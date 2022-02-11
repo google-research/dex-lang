@@ -152,6 +152,11 @@ instance Add Unit
   sub = \x y. ()
   zero = ()
 
+instance [Add a] Add (n->a)
+  add = \f g. \x. (f x) + (g x)
+  sub = \f g. \x. (f x) - (g x)
+  zero = \x. zero
+
 '#### Mul
 Things that can be multiplied.
 This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
@@ -185,6 +190,10 @@ instance Mul Word8
 instance Mul Unit
   mul = \x y. ()
   one = ()
+
+instance [Mul a] Mul (n->a)
+  mul = \f g. \x. (f x) * (g x)
+  one = \x. one
 
 '#### Integral
 Integer-like things.
@@ -347,6 +356,9 @@ instance VSpace Float
 
 instance {a n} [VSpace a] VSpace (n=>a)
   scaleVec = \s xs. for i. s .* xs.i
+
+instance [VSpace a] VSpace (n->a)
+  scaleVec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
   scaleVec = \_ _. ()
@@ -1138,7 +1150,6 @@ def argFilter {a n} (condition:a->Bool) (xs:n=>a) : List n =
       if condition xs.i
         then append list i
 
-
 '## Isomorphisms
 
 data Iso a b = MkIso { fwd: a -> b & bwd: b -> a }
@@ -1716,6 +1727,9 @@ Type class for generating example values
 interface Arbitrary a
   arb : Key -> a
 
+instance Arbitrary Bool
+  arb = \key. rand key < 0.5
+
 instance Arbitrary Float32
   arb = randn
 
@@ -1783,6 +1797,38 @@ def argscan {n o} (comp:o->o->Bool) (xs:n=>o) : n =
 
 def argmin {n o} [Ord o] (xs:n=>o) : n = argscan (<) xs
 def argmax {n o} [Ord o] (xs:n=>o) : n = argscan (>) xs
+
+def lexicalOrder {n} [Ord n]
+  (compareElements:n->n->Bool)
+  (compareLengths:Int->Int->Bool)
+  ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
+    -- Orders Lists according to the order of their elements,
+    -- in the same way a dictionary does.
+    -- For example, this lets us sort Strings.
+    --
+    -- More precisely, it returns True iff compareElements xs.i ys.i is true
+    -- at the first location they differ.
+    --
+    -- This function operates serially and short-circuits
+    -- at the first difference.  One could also write this
+    -- function as a parallel reduction, but it would be
+    -- wasteful in the case where there is an early difference,
+    -- because we can't short circuit.
+    iter \i.
+      case i == min nx ny of
+        True -> Done $ compareLengths nx ny
+        False ->
+          xi = xs.(unsafeFromOrdinal _ i)
+          yi = ys.(unsafeFromOrdinal _ i)
+          case compareElements xi yi of
+            True -> Done True
+            False -> case xi == yi of
+              True -> Continue
+              False -> Done False
+
+instance {n} [Ord n] Ord (List n)
+  (>) = lexicalOrder (>) (>)
+  (<) = lexicalOrder (<) (<)
 
 '### clip
 

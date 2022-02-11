@@ -4,3 +4,48 @@ import sort
 > True
 :p isSorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
 > True
+
+
+'### Lexical Sorting Tests
+
+:p "aaa" < "bbb"
+> True
+
+:p "aa" < "bbb"
+> True
+
+:p "a" < "aa"
+> True
+
+:p "aaa" > "bbb"
+> False
+
+:p "aa" > "bbb"
+> False
+
+:p "a" > "aa"
+> False
+
+:p "a" < "aa"
+> True
+
+:p ("": List Word8) > ("": List Word8)
+> False
+
+:p ("": List Word8) < ("": List Word8)
+> False
+
+:p "a" > "a"
+> False
+
+:p "a" < "a"
+> False
+
+:p "Thomas" < "Thompson"
+> True
+
+:p "Thomas" > "Thompson"
+> False
+
+:p isSorted $ sort ["Charlie", "Alice", "Bob", "Aaron"]
+> True

@@ -133,7 +133,7 @@ test-names = uexpr-tests adt-tests type-tests module-tests eval-tests show-tests
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
-             linalg-tests
+             linalg-tests set-tests
 
 lib-names = diagram plot png
 

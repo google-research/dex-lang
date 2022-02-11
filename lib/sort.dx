@@ -18,24 +18,26 @@ def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
 def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
-  --  2) Avoid initializing the return array.
-  init = concatTable xs ys
+  --  2) Avoid needlessly initializing the return array.
+  init = concatTable xs ys  -- Initialize array of correct size.
   yieldState init \buf.
     withState (0, 0) \countrefs.
-      for i.
+      for i:(m|n).
         (cur_x, cur_y) = get countrefs
-        noYsLeft = cur_y >= size n
-        stillXsLeft = cur_x < size m
-        cur_x_at_n = (unsafeFromOrdinal _ cur_x)
-        cur_y_at_n = (unsafeFromOrdinal _ cur_y)
-        xIsLess = xs.cur_x_at_n < ys.cur_y_at_n
-        if noYsLeft || (stillXsLeft && xIsLess)
+        if cur_y >= size n  -- no ys left
           then
             countrefs := (cur_x + 1, cur_y)
-            buf!i := xs.cur_x_at_n
+            buf!i := xs.(unsafeFromOrdinal _ cur_x)
           else
-            countrefs := (cur_x, cur_y + 1)
-            buf!i := ys.cur_y_at_n
+            if cur_x < size m -- still xs left
+              then 
+                if xs.(unsafeFromOrdinal _ cur_x) <= ys.(unsafeFromOrdinal _ cur_y)
+                  then
+                    countrefs := (cur_x + 1, cur_y)
+                    buf!i := xs.(unsafeFromOrdinal _ cur_x)
+                  else
+                    countrefs := (cur_x, cur_y + 1)
+                    buf!i := ys.(unsafeFromOrdinal _ cur_y)
 
 def mergeSortedLists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
   -- Need this wrapper because Dex can't automatically weaken
