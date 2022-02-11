@@ -93,7 +93,9 @@ runMode evalMode opts = case evalMode of
 evalBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
 evalBlockRepl block = do
   result <- evalSourceBlockRepl block
-  liftIO $ putStrLn $ pprint result
+  case result of
+    Result [] (Success ()) -> return ()
+    _ -> liftIO $ putStrLn $ pprint result
 
 liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Failure err) = liftIO $ putStrLn (pprint err) >> exitFailure
