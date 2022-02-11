@@ -129,7 +129,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
 # TODO: re-enable
 # fft vega-plotting
 
-test-names = uexpr-tests adt-tests type-tests module-tests eval-tests show-tests \
+test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
@@ -148,7 +148,12 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-tests: quine-tests repl-test
+module-tests:
+	misc/check-quine tests/module-tests.dx \
+           $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
+
+
+tests: quine-tests repl-test module-tests
 
 quine-tests: $(quine-test-targets)
 

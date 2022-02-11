@@ -230,7 +230,7 @@ catchIOExcept :: MonadIO m => IO a -> m (Except a)
 catchIOExcept m = liftIO $ (liftM Success m) `catches`
   [ Handler \(e::Errs)          -> return $ Failure e
   , Handler \(e::IOError)       -> return $ Failure $ Errs [Err DataIOErr   mempty $ show e]
-  -- , Handler \(e::SomeException) -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
+  , Handler \(e::SomeException) -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
   ]
 
 liftMaybe :: MonadFail m => Maybe a -> m a

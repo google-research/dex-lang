@@ -82,7 +82,6 @@ class Monad m => PassCtxReader m where
 type TopLogger m = (MonadIO m, MonadLogger [Output] m)
 
 class ( forall n. Fallible (m n)
-      -- , forall n. Catchable (m n)
       , forall n. MonadLogger [Output] (m n)
       , forall n. Catchable (m n)
       , forall n. ConfigReader (m n)
@@ -159,7 +158,7 @@ ensureModuleLoaded moduleSourceName = do
   depsRequired <- findDepsTransitively moduleSourceName
   forM_ depsRequired \md -> do
     evaluated <- evalPartiallyParsedUModuleCached md
-    loadModule (umppName md) evaluated
+    bindModule (umppName md) evaluated
 
 evalSourceBlock :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlock block = do
@@ -534,15 +533,18 @@ logPass passName cont = do
 
 loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m File
 loadModuleSource config moduleName = do
-  fnameStem <- case moduleName of
-    OrdinaryModule moduleName' -> return moduleName'
-    Prelude -> return "prelude"
+  fullPath <- case moduleName of
+    OrdinaryModule moduleName' -> findFullPath $ moduleName' ++ ".dx"
+    Prelude -> case preludeFile config of
+      Nothing -> findFullPath "prelude.dx"
+      Just path -> return path
     Main -> error "shouldn't be trying to load the source for main"
-  let fname = fnameStem ++ ".dx"
-  fullPath <- case libPath config of
+  readFileWithHash fullPath
+  where
+    findFullPath :: MonadIO m => FilePath -> m FilePath
+    findFullPath fname = case libPath config of
       Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
       Just path -> return $ path </> fname
-  readFileWithHash fullPath
 
 -- === saving cache to disk ===
 

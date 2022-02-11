@@ -304,6 +304,9 @@ type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
 -- === envs and modules ===
 
+-- `ModuleEnv` contains data that only makes sense in the context of evaluating
+-- a particular module. `TopEnv` contains everything that makes sense "between"
+-- evaluating modules.
 data Env n = Env
   { topEnv    :: TopEnv n
   , moduleEnv :: ModuleEnv n }

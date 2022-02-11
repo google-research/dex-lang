@@ -39,7 +39,7 @@ module Builder (
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
-  lookupLoadedModule, loadModule, getAllRequiredObjectFiles, extendCache,
+  lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
   TopEnvFrag (..), lookupModule, emitPartialTopEnvFrag,
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -162,8 +162,8 @@ emitTopLet hint letAnn expr = do
 emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
 emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
-loadModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
-loadModule sourceName internalName = do
+bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
+bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName
   emitPartialTopEnvFrag $ mempty {fragLoadedModules = loaded}
 
