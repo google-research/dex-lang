@@ -152,7 +152,7 @@ instance Add Unit
   sub = \x y. ()
   zero = ()
 
-instance [Add a] Add (n->a)
+instance {n a} [Add a] Add (n->a)
   add = \f g. \x. (f x) + (g x)
   sub = \f g. \x. (f x) - (g x)
   zero = \x. zero
@@ -191,7 +191,7 @@ instance Mul Unit
   mul = \x y. ()
   one = ()
 
-instance [Mul a] Mul (n->a)
+instance {n a} [Mul a] Mul (n->a)
   mul = \f g. \x. (f x) * (g x)
   one = \x. one
 
@@ -357,7 +357,7 @@ instance VSpace Float
 instance {a n} [VSpace a] VSpace (n=>a)
   scaleVec = \s xs. for i. s .* xs.i
 
-instance [VSpace a] VSpace (n->a)
+instance {a n} [VSpace a] VSpace (n->a)
   scaleVec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
