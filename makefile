@@ -107,6 +107,8 @@ build-ffis: dexrt-llvm
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
 
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
