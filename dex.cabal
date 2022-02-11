@@ -45,7 +45,7 @@ flag debug
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
-  build-depends:       base, bytestring, file-embed, dex
+  build-depends:       base, bytestring, file-embed
   hs-source-dirs:      src/resources
   default-language:    Haskell2010
   default-extensions:  CPP

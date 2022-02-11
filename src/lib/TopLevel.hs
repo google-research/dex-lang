@@ -53,7 +53,6 @@ import Syntax
 import Builder
 import Type
 import SourceRename
-import Resources
 import Inference
 import Simplify
 import Imp
@@ -534,18 +533,16 @@ logPass passName cont = do
   return result
 
 loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m File
-loadModuleSource config moduleName = case moduleName of
-  OrdinaryModule moduleName' -> do
-    let fname = moduleName' ++ ".dx"
-    fullPath <- case libPath config of
+loadModuleSource config moduleName = do
+  fnameStem <- case moduleName of
+    OrdinaryModule moduleName' -> return moduleName'
+    Prelude -> return "prelude"
+    Main -> error "shouldn't be trying to load the source for main"
+  let fname = fnameStem ++ ".dx"
+  fullPath <- case libPath config of
       Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
       Just path -> return $ path </> fname
-    readFileWithHash fullPath
-  Prelude -> do
-    case preludeFile config of
-      Nothing   -> return preludeSource
-      Just path -> readFileWithHash path
-  Main -> error "shouldn't be trying to load the source for main"
+  readFileWithHash fullPath
 
 -- === saving cache to disk ===
 
