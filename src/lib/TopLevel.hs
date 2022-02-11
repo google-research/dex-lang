@@ -567,12 +567,16 @@ loadCache = liftIO do
 storeCache :: MonadIO m => TopStateEx -> m ()
 storeCache env = liftIO do
   cachePath <- getCachePath
+  createDirectoryIfMissing True =<< getCacheDir
   envToStore <- snapshotPtrs $ stripEnvForSerialization env
   BS.writeFile cachePath $ encode envToStore
 
+getCacheDir :: MonadIO m => m FilePath
+getCacheDir = liftIO $ getXdgDirectory XdgCache "dex"
+
 getCachePath :: MonadIO m => m FilePath
 getCachePath = liftIO do
-  cacheDir <- getXdgDirectory XdgCache "dex"
+  cacheDir <- getCacheDir
   return $ cacheDir </> "dex.cache"
 
 clearCache :: MonadIO m => m ()
