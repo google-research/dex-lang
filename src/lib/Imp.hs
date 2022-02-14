@@ -742,7 +742,7 @@ extendIdxsTy (idxsTy, idxs) new = do
   let newAbs = abstractFreeVarsNoAnn idxs new
   Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs idxsTy \idxs' -> do
     ty' <- applyNaryAbs (sink newAbs) idxs'
-    singletonBinderNest NoHint ty'
+    singletonBinderNest noHint ty'
   return $ Abs (bs >>> b) UnitE
 
 type Idxs n = [AtomName n]
@@ -1279,7 +1279,7 @@ elemCountCPoly (Abs bs UnitE) = case bs of
         rhsElemCounts <- refreshBinders b \(b':>_) s -> do
           rest' <- applySubst s $ Abs rest UnitE
           Abs b' <$> elemCountCPoly rest'
-        withFreshBinder NoHint IdxRepTy \b' -> do
+        withFreshBinder noHint IdxRepTy \b' -> do
           let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
           return $ A.psubst (Abs b' sumPoly) size
       _ -> throw NotImplementedErr $

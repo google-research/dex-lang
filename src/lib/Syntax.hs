@@ -134,6 +134,7 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 import qualified Data.Store.Internal as SI
 
+import qualified RawName as R
 import Name
 import Err
 import LabeledItems
@@ -741,7 +742,7 @@ withFreshBinders [] cont = do
   Distinct <- getDistinct
   cont Empty []
 withFreshBinders (binding:rest) cont = do
-  withFreshBinder NoHint binding \b -> do
+  withFreshBinder noHint binding \b -> do
     ListE rest' <- sinkM $ ListE rest
     withFreshBinders rest' \bs vs ->
       cont (Nest (b :> binding) bs)
@@ -826,7 +827,7 @@ captureClosure decls result = do
 capturedVars :: (Color c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
 capturedVars b e = nameSetToList nameSet
-  where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+  where nameSet = R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 abstractPtrLiterals
   :: (EnvReader m, HoistableE e)

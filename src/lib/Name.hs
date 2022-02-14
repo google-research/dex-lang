@@ -59,7 +59,7 @@ module Name (
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
-  HasNameHint (..), NameHint (..), Color (..),
+  HasNameHint (..), NameHint (..), noHint, Color (..),
   GenericE (..), GenericB (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5, EitherE6,
     pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4, pattern Case5,
@@ -116,6 +116,9 @@ import Data.Store.Internal
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
+import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
+               , freshRawName, rawNameFromHint, rawNamesFromHints, noHint)
+import qualified RawName as R
 import Util (zipErr, onFst, onSnd, transitiveClosure)
 import Err
 
@@ -238,7 +241,7 @@ instance (SinkableB b, BindsNames b) => OutFrag (Nest b) where
 updateSubstFrag :: Color c => Name c i -> v c o -> SubstFrag v VoidS i o
                 -> SubstFrag v VoidS i o
 updateSubstFrag (UnsafeMakeName v) rhs (UnsafeMakeSubst m) =
-  UnsafeMakeSubst $ M.adjust (\(_:rest) -> (WithColor rhs) : rest ) v m
+  UnsafeMakeSubst $ R.adjust (\(_:rest) -> (WithColor rhs) : rest ) v m
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -391,11 +394,11 @@ traverseNames
   -> e i -> m o (e o)
 traverseNames f e = do
   let vs = freeVarsE e
-  m <- M.fromList <$> forM (M.toList vs)
+  m <- R.fromList <$> forM (R.toList vs)
          \(rawName, WithColor (UnitV :: UnitV c UnsafeS)) -> do
             x <- f (UnsafeMakeName rawName :: Name c i)
             return (rawName, WithColor x)
-  fmapNamesM (\((UnsafeMakeName v) :: Name c i) -> case M.lookup v m of
+  fmapNamesM (\((UnsafeMakeName v) :: Name c i) -> case R.lookup v m of
     Just (WithColor val) -> case tryAsColor val of
       Just val' -> val'
       Nothing -> error "shouldn't happen"
@@ -776,7 +779,7 @@ refreshAbsPure scope (Abs b e) cont =
 extendIfDistinct :: Scope n -> ScopeFrag n l
                  -> Maybe (DistinctEvidence l, Scope l)
 extendIfDistinct scope frag = do
-  if all isUnique extNames && M.disjoint scopeNames extNames
+  if all isUnique extNames && R.disjoint scopeNames extNames
     then Just ( fabricateDistinctEvidence
               , Scope (UnsafeMakeScopeFrag (extNames  <> scopeNames)))
     else Nothing
@@ -1547,18 +1550,9 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
 
 -- === name hints ===
 
-class HasNameHint a where
-  getNameHint :: a -> NameHint
-
-instance HasNameHint RawName where
-  getNameHint (RawName s _) = Hint s
-
-instance HasNameHint String where
-  getNameHint = fromString
-
 instance HasNameHint a => HasNameHint (Maybe a) where
   getNameHint (Just x) = getNameHint x
-  getNameHint (Nothing) = NoHint
+  getNameHint (Nothing) = noHint
 
 instance Color c => HasNameHint (BinderP c ann n l) where
   getNameHint (b:>_) = getNameHint b
@@ -1948,7 +1942,6 @@ instance HoistableV v => HoistableE (WithColor v) where
   freeVarsE (WithColor v) = freeVarsE v
 
 instance Store C
-instance Store RawName
 instance Store (UnitE n)
 instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
@@ -2088,9 +2081,9 @@ type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
 type ColorRep = WithColor UnitV UnsafeS
-type NameSet (n::S) = M.Map RawName ColorRep
+type NameSet (n::S) = RawNameMap ColorRep
 
-newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScopeFrag (M.Map RawName [ColorRep]) deriving Generic
+newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScopeFrag (RawNameMap [ColorRep]) deriving Generic
 newtype Scope (n::S) = Scope { fromScope :: ScopeFrag VoidS n }  deriving Generic
 
 instance Category ScopeFrag where
@@ -2099,11 +2092,11 @@ instance Category ScopeFrag where
     -- Flipped because the innermost names are at the left (head) of the list.
     -- But also flipped the other way because `(.)` is not like `(>>>)`.
     -- Hope we got that right!
-    UnsafeMakeScopeFrag $ M.unionWith (++) s2 s1
+    UnsafeMakeScopeFrag $ R.unionWith (++) s2 s1
 
 instance Color c => BindsNames (NameBinder c) where
   toScopeFrag (UnsafeMakeBinder v) =
-    UnsafeMakeScopeFrag $ M.singleton v [WithColor (UnitV :: UnitV c UnsafeS)]
+    UnsafeMakeScopeFrag $ R.singleton v [WithColor (UnitV :: UnitV c UnsafeS)]
 
 absurdNameFunction :: Name v VoidS -> a
 absurdNameFunction _ = error "Void names shouldn't exist"
@@ -2111,9 +2104,6 @@ absurdNameFunction _ = error "Void names shouldn't exist"
 scopeFragToSubstFrag :: ScopeFrag n l -> SubstFrag (ConstE UnitE) n l VoidS
 scopeFragToSubstFrag (UnsafeMakeScopeFrag m) =
   unsafeCoerceE $ UnsafeMakeSubst m
-
-type NameText = T.Text
-data RawName = RawName !NameText !Int deriving (Show, Eq, Ord, Generic)
 
 newtype Name (c::C)  -- Name color
              (n::S)  -- Scope parameter
@@ -2126,15 +2116,8 @@ newtype NameBinder (c::C)  -- name color
   = UnsafeMakeBinder RawName
     deriving (Show, Pretty, HasNameHint, Generic, Store)
 
-data NameHint = Hint NameText
-              | NoHint
-
-instance IsString NameHint where
-  fromString s = Hint $ fromString s
-
 newBinder :: Color c => NameHint -> (forall l. NameBinder c VoidS l -> a) -> a
-newBinder hint cont =
-  cont $ UnsafeMakeBinder $ RawName (interpretHint hint) 0
+newBinder hint cont = cont $ UnsafeMakeBinder $ rawNameFromHint hint
 
 -- Closed binder-name pair. The name isn't fresh and it doesn't pretend to be.
 -- It's intended for subsequent refreshing.
@@ -2147,7 +2130,7 @@ newNameM hint = return $ newName hint
 
 newNames :: Color c => [NameHint] -> Abs (Nest (NameBinder c)) (ListE (Name c)) n
 newNames hints = do
-  let rawNames =  [RawName (interpretHint hint) i | (i, hint) <- zip [0..] hints]
+  let rawNames =  rawNamesFromHints hints
   let vs = map UnsafeMakeName rawNames
   let bs = unsafeListToNest $ map UnsafeMakeBinder rawNames
   unsafeCoerceE $ Abs bs $ ListE vs
@@ -2164,26 +2147,9 @@ withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
       cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder c n UnsafeS)
 
-freshRawName :: NameHint -> M.Map RawName a -> RawName
-freshRawName hint usedNames = RawName tag nextNum
-  where
-    nextNum = case M.lookupLT (RawName tag bigInt) usedNames of
-                Just (RawName tag' i, _)
-                  | tag' /= tag -> 0
-                  | i < bigInt  -> i + 1
-                  | otherwise   -> error "Ran out of numbers!"
-                _ -> 0
-    bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
-    tag = interpretHint hint
-
-interpretHint :: NameHint -> NameText
-interpretHint hint = case hint of
-  Hint v -> v
-  NoHint -> "v"
-
 projectName :: ScopeFrag n l -> Name s l -> Either (Name s n) (Name s (n:=>:l))
 projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rawName)
-  | M.member rawName scope = Right $ UnsafeMakeName rawName
+  | R.member rawName scope = Right $ UnsafeMakeName rawName
   | otherwise              = Left  $ UnsafeMakeName rawName
 
 -- proves that the names in n are distinct
@@ -2352,7 +2318,7 @@ withScopeFromFreeVars :: HoistableE e => e n -> ClosedWithScope e
 withScopeFromFreeVars e =
   withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     ClosedWithScope scope $ unsafeCoerceE e
-  where scope = (Scope $ UnsafeMakeScopeFrag $ M.map (:[]) $ freeVarsE e) :: Scope UnsafeS
+  where scope = (Scope $ UnsafeMakeScopeFrag $ fmap (:[]) $ freeVarsE e) :: Scope UnsafeS
 
 -- This renames internal binders in a way that doesn't depend on any extra
 -- context. The resuling binder names are arbitrary (we make no promises!) but
@@ -2374,7 +2340,7 @@ ignoreHoistFailure (HoistFailure _) = error "hoist failure"
 
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
-  case nameSetRawNames $ M.intersection (freeVarsE e) frag of
+  case nameSetRawNames $ R.intersection (freeVarsE e) frag of
     []          -> HoistSuccess $ unsafeCoerceE e
     leakedNames -> HoistFailure leakedNames
   where UnsafeMakeScopeFrag frag = toScopeFrag b
@@ -2393,37 +2359,37 @@ freeVarsList e = nameSetToList $ freeVarsE e
 
 nameSetToList :: forall c n. Color c => NameSet n -> [Name c n]
 nameSetToList nameSet =
-  catMaybes $ flip map (M.toList nameSet) \(rawName, withColor) ->
+  catMaybes $ flip map (R.toList nameSet) \(rawName, withColor) ->
     case fromWithColor withColor of
       Nothing -> Nothing
       Just (ConstE UnitE :: UnitV c UnsafeS)-> Just $ UnsafeMakeName rawName
 
 toNameSet :: ScopeFrag n l -> NameSet l
-toNameSet (UnsafeMakeScopeFrag s) = M.map head s
+toNameSet (UnsafeMakeScopeFrag s) = fmap head s
 
 nameSetRawNames :: NameSet n -> [RawName]
-nameSetRawNames m = M.keys m
+nameSetRawNames m = R.keys m
 
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
-isFreeIn v e = getRawName v `M.member` freeVarsE e
+isFreeIn v e = getRawName v `R.member` freeVarsE e
 
 areFreeIn :: HoistableE e => [Name c n] -> e n -> Bool
 areFreeIn vs e =
-  not $ null $ S.intersection (S.fromList $ map getRawName vs)
-                              (M.keysSet $ freeVarsE e)
+  not $ null $ R.intersection (R.fromList $ map (\v -> (getRawName v, ())) vs)
+                              (freeVarsE e)
 
 exchangeBs :: (Distinct l, BindsNames b1, SinkableB b1, HoistableB b2)
               => PairB b1 b2 n l
               -> HoistExcept (PairB b2 b1 n l)
 exchangeBs (PairB b1 b2) =
-  case nameSetRawNames $ M.intersection (freeVarsB b2) frag  of
+  case nameSetRawNames $ R.intersection (freeVarsB b2) frag  of
     []          -> HoistSuccess $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
     leakedNames -> HoistFailure leakedNames
   where UnsafeMakeScopeFrag frag = toScopeFrag b1
 
 hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistNameSet b nameSet =
-  unsafeCoerceNameSet $ nameSet `M.difference` frag
+  unsafeCoerceNameSet $ nameSet `R.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
 abstractFreeVar :: Name c n -> e n -> Abs (NameBinder c) e n
@@ -2450,7 +2416,7 @@ instance Color c => HoistableB (NameBinder c) where
 
 instance Color c => HoistableE (Name c) where
   freeVarsE name =
-    M.singleton (getRawName name) (WithColor (UnitV :: UnitV c UnsafeS))
+    R.singleton (getRawName name) (WithColor (UnitV :: UnitV c UnsafeS))
 
 instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
   freeVarsB (PairB b1 b2) =
@@ -2478,7 +2444,7 @@ data SubstFrag
   (i ::S)  -- starting scope parameter for names we can look up in this env
   (i'::S)  -- ending   scope parameter for names we can look up in this env
   (o ::S)  -- scope parameter for the values stored in the env
-  = UnsafeMakeSubst (M.Map RawName [WithColor v o])
+  = UnsafeMakeSubst (RawNameMap [WithColor v o])
   deriving (Generic)
 deriving instance (forall c. Show (v c o)) => Show (SubstFrag v i i' o)
 
@@ -2486,7 +2452,7 @@ deriving instance (forall c. Show (v c o)) => Show (SubstFrag v i i' o)
 
 lookupSubstFrag :: Color c => SubstFrag v i i' o -> Name c (i:=>:i') -> v c o
 lookupSubstFrag (UnsafeMakeSubst m) (UnsafeMakeName rawName) =
-  case M.lookup rawName m of
+  case R.lookup rawName m of
     Just (d:_) -> case fromWithColor d of
       Nothing -> error "Wrong name color (should never happen)"
       Just x -> x
@@ -2494,23 +2460,23 @@ lookupSubstFrag (UnsafeMakeSubst m) (UnsafeMakeName rawName) =
 
 -- Just for debugging
 lookupSubstFragRaw :: SubstFrag v i i' o -> RawName -> Maybe (WithColor v o)
-lookupSubstFragRaw (UnsafeMakeSubst m) rawName = fmap head $ M.lookup rawName m
+lookupSubstFragRaw (UnsafeMakeSubst m) rawName = fmap head $ R.lookup rawName m
 
 instance InFrag (SubstFrag v) where
   emptyInFrag = UnsafeMakeSubst mempty
   catInFrags (UnsafeMakeSubst m1) (UnsafeMakeSubst m2) =
     -- flipped because the innermost names are at the left (head) of the list
-    UnsafeMakeSubst (M.unionWith (++) m2 m1)
+    UnsafeMakeSubst (R.unionWith (++) m2 m1)
 
 singletonSubst :: Color c => NameBinder c i i' -> v c o -> SubstFrag v i i' o
 singletonSubst (UnsafeMakeBinder name) x =
-  UnsafeMakeSubst (M.singleton name [WithColor x])
+  UnsafeMakeSubst (R.singleton name [WithColor x])
 
 fmapSubstFrag :: SinkableV v
             => (forall c. Color c => Name c (i:=>:i') -> v c o -> v' c o')
             -> SubstFrag v i i' o -> SubstFrag v' i i' o'
 fmapSubstFrag f (UnsafeMakeSubst m) = UnsafeMakeSubst m'
-  where m' = flip M.mapWithKey m $ \k xs ->
+  where m' = flip R.mapWithKey m $ \k xs ->
                 flip map xs \(WithColor val) ->
                   WithColor $ f (UnsafeMakeName k) val
 
@@ -2526,15 +2492,15 @@ collectGarbage :: (HoistableV v, HoistableE e)
                -> (forall l'. Distinct l' => RecSubstFrag v n l' -> e l' -> a)
                -> a
 collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
-  let seedNames = M.keys $ freeVarsE e
-  let accessibleNames = S.fromList $ transitiveClosure getParents seedNames
-  let env' = RecSubstFrag $ UnsafeMakeSubst $ M.restrictKeys env accessibleNames
+  let seedNames = R.keys $ freeVarsE e
+  let accessibleNames = transitiveClosure getParents seedNames
+  let env' = RecSubstFrag $ UnsafeMakeSubst $ R.restrictKeys env accessibleNames
   cont env' $ unsafeCoerceE e
   where
     getParents :: RawName -> [RawName]
-    getParents name = case M.lookup name env of
+    getParents name = case R.lookup name env of
       Nothing -> []
-      Just [WithColor v] -> M.keys $ freeVarsE v
+      Just [WithColor v] -> R.keys $ freeVarsE v
       _ -> error "shouldn't be possible, due to Distinct constraint"
 
 -- === iterating through env pairs ===
@@ -2544,7 +2510,7 @@ data SubstPair (v::V) (o::S) (i::S) (i'::S) where
 
 toSubstPairs :: forall v i i' o . SubstFrag v i i' o -> Nest (SubstPair v o) i i'
 toSubstPairs (UnsafeMakeSubst m) =
-  go $ fold $ M.elems $ flip M.mapWithKey m \k xs -> map (mkPair k) xs
+  go $ fold $ R.elems $ flip R.mapWithKey m \k xs -> map (mkPair k) xs
   where
     mkPair :: RawName -> WithColor v o -> SubstPair v o UnsafeS UnsafeS
     mkPair rawName (WithColor v) =
@@ -2618,7 +2584,7 @@ instance HoistableB b => HoistableB (Nest b) where
 instance (forall c n. Pretty (v c n)) => Pretty (SubstFrag v i i' o) where
   pretty (UnsafeMakeSubst m) =
     fold [ pretty v <+> "@>" <+> pretty x <> hardline
-         | (v, xs) <- M.toList m, WithColor x <- reverse xs]
+         | (v, xs) <- R.toList m, WithColor x <- reverse xs]
 
 instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
   type Rep (Nest b n l) = Rep [b UnsafeS UnsafeS]
@@ -2675,13 +2641,6 @@ instance Monad HoistExcept where
   return = pure
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
-
--- TODO: this needs to be sinkive but it's currently not
--- (needs to figure out acceptable tag strings)
-instance Pretty RawName where
-  pretty (RawName tag n) = pretty tag <> suffix
-            where suffix = case n of 0 -> ""
-                                     _ -> pretty n
 
 -- === notes ===
 
