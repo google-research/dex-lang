@@ -48,6 +48,7 @@ enumeration variable.
 ' We can also display it as html. To do this we include the plot library.
   Right now our table is not so interesting :)
 
+import png
 import plot
 
 :html matshow x

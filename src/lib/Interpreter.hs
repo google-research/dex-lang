@@ -105,7 +105,9 @@ evalAtom atom = traverseSurfaceAtomNames atom \v -> do
       ~(AtomNameBinding bindingInfo) <- lookupEnv v'
       case bindingInfo of
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ evalAtom x
-        PtrLitBound ty ptr -> return $ Con $ Lit $ PtrLit ty ptr
+        PtrLitBound _ ptrName -> do
+          ~(PtrBinding ptr) <- lookupEnv ptrName
+          return $ Con $ Lit $ PtrLit ptr
         _ -> error "shouldn't have irreducible atom names left"
 
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
@@ -164,15 +166,15 @@ evalOp expr = mapM evalAtom expr >>= \case
   ScalarUnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  PtrOffset (Con (Lit (PtrLit (a, t) p))) (IdxRepVal i) ->
-    return $ Con $ Lit $ PtrLit (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit (Heap CPU, t) p))) ->
+  PtrOffset (Con (Lit (PtrLit (PtrLitVal (a, t) p)))) (IdxRepVal i) ->
+    return $ Con $ Lit $ PtrLit (PtrLitVal (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i))
+  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap CPU, t) p)))) ->
     Con . Lit <$> liftIO (loadLitVal p t)
-  PtrLoad (Con (Lit (PtrLit (Heap GPU, t) p))) ->
+  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap GPU, t) p)))) ->
     liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
       loadCUDAArray hostPtr p (sizeOf t)
       Con . Lit <$> loadLitVal hostPtr t
-  PtrLoad (Con (Lit (PtrLit (Stack, _) _))) ->
+  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Stack, _) _)))) ->
     error $ "Unexpected stack pointer in interpreter"
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
@@ -221,14 +223,14 @@ matchUPat (WithSrcB _ pat) x = do
         go xs = \case
           UEmptyRowPat    -> return emptyInFrag
           URemFieldsPat b -> return $ b @> SubstVal (Record xs)
-          UDynFieldsPat ~(InternalName (UAtomVar v)) b rest ->
+          UDynFieldsPat ~(InternalName _ (UAtomVar v)) b rest ->
             evalAtom (Var v) >>= \case
               LabeledRow f | [StaticFields fields] <- fromFieldRowElems f -> do
                 let (items, remItems) = splitLabeledItems fields xs
                 frag <- matchUPat b (Record items)
                 frag `followedByFrag` go remItems rest
               _ -> error "Unevaluated fields?"
-          UDynFieldPat ~(InternalName (UAtomVar v)) b rest ->
+          UDynFieldPat ~(InternalName _ (UAtomVar v)) b rest ->
             evalAtom (Var v) >>= \case
               Con (LabelCon l) -> go xs $ UStaticFieldPat l b rest
               _ -> error "Unevaluated label?"

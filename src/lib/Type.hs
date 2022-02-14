@@ -284,6 +284,8 @@ instance Color c => CheckableE (Binding c) where
     MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
+    ModuleBinding     md                -> ModuleBinding     <$> substM md
+    PtrBinding        ptr               -> PtrBinding        <$> return ptr
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -292,7 +294,7 @@ instance CheckableE AtomBinding where
     PiBound  piBinding  -> PiBound     <$> checkE piBinding
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
-    PtrLitBound ty ptr  -> return $ PtrLitBound ty ptr
+    PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
     -- TODO: check the type actually matches the lambda term
     SimpLamBound ty lam -> do
       lam' <- substM lam
@@ -1083,7 +1085,8 @@ litType v = case v of
   Word64Lit  _ -> Scalar Word64Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
-  PtrLit t _   -> PtrType t
+  PtrLit (PtrSnapshot t _) -> PtrType t
+  PtrLit (PtrLitVal   t _) -> PtrType t
   VecLit  l -> Vector sb
     where Scalar sb = litType $ head l
 
@@ -1240,8 +1243,8 @@ declareEff eff = declareEffs $ oneEffect eff
 
 declareEffs :: Typer m => EffectRow o -> m i o ()
 declareEffs effs = do
-  allowedEffects <- getAllowedEffects
-  checkExtends allowedEffects effs
+  allowed <- getAllowedEffects
+  checkExtends allowed effs
 
 extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
 extendAllowedEffect newEff cont = do

@@ -80,8 +80,14 @@ all: build
 tc: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
+# Build without clearing the cache. Use at your own risk.
+just-build: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS)
+
 build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
 
 watch: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --file-watch
@@ -101,6 +107,8 @@ build-ffis: dexrt-llvm
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
 
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
@@ -140,7 +148,12 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-tests: quine-tests repl-test
+module-tests:
+	misc/check-quine tests/module-tests.dx \
+           $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
+
+
+tests: quine-tests repl-test module-tests
 
 quine-tests: $(quine-test-targets)
 

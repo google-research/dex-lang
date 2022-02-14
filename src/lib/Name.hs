@@ -74,7 +74,8 @@ module Name (
   HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
   abstractFreeVarsNoAnn,
   WithRenamer (..), ignoreHoistFailure,
-  HoistableB (..), HoistableV,
+  HoistableB (..), HoistableV, withScopeFromFreeVars, canonicalizeForPrinting,
+  ClosedWithScope (..),
   WrapE (..), WrapB (..), WithColor (..), fromWithColor,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames, newNamesM,
@@ -84,7 +85,7 @@ module Name (
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence,
-  MonadTrans1 (..),
+  MonadTrans1 (..), collectGarbage,
   ) where
 
 import Prelude hiding (id, (.))
@@ -115,7 +116,7 @@ import Data.Store.Internal
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
-import Util (zipErr, onFst, onSnd)
+import Util (zipErr, onFst, onSnd, transitiveClosure)
 import Err
 
 -- === category-like classes for envs, scopes etc ===
@@ -524,7 +525,7 @@ newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEm
         deriving (Show, Eq, Generic)
 
 newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-        deriving (Show, Eq, Generic)
+        deriving (Show, Eq, Generic, Monoid, Semigroup)
 
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
@@ -869,6 +870,7 @@ instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
+instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1128,15 +1130,10 @@ instance GenericE (EKey e) where
 -- slower (because we have to query the free vars of both expressions) and its
 -- implementation is unsafe, but it's needed for things like HashMap.
 instance (HoistableE e, AlphaEqE e) => Eq (EKey e n) where
-  EKey x == EKey y = do
-    let xFreeVars = freeVarsE x
-    if M.keysSet (freeVarsE y) /= M.keysSet (xFreeVars)
-      then False
-      else do
-        let scope = (Scope $ UnsafeMakeScopeFrag $ M.map (:[]) xFreeVars) :: Scope UnsafeS
-        withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
-          runScopeReaderM scope do
-            alphaEq (unsafeCoerceE x) (unsafeCoerceE y)
+  EKey x == EKey y =
+    case withScopeFromFreeVars $ PairE x y of
+      ClosedWithScope scope (PairE x' y') ->
+        runScopeReaderM scope $ alphaEq x' y'
 
 instance (AlphaEqE e, AlphaHashableE e) => Hashable (EKey e n) where
   hashWithSalt salt (EKey e) = alphaHashWithSalt salt e
@@ -1527,6 +1524,11 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
   listen = undefined
   pass = undefined
 
+instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
+         , MonadState s m)
+         => MonadState s (InplaceT bindings decls m n) where
+  state f = lift1 $ state f
+
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls)
          => MonadTrans1 (InplaceT bindings decls) where
   lift1 m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
@@ -1553,6 +1555,10 @@ instance HasNameHint RawName where
 
 instance HasNameHint String where
   getNameHint = fromString
+
+instance HasNameHint a => HasNameHint (Maybe a) where
+  getNameHint (Just x) = getNameHint x
+  getNameHint (Nothing) = NoHint
 
 instance Color c => HasNameHint (BinderP c ann n l) where
   getNameHint (b:>_) = getNameHint b
@@ -1587,6 +1593,8 @@ instance Color SuperclassNameC where getColorRep _ = SuperclassNameC
 instance Color MethodNameC     where getColorRep _ = MethodNameC
 instance Color ImpFunNameC     where getColorRep _ = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep _ = ObjectFileNameC
+instance Color ModuleNameC     where getColorRep _ = ModuleNameC
+instance Color PtrNameC        where getColorRep _ = ModuleNameC
 
 interpretColor :: C -> WithColor UnitV VoidS
 interpretColor c = case c of
@@ -1599,6 +1607,8 @@ interpretColor c = case c of
   MethodNameC     -> WithColor (UnitV :: UnitV MethodNameC     VoidS)
   ImpFunNameC     -> WithColor (UnitV :: UnitV ImpFunNameC     VoidS)
   ObjectFileNameC -> WithColor (UnitV :: UnitV ObjectFileNameC VoidS)
+  ModuleNameC     -> WithColor (UnitV :: UnitV ModuleNameC     VoidS)
+  PtrNameC        -> WithColor (UnitV :: UnitV PtrNameC        VoidS)
 
 deriving instance (forall c. Show (v c n)) => Show (WithColor v n)
 
@@ -2063,7 +2073,9 @@ data C =
   | MethodNameC
   | ImpFunNameC
   | ObjectFileNameC
-  deriving (Eq, Ord, Generic)
+  | ModuleNameC
+  | PtrNameC
+    deriving (Eq, Ord, Generic)
 
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
@@ -2333,6 +2345,25 @@ class BindsNames b => HoistableB (b::B) where
 
 data HoistExcept a = HoistSuccess a | HoistFailure [RawName]
 
+data ClosedWithScope (e::E) where
+  ClosedWithScope :: Distinct n => Scope n -> e n -> ClosedWithScope e
+
+withScopeFromFreeVars :: HoistableE e => e n -> ClosedWithScope e
+withScopeFromFreeVars e =
+  withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+    ClosedWithScope scope $ unsafeCoerceE e
+  where scope = (Scope $ UnsafeMakeScopeFrag $ M.map (:[]) $ freeVarsE e) :: Scope UnsafeS
+
+-- This renames internal binders in a way that doesn't depend on any extra
+-- context. The resuling binder names are arbitrary (we make no promises!) but
+-- at least they're deterministic.
+canonicalizeForPrinting
+  :: (HoistableE e, SubstE Name e) => e n -> (forall l. e l -> a) -> a
+canonicalizeForPrinting e cont =
+  case withScopeFromFreeVars e of
+    ClosedWithScope scope e' ->
+      cont $ fmapNames scope id e'
+
 liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
@@ -2487,6 +2518,24 @@ envFragAsScope :: forall v i i' o. SubstFrag v i i' o -> ScopeFrag i i'
 envFragAsScope (UnsafeMakeSubst m) =
   UnsafeMakeScopeFrag $ flip fmap m \xs ->
     flip map xs \(WithColor (_ :: v c o)) -> WithColor (UnitV :: UnitV c UnsafeS)
+
+-- === garbage collection ===
+
+collectGarbage :: (HoistableV v, HoistableE e)
+               => Distinct l => RecSubstFrag v n l -> e l
+               -> (forall l'. Distinct l' => RecSubstFrag v n l' -> e l' -> a)
+               -> a
+collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
+  let seedNames = M.keys $ freeVarsE e
+  let accessibleNames = S.fromList $ transitiveClosure getParents seedNames
+  let env' = RecSubstFrag $ UnsafeMakeSubst $ M.restrictKeys env accessibleNames
+  cont env' $ unsafeCoerceE e
+  where
+    getParents :: RawName -> [RawName]
+    getParents name = case M.lookup name env of
+      Nothing -> []
+      Just [WithColor v] -> M.keys $ freeVarsE v
+      _ -> error "shouldn't be possible, due to Distinct constraint"
 
 -- === iterating through env pairs ===
 

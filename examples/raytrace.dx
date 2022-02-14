@@ -5,6 +5,7 @@
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 
+import png
 import plot
 
 ' ### Generic Helper Functions

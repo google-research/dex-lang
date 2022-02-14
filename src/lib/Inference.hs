@@ -39,7 +39,7 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Type
-import PPrint ()
+import PPrint (pprintCanonicalized)
 import CheapReduction
 import GenericTraversal
 import MTL1
@@ -80,16 +80,16 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applySubst subst result
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
-  let classPrettyName   = fromString (pprint className) :: SourceName
-  let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
+  let classSourceName = uBinderSourceName className
+  let methodSourceNames = nestToList uBinderSourceName methodNames
   dictDef <- liftInfererM $
-               inferInterfaceDataDef classPrettyName paramBs superclasses methodTys
+               inferInterfaceDataDef classSourceName paramBs superclasses methodTys
   dictDefName <- emitDataDef dictDef
-  let classDef = ClassDef classPrettyName methodPrettyNames dictDefName
+  let classDef = ClassDef classSourceName methodSourceNames dictDefName
   className' <- emitClassDef classDef =<< tyConDefAsAtom dictDefName Nothing
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <-
-    forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
+    forM (enumerate $ zip methodSourceNames methodTys) \(i, (prettyName, ty)) -> do
       let UMethodType (Right explicits) _ = ty
       emitMethodType (getNameHint prettyName) className' explicits i
   let subst = className @> className' <.> methodNames @@> methodNames'
@@ -107,7 +107,7 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     return val
   return $ UDeclResultWorkRemaining block $ Abs decl result
 
-inferTopUDecl decl@(UInstance ~(InternalName className) argBinders params methods _) result = do
+inferTopUDecl decl@(UInstance ~(InternalName _ className) argBinders params methods _) result = do
   block <- liftInfererM $ solveLocal $ buildBlockInf do
     instanceDict <- checkInstanceArgs argBinders do
                       checkInstanceParams params \params' -> do
@@ -457,7 +457,8 @@ instance Inferer InfererM where
         "Type inference of this program requires delayed interface resolution"
       return UnitE
     get >>= \case
-      FailIfRequired    -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint iface
+      FailIfRequired    -> throw TypeErr $ "Couldn't synthesize a class dictionary for: "
+                             ++ pprintCanonicalized iface
       GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
 instance Builder (InfererM i) where
@@ -669,7 +670,7 @@ checkOrInferRho :: forall m i o.
                 => UExpr i -> RequiredTy RhoType o -> m i o (Atom o)
 checkOrInferRho (WithSrcE pos expr) reqTy = do
  addSrcContext pos $ case expr of
-  UVar ~(InternalName v) -> do
+  UVar ~(InternalName _ v) -> do
     substM v >>= inferUVar >>= instantiateSigma >>= matchRequirement
   ULam (ULamExpr ImplicitArrow (UPatAnn p ann) body) -> do
     argTy <- checkAnn ann
@@ -881,7 +882,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
 inferFunNoInstantiation :: (EmitsBoth o, Inferer m) => UExpr i -> m i o (Atom o)
 inferFunNoInstantiation expr@(WithSrcE pos expr') = do
  addSrcContext pos $ case expr' of
-  UVar ~(InternalName v) -> do
+  UVar ~(InternalName _ v) -> do
     -- XXX: deliberately no instantiation!
     substM v >>= inferUVar
   _ -> inferRho expr
@@ -1080,7 +1081,7 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   val <- checkMaybeAnnExpr ann rhs
   var <- emitDecl (getNameHint p) letAnn $ Atom val
   bindLamPat p var cont
-inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods maybeName) cont = do
+inferUDeclLocal (UInstance ~(InternalName _ className) argBinders params methods maybeName) cont = do
   className' <- substM className
   instanceDict <- checkInstanceArgs argBinders do
                     checkInstanceParams params \params' -> do
@@ -1301,10 +1302,12 @@ introDictTys (h:t) m = buildPiInf "_autoq" ClassArrow h \_ -> do
 
 checkMethodDef :: (EmitsBoth o, Inferer m)
                => ClassName o -> [Type o] -> UMethodDef i -> m i o (Int, Atom o)
-checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
+checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs) = do
   MethodBinding className' i _ <- substM v >>= lookupEnv
-  when (className /= className') $
-    throw TypeErr $ pprint v ++ " is not a method of " ++ pprint className
+  when (className /= className') do
+    ClassBinding (ClassDef classSourceName _ _) _ <- lookupEnv className
+    throw TypeErr $ pprint sourceName ++ " is not a method of "
+                 ++ pprint classSourceName
   let methodTy = methodTys !! i
   rhs' <- checkSigma rhs methodTy
   return (i, rhs')
@@ -1312,7 +1315,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
 checkUEffRow :: (EmitsInf o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
-   t' <- forM t \(InternalName v) -> do
+   t' <- forM t \(InternalName _ v) -> do
             v' <- substM v
             constrainVarTy v' EffKind
             return v'
@@ -1320,7 +1323,7 @@ checkUEffRow (EffectRow effs t) = do
 
 checkUEff :: (EmitsInf o, Inferer m) => UEffect i -> m i o (Effect o)
 checkUEff eff = case eff of
-  RWSEffect rws (Just ~(InternalName region)) -> do
+  RWSEffect rws (Just ~(InternalName _ region)) -> do
     region' <- substM region
     constrainVarTy region' TyKind
     return $ RWSEffect rws $ Just region'
@@ -1349,7 +1352,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
 
 getCaseAltIndex :: Inferer m => UPat i i' -> m i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
-  UPatCon ~(InternalName conName) _ -> do
+  UPatCon ~(InternalName _ conName) _ -> do
     (_, con) <- substM conName >>= getDataCon
     return $ ConAlt con
   UPatVariant (LabeledItems lmap) label _ -> do
@@ -1367,7 +1370,7 @@ checkCasePat :: (EmitsBoth o, Inferer m)
              -> (forall o'. (EmitsBoth o', Ext o o') => m i' o' (Atom o'))
              -> m i o (Alt o)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
-  UPatCon ~(InternalName conName) ps -> do
+  UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, con) <- substM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     DataConDef _ (EmptyAbs argBs) <- return $ cons !! con
@@ -1428,7 +1431,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- getSnd x' >>= zonk >>= emitAtomToName
       bindLamPat p2 x2 do
         cont
-  UPatCon ~(InternalName conName) ps -> do
+  UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< substM conName
     (DataDef sourceName paramBs cons) <- lookupDataDef dataDefName
     case cons of
@@ -1648,9 +1651,9 @@ addEffects :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o ()
 addEffects eff = do
   allowed <- checkAllowedUnconditionally eff
   unless allowed $ do
-    allowedEffects <- getAllowedEffects
+    effsAllowed <- getAllowedEffects
     eff' <- openEffectRow eff
-    constrainEq (Eff allowedEffects) (Eff eff')
+    constrainEq (Eff effsAllowed) (Eff eff')
 
 checkAllowedUnconditionally :: Inferer m => EffectRow o -> m i o Bool
 checkAllowedUnconditionally Pure = return True
@@ -1855,8 +1858,10 @@ constrainEq :: (EmitsInf o, Inferer m) => Type o -> Type o -> m i o ()
 constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  Abs infVars (PairE t1Pretty t2Pretty) <- renameForPrinting $ PairE t1' t2'
-  let msg =   "Expected: " ++ pprint t1Pretty
+  msg <- do
+    ab <- renameForPrinting $ PairE t1' t2'
+    return $ canonicalizeForPrinting ab \(Abs infVars (PairE t1Pretty t2Pretty)) ->
+              "Expected: " ++ pprint t1Pretty
          ++ "\n  Actual: " ++ pprint t2Pretty
          ++ (case infVars of
                Empty -> ""
@@ -2076,9 +2081,6 @@ trySynthDictBlock ty = do
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
         (d, _):_ -> return d
 
--- TODO: we'd rather have something like this:
---   data Givens n = Givens (M.Map (Type n) (Given n))
--- but we need an Ord or Hashable instance on types
 data Givens n = Givens { fromGivens :: HM.HashMap (EKey Type n) (Given n) }
 
 type Given = Block
@@ -2122,14 +2124,15 @@ liftSyntherM cont =
 
 givensFromEnv :: EnvReader m => m n (Givens n)
 givensFromEnv = do
-  SynthCandidates givens projs _ <- getSynthCandidatesM
+  givens <- getLambdaDicts
+  projs <- getSuperclassProjs
   let givensBlocks = map AtomicBlock givens
   getSuperclassClosure projs (Givens HM.empty) givensBlocks
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
   prevGivens <- getGivens
-  projs <- superclassGetters <$> getSynthCandidatesM
+  projs <- getSuperclassProjs
   finalGivens <- getSuperclassClosureM projs prevGivens newGivens
   withGivens finalGivens cont
 
@@ -2212,12 +2215,9 @@ getGiven = do
 
 getInstance :: DataDefName n -> Synther m => m n (Atom n)
 getInstance target = do
-  instances <- instanceDicts <$> getSynthCandidatesM
-  case M.lookup target instances of
-    Just relevantInstances -> do
-      declareUsedInstance
-      asum $ map pure relevantInstances
-    Nothing -> empty
+  instances <- getInstanceDicts target
+  declareUsedInstance
+  asum $ map pure instances
 
 synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
 synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =

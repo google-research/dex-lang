@@ -18,7 +18,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (
-  pprint, pprintList, asStr , atPrec, toJSONStr,
+  pprint, pprintCanonicalized, pprintList, asStr , atPrec, toJSONStr,
   PrettyPrec(..), PrecedenceLevel (..), printLitBlock) where
 
 import Data.Aeson hiding (Result, Null, Value, Success)
@@ -32,6 +32,7 @@ import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, uncons, unsnoc, unpack)
+import qualified Data.Set        as S
 import Data.String (fromString)
 import Data.Maybe (isNothing)
 import qualified System.Console.ANSI as ANSI
@@ -79,6 +80,10 @@ fromInfix t = do
 
 type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
 type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
+
+pprintCanonicalized :: (HoistableE e, SubstE Name e, PrettyE e)
+                    => e n -> String
+pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
 pprintList :: Pretty a => [a] -> String
 pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
@@ -337,7 +342,7 @@ instance Pretty (AtomBinding n) where
     PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    PtrLitBound ty ptr -> p $ PtrLit ty ptr
+    PtrLitBound _ ptr -> p ptr
     SimpLamBound ty f -> p ty <> hardline <> p f
     FFIFunBound _ f -> p f
 
@@ -368,6 +373,20 @@ instance Pretty (Binding s n) where
       "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
     ObjectFileBinding _ -> "<object file>"
+    ModuleBinding  _ -> "<module>"
+    PtrBinding     _ -> "<ptr>"
+
+instance Pretty (Module n) where
+  pretty m = prettyRecord
+    [ ("moduleSourceName"     , p $ moduleSourceName m)
+    , ("moduleDirectDeps"     , p $ S.toList $ moduleDirectDeps m)
+    , ("moduleTransDeps"      , p $ S.toList $ moduleTransDeps m)
+    , ("moduleExports"        , p $ moduleExports m)
+    , ("moduleSynthCandidates", p $ moduleSynthCandidates m)
+    , ("moduleObjectFiles"    , p $ moduleObjectFiles m) ]
+
+instance Pretty (ObjectFiles n) where
+  pretty (ObjectFiles _) = error "todo"
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
@@ -383,14 +402,29 @@ instance Pretty (ClassDef n) where
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
+instance Pretty (TopEnv n) where
+  pretty (TopEnv _ defs cache ms) =
+    prettyRecord [ ("Defs"          , p defs)
+                 , ("Cache"         , p cache)
+                 , ("Loaded modules", p ms)]
+
+instance Pretty (ImportStatus n) where
+  pretty imports = pretty $ S.toList $ directImports imports
+
+instance Pretty (ModuleEnv n) where
+  pretty (ModuleEnv imports sm sc _ effs) =
+    prettyRecord [ ("Imports"         , p imports)
+                 , ("Source map"      , p sm)
+                 , ("Synth candidates", p sc)
+                 , ("Effects"         , p effs)]
+
 instance Pretty (Env n) where
-  pretty s =
-       "bindings: "
-    <>   indented (pretty (getNameEnv s))
-    <> "synth candidates:"
-    <>   indented (pretty (getSynthCandidates s))
-    <> "source map: "
-    <>   indented (pretty (getSourceMap s))
+  pretty (Env env1 env2) =
+    prettyRecord [ ("Top env"   , p env1)
+                 , ("Module env", p env2)]
+
+prettyRecord :: [(String, Doc ann)] -> Doc ann
+prettyRecord xs = foldMap (\(name, val) -> pretty name <> indented val) xs
 
 instance Pretty SourceBlock where
   pretty block = pretty (sbText block)
@@ -433,7 +467,7 @@ instance Color c => PrettyPrec (UBinder c n l) where
   prettyPrec b = atPrec ArgPrec case b of
     UBindSource v -> p v
     UIgnore       -> "_"
-    UBind v       -> p v
+    UBind v _     -> p v
 
 instance PrettyE e => Pretty (WithSrcE e n) where
   pretty (WithSrcE _ x) = p x
@@ -449,7 +483,7 @@ instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where
 
 instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName   v) = p v
-  pretty (InternalName x) = p x
+  pretty (InternalName v _) = p v
 
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
@@ -602,27 +636,17 @@ instance Pretty (EnvFrag n l) where
        "Partial bindings:" <> indented (p bindings)
     <> "Effects allowed:" <+> p effects
 
-instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings scs sourceMap cache _) =
-       "bindings:"
-    <>   indented (p bindings)
-    <> "Synth candidats:"
-    <>   indented (p scs)
-    <> "Source map:"
-    <>   indented (p sourceMap)
-    <> "Cache:"
-    <>   indented (p cache)
-    <> "Object files:"
-    <>   indented "<TODO: Pretty instance>"
-
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
        "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
     <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
     <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
+
+instance Pretty (LoadedModules n) where
+  pretty _ = "<loaded modules>"
 
 indented :: Doc ann -> Doc ann
 indented doc = nest 2 (hardline <> doc) <> hardline
@@ -814,7 +838,9 @@ instance PrettyPrec LitVal where
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
+  prettyPrec (PtrLit (PtrLitVal ty x)) =
+    atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
+  prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty CallingConvention where

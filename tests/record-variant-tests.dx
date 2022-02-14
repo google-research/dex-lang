@@ -160,8 +160,8 @@ def getTwoFoosAndABar {a b c} {rest : Fields}
   (a1, a2, b)
 > Type error:
 > Expected: {a: c & a: d & b: e}
->   Actual: {a: b1 & b: a}
-> (Solving for: [a, b1, c, d, e])
+>   Actual: {a: b & b: a}
+> (Solving for: [a, b, c, d, e])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^
@@ -424,9 +424,9 @@ def badProject (l: Label) (x: {@l:Int & l:Float}) : Float =
   {l=lv, ...} = x
   lv
 > Type error:
-> Expected: {l: a & ...b1}
+> Expected: {l: a & ...b}
 >   Actual: {@l: Int32 & l: Float32}
-> (Solving for: [a, b1])
+> (Solving for: [a, b])
 >
 >   {l=lv, ...} = x
 >   ^^^^^^^^^^^^
@@ -453,9 +453,9 @@ subsetRecord {a: _ ? c: _} {a=1, b=2, c=4}
 
 subsetRecord {? c: _ ?} {a=1, b=2}
 > Type error:
-> Expected: {c: a & ...b1}
+> Expected: {c: a & ...b}
 >   Actual: {a: d & b: c}
-> (Solving for: [a, b1, c, d])
+> (Solving for: [a, b, c, d])
 >
 > subsetRecord {? c: _ ?} {a=1, b=2}
 >                         ^^^^^^^^^^

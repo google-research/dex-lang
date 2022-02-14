@@ -6,6 +6,7 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 module MTL1 (
@@ -40,7 +41,8 @@ class Monoid1 w => FallibleMonoid1 w where
 
 newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WriterT1 { runWriterT1' :: (WriterT (w n) (m n) a) }
-  deriving (Functor, Applicative, Monad, MonadWriter (w n), MonadFail, Fallible)
+  deriving ( Functor, Applicative, Monad, MonadWriter (w n), MonadFail
+           , Fallible, MonadIO)
 
 runWriterT1 :: WriterT1 w m n a -> m n (a, w n)
 runWriterT1 = runWriterT . runWriterT1'
@@ -96,7 +98,8 @@ instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
 
 newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WrapStateT1 { runStateT1' :: (StateT (s n) (m n) a) }
-  deriving (Functor, Applicative, Monad, MonadState (s n), MonadFail)
+  deriving ( Functor, Applicative, Monad, MonadState (s n)
+           , MonadFail, MonadIO)
 
 pattern StateT1 :: ((s n) -> m n (a, s n)) -> StateT1 s m n a
 pattern StateT1 f = WrapStateT1 (StateT f)
@@ -138,6 +141,9 @@ instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT
       return (ans, Abs b s')
     s'' <- hoistState s b s'
     return (ans, s'')
+
+instance Monad1 m => HoistableState (LiftE a) m where
+  hoistState _ _ (LiftE x) = return $ LiftE x
 
 -------------------- ScopedT1 --------------------
 

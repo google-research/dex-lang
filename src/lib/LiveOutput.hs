@@ -87,7 +87,8 @@ runDriver cfg env =
 
 evalSource :: SourceContents -> DriverM ()
 evalSource source = withLocalTopState do
-    (evaluated, remaining) <- tryEvalBlocksCached $ parseProg source
+    let UModule _ _ blocks = parseUModule Main source
+    (evaluated, remaining) <- tryEvalBlocksCached blocks
     remaining' <- mapM makeNewBlockId remaining
     updateResultList $ map getNodeId $ evaluated ++ remaining'
     mapM_ evalBlock remaining'
@@ -108,12 +109,10 @@ evalBlock :: WithId SourceBlock -> DriverM ()
 evalBlock (WithId blockId block) = do
   oldState <- gets fst
   opts <- asks fst
-  (result, maybeNewState) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
+  (result, s) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
   resultsChan <- asks snd
   resultsChan `send` oneResult blockId result
-  newState <- case maybeNewState of
-    Nothing -> return $ oldState
-    Just s -> makeNewStateId s
+  newState <- makeNewStateId s
   updateTopState newState
   insertCache (block, oldState) (blockId, newState)
 

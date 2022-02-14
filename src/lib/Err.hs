@@ -11,7 +11,7 @@
 
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
-            Fallible (..), Catchable (..),
+            Fallible (..), Catchable (..), catchErrExcept,
             FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
@@ -39,14 +39,16 @@ import System.IO.Unsafe
 -- === core API ===
 
 data Err = Err ErrType ErrCtx String  deriving (Show, Eq)
-newtype Errs = Errs [Err]  deriving (Show, Eq, Semigroup, Monoid)
+newtype Errs = Errs [Err]  deriving (Eq, Semigroup, Monoid)
 
 data ErrType = NoErr
              | ParseErr
              | TypeErr
              | KindErr
              | LinErr
+             | VarDefErr
              | UnboundVarErr
+             | AmbiguousVarErr
              | RepeatedVarErr
              | RepeatedPatVarErr
              | InvalidPatternErr
@@ -79,6 +81,9 @@ class MonadFail m => Fallible m where
 
 class Fallible m => Catchable m where
   catchErr :: m a -> (Errs -> m a) -> m a
+
+catchErrExcept :: Catchable m => m a -> m (Except a)
+catchErrExcept m = catchErr (Success <$> m) (\e -> return $ Failure e)
 
 -- We have this in its own class because IO and `Except` can't implement it
 -- (but FallibleM can)
@@ -117,6 +122,12 @@ instance Fallible IO where
   addErrCtx ctx m = do
     result <- catchIOExcept m
     liftExcept $ addErrCtx ctx result
+
+instance Catchable IO where
+  catchErr cont handler =
+    catchIOExcept cont >>= \case
+      Success result -> return result
+      Failure errs -> handler errs
 
 instance FallibleApplicative IO where
   mergeErrs m1 m2 = do
@@ -361,6 +372,9 @@ instance MonadFail Except where
 
 instance Exception Errs
 
+instance Show Errs where
+  show errs = pprint errs
+
 instance Pretty Err where
   pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx
     -- TODO: figure out a more uniform way to newlines
@@ -397,7 +411,9 @@ instance Pretty ErrType where
     KindErr           -> "Kind error:"
     LinErr            -> "Linearity error: "
     IRVariantErr      -> "Internal IR validation error: "
+    VarDefErr         -> "Error in (earlier) definition of variable: "
     UnboundVarErr     -> "Error: variable not in scope: "
+    AmbiguousVarErr   -> "Error: ambiguous variable: "
     RepeatedVarErr    -> "Error: variable already defined: "
     RepeatedPatVarErr -> "Error: variable already defined within pattern: "
     InvalidPatternErr -> "Error: not a valid pattern: "
@@ -412,7 +428,7 @@ instance Pretty ErrType where
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Leaked local variables:"
-    ModuleImportErr   -> "Module import error"
+    ModuleImportErr   -> "Module import error: "
     MonadFailErr      -> "MonadFail error (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where

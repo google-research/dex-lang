@@ -284,7 +284,9 @@ loadLitVal ptr (Scalar ty) = liftIO case ty of
   Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
-loadLitVal ptr (PtrType t) = liftIO $ PtrLit t <$> peek (castPtr ptr)
+loadLitVal ptrPtr (PtrType t) = do
+  ptr <- liftIO $ peek $ castPtr ptrPtr
+  return $ PtrLit $ PtrLitVal t ptr
 loadLitVal _ _ = error "not implemented"
 
 storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
@@ -294,7 +296,7 @@ storeLitVal ptr val = liftIO case val of
   Word8Lit   x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
-  PtrLit _   x -> poke (castPtr ptr) x
+  PtrLit (PtrLitVal _ x) -> poke (castPtr ptr) x
   _ -> error "not implemented"
 
 foreign import ccall "free_dex"

@@ -4,7 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Parser (Parser, parseit, parseProg, parseData,
+module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
+               finishUModuleParse, parseData, preludeImportBlock,
                parseTopDeclRepl, uint, withSource, parseExpr,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
@@ -14,6 +15,7 @@ import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
+import Data.ByteString.UTF8 (toString)
 import Data.Functor
 import Data.Foldable
 import Data.Maybe (fromMaybe)
@@ -27,6 +29,7 @@ import Err
 import LabeledItems
 import Name
 import Syntax
+import Util (File (..))
 
 -- canPair is used for the ops (,) (|) (&) which should only appear inside
 -- parentheses (to avoid conflicts with records and other syntax)
@@ -35,8 +38,29 @@ data ParseCtx = ParseCtx { curIndent :: Int
                          , canBreak  :: Bool }
 type Parser = ReaderT ParseCtx (Parsec Void String)
 
-parseProg :: String -> [SourceBlock]
-parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
+-- TODO: implement this more efficiently rather than just parsing the whole
+-- thing and then extracting the deps.
+parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
+parseUModuleDeps name file = deps
+  where UModule _ deps _ = parseUModule name $ toString $ fContents file
+
+finishUModuleParse :: UModulePartialParse -> UModule
+finishUModuleParse (UModulePartialParse name _ file) =
+  parseUModule name (toString $ fContents file)
+
+parseUModule :: ModuleSourceName -> String -> UModule
+parseUModule name s = do
+  let blocks = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
+  let blocks' = if name == Prelude
+        then blocks
+        else preludeImportBlock : blocks
+  let imports = flip foldMap blocks' \b -> case sbContents b of
+                  ImportModule moduleName -> [moduleName]
+                  _ -> []
+  UModule name imports blocks'
+
+preludeImportBlock :: SourceBlock
+preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule Prelude
 
 parseData :: String -> Except (UExpr VoidS)
 parseData s = parseit s $ expr <* (optional eol >> eof)
@@ -61,9 +85,9 @@ mustParseit s p  = case parseit s p of
   Failure e -> error $ "This shouldn't happen:\n" ++ pprint e
 
 importModule :: Parser SourceBlock'
-importModule = ImportModule <$> do
+importModule = ImportModule . OrdinaryModule <$> do
   keyWord ImportKW
-  s <- (:) <$> letterChar <*> many alphaNumChar
+  s <- lowerName <|> upperName
   eol
   return s
 
@@ -266,7 +290,8 @@ interfaceDef = do
   let methodNames' :: Nest (UBinder MethodNameC) VoidS VoidS
       methodNames' = toNest methodNames
   let tyConParams' = tyConParams
-  return $ UInterface tyConParams' superclasses methodTys (fromString tyConName) methodNames'
+  return $ UInterface tyConParams' superclasses methodTys
+                      (fromString tyConName) methodNames'
 
 toNest :: (IsString (a VoidS VoidS)) => [String] -> Nest a VoidS VoidS
 toNest = toNestParsed . map fromString
@@ -527,7 +552,7 @@ uPiType = withSrc $ upi <$> piBinderPat <*> arrow effects <*> uType
       return case b of
         UBindSource n -> (UPatAnn (WithSrcB pos (fromString n))       (Just ty))
         UIgnore       -> (UPatAnn (WithSrcB pos (UPatBinder UIgnore)) (Just ty))
-        UBind _       -> error "Shouldn't have UBind at parsing stage"
+        UBind _ _     -> error "Shouldn't have UBind at parsing stage"
 
 annBinder :: Parser (UAnnBinder (c::C) VoidS VoidS)
 annBinder = try $ namedBinder <|> anonBinder

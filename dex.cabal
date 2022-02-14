@@ -63,7 +63,7 @@ library
   other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs, transformers, hashable, unordered-containers,
-                       exceptions,
+                       exceptions, utf8-string, cryptonite,
                        -- Parsing
                        megaparsec, parser-combinators,
                        -- Text output

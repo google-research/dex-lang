@@ -9,25 +9,35 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 
-module SourceRename (renameSourceNamesUDecl, renameSourceNamesUExpr) where
+module SourceRename ( renameSourceNamesTopUDecl, uDeclErrSourceMap
+                    , renameSourceNamesUExpr) where
 
 import Prelude hiding (id, (.))
+import Data.List (sort)
 import Control.Category
 import Control.Monad.Except hiding (Except)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
--- import Subst
 import Err
 import LabeledItems
 import Name
 import Syntax
+import PPrint()
 
-renameSourceNamesUDecl :: (Fallible1 m, EnvReader m)
-                       => UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
-renameSourceNamesUDecl decl = do
+renameSourceNamesTopUDecl
+  :: (Fallible1 m, EnvReader m)
+  => ModuleSourceName -> UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
+renameSourceNamesTopUDecl mname decl = do
   Distinct <- getDistinct
-  liftRenamer $ sourceRenameTopUDecl decl
+  Abs renamedDecl sourceMapLocalNames <- liftRenamer $ sourceRenameTopUDecl decl
+  let sourceMap = SourceMap $ fmap (fmap (\(LocalVar v) -> ModuleVar mname (Just v))) $
+                    fromSourceMap sourceMapLocalNames
+  return $ Abs renamedDecl sourceMap
+
+uDeclErrSourceMap:: ModuleSourceName -> UDecl VoidS VoidS -> SourceMap n
+uDeclErrSourceMap mname decl =
+  SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
 
 renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
 renameSourceNamesUExpr expr = do
@@ -53,17 +63,17 @@ newtype RenamerM (n::S) (a:: *) =
 
 liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
 liftRenamer cont = do
-  sourceMap <- getSourceMapM
+  sm <- withEnv $ envSourceMap . moduleEnv
   Distinct <- getDistinct
   (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
-    runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $ cont
+    runOutReaderT (RenamerSubst sm False) $ runRenamerM $ cont
 
 class ( Monad1 m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
-  askSourceMap :: m n (SourceMap n)
-  extendSourceMap :: SourceMap n -> m n a -> m n a
+  askSourceMap    :: m n (SourceMap n)
+  extendSourceMap :: SourceName -> UVar n -> m n a -> m n a
 
 instance Renamer RenamerM where
   askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
@@ -71,9 +81,10 @@ instance Renamer RenamerM where
   setMayShadow mayShadow (RenamerM cont) = RenamerM do
     RenamerSubst sm _ <- askOutReader
     localOutReader (RenamerSubst sm mayShadow) cont
-  extendSourceMap sourceMap (RenamerM cont) = RenamerM do
+  extendSourceMap name var (RenamerM cont) = RenamerM do
     RenamerSubst sm mayShadow <- askOutReader
-    localOutReader (RenamerSubst (sm <> sourceMap) mayShadow) cont
+    let ext = SourceMap $ M.singleton name [LocalVar var]
+    localOutReader (RenamerSubst (sm <> ext) mayShadow) cont
 
 class SourceRenamableE e where
   sourceRenameE :: (Distinct o, Renamer m) => e i -> m o (e o)
@@ -86,34 +97,51 @@ class SourceRenamableB (b :: B) where
 
 instance SourceRenamableE (SourceNameOr UVar) where
   sourceRenameE (SourceName sourceName) =
-    InternalName <$> lookupSourceName sourceName
+    InternalName sourceName <$> lookupSourceName sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 lookupSourceName :: Renamer m => SourceName -> m n (UVar n)
 lookupSourceName v = do
-  SourceMap sourceMap <- askSourceMap
-  case M.lookup v sourceMap of
-    Nothing -> throw UnboundVarErr $ pprint v
-    Just v' -> return v'
+  sm <- askSourceMap
+  case lookupSourceMapPure sm v of
+    [] -> throw UnboundVarErr $ pprint v
+    LocalVar v' : _ -> return v'
+    [ModuleVar _ maybeV] -> case maybeV of
+      Just v' -> return v'
+      Nothing -> throw VarDefErr v
+    vs -> throw AmbiguousVarErr $ ambiguousVarErrMsg v vs
+
+ambiguousVarErrMsg :: SourceName -> [SourceNameDef n] -> String
+ambiguousVarErrMsg v defs =
+  -- we sort the lines to make the result a bit more deterministic for quine tests
+  pprint v ++ " is defined:\n" ++ unlines (sort $ map defsPretty defs)
+  where
+    defsPretty :: SourceNameDef n -> String
+    defsPretty (ModuleVar mname _) = case mname of
+      Main -> "in this file"
+      Prelude -> "in the prelude"
+      OrdinaryModule mname' -> "in " ++ pprint mname'
+    defsPretty (LocalVar _) =
+      error "shouldn't be possible because module vars can't shadow local ones"
 
 instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
-      UAtomVar v -> return $ InternalName v
+      UAtomVar v -> return $ InternalName sourceName v
       _ -> throw TypeErr $ "Not an ordinary variable: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableE (SourceNameOr (Name DataConNameC)) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
-      UDataConVar v -> return $ InternalName v
+      UDataConVar v -> return $ InternalName sourceName v
       _ -> throw TypeErr $ "Not a data constructor: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableE (SourceNameOr (Name ClassNameC)) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
-      UClassVar v -> return $ InternalName v
+      UClassVar v -> return $ InternalName sourceName v
       _ -> throw TypeErr $ "Not a class name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
@@ -284,16 +312,16 @@ sourceRenameUBinder :: (Distinct o, Renamer m, Color c)
                     -> m o a
 sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UBindSource b -> do
-    SourceMap sourceMap <- askSourceMap
+    SourceMap sm <- askSourceMap
     mayShadow <- askMayShadow
-    unless (mayShadow || not (M.member b sourceMap)) $
+    let shadows = M.member b sm
+    when (not mayShadow && shadows) $
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
-      let sourceMap' = SourceMap $ M.singleton b (asUVar $ binderName freshName)
-      extendSourceMap sourceMap' do
-        cont $ UBind freshName
-  UBind _ -> error "Shouldn't be source-renaming internal names"
+      extendSourceMap b (asUVar $ binderName freshName) $
+        cont $ UBind b freshName
+  UBind _ _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> cont UIgnore
 
 instance SourceRenamableE UDataDef where
@@ -325,7 +353,7 @@ instance SourceRenamableE UnitE where
 instance SourceRenamableE UMethodDef where
   sourceRenameE (UMethodDef ~(SourceName v) expr) = do
     lookupSourceName v >>= \case
-      UMethodVar v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
+      UMethodVar v' -> UMethodDef (InternalName v v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
@@ -356,7 +384,7 @@ instance SourceRenamablePat (UBinder AtomNameC) where
         when (S.member b sibs) $ throw RepeatedPatVarErr $ pprint b
         return $ S.singleton b
       UIgnore -> return mempty
-      UBind _ -> error "Shouldn't be source-renaming internal names"
+      UBind _ _ -> error "Shouldn't be source-renaming internal names"
     sourceRenameB ubinder \ubinder' ->
       cont (sibs <> newSibs) ubinder'
 
@@ -494,7 +522,7 @@ instance HasSourceNames (UBinder c) where
   sourceNames b = case b of
     UBindSource name -> S.singleton name
     UIgnore -> mempty
-    UBind _ -> error "Shouldn't be source-renaming internal names"
+    UBind _ _ -> error "Shouldn't be source-renaming internal names"
 
 -- === misc instance ===
 

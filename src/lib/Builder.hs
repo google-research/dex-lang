@@ -37,10 +37,11 @@ module Builder (
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
-  TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
+  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
-  extendImpCache, queryImpCache, extendObjCache, queryObjCache,
-  TopEnvFrag (..),
+  lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
+  extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
+  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock,
@@ -61,6 +62,8 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
+import Control.Monad.State.Strict (MonadState)
+import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
@@ -142,11 +145,17 @@ class (EnvReader m, MonadFail1 m)
                   => (forall l. (Mut l, DExt n l) => m l (e l))
                   -> m n (Abs TopEnvFrag e n)
 
+emitPartialTopEnvFrag :: TopBuilder m => PartialTopEnvFrag n -> m n ()
+emitPartialTopEnvFrag frag = emitNamelessEnv $ TopEnvFrag emptyOutFrag frag
+
+emitLocalModuleEnv :: TopBuilder m => ModuleEnv n -> m n ()
+emitLocalModuleEnv env = emitPartialTopEnvFrag $ mempty { fragLocalModuleEnv = env }
+
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
-emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm mempty mempty
+emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
 
 emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
-emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag sc mempty mempty mempty
+emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do
@@ -156,29 +165,65 @@ emitTopLet hint letAnn expr = do
 emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
 emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
+bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
+bindModule sourceName internalName = do
+  let loaded = LoadedModules $ M.singleton sourceName internalName
+  emitPartialTopEnvFrag $ mempty {fragLoadedModules = loaded}
+
+getAllRequiredObjectFiles :: EnvReader m => m n [ObjectFileName n]
+getAllRequiredObjectFiles = do
+  env <- withEnv moduleEnv
+  ObjectFiles objs <- return $ envObjectFiles env
+  return $ S.toList objs
+
+lookupLoadedModule:: EnvReader m => ModuleSourceName -> m n (Maybe (ModuleName n))
+lookupLoadedModule name = do
+  loadedModules <- withEnv $ envLoadedModules . topEnv
+  return $ M.lookup name $ fromLoadedModules loadedModules
+
 extendCache :: TopBuilder m => Cache n -> m n ()
-extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty cache mempty
+extendCache cache = emitPartialTopEnvFrag $ mempty {fragCache = cache}
 
 extendImpCache :: TopBuilder m => AtomName n -> ImpFunName n -> m n ()
-extendImpCache fSimp fImp = extendCache $ Cache mempty (eMapSingleton fSimp fImp) mempty
+extendImpCache fSimp fImp =
+  extendCache $ mempty { impCache = eMapSingleton fSimp fImp }
 
 queryImpCache :: EnvReader m => AtomName n -> m n (Maybe (ImpFunName n))
 queryImpCache v = do
-  cache <- withEnv (impCache . getCache)
+  cache <- impCache <$> getCache
   return $ lookupEMap cache v
 
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
-extendObjCache fImp cfun = extendCache $ Cache mempty mempty (eMapSingleton fImp cfun)
+extendObjCache fImp cfun =
+  extendCache $ mempty { objCache = eMapSingleton fImp cfun }
+
+emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
+emitObjFile hint objFile = do
+  v <- emitBinding hint $ ObjectFileBinding objFile
+  emitLocalModuleEnv $ mempty {envObjectFiles = ObjectFiles $ S.singleton v}
+  return v
 
 queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
 queryObjCache v = do
-  cache <- withEnv (objCache . getCache)
+  cache <- objCache <$> getCache
   return $ lookupEMap cache v
+
+getCache :: EnvReader m => m n (Cache n)
+getCache = withEnv $ envCache . topEnv
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader, MonadTrans1, MonadReader r, MonadIO)
+           , CtxReader, ScopeReader, MonadTrans1, MonadReader r
+           , MonadWriter w, MonadState s, MonadIO, Catchable)
+
+-- We use this to implement things that look like `local` from `MonadReader`.
+-- Does it make sense to but it in a transformer-like class, like we do with
+-- `lift11`?
+liftTopBuilderTWith :: Monad m => (forall a'. m a' -> m a')
+                    -> TopBuilderT m n a -> TopBuilderT m n a
+liftTopBuilderTWith modifyInner cont = TopBuilderT $
+  liftBetweenInplaceTs modifyInner id id (runTopBuilderT' cont)
 
 instance Fallible m => EnvReader (TopBuilderT m) where
   unsafeGetEnv = TopBuilderT $ getOutMapInplaceT
@@ -190,7 +235,8 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
       let envFrag = toEnvFrag b'
       let scs = bindingsFragToSynthCandidates envFrag
-      let topFrag = TopEnvFrag envFrag scs mempty mempty mempty
+      let topFrag = TopEnvFrag envFrag $
+            mempty { fragLocalModuleEnv = mempty { envSynthCandidates = scs} }
       return $ Abs topFrag v'
     TopBuilderT $ extendInplaceT ab'
 
@@ -219,6 +265,12 @@ runTopBuilderT bindings cont = do
   liftM snd $ runInplaceT bindings $ runTopBuilderT' $ cont
 
 type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
+
+instance (SinkableE e, HoistableState e m, TopBuilder m) => TopBuilder (StateT1 e m) where
+  emitBinding hint binding = lift11 $ emitBinding hint binding
+  emitEnv ab = lift11 $ emitEnv ab
+  emitNamelessEnv frag = lift11 $ emitNamelessEnv frag
+  localTopBuilder _ = error "not implemented"
 
 -- === BuilderT ===
 
@@ -802,13 +854,15 @@ updateAddAt x = liftEmitBuilder do
 
 litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom n)
 litValToPointerlessAtom litval = case litval of
-  PtrLit ptrTy ptr -> Var <$> emitPtrLit "ptr" ptrTy ptr
+  PtrLit val -> Var <$> emitPtrLit "ptr" val
   VecLit _ -> error "not implemented"
   _ -> return $ Con $ Lit litval
 
-emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrType -> Ptr () -> m n (AtomName n)
-emitPtrLit hint ptrTy ptr =
-  emitBinding hint $ AtomNameBinding $ PtrLitBound ptrTy ptr
+emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrLitVal -> m n (AtomName n)
+emitPtrLit hint p@(PtrLitVal ty _) = do
+  ptrName <- emitBinding hint $ PtrBinding p
+  emitBinding hint $ AtomNameBinding $ PtrLitBound ty ptrName
+emitPtrLit _ (PtrSnapshot _ _) = error "only used for serialization"
 
 emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =

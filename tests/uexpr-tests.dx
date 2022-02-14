@@ -194,12 +194,12 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   myId = fst (\x. x, 2)
-  f : a:Type -> a -> a = \a. \x. myId x
+  f : aa:Type -> aa -> aa = \bb. \x. myId x
   f Int 1
-> Leaked local variables:[a]
+> Leaked local variables:[bb]
 >
->   f : a:Type -> a -> a = \a. \x. myId x
->                           ^^^^^^^^^^^^^
+>   f : aa:Type -> aa -> aa = \bb. \x. myId x
+>                              ^^^^^^^^^^^^^^
 
 def myFst {a b} (p:(a&b)) : a =
   (x, _) = p
@@ -311,3 +311,24 @@ def bug (n : Type) : Unit =
 >
 >   for w':n.
 >   ^^^^
+
+badDefinition = oops_there_is_a_problem
+> Error: variable not in scope: oops_there_is_a_problem
+>
+> badDefinition = oops_there_is_a_problem
+>                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+badDefinition = 4
+> Error: variable already defined: badDefinition
+>
+> badDefinition = 4
+> ^^^^^^^^^^^^^^
+
+:p badDefinition
+> Error: ambiguous variable: badDefinition is defined:
+> in this file
+> in this file
+>
+>
+> :p badDefinition
+>    ^^^^^^^^^^^^^

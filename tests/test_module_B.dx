@@ -1,0 +1,17 @@
+
+import test_module_C
+
+test_module_amb = 10
+
+test_module_B_val = 10
+
+test_module_B_val_from_C = test_module_C_val
+
+instance FooClass Int
+  fooMethod = \x. x + x
+
+arrayVal = [1,2,3]
+
+arrayVal2 = for i. arrayVal.i * 2
+
+def fooMethodExportFromB {a} [FooClass a] (x:a) : a = fooMethod x

@@ -7,9 +7,9 @@ interface InterfaceTest1 a
 > Error: variable already defined: InterfaceTest1
 
 interface InterfaceTest3 a
-  foo : a -> Int
-  foo : a -> Int
-> Error: variable already defined: foo
+  foo_dup : a -> Int
+  foo_dup : a -> Int
+> Error: variable already defined: foo_dup
 
 interface InterfaceTest4 a
   foo : Int
@@ -32,7 +32,7 @@ instance InterfaceTest4 Float
 
 instance InterfaceTest4 Float
   someMethod = 1
-> Type error:someMethod is not a method of InterfaceTest41
+> Type error:someMethod is not a method of InterfaceTest4
 
 instance InterfaceTest4 Float
   foo = 1
@@ -176,11 +176,11 @@ def q2 {a} (x : MyPairOfXs a) : a = fst x
 def q3 {a} (x : MyPairOfXs a) : Int = x_ a
 
 -- We don't quantify implicitly over constraints of the return type
-def q4 {a} (x : a) : MyPairOfXs a = (x, x)
-> Type error:Couldn't synthesize a class dictionary for: (X a)
+def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
+> Type error:Couldn't synthesize a class dictionary for: (X a5)
 >
-> def q4 {a} (x : a) : MyPairOfXs a = (x, x)
->                      ^^^^^^^^^^^^^
+> def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
+>                        ^^^^^^^^^^^^^^
 
 -- Check automatic quantification for interfaces
 interface AutoQuant a
@@ -190,15 +190,18 @@ instance {a} AutoQuant (MyPairOfXs a)
 
 -- Should be able to quantify nested constraints
 def q5 {a} (x : MyPairOfXs (MyPairOfXs a)) : Int = 0
-:t q5
-> ((a:Type) ?-> (X a) ?=> (X (a & a)) ?=> ((a & a) & (a & a)) -> Int32)
+
+-- disabling because the order of constraints changes depending on the names in
+-- scope
+-- :t q5
+-- > ((a:Type) ?-> (X (a & a)) ?=> (X a) ?=> ((a & a) & (a & a)) -> Int32)
 
 -------------------- Data interface constraints --------------------
 
-data MyData a       = MkMyData (MyPairOfXs a)
-> Type error:Couldn't synthesize a class dictionary for: (X a)
+data MyData a5       = MkMyData (MyPairOfXs a5)
+> Type error:Couldn't synthesize a class dictionary for: (X a5)
 >
-> data MyData a       = MkMyData (MyPairOfXs a)
->                                 ^^^^^^^^^^^^
+> data MyData a5       = MkMyData (MyPairOfXs a5)
+>                                  ^^^^^^^^^^^^^
 
-data MyData a [X a] = MkMyData (MyPairOfXs a)
+data MyDataBetter a [X a] = MkMyDataBetter (MyPairOfXs a)
