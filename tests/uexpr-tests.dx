@@ -325,7 +325,10 @@ badDefinition = 4
 > ^^^^^^^^^^^^^^
 
 :p badDefinition
-> Error: ambiguous variable: badDefinition
+> Error: ambiguous variable: badDefinition is defined:
+> in this file
+> in this file
+>
 >
 > :p badDefinition
 >    ^^^^^^^^^^^^^

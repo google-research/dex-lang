@@ -41,7 +41,7 @@ module Builder (
   emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
   lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
-  TopEnvFrag (..), lookupModule, emitPartialTopEnvFrag,
+  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock,
@@ -148,11 +148,14 @@ class (EnvReader m, MonadFail1 m)
 emitPartialTopEnvFrag :: TopBuilder m => PartialTopEnvFrag n -> m n ()
 emitPartialTopEnvFrag frag = emitNamelessEnv $ TopEnvFrag emptyOutFrag frag
 
+emitLocalModuleEnv :: TopBuilder m => ModuleEnv n -> m n ()
+emitLocalModuleEnv env = emitPartialTopEnvFrag $ mempty { fragLocalModuleEnv = env }
+
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
-emitSourceMap sm = emitPartialTopEnvFrag $ mempty {fragSourceMap = sm}
+emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
 
 emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
-emitSynthCandidates sc = emitPartialTopEnvFrag $ mempty {fragSynthCandidates = sc}
+emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do
@@ -167,17 +170,10 @@ bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName
   emitPartialTopEnvFrag $ mempty {fragLoadedModules = loaded}
 
-lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
-lookupModule name = do
-  ~(ModuleBinding m) <- lookupEnv name
-  return m
-
 getAllRequiredObjectFiles :: EnvReader m => m n [ObjectFileName n]
 getAllRequiredObjectFiles = do
   env <- withEnv moduleEnv
-  let locals   = localReqObjectFiles env
-  let imported = objFileImports $ localImportStatus env
-  ObjectFiles objs <- return $ locals <> imported
+  ObjectFiles objs <- return $ envObjectFiles env
   return $ S.toList objs
 
 lookupLoadedModule:: EnvReader m => ModuleSourceName -> m n (Maybe (ModuleName n))
@@ -204,7 +200,7 @@ extendObjCache fImp cfun =
 emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
 emitObjFile hint objFile = do
   v <- emitBinding hint $ ObjectFileBinding objFile
-  emitPartialTopEnvFrag $ mempty {fragObjectFiles = ObjectFiles $ S.singleton v}
+  emitLocalModuleEnv $ mempty {envObjectFiles = ObjectFiles $ S.singleton v}
   return v
 
 queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
@@ -239,7 +235,8 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
       let envFrag = toEnvFrag b'
       let scs = bindingsFragToSynthCandidates envFrag
-      let topFrag = TopEnvFrag envFrag $ mempty {fragSynthCandidates = scs}
+      let topFrag = TopEnvFrag envFrag $
+            mempty { fragLocalModuleEnv = mempty { envSynthCandidates = scs} }
       return $ Abs topFrag v'
     TopBuilderT $ extendInplaceT ab'
 

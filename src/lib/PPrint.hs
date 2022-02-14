@@ -388,11 +388,6 @@ instance Pretty (Module n) where
 instance Pretty (ObjectFiles n) where
   pretty (ObjectFiles _) = error "todo"
 
-instance Pretty ModuleSourceName where
-  pretty Main = "main"
-  pretty Prelude = "prelude"
-  pretty (OrdinaryModule s) = p s
-
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
     "data" <+> p name <+> p bs <> hardline <> prettyLines cons
@@ -640,16 +635,6 @@ instance Pretty (EnvFrag n l) where
   pretty (EnvFrag bindings effects) =
        "Partial bindings:" <> indented (p bindings)
     <> "Effects allowed:" <+> p effects
-
-instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings rest) =
-    prettyRecord [ ("bindings"        , p bindings)
-                 , ("cache"           , p $ fragCache rest)
-                 , ("loaded"          , p $ fragLoadedModules rest)
-                 , ("imports"         , p $ fragImports rest)
-                 , ("source map"      , p $ fragSourceMap rest)
-                 , ("synth candidates", p $ fragSynthCandidates rest)
-                 , ("object files"    , p $ fragObjectFiles rest) ]
 
 instance Pretty (Cache n) where
   pretty (Cache _ _ _ _ _) = "<cache>" -- TODO

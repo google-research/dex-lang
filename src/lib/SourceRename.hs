@@ -9,30 +9,35 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 
-module SourceRename ( renameSourceNamesUDecl, uDeclErrSourceMap
+module SourceRename ( renameSourceNamesTopUDecl, uDeclErrSourceMap
                     , renameSourceNamesUExpr) where
 
 import Prelude hiding (id, (.))
+import Data.List (sort)
 import Control.Category
 import Control.Monad.Except hiding (Except)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
--- import Subst
 import Err
 import LabeledItems
 import Name
 import Syntax
+import PPrint()
 
-renameSourceNamesUDecl :: (Fallible1 m, EnvReader m)
-                       => UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
-renameSourceNamesUDecl decl = do
+renameSourceNamesTopUDecl
+  :: (Fallible1 m, EnvReader m)
+  => ModuleSourceName -> UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
+renameSourceNamesTopUDecl mname decl = do
   Distinct <- getDistinct
-  liftRenamer $ sourceRenameTopUDecl decl
+  Abs renamedDecl sourceMapLocalNames <- liftRenamer $ sourceRenameTopUDecl decl
+  let sourceMap = SourceMap $ fmap (fmap (\(LocalVar v) -> ModuleVar mname (Just v))) $
+                    fromSourceMap sourceMapLocalNames
+  return $ Abs renamedDecl sourceMap
 
-uDeclErrSourceMap:: UDecl VoidS VoidS -> SourceMap n
-uDeclErrSourceMap decl =
-  SourceMap $ M.fromSet (const [SourceNameDef Nothing Nothing]) (sourceNames decl)
+uDeclErrSourceMap:: ModuleSourceName -> UDecl VoidS VoidS -> SourceMap n
+uDeclErrSourceMap mname decl =
+  SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
 
 renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
 renameSourceNamesUExpr expr = do
@@ -44,13 +49,12 @@ sourceRenameTopUDecl
   => UDecl i i' -> m o (Abs UDecl SourceMap o)
 sourceRenameTopUDecl udecl =
   sourceRenameB udecl \udecl' -> do
-    SourceMap fullLocalSourceMap <- askLocalSourceMap
-    let partialSourceMap = fullLocalSourceMap `M.restrictKeys` sourceNames udecl
+    SourceMap fullSourceMap <- askSourceMap
+    let partialSourceMap = fullSourceMap `M.restrictKeys` sourceNames udecl
     return $ Abs udecl' $ SourceMap partialSourceMap
 
-data RenamerSubst n = RenamerSubst { renamerLocalSourceMap    :: SourceMap n
-                                   , renamerImportedSourceMap :: SourceMap n
-                                   , renamerMayShadow         :: Bool }
+data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
+                                   , renamerMayShadow :: Bool }
 
 newtype RenamerM (n::S) (a:: *) =
   RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
@@ -59,34 +63,28 @@ newtype RenamerM (n::S) (a:: *) =
 
 liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
 liftRenamer cont = do
-  env <- withEnv moduleEnv
-  let local = localSourceMap env
-  let imported = sourceMapImports $ localImportStatus env
+  sm <- withEnv $ envSourceMap . moduleEnv
   Distinct <- getDistinct
   (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
-    runOutReaderT (RenamerSubst local imported False) $ runRenamerM $ cont
+    runOutReaderT (RenamerSubst sm False) $ runRenamerM $ cont
 
 class ( Monad1 m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
-  askLocalSourceMap    :: m n (SourceMap n)
-  askImportedSourceMap :: m n (SourceMap n)
-  -- XXX: if the name is already in the map this shadows it rather than
-  -- extending the list of candidates
+  askSourceMap    :: m n (SourceMap n)
   extendSourceMap :: SourceName -> UVar n -> m n a -> m n a
 
 instance Renamer RenamerM where
   askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
-  askLocalSourceMap    = RenamerM $ renamerLocalSourceMap    <$> askOutReader
-  askImportedSourceMap = RenamerM $ renamerImportedSourceMap <$> askOutReader
+  askSourceMap = RenamerM $ renamerSourceMap <$> askOutReader
   setMayShadow mayShadow (RenamerM cont) = RenamerM do
-    RenamerSubst sm sm' _ <- askOutReader
-    localOutReader (RenamerSubst sm sm' mayShadow) cont
+    RenamerSubst sm _ <- askOutReader
+    localOutReader (RenamerSubst sm mayShadow) cont
   extendSourceMap name var (RenamerM cont) = RenamerM do
-    RenamerSubst (SourceMap local) imported mayShadow <- askOutReader
-    let local' = M.insert name [SourceNameDef (Just var) Nothing] local
-    localOutReader (RenamerSubst (SourceMap local') imported mayShadow) cont
+    RenamerSubst sm mayShadow <- askOutReader
+    let ext = SourceMap $ M.singleton name [LocalVar var]
+    localOutReader (RenamerSubst (sm <> ext) mayShadow) cont
 
 class SourceRenamableE e where
   sourceRenameE :: (Distinct o, Renamer m) => e i -> m o (e o)
@@ -104,20 +102,27 @@ instance SourceRenamableE (SourceNameOr UVar) where
 
 lookupSourceName :: Renamer m => SourceName -> m n (UVar n)
 lookupSourceName v = do
-  local <- askLocalSourceMap
-  case lookupSourceMapPure local v of
-    [] -> do
-      imported <- askImportedSourceMap
-      case lookupSourceMapPure imported v of
-        [] -> throw UnboundVarErr $ pprint v
-        [SourceNameDef maybeV _] -> case maybeV of
-          Just v' -> return v'
-          Nothing -> throw VarDefErr v
-        _ -> throw AmbiguousVarErr $ pprint v
-    [SourceNameDef maybeV _] -> case maybeV of
+  sm <- askSourceMap
+  case lookupSourceMapPure sm v of
+    [] -> throw UnboundVarErr $ pprint v
+    LocalVar v' : _ -> return v'
+    [ModuleVar _ maybeV] -> case maybeV of
       Just v' -> return v'
       Nothing -> throw VarDefErr v
-    _ -> throw AmbiguousVarErr $ pprint v
+    vs -> throw AmbiguousVarErr $ ambiguousVarErrMsg v vs
+
+ambiguousVarErrMsg :: SourceName -> [SourceNameDef n] -> String
+ambiguousVarErrMsg v defs =
+  -- we sort the lines to make the result a bit more deterministic for quine tests
+  pprint v ++ " is defined:\n" ++ unlines (sort $ map defsPretty defs)
+  where
+    defsPretty :: SourceNameDef n -> String
+    defsPretty (ModuleVar mname _) = case mname of
+      Main -> "in this file"
+      Prelude -> "in the prelude"
+      OrdinaryModule mname' -> "in " ++ pprint mname'
+    defsPretty (LocalVar _) =
+      error "shouldn't be possible because module vars can't shadow local ones"
 
 instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
   sourceRenameE (SourceName sourceName) = do
@@ -307,11 +312,10 @@ sourceRenameUBinder :: (Distinct o, Renamer m, Color c)
                     -> m o a
 sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UBindSource b -> do
-    SourceMap local    <- askLocalSourceMap
-    SourceMap imported <- askImportedSourceMap
+    SourceMap sm <- askSourceMap
     mayShadow <- askMayShadow
-    let shadows = M.member b local || M.member b imported
-    when (shadows && not mayShadow) $
+    let shadows = M.member b sm
+    when (not mayShadow && shadows) $
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct

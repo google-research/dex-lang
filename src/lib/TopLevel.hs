@@ -44,7 +44,7 @@ import MTL1
 import Logging
 import LLVMExec
 import PPrint (pprintCanonicalized)
-import Util (measureSeconds, File (..), readFileWithHash, foldMapM)
+import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
 
 import Name
@@ -126,9 +126,9 @@ evalSourceBlockIO opts env block = runTopperM opts env $ evalSourceBlockRepl blo
 -- Used for the top-level source file (rather than imported modules)
 evalSourceText :: (Topper m, Mut n) => String -> m n [(SourceBlock, Result)]
 evalSourceText source = do
-  let (UModule _ deps sourceBlocks) = parseUModule Main source
+  let (UModule mname deps sourceBlocks) = parseUModule Main source
   mapM_ ensureModuleLoaded deps
-  results <- mapM evalSourceBlock sourceBlocks
+  results <- mapM (evalSourceBlock mname) sourceBlocks
   return $ zip sourceBlocks results
 
 catchLogsAndErrs :: (Topper m, Mut n) => m n a -> m n (Except a, [Output])
@@ -146,7 +146,7 @@ evalSourceBlockRepl block = do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
-  evalSourceBlock block
+  evalSourceBlock Main block
 
 -- XXX: This ensures that a module and its transitive dependencies are loaded,
 -- (which will require evaluating them if they're not in the cache) but it
@@ -160,23 +160,24 @@ ensureModuleLoaded moduleSourceName = do
     evaluated <- evalPartiallyParsedUModuleCached md
     bindModule (umppName md) evaluated
 
-evalSourceBlock :: (Topper m, Mut n) => SourceBlock -> m n Result
-evalSourceBlock block = do
+evalSourceBlock :: (Topper m, Mut n)
+                => ModuleSourceName -> SourceBlock -> m n Result
+evalSourceBlock mname block = do
   result <- withCompileTime do
      (maybeErr, logs) <- catchLogsAndErrs $
        withPassCtx (PassCtx $ blockRequiresBench block) $
-         evalSourceBlock' block
+         evalSourceBlock' mname block
      return $ Result logs maybeErr
   case resultErrs result of
     Failure _ -> case sbContents block of
-      EvalUDecl decl -> emitSourceMap $ uDeclErrSourceMap decl
+      EvalUDecl decl -> emitSourceMap $ uDeclErrSourceMap mname decl
       _ -> return ()
     _ -> return ()
   return $ filterLogs block $ addResultCtx block result
 
-evalSourceBlock' :: (Topper m, Mut n) => SourceBlock -> m n ()
-evalSourceBlock' block = case sbContents block of
-  EvalUDecl decl -> execUDecl decl
+evalSourceBlock' :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
+evalSourceBlock' mname block = case sbContents block of
+  EvalUDecl decl -> execUDecl mname decl
   Command cmd expr -> case cmd of
     EvalExpr fmt -> do
       val <- evalUExpr expr
@@ -211,7 +212,7 @@ evalSourceBlock' block = case sbContents block of
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
-          M.singleton sourceName [SourceNameDef (Just $ UAtomVar vCore) Nothing]
+          M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty
@@ -333,36 +334,21 @@ evalPartiallyParsedUModule partiallyParsed = do
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
-  Abs topFrag UnitE <- localTopBuilder $ mapM_ evalSourceBlock' blocks >> return UnitE
-  TopEnvFrag envFrag frag <- return topFrag
-  let fragToEmit = TopEnvFrag envFrag $ mempty {fragCache = fragCache frag}
-  let directDeps = directImports $ fragImports frag
-  let transDeps  = transImports  $ fragImports frag
-  let evaluatedModule = Module name directDeps transDeps
-                               (fragSourceMap       frag)
-                               (fragSynthCandidates frag)
-                               (fragObjectFiles     frag)
-  emitEnv (Abs fragToEmit evaluatedModule)
+  Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
+  TopEnvFrag envFrag (PartialTopEnvFrag cache loadedModules moduleEnv) <- return topFrag
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs objs _ <- return moduleEnv
+  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache loadedModules mempty
+  let evaluatedModule = Module name directDeps transDeps sm scs objs
+  emitEnv $ Abs fragToReEmit evaluatedModule
 
 importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
 importModule name = do
   lookupLoadedModule name >>= \case
     Nothing -> throw ModuleImportErr $ "Couldn't import " ++ pprint name
-    Just name' -> importModuleByInternalName name'
-
-importModuleByInternalName :: (Mut n, TopBuilder m) => ModuleName n -> m n ()
-importModuleByInternalName name = do
-  ImportStatus _ transDeps _ _ _ <- withEnv $ localImportStatus . moduleEnv
-  Module _ _ transDeps' _ _ _ <- lookupModule name
-  let transDepsDelta = S.difference (S.singleton name <> transDeps') transDeps
-  let tdd = S.toList transDepsDelta
-  smDelta   <- foldMapM (liftM moduleExports         . lookupModule) tdd
-  scsDelta  <- foldMapM (liftM moduleSynthCandidates . lookupModule) tdd
-  objsDelta <- foldMapM (liftM moduleObjectFiles     . lookupModule) tdd
-  let importStatusDelta = ImportStatus (S.singleton name) transDepsDelta
-                                       smDelta scsDelta objsDelta
-  emitPartialTopEnvFrag $ mempty {fragImports = importStatusDelta}
-
+    Just name' -> do
+      Module _ _ transImports' _ _ _ <- lookupModule name'
+      let importStatus = ImportStatus (S.singleton name') (S.singleton name' <> transImports')
+      emitLocalModuleEnv $ mempty { envImportStatus = importStatus }
 
 evalFile :: (Topper m, Mut n) => FilePath -> m n [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
@@ -422,10 +408,10 @@ evalBlock typed = do
   result <- evalBackend simp
   applyRecon recon result
 
-execUDecl :: (Topper m, Mut n) => UDecl VoidS VoidS -> m n ()
-execUDecl decl = do
+execUDecl :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
+execUDecl mname decl = do
   logTop $ PassInfo Parse $ pprint decl
-  Abs renamedDecl sourceMap <- logPass RenamePass $ renameSourceNamesUDecl decl
+  Abs renamedDecl sourceMap <- logPass RenamePass $ renameSourceNamesTopUDecl mname decl
   inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
   case inferenceResult of
     UDeclResultWorkRemaining block declAbs -> do

@@ -13,3 +13,5 @@ instance FooClass Int
 arrayVal = [1,2,3]
 
 arrayVal2 = for i. arrayVal.i * 2
+
+def fooMethodExportFromB {a} [FooClass a] (x:a) : a = fooMethod x

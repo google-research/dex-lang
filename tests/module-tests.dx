@@ -8,7 +8,10 @@ import test_module_B
 > 7
 
 :p test_module_amb
-> Error: ambiguous variable: test_module_amb
+> Error: ambiguous variable: test_module_amb is defined:
+> in test_module_A
+> in test_module_B
+>
 >
 > :p test_module_amb
 >    ^^^^^^^^^^^^^^^
@@ -16,16 +19,22 @@ import test_module_B
 :p test_module_B_val_from_C
 > 23
 
+:p test_module_C_val
+> Error: variable not in scope: test_module_C_val
+>
+> :p test_module_C_val
+>    ^^^^^^^^^^^^^^^^^
+
 :p test_module_A_fun 2
 > 4
 
 :p test_module_A_fun_noinline 3
 > 6
 
-:p fooMethod 1
+:p fooMethodExportFromB 1
 > 2
 
-:p fooMethod 1.0
+:p fooMethodExportFromB 1.0
 > 10.
 
 :p arrayVal

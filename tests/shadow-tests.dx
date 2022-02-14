@@ -37,7 +37,10 @@ arr = 20
 > ^^^^
 
 :p arr
-> Error: ambiguous variable: arr
+> Error: ambiguous variable: arr is defined:
+> in this file
+> in this file
+>
 >
 > :p arr
 >    ^^^

@@ -1,5 +1,6 @@
 '# Sierpinski triangle ("chaos game")
 
+import diagram
 import plot
 
 def update {n} (points:n=>Point) (key:Key) ((x,y):Point) : Point =
