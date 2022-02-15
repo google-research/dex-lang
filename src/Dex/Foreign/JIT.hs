@@ -34,14 +34,18 @@ import qualified LLVM.Shims
 
 import Logging
 import LLVMExec
+import TopLevel
 import JIT
 import Syntax  hiding (sizeOf)
-import Export
-
-import SaferNames.Bridge
 
 import Dex.Foreign.Util
 import Dex.Foreign.Context
+
+-- TODO: Update Export to safer names
+-- import Export
+newtype ExportedSignature = ExportedSignature ()
+exportedSignatureDesc :: ExportedSignature -> (String, String, String)
+exportedSignatureDesc = undefined
 
 data NativeFunction =
   NativeFunction { nativeModule    :: LLVM.JIT.NativeModule
@@ -66,41 +70,45 @@ instance Storable ExportedSignature where
 
 dexCreateJIT :: IO (Ptr JIT)
 dexCreateJIT = do
-  jitTargetMachine <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
-  jit <- LLVM.JIT.createJIT jitTargetMachine
-  addrTableRef <- newIORef mempty
-  toStablePtr ForeignJIT{..}
+  setError "currently disabled" $> nullPtr
+  --jitTargetMachine <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
+  --jit <- LLVM.JIT.createJIT jitTargetMachine
+  --addrTableRef <- newIORef mempty
+  --toStablePtr ForeignJIT{..}
 
 dexDestroyJIT :: Ptr JIT -> IO ()
 dexDestroyJIT jitPtr = do
-  ForeignJIT{..} <- fromStablePtr jitPtr
-  addrTable <- readIORef addrTableRef
-  forM_ (M.toList addrTable) $ \(_, m) -> LLVM.JIT.unloadNativeModule $ nativeModule m
-  LLVM.JIT.destroyJIT jit
-  LLVM.Shims.disposeTargetMachine jitTargetMachine
+  return ()
+  --ForeignJIT{..} <- fromStablePtr jitPtr
+  --addrTable <- readIORef addrTableRef
+  --forM_ (M.toList addrTable) $ \(_, m) -> LLVM.JIT.unloadNativeModule $ nativeModule m
+  --LLVM.JIT.destroyJIT jit
+  --LLVM.Shims.disposeTargetMachine jitTargetMachine
 
-dexCompile :: Ptr JIT -> Ptr Context -> Ptr Atom -> IO NativeFunctionAddr
+dexCompile :: Ptr JIT -> Ptr Context -> Ptr AtomEx -> IO NativeFunctionAddr
 dexCompile jitPtr ctxPtr funcAtomPtr = do
-  ForeignJIT{..} <- fromStablePtr jitPtr
-  Context _ (TopStateEx env) <- fromStablePtr ctxPtr
-  funcAtom <- fromStablePtr funcAtomPtr
-  let (impMod, nativeSignature) = prepareFunctionForExport
-                                    (topBindings $ topStateD env) "userFunc" funcAtom
-  nativeModule <- execLogger Nothing $ \logger -> do
-    llvmAST <- impToLLVM logger impMod
-    LLVM.JIT.compileModule jit llvmAST
-        (standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
-  funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
-  modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
-  return $ funcPtr
+  setError "currently disabled" $> nullPtr
+  --ForeignJIT{..} <- fromStablePtr jitPtr
+  --Context _ (TopStateEx env) <- fromStablePtr ctxPtr
+  --funcAtom <- fromStablePtr funcAtomPtr
+  --let (impMod, nativeSignature) = prepareFunctionForExport
+                                    --(topBindings $ topStateD env) "userFunc" funcAtom
+  --nativeModule <- execLogger Nothing $ \logger -> do
+    --llvmAST <- impToLLVM logger impMod
+    --LLVM.JIT.compileModule jit llvmAST
+        --(standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
+  --funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
+  --modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
+  --return $ funcPtr
 
 dexGetFunctionSignature :: Ptr JIT -> NativeFunctionAddr -> IO (Ptr ExportedSignature)
 dexGetFunctionSignature jitPtr funcPtr = do
-  ForeignJIT{..} <- fromStablePtr jitPtr
-  addrTable <- readIORef addrTableRef
-  case M.lookup funcPtr addrTable of
-    Nothing -> setError "Invalid function address" $> nullPtr
-    Just NativeFunction{..} -> putOnHeap nativeSignature
+  setError "currently disabled" $> nullPtr
+  --ForeignJIT{..} <- fromStablePtr jitPtr
+  --addrTable <- readIORef addrTableRef
+  --case M.lookup funcPtr addrTable of
+    --Nothing -> setError "Invalid function address" $> nullPtr
+    --Just NativeFunction{..} -> putOnHeap nativeSignature
 
 dexFreeFunctionSignature :: Ptr ExportedSignature -> IO ()
 dexFreeFunctionSignature sigPtr = do
@@ -112,7 +120,8 @@ dexFreeFunctionSignature sigPtr = do
 
 dexUnload :: Ptr JIT -> NativeFunctionAddr -> IO ()
 dexUnload jitPtr funcPtr = do
-  ForeignJIT{..} <- fromStablePtr jitPtr
-  addrTable <- readIORef addrTableRef
-  LLVM.JIT.unloadNativeModule $ nativeModule $ addrTable M.! funcPtr
-  modifyIORef addrTableRef $ M.delete funcPtr
+  return ()
+  --ForeignJIT{..} <- fromStablePtr jitPtr
+  --addrTable <- readIORef addrTableRef
+  --LLVM.JIT.unloadNativeModule $ nativeModule $ addrTable M.! funcPtr
+  --modifyIORef addrTableRef $ M.delete funcPtr

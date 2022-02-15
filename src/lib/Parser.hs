@@ -6,7 +6,7 @@
 
 module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
                finishUModuleParse, parseData, preludeImportBlock,
-               parseTopDeclRepl, uint, withSource, parseExpr,
+               parseTopDeclRepl, uint, withSource,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
 import Control.Monad
@@ -70,9 +70,6 @@ parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
   _ -> Just b
   where b = mustParseit s sourceBlock
-
-parseExpr :: String -> Except (UExpr VoidS)
-parseExpr s = parseit s (expr <* eof)
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case parse (runReaderT p (ParseCtx 0 False False)) "" s of

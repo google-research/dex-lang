@@ -24,7 +24,6 @@ import Algebra
 import Syntax
 import Builder
 import Cat
-import Subst
 import Type
 import Simplify
 import Imp
@@ -32,7 +31,6 @@ import JIT
 import Logging
 import LLVMExec
 import PPrint
-import Optimize
 
 exportFunctions :: FilePath -> [(String, Atom)] -> Bindings -> IO ()
 exportFunctions = undefined

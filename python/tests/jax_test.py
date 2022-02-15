@@ -14,6 +14,7 @@ import dex
 from dex.interop.jax import primitive
 
 
+@unittest.skip
 class JAXTest(unittest.TestCase):
 
   def test_impl_scalar(self):
