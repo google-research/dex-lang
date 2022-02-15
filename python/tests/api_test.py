@@ -27,6 +27,7 @@ class APITest(unittest.TestCase):
     assert str(m.x) == "2.5"
     assert str(m.y) == "[2, 3, 4]"
 
+  @unittest.skip
   def test_function_call(self):
     m = dex.Module(dedent("""
     def addOne (x: Float) : Float = x + 1.0
