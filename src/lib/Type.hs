@@ -555,7 +555,6 @@ typeCheckPrimCon con = case con of
     unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
     payload |: (caseTys !! tag)
     return ty'
-  SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
   ClassDictHole _ ty  -> ty |:TyKind   >> substM ty
   IntRangeVal     l h i -> i|:IdxRepTy >> substM (TC $ IntRange     l h)
   IndexRangeVal t l h i -> i|:IdxRepTy >> substM (TC $ IndexRange t l h)
@@ -579,9 +578,6 @@ typeCheckPrimCon con = case con of
       h' <- mapM substM h
       i|:(RawRefTy IdxRepTy)
       return $ RawRefTy $ TC $ IndexRange t' l' h'
-    SumAsProd ty tag _ -> do    -- TODO: check args!
-      tag |:(RawRefTy TagRepTy)
-      RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substM t
   RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse typeCheckRef xs
@@ -1347,15 +1343,11 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
     Empty -> do
       assertEq eff (oneEffect IOEffect) ""
       resultTys <- checkScalarOrPairType resultTy
-      let cc = case length resultTys of
-                 0 -> error "Not implemented"
-                 1 -> FFIFun
-                 _ -> FFIMultiResultFun
-      return $ IFunType cc [argTy] resultTys
+      return $ IFunType [argTy] resultTys
     Nest b' rest -> do
       let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy
-      IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
-      return $ IFunType cc (argTy:argTys) resultTys
+      IFunType argTys resultTys <- checkFFIFunTypeM naryPiRest
+      return $ IFunType (argTy:argTys) resultTys
 
 checkScalar :: Fallible m => Type n -> m BaseType
 checkScalar (BaseTy ty) = return ty

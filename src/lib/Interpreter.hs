@@ -203,9 +203,7 @@ evalOp expr = mapM evalAtom expr >>= \case
     Con (Lit (Word8Lit 0)) -> return f
     Con (Lit (Word8Lit 1)) -> return t
     _ -> error $ "Invalid select condition: " ++ pprint cond
-  ToEnum ty@(TypeCon _ defName _) i -> do
-      DataDef _ _ cons <- lookupDataDef defName
-      return $ Con $ SumAsProd ty i (map (const []) cons)
+  ToEnum ty@(TypeCon _ defName _) i -> error "not implemented"
   _ -> error $ "Not implemented: " ++ pprint expr
 
 matchUPat :: Interp m => UPat i i' -> Atom o -> m i o (SubstFrag AtomSubstVal i i' o)

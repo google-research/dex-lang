@@ -201,14 +201,19 @@ evalSourceBlock' mname block = case sbContents block of
       ty <- getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname (UAnnBinder b uty) -> do
+
     ty <- evalUType uty
     asFFIFunType ty >>= \case
       Nothing -> throw TypeErr
         "FFI functions must be n-ary first order functions with the IO effect"
-      Just (impFunTy, naryPiTy) -> do
+      Just (impFunTy@(IFunType _ resultTys), naryPiTy) -> do
+        let cc = case length resultTys of
+                   0 -> error "Not implemented"
+                   1 -> FFIFun
+                   _ -> FFIMultiResultFun
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
-        vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
+        vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy cc fname
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
@@ -430,7 +435,8 @@ compileTopLevelFun hint f = do
     Nothing -> throw TypeErr "@noinline functions must be first-order"
     Just naryPi -> return naryPi
   fSimp <- simplifyTopFunction naryPi f
-  fImp <- toImpStandaloneFunction fSimp
+  backend <- backendName <$> getConfig
+  fImp <- toImpFunction backend fSimp
   fSimpName <- emitBinding hint $ AtomNameBinding $ SimpLamBound naryPi fSimp
   fImpName <- emitImpFunBinding hint fImp
   extendImpCache fSimpName fImpName
@@ -442,7 +448,7 @@ compileTopLevelFun hint f = do
 
 toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
 toCFunction fname f = do
-  (deps, m) <- impToLLVM fname f
+  (deps, m) <- impToLLVM fname CFunCC f
   objFile <- liftIO $ exportObjectFileVal deps m fname
   objFileName <- emitObjFile (getNameHint fname) objFile
   return $ CFun fname objFileName
@@ -456,23 +462,25 @@ evalLLVM :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   bench   <- requiresBench <$> getPassCtx
-  (blockAbs, ptrVals) <- abstractPtrLiterals block
+  logger  <- getLogger
+  resultTy <- getType block
+  lam <- asNullaryNaryLam block
+  impFun <- checkPass ImpPass $ toImpFunction backend lam
+  (impFunAbsPtrs, ptrs) <- abstractPtrsImpFunction impFun
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
-  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-                                             toImpFunction backend cc blockAbs
-  (_, llvmAST) <- impToLLVM mainFuncName impFun
-  let IFunType _ _ resultTypes = impFunType impFun
+  (_, llvmAST) <- impToLLVM mainFuncName cc impFunAbsPtrs
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  logger  <- getLogger
   objFileNames <- getAllRequiredObjectFiles
   objFiles <- forM objFileNames  \objFileName -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile
-  resultVals <- liftIO $ llvmEvaluate logger objFiles
-                  llvmAST mainFuncName ptrVals resultTypes
-  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
+  dest <- makeDestIO resultTy
+  allArgs <- mapM fromLitIExpr $ ptrs ++ flattenDest dest
+  void $ liftIO $ llvmEvaluate logger objFiles llvmAST mainFuncName allArgs []
+  result <- loadDestIO dest
+  resultVar <- emitBinding NoHint $ AtomNameBinding $ EvaluatedData resultTy result
+  return (Var resultVar)
 
 evalBackend :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBackend (AtomicBlock result) = return result

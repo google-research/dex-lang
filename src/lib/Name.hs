@@ -47,7 +47,7 @@ module Name (
   MonadIO1, MonadIO2,
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
-  applyAbs, applySubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
+  applyAbs, applySubst, applyFullSubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, alphaEqPure,
   AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   AlphaHashableE (..), AlphaHashableB (..), EKey (..), EMap (..), ESet,
@@ -662,8 +662,13 @@ applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
 applySubst substFrag x = do
   Distinct <- getDistinct
   let fullSubst = sink idSubst <>> substFrag
-  WithScope scope fullSubst' <- addScope fullSubst
-  sinkM $ fmapNames scope (fullSubst' !) x
+  applyFullSubst fullSubst x
+
+applyFullSubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
+               => Subst v i o -> e i -> m o (e o)
+applyFullSubst subst x = do
+  WithScope scope subst' <- addScope subst
+  sinkM $ fmapNames scope (subst' !) x
 
 applyAbs :: ( SinkableV v, SinkableE e
             , FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
@@ -871,6 +876,12 @@ instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
+
+instance ColorsNotEqual ImpNameC DataDefNameC where notEqProof = \case
+instance ColorsNotEqual ImpNameC ClassNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC SuperclassNameC where notEqProof = \case
+instance ColorsNotEqual ImpNameC ImpFunNameC     where notEqProof = \case
+instance ColorsNotEqual ImpNameC PtrNameC        where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1595,6 +1606,7 @@ instance Color ImpFunNameC     where getColorRep _ = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep _ = ObjectFileNameC
 instance Color ModuleNameC     where getColorRep _ = ModuleNameC
 instance Color PtrNameC        where getColorRep _ = ModuleNameC
+instance Color ImpNameC        where getColorRep _ = ImpNameC
 
 interpretColor :: C -> WithColor UnitV VoidS
 interpretColor c = case c of
@@ -1609,6 +1621,7 @@ interpretColor c = case c of
   ObjectFileNameC -> WithColor (UnitV :: UnitV ObjectFileNameC VoidS)
   ModuleNameC     -> WithColor (UnitV :: UnitV ModuleNameC     VoidS)
   PtrNameC        -> WithColor (UnitV :: UnitV PtrNameC        VoidS)
+  ImpNameC        -> WithColor (UnitV :: UnitV ImpNameC        VoidS)
 
 deriving instance (forall c. Show (v c n)) => Show (WithColor v n)
 
@@ -2075,6 +2088,7 @@ data C =
   | ObjectFileNameC
   | ModuleNameC
   | PtrNameC
+  | ImpNameC
     deriving (Eq, Ord, Generic)
 
 type E = S -> *       -- expression-y things, covariant in the S param

@@ -13,7 +13,8 @@ module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  exportObjectFileVal,
                  standardCompilationPipeline,
                  compileCUDAKernel,
-                 storeLitVals, loadLitVals, allocaCells, loadLitVal) where
+                 storeLitVals, loadLitVals, allocaCells, loadLitVal,
+                 makeDestIO, loadDestIO) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -64,6 +65,9 @@ import Resources
 import CUDA (synchronizeCUDA)
 import LLVM.JIT
 import Util (measureSeconds)
+import Name
+import Builder (TopBuilder)
+import Imp
 
 -- === One-shot evaluation ===
 
@@ -263,6 +267,13 @@ withModuleClone ctx m f = do
   bc <- Mod.moduleLLVMAssembly m
   Mod.withModuleFromLLVMAssembly ctx (("<string>" :: String), bc) f
 
+-- === working with dests and imp atoms ===
+
+makeDestIO :: (TopBuilder m, MonadIO1 m, Mut n) => Type n -> m n (Dest n)
+makeDestIO = undefined
+
+loadDestIO :: (TopBuilder m, MonadIO1 m, Mut n) => Dest n -> m n (ImpAtom n)
+loadDestIO = undefined
 
 -- === serializing scalars ===
 

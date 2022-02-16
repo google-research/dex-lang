@@ -319,7 +319,6 @@ transposeCon con ct = case con of
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
-  SumAsProd _ _ _   -> notImplemented
   ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent
