@@ -12,7 +12,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( toImpFunction, ImpFunctionWithRecon (..), toImpStandaloneFunction
+  ( toImpFunction, ImpFunctionWithRecon (..)
+  , toImpStandaloneFunction, toImpExportedFunction
   , PtrBinder, impFunType, getIType) where
 
 import Data.Functor
@@ -65,6 +66,33 @@ toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
       void $ translateBlock (Just $ sink resultDest) body
       return []
 toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not implemented"
+
+toImpExportedFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
+toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) = liftImpM do
+  case effs of
+    Pure -> return ()
+    _    -> throw TypeErr "Can only export pure functions"
+  let bs = Nest fb tb
+  NaryPiType tbs _ resTy <- naryLamExprType lam
+  (resDestAbsArgsPtrs, ptrFormals) <- refreshAbs (Abs tbs resTy) \tbs' resTy' -> do
+    -- WARNING! This ties the makeDest implementation to the C API expected in export.
+    -- In particular, every array has to be backend by a single pointer and pairs
+    -- should be traversed left-to-right.
+    AbsPtrs (Abs ptrBs' resDest') ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
+    let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> ("res"::NameHint, PtrType bt)
+    return (Abs tbs' (Abs ptrBs' resDest'), ptrFormals)
+  let argFormals = nestToList formalForBinder bs
+  dropSubst $ buildImpFunction CEntryFun (argFormals ++ ptrFormals) \argsAndPtrs -> do
+    let (args, ptrs) = splitAt (length argFormals) argsAndPtrs
+    resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
+    resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
+    extendSubst (bs @@> map SubstVal (Var <$> args)) do
+      void $ translateBlock (Just $ sink resDest) body
+      return []
+  where
+    formalForBinder b = case binderType b of
+      BaseTy bt -> (NoHint, bt)
+      _ -> error "Expected all binders to be of a BaseType"
 
 loadArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> m n ([Atom n], Dest n)
 loadArgDests (Abs Empty resultDest) = return ([], resultDest)

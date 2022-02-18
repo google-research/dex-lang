@@ -6,197 +6,130 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Export (
     exportFunctions, prepareFunctionForExport, exportedSignatureDesc,
-    ExportedSignature (..), ExportArrayType (..), ExportArg (..), ExportResult (..),
+    ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..),
   ) where
 
-import Control.Monad.State.Strict
-import Control.Monad.Writer hiding (pass)
-import qualified Data.Map.Strict as M
-import qualified Data.Text as T
-import Data.String
-import Data.Foldable
-import Data.List (nub, intercalate)
+import Data.List (intercalate)
 
-import Algebra
+import Name
+import Err
 import Syntax
-import Builder
-import Cat
 import Type
 import Simplify
 import Imp
-import JIT
-import Logging
-import LLVMExec
-import PPrint
 
-exportFunctions :: FilePath -> [(String, Atom)] -> Bindings -> IO ()
-exportFunctions = undefined
--- exportFunctions objPath funcs env = do
---   let names = fmap fst funcs
---   unless (length (nub names) == length names) $
---     throw CompilerErr "Duplicate export names"
---   modules <- forM funcs $ \(name, funcAtom) -> do
---     let (impModule, _) = prepareFunctionForExport env name funcAtom
---     (,[name]) <$> execLogger Nothing (flip impToLLVM impModule)
---   exportObjectFile modules \tm m -> Mod.writeObjectToFile tm (Mod.File objPath) m
+exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
+exportFunctions = error "Not implemented"
 
-type CArgList = [IBinder] -- ^ List of arguments to the C call
-data CArgSubst = CArgEnv { -- | Maps scalar atom binders to their CArgs. All atoms are Vars.
-                         cargScalarScope :: SubstSubst
-                         -- | Tracks the CArg names used so far (globally scoped, unlike Builder)
-                       , cargScope :: Subst () }
-type CArgM = WriterT CArgList (CatT CArgSubst Builder)
-
-instance Semigroup CArgSubst where
-  (CArgSubst a1 a2) <> (CArgEnv b1 b2) = CArgEnv (a1 <> b1) (a2 <> b2)
-
-instance Monoid CArgSubst where
-  mempty = CArgSubst mempty mempty
-
-runCArg :: CArgSubst -> CArgM a -> Builder (a, [IBinder], CArgEnv)
-runCArg initSubst m = repack <$> runCatT (runWriterT m) initEnv
-  where repack ((ans, cargs), env) = (ans, cargs, env)
-
-prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSignature)
-prepareFunctionForExport env nameStr func = do
-  -- Create a module that simulates an application of arguments to the function
-  -- TODO: Assert that the type of func is closed?
-  let ((dest, cargs, apiDesc, resultName, resultType), (_, decls)) = runBuilder (freeVars func) mempty $ do
-        (args, cargArgs, cargSubst) <- runCArg mempty $ createArgs $ getType func
-        let (atomArgs, exportedArgSig) = unzip args
-        resultAtom <- naryApp func atomArgs
-        ~(Var (outputName:>outputType)) <- emit $ Atom resultAtom
-        ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargSubst $ createDest mempty $ getType resultAtom
-        let cargs' = cargArgs <> cdestArgs
-        let exportedCCallSig = fmap (\(Bind (v:>_)) -> v) cargs'
-        return (resultDest, cargs', ExportedSignature{..}, outputName, outputType)
-
-  let coreModule = Module Core decls $ EvaluatedModule mempty mempty $
-                     SourceMap $ M.singleton outputSourceName $ SrcAtomName resultName
-  let defunctionalized = simplifyModule env coreModule
-  let Module _ optDecls (EvaluatedModule optBindings _ (SourceMap sourceMap)) =
-        optimizeModule defunctionalized
-  let ~(Just (SrcAtomName outputName)) = M.lookup outputSourceName sourceMap
-  -- XXX: this is a terrible hack. We could require any number of hops through
-  -- the evaluated bindings. TODO: reconstruct the result properly.
-  let outputExpr = case envLookup optBindings outputName of
-                     Just ~(AtomBinderInfo _ (LetBound PlainLet expr))-> expr
-                     Nothing -> Atom $ Var $ outputName :> resultType
-  let block = Block optDecls outputExpr
-  let name = Name TopFunctionName (fromString nameStr) 0
-  let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
-  (impModule, apiDesc)
+prepareFunctionForExport :: (EnvReader m, Fallible1 m) => Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport f = do
+  naryPi <- getType f >>= asFirstOrderFunction >>= \case
+    Nothing  -> throw TypeErr "Only first-order functions can be exported"
+    Just npi -> return npi
+  closedNaryPi <- case hoistToTop naryPi of
+    HoistFailure _   -> throw TypeErr "Types of exported functions have to be closed terms"
+    HoistSuccess npi -> return npi
+  sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
+    Success sig -> return sig
+    Failure err -> throwErrs err
+  fSimp <- simplifyTopFunction naryPi f
+  fImp <- toImpExportedFunction fSimp
+  return (fImp, sig)
   where
-    outputSourceName = "_ans_"
-
-    createArgs :: Type -> CArgM [(Atom, ExportArg)]
-    createArgs ty = case ty of
-      PiTy b arrow result | arrow /= TabArrow -> do
-        argSubst <- looks cargScalarScope
-        let visibility = case arrow of
-              PlainArrow Pure -> ExplicitArg
-              PlainArrow _    -> error $ "Effectful functions cannot be exported"
-              ImplicitArrow   -> ImplicitArg
-              _               -> error $ "Unexpected type for an exported function: " ++ pprint ty
-        (:) <$> createArg visibility (subst (argSubst, mempty) b) <*> createArgs result
-      _ -> return []
-
-    createArg :: ArgVisibility -> Binder -> CArgM (Atom, ExportArg)
-    createArg vis b = case ty of
-      BaseTy bt@(Scalar sbt) -> do
-        ~v@(Var (name:>_)) <- newCVar bt
-        extend $ mempty { cargScalarScope = b @> SubstVal (Var $ name :> BaseTy bt) }
-        return (v, ExportScalarArg vis name sbt)
-      TabTy _ _ -> createTabArg vis mempty ty
-      _ -> error $ "Unsupported arg type: " ++ pprint ty
-      where ty = binderType b
-
-    createTabArg :: ArgVisibility -> IndexStructure -> Type -> CArgM (Atom, ExportArg)
-    createTabArg vis idx ty = case ty of
-      BaseTy bt@(Scalar sbt) -> do
-        ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
-        destAtom <- unsafePtrLoad =<< applyIdxs v idx
-        funcArgScope <- looks cargScope
-        let exportArg = ExportArrayArg vis name $ case getRectShape funcArgScope idx of
-              Just rectShape -> RectContArrayPtr sbt rectShape
-              Nothing        -> GeneralArrayPtr  sbt
-        return (destAtom, exportArg)
-      TabTy b elemTy -> do
-        buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substBuilder (b@>SubstVal (Var i)) elemTy
-          createTabArg vis (idx <> Nest (Bind i) Empty) elemTy'
-      _ -> unsupported
-      where unsupported = error $ "Unsupported table type suffix: " ++ pprint ty
-
-    createDest :: IndexStructure -> Type -> CArgM (Atom, ExportResult)
-    createDest idx ty = case ty of
-      BaseTy bt@(Scalar sbt) -> do
-        ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
-        dest <- Con . BaseTypeRef <$> applyIdxs v idx
-        funcArgScope <- looks cargScope
-        let exportResult = case idx of
-              Empty -> ExportScalarResultPtr name sbt
-              _     -> ExportArrayResult name $ case getRectShape funcArgScope idx of
-                Just rectShape -> RectContArrayPtr sbt rectShape
-                Nothing        -> GeneralArrayPtr  sbt
-        return (dest, exportResult)
-      TabTy b elemTy -> do
-        (destTab, exportResult) <- buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substBuilder (b@>SubstVal (Var i)) elemTy
-          createDest (idx <> Nest (Bind i) Empty) elemTy'
-        return (Con $ TabRef destTab, exportResult)
-      PairTy a b | idx == Empty -> do
-        (atom_a, res_a) <- createDest idx a
-        (atom_b, res_b) <- createDest idx b
-        return (Con $ ConRef $ ProdCon [atom_a, atom_b], ExportPairResult res_a res_b)
-      _ -> unsupported
-      where unsupported = error $ "Unsupported result type: " ++ pprint ty
-
-    -- TODO: I guess that the address space depends on the backend?
-    -- TODO: Have an ExternalPtr tag?
-    ptrTy ty = PtrType (Heap CPU, ty)
-
-    getRectShape :: Subst () -> IndexStructure -> Maybe [Either Name Int]
-    getRectShape scope idx = traverse (dimShape . binderType) $ toList idx
+    naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
+                      => NaryPiType n -> m n (ExportedSignature n)
+    naryPiToExportSig (NaryPiType (NonEmptyNest tb tbs) effs resultTy) = do
+        case effs of
+          Pure -> return ()
+          _    -> throw TypeErr "Only pure functions can be exported"
+        goArgs Empty [] (Nest tb tbs) resultTy
       where
-        dimShape dimTy = case dimTy of
-          Fin (IdxRepVal n)                  -> Just $ Right $ fromIntegral n
-          Fin (Var v)       | v `isin` scope -> Just $ Left  $ varName v
-          _                                  -> Nothing
+        goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
+               => Nest ExportArg n l' -> [AtomName l'] -> Nest PiBinder l' l -> Type l -> m l' (ExportedSignature n)
+        goArgs argSig argVs piBs piRes = case piBs of
+          Empty -> goResult piRes \resSig ->
+            return $ ExportedSignature argSig resSig $
+              (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+          Nest b bs -> do
+            refreshAbs (Abs b (Abs bs piRes)) \(PiBinder v ty arrow) (Abs bs' piRes') -> do
+              let invalidArrow = throw TypeErr
+                                   "Exported functions can only have regular and implicit arrow types"
+              vis <- case arrow of
+                PlainArrow    -> return ExplicitArg
+                ImplicitArrow -> return ImplicitArg
+                ClassArrow    -> invalidArrow
+                TabArrow      -> invalidArrow
+                LinArrow      -> invalidArrow
+              ety <- toExportType ty
+              goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
+                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
 
-    newCVar :: BaseType -> CArgM Atom
-    newCVar bt = do
-      name <- genFresh (Name CArgName "arg" 0) <$> looks cargScope
-      extend $ mempty { cargScope = name @> () }
-      tell [Bind $ name :> bt]
-      return $ Var $ name :> BaseTy bt
+        goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
+                 => Type l
+                 -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
+                 -> m l a
+        goResult ty cont = case ty of
+          ProdTy [lty, rty] ->
+            goResult lty \lres ->
+              goResult (sink rty) \rres ->
+                cont $ joinNest lres rres
+          _ -> withFreshBinder NoHint ty \b -> do
+            ety <- toExportType ty
+            cont $ Nest (ExportResult (b:>ety)) Empty
+
+    toExportType :: Fallible m => Type n -> m (ExportType n)
+    toExportType = \case
+      BaseTy (Scalar sbt) -> return $ ScalarType sbt
+      -- TODO: Arrays!
+      ty -> throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 
 -- === Exported function signature ===
 
-data ExportArrayType = GeneralArrayPtr  ScalarBaseType
-                     | RectContArrayPtr ScalarBaseType [Either Name Int]
 data ArgVisibility = ImplicitArg | ExplicitArg
-data ExportArg = ExportArrayArg  ArgVisibility Name ExportArrayType
-               | ExportScalarArg ArgVisibility Name ScalarBaseType
-data ExportResult = ExportArrayResult     Name ExportArrayType
-                  | ExportScalarResultPtr Name ScalarBaseType
-                  | ExportPairResult      ExportResult ExportResult
-data ExportedSignature =
-  ExportedSignature { exportedArgSig   :: [ExportArg]
-                    , exportedResSig   :: ExportResult
-                    , exportedCCallSig :: [Name]
+data ExportType n = RectContArrayPtr ScalarBaseType [Either (AtomName n) Int]
+                  | ScalarType ScalarBaseType
+
+data    ExportArg    n l = ExportArg    ArgVisibility (BinderP AtomNameC ExportType n l)
+newtype ExportResult n l = ExportResult               (BinderP AtomNameC ExportType n l)
+data ExportedSignature n = forall l l'.
+  ExportedSignature { exportedArgSig   :: Nest ExportArg n l
+                    , exportedResSig   :: Nest ExportResult l l'
+                    , exportedCCallSig :: [AtomName l']
                     }
+
+deriving via (BinderP AtomNameC ExportType) instance GenericB   ExportResult
+deriving via (BinderP AtomNameC ExportType) instance ProvesExt  ExportResult
+deriving via (BinderP AtomNameC ExportType) instance BindsNames ExportResult
+instance BindsAtMostOneName ExportResult AtomNameC where
+  (ExportResult b) @> v = b @> v
+instance BindsOneName ExportResult AtomNameC where
+  binderName (ExportResult b) = binderName b
+
+instance GenericB ExportArg where
+  type RepB ExportArg = PairB (LiftB (LiftE ArgVisibility)) (BinderP AtomNameC ExportType)
+  fromB (ExportArg vis b) = PairB (LiftB (LiftE vis)) b
+  toB (PairB (LiftB (LiftE vis)) b) = ExportArg vis b
+instance ProvesExt  ExportArg
+instance BindsNames ExportArg
+instance BindsAtMostOneName ExportArg AtomNameC where
+  (ExportArg _ b) @> v = b @> v
+instance BindsOneName ExportArg AtomNameC where
+  binderName (ExportArg _ b) = binderName b
 
 -- Serialization
 
-exportedSignatureDesc :: ExportedSignature -> (String, String, String)
+exportedSignatureDesc :: ExportedSignature n -> (String, String, String)
 exportedSignatureDesc ExportedSignature{..} =
-  ( intercalate "," $ fmap show exportedArgSig
-  , show exportedResSig
-  , intercalate "," $ fmap showCArgName exportedCCallSig
+  ( intercalate "," $ nestToList show exportedArgSig
+  , intercalate "," $ nestToList show exportedResSig
+  , intercalate "," $ fmap pprint exportedCCallSig
   )
 
 showExportSBT :: ScalarBaseType -> String
@@ -209,34 +142,21 @@ showExportSBT sbt = case sbt of
   Float64Type -> "f64"
   Float32Type -> "f32"
 
-showCArgName :: Name -> String
-showCArgName ~name@(Name namespace tag idx) = case namespace of
-  CArgName -> T.unpack tag <> show idx
-  _        -> error $ "Expected a CArgName namespace: " ++ show name
-
-instance Show ExportArrayType where
+instance Show (ExportType n) where
   show arr = case arr of
-    GeneralArrayPtr  sbt       -> showExportSBT sbt <> "[?]"
     RectContArrayPtr sbt shape -> showExportSBT sbt <> showShape shape
+    ScalarType       sbt       -> showExportSBT sbt
     where
       showShape shape = "[" <> (intercalate "," $ fmap showDim shape) <> "]"
       showDim size = case size of
-        Left  name -> showCArgName name
+        Left  name -> pprint name
         Right lit  -> show lit
 
-instance Show ExportArg where
-  show arg = case arg of
-    ExportArrayArg  vis name ty  -> showVis vis <> showCArgName name <> ":" <> show ty
-    ExportScalarArg vis name sbt -> showVis vis <> showCArgName name <> ":" <> showExportSBT sbt
+instance Show (ExportArg n l) where
+  show (ExportArg vis (name:>ty)) = showVis vis <> pprint name <> ":" <> show ty
     where
       showVis ImplicitArg = "?"
       showVis ExplicitArg = ""
 
-instance Show ExportResult where
-  show res = case res of
-    ExportArrayResult     name ty    -> showCArgName name <> ":" <> show ty
-    ExportScalarResultPtr name sbt   -> showCArgName name <> ":" <> showExportSBT sbt
-    -- Nested pairs / tuples are compiled down to a sequence of separate output
-    -- arguments, so a pair result is serialized to look like two separate
-    -- results.
-    ExportPairResult      left right -> show left <> "," <> show right
+instance Show (ExportResult n l) where
+  show (ExportResult (name:>ty)) = pprint name <> ":" <> show ty

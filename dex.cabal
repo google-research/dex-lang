@@ -56,7 +56,7 @@ library
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
                        Err, LabeledItems, SourceRename, Name, Parser, MTL1,
                        Type, Builder, Inference, CheapReduction, GenericTraversal,
-                       Simplify, Imp, Algebra, Linearize, Transpose,
+                       Simplify, Imp, Algebra, Linearize, Transpose, Export,
                        LLVM.HEAD.JIT
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
