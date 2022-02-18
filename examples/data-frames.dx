@@ -1,0 +1,1201 @@
+'# Example tables
+
+-- TODO: Index those tables by the string elements or by integers?
+
+def students : (Fin 3)=>{name: String & age: Int & favColor: String} =
+  [ {name="Bob"  , age=12, favColor="blue" }
+  , {name="Alice", age=17, favColor="green"}
+  , {name="Eve"  , age=13, favColor="red"  }
+  ]
+
+def studentsMissing : (Fin 3)=>{name: String & age:(Maybe Int) & favColor:(Maybe String)} =
+  [ {name="Bob"  , age=Nothing, favColor=Just "blue" }
+  , {name="Alice", age=Just 17, favColor=Just "green"}
+  , {name="Eve"  , age=Just 13, favColor=Nothing     }
+  ]
+
+'## TODO: employees
+
+-- | Last Name    | Department ID |
+-- | ------------ | ------------- |
+-- | "Rafferty"   | 31            |
+-- | "Jones"      | 32            |
+-- | "Heisenberg" | 33            |
+-- | "Robinson"   | 34            |
+-- | "Smith"      | 34            |
+-- | "Williams"   |               |
+
+'## TODO: departments
+
+-- | Department ID | Department Name |
+-- | ------------- | --------------- |
+-- | 31            | "Sales"         |
+-- | 33            | "Engineering"   |
+-- | 34            | "Clerical"      |
+-- | 35            | "Marketing"     |
+
+'## TODO: jellyAnon
+
+-- | get acne | red   | black | white | green | yellow | brown | orange | pink  | purple |
+-- | -------- | ----- | ----- | ----- | ----- | ------ | ----- | ------ | ----- | ------ |
+-- | true     | false | false | false | true  | false  | false | true   | false | false  |
+-- | true     | false | true  | false | true  | true   | false | false  | false | false  |
+-- | false    | false | false | false | true  | false  | false | false  | true  | false  |
+-- | false    | false | false | false | false | true   | false | false  | false | false  |
+-- | false    | false | false | false | false | true   | false | false  | true  | false  |
+-- | true     | false | true  | false | false | false  | false | true   | true  | false  |
+-- | false    | false | true  | false | false | false  | false | false  | true  | false  |
+-- | true     | false | false | false | false | false  | true  | true   | false | false  |
+-- | true     | false | false | false | false | false  | false | true   | false | false  |
+-- | false    | true  | false | false | false | true   | true  | false  | true  | false  |
+
+'## TODO: jellyNamed
+
+-- | name       | get acne | red   | black | white | green | yellow | brown | orange | pink  | purple |
+-- | ---------- | -------- | ----- | ----- | ----- | ----- | ------ | ----- | ------ | ----- | ------ |
+-- | "Emily"    | true     | false | false | false | true  | false  | false | true   | false | false  |
+-- | "Jacob"    | true     | false | true  | false | true  | true   | false | false  | false | false  |
+-- | "Emma"     | false    | false | false | false | true  | false  | false | false  | true  | false  |
+-- | "Aidan"    | false    | false | false | false | false | true   | false | false  | false | false  |
+-- | "Madison"  | false    | false | false | false | false | true   | false | false  | true  | false  |
+-- | "Ethan"    | true     | false | true  | false | false | false  | false | true   | true  | false  |
+-- | "Hannah"   | false    | false | true  | false | false | false  | false | false  | true  | false  |
+-- | "Matthew"  | true     | false | false | false | false | false  | true  | true   | false | false  |
+-- | "Hailey"   | true     | false | false | false | false | false  | false | true   | false | false  |
+-- | "Nicholas" | false    | true  | false | false | false | true   | true  | false  | true  | false  |
+
+'## TODO: gradebook
+
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+
+'## TODO: gradebookMissing
+
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | 6     | 8     | 88      |       | 7     | 85    |
+-- | "Eve"   | 13  |       | 9     | 84      | 8     | 8     | 77    |
+
+'## TODO: gradebookSeq
+
+-- | name    | age | quizzes      | midterm | final |
+-- | ------- | --- | ------------ | ------- | ----- |
+-- | "Bob"   | 12  | [8, 9, 7, 9] | 77      | 87    |
+-- | "Alice" | 17  | [6, 8, 8, 7] | 88      | 85    |
+-- | "Eve"   | 13  | [7, 9, 8, 8] | 84      | 77    |
+
+'## TODO: gradebookTable
+
+-- | name    | age | quizzes           | midterm | final |
+-- | ------- | --- | ----------------- | ------- | ----- |
+-- | "Bob"   | 12  | | quiz# | grade | | 77      | 87    |
+-- |         |     | | ----- | ----- | |         |       |
+-- |         |     | | 1     | 8     | |         |       |
+-- |         |     | | 2     | 9     | |         |       |
+-- |         |     | | 3     | 7     | |         |       |
+-- |         |     | | 4     | 9     | |         |       |
+-- | "Alice" | 17  | | quiz# | grade | | 88      | 85    |
+-- |         |     | | ----- | ----- | |         |       |
+-- |         |     | | 1     | 6     | |         |       |
+-- |         |     | | 2     | 8     | |         |       |
+-- |         |     | | 3     | 8     | |         |       |
+-- |         |     | | 4     | 7     | |         |       |
+-- | "Eve"   | 13  | | quiz# | grade | | 84      | 77    |
+-- |         |     | | ----- | ----- | |         |       |
+-- |         |     | | 1     | 7     | |         |       |
+-- |         |     | | 2     | 9     | |         |       |
+-- |         |     | | 3     | 8     | |         |       |
+-- |         |     | | 4     | 8     | |         |       |
+
+'# Table API
+
+'## Constructors
+
+Void = Fin 0
+def emptyTable : Void=>{&} = for i. error "This should be an empty table!"
+
+def addRows {n m a} (t:n=>a) (t':m=>a) : (n|m)=>a =
+  for i. case i of
+    Left ni  -> t.ni
+    Right mi -> t'.mi
+
+-- > addRows(
+--     students,
+--     [
+--       [row:
+--         ("name", "Colton"), ("age", 19),
+--         ("favorite color", "blue")]
+--     ])
+-- | name     | age | favorite color |
+-- | -------- | --- | -------------- |
+-- | "Bob"    | 12  | "blue"         |
+-- | "Alice"  | 17  | "green"        |
+-- | "Eve"    | 13  | "red"          |
+-- | "Colton" | 19  | "blue"         |
+-- > addRows(gradebook, [])
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+
+
+-- ### `addColumn :: t1:Table * c:ColName * vs:Seq<Value> -> t2:Table`
+def addColumn {n f a} (t:n=>{&...f}) (c:Label) (vs:n=>a) : n=>{@c:a & ...f} =
+  for i. {@c=vs.i, ...t.i}
+
+-- > hairColor = ["brown", "red", "blonde"]
+-- > addColumn(students, "hair-color", hairColor)
+-- | name    | age | favorite color | hair-color |
+-- | ------- | --- | -------------- | ---------- |
+-- | "Bob"   | 12  | "blue"         | "brown"    |
+-- | "Alice" | 17  | "green"        | "red"      |
+-- | "Eve"   | 13  | "red"          | "blonde"   |
+-- > presentation = [9, 9, 6]
+-- > addColumn(gradebook, "presentation", presentation)
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final | presentation |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- | ------------ |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    | 9            |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    | 9            |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    | 6            |
+
+-- ### `buildColumn :: t1:Table * c:ColName * f:(r:Row -> v:Value) -> t2:Table`
+def buildColumn {n f a} (t:n=>{&...f}) (c:Label) (fn: {&...f} -> a) : n=>{@c:a & ...f} =
+  for i. {@c=fn t.i, ...t.i}
+
+-- > isTeenagerBuilder =
+--     function(r):
+--       12 < getValue(r, "age") and getValue(r, "age") < 20
+--     end
+-- > buildColumn(students, "is-teenager", isTeenagerBuilder)
+-- | name    | age | favorite color | is-teenager |
+-- | ------- | --- | -------------- | ----------- |
+-- | "Bob"   | 12  | "blue"         | false       |
+-- | "Alice" | 17  | "green"        | true        |
+-- | "Eve"   | 13  | "red"          | true        |
+-- > didWellInFinal =
+--     function(r):
+--       85 <= getValue(r, "final")
+--     end
+-- > buildColumn(gradebook, "did-well-in-final", didWellInFinal)
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final | did-well-in-final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- | ----------------- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    | true              |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    | true              |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    | false             |
+
+-- ### `vcat :: t1:Table * t2:Table -> t3:Table`
+def vcat {n m a} (t:n=>a) (t':m=>a) : (n|m)=>a = addRows t t'
+
+-- > increaseAge =
+--     function(r):
+--       [row: ("age", 1 + getValue(r, "age"))]
+--     end
+-- > vcat(students, update(students, increaseAge))
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+-- | "Alice" | 17  | "green"        |
+-- | "Eve"   | 13  | "red"          |
+-- | "Bob"   | 13  | "blue"         |
+-- | "Alice" | 18  | "green"        |
+-- | "Eve"   | 14  | "red"          |
+-- > curveMidtermAndFinal =
+--     function(r):
+--       curve =
+--         function(n):
+--           n + 5
+--         end
+--       [row:
+--         ("midterm", curve(getValue("midterm"))),
+--         ("final", curve(getValue("final")))]
+--     end
+-- > vcat(gradebook, update(gradebook, curveMidtermAndFinal))
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+-- | "Bob"   | 12  | 8     | 9     | 82      | 7     | 9     | 92    |
+-- | "Alice" | 17  | 6     | 8     | 93      | 8     | 7     | 90    |
+-- | "Eve"   | 13  | 7     | 9     | 89      | 8     | 8     | 82    |
+
+def hcat {n f f'} (t:n=>{&...f}) (t':n=>{&...f'}) : n=>{...f & ...f'} =
+  for i. {...(t.i), ...(t'.i)}
+
+-- > hcat(students, dropColumns(gradebook, ["name", "age"]))
+-- | name    | age | favorite color | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | -------------- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | "blue"         | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | "green"        | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | "red"          | 7     | 9     | 84      | 8     | 8     | 77    |
+-- > hcat(dropColumns(students, ["name", "age"]), gradebook)
+-- | favorite color | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | -------------- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "blue"         | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "green"        | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "red"          | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+
+def values {n a} : n=>a -> n=>a = id
+-- > values([
+--     [row: ("name", "Alice")],
+--     [row: ("name", "Bob")]])
+-- | name    |
+-- | ------- |
+-- | "Alice" |
+-- | "Bob"   |
+-- > values([
+--     [row: ("name", "Alice"), ("age", 12)],
+--     [row: ("name", "Bob"), ("age", 13)]])
+-- | name    | age |
+-- | ------- | --- |
+-- | "Alice" | 12  |
+-- | "Bob"   | 13  |
+
+-- ### `crossJoin :: t1:Table * t2:Table -> t3:Table`
+def crossJoin {n m f f'} (t:n=>{&...f}) (t':m=>{&...f'}) : (n & m)=>{...f & ...f'} =
+  for (i, j). {...(t.i), ...(t'.j)}
+
+-- > petiteJelly = subTable(jellyAnon, [0, 1], [0, 1, 2])
+-- > petiteJelly
+-- | get acne | red   | black |
+-- | -------- | ----- | ----- |
+-- | true     | false | false |
+-- | true     | false | true  |
+-- > crossJoin(students, petiteJelly)
+-- | name    | age | favorite color | get acne | red   | black |
+-- | ------- | --- | -------------- | -------- | ----- | ----- |
+-- | "Bob"   | 12  | "blue"         | true     | false | false |
+-- | "Bob"   | 12  | "blue"         | true     | false | true  |
+-- | "Alice" | 17  | "green"        | true     | false | false |
+-- | "Alice" | 17  | "green"        | true     | false | true  |
+-- | "Eve"   | 13  | "red"          | true     | false | false |
+-- | "Eve"   | 13  | "red"          | true     | false | true  |
+-- > crossJoin(emptyTable, petiteJelly)
+-- | get acne | red   | black |
+-- | -------- | ----- | ----- |
+
+'### TODO: `leftJoin` (lists of labels)
+
+-- It should be sufficient to do the join on a single column. One can always
+-- restructure the table so that the join happens on a tuple of values from
+-- the flattened columns.
+def leftJoin = todo
+-- def leftJoin (c:Label) (l:n=>{@c: a & ...f}) (r:m=>{@c: a & ...f'})
+--       : n=>{extra: Maybe {...f'} & ...f} = todo
+-- > leftJoin(students, gradebook, ["name", "age"])
+-- | name    | age | favorite color | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | -------------- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | "blue"         | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | "green"        | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | "red"          | 7     | 9     | 84      | 8     | 8     | 77    |
+-- > leftJoin(employees, departments, ["Department ID"])
+-- | Last Name    | Department ID | Department Name |
+-- | ------------ | ------------- | --------------- |
+-- | "Rafferty"   | 31            | "Sales"         |
+-- | "Jones"      | 32            |                 |
+-- | "Heisenberg" | 33            | "Engineering"   |
+-- | "Robinson"   | 34            | "Clerical"      |
+-- | "Smith"      | 34            | "Clerical"      |
+-- | "Williams"   |               |                 |
+
+'## Properties
+
+def nrows {n a} (t:n=>a) : Int = size n
+
+nrows emptyTable
+nrows studentsMissing
+
+'### TODO: `ncols` (type-classes over records)
+
+-- TODO: Is this even expressible? Perhaps through type classes?
+-- If we can do Eq of records in user space then we can count fields too.
+def ncols {n f} (t:n=>{&...f}) : Int = todo
+
+ncols students
+ncols studentsMissing
+
+'### TODO: `header` (type-classes over records)
+
+-- TODO: Is this even expressible? Perhaps through type classes again.
+def header {n f} (t:n=>{...f}) : List Label = todo
+-- > header(students)
+-- ["name", "age", "favorite color"]
+-- > header(gradebook)
+-- ["name", "age", "quiz1", "quiz2", "midterm", "quiz3", "quiz4", "final"]
+
+'## Access Subcomponents
+
+def getRow {n a} (t:n=>a) (i:n) : a = t.i
+
+getRow students (0@_)
+getRow gradebook (1@_)
+
+def getValue {f a} (c:Label) (r:{@c:a & ...f}) : a =
+  {@c=v, ...} = r
+  v
+-- > getValue([row: ("name", "Bob"),  ("age", 12)], "name")
+-- "Bob"
+-- > getValue([row: ("name", "Bob"),  ("age", 12)], "age")
+-- 12
+
+-- INEXPRESSIBLE: Columns are unordered
+-- ### (overloading 1/2) `getColumn :: t:Table * n:Number -> vs:Seq<Value>`
+
+-- ### (overloading 2/2) `getColumn :: t:Table * c:ColName -> vs:Seq<Value>`
+def getColumn {f n a} (c:Label) (t:n=>{@c:a & ...f}) : n=>a = todo
+-- > getColumn(students, "age")
+-- [12, 17, 13]
+-- > getColumn(gradebook, "name")
+-- ["Bob", "Alice", "Eve"]
+
+'## Subtable
+
+def selectRows {n m a} (t:n=>a) (is:m=>n) : m=>a = for i:m. t.(is.i)
+-- > selectRows(students, [2, 0, 2, 1])
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Eve"   | 13  | "red"          |
+-- | "Bob"   | 12  | "blue"         |
+-- | "Eve"   | 13  | "red"          |
+-- | "Alice" | 17  | "green"        |
+-- > selectRows(gradebooks, [2, 1])
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- ```
+
+def selectRowsMask (t:n=>a) (shouldTake:n=>Bool) : List a =
+  concat $ for i.
+    case shouldTake.i of
+      True  -> AsList _ [t.i]
+      False -> mempty
+-- > selectRows(students, [true, false, true])
+-- | name  | age | favorite color |
+-- | ----- | --- | -------------- |
+-- | "Bob" | 12  | "blue"         |
+-- | "Eve" | 13  | "red"          |
+-- > selectRows(gradebook, [false, false, true])
+-- | name  | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ----- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Eve" | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+
+-- INEXPRESSIBLE: Columns are unordered
+-- ### (overload 1/3) `selectColumns :: t1:Table * bs:Seq<Boolean> -> t2:Table`
+
+-- INEXPRESSIBLE: Columns are unordered
+-- ### (overload 2/3) `selectColumns :: t1:Table * ns:Seq<Number> -> t2:Table`
+
+-- ### (overload 3/3) `selectColumns :: t1:Table * cs:Seq<ColName> -> t2:Table`
+def selectColumns {n f'} (f: Fields) (t: n=>{...f & ...f'}) : n=>{&...f} =
+  for i.
+    {@...f=v, ...} = t.i
+    v
+-- > selectColumns(students, ["favorite color", "age"])
+-- | favorite color | age |
+-- | -------------- | --- |
+-- | "blue"         | 12  |
+-- | "green"        | 17  |
+-- | "red"          | 13  |
+-- > selectColumns(gradebook, ["final", "name", "midterm"])
+-- | final | name    | midterm |
+-- | ----- | ------- | ------- |
+-- | 87    | "Bob"   | 77      |
+-- | 85    | "Alice" | 88      |
+-- | 77    | "Eve"   | 84      |
+
+def head = todo
+-- > head(students, 1)
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+-- > head(students, -2)
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+
+'### TODO: `distinct` (type-classes for records)
+
+def distinct = todo
+-- > distinct(students)
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+-- | "Alice" | 17  | "green"        |
+-- | "Eve"   | 13  | "red"          |
+-- > distinct(selectColumns(gradebook, ["quiz3"]))
+-- | quiz3 |
+-- | ----- |
+-- | 7     |
+-- | 8     |
+
+def dropColumn {n f a} (c:Label) (t:n=>{@c:a & ...f}) : n=>{&...f} =
+  for i.
+    {@c=_, ...r} = t.i
+    r
+
+-- > dropColumn(students, "age")
+-- | name    | favorite color |
+-- | ------- | -------------- |
+-- | "Bob"   | "blue"         |
+-- | "Alice" | "green"        |
+-- | "Eve"   | "red"          |
+-- > dropColumn(gradebook, "final")
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     |
+
+def dropColumns {n f'} (f: Fields) (t:n=>{...f & ...f'}) : n=>{&...f'} =
+  for i.
+    {@...f=_, ...r} = t.i
+    r
+
+-- ### `dropColumns :: t1:Table * cs:Seq<ColName> -> t2:Table`
+--
+-- > dropColumns(students, ["age"])
+-- | name    | favorite color |
+-- | ------- | -------------- |
+-- | "Bob"   | "blue"         |
+-- | "Alice" | "green"        |
+-- | "Eve"   | "red"          |
+-- > dropColumns(gradebook, ["final", "midterm"])
+-- | name    | age | quiz1 | quiz2 | quiz3 | quiz4 |
+-- | ------- | --- | ----- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 7     | 9     |
+-- | "Alice" | 17  | 6     | 8     | 8     | 7     |
+-- | "Eve"   | 13  | 7     | 9     | 8     | 8     |
+
+def tfilter (t:n=>a) (keep:a -> Bool) : List a =
+ selectRowsMask t $ for i. keep t.i
+-- > ageUnderFifteen =
+--     function(r):
+--       getValue(r, "age") < 15
+--     end
+-- > tfilter(students, ageUnderFifteen)
+-- | name  | age | favorite color |
+-- | ----- | --- | -------------- |
+-- | "Bob" | 12  | "blue"         |
+-- | "Eve" | 13  | "red"          |
+-- > nameLongerThan3Letters =
+--     function(r):
+--       length(getValue(r, "name")) > 3
+--     end
+-- > tfilter(gradebook, nameLongerThan3Letters)
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+
+'## Ordering
+
+import sort
+
+-- TODO: We could the sort on the full data, with an Ord instance that only looks at the column
+-- ### `tsort :: t1:Table * c:ColName * b:Boolean -> t2:Table`
+def tsort {n f a} [Ord a] (c:Label) (t:n=>{@c: a & ...f}) : n=>{@c: a & ...f} =
+  ixs = argsort $ getColumn c t
+  for i. t.(ixs.i)
+
+-- > tsort(students, "age", true)
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+-- | "Eve"   | 13  | "red"          |
+-- | "Alice" | 17  | "green"        |
+-- > tsort(gradebook, "final", false)
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+
+'### TODO: `sortByColumns` (lists of labels)
+
+-- ### `sortByColumns :: t1:Table * cs:Seq<ColName> -> t2:Table`
+-- > sortByColumns(students, ["age"])
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+-- | "Eve"   | 13  | "red"          |
+-- | "Alice" | 17  | "green"        |
+-- > sortByColumns(gradebook, ["quiz2", "quiz1"])
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+
+
+-- ### `orderBy :: t1:Table * Seq<Exists K . getKey:(r:Row -> k:K) * compare:(k1:K * k2:K -> Boolean)> -> t2:Table`
+def orderBy = todo
+-- > nameLength =
+--     function(r):
+--       length(getValue(r, "name"))
+--     end
+-- > le =
+--     function(n1, n2):
+--       n1 <= n2
+--     end
+-- > orderBy(students, [(nameLength, le)])
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   | 12  | "blue"         |
+-- | "Eve"   | 13  | "red"          |
+-- | "Alice" | 17  | "green"        |
+-- > midtermAndFinal =
+--     function(r):
+--       [getValue(r, "midterm"), getValue(r, "final")]
+--     end
+-- > compareGrade =
+--     function(g1, g2):
+--       le(average(g1), average(g2))
+--     end
+-- > orderBy(gradebook, [(nameLength, ge), (midtermAndFinal, compareGrade)])
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Alice" | 17  | 6     | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 84      | 8     | 8     | 77    |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+
+'## Aggregate
+
+'### TODO: `count` (groupBy)
+
+def count = todo
+-- Takes a `Table` and a `ColName` representing the name of a column in that `Table`. Produces a `Table` that summarizes how many rows have each value in the given column.
+--
+-- > count(students, "favorite color")
+-- | value   | count |
+-- | ------- | ----- |
+-- | "blue"  | 1     |
+-- | "green" | 1     |
+-- | "red"   | 1     |
+-- > count(gradebook, "age")
+-- | value | count |
+-- | ----- | ----- |
+-- | 12    | 1     |
+-- | 17    | 1     |
+-- | 13    | 1     |
+
+'### TODO: `bin` (groupBy)
+
+-- ### `bin :: t1:Table * c:ColName * n:Number -> t2:Table`
+def bin = todo
+-- Groups the values of a numeric column into bins. The parameter `n` specifies the bin width. This function is useful in creating histograms and converting continuous random variables to categorical ones.
+--
+-- > bin(students, "age", 5)
+-- | group            | count |
+-- | ---------------- | ----- |
+-- | "10 <= age < 15" | 2     |
+-- | "15 <= age < 20" | 1     |
+-- > bin(gradebook, "final", 5)
+-- | group            | count |
+-- | ---------------- | ----- |
+-- | "75 <= age < 80" | 1     |
+-- | "80 <= age < 85" | 0     |
+-- | "85 <= age < 90" | 2     |
+
+'### TODO: `pivotTable` (groupBy)
+
+-- ### `pivotTable :: t1:Table * cs:Seq<ColName> * aggs:Seq<ColName * ColName * Function> -> t2:Table`
+def pivotTable (c:Label) (t:n=>{@c:a & ...f}) (agg: List {&...f} -> {&...f'}) : n=>{@c:a & ...f'} = todo
+-- Partitions rows into groups and summarize each group with the functions in `agg`. Each element of `agg` specifies the output column, the input column, and the function that compute the summarizing value (e.g. average, sum, and count).
+--
+-- ```lua
+-- > pivotTable(students, ["favorite color"], [("age-average", "age", average)])
+-- | favorite color | age-average |
+-- | -------------- | ----------- |
+-- | "blue"         | 12          |
+-- | "green"        | 17          |
+-- | "red"          | 13          |
+-- > proportion =
+--     function(bs):
+--       n = length(filter(bs, function(b): b end))
+--       n / length(bs)
+--     end
+-- > pivotTable(
+--     jellyNamed,
+--     ["get acne", "brown"],
+--     [
+--       ("red proportion", "red", proportion),
+--       ("pink proportion", "pink", proportion)
+--     ])
+-- | get acne | brown | red proportion | pink proportion |
+-- | -------- | ----- | -------------- | --------------- |
+-- | false    | false | 0              | 3/4             |
+-- | false    | true  | 1              | 1               |
+-- | true     | false | 0              | 1/4             |
+-- | true     | true  | 0              | 0               |
+
+'### TODO: `groupBy` (groupBy)
+
+-- TODO: Write this out to flatten out key and row' as records in the output
+def groupBy (t:n=>row)
+            (getKey:row -> key)
+            (project:row -> value)
+            (aggregate:key -> List value -> row')
+            : List (key & row') = todo
+
+-- Groups the rows of a table according to a specified key selector function and creates a result value from each group and its key. The rows of each group are projected by using a specified function.
+--
+-- > colorTemp =
+--     function(r):
+--       if getValue(r, "favorite color") == "red":
+--         "warm"
+--       else:
+--         "cool"
+--       end
+--     end
+-- > nameLength =
+--     function(r):
+--       length(getValue(r, "name"))
+--     end
+-- > aggregate =
+--     function(k, vs):
+--       [row: ("key", k), ("average", average(vs))]
+--     end
+-- > groupBy(students, colorTemp, nameLength, aggregate)
+-- | key    | average |
+-- | ------ | ------- |
+-- | "warm" | 3       |
+-- | "cool" | 4       |
+-- > abstractAge =
+--     function(r):
+--       if (getValue(r, "age") <= 12):
+--         "kid"
+--       else if (getValue(r, "age") <= 19):
+--         "teenager"
+--       else:
+--         "adult"
+--       end
+--     end
+-- > finalGrade =
+--     function(r):
+--       getValue(r, "final")
+--     end
+-- > groupBy(gradebook, abstractAge, finalGrade, aggregate)
+-- | key        | average |
+-- | ---------- | ------- |
+-- | "kid"      | 87      |
+-- | "teenager" | 81      |
+
+'## Missing values
+
+'### TODO: `completeCases` (type-classes over records)
+
+-- Return a `Seq<Boolean>` with `true` entries indicating rows without missing values (complete cases) in table `t`.
+--
+-- > completeCases(students, "age")
+-- [true, true, true]
+-- > completeCases(studentsMissing, "age")
+-- [false, true, true]
+
+'### TODO: `dropna` (type-classes over records)
+
+-- ### `dropna :: t1:Table -> t2:Table`
+-- Removes rows that have some values missing
+--
+-- > dropna(studentsMissing)
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Alice" | 17  | "green"        |
+-- > dropna(gradebookMissing)
+-- | name  | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ----- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob" | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+
+def fillna {n f a} (c:Label) (t:n=>{@c:(Maybe a) & ...f}) (v:a) : n=>{@c:a & ...f} =
+  for i.
+    {@c=ma, ...rest} = t.i
+    case ma of
+      Nothing -> {@c=v, ...rest}
+      Just v  -> {@c=v, ...rest}
+
+-- > fillna(studentsMissing, "favorite color", "white")
+-- | name    | age | favorite color |
+-- | ------- | --- | -------------- |
+-- | "Bob"   |     | "blue"         |
+-- | "Alice" | 17  | "green"        |
+-- | "Eve"   | 13  | "white"        |
+-- > fillna(gradebookMissing, "quiz1", 0)
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | 6     | 8     | 88      |       | 7     | 85    |
+-- | "Eve"   | 13  | 0     | 9     | 84      | 8     | 8     | 77    |
+
+'## Data Cleaning
+
+'### TODO: `pivotLonger` (??)
+
+-- This is a little difficult, because we'd need to reflect the labels as strings
+
+-- ### `pivotLonger :: t1:Table * cs:Seq<ColName> * c1:ColName * c2:ColName -> t2:Table`
+--
+-- Reshapes the input table and make it longer. The data kept in the named columns are moved to two new columns, one for the column names and the other for the cell values.
+--
+-- > pivotLonger(gradebook, ["midterm", "final"], "exam", "score")
+-- | name    | age | quiz1 | quiz2 | quiz3 | quiz4 | exam      | score |
+-- | ------- | --- | ----- | ----- | ----- | ----- | --------- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 7     | 9     | "midterm" | 77    |
+-- | "Bob"   | 12  | 8     | 9     | 7     | 9     | "final"   | 87    |
+-- | "Alice" | 17  | 6     | 8     | 8     | 7     | "midterm" | 88    |
+-- | "Alice" | 17  | 6     | 8     | 8     | 7     | "final"   | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 8     | 8     | "midterm" | 84    |
+-- | "Eve"   | 13  | 7     | 9     | 8     | 8     | "final"   | 77    |
+-- > pivotLonger(gradebook, ["quiz1", "quiz2", "quiz3", "quiz4", "midterm", "final"], "test", "score")
+-- | name    | age | test      | score |
+-- | ------- | --- | --------- | ----- |
+-- | "Bob"   | 12  | "quiz1"   | 8     |
+-- | "Bob"   | 12  | "quiz2"   | 9     |
+-- | "Bob"   | 12  | "quiz3"   | 7     |
+-- | "Bob"   | 12  | "quiz4"   | 9     |
+-- | "Bob"   | 12  | "midterm" | 77    |
+-- | "Bob"   | 12  | "final"   | 87    |
+-- | "Alice" | 17  | "quiz1"   | 6     |
+-- | "Alice" | 17  | "quiz2"   | 8     |
+-- | "Alice" | 17  | "quiz3"   | 8     |
+-- | "Alice" | 17  | "quiz4"   | 7     |
+-- | "Alice" | 17  | "midterm" | 88    |
+-- | "Alice" | 17  | "final"   | 85    |
+-- | "Eve"   | 13  | "quiz1"   | 7     |
+-- | "Eve"   | 13  | "quiz2"   | 9     |
+-- | "Eve"   | 13  | "quiz3"   | 8     |
+-- | "Eve"   | 13  | "quiz4"   | 8     |
+-- | "Eve"   | 13  | "midterm" | 84    |
+-- | "Eve"   | 13  | "final"   | 77    |
+
+'### TODO: `pivotWider` (lists of labels)
+
+-- Note that this time the list of labels is in the table column
+-- Not sure how to deal with that...
+
+-- ### `pivotWider :: t1:Table * c1:ColName * c2:ColName -> t2:Table`
+--
+-- The inverse of `pivotLonger`.
+--
+-- > pivotWider(students, "name", "age")
+-- | favorite color | Bob | Alice | Eve |
+-- | -------------- | --- | ----- | --- |
+-- | "blue"         | 12  |       |     |
+-- | "green"        |     | 17    |     |
+-- | "red"          |     |       | 13  |
+-- > longerTable =
+--     pivotLonger(
+--       gradebook,
+--       ["quiz1", "quiz2", "quiz3", "quiz4", "midterm", "final"],
+--       "test",
+--       "score")
+-- > pivotWider(longerTable, "test", "score")
+-- | name    | age | quiz1 | quiz2 | quiz3 | quiz4 | midterm | final |
+-- | ------- | --- | ----- | ----- | ----- | ----- | ------- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | 7     | 9     | 77      | 87    |
+-- | "Alice" | 17  | 6     | 8     | 8     | 7     | 88      | 85    |
+-- | "Eve"   | 13  | 7     | 9     | 8     | 8     | 84      | 77    |
+
+'## Utilities
+
+'### TODO: `flatten` (fields map)
+
+-- Can't zip multiple columns together... A typeclass could help.
+
+def flatten (c:Label) (t:n=>{@c:m=>a & ...f}) : (n&m)=>{@c:a & ...f} = todo
+
+-- ### `flatten :: t1:Table * cs:Seq<ColName> -> t2:Table`
+--
+-- When columns `cs` of table `t` have sequences, returns a `Table` where each element of each `c` in `cs` is flattened, meaning the column corresponding to `c` becomes a longer column where the original entries are concatenated. Elements of row `i` of `t` in columns other than `cs` will be repeated according to the length of `getValue(getRow(t1, i), c1)`. These lengths must therefore be the same for each `c` in `cs`.
+--
+-- > flatten(gradebookSeq, ["quizzes"])
+-- | name    | age | quizzes | midterm | final |
+-- | ------- | --- | ------- | ------- | ----- |
+-- | "Bob"   | 12  | 8       | 77      | 87    |
+-- | "Bob"   | 12  | 9       | 77      | 87    |
+-- | "Bob"   | 12  | 7       | 77      | 87    |
+-- | "Bob"   | 12  | 9       | 77      | 87    |
+-- | "Alice" | 17  | 6       | 88      | 85    |
+-- | "Alice" | 17  | 8       | 88      | 85    |
+-- | "Alice" | 17  | 8       | 88      | 85    |
+-- | "Alice" | 17  | 7       | 88      | 85    |
+-- | "Eve"   | 13  | 7       | 84      | 77    |
+-- | "Eve"   | 13  | 9       | 84      | 77    |
+-- | "Eve"   | 13  | 8       | 84      | 77    |
+-- | "Eve"   | 13  | 8       | 84      | 77    |
+-- > t = buildColumn(gradebookSeq, "quiz-pass?",
+--     function(r):
+--       isPass =
+--         function(n):
+--           n >= 8
+--         end
+--       map(getValue(r, "quizzes"), isPass)
+--     end)
+-- > t
+-- | name    | age | quizzes      | midterm | final | quiz-pass?                 |
+-- | ------- | --- | ------------ | ------- | ----- | -------------------------- |
+-- | "Bob"   | 12  | [8, 9, 7, 9] | 77      | 87    | [true, true, false, true]  |
+-- | "Alice" | 17  | [6, 8, 8, 7] | 88      | 85    | [false, true, true, false] |
+-- | "Eve"   | 13  | [7, 9, 8, 8] | 84      | 77    | [false, true, true, true]  |
+-- > flatten(t, ["quiz-pass?", "quizzes"])
+-- | name    | age | quizzes | midterm | final | quiz-pass? |
+-- | ------- | --- | ------- | ------- | ----- | ---------- |
+-- | "Bob"   | 12  | 8       | 77      | 87    | true       |
+-- | "Bob"   | 12  | 9       | 77      | 87    | true       |
+-- | "Bob"   | 12  | 7       | 77      | 87    | false      |
+-- | "Bob"   | 12  | 9       | 77      | 87    | true       |
+-- | "Alice" | 17  | 6       | 88      | 85    | false      |
+-- | "Alice" | 17  | 8       | 88      | 85    | true       |
+-- | "Alice" | 17  | 8       | 88      | 85    | true       |
+-- | "Alice" | 17  | 7       | 88      | 85    | false      |
+-- | "Eve"   | 13  | 7       | 84      | 77    | false      |
+-- | "Eve"   | 13  | 9       | 84      | 77    | true       |
+-- | "Eve"   | 13  | 8       | 84      | 77    | true       |
+-- | "Eve"   | 13  | 8       | 84      | 77    | true       |
+
+def transformColumn {n f a b} (c:Label) (t:n=>{@c:a & ...f}) (fn:a -> b) : n=>{@c:b & ...f} =
+  for i.
+    {@c=v, ...r} = t.i
+    {@c=fn v, ...r}
+
+-- > addLastName =
+--     function(name):
+--       concat(name, " Smith")
+--     end
+-- > transformColumn(students, "name", addLastName)
+-- | name          | age | favorite color |
+-- | ------------- | --- | -------------- |
+-- | "Bob Smith"   | 12  | "blue"         |
+-- | "Alice Smith" | 17  | "green"        |
+-- | "Eve Smith"   | 13  | "red"          |
+-- > quizScoreToPassFail =
+--     function(score):
+--       if score <= 6:
+--         "fail"
+--       else:
+--         "pass"
+--       end
+--     end
+-- > transformColumn(gradebook, "quiz1", quizScoreToPassFail)
+-- | name    | age | quiz1  | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ------ | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | "pass" | 9     | 77      | 7     | 9     | 87    |
+-- | "Alice" | 17  | "fail" | 8     | 88      | 8     | 7     | 85    |
+-- | "Eve"   | 13  | "pass" | 9     | 84      | 8     | 8     | 77    |
+
+'### TODO: `renameColumns` (fields map)
+
+def renameColumn (c:Label) (c':Label) (t:n=>{@c:a & ...f}) : n=>{@c':a & ...f} =
+  for i.
+    {@c=v, ...rest} = t.i
+    {@c'=v, ...rest}
+
+-- ### `renameColumns :: t1:Table * ccs:Seq<ColName * ColName> -> t2:Table`
+-- > renameColumns(students, [("favorite color", "preferred color"), ("name", "first name")])
+-- | first name | age | preferred color |
+-- | ---------- | --- | --------------- |
+-- | "Bob"      | 12  | "blue"          |
+-- | "Alice"    | 17  | "green"         |
+-- | "Eve"      | 13  | "red"           |
+-- > renameColumns(gradebook, [("midterm", "final"), ("final", "midterm")])
+-- | name    | age | quiz1 | quiz2 | final | quiz3 | quiz4 | midterm |
+-- | ------- | --- | ----- | ----- | ----- | ----- | ----- | ------- |
+-- | "Bob"   | 12  | 8     | 9     | 77    | 7     | 9     | 87      |
+-- | "Alice" | 17  | 6     | 8     | 88    | 8     | 7     | 85      |
+-- | "Eve"   | 13  | 7     | 9     | 84    | 8     | 8     | 77      |
+
+def find [Eq a] (t:n=>a) (x:a) : Maybe n = todo
+
+-- ### `find :: t:Table * r:Row -> n:Error<Number>`
+-- > find(students, [row: ("age", 13)])
+-- 2
+-- > find(students, [row: ("age", 14)])
+-- error("not found")
+
+'### TODO: `groupByRetentive` (groupBy)
+
+def groupByRetentive {n f a} (c:Label) (t:n=>{@c:a & ...f}) : List {key: a & groups:(List {@c:a & ...f})} = todo
+
+-- ### `groupByRetentive :: t1:Table * c:ColName -> t2:Table`
+-- > groupByRetentive(students, "favorite color")
+-- | key     | groups                             |
+-- | ------- | ---------------------------------- |
+-- | "blue"  | | name    | age | favorite color | |
+-- |         | | ------- | --- | -------------- | |
+-- |         | | "Bob"   | 12  | "blue"         | |
+-- | "green" | | name    | age | favorite color | |
+-- |         | | ------- | --- | -------------- | |
+-- |         | | "Alice" | 17  | "green"        | |
+-- | "red"   | | name    | age | favorite color | |
+-- |         | | ------- | --- | -------------- | |
+-- |         | | "Eve"   | 13  | "red"          | |
+-- > groupByRetentive(jellyAnon, "brown")
+-- | key   | groups                                                                                  |
+-- | ----- | --------------------------------------------------------------------------------------- |
+-- | false | | get acne | red   | black | white | green | yellow | brown | orange | pink  | purple | |
+-- |       | | -------- | ----- | ----- | ----- | ----- | ------ | ----- | ------ | ----- | ------ | |
+-- |       | | true     | false | false | false | true  | false  | false | true   | false | false  | |
+-- |       | | true     | false | true  | false | true  | true   | false | false  | false | false  | |
+-- |       | | false    | false | false | false | true  | false  | false | false  | true  | false  | |
+-- |       | | false    | false | false | false | false | true   | false | false  | false | false  | |
+-- |       | | false    | false | false | false | false | true   | false | false  | true  | false  | |
+-- |       | | true     | false | true  | false | false | false  | false | true   | true  | false  | |
+-- |       | | false    | false | true  | false | false | false  | false | false  | true  | false  | |
+-- |       | | true     | false | false | false | false | false  | false | true   | false | false  | |
+-- | true  | | get acne | red   | black | white | green | yellow | brown | orange | pink  | purple | |
+-- |       | | -------- | ----- | ----- | ----- | ----- | ------ | ----- | ------ | ----- | ------ | |
+-- |       | | true     | false | false | false | false | false  | true  | true   | false | false  | |
+-- |       | | false    | true  | false | false | false | true   | true  | false  | true  | false  | |
+
+'### TODO: `groupBySubtractive` (groupBy)
+
+def groupBySubtractive {n f a} (c:Label) (t:n=>{@c:a & ...f}) : List {key: a & groups:(List {&...f})} = todo
+-- ### `groupBySubtractive :: t1:Table * c:ColName -> t2:Table`
+--
+-- Similar to `groupByRetentive` but the named column is removed in the output.
+--
+-- > groupBySubtractive(students, "favorite color")
+-- | key     | groups            |
+-- | ------- | ----------------- |
+-- | "blue"  | | name    | age | |
+-- |         | | ------- | --- | |
+-- |         | | "Bob"   | 12  | |
+-- | "green" | | name    | age | |
+-- |         | | ------- | --- | |
+-- |         | | "Alice" | 17  | |
+-- | "red"   | | name    | age | |
+-- |         | | ------- | --- | |
+-- |         | | "Eve"   | 13  | |
+-- > groupBySubtractive(jellyAnon, "brown")
+-- | key   | groups                                                                          |
+-- | ----- | ------------------------------------------------------------------------------- |
+-- | false | | get acne | red   | black | white | green | yellow | orange | pink  | purple | |
+-- |       | | -------- | ----- | ----- | ----- | ----- | ------ | ------ | ----- | ------ | |
+-- |       | | true     | false | false | false | true  | false  | true   | false | false  | |
+-- |       | | true     | false | true  | false | true  | true   | false  | false | false  | |
+-- |       | | false    | false | false | false | true  | false  | false  | true  | false  | |
+-- |       | | false    | false | false | false | false | true   | false  | false | false  | |
+-- |       | | false    | false | false | false | false | true   | false  | true  | false  | |
+-- |       | | true     | false | true  | false | false | false  | true   | true  | false  | |
+-- |       | | false    | false | true  | false | false | false  | false  | true  | false  | |
+-- |       | | true     | false | false | false | false | false  | true   | false | false  | |
+-- | true  | | get acne | red   | black | white | green | yellow | orange | pink  | purple | |
+-- |       | | -------- | ----- | ----- | ----- | ----- | ------ | ------ | ----- | ------ | |
+-- |       | | true     | false | false | false | false | false  | true   | false | false  | |
+-- |       | | false    | true  | false | false | false | true   | false  | true  | false  | |
+
+'### TODO: `update` (???)
+
+-- ### `update :: t1:Table * f:(r1:Row -> r2:Row) -> t2:Table`
+--
+-- Consumes an existing `Table` and produces a new `Table` with the named columns updated, using `f` to produce the values for those columns, once for each row.
+--
+-- > abstractAge =
+--     function(r):
+--       if (getValue(r, "age") <= 12):
+--         [row: ("age", "kid")]
+--       else if (getValue(r, "age") <= 19):
+--         [row: ("age", "teenager")]
+--       else:
+--         [row: ("age", "adult")]
+--       end
+--     end
+-- > update(students, abstractAge)
+-- | name    | age        | favorite color |
+-- | ------- | ---------- | -------------- |
+-- | "Bob"   | "kid"      | "blue"         |
+-- | "Alice" | "teenager" | "green"        |
+-- | "Eve"   | "teenager" | "red"          |
+-- > didWellInFinal =
+--     function(r):
+--       [row:
+--         ("midterm", 85 <= getValue(r, "midterm"))
+--         ("final", 85 <= getValue(r, "final"))]
+--     end
+-- > update(gradebook, didWellInFinal)
+-- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
+-- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
+-- | "Bob"   | 12  | 8     | 9     | false   | 7     | 9     | true  |
+-- | "Alice" | 17  | 6     | 8     | true    | 8     | 7     | true  |
+-- | "Eve"   | 13  | 7     | 9     | false   | 8     | 8     | false |
+
+def select (t:n=>a) (f:a -> n -> b) : n=>b = for i. f t.i i
+
+-- > select(
+--     students,
+--     function(r, n):
+--       [row:
+--         ("ID", n),
+--         ("COLOR", getValue(r, "favorite color")),
+--         ("AGE", getValue(r, "age"))]
+--     end)
+-- | ID | COLOR   | AGE |
+-- | -- | ------- | --- |
+-- | 0  | "blue"  | 12  |
+-- | 1  | "green" | 17  |
+-- | 2  | "red"   | 13  |
+-- > select(
+--     gradebook,
+--     function(r, n):
+--       [row:
+--         ("full name", concat(getValue(r, "name"), " Smith")),
+--         ("(midterm + final) / 2", (getValue(r, "midterm") + getValue(r, "final")) / 2)]
+--     end)
+-- | full name     | (midterm + final) / 2 |
+-- | ------------- | --------------------- |
+-- | "Bob Smith"   | 82                    |
+-- | "Alice Smith" | 86.5                  |
+-- | "Eve Smith"   | 80.5                  |
+
+def selectMany (t:n=>a) (project:a -> n -> List b) (result:a -> b -> c) : List a =
+  todo $ for i.
+    AsList _ els = project t.i i
+    for j. result t.i els.j
+
+-- Projects each row of a table to a new table, flattens the resulting tables into one table, and invokes a result selector function on each row therein. The index of each source row is used in the intermediate projected form of that row.
+--
+-- > selectMany(
+--     students,
+--     function(r, n):
+--       if even(n):
+--         r
+--       else:
+--         head(r, 0)
+--       end
+--     end,
+--     function(r1, r2):
+--       r2
+--     end)
+-- | name  | age | favorite color |
+-- | ----- | --- | -------------- |
+-- | "Bob" | 12  | "blue"         |
+-- | "Eve" | 13  | "red"          |
+-- > repeatRow =
+--     function(r, n):
+--       if n == 0:
+--         r
+--       else:
+--         addRows(repeatRow(r, n - 1), [r])
+--       end
+--     end
+-- > selectMany(
+--     gradebook,
+--     repeatRow,
+--     function(r1, r2):
+--       selectColumns(r2, ["midterm"])
+--     end)
+-- | midterm |
+-- | ------- |
+-- | 77      |
+-- | 88      |
+-- | 88      |
+-- | 84      |
+-- | 84      |
+-- | 84      |
+
+'### TODO: `groupJoin` (groupBy)
+
+-- ### `groupJoin<K> :: t1:Table * t2:Table * getKey1:(r1:Row -> k1:K) * getKey2:(r2:Row -> k2:K) * aggregate:(r3:Row * t3:Table -> r4:Row) -> t4:Table`
+--
+-- - `schema(r1)` is equal to `schema(t1)`
+-- - `schema(r2)` is equal to `schema(t2)`
+-- - `schema(r3)` is equal to `schema(t1)`
+-- - `schema(t3)` is equal to `schema(t2)`
+-- - `schema(t4)` is equal to `schema(r4)`
+-- - `nrows(t4)` is equal to `nrows(t1)`
+--
+-- Correlates the rows of two tables based on equality of keys and groups the results.
+--
+-- > getName =
+--     function(r):
+--       getValue(r, "name")
+--     end
+-- > averageFinal =
+--     function(r, t):
+--       addColumn(r, "final", [average(getColumn(t, "final"))])
+--     end
+-- > groupJoin(students, gradebook, getName, getName, averageFinal)
+-- | name    | age | favorite color | final |
+-- | ------- | --- | -------------- | ----- |
+-- | "Bob"   | 12  | "blue"         | 87    |
+-- | "Alice" | 17  | "green"        | 85    |
+-- | "Eve"   | 13  | "red"          | 77    |
+-- > nameLength =
+--     function(r):
+--       length(getValue(r, "name"))
+--     end
+-- > tableNRows =
+--     function(r, t):
+--       addColumn(r, "nrows", [nrows(t)])
+--     end
+-- > groupJoin(students, gradebook, nameLength, nameLength, tableNRows)
+-- | name    | age | favorite color | nrows |
+-- | ------- | --- | -------------- | ----- |
+-- | "Bob"   | 12  | "blue"         | 2     |
+-- | "Alice" | 17  | "green"        | 1     |
+-- | "Eve"   | 13  | "red"          | 2     |
+
+def join [Eq key] (t1:n=>a) (t2:m=>b) (getKey1:a -> key) (getKey2:b -> key)
+         (combine:a -> b -> c) : List c =
+  concat $ for (i, j).
+    case getKey1 t1.i == getKey2 t2.j of
+      True  -> AsList _ [combine t1.i t2.j]
+      False -> mempty
+
+-- > getName =
+--     function(r):
+--       getValue(r, "name")
+--     end
+-- > addGradeColumn =
+--     function(r1, r2):
+--       addColumn(r1, "grade", [getValue(r2, "final")])
+--     end
+-- > join(students, gradebook, getName, getName, addGradeColumn)
+-- | name    | age | favorite color | grade |
+-- | ------- | --- | -------------- | ----- |
+-- | "Bob"   | 12  | "blue"         | 87    |
+-- | "Alice" | 17  | "green"        | 85    |
+-- | "Eve"   | 13  | "red"          | 77    |
+-- > nameLength =
+--     function(r):
+--       length(getValue(r, "name"))
+--     end
+-- > join(students, gradebook, nameLength, nameLength, addGradeColumn)
+-- | name    | age | favorite color | grade |
+-- | ------- | --- | -------------- | ----- |
+-- | "Bob"   | 12  | "blue"         | 87    |
+-- | "Bob"   | 12  | "blue"         | 77    |
+-- | "Alice" | 17  | "green"        | 85    |
+-- | "Eve"   | 13  | "red"          | 87    |
+-- | "Eve"   | 13  | "red"          | 77    |
+
+'# Buggy programs
+
+'# License
+Many comments in this file are derived from the [B2T2](https://github.com/brownplt/B2T2)
+benchmark, which is licensed under MIT, so we reproduce the license.
+
+-- MIT License
+--
+-- Copyright (c) 2022 Brown University PLT
+--
+-- Permission is hereby granted, free of charge, to any person obtaining a copy
+-- of this software and associated documentation files (the "Software"), to deal
+-- in the Software without restriction, including without limitation the rights
+-- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+-- copies of the Software, and to permit persons to whom the Software is
+-- furnished to do so, subject to the following conditions:
+--
+-- The above copyright notice and this permission notice shall be included in all
+-- copies or substantial portions of the Software.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+-- SOFTWARE.
