@@ -5,7 +5,7 @@ author:             Adam Paszke
 maintainer:         apaszke@google.com
 
 library
-  exposed-modules:  LinearA
+  exposed-modules:  LinearA, LinearB
   build-depends:    base ==4.*, containers, mtl, prettyprinter
   hs-source-dirs:   src
   default-language: Haskell2010
@@ -15,7 +15,7 @@ library
 test-suite spec
   type: exitcode-stdio-1.0
   main-is: Spec.hs
-  other-modules: LinearASpec
+  other-modules: LinearASpec, LinearBSpec
   ghc-options: -Wall
   hs-source-dirs:
       test
