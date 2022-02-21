@@ -135,7 +135,7 @@ s = 1.0
    for i. xs.i + 10
 > [12, 11, 10]
 
-cumsumplus : n=>Float -> n=>Float =
+def cumsumplus {n} : n=>Float -> n=>Float =
  \xs. snd $ scan 0.0 \i c.
    ans = c + xs.i
    (ans, 1.0 + ans)
@@ -275,6 +275,29 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 
 :p 0@(Fin 1)
 > (0@Fin 1)
+
+:p 5@(Fin 5 & Fin 3)
+> ((1@Fin 5), (2@Fin 3))
+
+:p ordinal (1@(Fin 5), 2@(Fin 3))
+> 5
+
+:p for i:(Fin 3 & Fin 5). i
+> [ ((0@Fin 3), (0@Fin 5))
+> , ((0@Fin 3), (1@Fin 5))
+> , ((0@Fin 3), (2@Fin 5))
+> , ((0@Fin 3), (3@Fin 5))
+> , ((0@Fin 3), (4@Fin 5))
+> , ((1@Fin 3), (0@Fin 5))
+> , ((1@Fin 3), (1@Fin 5))
+> , ((1@Fin 3), (2@Fin 5))
+> , ((1@Fin 3), (3@Fin 5))
+> , ((1@Fin 3), (4@Fin 5))
+> , ((2@Fin 3), (0@Fin 5))
+> , ((2@Fin 3), (1@Fin 5))
+> , ((2@Fin 3), (2@Fin 5))
+> , ((2@Fin 3), (3@Fin 5))
+> , ((2@Fin 3), (4@Fin 5)) ]@(Fin 3 & Fin 5)
 
 :p [1, 2, 3].(0@_)
 > 1
@@ -538,20 +561,34 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
   x
 > (Right 1.2)
 
+def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
+  fwd = \v.  case v of
+    {|weights=x|} -> Left x
+    {|biases=x|}  -> Right x
+  bwd = \v. case v of
+    Left x  -> {|weights=x|}
+    Right x -> {|biases=x|}
+  MkIso {fwd, bwd}
+
+instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
+  getSize = \(). size n + size m
+  ordinal = ordinal <<< appIso wbToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso wbToEither
+
 -- Sum types as flattened index sets!
-def Weights (n:Type) (m:Type) : Type = n=>m=>Float
-def Biases  (n:Type)          : Type = n=>Float
-def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Float
+def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
+def Biases  (n:Type)          [Ix n]       : Type = n=>Float
+def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
 
 w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
 b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
 
-def flatten ((w,b):(Weights n m & Biases n)): Params n m =
+def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
     {| weights = (i,j) |} -> w.i.j
     {| biases  = i     |} -> b.i
 
-def unflatten (params:Params n m) : (Weights n m & Biases n) =
+def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
   ( for i. for j. params.({| weights = (i,j)|})
   , for i.        params.({| biases  = i    |}))
 
@@ -665,8 +702,8 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
           x := newtonIter f $ get x
           Continue
 
-:p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
-> 1.414216
+-- :p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
+-- > 1.414216
 
 -- :p
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
@@ -815,7 +852,7 @@ triLit
 > , [3, 4, 5]@(..(2@Fin 4))
 > , [6, 7, 8, 9]@(..(3@Fin 4)) ]
 
-@noinline
+-- @noinline
 def fromLeftFloat (x:(Float | Int)) : Float =
   case x of
     Left x' -> x'
@@ -845,6 +882,10 @@ def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
 
 @noinline
 def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
+
+-- This will compile extremely slowly if non-inlining is broken
+:p f6 0
+> 100000
 
 -- Testing integer powers
 
@@ -877,10 +918,6 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 > [1, 1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048]
 
 
--- This will compile extremely slowly if non-inlining is broken
-:p f6 0
-> 100000
-
 interface AssociatedInt a
   value a : Int
 
@@ -901,30 +938,44 @@ interface AssociatedWithTwo a c
 instance AssociatedWithTwo Int Float
   value2 = 8
 
+-- TODO: the source location for this error message is a bit off since we added
+-- n-ary applications.
 value2 Int Float
 > 8
 value2 Float Int
 > Type error:Couldn't synthesize a class dictionary for: (AssociatedWithTwo Float32 Int32)
 >
 > value2 Float Int
-> ^^^^^^^^^^^^^^^^
+> ^^^^^^^
 
 -- TODO: This is a really bad error message
 interface BadAssociatedName a
   value2 c : Int
-> Error: variable not in scope: c
+> Type error:Explicit type binder `c` in method value2 is not a type parameter of its interface
 
 -- Technically the two tests below are not incorrect, but we don't implement them yet.
 interface AssociatedSubsetOfParams a c
   badValue1 a : Int
-> Compiler bug!
+> Not implemented:
 > Please report this at github.com/google-research/dex-lang/issues
 >
 > Permuted or incomplete explicit type binders are not supported yet.
 
 interface AssociatedPermutedParams a c
   badValue2 c a : Int
-> Compiler bug!
+> Not implemented:
 > Please report this at github.com/google-research/dex-lang/issues
 >
 > Permuted or incomplete explicit type binders are not supported yet.
+
+-- XXX: Disabled because we now compile expressions like these to blocks, which
+-- need a type that makes sense in the top scope. We may revisit that choice.
+-- -- checks that mixing non-data values into the results of case expressions don't
+-- -- prevent them from later being used in types.
+-- :p
+--   x = 1 + 1
+--   (n, _) = case x > 1 of
+--     True  -> (x, \x:Int. x)
+--     False -> (x, \x:Int. x)
+--   for i:(Fin n). 1.0
+-- > [1., 1.]

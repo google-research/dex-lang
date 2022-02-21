@@ -17,11 +17,16 @@ import Foreign.Ptr
 import Data.IORef
 import Data.String
 import Data.List (sortBy)
+import System.IO
+import System.IO.Temp
 import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as C8BS
 import qualified Data.ByteString.Short as SBS
+import qualified Data.ByteString       as BS
 
+import qualified LLVM.Internal.ObjectFile as ObjectFile
 import qualified LLVM.Internal.OrcJIT.CompileLayer as OrcJIT
+import qualified LLVM.Internal.OrcJIT.LinkingLayer as LinkingLayer
 import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Target as T
 import qualified LLVM.Linking as Linking
@@ -74,23 +79,31 @@ data NativeModule =
                }
 
 type CompilationPipeline = LLVM.Module -> IO ()
+type ObjectFileContents = BS.ByteString
 
 -- TODO: This leaks resources if we fail halfway
-compileModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> IO NativeModule
-compileModule moduleJIT@JIT{..} ast compilationPipeline = do
+compileModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module
+              -> CompilationPipeline -> IO NativeModule
+compileModule moduleJIT@JIT{..} objFiles ast compilationPipeline = do
   llvmContext <- LLVM.createContext
   llvmModule <- LLVM.createModuleFromAST llvmContext ast
   compilationPipeline llvmModule
-  moduleKey <- OrcJIT.allocateModuleKey execSession
-  resolver <- newSymbolResolver execSession (makeResolver compileLayer)
-  modifyIORef resolvers (M.insert moduleKey resolver)
+  moduleKey <- newKey
   OrcJIT.addModule compileLayer moduleKey llvmModule
+  mapM_ (loadObjectFile moduleJIT newKey) objFiles
   moduleDtors <- forM dtorNames \dtorName -> do
     dtorSymbol <- OrcJIT.mangleSymbol compileLayer (fromString dtorName)
     Right (OrcJIT.JITSymbol dtorAddr _) <- OrcJIT.findSymbol compileLayer dtorSymbol False
     return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
   return NativeModule{..}
   where
+    newKey :: IO OrcJIT.ModuleKey
+    newKey = do
+      moduleKey <- OrcJIT.allocateModuleKey execSession
+      resolver <- newSymbolResolver execSession (makeResolver compileLayer)
+      modifyIORef resolvers (M.insert moduleKey resolver)
+      return moduleKey
+
     makeResolver :: OrcJIT.IRCompileLayer OrcJIT.ObjectLinkingLayer -> OrcJIT.SymbolResolver
     makeResolver cl = OrcJIT.SymbolResolver \sym -> do
       rsym <- OrcJIT.findSymbol cl sym False
@@ -141,8 +154,8 @@ unloadNativeModule NativeModule{..} = do
   LLVM.disposeModule llvmModule
   LLVM.disposeContext llvmContext
 
-withNativeModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
-withNativeModule jit m p = bracket (compileModule jit m p) unloadNativeModule
+withNativeModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
+withNativeModule jit objs m p = bracket (compileModule jit objs m p) unloadNativeModule
 
 getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
 getFunctionPtr NativeModule{..} funcName = do
@@ -150,3 +163,12 @@ getFunctionPtr NativeModule{..} funcName = do
   symbol <- OrcJIT.mangleSymbol compileLayer $ fromString funcName
   Right (OrcJIT.JITSymbol funcAddr _) <- OrcJIT.findSymbolIn compileLayer moduleKey symbol False
   return $ castPtrToFunPtr $ wordPtrToPtr funcAddr
+
+loadObjectFile :: JIT -> IO OrcJIT.ModuleKey -> ObjectFileContents -> IO ()
+loadObjectFile jit makeKey objFileContents = do
+  withSystemTempFile "objfile.o" \path h -> do
+    BS.hPut h objFileContents
+    hFlush h
+    key <- makeKey
+    ObjectFile.withObjectFile path \objFile -> do
+      LinkingLayer.addObjectFile (linkLayer jit) key objFile

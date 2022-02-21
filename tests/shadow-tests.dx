@@ -37,10 +37,16 @@ arr = 20
 > ^^^^
 
 :p arr
-> 10
+> Error: ambiguous variable: arr is defined:
+> in this file
+> in this file
+>
+>
+> :p arr
+>    ^^^
 
 -- testing top-level shadowing
-f : a -> a = \x. x
+f : a:Type ?-> a -> a = \x. x
 
 x = 1
 
@@ -67,16 +73,16 @@ x = 1
 data Shadow = Shadow
 > Error: variable already defined: Shadow
 
-data Shadow =
+data Shadow2 =
   Shadow1 Int
   Shadow1
 > Error: variable already defined: Shadow1
 
 ShadowCon = 1
-data Shadow = ShadowCon
+data Shadow3 = ShadowCon
 > Error: variable already defined: ShadowCon
 
-data Shadow = ShadowCon'
+data Shadow4 = ShadowCon'
 ShadowCon' = 1
 > Error: variable already defined: ShadowCon'
 >

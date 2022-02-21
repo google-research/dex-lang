@@ -23,21 +23,21 @@ q
 ' ## Quaternion magnitude
  A quaternion is basically a 4 dimensional vector.
 
-as_vec = \ Q{x,y,z,w}. [x, y, z, w]
-from_vec = \ [x, y, z, w]. Q{x,y,z,w}
+as_vec = \Q{x,y,z,w}. [x, y, z, w]
+from_vec = \[x, y, z, w]. Q{x,y,z,w}
 
 ' It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
 
 
 
-def magnitude (x:a=>Float) : Float = sqrt $ sum $ for i. x.i * x.i
+def magnitude {a} (x:a=>Float) : Float = sqrt $ sum $ for i. x.i * x.i
 
 
 ' ## Quaternion normalization
 Like vectors a quaternion can be normalized by dividing each component by the magnitude:
 
-def normalize (x:a=>Float) : a=> Float = 1.0 / (magnitude x) .* x
+def normalize {a} (x:a=>Float) : a=> Float = 1.0 / (magnitude x) .* x
 
 ' A special property of quaternions is that a unit quaternion (a quaternion with magnitude \(1\)) represents a rotation in 3D space.
 
@@ -64,7 +64,7 @@ ident = Q{x=0.0, y=0.0, z=0.0, w=1.0}
 ' ## Quaternion multiplication
 Multiplying two unit quaternions represents a *composition of two rotations*.
 
-' Quaternion multiplication isn't commutative . If we want to apply a rotation \(q_{1}\) then a rotation \(q_{2}\), the resulting rotation \(q_{3}\) is: 
+' Quaternion multiplication isn't commutative . If we want to apply a rotation \(q_{1}\) then a rotation \(q_{2}\), the resulting rotation \(q_{3}\) is:
 $$q_{3}=q_{2}.q_{1}$$
 
 ' Quaternion multiplication looks like this:
@@ -121,12 +121,12 @@ data Euler = E (Fin 3=>Float)
 def euler_to_quat ((E v):Euler) : Quaternion =
     [sx, sy, sz] = for i. sin v.i
     [cx, cy, cz] = for i. cos v.i
-    Q { 
+    Q {
         x = sx*cy*cz - cx*sy*sz,
         y = cx*sy*cz + sx*cy*sz,
         z = cx*cy*sz - sx*sy*cz,
         w = cx*cy*cz + sx*sy*sz
-    }   
+    }
 
 
 
@@ -134,15 +134,15 @@ def euler_to_quat ((E v):Euler) : Quaternion =
 
 ' Libraries like three.js allow us to use quaternions directly for rotations.
 
-' This script implements a simple 3D box positioned based on a quaternion. 
+' This script implements a simple 3D box positioned based on a quaternion.
 
 
 def show3D ((Q {x, y, z, w}): Quaternion) : String =
     "<iframe width=\"100%\" frameborder=\"0\" scrolling=\"no\"  onload=\"this.style.height=this.contentWindow.document.body.scrollHeight+'px'\";
-srcdoc='<html> 
-    <head><script src=\"https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js\"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src=\"https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js\"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -178,9 +178,9 @@ srcdoc='<html>
                    (show z) <> ", " <>
                    (show w) <> "));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe>"
@@ -188,7 +188,7 @@ srcdoc='<html>
 :html show3D one
 > <html output>
 
-rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0]) 
+rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0])
 
 
 :html show3D $ one <> rot
@@ -206,7 +206,7 @@ rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0])
 ' All the way around!
 
 
-rot2 = euler_to_quat (E [pi / 16.0, pi/8.0, 0.0]) 
+rot2 = euler_to_quat (E [pi / 16.0, pi/8.0, 0.0])
 
 :html show3D $ one * rot2
 > <html output>
@@ -242,7 +242,7 @@ Multiplying a quaternion by its inverse results in the identity quaternion:
 q' = from_vec $ normalize $ as_vec $ Q { x=1.0, y=2.0, z=0.5, w=10.0}
 
 
-:html show3D $ one 
+:html show3D $ one
 > <html output>
 
 :html show3D $ one * q'
@@ -270,7 +270,7 @@ rot_right = euler_to_quat (E [0.0, pi/8.0, 0.0])
 :html show3D $ rot_right
 > <html output>
 
-rot_right_down = euler_to_quat (E [pi/16.0, pi/8.0, 0.0]) 
+rot_right_down = euler_to_quat (E [pi/16.0, pi/8.0, 0.0])
 :html show3D $ rot_right_down
 > <html output>
 
@@ -312,7 +312,7 @@ def q_exp (q:Quaternion) : Quaternion =
 
 ' NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit
 
-def acos (x:Float) : Float = 
+def acos (x:Float) : Float =
   negate = select (x < 0.0) 1.0 0.0
   x = abs x
   ret1 = (-0.0187293 * x) + 0.0742610
@@ -321,7 +321,7 @@ def acos (x:Float) : Float =
   ret4 = (ret3 * (sqrt (1.0-x)))
   ret5 = ret4 - (2.0 * negate * ret4)
   negate * pi + ret5
-    
+
 
 ' The logarithm of a quaternion is also a quaternion and is given by this formula:
 

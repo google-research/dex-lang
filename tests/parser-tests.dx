@@ -41,42 +41,13 @@ f = \x. x + 10.
 
 'Lambdas can have specific arrow annotations.
 
-lam1 = \n ?-> \x. fromOrdinal n x
+lam1 = \{n}. \x:(Fin n). ordinal x
 :t lam1
-> ((n:Type) ?-> Int32 -> n)
+> ((n:Int32) ?-> (Fin n) -> Int32)
 
-lam2 = \x --o 2.0 * x
-:t lam2
-> (Float32 --o Float32)
-
-lam3 = \d:(Eq Int) ?=> ()
-:t lam3
-> ((Eq Int32) ?=> Unit)
-
-lam4 = \n m ?-> (0@n, 0@m)
+lam4 = \{n m}. (Fin n, Fin m)
 :t lam4
-> ((n:Type) ?-> (m:Type) ?-> (n & m))
-
--- Not allowed to write regular lambdas or tables using explicit arrows:
-
-\x -> x + 1.0
-
-> Parse error:62:7:
->    |
-> 62 | \x -> x + 1.0
->    |       ^
-> To construct an explicit lambda function, use '.' instead of '->'
->
-
-\i => i
-
-> Parse error:71:7:
->    |
-> 71 | \i => i
->    |       ^
-> To construct a table, use 'for i. body' instead of '\i => body'
->
-
+> (Int32 ?-> Int32 ?-> (Type & Type))
 
 :p (
     1
@@ -104,12 +75,12 @@ def myInt : Int = 1
 :p myInt
 > 1
 
-def myInt : {State h} Int = 1
+def myInt2 : {State Int} Int = 1
 
-> Parse error:107:27:
->     |
-> 107 | def myInt : {State h} Int = 1
->     |                           ^
+> Parse error:78:30:
+>    |
+> 78 | def myInt2 : {State Int} Int = 1
+>    |                              ^
 > Nullary def can't have effects
 
 :p

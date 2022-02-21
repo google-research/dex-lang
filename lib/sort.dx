@@ -10,42 +10,43 @@ it's doing bubble / insertion sort with quadratic time cost.
 However, if breaks the list in half recursively, it'll be doing parallel mergesort.
 Currently it'll do the quadratic time version.
 
-def concatTable (leftin: a=>v) (rightin: b=>v) : ({left:a | right:b }=>v) =
-  -- Note: It'd be nicer to use (a | b)=>v but it's not currently supported.
+def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
   for idx. case idx of
-    {| left = i  |} -> leftin.i
-    {| right = i |} -> rightin.i
+    Left i  -> leftin.i
+    Right i -> rightin.i
 
-def mergeSortedTables [Ord a] (xs:m=>a) (ys:n=>a) : ({left:m | right:n }=>a) =
+def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
-  --  2) Avoid initializing the return array.
-  init = concatTable xs ys
+  --  2) Avoid needlessly initializing the return array.
+  init = concatTable xs ys  -- Initialize array of correct size.
   yieldState init \buf.
     withState (0, 0) \countrefs.
-      for i.
+      for i:(m|n).
         (cur_x, cur_y) = get countrefs
-        noYsLeft = cur_y >= size n
-        stillXsLeft = cur_x < size m
-        cur_x_at_n = (unsafeFromOrdinal _ cur_x)
-        cur_y_at_n = (unsafeFromOrdinal _ cur_y)
-        xIsLess = xs.cur_x_at_n < ys.cur_y_at_n
-        if noYsLeft || (stillXsLeft && xIsLess)
+        if cur_y >= size n  -- no ys left
           then
             countrefs := (cur_x + 1, cur_y)
-            buf!i := xs.cur_x_at_n
+            buf!i := xs.(unsafeFromOrdinal _ cur_x)
           else
-            countrefs := (cur_x, cur_y + 1)
-            buf!i := ys.cur_y_at_n
+            if cur_x < size m -- still xs left
+              then 
+                if xs.(unsafeFromOrdinal _ cur_x) <= ys.(unsafeFromOrdinal _ cur_y)
+                  then
+                    countrefs := (cur_x + 1, cur_y)
+                    buf!i := xs.(unsafeFromOrdinal _ cur_x)
+                  else
+                    countrefs := (cur_x, cur_y + 1)
+                    buf!i := ys.(unsafeFromOrdinal _ cur_y)
 
-def mergeSortedLists [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
+def mergeSortedLists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
   -- Need this wrapper because Dex can't automatically weaken
   -- (a | b)=>c to ((Fin d)=>c)
   sorted = mergeSortedTables xs ys
-  newsize = (Fin (nx + ny)) 
-  AsList _ $ unsafeCastTable newsize sorted
+  newsize = nx + ny
+  AsList _ $ unsafeCastTable (Fin newsize) sorted
 
-def sort [Ord a] (xs: n=>a) : n=>a =
+def sort {a n} [Ord a] (xs: n=>a) : n=>a =
   -- Warning: Has quadratic runtime cost for now.
 
   xlists = for i:n. (AsList 1 [xs.i])
@@ -58,9 +59,9 @@ def sort [Ord a] (xs: n=>a) : n=>a =
   (AsList _ r) = reduce mempty mcombine xlists
   unsafeCastTable n r
 
-def (+|) (i:n) (delta:Int) : n =
+def (+|) {n} [Ix n] (i:n) (delta:Int) : n =
   i' = ordinal i + delta
   fromOrdinal _ $ select (i' >= size n) (size n - 1) i'
 
-def isSorted [Ord a] (xs:n=>a) : Bool =
+def isSorted {a n} [Ord a] (xs:n=>a) : Bool =
   all for i. xs.i <= xs.(i +| 1)

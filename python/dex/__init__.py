@@ -21,18 +21,21 @@ class Module:
 
   def __init__(self, source):
     self._as_parameter_ = api.eval(prelude, api.as_cstr(source))
-    if not self._as_parameter_:
-      api.raise_from_dex()
+    if not self._as_parameter_: api.raise_from_dex()
+
+  @classmethod
+  def _from_ptr(cls, ptr):
+    if not ptr: api.raise_from_dex()
+    self = super().__new__(cls)
+    self._as_parameter_ = ptr
+    return self
 
   def __del__(self):
-    if api.nofree:
-      return
+    if api.nofree: return
     api.destroyContext(self)
 
   def __getattr__(self, name):
     result = api.lookup(self, api.as_cstr(name))
-    if not result:
-      api.raise_from_dex()
     return Atom._from_ptr(result, self)
 
 
@@ -46,13 +49,11 @@ class Prelude(Module):
 prelude = Prelude()
 
 
-def eval(expr: str, module=prelude, _env=None):
-  if _env is None:
-    _env = module
-  result = api.evalExpr(_env, api.as_cstr(expr))
-  if not result:
-    api.raise_from_dex()
-  return Atom._from_ptr(result, module)
+def eval(expr: str):
+  # TODO: Query a free source name
+  _final_env = Module._from_ptr(api.eval(prelude, api.as_cstr("python_result = " + expr)))
+  result = api.lookup(_final_env, api.as_cstr("python_result"))
+  return Atom._from_ptr(result, _final_env)
 
 
 class Atom:
@@ -77,6 +78,7 @@ class Atom:
 
   @classmethod
   def _from_ptr(cls, ptr, module):
+    if not ptr: api.raise_from_dex()
     self = super().__new__(cls)
     self._as_parameter_ = ptr
     self.module = module
@@ -88,7 +90,7 @@ class Atom:
 
   def __repr__(self):
     # TODO: Free!
-    return api.from_cstr(api.print(self))
+    return api.from_cstr(api.print(self.module, self))
 
   def __int__(self):
     return int(self._as_scalar())
@@ -107,6 +109,7 @@ class Atom:
     return value.value
 
   def __call__(self, *args):
+    raise NotImplementedError()
     # TODO: Make those calls more hygenic
     env = self.module
     for i, atom in enumerate(it.chain((self,), args)):
@@ -118,6 +121,7 @@ class Atom:
     return eval(" ".join(f"python_arg{i}" for i in range(len(args) + 1)), module=self.module, _env=env)
 
   def compile(self):
+    raise NotImplementedError()
     func_ptr = api.compile(api.jit, self.module, self)
     if not func_ptr:
       api.raise_from_dex()

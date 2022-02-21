@@ -4,22 +4,22 @@
 - Matrix Inversion
 
 
-def cast (d:a) : m = (ordinal d)@m
+def cast {a m} [Ix a, Ix m] (d:a) : m = (ordinal d)@m
 
 '### Triangular matrices
 
-def LowerTriMat (n:Type) (v:Type) : Type = i:n=>(..i)=>v
-def UpperTriMat (n:Type) (v:Type) : Type = i:n=>(i..)=>v
+def LowerTriMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(..i)=>v
+def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(i..)=>v
 
-def upperTriDiag (u:UpperTriMat n v) : n=>v = for i. u.i.(0@_)
-def lowerTriDiag (l:LowerTriMat n v) : n=>v = for i. l.i.(cast i)
+def upperTriDiag {n v} (u:UpperTriMat n v) : n=>v = for i. u.i.(0@_)
+def lowerTriDiag {n v} (l:LowerTriMat n v) : n=>v = for i. l.i.(cast i)
 
-def transposeLowerToUpper (lower:LowerTriMat n v) : UpperTriMat n v = 
-  for i:n. for j':(i..). 
+def transposeLowerToUpper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
+  for i:n. for j':(i..).
     j = %inject j'
     lower.j.(cast i)
 
-def forward_substitute [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
+def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
   -- Solves lower triangular linear system (inverse a) **. b
   yieldState zero \sRef.
     for i:n.
@@ -27,7 +27,7 @@ def forward_substitute [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
         a.i.(cast k) .* get sRef!(%inject k)
       sRef!i := (b.i - s) / a.i.(cast i)
 
-def backward_substitute [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
+def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
   -- Solves upper triangular linear system (inverse a) **. b
   yieldState zero \sRef.
     rof i:n.
@@ -36,16 +36,16 @@ def backward_substitute [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
       sRef!i := (b.i - s) / a.i.(0@_) -- 0 is the diagonal index
 
 -- Todo: get rid of these by writing a dependent indexing (!) operator.
-def lowerTriMat (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
+def lowerTriMat {a b h} (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
   d = %indexRef ref i
   d!j
-def upperTriMat (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
+def upperTriMat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
   d = %indexRef ref i
   d!j
 
 '### Cholesky decomposition
 
-def chol (x:n=>n=>Float) : LowerTriMat n Float =
+def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
   yieldState zero \buf.
     mat = lowerTriMat buf
     for i:n. for j':(..i).
@@ -65,29 +65,29 @@ def chol (x:n=>n=>Float) : LowerTriMat n Float =
 -- The sign of the determinant of a permutation is either 1.0 or -1.0
 PermutationSign = Float
 
-def Permutation (n:Type) : Type = (perm:n=>n & PermutationSign)
+def Permutation (n:Type) [Ix n] : Type = (perm:n=>n & PermutationSign)
 
-def apply_permutation ((perm, _):Permutation n) (xs: n=>t) : n=>t =
+def apply_permutation {n t} ((perm, _):Permutation n) (xs: n=>t) : n=>t =
   for i. xs.(perm.i)
 
-def identity_permutation : Permutation n =
+def identity_permutation {n} [Ix n] : Permutation n =
   (for i. i, 1.0)
 
-def swapInPlace (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
+def swapInPlace {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
   (permRef, signRef) = (fstRef pRef, sndRef pRef)
   tempj = get permRef!j
   permRef!j := get permRef!i
   permRef!i := tempj
   signRef := -(get signRef)
 
-def permToTable ((perm, _):Permutation n) : n=>n = perm
-def permSign    ((_, sign):Permutation n) : PermutationSign = sign
+def permToTable {n} ((perm, _):Permutation n) : n=>n = perm
+def permSign    {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 
 
 '### LU decomposition functions
 
-def pivotize (a:n=>n=>Float) : Permutation n =
+def pivotize {n} (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yieldState identity_permutation \permRef.
     for j:n.
@@ -96,7 +96,7 @@ def pivotize (a:n=>n=>Float) : Permutation n =
         True -> ()
         False -> swapInPlace permRef j (%inject row_with_largest)
 
-def lu (a: n=>n=>Float) :
+def lu {n} (a: n=>n=>Float) :
        (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
   -- Computes lower, upper, and permuntation matrices from a square matrix,
   -- such that apply_permutation permutation a == lower ** upper.
@@ -162,7 +162,7 @@ def lu (a: n=>n=>Float) :
 
 '### General linear algebra functions.
 
-def solve [VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
+def solve {n v} [VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   -- There's a small speedup possible by exploiting the fact
   -- that l always has ones on the diagonal.  It would just require a
   -- custom forward_substitute routine that doesn't divide
@@ -172,22 +172,22 @@ def solve [VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   y = forward_substitute l b'
   backward_substitute u y
 
-def invert (a:n=>n=>Float) : n=>n=>Float =
+def invert {n} (a:n=>n=>Float) : n=>n=>Float =
   solve a eye
 
-def determinant (a:n=>n=>Float) : Float =
+def determinant {n} (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
   prod (for i. (upperTriDiag u).i * (lowerTriDiag l).i) * permSign perm
 
-def sign_and_log_determinant (a:n=>n=>Float) : (Float & Float) =
+def sign_and_log_determinant {n} (a:n=>n=>Float) : (Float & Float) =
   (l, u, perm) = lu a
   diags = for i. (upperTriDiag u).i * (lowerTriDiag l).i
   sign = (permSign perm) * prod for i. sign diags.i
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
-def matrix_power (base:n=>n=>Float) (power:Int) : n=>n=>Float =
+def matrix_power {n} (base:n=>n=>Float) (power:Int) : n=>n=>Float =
   generalIntegerPower (**) eye base power
 
-def trace [Add a] (x:n=>n=>a) : a =
+def trace {n a} [Add a] (x:n=>n=>a) : a =
   sum for i. x.i.i

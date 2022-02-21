@@ -13,8 +13,10 @@ data Geom =
 
 HtmlColor : Type = Fin 3 => Word8
 
+foreign "showHex" showHexFFI : Word8 -> {IO} (Int32 & RawPtr)
+
 def showHex (x:Word8) : String = unsafeIO \().
-  (n, ptr) = %ffi showHex (Int32 & RawPtr) x
+  (n, ptr) = showHexFFI x
   stringFromCharPtr n (MkPtr ptr)
 
 black : HtmlColor = [IToW8   0, IToW8   0, IToW8   0]
@@ -40,7 +42,7 @@ instance Monoid Diagram
   mempty = MkDiagram mempty
   mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
 
-def concatDiagrams (diagrams:n=>Diagram) : Diagram =
+def concatDiagrams {n} (diagrams:n=>Diagram) : Diagram =
   MkDiagram $ concat for i.
     (MkDiagram d) = diagrams.i
     d
@@ -102,9 +104,9 @@ def removeFill                   : Diagram -> Diagram = updateGeom $ setAt #fill
 'Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).
 
 @noinline
-def strCatUncurried ((xs,ys):(String & String)) : String = xs <> ys
+def strCat (xs:String) (ys:String) : String = xs <> ys
 
-def (<.>) (xs:String) (ys:String) : String = strCatUncurried (xs, ys)
+def (<.>) (xs:String) (ys:String) : String = strCat xs ys
 
 def quote (s:String) : String = "\"" <.> s <.> "\""
 
@@ -112,7 +114,7 @@ def quote (s:String) : String = "\"" <.> s <.> "\""
 def strSpaceCatUncurried ((s1,s2):(String & String)) : String =
   s1 <.> " " <.> s2
 
-def (<+>) [Show a, Show b] (s1:a) (s2:b) : String =
+def (<+>) {a b} [Show a, Show b] (s1:a) (s2:b) : String =
   strSpaceCatUncurried ((show s1), (show s2))
 
 def selfClosingBrackets (s:String) : String = "<" <.> s <.> "/>"
@@ -127,7 +129,7 @@ def tagBracketsAttrUncurried ((tag, attr, s):(String & String & String)) : Strin
 def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
   tagBracketsAttrUncurried (tag, attr, s)
 
-def (<=>) [Show b] (attr:String) (val:b) : String =
+def (<=>) {b} [Show b] (attr:String) (val:b) : String =
   attr <.> "=" <.> quote (show val)
 
 def htmlColor(cs:HtmlColor) : String =
@@ -144,6 +146,7 @@ def attrString (attr:GeomStyle) : String =
   <+> ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
   <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
 
+@noinline
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
   solidAttr = setAt #fillColor (getAt #strokeColor attr) attr
@@ -181,6 +184,7 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
 
 BoundingBox : Type = (Point & Point)
 
+@noinline
 def computeBounds (d:Diagram) : BoundingBox =
   computeSubBound = \sel op (_, p, geom).
     sel p + case geom of
@@ -202,6 +206,7 @@ def computeBounds (d:Diagram) : BoundingBox =
     )
   )
 
+@noinline
 def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   ((xmin, ymin), (xmax, ymax)) = bounds
   imgWidth = 400.0

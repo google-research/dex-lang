@@ -2,18 +2,18 @@
 
 'Utilities unrelated to parsing
 
-def fromOrdinalExc (n:Type) (i:Int) : {Except} n =
+def fromOrdinalExc (n:Type) [Ix n] (i:Int) : {Except} n =
   if (0 <= i) && (i < size n)
     then unsafeFromOrdinal _ i
     else throw ()
 
 -- TODO: allow this to happen in-place
 -- TODO: if it takes too long to make that possible, start with a bounded version
-def push (ref:Ref h (List a)) (x:a) : {State h} Unit =
+def push {h a} (ref:Ref h (List a)) (x:a) : {State h} Unit =
   l = get ref
   ref := l <> AsList _ [x]
 
-def indexList (l:List a) (i:Int) : {Except} a =
+def indexList {a} (l:List a) (i:Int) : {Except} a =
   (AsList n xs) = l
   xs.(fromOrdinalExc _ i)
 
@@ -24,11 +24,11 @@ def ParserHandle (h:Type) : Type = (String & Ref h Int)
 data Parser a:Type =
   MkParser (h:Type ?-> ParserHandle h -> {Except, State h} a)
 
-def parse (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a =
+def parse {a h} (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a =
   (MkParser f) = parser
   f handle
 
-def runParserPartial (s:String) (parser:Parser a) : Maybe a =
+def runParserPartial {a} (s:String) (parser:Parser a) : Maybe a =
   (MkParser f) = parser
   withState 0 \pos.
     catch $ do
@@ -45,7 +45,7 @@ def pChar (c:Char) : Parser Unit = MkParser \(s, posRef).
 def pEOF : Parser Unit = MkParser \(s, posRef).
   assert $ get posRef >= listLength s
 
-def (<|>) (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
+def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
   (s, posRef) = h
   curPos = get posRef
   case catch do parse h p1 of
@@ -54,9 +54,9 @@ def (<|>) (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
       parse h p2
     Just ans -> ans
 
-def return (x:a) : Parser a = MkParser \_. x
+def return {a} (x:a) : Parser a = MkParser \_. x
 
-def runParser (s:String) (parser:Parser a) : Maybe a =
+def runParser {a} (s:String) (parser:Parser a) : Maybe a =
   runParserPartial s $ MkParser \h.
     ans = parse h parser
     _   = parse h pEOF
@@ -69,7 +69,7 @@ def parseAny : Parser Char = MkParser \h.
   posRef := i + 1
   c'
 
-def try (parser:Parser a) : Parser a = MkParser \h.
+def try {a} (parser:Parser a) : Parser a = MkParser \h.
   (s, posRef) = h
   savedPos = get posRef
   ans = catch do parse h parser
@@ -87,10 +87,10 @@ def parseDigit : Parser Int = try $ MkParser \h.
   assert $ 0 <= i && i < 10
   i
 
-def optional (p:Parser a) : Parser (Maybe a) =
+def optional {a} (p:Parser a) : Parser (Maybe a) =
   (MkParser \h. Just (parse h p)) <|> return Nothing
 
-def parseMany (parser:Parser a) : Parser (List a) = MkParser \h.
+def parseMany {a} (parser:Parser a) : Parser (List a) = MkParser \h.
   yieldState (AsList _ []) \results.
     iter \_.
       maybeVal = parse h $ optional parser
@@ -112,12 +112,12 @@ def parseInt : Parser Int = MkParser \h.
     Nothing -> x
     Just () -> (-1) * x
 
-def bracketed (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a =
+def bracketed {a} (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a =
   MkParser \h.
     _   = parse h l
     ans = parse h body
     _   = parse h r
     ans
 
-def parens (parser:Parser a) : Parser a =
+def parens {a} (parser:Parser a) : Parser a =
   bracketed (pChar '(') (pChar ')') parser

@@ -4,18 +4,18 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, safe-names-dev ]
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-18.04]
+        os: [ubuntu-20.04]
         include:
-          - os: ubuntu-18.04
-            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config wget gzip
-            path_extension: /usr/lib/llvm-9/bin
+          - os: ubuntu-20.04
+            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip
+            path_extension: /usr/lib/llvm-12/bin
 
     steps:
     - name: Checkout the repository

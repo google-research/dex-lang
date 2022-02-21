@@ -10,12 +10,13 @@
 module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
   , withLabels, lookupLabelHead, lookupLabel, ExtLabeledItems (..), prefixExtLabeledItems
-  , unzipExtLabeledItems
+  , unzipExtLabeledItems, splitLabeledItems, popLabeledItems
   , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
   , pattern Unlabeled ) where
 
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Hashable
 import Data.Foldable (toList)
 import Data.Store (Store)
 import GHC.Generics
@@ -111,7 +112,28 @@ pattern Unlabeled as <- (_getUnlabeled -> Just as)
           Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
           Nothing -> NoLabeledItems
 
+splitLabeledItems :: LabeledItems a -> LabeledItems b -> (LabeledItems b, LabeledItems b)
+splitLabeledItems (LabeledItems litems) (LabeledItems fullItems) =
+  (LabeledItems left, LabeledItems right)
+  where
+    splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+    splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
+    left  = M.intersectionWith splitLeft fullItems litems
+    right = M.differenceWith splitRight fullItems litems
+
+popLabeledItems :: Label -> LabeledItems b -> Maybe (b, LabeledItems b)
+popLabeledItems l items = case lookupLabelHead items l of
+  Just val -> Just (val, snd $ splitLabeledItems (labeledSingleton l ()) items)
+  Nothing  -> Nothing
+
 -- === instances ===
 
 instance Store a => Store (LabeledItems a)
 instance (Store a, Store b) => Store (ExtLabeledItems a b)
+
+instance Hashable a => Hashable (LabeledItems a) where
+  -- explicit implementation because `Map.Map` doesn't have a hashable instance
+  hashWithSalt salt (LabeledItems items) =
+    hashWithSalt salt $ M.toList items
+
+instance (Hashable a, Hashable b) => Hashable (ExtLabeledItems a b)

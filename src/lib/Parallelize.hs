@@ -17,7 +17,7 @@ import Optimize
 import Syntax
 import Builder
 import Cat
-import Env
+import Subst
 import Type
 import Util (for)
 
@@ -39,23 +39,23 @@ asABlock block = ABlock decls result
     scope = freeVars block
     ((result, decls), _) = runBuilder scope mempty $ scopedDecls $ emitBlock block
 
-data LoopEnv = LoopEnv
+data LoopSubst = LoopEnv
   { loopBinders :: [Var]              -- In scope of the original program
-  , delayedApps :: Env (Atom, [Atom]) -- (n @> (arr, bs)), n and bs in scope of the original program
+  , delayedApps :: Subst (Atom, [Atom]) -- (n @> (arr, bs)), n and bs in scope of the original program
                                       --   arr in scope of the newly constructed program!
   }
-data AccEnv = AccEnv { activeAccs :: Env (Var, (Var, BaseMonoid)) } -- (original region, reference, its base monoid)
+data AccSubst = AccEnv { activeAccs :: Env (Var, (Var, BaseMonoid)) } -- (original region, reference, its base monoid)
 
-type TLParallelM = SubstBuilderT (State AccEnv)   -- Top-level non-parallel statements
-type LoopM       = ReaderT LoopEnv TLParallelM  -- Generation of (parallel) loop nests
+type TLParallelM = SubstBuilderT (State AccSubst)   -- Top-level non-parallel statements
+type LoopM       = ReaderT LoopSubst TLParallelM  -- Generation of (parallel) loop nests
 
 runLoopM :: LoopM a -> TLParallelM a
-runLoopM m = runReaderT m $ LoopEnv mempty mempty
+runLoopM m = runReaderT m $ LoopSubst mempty mempty
 
 extractParallelism :: Module -> Module
 extractParallelism = transformModuleAsBlock go
   where go block = fst $ evalState (runSubstBuilderT mempty mempty
-                     (traverseBlock parallelTrav block)) $ AccEnv mempty
+                     (traverseBlock parallelTrav block)) $ AccSubst mempty
 
 parallelTrav :: TraversalDef TLParallelM
 parallelTrav = ( traverseDecl parallelTrav
@@ -81,9 +81,9 @@ parallelTraverseExpr expr = case expr of
     ~(RefTy _ accTy) <- traverseAtom substTraversalDef $ binderType b
     liftM Atom $ emitRunWriter (binderNameHint b) accTy bm \ref@(Var refVar) -> do
       let RefTy h' _ = varType refVar
-      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (hName, (refVar, bm)) }
+      modify \accSubst -> accEnv { activeAccs = activeAccs accEnv <> b @> (hName, (refVar, bm)) }
       res <- extendR (h @> SubstVal h' <> b @> SubstVal ref) $ evalBlockE parallelTrav body
-      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv `envDiff` (b @> ()) }
+      modify \accSubst -> accEnv { activeAccs = activeAccs accEnv `envDiff` (b @> ()) }
       return res
   -- TODO: Do some alias analysis. This is not fundamentally hard, but it is a little annoying.
   --       We would have to track not only the base references, but also all the aliases, along
@@ -96,9 +96,9 @@ parallelTraverseExpr expr = case expr of
   where
     nothingSpecial = traverseExpr parallelTrav expr
     disallowRef ~(Var refVar) =
-      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv `envDiff` (refVar @> ()) }
+      modify \accSubst -> accEnv { activeAccs = activeAccs accEnv `envDiff` (refVar @> ()) }
 
-parallelizableEffect :: Env () -> Effect -> Bool
+parallelizableEffect :: Subst () -> Effect -> Bool
 parallelizableEffect allowedRegions effect = case effect of
   RWSEffect Writer h | h `isin` allowedRegions -> True
   -- TODO: we should be able to parallelize the exception effect too
@@ -183,7 +183,7 @@ withLoopBinder b m = do
     Ignore ty -> withNameHint ("i"::String) $ freshVarE UnknownBinder ty
   local (\env -> env { loopBinders = loopBinders env <> [v]}) m
 
-delayApps :: Env (Atom, [Atom]) -> LoopM a -> LoopM a
+delayApps :: Subst (Atom, [Atom]) -> LoopM a -> LoopM a
 delayApps apps = local (\env -> env { delayedApps = apps <> delayedApps env })
 
 emitLoops :: (Binder -> (Atom -> TLParallelM Atom) -> TLParallelM Atom)
@@ -199,11 +199,11 @@ emitLoops buildPureLoop (ABlock decls result) = do
   let (iterTy, iterBundleDesc) = mkBundleTy $ fmap varType lbs
   let buildBody pari = do
         is <- unpackBundle pari iterBundleDesc
-        extendR (newEnv lbs $ map SubstVal is) $ do
-          ctxEnv <- flip traverseNames dapps \_ (arr, idx) ->
+        extendR (newSubst lbs $ map SubstVal is) $ do
+          ctxSubst <- flip traverseNames dapps \_ (arr, idx) ->
             -- XXX: arr is namespaced in the new program
             SubstVal <$> (foldM appTryReduce arr =<< substBuilderR idx)
-          extendR ctxEnv $ evalBlockE appReduceTraversalDef $ Block decls $ Atom result
+          extendR ctxSubst $ evalBlockE appReduceTraversalDef $ Block decls $ Atom result
   lift $ case null refs of
     True -> buildPureLoop (Bind $ "pari" :> iterTy) buildBody
     False -> do
@@ -214,9 +214,9 @@ emitLoops buildPureLoop (ABlock decls result) = do
             let writerSpecs = for newRefs \(ref, bm) -> (varName ref, derefType (varType ref), bm)
             emitRunWriters writerSpecs $ \localRefs -> do
               buildFor Fwd (Bind $ "tidx" :> threadRange) \tidx -> do
-                pari <- emitOp $ Inject tidx
-                let regionEnv = newEnv oldRegionNames $ for localRefs \(getType -> RefTy h _) -> SubstVal h
-                extendR (regionEnv <> newEnv oldRefNames (map SubstVal localRefs)) $ buildBody pari
+                pari <- emitOp $ Sink tidx
+                let regionSubst = newEnv oldRegionNames $ for localRefs \(getType -> RefTy h _) -> SubstVal h
+                extendR (regionSubst <> newEnv oldRefNames (map SubstVal localRefs)) $ buildBody pari
       (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce (fmap snd newRefs) iterTy body)
       updates <- unpackRightLeaningConsList updateList
       forM_ (zip newRefs updates) $ \((ref, bm), update) -> do

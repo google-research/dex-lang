@@ -21,7 +21,7 @@ Base64 = Byte -- first two bits should be zero
 
 -- This could go in the prelude, or in a library of array-dicing functions.
 -- An explicit "view" builder would be good here, to avoid copies
-def getChunks
+def getChunks {n a}
     (chunkSize:Int) (padVal:a) (xs:n=>a)
     : List (Fin chunkSize => a) =
   numChunks = idivCeil (size n) chunkSize
@@ -72,7 +72,7 @@ def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
     Just base64s -> Just $ base64sToBytes base64s
 
 -- TODO: put this in prelude?
-def replace [Eq a] ((old,new):(a&a)) (x:a) : a =
+def replace {a} [Eq a] ((old,new):(a&a)) (x:a) : a =
   case x == old of
     True  -> new
     False -> x
@@ -95,14 +95,16 @@ Html : Type = String
 Png  : Type = String
 Gif  : Type = String
 
-def makePNG (img:n=>m=>(Fin 3)=>Word8) : Png = unsafeIO \().
+foreign "encodePNG" encodePNG : RawPtr -> Int32 -> Int32 -> {IO} (Int32 & RawPtr)
+
+def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafeIO \().
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
   withTabPtr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
-    (n, ptr') = %ffi encodePNG (Int & RawPtr) rawPtr (size m) (size n)
+    (n, ptr') = encodePNG rawPtr (size m) (size n)
     toList $ tabFromPtr (Fin n) $ MkPtr ptr'
 
-def pngsToGif (delay:Int) (pngs:t=>Png) : Gif = unsafeIO \().
+def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafeIO \().
   withTempFiles \pngFiles.
     for i. writeFile pngFiles.i pngs.i
     withTempFile \gifFile.
@@ -120,13 +122,13 @@ def imgToHtml (png:String) : Html =
 def floatTo8Bit (x:Float) : Word8 =
   IToW8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
-def imgToPng (img:n=>m=>(Fin 3)=>Float) : Png =
+def imgToPng {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
   makePNG for i j k. floatTo8Bit img.i.j.k
 
 '## API entry point
 
-def imshow (img:n=>m=>(Fin 3)=>Float) : Html =
+def imshow {n m} (img:n=>m=>(Fin 3)=>Float) : Html =
   imgToHtml $ imgToPng img
 
-def imseqshow (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
+def imseqshow {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
   imgToHtml $ pngsToGif 50 $ map imgToPng imgs

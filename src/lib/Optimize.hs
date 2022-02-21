@@ -15,7 +15,7 @@ import Data.Maybe
 import Syntax
 import Builder
 import Cat
-import Env
+import Subst
 import Type
 
 optimizeModule :: Module -> Module
@@ -96,7 +96,7 @@ inlineModule m = transformModuleAsBlock inlineBlock (computeInlineHints m)
   where
     inlineBlock block = fst $ runSubstBuilder mempty mempty (traverseBlock inlineTraversalDef block)
 
-inlineTraverseDecl :: Decl -> InlineM SubstEnv
+inlineTraverseDecl :: Decl -> InlineM SubstSubst
 inlineTraverseDecl decl = case decl of
   Let _ b@(BindWithHint CanInline _) expr@(Hof (For _ body)) | isPure expr -> do
     ~(LamVal ib block) <- traverseAtom inlineTraversalDef body
@@ -111,13 +111,13 @@ inlineTraverseDecl decl = case decl of
     case f of
       TabVal b (Block body result) -> do
         dropSub $ extendR (b@>SubstVal x) $ do
-          blockEnv <- traverseDeclsOpen substTraversalDef body
-          extendR blockEnv $ inlineTraverseDecl $ Let letAnn letBinder result
+          blockSubst <- traverseDeclsOpen substTraversalDef body
+          extendR blockSubst $ inlineTraverseDecl $ Let letAnn letBinder result
       _ -> ((letBinder@>) . SubstVal )<$> withNameHint letBinder (emitAnn letAnn (App f x))
   _ -> traverseDecl inlineTraversalDef decl
 
 -- TODO: This is a bit overeager. We should count under how many loops are we.
---       Even if the array is accessed in an injective fashion, the accesses might
+--       Even if the array is accessed in an sinkive fashion, the accesses might
 --       be happen in a deeply nested loop and we might not want to repeat the
 --       compute over and over.
 inlineTraverseExpr :: Expr -> InlineM Expr
@@ -143,14 +143,14 @@ inlineTraverseExpr expr = case expr of
   _ -> nope
   where nope = traverseExpr inlineTraversalDef expr
 
-type InlineHintM = State (Env InlineHint)
+type InlineHintM = State (Subst InlineHint)
 
 computeInlineHints :: Module -> Module
 computeInlineHints m@(Module _ _ bindings) =
     transformModuleAsBlock (flip evalState bindingsNoInline . hintBlock) m
   where
     usedInBindings = bindingsAsVars $ freeVars bindings
-    bindingsNoInline = newEnv usedInBindings (repeat NoInline)
+    bindingsNoInline = newSubst usedInBindings (repeat NoInline)
 
     hintBlock (Block decls result) = do
       result' <- hintExpr result  -- Traverse result before decls!
@@ -184,7 +184,7 @@ computeInlineHints m@(Module _ _ bindings) =
     hintAtom :: Atom -> InlineHintM Atom
     hintAtom atom = case atom of
       -- TODO: Is it always ok to inline e.g. into a table lambda? Even if the
-      --       lambda indicates that the access pattern would be injective, its
+      --       lambda indicates that the access pattern would be sinkive, its
       --       body can still get instantiated multiple times!
       Lam (Abs b (arr, block)) -> Lam <$> (Abs <$> hintAbsBinder b <*> ((arr,) <$> hintBlock block))
       _ -> noInlineFree atom

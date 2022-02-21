@@ -55,10 +55,11 @@ bottom three sides of the square.
      width=\"100%\">"
 > <html output>
 
-def manifoldLinearize [TangentSpace manifoldA tangentA,
-                       TangentSpace manifoldB tangentB, Add tangentA]
+def manifoldLinearize
+    {manifoldA tangentA manifoldB tangentB}
+    [TangentSpace manifoldA tangentA, TangentSpace manifoldB tangentB, Add tangentA]
     (f: manifoldA -> manifoldB) (x: manifoldA) :
-    (manifoldB & tangentA --o tangentB) = 
+    (manifoldB & tangentA --o tangentB) =
   y = f x
   tangentSpaceMapping : tangentA -> tangentB =
     \ v . tangentLogarithmMap y $ f $ tangentExponentialMap x v
@@ -67,22 +68,24 @@ def manifoldLinearize [TangentSpace manifoldA tangentA,
 
 ' A full proof that this is in fact a correct formulation is a bit more
 involved, so we leave it out here. The general idea is to use the differentiable
-curves formulation of the tangent space, and to treat the tangent space at a 
+curves formulation of the tangent space, and to treat the tangent space at a
 point $x$ as both the tangent space, and as a local chart.
 
 ' Before we can define `grad` for manifolds, we need to create the trivial
 instance of a TangentSpace for vector spaces. In this case, we view the tangent
 space at $x$ to be just a copy of the vector space, centred on $x$.
 
-instance [VSpace a] TangentSpace a a
+instance {a} [VSpace a] TangentSpace a a
   tangentExponentialMap = \ p v . p + v
   tangentLogarithmMap = \ p q . q - p
 
 ' Now we can define a version of the Dex `grad` function which works on
 manifolds.
 
-def manifoldGrad [TangentSpace manifoldA tangentA, VSpace tangentA]
-  (f: manifoldA -> Float) (x: manifoldA) : tangentA = 
+def manifoldGrad
+  {manifoldA tangentA}
+  [TangentSpace manifoldA tangentA, VSpace tangentA]
+  (f: manifoldA -> Float) (x: manifoldA) : tangentA =
   linearized: (Float & (tangentA --o Float)) = manifoldLinearize f x
   transposeLinear (snd linearized) 1.0
 
@@ -93,7 +96,7 @@ non-manifold versions on functions which are defined on $\mathbb{R}^n$.
 
 x = for i:(Fin 10). IToF (ordinal i) / 10.
 
-def myFunc (x : (n => Float)) : Float =
+def myFunc {n} (x : (n => Float)) : Float =
   sum $ for i. if (mod (ordinal i) 2 == 0) then (exp x.i) else (sin x.i)
 
 original = linearize myFunc x
@@ -138,7 +141,7 @@ $\mathbb{R}^2$, that is $x$ = `x / sqrt(x*x + y*y)`, $y$ = `y / sqrt(x*x + y*y)`
 
 -- Normalizes an S1 instance. Note this doesn't modify the point on the circle
 -- which it represents.
-def s1Normalize (S{x, y}: S1) : S1 = 
+def s1Normalize (S{x, y}: S1) : S1 =
   magnitude = sqrt $ x * x + y * y
   (S{x = x / magnitude, y = y / magnitude})
 
@@ -174,7 +177,7 @@ between them: $\cos \theta = (1 - d^2) / 2$.
 function in Dex so we copy the numerical approximation from `quaterions.dx`.
 
 -- source: https://developer.nvidia.com/cg-toolkit
-def acos (x:Float) : Float = 
+def acos (x:Float) : Float =
   negate = select (x < 0.0) 1.0 0.0
   x = abs x
   ret1 = (-0.0187293 * x) + 0.0742610
@@ -193,7 +196,7 @@ instance TangentSpace S1 Float
     (S{x=xn, y=yn}) = s1Normalize (S{x=x, y=y})
     (S{x=sn, y=tn}) = s1Normalize (S{x=s, y=t})
     dSquared = (xn - sn) * (xn - sn) + (yn - tn) * (yn - tn)
-    -- Check if we're using positive or negative inverse cos solution. 
+    -- Check if we're using positive or negative inverse cos solution.
     -- This is done by considering the sign of the cross product of the two
     -- points in 3D space.
     negate = select ((xn * tn - sn * yn) > 0.) 1.0 (-1.0)
@@ -202,7 +205,7 @@ instance TangentSpace S1 Float
 ' Check that the tangent and logarithm are actually inverse to one another:
 
 -- Convenience function to help check for equality.
-def s1ToR2 (S{x=x, y=y}: S1) : (Fin 2 => Float) = 
+def s1ToR2 (S{x=x, y=y}: S1) : (Fin 2 => Float) =
   [x, y]
 
 -- Two arbitrary points on the circle, not normalized.
@@ -260,9 +263,9 @@ def quatAsVec (Q{x, y, z, w}: Quaternion) : (Fin 4 => Float) = [x, y, z, w]
 def quatFromVec ([x, y, z, w]: Fin 4 => Float) : Quaternion = Q{x, y, z, w}
 
 -- General normalization functions for arrays.
-def squareMagnitude (x:a=>Float) : Float = sum $ for i. x.i * x.i 
-def magnitude (x:a=>Float) : Float = sqrt $ squareMagnitude x
-def normalize (x:a=>Float) : a=> Float = (1.0 / (magnitude x)) .* x
+def squareMagnitude {a} (x:a=>Float) : Float = sum $ for i. x.i * x.i
+def magnitude {a} (x:a=>Float) : Float = sqrt $ squareMagnitude x
+def normalize {a} (x:a=>Float) : a=> Float = (1.0 / (magnitude x)) .* x
 
 -- Normalization for quaternions.
 def quatNormalize (q: Quaternion) : Quaternion =
@@ -338,7 +341,7 @@ of approximation terms will be reduced by each successive differentiation.
 R3 = (Fin 3 => Float)
 
 -- Taylor expansion for sinc (sqrt x).
-def sincSqrt (x : Float) : Float = 
+def sincSqrt (x : Float) : Float =
  (1.
   - (x  / 6.)
   + (x * x / 120.)
@@ -348,17 +351,17 @@ def sincSqrt (x : Float) : Float =
   + (x * x * x * x * x *  x / 6227020800.))
 
 -- Taylor expansion for cos (sqrt x).
-def cosSqrt (x: Float) : Float = 
-  (1. 
+def cosSqrt (x: Float) : Float =
+  (1.
    - (x / 2.)
    + (x * x / 24.)
    - (x * x * x / 720.)
-   + (x * x * x * x / 40320.) 
+   + (x * x * x * x / 40320.)
    - (x * x * x * x * x / 3628800.)
    + (x * x * x * x * x * x / 479001600.))
 
 -- Taylor expansion for sinc (arccos x)
-def sincAcos (x: Float) : Float = 
+def sincAcos (x: Float) : Float =
   (2. / pi
    + x * 4. / (pow pi 2.)
    + x * x * (8. - pow pi 2.) / (pow pi 3.)
@@ -367,7 +370,7 @@ def sincAcos (x: Float) : Float =
    - x * x * x * x * x * 8. * (pow pi 4. - 120.) / (15. * pow pi 6.))
 
 -- Exponential function at the identity.
-def quatExpAtIdent (v : R3) : Quaternion = 
+def quatExpAtIdent (v : R3) : Quaternion =
   [x', y', z'] = v
   m2 = squareMagnitude v
   -- This is equal to sinc (m / 2) = 2 * sin (m / 2) / m
@@ -424,7 +427,7 @@ allclose tangentLooseTolerance rtol (quatExpAtIdentInv $ quatExpAtIdent tangentV
 expOfTangentVectorForTest : Quaternion = tangentExponentialMap quatForTestOne tangentVectorForTest
 roundTripTangentVectorForTest : R3 =
   tangentLogarithmMap quatForTestOne expOfTangentVectorForTest
-allclose tangentLooseTolerance rtol roundTripTangentVectorForTest tangentVectorForTest 
+allclose tangentLooseTolerance rtol roundTripTangentVectorForTest tangentVectorForTest
 > True
 
 
@@ -454,7 +457,7 @@ allclose quatLooseTolerance rtol perturbedRotationDirect perturbedRotationCompos
 ' Now we can test the linearization and gradient functions.
 
 -- A function to get the Euler-angle roll from a quaternion.
-def quatRoll (Q{x, y, z, w} : Quaternion) : Float = 
+def quatRoll (Q{x, y, z, w} : Quaternion) : Float =
   sinrCosp = 2. * (w * x + y * z)
   cosrCosp = 1. - 2. * (x * x + y * y)
   atan2 sinrCosp cosrCosp

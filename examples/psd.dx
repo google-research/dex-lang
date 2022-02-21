@@ -2,7 +2,7 @@
 
 import linalg
 
-def psdsolve (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+def psdsolve {n} (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
   l = chol mat
   b' = forward_substitute l b
   u = transposeLowerToUpper l
@@ -18,7 +18,7 @@ psd : N=>N=>Float =
   x = a ** transpose a
   x + eye
 
-def padLowerTriMat [Add v] (mat:LowerTriMat n v) : n=>n=>v = 
+def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
   for i j.
     if (ordinal j)<=(ordinal i)
       then mat.i.(cast j)

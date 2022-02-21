@@ -48,6 +48,7 @@ enumeration variable.
 ' We can also display it as html. To do this we include the plot library.
   Right now our table is not so interesting :)
 
+import png
 import plot
 
 :html matshow x
@@ -121,7 +122,7 @@ mean y
 '## Typed indexing
 
 ' The use of typed indices lets you do really neat things, but
-  lets consider how it works. Critically, one cannot
+  let's consider how it works. Critically, one cannot
   simply index an table with an integer.
 
 r = x.(2 : Int)
@@ -248,7 +249,7 @@ add5 1.0
   table argument type: this declares the type variable `n` as the index type of
   the table argument.
 
-def tableAdd5' (x : n => Float32) : n => Float32 =
+def tableAdd5' {n} (x : n => Float32) : n => Float32 =
     for i. x.i + 5.0
 
 :t tableAdd5' y
@@ -260,12 +261,12 @@ def tableAdd5' (x : n => Float32) : n => Float32 =
 
 ' Imagine we have `transpose` function. We can encode the shape change in the type.
 
-def transFloat (x : m => n => Float32) : n => m => Float32 =
+def transFloat {m n} (x : m => n => Float32) : n => m => Float32 =
     for i. for j. x.j.i
 
 ' We can even make it more generic by abstracting over the value type.
 
-def trans (x : m => n => v) : n => m => v =
+def trans {m n v} (x : m => n => v) : n => m => v =
     for i. for j. x.j.i
 
 ' We can also use this to check for shape errors:
@@ -273,7 +274,7 @@ def trans (x : m => n => v) : n => m => v =
 :t x
 > ((Fin 3) => (Fin 8) => Float32)
 
-def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
+def tableAdd' {m n} (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
     for i. for j. x.i.j + y.i.j
 
 :t tableAdd' x x
@@ -375,10 +376,12 @@ imscolor2 = for b. for i. for j. for c:Channels.
   pixel in a tile grid pattern. See if you can figure out the other
   types.
 
-def split (x: m=>v) : n=>o=>v =
+def split {m n o v} [Ix n, Ix o] (x: m=>v) : n=>o=>v =
     for i j. x.(ordinal (i,j)@_)
 
-def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
+def imtile {a b n o p q v}
+           [Ix n, Ix o, Ix p, Ix q]
+           (x: a=>b=>v) : n=>o=>p=>q=>v =
     for kh kw h w. (split (split x).h.kh).w.kw
 
 im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@_)
@@ -416,7 +419,7 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
   the `State` effect, which provides getter and setter functionality (via `get`
   and `:=` assignment). Here's what it looks like:
 
-def tableMean (x : n => Float32) : Float32 =
+def tableMean {n} (x : n => Float32) : Float32 =
     -- acc = 0
     withState 0.0 $ \acc.
          -- for i in range(len(x))
@@ -498,7 +501,7 @@ withState 10 $ \ state.
   integer tables (of type `n => Float32`).
 
 :t tableMean
-> ((n:Type) ?-> (n => Float32) -> Float32)
+> ((n:Type) ?-> (Ix n) ?=> (n => Float32) -> Float32)
 
 ' If we try to apply `tableMean` to other types for get errors. For example,
   `tableMean` does not work when applied to a table of *pairs* of floats.
@@ -561,7 +564,7 @@ instance VSpace (Float32 & Float32)
 ' Once we have these two instance definitions, we can revisit our table sum
   function using them:
 
-def tableMean' [VSpace v] (x : n => v) : v =
+def tableMean' {n v} [VSpace v] (x : n => v) : v =
    withState zero $ \acc: (Ref _ v).
         for i.
             acc := add (get acc) x.i       -- `Add` requirement
@@ -577,12 +580,12 @@ tableMean' [(1.0, 0.5), (0.5, 0.8)]
   we can and should instead define `Add` and `VSpace` instances for generic
 ' tuple types.
 
-instance [Add v, Add w] Add (v & w)
+instance {v w} [Add v, Add w] Add (v & w)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
   sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
   zero = (zero, zero)
 
-instance [VSpace v, VSpace w] VSpace (v & w)
+instance {v w} [VSpace v, VSpace w] VSpace (v & w)
   scaleVec = \s (x, y). (scaleVec s x, scaleVec s y)
 
 '## More Fashion MNist
@@ -593,7 +596,7 @@ instance [VSpace v, VSpace w] VSpace (v & w)
 
 Pixels = Fin 256
 
-def bincount (inp : a => b) : b => Int =
+def bincount {a b} [Ix b] (inp : a => b) : b => Int =
     withState zero \acc .
         for i.
             v = acc!(inp.i)
@@ -611,7 +614,7 @@ hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
 
 ' Find nearest images in the dataset:
 
-def imdot (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
+def imdot {m n} (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
     sum for (i, j). x.i.j * y.i.j
 
 dist = for b1. for b2.
@@ -670,7 +673,7 @@ temptab
 
 shoes = (5 @ Class)
 
-def findShoes (x : a=>b) (y : a=>Class) : List b =
+def findShoes {a b} (x : a=>b) (y : a=>Class) : List b =
     concat for i. case (y.i == (5 @ _)) of
             True -> toList [x.i]
             False -> toList []

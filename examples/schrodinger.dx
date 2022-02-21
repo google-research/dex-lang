@@ -44,20 +44,20 @@ def fToC (x:Float) : Complex = MkComplex x 0.
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension
-def ixToF (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
+def ixToF {n} [Ix n] (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
 
 -- Helper to generate zero-delay GIF animations
-def animate (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
+def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
   imgToHtml $ pngsToGif 0 $ map imgToPng imgs
 
 -- Cuts an array down to a smaller dimension.
 -- Useful for cutting out animation frames for a faster GIF.
-def cut (x:n=>a) : m=>a =
+def cut {n m a} [Ix m] (x:n=>a) : m=>a =
   s = idiv (size n) (size m)
   for i:m. x.(unsafeFromOrdinal _ $ s * ordinal i)
 
 -- Converts a given 2D matrix to a greyscale image.
-def toImg (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
+def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
   scale = 1. / maximum (map maximum xs)
   for h.
     for w c. scale * xs.h.w
@@ -65,18 +65,18 @@ def toImg (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
 '## Computing $\psi_{t+\Delta t}$
 
 -- Are the given indices at the bounds of the grid
-def atBounds (i:n) (j:m) : Bool =
+def atBounds {n m} [Ix n, Ix m] (i:n) (j:m) : Bool =
   (ordinal i == 0
    || ordinal i == (gridSize - 1)
    || ordinal j == 0
    || ordinal j == (gridSize - 1))
 
 -- Operators for performing unsafe ordinal arithmetic
-def (+!) (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
-def (-!) (i:n) (off:Int) : n = i +! (-1 * off)
+def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
+def (-!) {n} [Ix n] (i:n) (off:Int) : n = i +! (-1 * off)
 
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
-def step (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
+def step {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
   for i j.
     if atBounds i j
       then zero
@@ -91,11 +91,11 @@ def step (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
          - (i_ * (fToC $ dt * v.i.j) * psi.i.j))
 
 -- Computes time evolution of wavefunction.
-def evolve (psi:m=>n=>Complex) (v:m=>n=>Float): Steps=>m=>n=>Complex =
+def evolve {m n} (psi:m=>n=>Complex) (v:m=>n=>Float): Steps=>m=>n=>Complex =
   scan' psi (\i x. step x v)
 
 -- Compute the Born rule probability distribution by |psi|**2
-def pdf (psi:n=>m=>Complex) : n=>m=>Float =
+def pdf {n m} (psi:n=>m=>Complex) : n=>m=>Float =
   pdf = for i j. complex_mag (pow psi.i.j (fToC 2.))
   scale = sum (map sum pdf)
   for i j. divide pdf.i.j scale
@@ -103,7 +103,7 @@ def pdf (psi:n=>m=>Complex) : n=>m=>Float =
 '## Examples
 
 -- Generate gaussian initial conditions with zero at the bounds.
-def gaussian ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
+def gaussian {n m} [Ix n, Ix m] ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
   for i:n.
     for j:m.
       y2 = pow (ixToF i - uy) 2.
@@ -113,7 +113,7 @@ def gaussian ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Compl
         else fToC $ exp (-0.5 * ((x2 / (pow ox 2.)) + (y2 / (pow oy 2.))))
 
 -- Create an animation of the evolution of the given wavefunction under the given potential.
-def run (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
+def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
   animate (map toImg (cut (map pdf (evolve psi v))):(Fin gifFrames=>_))
 
 ' Centred particle in a zero-potential box.

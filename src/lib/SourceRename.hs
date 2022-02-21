@@ -6,106 +6,183 @@
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 
-module SourceRename (renameSourceNames) where
+module SourceRename ( renameSourceNamesTopUDecl, uDeclErrSourceMap
+                    , renameSourceNamesUExpr) where
 
-import Data.Char (isLower)
-import Data.List (nub)
-import Data.String
-import Control.Monad.Writer
-import Control.Monad.Reader
+import Prelude hiding (id, (.))
+import Data.List (sort)
+import Control.Category
+import Control.Monad.Except hiding (Except)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
-import Env
 import Err
 import LabeledItems
+import Name
 import Syntax
+import PPrint()
 
-renameSourceNames :: Fallible m => Scope -> SourceMap -> SourceUModule -> m UModule
-renameSourceNames scope sourceMap m =
-  runReaderT (runReaderT (renameSourceNames' m) (scope, sourceMap)) False
+renameSourceNamesTopUDecl
+  :: (Fallible1 m, EnvReader m)
+  => ModuleSourceName -> UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
+renameSourceNamesTopUDecl mname decl = do
+  Distinct <- getDistinct
+  Abs renamedDecl sourceMapLocalNames <- liftRenamer $ sourceRenameTopUDecl decl
+  let sourceMap = SourceMap $ fmap (fmap (\(LocalVar v) -> ModuleVar mname (Just v))) $
+                    fromSourceMap sourceMapLocalNames
+  return $ Abs renamedDecl sourceMap
 
-type RenameEnv = (Scope, SourceMap)
+uDeclErrSourceMap:: ModuleSourceName -> UDecl VoidS VoidS -> SourceMap n
+uDeclErrSourceMap mname decl =
+  SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
 
--- We have this class because we want to read some extra context (whether
--- shadowing is allowed) but we've already used up the MonadReader
--- (we can't add a field because we want it to be monoidal).
-class (MonadReader RenameEnv m, Fallible m) => Renamer m where
-  askMayShadow :: m Bool
-  setMayShadow :: Bool -> m a -> m a
+renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
+renameSourceNamesUExpr expr = do
+  Distinct <- getDistinct
+  liftRenamer $ sourceRenameE expr
 
-instance Fallible m => Renamer (ReaderT RenameEnv (ReaderT Bool m)) where
-  askMayShadow = lift ask
-  setMayShadow mayShadow cont = do
-    env <- ask
-    lift $ local (const mayShadow) (runReaderT cont env)
+sourceRenameTopUDecl
+  :: (Renamer m, Distinct o)
+  => UDecl i i' -> m o (Abs UDecl SourceMap o)
+sourceRenameTopUDecl udecl =
+  sourceRenameB udecl \udecl' -> do
+    SourceMap fullSourceMap <- askSourceMap
+    let partialSourceMap = fullSourceMap `M.restrictKeys` sourceNames udecl
+    return $ Abs udecl' $ SourceMap partialSourceMap
 
-renameSourceNames' :: Renamer m => SourceUModule -> m UModule
-renameSourceNames' (SourceUModule decl) = do
-  (decl', (_, sourceMap)) <- runWithEnv $ sourceRenamableBTopDecl decl
-  return $ UModule decl' sourceMap
+data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
+                                   , renamerMayShadow :: Bool }
+
+newtype RenamerM (n::S) (a:: *) =
+  RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , ScopeReader, ScopeExtender)
+
+liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
+liftRenamer cont = do
+  sm <- withEnv $ envSourceMap . moduleEnv
+  Distinct <- getDistinct
+  (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
+    runOutReaderT (RenamerSubst sm False) $ runRenamerM $ cont
+
+class ( Monad1 m, ScopeReader m
+      , ScopeExtender m, Fallible1 m) => Renamer m where
+  askMayShadow :: m n Bool
+  setMayShadow :: Bool -> m n a -> m n a
+  askSourceMap    :: m n (SourceMap n)
+  extendSourceMap :: SourceName -> UVar n -> m n a -> m n a
+
+instance Renamer RenamerM where
+  askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
+  askSourceMap = RenamerM $ renamerSourceMap <$> askOutReader
+  setMayShadow mayShadow (RenamerM cont) = RenamerM do
+    RenamerSubst sm _ <- askOutReader
+    localOutReader (RenamerSubst sm mayShadow) cont
+  extendSourceMap name var (RenamerM cont) = RenamerM do
+    RenamerSubst sm mayShadow <- askOutReader
+    let ext = SourceMap $ M.singleton name [LocalVar var]
+    localOutReader (RenamerSubst (sm <> ext) mayShadow) cont
 
 class SourceRenamableE e where
-  sourceRenameE :: Renamer m => e -> m e
+  sourceRenameE :: (Distinct o, Renamer m) => e i -> m o (e o)
 
-class SourceRenamableB b where
-  sourceRenameB :: Renamer m => b -> WithEnv RenameEnv m b
+class SourceRenamableB (b :: B) where
+  sourceRenameB :: (Renamer m, Distinct o)
+                => b i i'
+                -> (forall o'. DExt o o' => b o o' -> m o' a)
+                -> m o a
 
-withSourceRenameB :: SourceRenamableB b => Renamer m => b -> (b -> m r) -> m r
-withSourceRenameB b cont = do
-  (b', env) <- runWithEnv $ sourceRenameB b
-  local (<>env) $ cont b'
-
-instance SourceRenamableE UVar where
-  sourceRenameE (USourceVar sourceName) = do
-    SourceMap sourceMap <- asks snd
-    case M.lookup sourceName sourceMap of
-      Nothing    -> throw UnboundVarErr $ pprint sourceName
-      -- TODO: consider distinguishing between these cases in the UExpr IR
-      Just (SrcAtomName     name) -> return $ UInternalVar name
-      Just (SrcTyConName    name) -> return $ UInternalVar name
-      Just (SrcDataConName  name) -> return $ UInternalVar name
-      Just (SrcClassName    name) -> return $ UInternalVar name
-      Just (SrcMethodName   name) -> return $ UInternalVar name
+instance SourceRenamableE (SourceNameOr UVar) where
+  sourceRenameE (SourceName sourceName) =
+    InternalName sourceName <$> lookupSourceName sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-instance SourceRenamableB UBinder where
-  sourceRenameB b = sourceRenameUBinder SrcAtomName b
+lookupSourceName :: Renamer m => SourceName -> m n (UVar n)
+lookupSourceName v = do
+  sm <- askSourceMap
+  case lookupSourceMapPure sm v of
+    [] -> throw UnboundVarErr $ pprint v
+    LocalVar v' : _ -> return v'
+    [ModuleVar _ maybeV] -> case maybeV of
+      Just v' -> return v'
+      Nothing -> throw VarDefErr v
+    vs -> throw AmbiguousVarErr $ ambiguousVarErrMsg v vs
+
+ambiguousVarErrMsg :: SourceName -> [SourceNameDef n] -> String
+ambiguousVarErrMsg v defs =
+  -- we sort the lines to make the result a bit more deterministic for quine tests
+  pprint v ++ " is defined:\n" ++ unlines (sort $ map defsPretty defs)
+  where
+    defsPretty :: SourceNameDef n -> String
+    defsPretty (ModuleVar mname _) = case mname of
+      Main -> "in this file"
+      Prelude -> "in the prelude"
+      OrdinaryModule mname' -> "in " ++ pprint mname'
+    defsPretty (LocalVar _) =
+      error "shouldn't be possible because module vars can't shadow local ones"
+
+instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UAtomVar v -> return $ InternalName sourceName v
+      _ -> throw TypeErr $ "Not an ordinary variable: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
+instance SourceRenamableE (SourceNameOr (Name DataConNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UDataConVar v -> return $ InternalName sourceName v
+      _ -> throw TypeErr $ "Not a data constructor: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
+instance SourceRenamableE (SourceNameOr (Name ClassNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UClassVar v -> return $ InternalName sourceName v
+      _ -> throw TypeErr $ "Not a class name: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
+instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
+  sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
+
+instance SourceRenamableB (UBinder AtomNameC) where
+  sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
 
 instance SourceRenamableB UPatAnn where
-  sourceRenameB (UPatAnn b ann) = do
-    ann' <- lift (mapM sourceRenameE ann)
-    b' <- sourceRenameB b
-    return $ UPatAnn b' ann'
+  sourceRenameB (UPatAnn b ann) cont = do
+    ann' <- mapM sourceRenameE ann
+    sourceRenameB b \b' ->
+      cont $ UPatAnn b' ann'
 
-instance SourceRenamableB UAnnBinder where
-  sourceRenameB (UAnnBinder b ann) = do
-    ann' <- lift $ sourceRenameE ann
-    b' <- sourceRenameB b
-    return $ UAnnBinder b' ann'
+instance SourceRenamableB (UAnnBinder AtomNameC) where
+  sourceRenameB (UAnnBinder b ann) cont = do
+    ann' <- sourceRenameE ann
+    sourceRenameB b \b' ->
+      cont $ UAnnBinder b' ann'
 
 instance SourceRenamableB UPatAnnArrow where
-  sourceRenameB (UPatAnnArrow b arrow) = do
-    b' <- sourceRenameB b
-    return $ UPatAnnArrow b' arrow
+  sourceRenameB (UPatAnnArrow b arrow) cont =
+    sourceRenameB b \b' -> cont $ UPatAnnArrow b' arrow
 
 instance SourceRenamableE UExpr' where
   sourceRenameE expr = setMayShadow True case expr of
     UVar v -> UVar <$> sourceRenameE v
-    ULam pat arr body ->
-      withSourceRenameB pat \pat' ->
-        ULam pat' <$> sourceRenameE arr <*> sourceRenameE body
-    UPi pat arr body ->
-      withSourceRenameB pat \pat' ->
-        UPi pat' <$> sourceRenameE arr <*> sourceRenameE body
-    UApp arr f x -> UApp <$> sourceRenameE arr <*> sourceRenameE f <*> sourceRenameE x
-    UDecl decl rest ->
-      withSourceRenameB decl \decl' ->
-        UDecl decl' <$> sourceRenameE rest
-    UFor d pat body ->
-      withSourceRenameB pat \pat' ->
-        UFor d pat' <$> sourceRenameE body
+    ULam (ULamExpr arr pat body) ->
+      sourceRenameB pat \pat' ->
+        ULam <$> ULamExpr arr pat' <$> sourceRenameE body
+    UPi (UPiExpr arr pat eff body) ->
+      sourceRenameB pat \pat' ->
+        UPi <$> (UPiExpr arr pat' <$> sourceRenameE eff <*> sourceRenameE body)
+    UApp arr f x -> UApp arr <$> sourceRenameE f <*> sourceRenameE x
+    UDecl (UDeclExpr decl rest) ->
+      sourceRenameB decl \decl' ->
+        UDecl <$> UDeclExpr decl' <$> sourceRenameE rest
+    UFor d (UForExpr pat body) ->
+      sourceRenameB pat \pat' ->
+        UFor d <$> UForExpr pat' <$> sourceRenameE body
     UCase scrut alts ->
       UCase <$> sourceRenameE scrut <*> mapM sourceRenameE alts
     UHole -> return UHole
@@ -114,128 +191,177 @@ instance SourceRenamableE UExpr' where
     UIndexRange low high ->
       UIndexRange <$> mapM sourceRenameE low <*> mapM sourceRenameE high
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
-    URecord (Ext tys ext) -> URecord <$>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+    ULabel name -> return $ ULabel name
+    URecord elems -> URecord <$> mapM sourceRenameE elems
     UVariant types label val ->
-      UVariant <$> mapM sourceRenameE types <*> return label <*> sourceRenameE val
+      UVariant types <$> return label <*> sourceRenameE val
     UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
-    URecordTy (Ext tys ext) -> URecordTy <$>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+    ULabeledRow elems -> ULabeledRow <$> mapM sourceRenameE elems
+    URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
     UVariantTy (Ext tys ext) -> UVariantTy <$>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
 
+instance SourceRenamableE UFieldRowElem where
+  sourceRenameE = \case
+    UStaticField l e -> UStaticField l <$> sourceRenameE e
+    UDynField    v e -> UDynField  <$> sourceRenameE v <*> sourceRenameE e
+    UDynFields   v   -> UDynFields <$> sourceRenameE v
+
 instance SourceRenamableE UAlt where
   sourceRenameE (UAlt pat body) =
-    withSourceRenameB pat \pat' ->
+    sourceRenameB pat \pat' ->
       UAlt pat' <$> sourceRenameE body
 
-instance (Ord a, SourceRenamableE a) => SourceRenamableE (EffectRowP a) where
+instance ((forall n. Ord (a n)), SourceRenamableE a) => SourceRenamableE (EffectRowP a) where
   sourceRenameE (EffectRow row tailVar) =
-    EffectRow <$> row'  <*> mapM sourceRenameE tailVar
+    EffectRow <$> row' <*> mapM sourceRenameE tailVar
     where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
 
 instance SourceRenamableE a => SourceRenamableE (EffectP a) where
-  sourceRenameE eff = traverse sourceRenameE eff
+  sourceRenameE (RWSEffect rws (Just name)) = RWSEffect rws <$> Just <$> sourceRenameE name
+  sourceRenameE (RWSEffect rws Nothing) = return $ RWSEffect rws Nothing
+  sourceRenameE ExceptionEffect = return ExceptionEffect
+  sourceRenameE IOEffect = return IOEffect
 
-instance SourceRenamableE () where
-  sourceRenameE () = return ()
+instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
+  sourceRenameE (WithSrcE pos e) = addSrcContext pos $
+    WithSrcE pos <$> sourceRenameE e
 
-instance SourceRenamableE a => SourceRenamableE (ArrowP a) where
-  sourceRenameE arr = mapM sourceRenameE arr
-
-instance SourceRenamableE a => SourceRenamableE (WithSrc a) where
-  sourceRenameE (WithSrc pos e) = addSrcContext pos $
-    WithSrc pos <$> sourceRenameE e
-
-instance SourceRenamableB a => SourceRenamableB (WithSrc a) where
-  sourceRenameB (WithSrc pos b) = addSrcContext pos $
-    WithSrc pos <$> sourceRenameB b
-
-sourceRenamableBTopDecl :: Renamer m => UDecl -> WithEnv RenameEnv m UDecl
-sourceRenamableBTopDecl (ULet ann (UPatAnn pat (Just ty)) expr) = do
-  let implicitArgs = findImplicitArgNames ty
-  let ty'   = foldr addImplicitPiArg  ty   implicitArgs
-  let expr' = foldr addImplicitLamArg expr implicitArgs
-  sourceRenameB $ ULet ann (UPatAnn pat (Just ty')) expr'
-sourceRenamableBTopDecl (UInstance argBinders className params methods maybeName) = do
-  let implicitArgs = findImplicitArgNames $ Abs argBinders (className, params)
-  let argBinders' = toNest (map nameAsImplicitBinder implicitArgs) <> argBinders
-  sourceRenameB $ UInstance argBinders' className params methods maybeName
-sourceRenamableBTopDecl decl = sourceRenameB decl
+instance SourceRenamableB a => SourceRenamableB (WithSrcB a) where
+  sourceRenameB (WithSrcB pos b) cont = addSrcContext pos $
+    sourceRenameB b \b' -> cont $ WithSrcB pos b'
 
 instance SourceRenamableB UDecl where
-  sourceRenameB decl = case decl of
+  sourceRenameB decl cont = case decl of
     ULet ann pat expr -> do
-      expr' <- lift $ sourceRenameE expr
-      pat' <- sourceRenameB pat
-      return $ ULet ann pat' expr'
+      expr' <- sourceRenameE expr
+      sourceRenameB pat \pat' ->
+        cont $ ULet ann pat' expr'
     UDataDefDecl dataDef tyConName dataConNames -> do
-      dataDef' <- lift $ sourceRenameE dataDef
-      tyConName' <- sourceRenameUBinder SrcTyConName tyConName
-      dataConNames' <- mapM (sourceRenameUBinder SrcDataConName) dataConNames
-      return $ UDataDefDecl dataDef' tyConName' dataConNames'
+      dataDef' <- sourceRenameE dataDef
+      sourceRenameUBinder UTyConVar tyConName \tyConName' ->
+        sourceRenameUBinderNest UDataConVar dataConNames \dataConNames' ->
+           cont $ UDataDefDecl dataDef' tyConName' dataConNames'
     UInterface paramBs superclasses methodTys className methodNames -> do
-      (paramBs', bsEnv) <- lift $ setMayShadow True $ runWithEnv $ runPatRenamerT $ sourceRenamePat paramBs
-      (superclasses', methodTys') <- lift $ local (<>bsEnv) $ sourceRenameE $ (superclasses, methodTys)
-      className' <- sourceRenameUBinder SrcClassName className
-      methodNames' <- sourceRenameUBinderNest SrcMethodName methodNames
-      return $ UInterface paramBs' superclasses' methodTys' className' methodNames'
-    UInstance conditions className params methodDefs instanceName -> do
-      Abs conditions' ((className', params'), methodDefs') <-
-        lift $ sourceRenameE $ Abs conditions ((className, params), methodDefs)
-      instanceName' <- mapM sourceRenameB instanceName
-      return $ UInstance conditions' className' params' methodDefs' instanceName'
+      Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
+        sourceRenameB paramBs \paramBs' -> do
+          superclasses' <- mapM sourceRenameE superclasses
+          methodTys' <- zipWithM (renameMethodType paramBs) methodTys methodSourceNames
+          return $ Abs paramBs' (PairE (ListE superclasses') (ListE methodTys'))
+      sourceRenameUBinder UClassVar className \className' ->
+        sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
+          cont $ UInterface paramBs' superclasses' methodTys' className' methodNames'
+      where methodSourceNames = nestToList (\(UBindSource n) -> n) methodNames
+    UInstance className conditions params methodDefs instanceName -> do
+      className' <- sourceRenameE className
+      Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
+        sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
+      sourceRenameB instanceName \instanceName' ->
+        cont $ UInstance className' conditions' params' methodDefs' instanceName'
 
-instance SourceRenamableE UMethodType where
-  sourceRenameE (UMethodType expl ty) =
-    UMethodType <$> traverse sourceRenameE expl <*> sourceRenameE ty
+renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
+                 => Nest (UAnnBinder AtomNameC) i' i
+                 -> UMethodType i
+                 -> SourceName
+                 -> m o (UMethodType o)
+renameMethodType paramBinders (UMethodType ~(Left explicitNames) ty) methodName = do
+  explicitFlags <- case explicitNames of
+    [] -> return $ replicate (nestLength paramBinders) False
+    _ | paramNames == explicitNames -> return $ replicate (nestLength paramBinders) True
+    _ -> case unexpected of
+      []    -> throw NotImplementedErr "Permuted or incomplete explicit type binders are not supported yet."
+      (h:_) -> throw TypeErr $ "Explicit type binder `" ++ pprint h ++ "` in method " ++
+                                pprint methodName ++ " is not a type parameter of its interface"
+      where unexpected = filter (not . (`elem` paramNames)) explicitNames
+  UMethodType (Right explicitFlags) <$> sourceRenameE ty
+  where
+    paramNames = nestToList (\(UAnnBinder (UBindSource n) _) -> n) paramBinders
 
-sourceRenameUBinderNest :: Renamer m => (Name -> SourceNameDef)
-                        -> Nest UBinder -> WithEnv RenameEnv m (Nest UBinder)
-sourceRenameUBinderNest _ Empty = return Empty
-sourceRenameUBinderNest f (Nest b bs) =
-  Nest <$> sourceRenameUBinder f b <*> sourceRenameUBinderNest f bs
+instance SourceRenamableB UnitB where
+  sourceRenameB UnitB cont = cont UnitB
 
-sourceRenameUBinder :: Renamer m => (Name -> SourceNameDef)
-                    -> UBinder -> WithEnv RenameEnv m UBinder
-sourceRenameUBinder asSourceNameDef ubinder = case ubinder of
+instance (SourceRenamableB b1, SourceRenamableB b2)
+         => SourceRenamableB (EitherB b1 b2) where
+  sourceRenameB (LeftB  b) cont = sourceRenameB b \b' -> cont $ LeftB  b'
+  sourceRenameB (RightB b) cont = sourceRenameB b \b' -> cont $ RightB b'
+
+instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b1 b2) where
+  sourceRenameB (PairB b1 b2) cont = do
+    sourceRenameB b1 \b1' ->
+      sourceRenameB b2 \b2' ->
+        cont $ PairB b1' b2'
+
+sourceRenameUBinderNest
+  :: (Renamer m, Color c, Distinct o)
+  => (forall l. Name c l -> UVar l)
+  -> Nest (UBinder c) i i'
+  -> (forall o'. DExt o o' => Nest (UBinder c) o o' ->  m o' a)
+  -> m o a
+sourceRenameUBinderNest _ Empty cont = cont Empty
+sourceRenameUBinderNest asUVar (Nest b bs) cont =
+  sourceRenameUBinder asUVar b \b' ->
+    sourceRenameUBinderNest asUVar bs \bs' ->
+      cont $ Nest b' bs'
+
+sourceRenameUBinder :: (Distinct o, Renamer m, Color c)
+                    => (forall l. Name c l -> UVar l)
+                    -> UBinder c i i'
+                    -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)
+                    -> m o a
+sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UBindSource b -> do
-    (scope, SourceMap sourceMap) <- lift ask
-    mayShadow <- lift askMayShadow
-    unless (mayShadow || not (M.member b sourceMap)) $
+    SourceMap sm <- askSourceMap
+    mayShadow <- askMayShadow
+    let shadows = M.member b sm
+    when (not mayShadow && shadows) $
       throw RepeatedVarErr $ pprint b
-    let freshName = genFresh (Name GenName (fromString b) 0) scope
-    extendEnv ( freshName @> LocalUExprBound
-              , SourceMap (M.singleton b (asSourceNameDef freshName)))
-    return $ UBind freshName
-  UBind _ -> error "Shouldn't be source-renaming internal names"
-  UIgnore -> return UIgnore
+    withFreshM (getNameHint b) \freshName -> do
+      Distinct <- getDistinct
+      extendSourceMap b (asUVar $ binderName freshName) $
+        cont $ UBind b freshName
+  UBind _ _ -> error "Shouldn't be source-renaming internal names"
+  UIgnore -> cont UIgnore
 
 instance SourceRenamableE UDataDef where
-  sourceRenameE (UDataDef (tyConName, paramBs) dataCons) =
-    withSourceRenameB paramBs \paramBs' -> do
-      dataCons' <- forM dataCons \(dataConName, argBs) ->
-                      withSourceRenameB argBs \argBs' -> return (dataConName, argBs')
-      return $ UDataDef (tyConName, paramBs') dataCons'
+  sourceRenameE (UDataDef (tyConName, paramBs) clsBs dataCons) = do
+    sourceRenameB paramBs \paramBs' -> do
+      sourceRenameB clsBs \clsBs' -> do
+        dataCons' <- forM dataCons \(dataConName, argBs) -> do
+          argBs' <- sourceRenameE argBs
+          return (dataConName, argBs')
+        return $ UDataDef (tyConName, paramBs') clsBs' dataCons'
 
-instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
-  sourceRenameE (Abs b e) = withSourceRenameB b \b' -> Abs b' <$> sourceRenameE e
+instance SourceRenamableE UDataDefTrail where
+  sourceRenameE (UDataDefTrail args) = sourceRenameB args \args' ->
+    return $ UDataDefTrail args'
 
-instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (e1, e2) where
-  sourceRenameE (x, y) = (,) <$> sourceRenameE x <*> sourceRenameE y
+instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (PairE e1 e2) where
+  sourceRenameE (PairE x y) = PairE <$> sourceRenameE x <*> sourceRenameE y
 
-instance SourceRenamableE e => SourceRenamableE [e] where
-  sourceRenameE xs = mapM sourceRenameE xs
+instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (EitherE e1 e2) where
+  sourceRenameE (LeftE  x) = LeftE  <$> sourceRenameE x
+  sourceRenameE (RightE x) = RightE <$> sourceRenameE x
+
+instance SourceRenamableE e => SourceRenamableE (ListE e) where
+  sourceRenameE (ListE xs) = ListE <$> mapM sourceRenameE xs
+
+instance SourceRenamableE UnitE where
+  sourceRenameE UnitE = return UnitE
 
 instance SourceRenamableE UMethodDef where
-  sourceRenameE (UMethodDef v expr) =
-    UMethodDef <$> sourceRenameE v <*> sourceRenameE expr
+  sourceRenameE (UMethodDef ~(SourceName v) expr) = do
+    lookupSourceName v >>= \case
+      UMethodVar v' -> UMethodDef (InternalName v v') <$> sourceRenameE expr
+      _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
-  sourceRenameB (Nest b bs) = Nest <$> sourceRenameB b <*> sourceRenameB bs
-  sourceRenameB Empty = return Empty
+  sourceRenameB (Nest b bs) cont =
+    sourceRenameB b \b' ->
+      sourceRenameB bs \bs' ->
+        cont $ Nest b' bs'
+  sourceRenameB Empty cont = cont Empty
 
 -- === renaming patterns ===
 
@@ -243,223 +369,162 @@ instance SourceRenamableB b => SourceRenamableB (Nest b) where
 -- the set of in-scope siblings' names along with the normal renaming env.
 
 type SiblingSet = S.Set SourceName
-type PatRenamerT m p = WithEnv SiblingSet (ReaderT SiblingSet m) p
 
-class SourceRenamablePat pat where
-  sourceRenamePat :: Renamer m => pat -> PatRenamerT (WithEnv RenameEnv m) pat
+class SourceRenamablePat (pat::B) where
+  sourceRenamePat :: (Distinct o, Renamer m)
+                  => SiblingSet
+                  -> pat i i'
+                  -> (forall o'. DExt o o' => SiblingSet -> pat o o' -> m o' a)
+                  -> m o a
 
-liftPatRenamerT :: Monad m => m p -> PatRenamerT m p
-liftPatRenamerT m = lift $ lift m
-
-runPatRenamerT :: Monad m => PatRenamerT m p -> m p
-runPatRenamerT m = fst <$> runReaderT (runWithEnv m) mempty
-
-instance SourceRenamablePat UBinder where
-  sourceRenamePat ubinder = do
-    case ubinder of
+instance SourceRenamablePat (UBinder AtomNameC) where
+  sourceRenamePat sibs ubinder cont = do
+    newSibs <- case ubinder of
       UBindSource b -> do
-        siblingNames <- lift ask
-        when (S.member b siblingNames) $ throw RepeatedPatVarErr $ pprint b
-        extendEnv $ S.singleton b
-      _ -> return ()
-    liftPatRenamerT $ sourceRenameB ubinder
-
-instance SourceRenamablePat UAnnBinder where
-  sourceRenamePat (UAnnBinder b ty) = do
-    ty' <- liftPatRenamerT $ lift $ sourceRenameE ty
-    b' <- sourceRenamePat b
-    return $ UAnnBinder b' ty'
+        when (S.member b sibs) $ throw RepeatedPatVarErr $ pprint b
+        return $ S.singleton b
+      UIgnore -> return mempty
+      UBind _ _ -> error "Shouldn't be source-renaming internal names"
+    sourceRenameB ubinder \ubinder' ->
+      cont (sibs <> newSibs) ubinder'
 
 instance SourceRenamablePat UPat' where
-  sourceRenamePat pat = case pat of
-    UPatBinder b -> UPatBinder <$> sourceRenamePat b
-    UPatCon ~(USourceVar con) bs -> do
-      con' <- liftPatRenamerT $ lift do
-        SourceMap sourceMap <- asks snd
-        case M.lookup con sourceMap of
-          Nothing    -> throw UnboundVarErr $ pprint con
-          Just (SrcDataConName name) -> return $ UInternalVar name
-          Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
-      bs' <- sourceRenamePat bs
-      return $ UPatCon con' bs'
-    UPatPair p1 p2 -> UPatPair <$> sourceRenamePat p1 <*> sourceRenamePat p2
-    UPatUnit -> return UPatUnit
-    UPatRecord (Ext ps ext) -> UPatRecord <$>
-      (Ext <$> forM ps sourceRenamePat <*> mapM sourceRenamePat ext)
-    UPatVariant labels label p -> UPatVariant labels label <$> sourceRenamePat p
-    UPatVariantLift labels p -> UPatVariantLift labels <$> sourceRenamePat p
-    UPatTable ps -> UPatTable <$> mapM sourceRenamePat ps
+  sourceRenamePat sibs pat cont = case pat of
+    UPatBinder b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' $ UPatBinder b'
+    UPatCon con bs -> do
+      -- TODO Deduplicate this against the code for sourceRenameE of
+      -- the SourceName case of SourceNameOr
+      con' <- sourceRenameE con
+      sourceRenamePat sibs bs \sibs' bs' ->
+        cont sibs' $ UPatCon con' bs'
+    UPatPair (PairB p1 p2) ->
+      sourceRenamePat sibs  p1 \sibs' p1' ->
+        sourceRenamePat sibs' p2 \sibs'' p2' ->
+          cont sibs'' $ UPatPair $ PairB p1' p2'
+    UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
+    UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
+    UPatVariant labels label p ->
+      sourceRenamePat sibs p \sibs' p' ->
+        cont sibs' $ UPatVariant labels label p'
+    UPatVariantLift labels p ->
+      sourceRenamePat sibs p \sibs' p' ->
+        cont sibs' $ UPatVariantLift labels p'
+    UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
 
-instance SourceRenamablePat p => SourceRenamablePat (WithSrc p) where
-  sourceRenamePat (WithSrc pos pat) = addSrcContext pos $
-    WithSrc pos <$> sourceRenamePat pat
+instance SourceRenamablePat UFieldRowPat where
+  sourceRenamePat sibs pat cont = case pat of
+    UEmptyRowPat    -> cont sibs UEmptyRowPat
+    URemFieldsPat b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' (URemFieldsPat b')
+    UDynFieldsPat v p rest -> do
+      v' <- sourceRenameE v
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UDynFieldsPat v' p' rest'
+    UStaticFieldPat l p rest -> do
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UStaticFieldPat l p' rest'
+    UDynFieldPat    v p rest -> do
+      v' <- sourceRenameE v
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UDynFieldPat v' p' rest'
+
+instance SourceRenamablePat UnitB where
+  sourceRenamePat sibs UnitB cont = cont sibs UnitB
+
+instance (SourceRenamablePat p1, SourceRenamablePat p2)
+         => SourceRenamablePat (PairB p1 p2) where
+  sourceRenamePat sibs (PairB p1 p2) cont =
+    sourceRenamePat sibs p1 \sibs' p1' ->
+      sourceRenamePat sibs' p2 \sibs'' p2' ->
+        cont sibs'' $ PairB p1' p2'
+
+instance (SourceRenamablePat p1, SourceRenamablePat p2)
+         => SourceRenamablePat (EitherB p1 p2) where
+  sourceRenamePat sibs (LeftB p) cont =
+    sourceRenamePat sibs p \sibs' p' ->
+      cont sibs' $ LeftB p'
+  sourceRenamePat sibs (RightB p) cont =
+    sourceRenamePat sibs p \sibs' p' ->
+    cont sibs' $ RightB p'
+
+instance SourceRenamablePat p => SourceRenamablePat (WithSrcB p) where
+   sourceRenamePat sibs (WithSrcB pos pat) cont = addSrcContext pos do
+     sourceRenamePat sibs pat \sibs' pat' ->
+       cont sibs' $ WithSrcB pos pat'
 
 instance SourceRenamablePat p => SourceRenamablePat (Nest p) where
-  sourceRenamePat (Nest b bs) = Nest <$> sourceRenamePat b <*> sourceRenamePat bs
-  sourceRenamePat Empty = return Empty
+  sourceRenamePat sibs (Nest b bs) cont =
+    sourceRenamePat sibs b \sibs' b' ->
+      sourceRenamePat sibs' bs \sibs'' bs' ->
+        cont sibs'' $ Nest b' bs'
+  sourceRenamePat sibs Empty cont = cont sibs Empty
 
 instance SourceRenamableB UPat' where
-  sourceRenameB pat = runPatRenamerT $ sourceRenamePat pat
+  sourceRenameB pat cont =
+    sourceRenamePat mempty pat \_ pat' -> cont pat'
 
--- === WithEnv Monad transformer ===
+-- === source name sets ===
 
--- XXX: we deliberately avoid implementing the instance
---   MonadReader env m => MonadReader env (WithEnv env m a)
--- because we want to make lifting explicit, to avoid performance issues due
--- to too many `WithEnv` wrappers.
-newtype WithEnv env m a = WithEnv { runWithEnv :: m (a, env) }
+-- It's a shame we require these. They're redundant with the intended
+-- information in SourceRenamableB but the continuation style doesn't let us
+-- access the additional source names, only the full set. But it's not a huge
+-- amount of code and there's nothing tricky about it.
 
-extendEnv :: (Monoid env, MonadReader env m) => env -> WithEnv env m ()
-extendEnv env = WithEnv $ return ((), env)
+-- Note that this is only expected to return the _bound source names_!
+class HasSourceNames (b::B) where
+  sourceNames :: b n l -> S.Set SourceName
 
-instance (Monoid env, MonadReader env m) => Functor (WithEnv env m) where
-  fmap = liftM
+instance HasSourceNames UDecl where
+  sourceNames decl = case decl of
+    ULet _ (UPatAnn pat _) _ -> sourceNames pat
+    UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
+      S.singleton tyConName <> sourceNames dataConNames
+    UInterface _ _ _ ~(UBindSource className) methodNames -> do
+      S.singleton className <> sourceNames methodNames
+    UInstance _ _ _ _ instanceName -> sourceNames instanceName
 
-instance (Monoid env, MonadReader env m) => Applicative (WithEnv env m) where
-  (<*>) = ap
-  pure x = WithEnv $ pure (x, mempty)
+instance HasSourceNames UPat where
+  sourceNames (WithSrcB _ pat) = case pat of
+    UPatBinder b -> sourceNames b
+    UPatCon _ bs -> sourceNames bs
+    UPatPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
+    UPatUnit UnitB -> mempty
+    UPatRecord p -> sourceNames p
+    UPatVariant _ _ p -> sourceNames p
+    UPatVariantLift _ p -> sourceNames p
+    UPatTable ps -> sourceNames ps
 
-instance (Monoid env, MonadReader env m) => Monad (WithEnv env m) where
-  return = pure
-  -- TODO: Repeated bind will get expensive here. An implementation like Cat
-  -- might be more efficient
-  WithEnv m1 >>= f = WithEnv do
-    (x, env1) <- m1
-    let WithEnv m2 = f x
-    (y, env2) <- local (<> env1) m2
-    return (y, env1 <> env2)
+instance HasSourceNames UFieldRowPat where
+  sourceNames = \case
+    UEmptyRowPat             -> mempty
+    URemFieldsPat b          -> sourceNames b
+    UDynFieldsPat   _ p rest -> sourceNames p <> sourceNames rest
+    UStaticFieldPat _ p rest -> sourceNames p <> sourceNames rest
+    UDynFieldPat    _ p rest -> sourceNames p <> sourceNames rest  -- Shouldn't we include v?
 
-instance Monoid env => MonadTrans (WithEnv env) where
-  lift m = WithEnv $ fmap (,mempty) m
+instance (HasSourceNames b1, HasSourceNames b2)
+         => HasSourceNames (PairB b1 b2) where
+  sourceNames (PairB b1 b2) = sourceNames b1 <> sourceNames b2
 
-instance (Monoid env, MonadFail m, MonadReader env m)
-         => MonadFail (WithEnv env m) where
-  fail s = lift $ fail s
+instance HasSourceNames b => HasSourceNames (MaybeB b)where
+  sourceNames b = case b of
+    JustB b' -> sourceNames b'
+    _ -> mempty
 
-instance (Monoid env, Fallible m, MonadReader env m)
-         => Fallible (WithEnv env m) where
-  throwErrs errs = lift $ throwErrs errs
-  addErrCtx ctx (WithEnv m) = WithEnv $
-    addErrCtx ctx m
+instance HasSourceNames b => HasSourceNames (Nest b)where
+  sourceNames Empty = mempty
+  sourceNames (Nest b rest) =
+    sourceNames b <> sourceNames rest
 
--- === Traversal to find implicit names
+instance HasSourceNames (UBinder c) where
+  sourceNames b = case b of
+    UBindSource name -> S.singleton name
+    UIgnore -> mempty
+    UBind _ _ -> error "Shouldn't be source-renaming internal names"
 
-nameAsImplicitBinder :: SourceName -> UPatAnnArrow
-nameAsImplicitBinder v = UPatAnnArrow (fromString v) ImplicitArrow
+-- === misc instance ===
 
-addImplicitPiArg :: SourceName -> UType -> UType
-addImplicitPiArg v vTy = WithSrc Nothing $ UPi  (fromString v) ImplicitArrow vTy
-
-addImplicitLamArg :: SourceName -> UExpr -> UExpr
-addImplicitLamArg v e = WithSrc Nothing $ ULam (fromString v) ImplicitArrow e
-
-findImplicitArgNames :: HasImplicitArgNamesE e => e -> [SourceName]
-findImplicitArgNames expr =
-  nub $ flip runReader mempty $ execWriterT $ implicitArgsE expr
-
--- TODO: de-deuplicate with SourceRename by making a class for traversals
---       parameterized by the base cases on UBinder and UVar.
-class HasImplicitArgNamesE e where
-  implicitArgsE :: MonadReader (S.Set SourceName) m
-                => MonadWriter [SourceName] m
-                => e
-                -> m ()
-
-class HasImplicitArgNamesB b where
-  implicitArgsB :: MonadReader (S.Set SourceName) m
-                => MonadWriter [SourceName] m
-                => b
-                -> WithEnv (S.Set SourceName) m ()
-
-instance HasImplicitArgNamesE UVar where
-  implicitArgsE (USourceVar v) = do
-    isFree <- asks \boundNames -> not $ v `S.member` boundNames
-    when (isFree && isLower (head v)) $ tell [v]
-  implicitArgsE _ = error "Unexpected internal var"
-
-instance HasImplicitArgNamesB UBinder where
-  implicitArgsB ubinder = case ubinder of
-    UBindSource b -> extendEnv (S.singleton b)
-    UBind _ -> error "Unexpected internal name"
-    UIgnore -> return ()
-
-instance HasImplicitArgNamesB UPatAnn where
-  implicitArgsB (UPatAnn b ann) = do
-    lift $ mapM_ implicitArgsE ann
-    implicitArgsB b
-
-instance HasImplicitArgNamesB UPatAnnArrow where
-  implicitArgsB (UPatAnnArrow b _) = implicitArgsB b
-
-instance HasImplicitArgNamesE UExpr' where
-  implicitArgsE expr = case expr of
-    UVar v -> implicitArgsE v
-    UPi pat arr body -> implicitArgsE $ Abs pat (arr, body)
-    -- specifically exclude vars on the lhs of an application
-    UApp _ (WithSrc _ (UVar _)) x -> implicitArgsE x
-    UApp _ f x -> implicitArgsE f >> implicitArgsE x
-    UHole -> return ()
-    UTypeAnn v ty -> implicitArgsE v >> implicitArgsE ty
-    UIndexRange low high -> mapM_ implicitArgsE low >> mapM_ implicitArgsE high
-    UPrimExpr e -> mapM_ implicitArgsE e
-    URecord (Ext ulr _) ->  mapM_ implicitArgsE ulr
-    UVariant _ _   val -> implicitArgsE val
-    UVariantLift _ val -> implicitArgsE val
-    URecordTy  (Ext tys ext) -> mapM_ implicitArgsE tys >> mapM_ implicitArgsE ext
-    UVariantTy (Ext tys ext) -> mapM_ implicitArgsE tys >> mapM_ implicitArgsE ext
-    UIntLit   _ -> return ()
-    UFloatLit _ -> return ()
-    ULam _ _ _ -> error "Unexpected lambda in type annotation"
-    UDecl _ _  -> error "Unexpected let binding in type annotation"
-    UFor _ _ _ -> error "Unexpected for in type annotation"
-    UCase _ _  -> error "Unexpected case in type annotation"
-    UTabCon _ ->  error "Unexpected table constructor in type annotation"
-
-instance HasImplicitArgNamesB UPat' where
-  implicitArgsB pat = case pat of
-    UPatBinder b -> implicitArgsB b
-    UPatCon _ bs -> mapM_ implicitArgsB bs
-    UPatPair p1 p2 -> implicitArgsB p1 >> implicitArgsB p2
-    UPatUnit -> return ()
-    UPatRecord (Ext ps ext) -> mapM_ implicitArgsB ps >> mapM_ implicitArgsB ext
-    UPatVariant _ _ p -> implicitArgsB p
-    UPatVariantLift _ p -> implicitArgsB p
-    UPatTable ps -> mapM_ implicitArgsB ps
-
-instance HasImplicitArgNamesE () where
-  implicitArgsE () = return ()
-
-instance HasImplicitArgNamesB b => HasImplicitArgNamesB (Nest b) where
-  implicitArgsB Empty = return ()
-  implicitArgsB (Nest b bs) = implicitArgsB b >> implicitArgsB bs
-
-instance (HasImplicitArgNamesB b, HasImplicitArgNamesE e)
-         => HasImplicitArgNamesE (Abs b e) where
-  implicitArgsE (Abs b e) = do
-    ((), vs) <- runWithEnv $ implicitArgsB b
-    local (<>vs) $ implicitArgsE e
-
-instance (HasImplicitArgNamesE e1, HasImplicitArgNamesE e2)
-         => HasImplicitArgNamesE (e1, e2) where
-  implicitArgsE (x, y) = implicitArgsE x >> implicitArgsE y
-
-instance HasImplicitArgNamesE UEffArrow where
-  implicitArgsE arr = mapM_ implicitArgsE arr
-
-instance (Ord a, HasImplicitArgNamesE a) => HasImplicitArgNamesE (EffectRowP a) where
-  implicitArgsE (EffectRow row tailVar) = do
-    mapM_  implicitArgsE $ S.toList row
-    mapM_  implicitArgsE tailVar
-
-instance HasImplicitArgNamesE a => HasImplicitArgNamesE (EffectP a) where
-  implicitArgsE eff = mapM_ implicitArgsE eff
-
-instance HasImplicitArgNamesE e => HasImplicitArgNamesE (WithSrc e) where
-  implicitArgsE (WithSrc _ x) = implicitArgsE x
-
-instance HasImplicitArgNamesB e => HasImplicitArgNamesB (WithSrc e) where
-  implicitArgsB (WithSrc _ x) = implicitArgsB x
-
-instance HasImplicitArgNamesE e => HasImplicitArgNamesE [e] where
-  implicitArgsE xs = mapM_ implicitArgsE xs
-
+instance SinkableE RenamerSubst where
+  sinkingProofE = undefined

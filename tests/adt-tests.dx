@@ -187,7 +187,7 @@ xsList = AsList _ [1,2,3]
   (x, y)
 > (3, 4)
 
-def catLists (xs:List a) (ys:List a) : List a =
+def catLists {a} (xs:List a) (ys:List a) : List a =
   (AsList nx xs') = xs
   (AsList ny ys') = ys
   nz = nx + ny
@@ -213,22 +213,22 @@ def catLists (xs:List a) (ys:List a) : List a =
 
 
 
-def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
+def listToTable {a} ((AsList n xs): List a) : (Fin n)=>a = xs
 
 :t listToTable
-> ((a:Type) ?-> (pat:(List a)) -> (Fin ((\((AsList n _)). n) pat)) => a)
+> ((a:Type) ?-> (pat:(List a)) -> (Fin (ProjectElt [0] pat)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
   sum $ listToTable l
 > 6
 
-def listToTable2 (l: List a) : (Fin (listLength l))=>a =
+def listToTable2 {a} (l: List a) : (Fin (listLength l))=>a =
   (AsList _ xs) = l
   xs
 
 :t listToTable2
-> ((a:Type) ?-> (l:(List a)) -> (Fin ((\((AsList n _)). n) l)) => a)
+> ((a:Type) ?-> (l:(List a)) -> (Fin (ProjectElt [0] l)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
@@ -239,41 +239,47 @@ l2 = AsList _ [1, 2, 3]
 :p sum $ listToTable2 l2
 > 6
 
-def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
+def zerosLikeList {a} (l : List a) : (Fin (listLength l))=>Float =
   for i:(Fin $ listLength l). 0.0
 
 :p zerosLikeList l2
 > [0., 0., 0.]
 
-data Graph a:Type =
-  MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
+data Graph n:Type a:Type [Ix n] =
+  MkGraph nodes:(n=>a) edges:(List (n & n))
 
-def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
+def graphToAdjacencyMatrix {n a} ((MkGraph nodes (AsList _ edges)):Graph n a) : n=>n=>Bool =
   init = for i j. False
   yieldState init \mRef.
-    for i:m.
+    for i.
       (from, to) = edges.i
       mRef!from!to := True
 
 :t graphToAdjacencyMatrix
-> ((a:Type)
->  ?-> (pat:(Graph a))
->  -> ((\((MkGraph n _ _ _)). n) pat) => ((\((MkGraph n _ _ _)). n) pat) => Bool)
+> ((n:Type) ?-> (a:Type) ?-> (Ix n) ?=> (Graph n a) -> n => n => Bool)
 
 :p
-  g : Graph Int = MkGraph (Fin 3) [5, 6, 7] (Fin 4) [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]
+  g : Graph (Fin 3) Int = MkGraph [5, 6, 7] $ AsList _ [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]
   graphToAdjacencyMatrix g
 > [[False, True, True], [False, True, False], [True, False, False]]
 
 -- Test how (nested) projections are handled and pretty-printed.
 
 def pairUnpack ((v, _):(Int & Float)) : Int = v
-:p pairUnpack
-> \pat:(Int32 & Float32). ((\(a, _). a) pat)
+
+-- :p pairUnpack
+-- > \pat2:(Int32 & Float32).
+-- >    v:Int32 = ProjectElt [0] pat2
+-- >    v1:Float32 = ProjectElt [1] pat2
+-- >   v
 
 def recordUnpack ({a=v, b=_}:{a:Int & b:Float}) : Int = v
-:p recordUnpack
-> \pat:{a: Int32 & b: Float32}. ((\{a = a, b = _}. a) pat)
+
+-- :p recordUnpack
+-- > \pat2:{a: Int32 & b: Float32}.
+-- >    v:Int32 = ProjectElt [0] pat2
+-- >    v1:Float32 = ProjectElt [1] pat2
+-- >   v
 
 def nestedUnpack (x:MyPair Int (MyPair (MyIntish & Int) Int)) : Int =
   (MkMyPair _ (MkMyPair (MkIntish y, _) _)) = x

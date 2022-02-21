@@ -47,7 +47,7 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
-possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++
 
 CLANG := clang++
 
@@ -62,11 +62,11 @@ CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
 if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
 then echo "$$clangversion" ; break ; fi ; done)
 ifeq (,$(CLANG))
-$(error "Please install clang++-9")
+$(error "Please install clang++-12")
 endif
-clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)|(12\.)).*$$/, "")) }')
 ifneq (1,$(clang-version-compatible))
-$(error "Please install clang++-9")
+$(error "Please install clang++-12")
 endif
 endif
 
@@ -80,8 +80,14 @@ all: build
 tc: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
+# Build without clearing the cache. Use at your own risk.
+just-build: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS)
+
 build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
 
 watch: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --file-watch
@@ -90,23 +96,22 @@ install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:-foreign
+	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:debug
 
 # For some reason stack fails to detect modifications to foreign library files
 build-ffis: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --force-dirty
+	$(STACK) build $(STACK_FLAGS) --force-dirty --flag dex:foreign
 	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
 
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
-
-build-safe-names: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
 
 dexrt-llvm: src/lib/dexrt.bc
 
@@ -119,8 +124,8 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd psd tutorial kernelregression \
-                quaternions manifold-gradients schrodinger simplex
+                sgd psd kernelregression \
+                quaternions manifold-gradients schrodinger tutorial
 # TODO: re-enable
 # fft vega-plotting
 
@@ -128,7 +133,7 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
-             linalg-tests
+             linalg-tests set-tests
 
 lib-names = diagram plot png
 
@@ -143,7 +148,12 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-tests: quine-tests repl-test
+module-tests:
+	misc/check-quine tests/module-tests.dx \
+           $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
+
+
+tests: quine-tests repl-test module-tests
 
 quine-tests: $(quine-test-targets)
 
@@ -181,10 +191,7 @@ update-gpu-tests: tests/gpu-tests.dx build
 	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-uexpr-tests:
-	misc/check-quine examples/uexpr-tests.dx $(dex) script
-
-repl-test:
+repl-test: build
 	misc/check-no-diff \
 	  tests/repl-multiline-test-expected-output \
 	  <($(dex) repl < tests/repl-multiline-test.dx)

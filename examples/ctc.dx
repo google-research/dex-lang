@@ -18,27 +18,26 @@ pass automatically.  That makes this code much shorter than
 most implementations.
 
 
-def interleave (blank:v) (labels: m=>v) : (m & (Fin 2))=>v =
+def interleave {m v} (blank:v) (labels: m=>v) : (m & (Fin 2))=>v =
   -- Turns "text" into "t e x t " by first pairing each letter with a blank,
   -- then flattening the pairs back into a single-index table.
   pairs = for i. [labels.i, blank]
   for (i, j). pairs.i.j
 
-def prepend (first: v) (seq: m=>v) : ({head:Unit | tail:m }=>v) =
+def prepend {m v} (first: v) (seq: m=>v) : ((Unit|m)=>v) =
   -- Concatenates a single element to the beginning of a sequence.
   for idx. case idx of
-    {| head = () |} -> first
-    {| tail = i  |} -> seq.i
+    Left () -> first
+    Right i -> seq.i
 
-def prepend_and_interleave (blank:v) (seq: m=>v) :
-  ({head:Unit | tail:(m & (Fin 2))}=>v) =
+def prepend_and_interleave {m v} (blank:v) (seq: m=>v) : ((Unit|(m & (Fin 2)))=>v) =
   -- Turns "text" into " t e x t".
   -- The output of this function has a slightly complicated output type, which
   -- has size 1 + 2 * (size m).
   interleaved = interleave blank seq
   prepend blank interleaved
 
-def clipidx (n:Type) -> (i:Int) : n =
+def clipidx (n:Type) [Ix n] (i:Int) : n =
   -- Returns element at 0 if less than zero.
   -- Ideally we could have an alternative
   -- to Fin that just clips the index at its bounds.
@@ -48,7 +47,8 @@ def logaddexp (x:Float) (y:Float) : Float =
   m = max x y
   m + ( log ( (exp (x - m) + exp (y - m))))
 
-def ctc [Eq vocab, Eq position, Eq time]
+def ctc {vocab time position}
+        [Eq vocab, Eq position, Eq time]
         (blank:  vocab)
         (logits: time=>vocab=>Float)
         (labels: position=>vocab)
@@ -102,7 +102,7 @@ def ctc [Eq vocab, Eq position, Eq time]
 
 '### Demo
 
-def randIdxNoZero (n:Type) -> (k:Key) : n =
+def randIdxNoZero (n:Type) [Ix n] (k:Key) : n =
   unif = rand k
   fromOrdinal n $ (1 + (FToI (floor ( unif * IToF ((size n) - 1)))))
 

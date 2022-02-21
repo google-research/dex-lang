@@ -29,6 +29,7 @@ def expr_test(dex_source, reference, args_iter):
     return check_atom(dex.eval(dex_source), reference, args_iter)
   return test
 
+@unittest.skip
 class JITTest(unittest.TestCase):
   test_sigmoid = expr_test(r"\x:Float. 1.0 / (1.0 + exp(-x))",
                            lambda x: np.float32(1.0) / (np.float32(1.0) + np.exp(-x)),
@@ -75,7 +76,7 @@ class JITTest(unittest.TestCase):
   def test_tuple_return(self):
     dex_func = dex.eval(r"\x: ((Fin 10) => Float). (x, 2. .* x, 3. .* x)")
     reference = lambda x: (x, 2 * x, 3 * x)
-    
+
     x = np.arange(10, dtype=np.float32)
 
     dex_output = dex_func.compile()(x)

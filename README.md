@@ -30,12 +30,12 @@ development. Expect monstrous bugs and razor-sharp edges!**
 ## Dependencies
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 9
-    * Ubuntu/Debian: `apt-get install llvm-9-dev`
-    * macOS: `brew install llvm@9`
-      * Make sure `llvm@9` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@9)/bin:$PATH"`
-  * Install clang 9 (may be installed together with llvm)
-    * Ubuntu/Debian: `apt-get install clang-9`
+  * Install LLVM 12
+    * Ubuntu/Debian: `apt-get install llvm-12-dev`
+    * macOS: `brew install llvm@12`
+      * Make sure `llvm@12` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@12)/bin:$PATH"`
+  * Install clang 12 (may be installed together with llvm)
+    * Ubuntu/Debian: `apt-get install clang-12`
     * macOS: installs with llvm
   * Install libpng (often included by default in *nix platforms)
     * Ubuntu/Debian: `apt-get install libpng-dev`
@@ -84,6 +84,28 @@ on the environment, and so one has to create an appropriate `hie.yaml` file
 manually. This will be ignored by git.
 
 This should work out of the box with Emacs' `lsp-haskell` package.
+
+### Building with Nix
+
+[Nix](https://nixos.org/) is a functional package manager and build system.
+
+To build with vanilla Nix:
+```bash
+$ nix-build
+```
+
+To build with flakes-enabled Nix:
+```bash
+$ nix build .#dex
+```
+The resulting `dex` binary should be in `result/bin/dex`.
+
+For development purposes, you can use a Nix environment with
+```bash
+$ nix-shell
+$ nix develop  # With flakes
+```
+and use `make` to use Stack to build Dex.
 
 ## Running
 

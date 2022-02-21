@@ -25,7 +25,7 @@ def idExplicit (a:Type) (x:a) : a = x
 :p idExplicit Int 1
 > 1
 
-def idImplicit (a:Type) ?-> (x:a) : a = x
+def idImplicit {a:Type} (x:a) : a = x
 :p idImplicit 1
 > 1
 
@@ -74,7 +74,7 @@ def TyId (a:Type) : Type = a
   x
 > 1
 
-def tabId (n:Type) ?-> (x:n=>Int) : n=>Int = for i. x.i
+def tabId {n:Type} (x:n=>Int) : n=>Int = for i. x.i
 
 -- bug: this doesn't work if we split it across top-level decls
 :p
@@ -175,7 +175,7 @@ myPair = (1, 2.3)
       xsRef!i := ordinal i
 > [0, 1, 2]
 
-def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
+def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   yieldState 1 \ref.
@@ -194,20 +194,20 @@ def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   myId = fst (\x. x, 2)
-  f : a:Type -> a -> a = \a. \x. myId x
+  f : aa:Type -> aa -> aa = \bb. \x. myId x
   f Int 1
-> Type error:Leaked type variable: a:Type
+> Leaked local variables:[bb]
 >
->   f : a:Type -> a -> a = \a. \x. myId x
->                           ^^^^^^^^^^^^^
+>   f : aa:Type -> aa -> aa = \bb. \x. myId x
+>                              ^^^^^^^^^^^^^^
 
-def myFst (p:(a&b)) : a =
+def myFst {a b} (p:(a&b)) : a =
   (x, _) = p
   x
 :p myFst (1,2)
 > 1
 
-def myOtherFst ((x, _):(a&b)) : a = x
+def myOtherFst {a b} ((x, _):(a&b)) : a = x
 :p myOtherFst (1,2)
 > 1
 
@@ -242,7 +242,7 @@ def myOtherFst ((x, _):(a&b)) : a = x
    transposeLinear f [1.0, 2.0, 3.0]
 > 12.
 
-id'' : b -> b = id
+id'' : b:Type ?-> b -> b = id
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left  i -> i
@@ -251,11 +251,16 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p (eitherFloor (Left 1), eitherFloor (Right 2.3))
 > (1, 2)
 
-:p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
-> Type error:Failed to infer the index set of an array literal. Please try adding a type annotation.
->
-> :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
->    ^^^^^^^^^^^^^
+-- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
+-- :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
+-- > Type error:
+-- > Expected: ((Fin a & Fin 2) => Int32)
+-- >   Actual: ((Fin 4) => b)
+-- > (Solving for: [a, b])
+-- > If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+-- >
+-- > :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
+-- >    ^^^^^^^^^^^^^
 
 :p
   [(a, b), c] = [(1, 2), (3, 4)]
@@ -265,10 +270,13 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p
   [a, b] = [1, 2, 3]
   (a, b)
-> Type error:Table literal has 3 elements, but its inferred index set (((Fin 2) => Int32)) has a size of 2
+> Type error:
+> Expected: ((Fin 3) => a)
+>   Actual: ((Fin 2) => b)
+> (Solving for: [a, b])
 >
 >   [a, b] = [1, 2, 3]
->            ^^^^^^^^^
+>   ^^^^^^^
 
 :p
   [[a, _], [_, d]] = [[1, 2], [3, 4]]
@@ -282,23 +290,45 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 > Type error:
 > Expected: ((Fin 2 & Fin 2) => Int32)
 >   Actual: ((Fin 4) => a)
-> (Solving for: [a:Type])
+> (Solving for: [a])
 >
 >   [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
 >   ^^^^^^^^^^^^^
 
-:p
-  -- parentheses needed to stop the parser from reading "zero" as a binder name
-  [a, b, c, d] = (zero) : (_ => Int)
-  (a, b, c, d)
-> (0, (0, (0, 0)))
+-- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
+-- :p
+--   -- parentheses needed to stop the parser from reading "zero" as a binder name
+--   [a, b, c, d] = (zero) : (_ => Int)
+--   (a, b, c, d)
+-- > (0, (0, (0, 0)))
 
 def bug (n : Type) : Unit =
   for w':n.
     w : n = todo
     for i:(w..). ()
   ()
-> Type error:Leaked local variable `w` in result type ((w..) => Unit)
+> Leaked local variables:[v]
 >
 >   for w':n.
 >   ^^^^
+
+badDefinition = oops_there_is_a_problem
+> Error: variable not in scope: oops_there_is_a_problem
+>
+> badDefinition = oops_there_is_a_problem
+>                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+badDefinition = 4
+> Error: variable already defined: badDefinition
+>
+> badDefinition = 4
+> ^^^^^^^^^^^^^^
+
+:p badDefinition
+> Error: ambiguous variable: badDefinition is defined:
+> in this file
+> in this file
+>
+>
+> :p badDefinition
+>    ^^^^^^^^^^^^^

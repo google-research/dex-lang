@@ -100,12 +100,15 @@ xr = map IToF arr
 
 :t [1, [2]]
 > Type error:Couldn't synthesize a class dictionary for: (FromInteger ((Fin 1) => Int32))
+>
+> :t [1, [2]]
+>     ^
 
 :t [[1, 2], [3, 4]]
 > ((Fin 2) => (Fin 2) => Int32)
 
 :t [[1, 2], [3]]
-> Type error:Table literal has 1 elements, but its inferred index set (((Fin 2) => Int32)) has a size of 2
+> Type error:Table type doesn't match annotation
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -147,13 +150,13 @@ MyPair : Type -> Type =
 
 
 -- TODO: put source annotation on effect for a better message here
-fEff : Unit -> {| a} a = todo
+def fEff {a} : Unit -> {| a} a = todo
 > Type error:
 > Expected: Type
 >   Actual: EffKind
 >
-> fEff : Unit -> {| a} a = todo
->                      ^^
+> def fEff {a} : Unit -> {| a} a = todo
+>                              ^^
 
 :p
     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
@@ -196,7 +199,7 @@ fEff : Unit -> {| a} a = todo
 -- > :p (\(u,v). for i:0...u. 1.0) (2, 3)
 -- >     ^^^^^^^^^^^^^^^^^^^^^^^^
 
-g : a -> a = \x. x
+g : a:Type ?-> a -> a = \x. x
 
 :t g
 > ((a:Type) ?-> a -> a)
@@ -211,31 +214,31 @@ g : a -> a = \x. x
    f 1
 > Float32
 
-g1 : (a -> Int) -> (a -> Int) = \x. x
+g1 : a:Type ?-> (a -> Int) -> (a -> Int) = \x. x
 
 :t g1
 > ((a:Type) ?-> (a -> Int32) -> a -> Int32)
 
-g2 : a -> a = \x. idiv x x
-> Type error:Couldn't synthesize a class dictionary for: (Integral a)
+g2 : aaa:Type ?-> aaa -> aaa = \x. idiv x x
+> Type error:Couldn't synthesize a class dictionary for: (Integral aaa)
 >
-> g2 : a -> a = \x. idiv x x
->                   ^^^^^
+> g2 : aaa:Type ?-> aaa -> aaa = \x. idiv x x
+>                                    ^^^^^
 
-h : (a -> b) -> (a -> b) = \x. x
+h : a:Type ?-> b:Type ?-> (a -> b) -> (a -> b) = \x. x
 
 :t h
 > ((a:Type) ?-> (b:Type) ?-> (a -> b) -> a -> b)
 
-fun : a -> a = \x. sin x
-> Type error:Couldn't synthesize a class dictionary for: (Floating a)
+fun : aaa:Type ?-> aaa -> aaa = \x. sin x
+> Type error:Couldn't synthesize a class dictionary for: (Floating aaa)
 >
-> fun : a -> a = \x. sin x
->                    ^^^^
+> fun : aaa:Type ?-> aaa -> aaa = \x. sin x
+>                                     ^^^^
 
-data NewPair a:Type b:Type = MkNewPair a b
+data NewPair aa:Type bb:Type = MkNewPair aa bb
 
-fromNewPair : NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
+def fromNewPair {a b}: NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
 
 newPair : NewPair Int Float = MkNewPair 1 2.0
 
@@ -243,7 +246,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > Type error:
 > Expected: (a & b)
 >   Actual: (NewPair Int32 Float32)
-> (Solving for: [a:Type, b:Type])
+> (Solving for: [a, b])
 >
 > :p fst newPair
 >        ^^^^^^^
@@ -252,7 +255,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > 1
 
 :p NewPair
-> NewPair
+> \aa:Type bb:Type. NewPair aa bb
 
 -- TODO: these are broken since switching from newtype mechanism to ADTs
 
@@ -318,25 +321,25 @@ bad_range : Int = (1@Fin 3)..(2@_)
 > :p (\x:Int. x) == (\x:Int. x)
 >                ^^^
 
-def getFst1 (n:Type) ?-> (xs:n=>b) : b =
+def getFst1 {n:Type} {b} (xs:n=>b) : b =
   xs.(fromOrdinal n 0)
 
 :p getFst1 [1,2,3]
 > 1
 
-def getFst2 (xs:n=>b) : b =
+def getFst2 {n b} (xs:n=>b) : b =
   xs.(fromOrdinal n 0)
 
 :p getFst2 [1,2,3]
 > 1
 
-def getFst3 (b:Type) ?-> (n:Type) ?-> (xs:n=>b) : b =
+def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
   xs.(fromOrdinal n 0)
 
 :p getFst3 [1,2,3]
 > 1
 
-def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
+def triRefIndex {h n} (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
   %indexRef ref i
 
 (for i:(Fin 5). for j:(i..). 0.0).(0@_)
@@ -355,7 +358,7 @@ def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
 id (for i:(Fin 2). for j:(..i). 1.0)
 > [[1.]@(..(0@Fin 2)), [1., 1.]@(..(1@Fin 2))]
 
-def weakerInferenceReduction (l : i:n=>(..i)=>Float) (j:n): Unit =
+def weakerInferenceReduction {n} (l : i:n=>(..i)=>Float) (j:n): Unit =
   for i:(..j).
     i' = %inject i
     for k:(..i').
@@ -401,10 +404,45 @@ def mkEmpty (a:Type) : (Fin 0)=>a = []
 :t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] : i:(Fin 2)=>(..i)=>(Fin 2)=>Float
 > ((i:(Fin 2)) => (..i) => (Fin 2) => Float32)
 
-def uncurryTable (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
+def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
   for i j. x.(i, j)
 
 :t uncurryTable [0.0, 1.0, 2.0, 3.0]  -- We should be able to infer the tuple type here
 > ((Fin 2) => (Fin 2) => Float32)
 :t uncurryTable [0, 1, 2, 3]          -- Extra difficulty: need to default the integer type
 > ((Fin 2) => (Fin 2) => Int32)
+
+
+-- Make sure that the local type alias is unifiable with Int
+def GetInt (n : Int) : Type = Int
+def the (t : Type) (x : t) : t = x
+def ff (n : Int) : Int =
+  i = GetInt n
+  the i 2
+
+ff 0
+> 2
+
+-- The two local aliases for Fin n should be unifiable with each other and Fin n
+def q (n : Int) : (Fin n)=>Int =
+  ix1 = Fin n
+  x1 = for i:ix1. ordinal i
+  ix2 = Fin n
+  x2 = for i:ix2. ordinal i
+  for i. x1.i + x2.i
+
+q 5
+> [0, 2, 4, 6, 8]
+
+'### Tests for function VSpace
+
+:p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
+> True
+:p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
+> True
+:p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
+> True
+
+xbool : Bool = arb $ newKey 0
+:p xbool
+> True

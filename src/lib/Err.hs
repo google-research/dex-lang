@@ -11,11 +11,13 @@
 
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
-            Fallible (..), FallibleM (..), HardFailM (..), CtxReader (..),
+            Fallible (..), Catchable (..), catchErrExcept,
+            FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
-            catchIOExcept, liftExcept, liftMaybe,
-            assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
+            catchIOExcept, liftExcept, liftMaybe, liftMaybeErr,
+            assertEq, ignoreExcept, isSuccess, exceptToMaybe,
+            pprint, docAsStr, asCompilerErr,
             FallibleApplicativeWrapper, traverseMergingErrs, liftFallibleM,
             SearcherM (..), Searcher (..), runSearcherM) where
 
@@ -24,6 +26,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
+import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Text (unpack)
@@ -36,14 +39,16 @@ import System.IO.Unsafe
 -- === core API ===
 
 data Err = Err ErrType ErrCtx String  deriving (Show, Eq)
-newtype Errs = Errs [Err]  deriving (Show, Eq, Semigroup, Monoid)
+newtype Errs = Errs [Err]  deriving (Eq, Semigroup, Monoid)
 
 data ErrType = NoErr
              | ParseErr
              | TypeErr
              | KindErr
              | LinErr
+             | VarDefErr
              | UnboundVarErr
+             | AmbiguousVarErr
              | RepeatedVarErr
              | RepeatedPatVarErr
              | InvalidPatternErr
@@ -64,7 +69,8 @@ type SrcTextCtx = Maybe (Int, String) -- Int is the offset in the source file
 data ErrCtx = ErrCtx
   { srcTextCtx :: SrcTextCtx
   , srcPosCtx  :: SrcPosCtx
-  , messageCtx :: [String] }
+  , messageCtx :: [String]
+  , stackCtx   :: Maybe [String] }
     deriving (Show, Eq)
 
 type SrcPos = (Int, Int)
@@ -72,6 +78,12 @@ type SrcPos = (Int, Int)
 class MonadFail m => Fallible m where
   throwErrs :: Errs -> m a
   addErrCtx :: ErrCtx -> m a -> m a
+
+class Fallible m => Catchable m where
+  catchErr :: m a -> (Errs -> m a) -> m a
+
+catchErrExcept :: Catchable m => m a -> m (Except a)
+catchErrExcept m = catchErr (Success <$> m) (\e -> return $ Failure e)
 
 -- We have this in its own class because IO and `Except` can't implement it
 -- (but FallibleM can)
@@ -92,6 +104,12 @@ instance Fallible FallibleM where
     throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
 
+instance Catchable FallibleM where
+  FallibleM m `catchErr` handler = FallibleM $ ReaderT \ctx ->
+    case runReaderT m ctx of
+      Failure errs -> runReaderT (fromFallibleM $ handler errs) ctx
+      Success ans  -> return ans
+
 instance FallibleApplicative FallibleM where
   mergeErrs (FallibleM (ReaderT f1)) (FallibleM (ReaderT f2)) =
     FallibleM $ ReaderT \ctx -> mergeErrs (f1 ctx) (f2 ctx)
@@ -104,6 +122,12 @@ instance Fallible IO where
   addErrCtx ctx m = do
     result <- catchIOExcept m
     liftExcept $ addErrCtx ctx result
+
+instance Catchable IO where
+  catchErr cont handler =
+    catchIOExcept cont >>= \case
+      Success result -> return result
+      Failure errs -> handler errs
 
 instance FallibleApplicative IO where
   mergeErrs m1 m2 = do
@@ -175,10 +199,18 @@ instance FallibleApplicative HardFailM where
 -- === convenience layer ===
 
 throw :: Fallible m => ErrType -> String -> m a
-throw errTy s = throwErrs $ Errs [Err errTy mempty s]
+throw errTy s = throwErrs $ Errs [addCompilerStackCtx $ Err errTy mempty s]
 
 throwErr :: Fallible m => Err -> m a
-throwErr err = throwErrs $ Errs [err]
+throwErr err = throwErrs $ Errs [addCompilerStackCtx err]
+
+addCompilerStackCtx :: Err -> Err
+addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
+#ifdef DEX_DEBUG
+  where compilerStack = Just $! reverse $ unsafePerformIO currentCallStack
+#else
+  where compilerStack = stackCtx ctx
+#endif
 
 throwIf :: Fallible m => Bool -> ErrType -> String -> m ()
 throwIf True  e s = throw e s
@@ -205,6 +237,10 @@ liftMaybe :: MonadFail m => Maybe a -> m a
 liftMaybe Nothing = fail ""
 liftMaybe (Just x) = return x
 
+liftMaybeErr :: Fallible m => ErrType -> String -> Maybe a -> m a
+liftMaybeErr err s Nothing  = throw err s
+liftMaybeErr _   _ (Just x) = return x
+
 liftExcept :: Fallible m => Except a -> m a
 liftExcept (Failure errs) = throwErrs errs
 liftExcept (Success ans) = return ans
@@ -215,6 +251,14 @@ liftFallibleM m = liftExcept $ runFallibleM m
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Failure e) = error $ pprint e
 ignoreExcept (Success x) = x
+
+isSuccess :: Except a -> Bool
+isSuccess (Success _) = True
+isSuccess (Failure _) = False
+
+exceptToMaybe :: Except a -> Maybe a
+exceptToMaybe (Success a) = Just a
+exceptToMaybe (Failure _) = Nothing
 
 assertEq :: (HasCallStack, Fallible m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
@@ -267,6 +311,25 @@ instance Searcher SearcherM where
 instance CtxReader SearcherM where
   getErrCtx = SearcherM $ lift getErrCtx
 
+instance Searcher [] where
+  [] <!> m = m
+  m  <!> _ = m
+
+instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
+  WriterT m1 <!> WriterT m2 = WriterT (m1 <!> m2)
+
+instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
+  throwErrs errs = lift $ throwErrs errs
+  addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
+
+instance Fallible [] where
+  throwErrs _ = []
+  addErrCtx _ m = m
+
+instance Fallible Maybe where
+  throwErrs _ = Nothing
+  addErrCtx _ m = m
+
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
 
@@ -309,24 +372,34 @@ instance MonadFail Except where
 
 instance Exception Errs
 
+instance Show Errs where
+  show errs = pprint errs
+
 instance Pretty Err where
   pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx
     -- TODO: figure out a more uniform way to newlines
     where prettyCtx = case ctx of
-            ErrCtx _ Nothing [] -> mempty
+            ErrCtx _ Nothing [] Nothing -> mempty
             _ -> hardline <> pretty ctx
 
 instance Pretty ErrCtx where
-  pretty (ErrCtx maybeTextCtx maybePosCtx messages) =
+  pretty (ErrCtx maybeTextCtx maybePosCtx messages stack) =
     -- The order of messages is outer-scope-to-inner-scope, but we want to print
     -- them starting the other way around (Not for a good reason. It's just what
     -- we've always done.)
-    prettyLines (reverse messages) <> highlightedSource
+    prettyLines (reverse messages) <> highlightedSource <> prettyStack
     where
       highlightedSource = case (maybeTextCtx, maybePosCtx) of
         (Just (offset, text), Just (start, stop)) ->
            hardline <> pretty (highlightRegion (start - offset, stop - offset) text)
         _ -> mempty
+      prettyStack = case stack of
+        Nothing -> mempty
+        Just s  -> hardline <> "Compiler stack trace:" <> nest 2 (hardline <> prettyLines s)
+
+instance Pretty a => Pretty (Except a) where
+  pretty (Success x) = "Success:" <+> pretty x
+  pretty (Failure e) = "Failure:" <+> pretty e
 
 instance Pretty ErrType where
   pretty e = case e of
@@ -338,11 +411,15 @@ instance Pretty ErrType where
     KindErr           -> "Kind error:"
     LinErr            -> "Linearity error: "
     IRVariantErr      -> "Internal IR validation error: "
+    VarDefErr         -> "Error in (earlier) definition of variable: "
     UnboundVarErr     -> "Error: variable not in scope: "
+    AmbiguousVarErr   -> "Error: ambiguous variable: "
     RepeatedVarErr    -> "Error: variable already defined: "
     RepeatedPatVarErr -> "Error: variable already defined within pattern: "
     InvalidPatternErr -> "Error: not a valid pattern: "
-    NotImplementedErr -> "Not implemented:"
+    NotImplementedErr ->
+      "Not implemented:" <> line <>
+      "Please report this at github.com/google-research/dex-lang/issues\n" <> line
     CompilerErr       ->
       "Compiler bug!" <> line <>
       "Please report this at github.com/google-research/dex-lang/issues\n" <> line
@@ -350,13 +427,17 @@ instance Pretty ErrType where
     MiscErr           -> "Error:"
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
-    EscapedNameErr    -> "Escaped name"
-    ModuleImportErr   -> "Module import error"
+    EscapedNameErr    -> "Leaked local variables:"
+    ModuleImportErr   -> "Module import error: "
     MonadFailErr      -> "MonadFail error (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs
   addErrCtx ctx (ReaderT f) = ReaderT \r -> addErrCtx ctx $ f r
+
+instance Catchable m => Catchable (ReaderT r m) where
+  ReaderT f `catchErr` handler = ReaderT \r ->
+    f r `catchErr` \e -> runReaderT (handler e) r
 
 instance FallibleApplicative m => FallibleApplicative (ReaderT r m) where
   mergeErrs (ReaderT f1) (ReaderT f2) =
@@ -373,16 +454,21 @@ instance Fallible m => Fallible (StateT s m) where
   throwErrs errs = lift $ throwErrs errs
   addErrCtx ctx (StateT f) = StateT \s -> addErrCtx ctx $ f s
 
+instance Catchable m => Catchable (StateT s m) where
+  StateT f `catchErr` handler = StateT \s ->
+    f s `catchErr` \e -> runStateT (handler e) s
+
 instance CtxReader m => CtxReader (StateT s m) where
   getErrCtx = lift getErrCtx
 
 instance Semigroup ErrCtx where
-  ErrCtx text pos ctxStrs <> ErrCtx text' pos' ctxStrs' =
+  ErrCtx text pos ctxStrs stk <> ErrCtx text' pos' ctxStrs' stk' =
     ErrCtx (leftmostJust  text text')
            (rightmostJust pos  pos' )
            (ctxStrs <> ctxStrs')
+           (leftmostJust stk stk')  -- We usually extend errors form the right
 instance Monoid ErrCtx where
-  mempty = ErrCtx Nothing Nothing []
+  mempty = ErrCtx Nothing Nothing [] Nothing
 
 -- === misc util stuff ===
 

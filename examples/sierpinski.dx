@@ -1,12 +1,13 @@
 '# Sierpinski triangle ("chaos game")
 
+import diagram
 import plot
 
-def update (points:n=>Point) (key:Key) ((x,y):Point) : Point =
+def update {n} (points:n=>Point) (key:Key) ((x,y):Point) : Point =
   (x', y') = points.(randIdx key)
   (0.5 * (x + x'), 0.5 * (y + y'))
 
-def runChain (n:Int) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
+def runChain {a} (n:Int) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
   scan' x0 (many f key)
 
 trianglePoints : (Fin 3)=>Point = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]

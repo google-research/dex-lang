@@ -9,10 +9,10 @@ import plot
 Time = Float
 
 -- Should this go in the prelude?
-def length (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
-def (./) (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
+def length {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+def (./) {d} (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
 
-def fit_4th_order_polynomial [VSpace v]
+def fit_4th_order_polynomial {v} [VSpace v]
     (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =
   -- dz0 and dz1 are gradient evaluations.
   a = -2. * dt .* dz0 + 2. * dt .* dz1 -  8. .* z0 -  8. .* z1 + 16. .* z_mid
@@ -26,13 +26,13 @@ dps_c_mid = [6025192743. /30085553152. /2., 0., 51252292925. /65400821598. /2.,
             -2691868925. /45128329728. /2., 187940372067. /1594534317056. /2.,
             -1776094331. /19743644256. /2., 11237099. /235043384. /2.]
 
-def interp_fit_dopri [VSpace v]
+def interp_fit_dopri {v} [VSpace v]
     (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time) : (Fin 5)=>v =
   -- Fit a polynomial to the results of a Runge-Kutta step.
   z_mid = z0 + dt .* (dot dps_c_mid k)
   fit_4th_order_polynomial z0 z1 z_mid k.(0@_) k.(1@_) dt
 
-def initial_step_size (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Float)
+def initial_step_size {d} (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Float)
                       (order:Int) (rtol:Float) (atol:Float) (f0:d=>Float) : Time =
   -- Algorithm from: E. Hairer, S. P. Norsett G. Wanner,
   -- Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
@@ -64,7 +64,7 @@ c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
            125. / 192. - 451. / 720., -2187. / 6784. + 12231. / 42400.,
            11. / 84. - 649. / 6300., -1. / 60.]
 
-def runge_kutta_step [VSpace v] (func:v->Time->v)
+def runge_kutta_step {v} [VSpace v] (func:v->Time->v)
     (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
 
   evals_init = yieldState zero \r.
@@ -81,7 +81,7 @@ def runge_kutta_step [VSpace v] (func:v->Time->v)
   f_last = evals_filled.(6@_)
   (z_last, f_last, z_last_error, evals_filled)
 
-def error_ratio (error_estimates:d=>Float) (rtol:Float) (atol:Float)
+def error_ratio {d} (error_estimates:d=>Float) (rtol:Float) (atol:Float)
                 (z0:d=>Float) (z1:d=>Float) : Float =
   err_tols = for i. atol + rtol * (max (abs z0.i) (abs z1.i))
   err_ratios = error_estimates ./ err_tols
@@ -99,7 +99,7 @@ def optimal_step_size (last_step:Time) (mean_error_ratio:Float) : Time =
   select (mean_error_ratio == 0.) (last_step * ifactor) (last_step / factor)
 
 
-def odeint (func: d=>Float -> Time -> d=>Float)
+def odeint {d n} (func: d=>Float -> Time -> d=>Float)
            (z0: d=>Float) (t0: Time) (times: n=>Time) : n=>d=>Float =
   -- Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
   --  Args:
@@ -157,7 +157,7 @@ def odeint (func: d=>Float -> Time -> d=>Float)
 
 '#### Example: Linear dynamics
 
-def myDyn (z : a) -> (t:Time) : a = z
+def myDyn {a} (z : a) (t:Time) : a = z
 
 z0 = [1.0]
 t0 = 0.0

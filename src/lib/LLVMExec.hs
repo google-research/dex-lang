@@ -10,6 +10,7 @@
 
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
+                 exportObjectFileVal,
                  standardCompilationPipeline,
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal) where
@@ -38,13 +39,14 @@ import System.IO.Unsafe
 import System.IO.Temp
 import System.Directory (listDirectory)
 import System.Process
-import System.Environment
+import qualified System.Environment as E
 import System.Exit
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
 import Foreign.C.Types (CInt (..))
 import Foreign.Storable hiding (alignment)
+import Control.Monad.IO.Class
 import Control.Monad
 import Control.Concurrent
 import Control.Exception hiding (throw)
@@ -55,6 +57,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Control.Exception as E
 
+import Err
 import Logging
 import Syntax
 import Resources
@@ -70,26 +73,26 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-compileAndEval :: Logger [Output] -> L.Module -> String
+compileAndEval :: Logger [Output] -> [ObjectFile n] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval logger ast fname args resultTypes = do
+compileAndEval logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff logger ast fname $
+        evalTime <- compileOneOff logger objFiles ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
         logThis logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 
-compileAndBench :: Bool -> Logger [Output] -> L.Module -> String
+compileAndBench :: Bool -> Logger [Output] -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
+compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff logger ast fname \fPtr -> do
+        compileOneOff logger objFiles ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -130,11 +133,13 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
 
-compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
-compileOneOff logger ast name f = do
+compileOneOff :: Logger [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileOneOff logger objFiles ast name f = do
   withHostTargetMachine \tm ->
-    withJIT tm \jit ->
-      withNativeModule jit ast (standardCompilationPipeline logger [name] tm) \compiled ->
+    withJIT tm \jit -> do
+      let pipeline = standardCompilationPipeline logger [name] tm
+      let objFileContents = [s | ObjectFile s _ _ <- objFiles]
+      withNativeModule jit objFileContents ast pipeline \compiled ->
         f =<< getFunctionPtr compiled name
 
 standardCompilationPipeline :: Logger [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
@@ -151,9 +156,14 @@ standardCompilationPipeline logger exports tm m = do
 
 -- === object file export ===
 
+exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
+exportObjectFileVal deps m fname = do
+  contents <- exportObjectFile [(m, [fname])] Mod.moduleObject
+  return $ ObjectFile contents [fname] deps
+
 -- Each module comes with a list of exported functions
-exportObjectFile :: FilePath -> [(L.Module, [String])] -> IO ()
-exportObjectFile objFile modules = do
+exportObjectFile :: [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
+exportObjectFile modules exportFn = do
   withContext \c -> do
     withHostTargetMachine \tm ->
       withBrackets (fmap (toLLVM c) modules) \mods -> do
@@ -161,7 +171,7 @@ exportObjectFile objFile modules = do
           void $ foldM linkModules exportMod mods
           execLogger Nothing \logger ->
             standardCompilationPipeline logger allExports tm exportMod
-          Mod.writeObjectToFile tm (Mod.File objFile) exportMod
+          exportFn tm exportMod
   where
     allExports = foldMap snd modules
 
@@ -256,17 +266,17 @@ withModuleClone ctx m f = do
 
 -- === serializing scalars ===
 
-loadLitVals :: Ptr () -> [BaseType] -> IO [LitVal]
+loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
 loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
-freeLitVals :: Ptr () -> [BaseType] -> IO ()
+freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
 freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
 
-storeLitVals :: Ptr () -> [LitVal] -> IO ()
+storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
 
-loadLitVal :: Ptr () -> BaseType -> IO LitVal
-loadLitVal ptr (Scalar ty) = case ty of
+loadLitVal :: MonadIO m => Ptr () -> BaseType -> m LitVal
+loadLitVal ptr (Scalar ty) = liftIO case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
@@ -274,17 +284,19 @@ loadLitVal ptr (Scalar ty) = case ty of
   Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
-loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
+loadLitVal ptrPtr (PtrType t) = do
+  ptr <- liftIO $ peek $ castPtr ptrPtr
+  return $ PtrLit $ PtrLitVal t ptr
 loadLitVal _ _ = error "not implemented"
 
-storeLitVal :: Ptr () -> LitVal -> IO ()
-storeLitVal ptr val = case val of
+storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
+storeLitVal ptr val = liftIO case val of
   Int64Lit   x -> poke (castPtr ptr) x
   Int32Lit   x -> poke (castPtr ptr) x
   Word8Lit   x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
-  PtrLit _   x -> poke (castPtr ptr) x
+  PtrLit (PtrLitVal _ x) -> poke (castPtr ptr) x
   _ -> error "not implemented"
 
 foreign import ccall "free_dex"
@@ -297,11 +309,11 @@ free_gpu :: Ptr () -> IO ()
 free_gpu = error "Compiled without GPU support!"
 #endif
 
-freeLitVal :: Ptr () -> BaseType -> IO ()
+freeLitVal :: MonadIO m => Ptr () -> BaseType -> m ()
 freeLitVal litValPtr ty = case ty of
   Scalar  _ -> return ()
-  PtrType (Heap CPU, Scalar _) -> free_cpu =<< loadPtr
-  PtrType (Heap GPU, Scalar _) -> free_gpu =<< loadPtr
+  PtrType (Heap CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
+  PtrType (Heap GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
   -- TODO: Handle pointers to pointers
   _ -> error "not implemented"
   where loadPtr = peek (castPtr litValPtr)
@@ -312,8 +324,8 @@ cellSize = 8
 ptrArray :: Ptr () -> [Ptr ()]
 ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
 
-allocaCells :: Int -> (Ptr () -> IO a) -> IO a
-allocaCells n = allocaBytes (n * cellSize)
+allocaCells :: MonadIO m => Int -> (Ptr () -> IO a) -> m a
+allocaCells n cont = liftIO $ allocaBytes (n * cellSize) cont
 
 
 -- === dex runtime ===
@@ -353,7 +365,7 @@ linkDexrt m = do
 data LLVMKernel = LLVMKernel L.Module
 
 cudaPath :: IO String
-cudaPath = maybe "/usr/local/cuda" id <$> lookupEnv "CUDA_PATH"
+cudaPath = maybe "/usr/local/cuda" id <$> E.lookupEnv "CUDA_PATH"
 
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> String -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) arch = do
@@ -364,7 +376,7 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
         linkLibdevice m
         standardCompilationPipeline logger ["kernel"] tm m
         ptx <- Mod.moduleTargetAssembly tm m
-        usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
+        usePTXAS <- maybe False (=="1") <$> E.lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
           then do
             ptxasPath <- (++"/bin/ptxas") <$> cudaPath

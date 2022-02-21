@@ -6,7 +6,7 @@ import plot
 
 LogProb : Type = Float
 
-def runChain
+def runChain {a}
       (initialize: Key -> a)
       (step: Key -> a -> a)
       (numSamples: Int)
@@ -19,7 +19,7 @@ def runChain
       s := x
       x
 
-def propose
+def propose {a}
       (logDensity : a -> LogProb)
       (cur      : a)
       (proposal : a)
@@ -28,7 +28,7 @@ def propose
   accept = logDensity proposal > (logDensity cur + log (rand k))
   select accept proposal cur
 
-def meanAndCovariance (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
+def meanAndCovariance {n d} (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
    xsMean :    d=>Float = (for i. sum for j. xs.j.i) / IToF (size n)
    xsCov  : d=>d=>Float = (for i i'. sum for j.
                            (xs.j.i' - xsMean.i') *
@@ -39,7 +39,7 @@ def meanAndCovariance (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
 
 MHParams : Type = Float  -- step size
 
-def mhStep
+def mhStep {d} [Ix d]
       (stepSize: MHParams)
       (logProb: (d=>Float) -> LogProb)
       (k:Key)
@@ -53,7 +53,7 @@ def mhStep
 
 HMCParams : Type = (Int & Float)  -- leapfrog steps, step size
 
-def leapfrogIntegrate
+def leapfrogIntegrate {a}
       [VSpace a]
       ((nsteps, dt): HMCParams)
       (logProb: a -> LogProb)
@@ -67,7 +67,7 @@ def leapfrogIntegrate
   p = p + (0.5 * dt) .* grad logProb x
   (x, p)
 
-def hmcStep
+def hmcStep {d} [Ix d]
       (params: HMCParams)
       (logProb: (d=>Float) -> LogProb)
       (k:Key)

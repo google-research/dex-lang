@@ -5,6 +5,7 @@
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 
+import png
 import plot
 
 ' ### Generic Helper Functions
@@ -14,22 +15,22 @@ def Vec (n:Int) : Type = Fin n => Float
 def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Float
 
 def relu (x:Float) : Float = max x 0.0
-def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+def length {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 -- TODO: make a newtype for normal vectors
-def normalize (x: d=>Float) : d=>Float = x / (length x)
-def directionAndLength (x: d=>Float) : (d=>Float & Float) =
+def normalize {d} (x: d=>Float) : d=>Float = x / (length x)
+def directionAndLength {d} (x: d=>Float) : (d=>Float & Float) =
   l = length x
   (x / (length x), l)
 
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def sampleAveraged [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
+def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
   yieldState zero \total.
     for i:(Fin n).
       total := get total + sample (ixkey k i) / IToF n
 
-def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
+def positiveProjection {n} (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
 ' ### 3D Helper Functions
 
@@ -116,7 +117,7 @@ Params = { numSamples : Int
          & shareSeed  : Bool }
 
 -- TODO: use a list instead, once they work
-data Scene n:Type = MkScene (n=>Object)
+data Scene n:Type [Ix n] = MkScene (n=>Object)
 
 def sampleReflection ((nor, surf):OrientedSurface) ((pos, dir):Ray) (k:Key) : Ray =
   newDir = case surf of
@@ -154,7 +155,7 @@ def sdObject (pos:Position) (obj:Object) : Distance =
       halfWidths = [hw, 0.01, hw]
       length $ for i. max ((abs pos'.i) - halfWidths.i) 0.0
 
-def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
+def sdScene {n} (scene:Scene n) (pos:Position) : (Object & Distance) =
   (MkScene objs) = scene
   (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
   (objs.i, d)
@@ -169,7 +170,7 @@ data RayMarchResult =
   -- Could refine with failure reason (beyond horizon, failed to converge etc)
   HitNothing
 
-def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
+def raymarch {n} (scene:Scene n) (ray:Ray) : RayMarchResult =
   maxIters = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
@@ -195,7 +196,7 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
                 PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
                 Light _ _ radiance   -> HitLight radiance
 
-def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
+def rayDirectRadiance {n} (scene:Scene n) (ray:Ray) : Radiance =
   case raymarch scene ray of
     HitLight intensity -> intensity
     HitNothing -> zero
@@ -207,7 +208,7 @@ def sampleSquare (hw:Float) (k:Key) : Position =
  z = randuniform (- hw) hw kz
  [x, 0.0, z]
 
-def sampleLightRadiance
+def sampleLightRadiance {n}
       (scene:Scene n) (osurf:OrientedSurface) (inRay:Ray) (k:Key) : Radiance =
   (surfNor, surf) = osurf
   (rayPos, _) = inRay
@@ -225,7 +226,7 @@ def sampleLightRadiance
           coeff = fracSolidAngle * probReflection osurf inRay outRay
           radiance += coeff .* rayDirectRadiance scene outRay
 
-def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
+def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
   yieldAccum (AddMonoid Float) \radiance.
     runState  noFilter \filter.
@@ -264,7 +265,7 @@ def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
     (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
 
-def takePicture (params:Params) (scene:Scene m) (camera:Camera) : Image =
+def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
   n = getAt #numPix camera
   rays = cameraRays n camera
   rootKey = newKey 0

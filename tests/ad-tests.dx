@@ -1,6 +1,6 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum'  (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
+def sum' {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
 
 :p
    f : Float -> Float = \x. x
@@ -155,7 +155,7 @@ tripleit : Float --o Float = \x. x + x + x
 > 3.
 
 :p
-  f : n:Type ?->  Float --o n=>Float = \x. for i. x
+  f : n:Type ?-> Ix n ?=> Float --o n=>Float = \x. for i. x
 
   transposeLinear f [1.0, 2.0]
 > 3.

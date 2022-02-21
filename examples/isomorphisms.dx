@@ -3,11 +3,11 @@
 '`Iso a b` is the type of an isomorphism between `a` and `b`.
 
 :t MkIso
-> ((a:Type) ?-> (b:Type) ?-> (tmp8:{bwd: b -> a & fwd: a -> b}) -> Iso a b)
+> ((a:Type) ?-> (b:Type) ?-> {bwd: b -> a & fwd: a -> b} -> Iso a b)
 
 'This is a normal ADT, and you can construct your own isomorphisms.
 
-cycleThree : Iso (a & b & c) (b & c & a) =
+def cycleThree {a b c} : Iso (a & b & c) (b & c & a) =
   MkIso { fwd = \(a, b, c). (b, c, a)
         , bwd = \(b, c, a). (a, b, c)
         }
@@ -45,26 +45,22 @@ that produce isos. We will start with the first two:
 %passes parse
 :t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = x, ...r}. (,) x r}
->   : Iso {a: Int & b: Float & c: Unit} _
+> (MkIso {fwd=(\{b=x, ...r}. (,) x r), bwd=(\(x, r). {b=x, ...r})}
+>  : Iso {a: Int & b: Float & c: Unit} _)
 
 %passes parse
 :t #?b : Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \v. case v
->                 ((Left x)) -> {| b = x |}
->                 ((Right r)) -> {|b| ...r |}
->                 
->     , fwd = \v. case v
->                 {| b = x |} -> (Left x)
->                 {|b| ...r |} -> (Right r)
->                 }
->   : Iso {a: Int | b: Float | c: Unit} _
+> (MkIso
+>    {fwd=(\v. case v
+>              {| b = x |} -> (Left x)
+>              {|b| ...r |} -> (Right r)
+>              )
+>    , bwd=(\v. case v
+>               ((Left x)) -> {| b = x |}
+>               ((Right r)) -> {|b| ...r |}
+>               )}
+>  : Iso {a: Int | b: Float | c: Unit} _)
 
 'There are also two "zipper" forms, described later on this page:
 - `#&x` produces a "record-zipper" isomorphism
@@ -139,18 +135,16 @@ another. For instance:
 %passes parse
 :t #&a : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \({a = x, ...l}, {, ...r}). (,) {, ...l} {a = x, ...r}
->     , fwd = \({, ...l}, {a = x, ...r}). (,) {a = x, ...l} {, ...r}}
->   : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _
+> (MkIso
+>    {fwd=(\({...l}, {a=x, ...r}). (,) {a=x, ...l} {...r})
+>    , bwd=(\({a=x, ...l}, {...r}). (,) {...l} {a=x, ...r})}
+>  : Iso ((&) {} {a: Int & b: Float & c: Unit}) _)
 
 :t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32 & b: Float32} & {c: Unit}))
 
 '`#&a` and `#&b` are isomorphisms that move a given field from the record on the
@@ -163,7 +157,9 @@ when using a record type as an index set:
 > ((a:Type)
 >  ?-> (b:Type)
 >  ?-> (c:Type)
->  ?-> (v:Type) ?-> (Iso ({ &} & a) (b & c)) -> (a => v) -> b => c => v)
+>  ?-> (v:Type)
+>  ?-> (Ix b)
+>  ?=> (Ix c) ?=> (Iso ({&} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
 
 -- :p
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -180,15 +176,36 @@ when using a record type as an index set:
 `overLens`:
 
 :t splitR
-> ((a:Type) ?-> Iso a ({ &} & a))
+> ((a:Type) ?-> Iso a ({&} & a))
 
 :t overLens
 > ((a:Type)
 >  ?-> (b:Type)
->  ?-> (c:Type) ?-> (v:Type) ?-> (Iso a (b & c)) -> (a => v) -> b => c => v)
+>  ?-> (c:Type)
+>  ?-> (v:Type)
+>  ?-> (Ix b)
+>  ?=> (Ix c) ?=> (Iso a (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
 
 '`overLens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.
+
+def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
+  fwd = \{a, b, c}. (c, b, a)
+  bwd = \(c, b, a). {a, b, c}
+  MkIso {fwd, bwd}
+instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
+  getSize = \(). size n * size m * size q
+  ordinal = ordinal <<< appIso abcToTuple
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToTuple
+
+def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
+  fwd = \{b, c}. (c, b)
+  bwd = \(c, b). {b, c}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
+  getSize = \(). size n * size m
+  ordinal = ordinal <<< appIso bcToPair
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso bcToPair
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -211,24 +228,22 @@ zipper isomorphisms:
 > (Iso
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \v. case v
->                 ((Left w)) -> (case w
->                                  {| a = x |} -> (Right {| a = x |})
->                                  {|a| ...r |} -> (Left r)
->                                  )
->                 ((Right l)) -> (Right {|a| ...l |})
->                 
->     , fwd = \v. case v
->                 ((Left l)) -> (Left {|a| ...l |})
->                 ((Right w)) -> (case w
->                                   {| a = x |} -> (Left {| a = x |})
->                                   {|a| ...r |} -> (Right r)
->                                   )
->                 }
->   : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _
+> (MkIso
+>    {fwd=(\v. case v
+>              ((Left l)) -> (Left {|a| ...l |})
+>              ((Right w)) -> (case w
+>                                {| a = x |} -> (Left {| a = x |})
+>                                {|a| ...r |} -> (Right r)
+>                                )
+>              )
+>    , bwd=(\v. case v
+>               ((Left w)) -> (case w
+>                                {| a = x |} -> (Right {| a = x |})
+>                                {|a| ...r |} -> (Left r)
+>                                )
+>               ((Right l)) -> (Right {|a| ...l |})
+>               )}
+>  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:
 
@@ -243,14 +258,56 @@ zipper isomorphisms:
 '`sliceFields` uses this to specific named variants from a variant-indexed
 table:
 
+def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right (Left x)
+    {|c=x|} -> Right (Right x)
+  bwd = \v. case v of
+    Left  x -> {|a=x|}
+    Right x -> case x of
+      Left  y -> {|b=y|}
+      Right y -> {|c=y|}
+  MkIso {fwd, bwd}
+instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
+  getSize = \(). size n + size m + size q
+  ordinal = ordinal <<< appIso abcToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToEither
+
+def abToEither {a b} : Iso {a:a | b:b} (a|b) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|b=x|}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
+  getSize = \(). size n + size m
+  ordinal = ordinal <<< appIso abToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
+
+def acToEither {a c} : Iso {a:a | c:c} (a|c) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|c=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|c=x|}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
+  getSize = \(). size n + size m
+  ordinal = ordinal <<< appIso acToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso acToEither
+
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
   v1 = x
-  v2 = sliceFields (#|b) x
+  v2 = sliceFields (#|a &>> #|b) x
   v3 = sliceFields (#|a &>> #|c) x
   v4 = sliceFields (#|a &>> #|b &>> #|c) x
   (v1, v2, v3, v4)
 > ( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
-> , ( [2, 3]@{b: Fin 2}
+> , ( [0, 1, 2, 3]@{a: Fin 2 | b: Fin 2}
 > , ( [0, 1, 4, 5]@{a: Fin 2 | c: Fin 2}
 > , [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2} ) ) )
