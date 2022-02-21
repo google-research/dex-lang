@@ -49,10 +49,10 @@ spec = do
       -- jvp (\x. case x of Left f -> f * 2.0; Right () -> 4.0)
       shouldTypeCheck $ Program $ M.fromList
         [ ("case", FuncDef [("x", SumType [FloatType, TupleType []])]
-                           [("xt", SumDepType (ProjHere "x") "xb"
+                           [("xt", SumDepType (Proj "x" []) "xb"
                                      [FloatType, TupleType []])]
                            (mixedType [FloatType] [FloatType]) $
-            Case "x" "xv"
+            Case "x" "xv" (mixedType [FloatType] [FloatType])
               [ LetDepMixed ["yv"] []  (BinOp Mul (Var "xv") (Lit 2.0)) $
                 LetDepMixed [] ["ytv"] (LScale (Lit 2.0) (LVar "xt")) $
                 RetDep ["yv"] ["ytv"]
@@ -65,12 +65,28 @@ spec = do
         ]
 
   describe "jvp" $ do
-    it "jvp of case" $ do
+    it "case" $ do
       shouldTypeCheck $ jvpProgram $ Program $ M.fromList
         [ ("case", FuncDef [("x", SumType [FloatType, TupleType []])] []
                            (mixedType [FloatType] []) $
-            Case "x" "xv"
+            Case "x" "xv" (mixedType [FloatType] [])
               [ BinOp Mul (Var "xv") (Lit 2.0)
+              , LetDepMixed [] []      (Drop (Var "xv")) $
+                Lit 4.0
+              ])
+        ]
+
+    xit "case of case" $ do
+      shouldTypeCheck $ jvpProgram $ Program $ M.fromList
+        [ ("case", FuncDef [("x", SumType [FloatType, TupleType []])] []
+                           (mixedType [FloatType] []) $
+            Case "x" "xv" (mixedType [FloatType] [])
+              [ Case "x" "xv2" (mixedType [FloatType] [])
+                [ LetDepMixed [] [] (Drop (Var "xv2")) $
+                  BinOp Mul (Var "xv") (Lit 2.0)
+                , LetDepMixed [] [] (Drop $ Tuple ["xv2", "xv"]) $
+                  Lit 8.0  -- TODO: Unpack empty tuple
+                ]
               , LetDepMixed [] []      (Drop (Var "xv")) $
                 Lit 4.0
               ])

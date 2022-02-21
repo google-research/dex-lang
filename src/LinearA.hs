@@ -4,16 +4,19 @@ import Prelude hiding (lookup)
 import Control.Monad
 import Control.Monad.Except
 import Data.Foldable
+import Data.Hashable
 import Data.List (intercalate)
 import Data.Functor ((<&>))
 import Data.String (IsString(..))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import GHC.Stack
+import GHC.Generics
 import Prettyprinter
 
 data Var = MkVar String Int
-         deriving (Eq, Ord)
+         deriving (Eq, Ord, Generic)
+instance Hashable Var
 
 data MixedType = MixedType [Type] [Type]
                  deriving (Eq, Show)

@@ -6,11 +6,11 @@ maintainer:         apaszke@google.com
 
 library
   exposed-modules:  LinearA, LinearB
-  build-depends:    base ==4.*, containers, mtl, prettyprinter
+  build-depends:    base ==4.*, containers, mtl, prettyprinter, hashable, unordered-containers
   hs-source-dirs:   src
   default-language: Haskell2010
   ghc-options: -Wall -Wno-name-shadowing
-  default-extensions: OverloadedStrings, LambdaCase
+  default-extensions: OverloadedStrings, LambdaCase, DeriveGeneric
 
 test-suite spec
   type: exitcode-stdio-1.0
