@@ -9,6 +9,7 @@ import qualified Data.Set as S
 import qualified Data.HashSet as HS
 import qualified Data.Map.Strict as M
 import GHC.Generics
+import Prettyprinter
 
 import LinearA (Var (..), FuncName, Subst,
                 FreeVars (..), freeVar, freeLinVar,
@@ -72,6 +73,63 @@ data FuncDef = FuncDef [(Var, Type)] [(Var, Type)] MixedDepType Expr
                deriving Show
 data Program = Program (M.Map FuncName FuncDef)
                deriving Show
+
+-------------------- Pretty printing --------------------
+
+instance Pretty Program where
+  pretty (Program progMap) = vcat $ M.toList progMap <&> \(fname, def) -> "def" <+> pretty fname <+> pretty def
+instance Pretty FuncDef where
+  pretty (FuncDef vs vs' (MixedDepType rtys rtys') body) =
+    parens (prettyFormals vs <> " ;" <+> prettyFormals vs') <+> (nest 2 $
+      softline' <> "->" <+> encloseSep "(" "" ", " (pretty <$> rtys) <>
+      "; " <> encloseSep "" ")" ", " (pretty <$> rtys') <+> "=" <> hardline <> pretty body)
+    where
+      prettyFormals vs = cat $ punctuate ", " $ vs <&> \(v, ty) -> pretty v <> ":" <> pretty ty
+instance Pretty Type where
+  pretty = \case
+    FloatType     -> "Float"
+    TupleType tys -> tupled $ pretty <$> tys
+    SumType   tys -> encloseSep "{" "}" "|" $ pretty <$> tys
+    SumDepType p v tys -> "tcase" <+> pretty p <+> "of" <+> pretty v <+> encloseSep "{" "}" "|" (pretty <$> tys)
+instance Pretty MixedDepType where
+  pretty (MixedDepType tysBs linTys) =
+    group $ parens $ fillSep (tysBs <&> prettyBinder) <> line' <> "; " <>
+                     fillSep (pretty <$> linTys)
+    where
+      prettyBinder (b, ty) = case b of
+        Nothing -> "_:" <> pretty ty
+        Just n  -> pretty n <> ":" <> pretty ty
+instance Pretty ProjExpr where
+  pretty (Proj v ps) = pretty v <> (flip foldMap ps $ \p -> "." <> pretty p)
+instance Pretty Expr where
+  pretty = \case
+    RetDep vs vs' ty -> prettyMixedVars vs vs' <> "@" <> pretty ty
+    LetDepMixed vs vs' e1 e2 -> "let" <+> prettyMixedVars vs vs' <+> "=" <> (nest 2 $ group $ line <> pretty e1) <> hardline <> pretty e2
+    LetUnpack vs v e -> "explodeN" <+> prettyMixedVars vs [] <+> "=" <+> pretty v <> hardline <> pretty e
+    LetUnpackLin vs' v e -> "explodeL" <+> prettyMixedVars [] vs' <+> "=" <+> pretty v <> hardline <> pretty e
+    App funcName vs vs' -> pretty funcName <> prettyMixedVars vs vs'
+    Var v -> pretty v
+    Lit v -> pretty v
+    Tuple es -> "tupN" <+> (tupled $ pretty <$> es)
+    UnOp Sin e -> "sin" <+> parens (pretty e)
+    UnOp Cos e -> "cos" <+> parens (pretty e)
+    UnOp Exp e -> "exp" <+> parens (pretty e)
+    BinOp Add e1 e2 -> parens (pretty e1) <+> "+" <+> parens (pretty e2)
+    BinOp Mul e1 e2 -> parens (pretty e1) <+> "*" <+> parens (pretty e2)
+    LVar v -> pretty v
+    LTuple es -> "tupL" <+> (tupled $ pretty <$> es)
+    LAdd e1 e2 -> pretty $ BinOp Add e1 e2
+    LScale es el -> pretty $ BinOp Mul es el
+    LZero -> "zero"
+    Dup e -> "dup" <+> parens (pretty e)
+    Drop e -> "drop" <+> parens (pretty e)
+    Case v b ty es -> "case" <+> pretty v <+> "@" <+> pretty ty <+> "of" <+> pretty b <+> (nest 2 $ flip foldMap es $ \e -> hardline <> "->" <+> nest 3 (pretty e))
+    Inject con v tys -> "inject" <+> pretty con <+> pretty v <+> "@" <+> pretty (SumType tys)
+    where
+      prettyMixedVars :: [Var] -> [Var] -> Doc ann
+      prettyMixedVars vs vs' = group $ "(" <> fillSep (pretty <$> vs) <> line' <> "; " <> fillSep (pretty <$> vs') <> ")"
+
+-------------------- Free variable querying --------------------
 
 freeVars :: Expr -> FreeVars
 freeVars e = case e of

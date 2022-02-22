@@ -5,6 +5,7 @@ import Data.Functor
 import qualified Data.Map.Strict as M
 import Test.Hspec
 import LinearB
+import Prettyprinter
 
 -- Define some orhpan instances as sugar over non-linear expressions
 instance Num Expr where
@@ -24,7 +25,7 @@ shouldTypeCheck prog = do
   let tp = typecheckProgram prog
   case tp of
     (Right ()) -> return ()
-    (Left _) -> putStrLn $ show prog
+    (Left _) -> putStrLn $ show $ pretty prog
   tp `shouldBe` (Right ())
 
 shouldNotTypeCheck :: Program -> Expectation
@@ -85,9 +86,9 @@ spec = do
           RetDep ["w"] [] (mixedType [SumType [FloatType, TupleType []]] []))
         ]
 
-    xit "case of case" $ do
+    it "case of case" $ do
       shouldTypeCheck $ jvpProgram $ Program $ M.fromList
-        [ ("case", FuncDef [("x", SumType [FloatType, TupleType []])] []
+        [ ("twoCase", FuncDef [("x", SumType [FloatType, TupleType []])] []
                            (mixedType [FloatType] []) $
             Case "x" "xv" (mixedType [FloatType] [])
               [ Case "x" "xv2" (mixedType [FloatType] [])
