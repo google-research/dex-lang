@@ -268,6 +268,8 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
       M.keysSet env == free
     check "LetUnpackLin: linear environment mismatched" $
        (M.keysSet linEnv `S.difference` S.singleton v) `S.union` (S.fromList vs) == freeLin
+    -- TODO: The type does not have to be equal to TupleType, it only has to be unifiable!
+    -- TODO: What if the type unifies with multiple tuple types?? We need more annotations!
     case linEnv ! v of
       TupleType tys -> do
         check "" $ length tys == length vs
@@ -287,6 +289,7 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
   App f args linArgs -> do
     let FuncDef _ _ resTy _ = progMap ! f
     -- Use (L)Tuple checking rules to verify that references to args are valid
+    -- TODO: Check that args are aligned with what f expects!
     void $ typecheck prog (evid, env, mempty)    $ Tuple  args
     void $ typecheck prog (evid, mempty, linEnv) $ LTuple linArgs
     return $ resTy
@@ -318,6 +321,7 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
     ~[lenv, renv] <- splitEnv [le, re]
     lmty <- typecheck prog lenv le
     rmty <- typecheck prog renv re
+    -- TODO: Check that both types are VSpaces
     case (lmty, rmty) of
       (MixedDepType [] [lty], MixedDepType [] [rty]) -> checkTypeEq lty rty
       _ -> throwError "Expected one linear value on each side of LAdd"
@@ -325,6 +329,7 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
   LScale se le -> do
     ~[senv, lenv] <- splitEnv [se, le]
     checkFloat senv se
+    -- TODO: Check that the type is a vspace
     typecheck prog lenv le
   LZero -> do
     check "LZero: non-empty environment" $ null env && null linEnv
@@ -579,17 +584,20 @@ jvp funcEnv typeEnv scope subst env e = case e of
     where
       allFresh  = take (2 * length vs_) $ freshVars scope
       (vs, vs') = splitAt (length vs_) allFresh
-      (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) (envExt env vs_ vs') [e1, e2]
+      -- TODO: This env extension is sketchy?
+      (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) env [e1, e2]
       -- TODO: Carry the original function env!
       Right (MixedDepType vsTysBs []) = typecheck undefined (mempty, typeEnv, mempty) e1
       vsTys = snd <$> vsTysBs
   LetDepMixed _ _ _ _ -> expectNonLinear
-  Case v_ b_ (MixedDepType tysBs_ []) es_ -> Case (subst ! v_) b (MixedDepType tysBs tys') es
+  Case v_ b_ (MixedDepType tysBs_ []) es_ -> ctx $ Case (subst ! v_) b (MixedDepType tysBs tys') es
     where
       b = freshVar scope
+      -- TODO: Empty case
+      (ctx, ctxScope, [envv, enve]) = splitTangents (scopeExt scope [b]) env [Var v_, head es_]
       SumType conTys = typeEnv ! v_
       es = zip [0..] es_ <&> \(con, e) ->
-        rec (envExt typeEnv [b_] [conTys !! con]) (scopeExt scope [b]) (envExt subst [b_] [b]) (envExt env [b_] [env ! v_]) e
+        rec (envExt typeEnv [b_] [conTys !! con]) ctxScope (envExt subst [b_] [b]) (envExt enve [b_] [envv ! v_]) e
       tys_ = snd <$> tysBs_
       tysVs = MkVar "r" <$> [1..]
       tysBs = zip (Just <$> tysVs) tys_  -- This assumes that primal types are closed!

@@ -97,7 +97,8 @@ spec = do
                 , LetDepMixed [] [] (Drop $ Tuple ["xv2", "xv"]) $
                   Lit 8.0  -- TODO: Unpack empty tuple
                 ]
-              , LetDepMixed [] []      (Drop (Var "xv")) $
+              -- TODO: This test fails when this case does not consume x. Check this in the type checker!
+              , LetDepMixed [] []      (Drop (Tuple ["x", "xv"])) $
                 Lit 4.0
               ])
         ]

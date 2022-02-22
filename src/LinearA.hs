@@ -477,7 +477,7 @@ jvp funcEnv scope subst env e = case e of
     where
       allFresh  = take (2 * length vs_) $ freshVars scope
       (vs, vs') = splitAt (length vs_) allFresh
-      (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) (envExt env vs_ vs') [e1, e2]
+      (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) env [e1, e2]
   LetMixed _ _ _ _ -> expectNonLinear
   LetUnpack vs_ v_ e ->
     ctx $ LetUnpack vs (subst ! v_) $
