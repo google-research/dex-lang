@@ -41,8 +41,8 @@ spec = do
     it "accepts an implicit dup" $ do
       shouldTypeCheck $ Program $ M.fromList
         [ ("dup", FuncDef [("x", FloatType)] [] (mixedType [FloatType, FloatType] []) $
-            LetDepMixed ["y"] [] (RetDep ["x"] []) $
-            RetDep ["x", "y"] [])
+            LetDepMixed ["y"] [] (Var "x") $
+            RetDep ["x", "y"] [] (mixedType [FloatType, FloatType] []))
         ]
 
     it "checks jvp of case" $ do
@@ -55,12 +55,12 @@ spec = do
             Case "x" "xv" (mixedType [FloatType] [FloatType])
               [ LetDepMixed ["yv"] []  (BinOp Mul (Var "xv") (Lit 2.0)) $
                 LetDepMixed [] ["ytv"] (LScale (Lit 2.0) (LVar "xt")) $
-                RetDep ["yv"] ["ytv"]
+                RetDep ["yv"] ["ytv"] (mixedType [FloatType] [FloatType])
               , LetDepMixed ["yv"] []  (Lit 4.0) $
                 LetDepMixed [] ["ytv"] (LZero) $
                 LetDepMixed [] []      (Drop (LVar "xt")) $
                 LetDepMixed [] []      (Drop (Var "xv")) $
-                RetDep ["yv"] ["ytv"]
+                RetDep ["yv"] ["ytv"] (mixedType [FloatType] [FloatType])
               ])
         ]
 
@@ -74,6 +74,15 @@ spec = do
               , LetDepMixed [] []      (Drop (Var "xv")) $
                 Lit 4.0
               ])
+        ]
+
+    it "inject" $ do
+      shouldTypeCheck $ jvpProgram $ Program $ M.fromList
+        [ ("inject", FuncDef [("x", FloatType)] []
+                             (mixedType [SumType [FloatType, TupleType []]] []) $
+          LetDepMixed ["q"] [] (BinOp Mul (Var "x") (Lit 2.0)) $
+          LetDepMixed ["w"] [] (Inject 0 "q" [FloatType, TupleType []]) $
+          RetDep ["w"] [] (mixedType [SumType [FloatType, TupleType []]] []))
         ]
 
     xit "case of case" $ do
