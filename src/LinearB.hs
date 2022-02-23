@@ -167,18 +167,18 @@ freeVars e = case e of
     (FV a b) `hiding` (FV a' b') = FV (a `S.difference` a') (b `S.difference` b')
 
 freeVarsMixedType :: MixedDepType -> FreeVars
-freeVarsMixedType (MixedDepType tysBs linTys) =
-    FV (foldMap freeVarsType tys <> (foldMap freeVarsType linTys `S.difference` bsFree)) mempty
+freeVarsMixedType (MixedDepType tysBs topLinTys) = FV (go tysBs topLinTys) mempty
   where
-    (bs, tys) = unzip tysBs
-    bsFree = flip foldMap bs $ \b -> case b of Nothing -> mempty; Just v -> S.singleton v
+    go [] linTys = foldMap freeVarsType linTys
+    go ((Just b ,t):r) linTys = freeVarsType t <> S.delete b (go r linTys)
+    go ((Nothing,t):r) linTys = freeVarsType t <> go r linTys
 
 freeVarsType :: Type -> S.Set Var
 freeVarsType ty = case ty of
   FloatType         -> mempty
   TupleType tys     -> foldMap freeVarsType tys
   SumType   tys     -> foldMap freeVarsType tys
-  SumDepType p v ty -> freeVarsProj p <> (foldMap freeVarsType ty `S.difference` S.singleton v)
+  SumDepType p v ty -> freeVarsProj p <> S.delete v (foldMap freeVarsType ty)
 
 freeVarsProj :: ProjExpr -> S.Set Var
 freeVarsProj (Proj v _) = S.singleton v
@@ -195,7 +195,6 @@ substProj :: Subst -> ProjExpr -> ProjExpr
 substProj s (Proj v ps) = case M.lookup v s of
   Nothing -> Proj v  ps
   Just v' -> Proj v' ps
-
 
 -------------------- Type checking --------------------
 
@@ -230,17 +229,15 @@ typecheck prog tenv@(evid, env, linEnv) expr = case expr of
     check "LetMixed: linear environment mismatched" $
       S.union freeLinE1 (freeLinE2 `S.difference` S.fromList linVs) == M.keysSet linEnv
     let e1Env = (evid, env `M.restrictKeys` freeE1, linEnv `M.restrictKeys` freeLinE1)
-    MixedDepType vTysBs linVTys' <- typecheck prog e1Env e1
-    let (vBs, vTys) = unzip vTysBs
-    let s = M.fromList $ concat $ zip vBs vs <&> \(b, v) -> case b of Nothing -> []; Just b' -> [(b', v)]
-    let linVTys = substType s <$> linVTys'
+    e1Ty <- typecheck prog e1Env e1
+    let (vsTys, linVsTys) = instMixedDepType e1Ty vs
     let e2Evid = case (vs, e1) of
                    ([b], Tuple vs      ) -> addEvidence evid b $ ProjEvidence vs
                    ([b], Inject con v _) -> addEvidence evid b $ InjEvidence con v
                    _ -> evid
     let e2Env = ( e2Evid
-                , envExt (env `M.restrictKeys` freeE2) vs vTys
-                , envExt (linEnv `M.restrictKeys` freeLinE2) linVs linVTys)
+                , envExt (env `M.restrictKeys` freeE2) vs vsTys
+                , envExt (linEnv `M.restrictKeys` freeLinE2) linVs linVsTys)
     typecheck prog e2Env e2
   Case v b ty es -> do
     case env ! v of
@@ -385,12 +382,24 @@ typecheck prog tenv@(evid, env, linEnv) expr = case expr of
 
     scope = M.keysSet env <> M.keysSet linEnv
 
+instMixedDepType :: MixedDepType -> [Var] -> ([Type], [Type])
+instMixedDepType (MixedDepType tysBs topLinTys) vs = go topLinTys mempty tysBs vs
+  where
+    go :: [Type] -> Subst -> [(Maybe Var, Type)] -> [Var] -> ([Type], [Type])
+    go linTys s [] [] = ([], substType s <$> linTys)
+    go linTys s ((Nothing, t):rtys) (_:vr) = (substType s t:r, r')
+      where (r, r') = go linTys s rtys vr
+    go linTys s ((Just b , t):rtys) (v:vr) = (substType s t:r, r')
+      where (r, r') = go linTys (envExt s [b] [v]) rtys vr
+    go _ _ _ _ = error "Failed instantiation of a MixedDepType"
+
 typecheckFunc :: Program -> FuncName -> Either String ()
 typecheckFunc prog@(Program funcMap) name = case typecheck prog env body of
   Left  err -> Left err
+  -- TODO: Check scoping
   Right ty  -> case mixedTypeAlphaEqual (S.fromList $ fst <$> formals) ty resultType of
     True  -> Right ()
-    False -> Left "Return type mismatch"
+    False -> Left $ "Return type mismatch: expected " ++ (show $ pretty resultType) ++ ", got " ++ (show $ pretty ty)
   where
     FuncDef formals linFormals resultType body = funcMap ! name
     env = (mempty, M.fromList formals, M.fromList linFormals)
@@ -452,7 +461,7 @@ mixedTypeEqualGiven topScope evidence (MixedDepType tysBs tysLin) (MixedDepType 
       ([]     , []        ) ->
         all (uncurry $ typeEqualGiven scope evidence) $
           zip tysLin (substType subst <$> tysLin')
-      ((b,t):r, (b',t'):r') -> typeEqualGiven topScope evidence t t' && restEqual
+      ((b,t):r, (b',t'):r') -> typeEqualGiven topScope evidence t (substType subst t') && restEqual
         where
           restEqual = case (b, b') of
             (Nothing, Nothing) -> go scope subst r r'

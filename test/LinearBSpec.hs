@@ -62,6 +62,16 @@ spec = do
               ])
         ]
 
+    it "accepts an identity between dependent values" $ do
+      let sTy = SumType [FloatType, FloatType]
+      let dTy x = SumDepType x "_" [FloatType, TupleType []]
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("depId", FuncDef [("x" , sTy), ("x2", dTy "x")] []
+                            (MixedDepType [(Just "z", sTy), (Nothing, dTy "z")] []) $
+            LetDepMixed ["y", "y2"] [] (RetDep ["x", "x2"] []) $
+            RetDep ["y", "y2"] []
+          )
+        ]
 
   describe "jvp" $ do
     it "case" $ do
