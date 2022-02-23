@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module LinearBSpec where
 
+import Data.String
 import Data.Functor
 import qualified Data.Map.Strict as M
 import Test.Hspec
@@ -19,6 +20,9 @@ instance Num Expr where
 instance Fractional Expr where
   fromRational = Lit . fromRational
   (/) = undefined
+
+instance IsString ProjExpr where
+  fromString s = Proj (fromString s) []
 
 shouldTypeCheck :: Program -> Expectation
 shouldTypeCheck prog = do
@@ -64,6 +68,17 @@ spec = do
                 RetDep ["yv"] ["ytv"] (mixedType [FloatType] [FloatType])
               ])
         ]
+
+    it "accepts an output with type dependent on an input" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("depOnInput", FuncDef [("x", SumType [FloatType, TupleType []])] []
+                           (mixedType [] [SumDepType "x" "xv" [FloatType, TupleType []]]) $
+            Case "x" "xv" (mixedType [] [SumDepType "x" "xv" [FloatType, TupleType []]])
+              [ LetDepMixed [] [] (Drop (Var "xv")) $ LZero
+              , LetDepMixed [] [] (Drop (Var "xv")) $ LTuple []
+              ])
+        ]
+
 
   describe "jvp" $ do
     it "case" $ do
@@ -115,4 +130,33 @@ spec = do
               [ Inject 1 "yv" [TupleType [], FloatType]
               , Inject 0 "yv" [TupleType [], FloatType]
               ])
+        ]
+
+  let ensureJvpUnzips p = do
+        let pj = jvpProgram p
+        shouldTypeCheck pj
+        let upj = unzipProgram pj
+        shouldTypeCheck upj
+        --let expAns = evalFunc pj "f" [FloatVal 2.0] [FloatVal 2.0]
+        --let ans = eval upj mempty $
+                    --LetMixed ["x"] [] (Lit 2.0) $
+                    --LetMixed ["v", "r"] [] (App "f.nonlin" ["x"] []) $
+                    --LetMixed [] ["v'"] (App "f.lin" ["r"] ["x"]) $
+                    --Ret ["v"] ["v'"]
+        --ans `shouldBe` expAns
+
+  describe "unzip" $ do
+    it "sin x" $ do
+      let p = Program $ M.fromList
+                [ ("f", FuncDef [("x", FloatType)] [] (mixedType [FloatType] []) $
+                    UnOp Sin (Var "x")
+                  )
+                ]
+      ensureJvpUnzips p
+
+    xit "inject" $ do
+      ensureJvpUnzips $ Program $ M.fromList
+        [ ("f", FuncDef [("x", FloatType)] [] (mixedType [SumType [FloatType, TupleType []]] []) $
+            Inject 0 "x" [FloatType, TupleType []]
+          )
         ]

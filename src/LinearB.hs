@@ -154,7 +154,7 @@ freeVars e = case e of
       FV freeE1 freeLinE1 = freeVars e1
       FV freeE2 freeLinE2 = freeVars e2
   LetUnpack vs v e -> freeVar v <> (freeVars e `hiding` FV (S.fromList vs) mempty)
-  LetUnpackLin vs tys v e -> assertClosedTys tys $ freeLinVar v <> (freeVars e `hiding` FV mempty (S.fromList vs))
+  LetUnpackLin vs tys v e -> freeLinVar v <> (freeVars e `hiding` FV mempty (S.fromList vs)) <> FV (foldMap freeVarsType tys) mempty
   Case v b ty exprs -> freeVar v <> FV fe' fel' <> freeVarsMixedType ty
     where
       FV fe fel' = foldMap freeVars exprs
@@ -373,7 +373,7 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
 typecheckFunc :: Program -> FuncName -> Either String ()
 typecheckFunc prog@(Program funcMap) name = case typecheck prog env body of
   Left  err -> Left err
-  Right ty  -> case mixedTypeEqualGiven mempty mempty ty resultType of
+  Right ty  -> case mixedTypeEqualGiven (S.fromList $ fst <$> formals) mempty ty resultType of
     True  -> Right ()
     False -> Left "Return type mismatch"
   where
@@ -586,7 +586,6 @@ jvp funcEnv typeEnv scope subst env e = case e of
     where
       allFresh  = take (2 * length vs_) $ freshVars scope
       (vs, vs') = splitAt (length vs_) allFresh
-      -- TODO: This env extension is sketchy?
       (ctx, ctxScope, [env1, env2]) = splitTangents typeEnv (scopeExt scope allFresh) env [e1, e2]
       -- TODO: Carry the original function env!
       Right (MixedDepType vsTysBs []) = typecheck undefined (mempty, typeEnv, mempty) e1
@@ -619,3 +618,163 @@ jvp funcEnv typeEnv scope subst env e = case e of
       retDepPair (scope <> S.fromList [v, v'])
         (UnOp primOp (Var v)) (LScale (tanCoef v) (LVar v')) FloatType
       where v : v' : _ = freshVars scope
+
+-------------------- Unzip --------------------
+
+unzipProgram :: Program -> Program
+unzipProgram orig@(Program funcMap) = new where
+  new = Program $ flip M.foldMapWithKey funcMap $ \name def -> do
+    -- Tying the knot by passing `new` here does assume that laziness
+    -- will figure out a sensible order in which to actually perform
+    -- the unzipping so that the type of every unzipped callee is
+    -- available for its unzipped caller.
+    let (udef, udef') = unzipFunc orig new def
+    M.fromList [(name ++ ".nonlin", udef), (name ++ ".lin", udef')]
+
+
+-- TODO: How to transfer evidence between the non-linear and linear functions?
+-- We need it for the tangent type casts to be valid.
+-- (1) We could have a new type for "evidence witness" values (a'la GADTs).
+--     The only problem is that those would have to be non-linear values dependent
+--     on non-linear values, which we don't support.
+-- (2) The pairing method (bundling linear cast with a non-linear op) doesn't work
+--     with unzipping at all, so that's not a solution either.
+
+-- The nonlinear returned function packages the tape in the _last_ returned value
+unzipFunc :: Program -> Program -> FuncDef -> (FuncDef, FuncDef)
+unzipFunc orig new def = assert implLimitationsOk $
+  ( FuncDef formalsWithTys [] nonlinFuncTy nonlinBody
+  -- TOOD: We could bundle formalsWithTys into residuals, but we'd need to
+  -- adjust linRetTys to use projections from residuals instead of formal vars.
+  -- TODO: We have to take retTys, or else linRetTys are not well scoped.
+  , FuncDef (retFormalsWithTys ++ [(resVar, residualTupleTy)])
+      linFormalsWithTys (MixedDepType [] linRetTys) linBody
+  )
+  where
+    (FuncDef formalsWithTys linFormalsWithTys (MixedDepType retTysBs linRetTys) body) = def
+    (formals, _) = unzip formalsWithTys
+    (linFormals, _) = unzip linFormalsWithTys
+    formalsScope = scopeExt (scopeExt mempty formals) linFormals
+    formalsSubst = envExt (envExt mempty formals formals) linFormals linFormals
+    ((ctx, ctxScope), ubody, ubody') = unzipExpr orig formalsScope formalsSubst body
+
+    resVar:retVarsHints = take (1 + length retTysBs) $ freshVars ctxScope
+    retVars = zip retTysBs retVarsHints <&> \((mb, _), h) -> case mb of Nothing -> h; Just b -> b
+    residualVars = toList $ getFree (freeVars ubody') `S.difference`
+                            (scopeExt mempty $ linFormals)
+    retFormalsWithTys = zip retVars (snd <$> retTysBs)
+
+    resOnlyBody = ctx $ LetDepMixed [] [] (Drop ubody) $ Tuple residualVars
+    MixedDepType [(_, residualTupleTy)] [] = case
+      typecheck new (mempty, M.fromList formalsWithTys, mempty) resOnlyBody of
+        Right res -> res
+        Left err -> error $ err ++ " in\n" ++ show (pretty resOnlyBody)
+          ++ "\nwith env\n" ++ show (pretty formalsWithTys)
+    nonlinFuncTy = MixedDepType (retTysBs ++ [(Nothing, residualTupleTy)]) []
+    nonlinBody = ctx $
+      LetDepMixed retVars [] ubody $
+      LetDepMixed [resVar] [] (Tuple residualVars) $
+      RetDep (retVars ++ [resVar]) [] nonlinFuncTy
+
+    -- TODO: Important! Can this drop mess up complexity results??
+    linBody = LetDepMixed [] [] (Drop $ Tuple retVars) $
+              LetUnpack residualVars resVar $
+              ubody'
+
+    -- TODO: Refresh the retTysBs to make sure they don't run into conflicts with other vars
+    implLimitationsOk = (not $ any (`S.member` formalsScope) retVars) &&
+                        (not $ any (== resVar) retVars)
+
+
+-- The Scope is the set of variables used by the generated body so far
+-- (with respect to which new variables must be fresh).
+-- The Subst is the remapping of old variable names to new ones.
+-- The return is
+-- - The binding list, represented as an Expr -> Expr function
+-- - The Scope in that context (scope argument is always contained in it)
+-- - The non-linear result expression
+-- - The linear result expression
+unzipExpr :: Program -> Scope -> Subst -> Expr -> ((Expr -> Expr, Scope), Expr, Expr)
+unzipExpr orig scope subst expr = case expr of
+  RetDep vs vs' (MixedDepType tysBs linTys) ->
+    ( (id, scope)
+    , RetDep ((subst !) <$> vs) []  (MixedDepType tysBs [])
+    , RetDep [] ((subst !) <$> vs') (MixedDepType [] linTys)
+    )
+  LetDepMixed vs vs' e1 e2 ->
+      ( (ctx1 . LetDepMixed uvs [] ue1 . ctx2, scopeCtx2)
+      , ue2
+      , LetDepMixed [] uvs' ue1' ue2'
+      )
+    where
+      ((ctx1, scopeCtx1), ue1, ue1') = rec scope subst e1
+      (uvs, uvs') = splitAt (length vs) $ take (length vs + length vs') $ freshVars scopeCtx1
+      e2Subst = envExt (envExt subst vs uvs) vs' uvs'
+      e2Scope = scopeExt (scopeExt scope uvs) uvs'
+      ((ctx2, scopeCtx2), ue2, ue2') = rec e2Scope e2Subst e2
+  LetUnpack vs v e ->
+      ((LetUnpack uvs (subst ! v) . ctx, ctxScope), ue, ue')
+    where
+      uvs = take (length vs) $ freshVars scope
+      subst' = envExt subst vs uvs
+      scope' = (scopeExt scope uvs)
+      ((ctx, ctxScope), ue, ue') = rec scope' subst' e
+  LetUnpackLin vs tys v e ->
+      ( (ctx, ctxScope)
+      , ue
+      , LetUnpackLin uvs (substType subst <$> tys) (subst ! v) ue'
+      )
+    where
+      uvs = take (length vs) $ freshVars scope
+      subst' = envExt subst vs uvs
+      scope' = (scopeExt scope uvs)
+      ((ctx, ctxScope), ue, ue') = rec scope' subst' e
+  App _ _ _ -> undefined
+  --App name vs vs' ->
+      --( (LetMixed (retVars ++ [tapeVar]) [] (App (name ++ ".nonlin") uvs []), scope2)
+      --, Ret retVars []
+      --, App (name ++ ".lin") [tapeVar] uvs'
+      --)
+    --where
+      --uvs = (subst !) <$> vs
+      --uvs' = (subst !) <$> vs'
+      --retTys = nonLinRetTys orig name
+      --tapeVar:retVars = take (1 + length retTys) $ freshVars scope
+      --scope2 = scopeExt scope $ tapeVar:retVars
+  Var v -> ((id, scope), Var (subst ! v), trivial)
+  Lit f -> ((id, scope), Lit f, trivial)
+  Tuple vs -> ((id, scope), Tuple $ (subst !) <$> vs, trivial)
+  UnOp op e -> ((ctx, ctxScope), UnOp op ue, ue')
+    where ((ctx, ctxScope), ue, ue') = rec scope subst e
+  BinOp op e1 e2 -> ((ctx1 . ctx2, ctxScope2), BinOp op ue1 ue2, ue')
+    where
+      ((ctx1, ctxScope1), ue1, ue1') = rec scope subst e1
+      ((ctx2, ctxScope2), ue2, ue2') = rec ctxScope1 subst e2
+      ue' = LetDepMixed [] [] ue1' ue2'
+  LVar v -> ((id, scope), trivial, LVar (subst ! v))
+  LTuple vs -> ((id, scope), trivial, LTuple $ (subst !) <$> vs)
+  LAdd e1 e2 -> ((ctx1 . ctx2, ctxScope2), ue, LAdd ue1' ue2')
+    where
+      ((ctx1, ctxScope1), ue1, ue1') = rec scope subst e1
+      ((ctx2, ctxScope2), ue2, ue2') = rec ctxScope1 subst e2
+      ue = LetDepMixed [] [] ue1 ue2
+  LScale s e ->
+    ( (sCtx . eCtx, eCtxScope)
+    , LetDepMixed [] [] ue  $ trivial
+    , LetDepMixed [] [] us' $ LScale us ue'
+    )
+    where
+      ((sCtx, sCtxScope), us, us') = rec scope     subst s
+      ((eCtx, eCtxScope), ue, ue') = rec sCtxScope subst e
+  LZero -> ((id, scope), trivial, LZero)
+  Dup e -> ((ctx, ctxScope), ue, Dup ue')
+    where ((ctx, ctxScope), ue, ue') = rec scope subst e
+  Drop e -> ((ctx, ctxScope), Drop ue, Drop ue')
+    where ((ctx, ctxScope), ue, ue') = rec scope subst e
+  --Case v_ b_ (MixedDepType tysBs_ linTys_) es_ -> undefined
+  Case _ _ _ _ -> undefined
+  Inject con v_ tys -> ((id, scope), Inject con (subst ! v_) tys, trivial)
+  where
+    rec = unzipExpr orig
+    trivial = RetDep [] [] (MixedDepType [] [])
+
