@@ -83,10 +83,9 @@ data Program = Program (M.Map FuncName FuncDef)
 instance Pretty Program where
   pretty (Program progMap) = vcat $ M.toList progMap <&> \(fname, def) -> "def" <+> pretty fname <+> pretty def
 instance Pretty FuncDef where
-  pretty (FuncDef vs vs' (MixedDepType rtys rtys') body) =
+  pretty (FuncDef vs vs' ty body) =
     parens (prettyFormals vs <> " ;" <+> prettyFormals vs') <+> (nest 2 $
-      softline' <> "->" <+> encloseSep "(" "" ", " (pretty <$> rtys) <>
-      "; " <> encloseSep "" ")" ", " (pretty <$> rtys') <+> "=" <> hardline <> pretty body)
+      softline' <> "->" <+> pretty ty <+> "=" <> hardline <> pretty body)
     where
       prettyFormals vs = cat $ punctuate ", " $ vs <&> \(v, ty) -> pretty v <> ":" <> pretty ty
 instance Pretty Type where
@@ -464,7 +463,7 @@ typeEqualGiven scope evidence at bt =
           FloatType         -> FloatType
           TupleType ts      -> TupleType $ go scope subst <$> ts
           SumType   ts      -> SumType   $ go scope subst <$> ts
-          EvidenceType v ev -> EvidenceType (subst ! v) (substEvidence subst ev)
+          EvidenceType v ev -> EvidenceType (fromMaybe v $ M.lookup v subst) (substEvidence subst ev)
           SumDepType p b ts ->
             SumDepType (substProj subst p) b' $
               go (scopeExt scope [b']) (envExt subst [b] [b']) <$> ts
@@ -740,8 +739,8 @@ unzipFunc orig new def = assert implLimitationsOk $
   -- adjust linRetTys to use projections from residuals instead of formal vars.
   -- TODO: We have to take retTys, or else linRetTys are not well scoped.
   -- TODO: Take in formals or else linRetTys might not be well scoped.
-  , FuncDef (retFormalsWithTys ++ [(resVar, residualTupleTy)])
-      linFormalsWithTys (MixedDepType [] linRetTys) linBody
+  , FuncDef (zip uvars uvarTys ++ [(resVar, residualTupleTy)])
+      linFormalsWithTys (MixedDepType [] uvarLinRetTys) linBody
   )
   where
     (FuncDef formalsWithTys linFormalsWithTys (MixedDepType retTysBs linRetTys) body) = def
@@ -749,7 +748,9 @@ unzipFunc orig new def = assert implLimitationsOk $
     (linFormals, _) = unzip linFormalsWithTys
     formalsScope = scopeExt (scopeExt mempty formals) linFormals
     formalsSubst = envExt (envExt mempty formals formals) linFormals linFormals
-    ((ctx, ctxScope), ubody, ubody') = unzipExpr orig formalsScope formalsSubst body
+    -- TODO: Don't depend on RetDep!
+    -- NOTE: residualVars are disjoint from retVars <- this should help!
+    ((ctx, ctxScope), ubody@(RetDep uvars []), ubody') = unzipExpr orig formalsScope formalsSubst body
 
     resVar:retVarsHints = take (1 + length retTysBs) $ freshVars ctxScope
     retVars = zip retTysBs retVarsHints <&> \((mb, _), h) -> case mb of Nothing -> h; Just b -> b
@@ -763,14 +764,15 @@ unzipFunc orig new def = assert implLimitationsOk $
         Right res -> res
         Left err -> error $ err ++ " in\n" ++ show (pretty resOnlyBody)
           ++ "\nwith env\n" ++ show (pretty formalsWithTys)
-    nonlinFuncTy = MixedDepType (retTysBs ++ [(Nothing, residualTupleTy)]) []
+    (uvarTys, uvarLinRetTys) = instMixedDepType (MixedDepType retTysBs []) uvars
+    nonlinFuncTy = MixedDepType (zip (Just <$> uvars) uvarTys ++ [(Nothing, residualTupleTy)]) []
     nonlinBody = ctx $
-      LetDepMixed retVars [] ubody $
+      --LetDepMixed retVars [] ubody $  -- TODO: Don't depend on RetDep!
       LetDepMixed [resVar] [] (Tuple residualVars) $
-      RetDep (retVars ++ [resVar]) []
+      RetDep (uvars ++ [resVar]) []
 
     -- TODO: Important! Can this drop mess up complexity results??
-    linBody = LetDepMixed [] [] (Drop $ Tuple retVars) $
+    linBody = LetDepMixed [] [] (Drop $ Tuple uvars) $
               LetUnpack residualVars resVar $
               ubody'
 
