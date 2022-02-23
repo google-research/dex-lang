@@ -105,27 +105,14 @@ spec = do
               ])
         ]
 
--- let y = x
--- case y of
---   Left l  -> f l
---   Right r -> g r
---
---
--- \x:(Either ..., Either ...).
---   let (y, z) = x
---   case y of
---     Left l  -> f l
---     Right r -> g r
---
---
--- \x:(Either ..., Either ...).
---   LetUnpack [y, z] (Var x)
---   ...
---
--- \x:(Either ..., Either ...) xt:(SumDepTy x.0 ..., SumDepTy x.1 ...).
---   -- LetDepUnpack [y_tmp, z_tmp] (Var x)
---   -- LetLinUnpack [yt_tmp, zt_tmp] (LVar xt)
---   -- LetDepMixed [y, z] [yt, zt] (RetDep [y_tmp, z_tmp] [yt_tmp, zt_tmp]) !!!!)
---   LetDepUnpack [y, z] [yt, zt] x xt $
---   yt: SumDepTy y ...
---   ...
+    it "case swap" $ do
+      let fou = SumType [FloatType, TupleType []]
+      let uof = SumType [TupleType [], FloatType]
+      shouldTypeCheck $ jvpProgram $ Program $ M.fromList
+        [ ("caseSwap", FuncDef [("x", fou)] [] (mixedType [uof] []) $
+            LetDepMixed ["y"] [] (Var "x") $
+            Case "y" "yv" (mixedType [uof] [])
+              [ Inject 1 "yv" [TupleType [], FloatType]
+              , Inject 0 "yv" [TupleType [], FloatType]
+              ])
+        ]
