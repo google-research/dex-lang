@@ -100,7 +100,6 @@ spec = do
                   LetUnpack [] "xv2" $
                   BinOp Mul (Var "xv") (Lit 4.0)
                 ]
-              -- TODO: This test fails when this case does not consume x. Check this in the type checker!
               , LetDepMixed [] []      (Drop (Tuple ["x", "xv"])) $
                 Lit 4.0
               ])

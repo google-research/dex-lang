@@ -237,10 +237,12 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
     case env ! v of
       SumType tys -> do
         check "Mismatched case count" $ length tys == length es
-        forM_ (zip3 [0..] tys es) $ \(con, bty, e) -> do
-          let eEnv = case S.member v (getFree $ freeVars e) of
+        let eEnv = case es of
+                     [] -> error "shouldn't be needed"
+                     (he:_) -> case S.member v (getFree $ freeVars he) of
                        True  -> env
                        False -> M.delete v env
+        forM_ (zip3 [0..] tys es) $ \(con, bty, e) -> do
           let eEvid = addEvidence evid v $ InjEvidence con b
           eTy <- typecheck prog (eEvid, envExt eEnv [b] [bty], linEnv) e
           check ("Cases return different types: expected " ++ show ty ++ ", got " ++ show eTy) $
