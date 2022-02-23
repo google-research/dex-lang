@@ -47,35 +47,18 @@ spec = do
       shouldTypeCheck $ Program $ M.fromList
         [ ("dup", FuncDef [("x", FloatType)] [] (mixedType [FloatType, FloatType] []) $
             LetDepMixed ["y"] [] (Var "x") $
-            RetDep ["x", "y"] [] (mixedType [FloatType, FloatType] []))
-        ]
-
-    it "checks jvp of case" $ do
-      -- jvp (\x. case x of Left f -> f * 2.0; Right () -> 4.0)
-      shouldTypeCheck $ Program $ M.fromList
-        [ ("case", FuncDef [("x", SumType [FloatType, TupleType []])]
-                           [("xt", SumDepType (Proj "x" []) "xb"
-                                     [FloatType, TupleType []])]
-                           (mixedType [FloatType] [FloatType]) $
-            Case "x" "xv" (mixedType [FloatType] [FloatType])
-              [ LetDepMixed ["yv"] []  (BinOp Mul (Var "xv") (Lit 2.0)) $
-                LetDepMixed [] ["ytv"] (LScale (Lit 2.0) (LVar "xt")) $
-                RetDep ["yv"] ["ytv"] (mixedType [FloatType] [FloatType])
-              , LetDepMixed ["yv"] []  (Lit 4.0) $
-                LetDepMixed [] ["ytv"] (LZero) $
-                LetDepMixed [] []      (Drop (LVar "xt")) $
-                LetDepMixed [] []      (Drop (Var "xv")) $
-                RetDep ["yv"] ["ytv"] (mixedType [FloatType] [FloatType])
-              ])
+            RetDep ["x", "y"] []
+          )
         ]
 
     it "accepts an output with type dependent on an input" $ do
+      let xTanTy = SumDepType "x" "xv" [FloatType, TupleType []]
       shouldTypeCheck $ Program $ M.fromList
         [ ("depOnInput", FuncDef [("x", SumType [FloatType, TupleType []])] []
-                           (mixedType [] [SumDepType "x" "xv" [FloatType, TupleType []]]) $
-            Case "x" "xv" (mixedType [] [SumDepType "x" "xv" [FloatType, TupleType []]])
-              [ LetDepMixed [] [] (Drop (Var "xv")) $ LZero
-              , LetDepMixed [] [] (Drop (Var "xv")) $ LTuple []
+                           (mixedType [] [xTanTy]) $
+            Case "x" "xv" (mixedType [] [xTanTy])
+              [ LetDepMixed [] [] (Drop (Var "xv")) $ Cast LZero       (mixedType [] [xTanTy])
+              , LetDepMixed [] [] (Drop (Var "xv")) $ Cast (LTuple []) (mixedType [] [xTanTy])
               ])
         ]
 
@@ -96,9 +79,10 @@ spec = do
       shouldTypeCheck $ jvpProgram $ Program $ M.fromList
         [ ("inject", FuncDef [("x", FloatType)] []
                              (mixedType [SumType [FloatType, TupleType []]] []) $
-          LetDepMixed ["q"] [] (BinOp Mul (Var "x") (Lit 2.0)) $
-          LetDepMixed ["w"] [] (Inject 0 "q" [FloatType, TupleType []]) $
-          RetDep ["w"] [] (mixedType [SumType [FloatType, TupleType []]] []))
+            LetDepMixed ["q"] [] (BinOp Mul (Var "x") (Lit 2.0)) $
+            LetDepMixed ["w"] [] (Inject 0 "q" [FloatType, TupleType []]) $
+            RetDep ["w"] []
+          )
         ]
 
     it "case of case" $ do
