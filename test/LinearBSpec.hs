@@ -94,8 +94,11 @@ spec = do
               [ Case "x" "xv2" (mixedType [FloatType] [])
                 [ LetDepMixed [] [] (Drop (Var "xv2")) $
                   BinOp Mul (Var "xv") (Lit 2.0)
-                , LetDepMixed [] [] (Drop $ Tuple ["xv2", "xv"]) $
-                  Lit 8.0  -- TODO: Unpack empty tuple
+                , -- We unpack the exercise the duality of x's tangent type:
+                  -- it has to act both as a tuple and as a float. Note that
+                  -- this code is unreachable at runtime.
+                  LetUnpack [] "xv2" $
+                  BinOp Mul (Var "xv") (Lit 4.0)
                 ]
               -- TODO: This test fails when this case does not consume x. Check this in the type checker!
               , LetDepMixed [] []      (Drop (Tuple ["x", "xv"])) $

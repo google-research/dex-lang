@@ -45,8 +45,8 @@ data Expr
        -- LinearA parts that are not included in LinearB
        -- = Ret [Var] [Var]
        -- | LetMixed     [Var] [Var] Expr Expr
-          = LetUnpack    [Var]       Var  Expr
-          | LetUnpackLin [Var]       Var  Expr
+          = LetUnpack    [Var]        Var  Expr
+          | LetUnpackLin [Var] [Type] Var  Expr
           | App FuncName [Var] [Var]
           -- Additional non-linear expressions
           | Var Var
@@ -106,7 +106,7 @@ instance Pretty Expr where
     RetDep vs vs' ty -> prettyMixedVars vs vs' <> "@" <> pretty ty
     LetDepMixed vs vs' e1 e2 -> "let" <+> prettyMixedVars vs vs' <+> "=" <> (nest 2 $ group $ line <> pretty e1) <> hardline <> pretty e2
     LetUnpack vs v e -> "explodeN" <+> prettyMixedVars vs [] <+> "=" <+> pretty v <> hardline <> pretty e
-    LetUnpackLin vs' v e -> "explodeL" <+> prettyMixedVars [] vs' <+> "=" <+> pretty v <> hardline <> pretty e
+    LetUnpackLin vs' _ v e -> "explodeL" <+> prettyMixedVars [] vs' <+> "=" <+> pretty v <> hardline <> pretty e
     App funcName vs vs' -> pretty funcName <> prettyMixedVars vs vs'
     Var v -> pretty v
     Lit v -> pretty v
@@ -154,13 +154,15 @@ freeVars e = case e of
       FV freeE1 freeLinE1 = freeVars e1
       FV freeE2 freeLinE2 = freeVars e2
   LetUnpack vs v e -> freeVar v <> (freeVars e `hiding` FV (S.fromList vs) mempty)
-  LetUnpackLin vs v e -> freeLinVar v <> (freeVars e `hiding` FV mempty (S.fromList vs))
+  LetUnpackLin vs tys v e -> assertClosedTys tys $ freeLinVar v <> (freeVars e `hiding` FV mempty (S.fromList vs))
   Case v b ty exprs -> freeVar v <> FV fe' fel' <> freeVarsMixedType ty
     where
       FV fe fel' = foldMap freeVars exprs
       fe' = fe `S.difference` S.singleton b
-  Inject _ v tys -> assert (null $ foldMap freeVarsType tys) $ freeVar v
+  Inject _ v tys -> assertClosedTys tys $ freeVar v
   where
+    assertClosedTys :: [Type] -> a -> a
+    assertClosedTys tys = assert (null $ foldMap freeVarsType tys)
     (FV a b) `hiding` (FV a' b') = FV (a `S.difference` a') (b `S.difference` b')
 
 freeVarsMixedType :: MixedDepType -> FreeVars
@@ -261,20 +263,16 @@ typecheck prog@(Program progMap) tenv@(evid, env, linEnv) expr = case expr of
         check "" $ length tys == length vs
         typecheck prog (addEvidence evid v $ ProjEvidence vs, envExt (env `M.restrictKeys` free) vs tys, linEnv) e
       _ -> throwError "Unpacking a non-tuple type"
-  LetUnpackLin vs v e -> do
+  LetUnpackLin vs tys v e -> do
     let FV free freeLin = freeVars e
     check "shadowing in binders" $ unique vs
     check "LetUnpackLin: non-linear environment mismatched" $
       M.keysSet env == free
     check "LetUnpackLin: linear environment mismatched" $
        (M.keysSet linEnv `S.difference` S.singleton v) `S.union` (S.fromList vs) == freeLin
-    -- TODO: The type does not have to be equal to TupleType, it only has to be unifiable!
-    -- TODO: What if the type unifies with multiple tuple types?? We need more annotations!
-    case linEnv ! v of
-      TupleType tys -> do
-        check "" $ length tys == length vs
-        typecheck prog (evid, env, envExt (M.delete v linEnv) vs tys) e
-      _ -> throwError "Unpacking a non-tuple type"
+    check "LetUnpackLin: annotations mismatched" $
+      typeEqualGiven scope evid (linEnv ! v) (TupleType tys)
+    typecheck prog (evid, env, envExt (M.delete v linEnv) vs tys) e
   Lit _ -> do
     check "Lit: non-empty environments" $ null env && null linEnv
     return $ MixedDepType [(Nothing, FloatType)] []
@@ -489,8 +487,8 @@ tangentType v vTy = go (Proj v [], vTy)
       SumType   tys -> SumDepType p "v" $ tys <&> \t -> go (Proj "v" [], t)
       SumDepType _ _ _ -> error "unsupported"
 
-splitTangents :: Scope -> TangentMap -> [Expr] -> (Expr -> Expr, Scope, [TangentMap])
-splitTangents scope env es = go scope env (freeVars <$> es)
+splitTangents :: M.Map Var Type -> Scope -> TangentMap -> [Expr] -> (Expr -> Expr, Scope, [TangentMap])
+splitTangents typeEnv scope env es = go scope env (freeVars <$> es)
   where
     go scope _   [] = (id, scope, [])
     go scope env (FV fvs fvs':tfvs) = case null fvs' of
@@ -507,17 +505,18 @@ splitTangents scope env es = go scope env (freeVars <$> es)
                 (envExt (M.withoutKeys env fvs) commonFvs dvs') tfvs
             emap = envExt (M.withoutKeys env subfvs) commonFvs dvs2'
             context = LetDepMixed [] [vst', vst2'] (Dup (LTuple $ (env !) <$> commonFvs)) .
-                      LetUnpackLin dvs'  vst' .
-                      LetUnpackLin dvs2' vst2'
+                      LetUnpackLin dvs'  tanTys vst' .
+                      LetUnpackLin dvs2' tanTys vst2'
       where
         subfvs = getFree (fold tfvs)
         commonFvsS = fvs `S.intersection` subfvs
         commonFvs  = toList commonFvsS
+        tanTys = commonFvs <&> \v -> tangentType v (typeEnv ! v)
 
 jvp :: JVPFuncMap -> M.Map Var Type -> Scope -> Subst -> TangentMap -> Expr -> Expr
 jvp funcEnv typeEnv scope subst env e = case e of
   App f vs_ [] -> ctx $ App (funcEnv ! f) ((subst !) <$> vs_) (zipWith (!) envs vs_)
-    where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
+    where (ctx, _, envs) = splitTangents typeEnv scope env (Var <$> vs_)
   App _ _ _  -> expectNonLinear
   Var v -> RetDep [subst ! v] [env ! v] $ MixedDepType [(Just v, typeEnv ! v)] [tangentType v (typeEnv ! v)]
   Lit v -> retDepPair scope (Lit v) LZero FloatType
@@ -526,7 +525,7 @@ jvp funcEnv typeEnv scope subst env e = case e of
       (Tuple $ (subst !) <$> vs_) (LTuple $ zipWith (!) envs vs_)
       (TupleType $ (typeEnv !) <$> vs_)
     where
-      (ctx, scope', envs) = splitTangents scope env (Var <$> vs_)
+      (ctx, scope', envs) = splitTangents typeEnv scope env (Var <$> vs_)
   UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
   UnOp Cos e -> jvpUnOp e Cos $ \v -> BinOp Mul (UnOp Sin (Var v)) (Lit (-1))
   UnOp Exp e -> jvpUnOp e Exp $ UnOp Exp . Var
@@ -536,7 +535,7 @@ jvp funcEnv typeEnv scope subst env e = case e of
     retDepPair (ctxScope <> S.fromList [v1, v1', v2, v2'])
       (BinOp Add (Var v1) (Var v2)) (LAdd (LVar v1') (LVar v2')) FloatType
     where
-      (ctx, ctxScope, [env1, env2]) = splitTangents scope env [e1, e2]
+      (ctx, ctxScope, [env1, env2]) = splitTangents typeEnv scope env [e1, e2]
       v1:v1':v2:v2':_ = freshVars ctxScope
   BinOp Mul e1 e2 -> ctx $
     LetDepMixed [v1] [v1'] (rec typeEnv ctxScope subst env1 e1) $
@@ -547,7 +546,7 @@ jvp funcEnv typeEnv scope subst env e = case e of
             (LScale (Var v1) (LVar v2')))
       FloatType
     where
-      (ctx, ctxScope, [env1, env2]) = splitTangents scope env [e1, e2]
+      (ctx, ctxScope, [env1, env2]) = splitTangents typeEnv scope env [e1, e2]
       v1:v1':v2:v2':_ = freshVars ctxScope
   LVar _     -> expectNonLinear
   LTuple _   -> expectNonLinear
@@ -558,23 +557,24 @@ jvp funcEnv typeEnv scope subst env e = case e of
   Drop e -> Drop $ rec typeEnv scope subst env e
   LetUnpack vs_ v_ e ->
     ctx $
-      LetUnpack vs (subst ! v_) $
-      LetUnpackLin vs' (envv ! v_) $
+      LetUnpack    vs         (subst ! v_) $
+      LetUnpackLin vs' tanTys (envv ! v_) $
       rec typeEnv' (scopeExt ctxScope allFresh) subst' env' e
     where
-      (ctx, ctxScope, [envv, enve]) = splitTangents scope env [Var v_, e]
+      (ctx, ctxScope, [envv, enve]) = splitTangents typeEnv scope env [Var v_, e]
       allFresh = take (2 * length vs_) $ freshVars ctxScope
       (vs, vs') = splitAt (length vs_) allFresh
       subst' = envExt subst vs_ vs
       env' = envExt enve vs_ vs'
       typeEnv' = envExt typeEnv vs_ vsTys_
       TupleType vsTys_ = typeEnv ! v_
-  LetUnpackLin _ _ _ -> expectNonLinear
+      tanTys = vs <&> \v -> tangentType v (typeEnv ! v)
+  LetUnpackLin _ _ _ _ -> expectNonLinear
   RetDep vs_ [] (MixedDepType tysBs_ []) ->
     ctx $ RetDep vs (zipWith (!) envs vs_)
       (MixedDepType (zip (Just <$> vs_) tys_) (uncurry tangentType <$> zip vs_ tys_))
     where
-      (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
+      (ctx, _, envs) = splitTangents typeEnv scope env (Var <$> vs_)
       vs = (subst !) <$> vs_
       tys_ = snd <$> tysBs_
   RetDep _ _ _ -> expectNonLinear
@@ -585,7 +585,7 @@ jvp funcEnv typeEnv scope subst env e = case e of
       allFresh  = take (2 * length vs_) $ freshVars scope
       (vs, vs') = splitAt (length vs_) allFresh
       -- TODO: This env extension is sketchy?
-      (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) env [e1, e2]
+      (ctx, ctxScope, [env1, env2]) = splitTangents typeEnv (scopeExt scope allFresh) env [e1, e2]
       -- TODO: Carry the original function env!
       Right (MixedDepType vsTysBs []) = typecheck undefined (mempty, typeEnv, mempty) e1
       vsTys = snd <$> vsTysBs
@@ -594,7 +594,7 @@ jvp funcEnv typeEnv scope subst env e = case e of
     where
       b = freshVar scope
       -- TODO: Empty case
-      (ctx, ctxScope, [envv, enve]) = splitTangents (scopeExt scope [b]) env [Var v_, head es_]
+      (ctx, ctxScope, [envv, enve]) = splitTangents typeEnv (scopeExt scope [b]) env [Var v_, head es_]
       SumType conTys = typeEnv ! v_
       es = zip [0..] es_ <&> \(con, e) ->
         rec (envExt typeEnv [b_] [conTys !! con]) ctxScope (envExt subst [b_] [b]) (envExt enve [b_] [envv ! v_]) e
