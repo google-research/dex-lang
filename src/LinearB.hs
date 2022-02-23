@@ -1,6 +1,7 @@
 module LinearB (module LinearB, module LinearA) where
 
 import Control.Monad.Except
+import Data.Maybe
 import Data.Functor
 import Data.Foldable
 import Data.Hashable
@@ -31,6 +32,7 @@ data Type = FloatType
           | TupleType [Type]
           | SumType   [Type]
           | SumDepType ProjExpr Var [Type]
+          | EvidenceType Var TypeEqEvidence
           deriving (Show, Eq, Generic)
 instance Hashable Type
 
@@ -63,7 +65,8 @@ data Expr
           | Dup  Expr
           | Drop Expr
           -- LinearB extensions
-          | Cast           Expr  MixedDepType
+          | Reflect        Var   TypeEqEvidence
+          | Cast           Expr  MixedDepType [Var]
           | RetDep         [Var] [Var]
           | LetDepMixed    [Var] [Var] Expr    Expr
           | Case Var Var MixedDepType [Expr]  -- scrutinee, binder, result type, expression
@@ -92,6 +95,11 @@ instance Pretty Type where
     TupleType tys -> tupled $ pretty <$> tys
     SumType   tys -> encloseSep "{" "}" "|" $ pretty <$> tys
     SumDepType p v tys -> "tcase" <+> pretty p <+> "of" <+> pretty v <+> encloseSep "{" "}" "|" (pretty <$> tys)
+    EvidenceType v e -> prettyEvidence v e
+prettyEvidence :: Var -> TypeEqEvidence -> Doc ann
+prettyEvidence v ev = braces $ pretty v <+> "=" <+> case ev of
+  InjEvidence con val -> "inject" <+> pretty con <+> pretty val
+  ProjEvidence vals   -> tupled $ pretty <$> vals
 instance Pretty MixedDepType where
   pretty (MixedDepType tysBs linTys) =
     group $ parens $ fillSep (tysBs <&> prettyBinder) <> line' <> "; " <>
@@ -104,7 +112,7 @@ instance Pretty ProjExpr where
   pretty (Proj v ps) = pretty v <> (flip foldMap ps $ \p -> "." <> pretty p)
 instance Pretty Expr where
   pretty = \case
-    Cast e ty -> parens (pretty e) <> "@" <> pretty ty
+    Cast e ty evs -> parens (pretty e) <> "@" <> pretty ty <+> "given" <+> list (pretty <$> evs)
     RetDep vs vs' -> prettyMixedVars vs vs'
     LetDepMixed vs vs' e1 e2 -> "let" <+> prettyMixedVars vs vs' <+> "=" <> (nest 2 $ group $ line <> pretty e1) <> hardline <> pretty e2
     LetUnpack vs v e -> "explodeN" <+> prettyMixedVars vs [] <+> "=" <+> pretty v <> hardline <> pretty e
@@ -127,6 +135,7 @@ instance Pretty Expr where
     Drop e -> "drop" <+> parens (pretty e)
     Case v b ty es -> "case" <+> pretty v <+> "@" <+> pretty ty <+> "of" <+> pretty b <+> (nest 2 $ flip foldMap es $ \e -> hardline <> "->" <+> nest 3 (pretty e))
     Inject con v tys -> "inject" <+> pretty con <+> pretty v <+> "@" <+> pretty (SumType tys)
+    Reflect v e -> "reflect" <+> prettyEvidence v e
     where
       prettyMixedVars :: [Var] -> [Var] -> Doc ann
       prettyMixedVars vs vs' = group $ "(" <> fillSep (pretty <$> vs) <> line' <> "; " <> fillSep (pretty <$> vs') <> ")"
@@ -148,7 +157,7 @@ freeVars e = case e of
   LZero          -> mempty
   Dup  e -> freeVars e
   Drop e -> freeVars e
-  Cast e ty -> freeVars e <> freeVarsMixedType ty
+  Cast e ty evs -> foldMap freeVar evs <> freeVars e <> freeVarsMixedType ty
   RetDep vs linVs -> FV (S.fromList vs) (S.fromList linVs)
   LetDepMixed vs linVs e1 e2 -> FV
     (freeE1    `S.union` (freeE2    `S.difference` S.fromList vs   ))
@@ -163,6 +172,7 @@ freeVars e = case e of
       FV fe fel' = foldMap freeVars exprs
       fe' = fe `S.difference` S.singleton b
   Inject _ v tys -> freeVar v <> FV (foldMap freeVarsType tys) mempty
+  Reflect v e -> freeVar v <> FV (freeVarsEvidence e) mempty
   where
     (FV a b) `hiding` (FV a' b') = FV (a `S.difference` a') (b `S.difference` b')
 
@@ -179,9 +189,27 @@ freeVarsType ty = case ty of
   TupleType tys     -> foldMap freeVarsType tys
   SumType   tys     -> foldMap freeVarsType tys
   SumDepType p v ty -> freeVarsProj p <> S.delete v (foldMap freeVarsType ty)
+  EvidenceType v ev -> S.singleton v <> freeVarsEvidence ev
 
 freeVarsProj :: ProjExpr -> S.Set Var
 freeVarsProj (Proj v _) = S.singleton v
+
+freeVarsEvidence :: TypeEqEvidence -> S.Set Var
+freeVarsEvidence e = case e of
+  InjEvidence _ v -> S.singleton v
+  ProjEvidence vs -> S.fromList vs
+
+substMixedType :: Subst -> MixedDepType -> MixedDepType
+substMixedType s (MixedDepType tysBs linTys) = go s tysBs
+  where
+    go s [] = MixedDepType [] (substType s <$> linTys)
+    go s ((Nothing,t):rt) = MixedDepType ((Nothing,substType s t):tysBs') linTys'
+      where MixedDepType tysBs' linTys' = go s rt
+    go s ((Just b ,t):rt) = MixedDepType ((Just b',substType s t):tysBs') linTys'
+      where
+        MixedDepType tysBs' linTys' = go s' rt
+        b' = freshVar $ S.fromList (toList s) <> (getFree $ freeVarsMixedType $ MixedDepType rt linTys)
+        s' = envExt s [b] [b']
 
 substType :: Subst -> Type -> Type
 substType s ty = case ty of
@@ -190,11 +218,17 @@ substType s ty = case ty of
   SumType   tys -> SumType   (substType s <$> tys)
   SumDepType p v tys -> SumDepType (substProj s p) v' (substType (s <> M.singleton v v') <$> tys)
     where v' = freshVar $ S.fromList (toList s) <> foldMap freeVarsType tys
+  EvidenceType v ev -> EvidenceType (fromMaybe v $ M.lookup v s) (substEvidence s ev)
 
 substProj :: Subst -> ProjExpr -> ProjExpr
 substProj s (Proj v ps) = case M.lookup v s of
   Nothing -> Proj v  ps
   Just v' -> Proj v' ps
+
+substEvidence :: Subst -> TypeEqEvidence -> TypeEqEvidence
+substEvidence s ev = case ev of
+  InjEvidence con v -> InjEvidence con (fromMaybe v $ M.lookup v s)
+  ProjEvidence vs   -> ProjEvidence (vs <&> \v -> fromMaybe v $ M.lookup v s)
 
 -------------------- Type checking --------------------
 
@@ -205,14 +239,23 @@ type TypeEnv = (TypeEqEvidenceEnv, M.Map Var Type, M.Map Var Type)
 -- towards the "at least one use" rule? Right now they do!
 typecheck :: Program -> TypeEnv -> Expr -> Either String MixedDepType
 typecheck prog tenv@(evid, env, linEnv) expr = case expr of
-  Cast e ty -> do
+  Cast e ty evs -> do
     let FV freeE _ = freeVars e
     let FV freeTy _ = freeVarsMixedType ty
     check "Cast: non-linear environment mismatched" $
-      S.union freeE freeTy == M.keysSet env
+      freeE <> freeTy <> (S.fromList evs) == M.keysSet env
     inferredTy <- typecheck prog (evid, env `M.restrictKeys` freeE, linEnv) e
-    check "Cast: incompatible annotation" $ mixedTypeEqualGiven scope evid inferredTy ty
+    check "Cast: incompatible annotation" $ mixedTypeEqualGiven scope evidence inferredTy ty
     return ty
+    where
+      evidence = foldl (M.unionWith (<>)) mempty $ evs <&> \ev -> case env ! ev of
+        EvidenceType v ev -> M.singleton v (HS.singleton ev)
+        ty -> error $ "Invalid evidence var type: " ++ show ty
+  Reflect v ev -> do
+    check "Cannot find reflected evidence" $ case M.lookup v evid of
+      Just evs -> HS.member ev evs
+      Nothing  -> False
+    return $ MixedDepType [(Nothing, EvidenceType v ev)] []
   RetDep vs linVs -> do
     check "RetDep non-linear environment mismatched" $ S.fromList vs == M.keysSet env
     check "Repeated linear returns" $ unique linVs
@@ -421,6 +464,7 @@ typeEqualGiven scope evidence at bt =
           FloatType         -> FloatType
           TupleType ts      -> TupleType $ go scope subst <$> ts
           SumType   ts      -> SumType   $ go scope subst <$> ts
+          EvidenceType v ev -> EvidenceType (subst ! v) (substEvidence subst ev)
           SumDepType p b ts ->
             SumDepType (substProj subst p) b' $
               go (scopeExt scope [b']) (envExt subst [b] [b']) <$> ts
@@ -431,6 +475,7 @@ typeEqualGiven scope evidence at bt =
       FloatType         -> HS.singleton FloatType
       TupleType ts      -> TupleType `HS.map` (join $ saturate <$> ts)
       SumType   ts      -> SumType   `HS.map` (join $ saturate <$> ts)
+      EvidenceType v ev -> HS.singleton $ EvidenceType v ev
       SumDepType p@(Proj v ps) b ts ->
         (SumDepType p b `HS.map` (join $ saturate <$> ts)) <>
         (case ps of
@@ -518,6 +563,7 @@ tangentType v vTy = go (Proj v [], vTy)
       TupleType tys -> TupleType $ go <$> zip (appendProj p <$> [0..]) tys
       SumType   tys -> SumDepType p "v" $ tys <&> \t -> go (Proj "v" [], t)
       SumDepType _ _ _ -> error "unsupported"
+      EvidenceType _ _ -> TupleType []
 
 splitTangents :: M.Map Var Type -> Scope -> TangentMap -> [Expr] -> (Expr -> Expr, Scope, [TangentMap])
 splitTangents _ scope env es = go scope env (freeVars <$> es)
@@ -552,12 +598,18 @@ jvp funcEnv typeEnv scope subst env e = case e of
   Var v -> RetDep [subst ! v] [env ! v]
   Lit v -> retDepPair scope (Lit v) LZero
   Tuple vs_ ->
-    ctx $ retDepPair scope'
-      (Tuple $ (subst !) <$> vs_)
-      (Cast (LTuple $ zipWith (!) envs vs_)
-            (MixedDepType [] [TupleType $ vs_ <&> \v_ -> tangentType v_ (typeEnv ! v_)]))
+    ctx $
+      LetDepMixed [v]  [] (Tuple vs) $
+      LetDepMixed [ev] [] (Reflect v (ProjEvidence vs)) $
+      LetDepMixed [] [v']
+        (Cast (LTuple $ zipWith (!) envs vs_)
+            (MixedDepType [] [TupleType $ vs_ <&> \v_ -> tangentType v_ (typeEnv ! v_)])
+            [ev]) $
+      RetDep [v] [v']
     where
+      vs = (subst !) <$> vs_
       (ctx, scope', envs) = splitTangents typeEnv scope env (Var <$> vs_)
+      v:v':ev:_ = freshVars scope'
   UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
   UnOp Cos e -> jvpUnOp e Cos $ \v -> BinOp Mul (UnOp Sin (Var v)) (Lit (-1))
   UnOp Exp e -> jvpUnOp e Exp $ UnOp Exp . Var
@@ -589,13 +641,14 @@ jvp funcEnv typeEnv scope subst env e = case e of
   LetUnpack vs_ v_ e ->
     ctx $
       LetUnpack    vs  (subst ! v_) $
+      LetDepMixed  [ev] [] (Reflect (subst ! v_) (ProjEvidence vs)) $
       LetUnpackLin vs' (envv ! v_) $
-      LetDepMixed  [] vs' (Cast (RetDep [] vs') (MixedDepType [] tanTys)) $
+      LetDepMixed  [] vs' (Cast (RetDep [] vs') (MixedDepType [] tanTys) [ev]) $
       rec typeEnv' (scopeExt ctxScope allFresh) subst' env' e
     where
       (ctx, ctxScope, [envv, enve]) = splitTangents typeEnv scope env [Var v_, e]
-      allFresh = take (2 * length vs_) $ freshVars ctxScope
-      (vs, vs') = splitAt (length vs_) allFresh
+      allFresh@(ev:allVs) = take (1 + 2 * length vs_) $ freshVars ctxScope
+      (vs, vs') = splitAt (length vs_) allVs
       subst' = envExt subst vs_ vs
       env' = envExt enve vs_ vs'
       typeEnv' = envExt typeEnv vs_ vsTys_
@@ -621,14 +674,15 @@ jvp funcEnv typeEnv scope subst env e = case e of
   LetDepMixed _ _ _ _ -> expectNonLinear
   Case v_ b_ (MixedDepType tysBs_ []) es_ -> ctx $ Case (subst ! v_) b (MixedDepType tysBs tys') es
     where
-      allFresh@[b, b'] = take 2 $ freshVars scope
       -- TODO: Empty case
-      (ctx, ctxScope, [envv, enve]) = splitTangents typeEnv (scopeExt scope allFresh) env [Var v_, head es_]
+      (ctx, ctxScope, [envv, enve]) = splitTangents typeEnv scope env [Var v_, head es_]
+      allFresh@[b, b', ev] = take 3 $ freshVars ctxScope
       SumType conTys = typeEnv ! v_
       es = zip [0..] es_ <&> \(con, e) ->
-             LetDepMixed [] [b'] (Cast (LVar (envv ! v_)) (MixedDepType [] [tangentType b (conTys !! con)])) $
+             LetDepMixed [ev] [] (Reflect (subst ! v_) (InjEvidence con b)) $
+             LetDepMixed [] [b'] (Cast (LVar (envv ! v_)) (MixedDepType [] [tangentType b (conTys !! con)]) [ev]) $
              rec (envExt typeEnv [b_] [conTys !! con])
-                 ctxScope
+                 (scopeExt ctxScope allFresh)
                  (envExt subst [b_] [b])
                  (envExt enve [b_] [b'])
                  e
@@ -639,11 +693,13 @@ jvp funcEnv typeEnv scope subst env e = case e of
   Case _ _ _ _ -> expectNonLinear
   Inject con v_ tys ->
     LetDepMixed [b] [] (Inject con (subst ! v_) tys) $
-    LetDepMixed [] [bt] (Cast (LVar $ env ! v_) (MixedDepType [] [tangentType b (SumType tys)])) $
+    LetDepMixed [ev] [] (Reflect b (InjEvidence con (subst ! v_))) $
+    LetDepMixed [] [bt] (Cast (LVar $ env ! v_) (MixedDepType [] [tangentType b (SumType tys)]) [ev]) $
       RetDep [b] [bt]
-    where b:bt:_ = freshVars scope
-  -- Not very important, since we generally only emit it in jvp
-  Cast _ _ -> undefined
+    where b:bt:ev:_ = freshVars scope
+  -- TODO: Work those out. Useful for higher-order AD!
+  Cast _ _ _  -> undefined
+  Reflect _ _ -> undefined
   where
     rec = jvp funcEnv
     expectNonLinear = error "JVP only applies to completely non-linear computations"
@@ -811,6 +867,9 @@ unzipExpr orig scope subst expr = case expr of
   --Case v_ b_ (MixedDepType tysBs_ linTys_) es_ -> undefined
   Case _ _ _ _ -> undefined
   Inject con v_ tys -> ((id, scope), Inject con (subst ! v_) tys, trivial)
+  Reflect v ev -> ((id, scope), Reflect v ev, trivial)
+  Cast e_ ty_ evs_ -> ((ctx, ctxScope), ue, Cast ue' (substMixedType subst ty_) ((subst !) <$> evs_))
+    where ((ctx, ctxScope), ue, ue') = rec scope subst e_
   where
     rec = unzipExpr orig
     trivial = RetDep [] []
