@@ -57,8 +57,12 @@ spec = do
         [ ("depOnInput", FuncDef [("x", SumType [FloatType, TupleType []])] []
                            (mixedType [] [xTanTy]) $
             Case "x" "xv" (mixedType [] [xTanTy])
-              [ LetDepMixed [] [] (Drop (Var "xv")) $ Cast LZero       (mixedType [] [xTanTy])
-              , LetDepMixed [] [] (Drop (Var "xv")) $ Cast (LTuple []) (mixedType [] [xTanTy])
+              [ LetDepMixed [] [] (Drop (Var "xv")) $
+                LetDepMixed ["e"] [] (Reflect "x" (InjEvidence 0 "xv")) $
+                Cast LZero (mixedType [] [xTanTy]) ["e"]
+              , LetDepMixed [] [] (Drop (Var "xv")) $
+                LetDepMixed ["e"] [] (Reflect "x" (InjEvidence 1 "xv")) $
+                Cast (LTuple []) (mixedType [] [xTanTy]) ["e"]
               ])
         ]
 
@@ -148,7 +152,7 @@ spec = do
                 ]
       ensureJvpUnzips p
 
-    xit "inject" $ do
+    it "inject" $ do
       ensureJvpUnzips $ Program $ M.fromList
         [ ("f", FuncDef [("x", FloatType)] [] (mixedType [SumType [FloatType, TupleType []]] []) $
             Inject 0 "x" [FloatType, TupleType []]
