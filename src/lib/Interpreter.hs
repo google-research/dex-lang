@@ -90,9 +90,6 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
     ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
-  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
-  BoxedRef _ _     -> error "Should only occur in Imp lowering"
-  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
   where rec x = traverseSurfaceAtomNames x doWithName
 

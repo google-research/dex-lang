@@ -56,7 +56,7 @@ import Util (IsBool (..))
 
 -- === Compile monad ===
 
-type OperandSubstVal = SubstVal AtomNameC (LiftE Operand)
+type OperandSubstVal = SubstVal ImpNameC (LiftE Operand)
 type OperandEnvFrag = SubstFrag OperandSubstVal
 
 type Function = L.Global
@@ -100,15 +100,16 @@ instance Compiler CompileM
 -- === Imp to LLVM ===
 
 impToLLVM :: (Mut n, TopBuilder m, MonadIO1 m, MonadLogger1 [Output] m)
-          => SourceName -> ImpFunction n -> m n ([ObjectFileName n], L.Module)
-impToLLVM name f =  do
+          => SourceName -> CallingConvention
+          -> ImpFunction n -> m n ([ObjectFileName n], L.Module)
+impToLLVM name cc f =  do
   logger <- getLogger
-  ([],) <$> impToLLVM' logger name f
+  ([],) <$> impToLLVM' logger name cc f
 
 impToLLVM' :: (EnvReader m, MonadIO1 m) => Logger [Output]
-           -> SourceName -> ImpFunction n -> m n L.Module
-impToLLVM' logger fName f = do
-  (defns, externSpecs, globalDtors) <- compileFunction logger fName f
+           -> SourceName -> CallingConvention -> ImpFunction n -> m n L.Module
+impToLLVM' logger fName cc f = do
+  (defns, externSpecs, globalDtors) <- compileFunction logger fName cc f
   let externDefns = map externDecl $ toList externSpecs
   let dtorDef = defineGlobalDtors globalDtors
   return $ L.defaultModule
@@ -130,28 +131,21 @@ impToLLVM' logger fName f = do
         }
 
 compileFunction :: (EnvReader m, MonadIO1 m)
-                => Logger [Output] -> SourceName -> ImpFunction n
+                => Logger [Output] -> SourceName -> CallingConvention -> ImpFunction n
                 -> m n ([L.Definition], S.Set ExternFunSpec, [L.Name])
-compileFunction _ _ (FFIFunction ty f) =
-  return ([], S.singleton (makeFunSpec f ty), [])
-compileFunction logger fName fun@(ImpFunction (IFunType cc argTys retTys)
-                (Abs bs body)) = case cc of
+compileFunction _ _ cc (FFIFunction ty _ f) =
+  return ([], S.singleton (makeFunSpec f cc ty), [])
+compileFunction logger fName cc fun@(ImpFunction (IFunType argTys retTys)
+                                                 (Abs bs body)) = case cc of
   FFIFun            -> error "shouldn't be trying to compile an FFI function"
   FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
-  CInternalFun -> liftCompile CPU $ do
+  CFunCC -> liftCompile CPU $ do
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
-    unless (null retTys) $ error "CInternalFun doesn't support returning values"
+    unless (null retTys) $ error "CFunCC doesn't support returning values"
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
-  CEntryFun -> liftCompile CPU $ do
-    (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
-    unless (null retTys) $ error "CEntryFun doesn't support returning values"
-    void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
-    extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs, [])
   EntryFun requiresCUDA -> liftCompile CPU $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -253,9 +247,8 @@ compileInstr instr = case instr of
   ICond p cons alt -> [] <$ do
     p' <- compileExpr p >>= (`asIntWidth` i1)
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
-  IQueryParallelism f s -> do
-    let IFunType cc _ _ = snd f
-    let kernelFuncName = topLevelFunName $ fst f
+  IQueryParallelism (f, cc, _) s -> do
+    let kernelFuncName = topLevelFunName f
     n <- (`asIntWidth` i64) =<< compileExpr s
     case cc of
       MCThreadLaunch -> do
@@ -279,7 +272,7 @@ compileInstr instr = case instr of
       CPU -> error "Not yet implemented"
       GPU -> [] <$ emitVoidExternCall barrierSpec []
         where barrierSpec = ExternFunSpec "llvm.nvvm.barrier0" L.VoidType [] [] []
-  ILaunch (fname, IFunType cc _ _) size args -> [] <$ do
+  ILaunch (fname, cc, _) size args -> [] <$ do
     size' <- (`asIntWidth` i64) =<< compileExpr size
     args' <- mapM compileExpr args
     let kernelFuncName = topLevelFunName fname
@@ -366,50 +359,42 @@ compileInstr instr = case instr of
   ICall f args -> do
     fImpName <- substM f
     f' <- lookupImpFun fImpName
-    let ty@(IFunType cc argTys resultTys) = impFunType f'
-    fname <- case f' of
-      FFIFunction _ fname -> return fname
-      ImpFunction _ _ -> do
-        ~(Just (CFun cname _)) <- queryObjCache fImpName
-        -- TODO: track deps!
-        return cname
+    let ty@(IFunType argTys resultTys) = impFunType f'
     args' <- mapM compileExpr args
     let resultTys' = map scalarTy resultTys
-    case cc of
-      FFIFun -> do
-        ans <- emitExternCall (makeFunSpec fname ty) args'
-        return [ans]
-      FFIMultiResultFun -> do
-        resultPtr <- makeMultiResultAlloc resultTys'
-        emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
-        loadMultiResultAlloc resultTys' resultPtr
-      CEntryFun -> do
+    case f' of
+      FFIFunction _ cc fname -> case cc of
+        FFIFun -> do
+          ans <- emitExternCall (makeFunSpec fname cc ty) args'
+          return [ans]
+        FFIMultiResultFun -> do
+          resultPtr <- makeMultiResultAlloc resultTys'
+          emitVoidExternCall (makeFunSpec fname cc ty) (resultPtr : args')
+          loadMultiResultAlloc resultTys' resultPtr
+        _ -> error "not a valid calling convention for FFI functions"
+      ImpFunction _ _ -> do
+        ~(Just (CFun fname _)) <- queryObjCache fImpName
+        let fTy = funTy i64 $ map scalarTy argTys
+        let fun = callableOperand fTy $ topLevelFunName fname
         exitCode <- emitInstr i64 (callInstr fun args') >>= (`asIntWidth` i1)
         compileIf exitCode throwRuntimeError (return ())
         return []
-          where
-            fTy = funTy i64 $ map scalarTy argTys
-            fun = callableOperand fTy $ topLevelFunName fname
-      CInternalFun -> do
-        exitCode <- emitExternCall (makeFunSpec fname ty) args' >>= (`asIntWidth` i1)
-        compileIf exitCode throwRuntimeError (return ())
-        return []
-      _ -> error $ "Unsupported calling convention: " ++ show cc
 
 -- TODO: use a careful naming discipline rather than strings
 topLevelFunName :: SourceName -> L.Name
 topLevelFunName name = fromString name
 
-makeFunSpec :: SourceName -> IFunType -> ExternFunSpec
-makeFunSpec name (IFunType FFIFun argTys [resultTy]) =
-   ExternFunSpec (L.Name (fromString name)) (scalarTy resultTy)
-                    [] [] (map scalarTy argTys)
-makeFunSpec name (IFunType FFIMultiResultFun argTys _) =
-   ExternFunSpec (L.Name (fromString name)) L.VoidType [] []
-     (hostPtrTy hostVoidp : map scalarTy argTys)
-makeFunSpec name (IFunType CInternalFun argTys _) =
-   ExternFunSpec (L.Name (fromString name)) i64 [] [] (map scalarTy argTys)
-makeFunSpec _ (IFunType _ _ _) = error "not implemented"
+makeFunSpec :: SourceName -> CallingConvention -> IFunType -> ExternFunSpec
+makeFunSpec name cc (IFunType argTys resultTys) = case cc of
+  FFIFun ->
+    ExternFunSpec (L.Name (fromString name)) (scalarTy resultTy) [] [] (map scalarTy argTys)
+    where [resultTy] = resultTys
+  FFIMultiResultFun ->
+    ExternFunSpec (L.Name (fromString name)) L.VoidType [] []
+      (hostPtrTy hostVoidp : map scalarTy argTys)
+  CFunCC ->
+    ExternFunSpec (L.Name (fromString name)) i64 [] [] (map scalarTy argTys)
+  _ -> error "not implemented"
 
 compileLoop :: Compiler m => Direction -> IBinder i i' -> Operand -> m i' o () -> m i o ()
 compileLoop d iBinder n compileBody = do
@@ -692,6 +677,7 @@ compileExpr :: Compiler m => IExpr i -> m i o Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
   IVar v _ -> lookupImpVar v
+  IPtrVar _ -> error "shouldn't be compiling pointer literals"
 
 packArgs :: LLVMBuilder m => [Operand] -> m Operand
 packArgs elems = do
@@ -978,10 +964,10 @@ liftCompile dev m =
     -- TODO: figure out naming discipline properly
     initState = CompileState [] [] [] "start_block" mempty mempty mempty dev mempty
 
-opSubstVal :: Operand -> OperandSubstVal AtomNameC n
+opSubstVal :: Operand -> OperandSubstVal ImpNameC n
 opSubstVal x = SubstVal (LiftE x)
 
-lookupImpVar :: Compiler m => AtomName i -> m i o Operand
+lookupImpVar :: Compiler m => ImpName i -> m i o Operand
 lookupImpVar v = do
   subst <- getSubst
   case subst ! v of

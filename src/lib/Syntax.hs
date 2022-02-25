@@ -44,7 +44,8 @@ module Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    IRVariant (..), SubstVal (..), AtomName, DataDefName, ClassName, AtomSubstVal,
+    IRVariant (..), SubstVal (..), AtomName,
+    ImpName, ImpNameBinder, DataDefName, ClassName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
@@ -56,12 +57,15 @@ module Syntax (
     ModuleName, Module (..), UModule (..), UModulePartialParse (..),
     UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), OutFormat (..),
-    EnvReader (..), EnvExtender (..),  Binding (..),
+    EnvReader (..), EnvReaderI (..), EnvReaderIT (..), runEnvReaderIT,
+    extendI, liftEnvReaderI, refreshAbsI, refreshLamI,
+    EnvExtender (..),  Binding (..),
     TopEnvFrag (..), ToBinding (..), PartialTopEnvFrag (..), withFreshBinders,
     refreshBinders, substBinders, withFreshBinder,
     withFreshLamBinder, withFreshPureLamBinder, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
-    EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName, lookupImpFun, lookupModule,
+    EnvFrag (..), lookupEnv, lookupDataDef, lookupPtr,
+    lookupAtomName, lookupImpFun, lookupModule,
     lookupEnvPure, lookupSourceMap, lookupSourceMapPure,
     withEnv, updateEnv, runEnvReaderT, liftEnvReaderM,
     liftEnvReaderT, liftSubstEnvReaderM,
@@ -79,6 +83,7 @@ module Syntax (
     getAllowedEffects, withAllowedEffects, todoSinkableProof,
     FallibleT1, runFallibleT1, abstractPtrLiterals, freeAtomVarsList,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
+    ImpAtom (..), Buffer (..),
     ImpFunction (..), ImpBlock (..), ImpDecl (..),
     ImpInstr (..), iBinderType,
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
@@ -86,12 +91,12 @@ module Syntax (
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryPiType,
     NonEmpty (..), nonEmpty,
-    naryLamExprAsAtom, naryPiTypeAsType,
+    naryLamExprAsAtom, asNullaryNaryLam, naryPiTypeAsType,
     ObjectFile (..), ObjectFileName, CFunName, CFun (..),
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal,
-    pattern TagRepTy,
-    pattern TagRepVal, pattern Word8Ty,
+    pattern TagRepTy, pattern ITagRepTy,
+    pattern TagRepVal, pattern TagRepLit, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
@@ -113,6 +118,7 @@ import Control.Applicative
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Control.Monad.State
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import qualified Control.Monad.Trans.Except as MTE
 import qualified Data.ByteString       as BS
@@ -160,12 +166,6 @@ data Atom (n::S) =
  | Eff (EffectRow n)
    -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
-   -- single-constructor only for now
- | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
- -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
- | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
- | BoxedRef [(Atom n, Block n)]        -- ptrptrs/sizes
-            (NaryAbs AtomNameC Atom n) -- abstracted dest
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
@@ -411,6 +411,7 @@ data Binding (c::C) (n::S) where
   ObjectFileBinding :: ObjectFile n                       -> Binding ObjectFileNameC n
   ModuleBinding     :: Module n                           -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                          -> Binding PtrNameC        n
+  ImpNameBinding    ::                                       Binding ImpNameC        n
 deriving instance Show (Binding c n)
 
 data AtomBinding (n::S) =
@@ -422,6 +423,7 @@ data AtomBinding (n::S) =
  | PtrLitBound PtrType (PtrName n)
  | SimpLamBound (NaryPiType n) (NaryLamExpr n)  -- first-order functions only
  | FFIFunBound  (NaryPiType n) (ImpFunName n)
+ | EvaluatedData (Type n) (ImpAtom n)
    deriving (Show, Generic)
 
 data SolverBinding (n::S) =
@@ -683,6 +685,9 @@ lookupModule name = do
   ~(ModuleBinding m) <- lookupEnv name
   return m
 
+lookupPtr :: EnvReader m => PtrName n -> m n PtrLitVal
+lookupPtr name = lookupEnv name >>= \case PtrBinding x -> return x
+
 lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
 lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
 
@@ -809,6 +814,82 @@ instance (forall c. Color c => ToBinding (binding c) c)
     withExtEvidence b $
       EnvFrag (RecSubstFrag $ b @> sink (toBinding binding)) Nothing
 
+-- === Env reader on the input side ===
+
+class Monad2 m => EnvReaderI (m::MonadKind2) where
+   getEnvI :: m i o (Env i)
+   getDistinctI :: m i o (DistinctEvidence i)
+   withEnvI :: Distinct i' => Env i' -> m i' o a -> m i o a
+
+newtype EnvReaderIT (m::MonadKind1) (i::S) (o::S) (a:: *) =
+  EnvReaderIT { runEnvReaderIT' :: ReaderT (DistinctEvidence i, Env i) (m o) a }
+  deriving (Functor, Applicative, Monad, MonadFail, Catchable, Fallible, CtxReader,
+            Alternative)
+
+runEnvReaderIT :: Distinct i => Env i -> EnvReaderIT m i o a -> m o a
+runEnvReaderIT env m = runReaderT (runEnvReaderIT' m) (Distinct, env)
+
+instance Monad1 m => EnvReaderI (EnvReaderIT m) where
+  getEnvI = EnvReaderIT $ asks snd
+  getDistinctI = EnvReaderIT $ asks fst
+  withEnvI env cont = EnvReaderIT $ withReaderT (const (Distinct, env)) $
+    runEnvReaderIT' cont
+
+-- run a monadic EnvReaderM function over the in-space env
+liftEnvReaderI :: EnvReaderI m => EnvReaderM i a -> m i o a
+liftEnvReaderI cont = do
+  env <- getEnvI
+  Distinct <- getDistinctI
+  return $ runEnvReaderM env cont
+
+extendI :: (BindsEnv b, EnvReaderI m, Distinct i')
+        => b i i' -> m i' o a -> m i o a
+extendI b cont = do
+  env <- getEnvI
+  Distinct <- getDistinctI
+  withEnvI (extendOutMap env $ toEnvFrag b) cont
+
+refreshAbsI :: (EnvReaderI m, BindsEnv b, SubstB Name b, SubstE Name e)
+            => Abs b e i
+            -> (forall i'. DExt i i' => b i i' -> e i' -> m i' o a)
+            -> m i o a
+refreshAbsI ab cont = do
+  env <- getEnvI
+  Distinct <- getDistinctI
+  refreshAbsPure (toScope env) ab \_ b e ->
+    extendI b $ cont b e
+
+refreshLamI :: EnvReaderI m
+            => LamExpr i
+            -> (forall i'. DExt i i' => LamBinder i i' -> Block i' -> m i' o a)
+            -> m i o a
+refreshLamI _ _ = undefined
+
+instance EnvReader m => EnvReader (EnvReaderIT m i) where
+  unsafeGetEnv = EnvReaderIT $ lift unsafeGetEnv
+
+instance (ScopeReader m, EnvExtender m)
+         => EnvExtender (EnvReaderIT m i) where
+  refreshAbs ab cont = EnvReaderIT $ ReaderT \env ->
+    refreshAbs ab \b e -> do
+      let EnvReaderIT (ReaderT cont') = cont b e
+      cont' env
+
+instance ScopeReader m => ScopeReader (EnvReaderIT m i) where
+  unsafeGetScope = EnvReaderIT $ lift unsafeGetScope
+  getDistinct = EnvReaderIT $ lift getDistinct
+
+instance (ScopeReader m, ScopeExtender m)
+         => ScopeExtender (EnvReaderIT m i) where
+  refreshAbsScope ab cont = EnvReaderIT $ ReaderT \env ->
+    refreshAbsScope ab \b e -> do
+      let EnvReaderIT (ReaderT cont') = cont b e
+      cont' env
+
+deriving instance MonadIO1 m => MonadIO (EnvReaderIT m i o)
+deriving instance (Monad1 m, MonadState (s o) (m o))
+                  => MonadState (s o) (EnvReaderIT m i o)
+
 -- === reconstruction abstractions ===
 
 captureClosure
@@ -831,18 +912,18 @@ capturedVars b e = nameSetToList nameSet
 abstractPtrLiterals
   :: (EnvReader m, HoistableE e)
   => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
-abstractPtrLiterals block = do
-  let fvs = freeAtomVarsList block
-  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
-    lookupAtomName v >>= \case
-      PtrLitBound _ name -> lookupEnv name >>= \case
-        PtrBinding (PtrLitVal ty ptr) ->
-          return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
-        PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
-      _ -> return Nothing
-  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
-  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
-  return (Abs ptrBinders block', ptrVals)
+abstractPtrLiterals block = undefined
+  -- let fvs = freeAtomVarsList block
+  -- (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
+  --   lookupAtomName v >>= \case
+  --     PtrLitBound _ name -> lookupEnv name >>= \case
+  --       PtrBinding (PtrLitVal ty ptr) ->
+  --         return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
+  --       PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
+  --     _ -> return Nothing
+  -- Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
+  -- let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
+  -- return (Abs ptrBinders block', ptrVals)
 
 freeAtomVarsList :: HoistableE e => e n -> [AtomName n]
 freeAtomVarsList = freeVarsList
@@ -1356,16 +1437,66 @@ instance OrdE name => Semigroup (EffectRowP name n) where
 instance OrdE name => Monoid (EffectRowP name n) where
   mempty = EffectRow mempty Nothing
 
+-- === imp-core bridge ===
+
+data ImpAtom n =
+   ImpAtomScalar (IExpr n)
+ -- ImpAtomTabRef and ImpAtomTabVal carry the same data, but it's interpreted
+ -- differently. ImpAtomTabVal implicitly dereferences buffer, which is assumed
+ -- to be immutable.
+ | ImpAtomTabRef [IExpr n] (FlatTabTy n) (ImpAtomType n)
+ | ImpAtomTabVal [IExpr n] (FlatTabTy n) (ImpAtomType n)
+ -- To load from the box we dereference each of the pointers in the `[IExpr n]`
+ -- list and interpret them as an `ImpAtom n` of the given type
+ -- | ImpAtomBox [IExpr n] (ImpAtomType n)
+ -- To load the rhs, we obtain its type given the value of the lhs. Then we load
+ -- the rhs itself in the same we load a box -- we dereference the pointers in
+ -- the `[IExpr n]` list and interpret the result as an `ImpAtom n` of the given
+ -- type.
+ -- | ImpAtomDepPairRef (ImpAtom n) [IExpr n] (ImpDepPairType n)
+ | ImpAtomProduct [ImpAtom n]
+ | ImpAtomSum (ImpAtom n) [[ImpAtom n]] -- tag, payloads
+   deriving (Show, Generic)
+
+data ImpAtomType n =
+   ImpAtomScalarTy BaseType
+ -- ImpAtomTabRef and ImpAtomTabVal carry the same data, but it's interpreted
+ -- differently. ImpAtomTabVal implicitly dereferences buffer, which is assumed
+ -- to be immutable.
+ | ImpAtomTabRefTy (FlatTabTy n) (ImpAtomType n)
+ | ImpAtomTabValTy (FlatTabTy n) (ImpAtomType n)
+ -- To load from the box we dereference each of the pointers in the `[IExpr n]`
+ -- list and interpret them as an `ImpAtom n` of the given type
+ -- | ImpAtomBoxTy [IExpr n] (ImpAtomType n)
+ -- To load the rhs, we obtain its type given the value of the lhs. Then we load
+ -- the rhs itself in the same we load a box -- we dereference the pointers in
+ -- the `[IExpr n]` list and interpret the result as an `ImpAtom n` of the given
+ -- type.
+ -- | ImpAtomDepPairRefTy (ImpAtom n) [IExpr n] (ImpDepPairType n)
+ | ImpAtomProductTy [ImpAtomType n] (ImpAtomType n)
+ | ImpAtomSumTy (ImpAtomType n) [[ImpAtomType n]] -- tag, payloads
+   deriving (Show, Generic)
+
+data FlatTabTy n = FlatTabTy
+  { flatTabSize   :: IExpr n
+  , flatTabOffset :: Abs (Nest IBinder) IExpr n }
+  deriving (Show, Generic)
+
 -- === imperative IR ===
 
+data Buffer (n::S) = Buffer { bufferPtr   :: IExpr n
+                            , bufferNumel :: IExpr n}
+     deriving (Show, Generic)
+
+type ImpName = Name ImpNameC
+type ImpNameBinder = NameBinder ImpNameC
 type ImpFunName = Name ImpFunNameC
 data IExpr n = ILit LitVal
-             -- We use AtomName because we convert between atoms and imp
-             -- expressions without chaning names. Maybe we shouldn't do that.
-             | IVar (AtomName n) BaseType
+             | IVar (ImpName n) BaseType
+             | IPtrVar (PtrName n)
                deriving (Show, Generic)
 
-data IBinder n l = IBinder (NameBinder AtomNameC n l) IType
+data IBinder n l = IBinder (NameBinder ImpNameC n l) IType
                    deriving (Show, Generic)
 
 type IPrimOp n = PrimOp (IExpr n)
@@ -1373,8 +1504,8 @@ type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
 type Size = IExpr
 
-type IFunVar = (SourceName, IFunType)
-data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
+type IFunVar = (SourceName, CallingConvention, IFunType)
+data IFunType = IFunType [IType] [IType] -- args, results
                 deriving (Show, Eq, Generic)
 
 data IsCUDARequired = CUDARequired | CUDANotRequired  deriving (Eq, Show, Generic)
@@ -1384,8 +1515,12 @@ instance IsBool IsCUDARequired where
   toBool CUDANotRequired = False
 
 data CallingConvention =
-   CEntryFun
- | CInternalFun
+   -- For top-level functions called from Python/Julia etc. No results.
+   -- The actual C function will return an i64 error code.
+   CFunCC
+   -- For top-level function called by Haskell. It takes excatly two args so it
+   -- can be called from Haskell. Takes a pointer to an array of args and a
+   -- pointer to an array of results.
  | EntryFun IsCUDARequired
  | FFIFun
  | FFIMultiResultFun
@@ -1395,7 +1530,7 @@ data CallingConvention =
 
 data ImpFunction n =
    ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
- | FFIFunction IFunType SourceName
+ | FFIFunction IFunType CallingConvention SourceName
    deriving (Show, Generic)
 
 data ImpBlock n where
@@ -1414,7 +1549,7 @@ data ImpInstr n =
  | ILaunch IFunVar (Size n) [IExpr n]
  | ICall (ImpFunName n) [IExpr n]
  | Store (IExpr n) (IExpr n)           -- dest, val
- | Alloc AddressSpace IType (Size n)
+ | Alloc AddressSpace IType (Size n)       -- base type, numel
  | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
  | Free (IExpr n)
  | IThrowError  -- TODO: parameterize by a run-time string
@@ -1480,7 +1615,7 @@ data LitVal = Int64Lit   Int64
             | Word64Lit  Word64
             | Float64Lit Double
             | Float32Lit Float
-              -- XXX: we have to be careful with this, because it can't be
+              -- XXX: we have to be careful with this. Because it can't be
               -- serialized we only use it in a few places, like the interpreter
               -- and for passing values to LLVM's JIT. Otherwise, pointers
               -- should be referred to by name.
@@ -1712,10 +1847,16 @@ pattern IIdxRepTy = Scalar Int32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type n
-pattern TagRepTy = TC (BaseType (Scalar Word8Type))
+pattern TagRepTy = TC (BaseType ITagRepTy)
+
+pattern ITagRepTy :: IType
+pattern ITagRepTy = Scalar Word8Type
 
 pattern TagRepVal :: Word8 -> Atom n
-pattern TagRepVal x = Con (Lit (Word8Lit x))
+pattern TagRepVal x = Con (Lit (TagRepLit x))
+
+pattern TagRepLit :: Word8 -> LitVal
+pattern TagRepLit x = Word8Lit x
 
 pattern Word8Ty :: Type n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
@@ -1825,6 +1966,10 @@ naryLamExprAsAtom (NaryLamExpr (NonEmptyNest (b:>ty) bs) effs body) = case bs of
   Empty -> Lam $ LamExpr (LamBinder b ty PlainArrow effs) body
   Nest b' rest -> Lam $ LamExpr (LamBinder b ty PlainArrow Pure) (AtomicBlock restBody)
     where restBody = naryLamExprAsAtom $ NaryLamExpr (NonEmptyNest b' rest) effs body
+
+asNullaryNaryLam :: ScopeReader m => Block n -> m n (NaryLamExpr n)
+asNullaryNaryLam body = toConstAbs body >>= \case
+  Abs b body' -> return $ NaryLamExpr (NonEmptyNest (b:>UnitTy) Empty) Pure body'
 
 mkConsListTy :: [Type n] -> Type n
 mkConsListTy = foldr PairTy UnitTy
@@ -2089,14 +2234,9 @@ instance GenericE Atom where
             ) (EitherE2
   {- Con -}        (ComposeE PrimCon Atom)
   {- TC -}         (ComposeE PrimTC  Atom)
-            ) (EitherE5
+            ) (EitherE2
   {- Eff -}        EffectRow
-  {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
-  {- DataConRef -} ( DataDefName                    `PairE`
-                     ListE Atom                     `PairE`
-                     EmptyAbs (Nest DataConRefBinding) )
-  {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
-  {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
+  {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type ))
 
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
@@ -2122,12 +2262,6 @@ instance GenericE Atom where
     TC  con -> Case3 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case0 $ effs
     ACase scrut alts ty -> Case4 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
-    DataConRef defName params bs ->
-      Case4 $ Case2 $ defName `PairE` ListE params `PairE` bs
-    BoxedRef ptrsAndSizes ab ->
-      Case4 $ Case3 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
-    DepPairRef lhs rhs ty ->
-      Case4 $ Case4 $ lhs `PairE` rhs `PairE` ty
 
   toE atom = case atom of
     Case0 val -> case val of
@@ -2163,10 +2297,6 @@ instance GenericE Atom where
     Case4 val -> case val of
       Case0 effs -> Eff effs
       Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
-      Case2 (defName `PairE` ListE params `PairE` bs) ->
-        DataConRef defName params bs
-      Case3 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
-      Case4 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"
 
@@ -2202,9 +2332,6 @@ trySelectBranch e = case e of
     let index = fst $ (ixtypes M.! label) NE.!! i
     return (index, [value])
   SumVal _ i value -> Just (i, [value])
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let i = fromIntegral tag
-    return (i , vals !! i)
   _ -> Nothing
 
 instance GenericE Expr where
@@ -2856,6 +2983,10 @@ instance Store (ImpDecl n l)
 instance Store (IFunType)
 instance Store (ImpInstr n)
 instance Store (IExpr n)
+instance Store (Buffer n)
+instance Store (FlatTabTy n)
+instance Store (ImpAtom n)
+instance Store (ImpAtomType n)
 instance Store (ImpBlock n)
 instance Store (ImpFunction n)
 
@@ -3136,7 +3267,7 @@ deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 
 instance GenericE IExpr where
   type RepE IExpr = EitherE2 (LiftE LitVal)
-                             (PairE AtomName (LiftE BaseType))
+                             (PairE ImpName (LiftE BaseType))
   fromE iexpr = case iexpr of
     ILit x -> Case0 (LiftE x)
     IVar v ty -> Case1 (v `PairE` LiftE ty)
@@ -3152,8 +3283,16 @@ instance AlphaEqE IExpr
 instance AlphaHashableE IExpr
 instance SubstE Name IExpr
 
+instance GenericE ImpAtom where
+  type RepE ImpAtom = UnitE
+
+instance SinkableE ImpAtom
+instance HoistableE  ImpAtom
+instance SubstE Name ImpAtom
+instance SubstE AtomSubstVal ImpAtom
+
 instance GenericB IBinder where
-  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder AtomNameC)
+  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder ImpNameC)
   fromB (IBinder b ty) = PairB (LiftB (LiftE ty)) b
   toB   (PairB (LiftB (LiftE ty)) b) = IBinder b ty
 
@@ -3161,12 +3300,12 @@ instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
 
 instance BindsEnv IBinder where
-  toEnvFrag (IBinder b ty) = toEnvFrag $ b :> BaseTy ty
+  toEnvFrag (IBinder b ty) = toEnvFrag $ b :> ImpNameBinding
 
-instance BindsAtMostOneName IBinder AtomNameC where
+instance BindsAtMostOneName IBinder ImpNameC where
   IBinder b _ @> x = b @> x
 
-instance BindsOneName IBinder AtomNameC where
+instance BindsOneName IBinder ImpNameC where
   binderName (IBinder b _) = binderName b
 
 instance BindsNames IBinder where
@@ -3200,14 +3339,14 @@ instance BindsEnv ImpDecl where
 instance GenericE ImpFunction where
   type RepE ImpFunction = EitherE2 (LiftE IFunType `PairE` Abs (Nest IBinder) ImpBlock)
                                    (LiftE (IFunType, SourceName))
-  fromE f = case f of
-    ImpFunction ty ab   -> Case0 $ LiftE ty `PairE` ab
-    FFIFunction ty name -> Case1 $ LiftE (ty, name)
+  -- fromE f = case f of
+  --   ImpFunction ty ab   -> Case0 $ LiftE ty `PairE` ab
+  --   FFIFunction ty name -> Case1 $ LiftE (ty, name)
 
-  toE f = case f of
-    Case0 (LiftE ty `PairE` ab) -> ImpFunction ty ab
-    Case1 (LiftE (ty, name))    -> FFIFunction ty name
-    _ -> error "impossible"
+  -- toE f = case f of
+  --   Case0 (LiftE ty `PairE` ab) -> ImpFunction ty ab
+  --   Case1 (LiftE (ty, name))    -> FFIFunction ty name
+  --   _ -> error "impossible"
 
 instance SinkableE ImpFunction
 instance HoistableE  ImpFunction

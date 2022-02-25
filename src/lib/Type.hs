@@ -378,31 +378,6 @@ instance HasType Atom where
       checkTypeE TyKind ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
-    DataConRef defName params args -> do
-      defName' <- substM defName
-      DataDef sourceName paramBs [DataConDef _ argBs] <- lookupDataDef defName'
-      paramTys <- nonDepBinderNestTypes paramBs
-      params' <- forMZipped paramTys params checkTypeE
-      argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
-      checkDataConRefEnv argBs' args
-      return $ RawRefTy $ TypeCon sourceName defName' params'
-    DepPairRef l (Abs b r) ty -> do
-      ty' <- checkTypeE TyKind ty
-      l |: RawRefTy (depPairLeftTy ty')
-      checkB b \b' -> do
-        ty'' <- sinkM ty'
-        rTy <- instantiateDepPairTy ty'' $ Var (binderName b')
-        r |: RawRefTy rTy
-      return $ RawRefTy $ DepPairTy ty'
-    BoxedRef ptrsAndSizes (Abs bs body) -> do
-      ptrTys <- forM ptrsAndSizes \(ptr, numel) -> do
-        numel |: IdxRepTy
-        ty@(PtrTy _) <- getTypeE ptr
-        return ty
-      withFreshBinders ptrTys \bs' vs -> do
-        extendSubst (bs @@> vs) do
-          bodyTy <- getTypeE body
-          liftHoistExcept $ hoist bs' bodyTy
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -1347,15 +1322,11 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
     Empty -> do
       assertEq eff (oneEffect IOEffect) ""
       resultTys <- checkScalarOrPairType resultTy
-      let cc = case length resultTys of
-                 0 -> error "Not implemented"
-                 1 -> FFIFun
-                 _ -> FFIMultiResultFun
-      return $ IFunType cc [argTy] resultTys
+      return $ IFunType [argTy] resultTys
     Nest b' rest -> do
       let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy
-      IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
-      return $ IFunType cc (argTy:argTys) resultTys
+      IFunType argTys resultTys <- checkFFIFunTypeM naryPiRest
+      return $ IFunType (argTy:argTys) resultTys
 
 checkScalar :: Fallible m => Type n -> m BaseType
 checkScalar (BaseTy ty) = return ty

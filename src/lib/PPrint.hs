@@ -223,14 +223,8 @@ instance PrettyPrec (Atom n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
-    DataConRef _ params args -> atPrec LowestPrec $
-      "DataConRef" <+> p params <+> p args
-    BoxedRef ptrsSizes (Abs b body) -> atPrec LowestPrec $
-      "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
-    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
-      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
 
 prettyRecordTyRow :: FieldRowElems n -> Doc ann -> DocPrec ann
 prettyRecordTyRow elems separator = do
@@ -665,14 +659,14 @@ instance Pretty (ImpDecl n l) where
   pretty (ImpLet bs instr) = p bs <+> "=" <+> p instr
 
 instance Pretty IFunType where
-  pretty (IFunType cc argTys retTys) =
-    "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
+  pretty (IFunType argTys retTys) =
+    "Fun" <+> p argTys <+> "->" <+> p retTys
 
 instance Pretty (ImpFunction n) where
-  pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
-    "impfun" <+> p cc <+> prettyBinderNest bs
+  pretty (ImpFunction (IFunType _ _) (Abs bs body)) =
+    "impfun" <+> prettyBinderNest bs
     <> nest 2 (hardline <> p body) <> hardline
-  pretty (FFIFunction _ f) = p f
+  pretty (FFIFunction _ _ f) = p f
 
 instance Pretty (ImpBlock n)  where
   pretty (ImpBlock Empty expr) = group $ line <> pLowest expr
@@ -773,8 +767,6 @@ prettyPrecPrimCon con = case con of
     encloseSep "(" ")" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
-  SumAsProd ty tag payload -> atPrec LowestPrec $
-    "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"
   IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)

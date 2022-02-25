@@ -281,9 +281,6 @@ linearizeAtom atom = case atom of
   -- Those should be gone after simplification
   Lam _            -> error "Unexpected non-table lambda"
   ACase _ _ _      -> error "Unexpected ACase"
-  DataConRef _ _ _ -> error "Unexpected ref"
-  BoxedRef _ _     -> error "Unexpected ref"
-  DepPairRef _ _ _ -> error "Unexpected ref"
   where emitZeroT = withZeroT $ substM atom
 
 linearizeBlock :: Emits o => Block i -> LinM i o Atom Atom
