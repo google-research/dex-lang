@@ -31,7 +31,7 @@ class Module:
     return self
 
   def __del__(self):
-    if api.nofree: return
+    if api is None or api.nofree: return
     api.destroyContext(self)
 
   def __getattr__(self, name):

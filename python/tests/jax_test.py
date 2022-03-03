@@ -12,6 +12,7 @@ import jax.numpy as jnp
 
 import dex
 from dex.interop.jax import primitive
+from dex.interop.jax2dex import dexjit
 
 
 @unittest.skip
@@ -205,6 +206,16 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(
         jax.jit(grad_dex)(x, y),
         jax.jit(grad_jax)(x, y))
+
+class JAX2DexTest(unittest.TestCase):
+
+  def test_basic(self):
+    @dexjit
+    def f(x, y):
+      assert x.ndim == y.ndim == 0
+      return x + y
+
+    f(1., 2.)
 
 
 if __name__ == "__main__":
