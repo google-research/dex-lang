@@ -182,8 +182,9 @@ update-examples/%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
-run-gpu-tests: tests/gpu-tests.dx build
+gpu-tests: run-gpu-tests/gpu-tests
+
+run-gpu-tests/%: tests/%.dx build
 	misc/check-quine $< $(dex) --backend llvm-cuda script --allow-errors
 
 update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0

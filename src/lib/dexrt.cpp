@@ -234,17 +234,23 @@ void dex_cuMemcpyHtoD(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyHtoD, reinterpret_cast<CUdeviceptr>(device_ptr), host_ptr, bytes);
 }
 
-void dex_queryParallelismCUDA(const char* kernel_func, int64_t iters,
+void dex_queryParallelismCUDA(char* kernel_func, int64_t iters,
                               int32_t* numWorkgroups, int32_t* workgroupSize) {
   if (iters == 0) {
     *numWorkgroups = 0;
     *workgroupSize = 0;
     return;
   }
-  // TODO: Use the occupancy calculator, or at least use a fixed number of blocks?
-  const int64_t fixedWgSize = 1024;
-  *workgroupSize = fixedWgSize;
-  *numWorkgroups = std::min((iters + fixedWgSize - 1) / fixedWgSize, fixedWgSize);
+  int min_grid_size_for_max_occupancy;
+       int block_size_32;
+  CUfunction kernel = reinterpret_cast<CUfunction>(kernel_func);
+  CHECK(cuOccupancyMaxPotentialBlockSize,
+        &min_grid_size_for_max_occupancy,
+        &block_size_32,
+        kernel, nullptr, 0, 0);
+  int64_t block_size = block_size_32;
+  *workgroupSize = block_size;
+  *numWorkgroups = (iters + block_size - 1) / block_size;
 }
 
 void dex_loadKernelCUDA(const char* kernel_text, char** module_storage, char** kernel_storage) {
