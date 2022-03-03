@@ -39,8 +39,10 @@ prepareFunctionForExport f = do
   sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
     Success sig -> return sig
     Failure err -> throwErrs err
+  let argRecon = case sig of
+        ExportedSignature argSig _ _ -> runEnvReaderM emptyOutMap $ exportArgRecon argSig
   fSimp <- simplifyTopFunction naryPi f
-  fImp <- toImpExportedFunction fSimp
+  fImp <- toImpExportedFunction fSimp (sinkFromTop argRecon)
   return (fImp, sig)
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
@@ -84,6 +86,25 @@ prepareFunctionForExport f = do
             ety <- toExportType ty
             cont $ Nest (ExportResult (b:>ety)) Empty
 
+    exportArgRecon :: (EnvReader m, EnvExtender m) => Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Atom) n)
+    exportArgRecon topArgs = go (ListE []) topArgs
+      where
+        go :: (EnvReader m, EnvExtender m)
+           => ListE Atom n -> Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Atom) n)
+        go argAtoms = \case
+          Empty -> return $ Abs Empty argAtoms
+          Nest (ExportArg _ b) bs ->
+            refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) -> do
+              let (ity, atom) = typeToAtom ety v'
+              Abs ibs' allAtoms' <- go (ListE $ fromListE (sink argAtoms) ++ [atom]) bs'
+              return $ Abs (Nest (IBinder v' ity) ibs') allAtoms'
+
+        typeToAtom :: ExportType n -> AtomNameBinder n l -> (IType, Atom l)
+        typeToAtom ety v = case ety of
+          ScalarType sbt             -> (Scalar sbt                    , Var $ binderName v)
+          RectContArrayPtr sbt shape -> (PtrType (Heap CPU, Scalar sbt), tableAtom shape   )
+            where tableAtom = undefined
+
     toExportType :: Fallible m => Type n -> m (ExportType n)
     toExportType = \case
       BaseTy (Scalar sbt) -> return $ ScalarType sbt
@@ -104,6 +125,38 @@ data ExportedSignature n = forall l l'.
                     , exportedCCallSig :: [AtomName l']
                     }
 
+instance GenericE ExportType where
+  type RepE ExportType = EitherE (LiftE ScalarBaseType)
+                                 (LiftE ScalarBaseType `PairE` ListE (EitherE AtomName (LiftE Int)))
+  fromE = \case
+    ScalarType sbt   -> LeftE $ LiftE sbt
+    RectContArrayPtr sbt shape -> RightE $ LiftE sbt `PairE` shapeToE shape
+  toE = \case
+    LeftE (LiftE sbt) -> ScalarType sbt
+    RightE (LiftE sbt `PairE` shape) -> RectContArrayPtr sbt (shapeFromE shape)
+instance SubstE    Name ExportType
+instance SinkableE      ExportType
+
+shapeToE :: [Either (AtomName n) Int] -> ListE (EitherE AtomName (LiftE Int)) n
+shapeToE shape = ListE (dimToE <$> shape)
+  where dimToE = \case Left n -> LeftE n; Right n -> RightE (LiftE n)
+
+shapeFromE :: ListE (EitherE AtomName (LiftE Int)) n -> [Either (AtomName n) Int]
+shapeFromE (ListE shape) = (dimFromE <$> shape)
+  where dimFromE = \case LeftE n -> Left n; RightE (LiftE n) -> Right n
+
+instance ToBinding ExportType AtomNameC where
+  toBinding = \case
+    ScalarType sbt -> toBinding $ BaseTy $ Scalar sbt
+    RectContArrayPtr sbt shape -> toBinding $ buildArr $ shapeToE shape
+      where
+        buildArr :: ListE (EitherE AtomName (LiftE Int)) n -> Type n
+        buildArr (ListE sl) = case sl of
+          []    -> BaseTy $ Scalar sbt
+          (h:t) -> case toConstAbsPure (ListE t) of
+            Abs b t' -> TabTy (PiBinder b (Fin s) TabArrow) $ buildArr t'
+            where s = case h of LeftE v -> Var v; RightE (LiftE n) -> IdxRepVal $ fromIntegral n
+
 deriving via (BinderP AtomNameC ExportType) instance GenericB   ExportResult
 deriving via (BinderP AtomNameC ExportType) instance ProvesExt  ExportResult
 deriving via (BinderP AtomNameC ExportType) instance BindsNames ExportResult
@@ -116,8 +169,10 @@ instance GenericB ExportArg where
   type RepB ExportArg = PairB (LiftB (LiftE ArgVisibility)) (BinderP AtomNameC ExportType)
   fromB (ExportArg vis b) = PairB (LiftB (LiftE vis)) b
   toB (PairB (LiftB (LiftE vis)) b) = ExportArg vis b
-instance ProvesExt  ExportArg
-instance BindsNames ExportArg
+instance ProvesExt       ExportArg
+instance BindsNames      ExportArg
+instance SinkableB       ExportArg
+instance SubstB     Name ExportArg
 instance BindsAtMostOneName ExportArg AtomNameC where
   (ExportArg _ b) @> v = b @> v
 instance BindsOneName ExportArg AtomNameC where

@@ -37,7 +37,7 @@ module Name (
   HashMapE (..), HashableE,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
-  toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
+  toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst, liftSubstReaderT,
   liftScopeReaderT, liftScopeReaderM,
   ScopeReaderT (..), SubstReaderT (..),
@@ -419,6 +419,11 @@ toConstAbs body = do
   WithScope scope body' <- addScope body
   withFresh "ignore" scope \b -> do
     sinkM $ Abs b $ sink body'
+
+toConstAbsPure :: (HoistableE e, SinkableE e, Color c)
+               => e n -> (Abs (NameBinder c) e n)
+toConstAbsPure e = Abs (UnsafeMakeBinder n) (unsafeCoerceE e)
+  where n = freshRawName NoHint $ freeVarsE e
 
 -- === type classes for traversing names ===
 
