@@ -24,11 +24,9 @@ def check_atom(dex_atom, reference, args_iter):
                                rtol=1e-4, atol=1e-6)
   assert ran_any_iter, "Empty argument iterator!"
 
-def expr_test(dex_source, reference, args_iter, skip=False):
+def expr_test(dex_source, reference, args_iter):
   def test(self):
     return check_atom(dex.eval(dex_source), reference, args_iter)
-  if skip:
-    test = unittest.skip(test)
   return test
 
 class JITTest(unittest.TestCase):
@@ -47,20 +45,16 @@ class JITTest(unittest.TestCase):
 
   test_array_scalar = expr_test(r"\x:((Fin 10)=>Float). sum x",
                                 np.sum,
-                                [(np.arange(10, dtype=np.float32),)],
-                                skip=True)
+                                [(np.arange(10, dtype=np.float32),)])
 
   test_scalar_array = expr_test(r"\x:Int. for i:(Fin 10). x + ordinal i",
                                 lambda x: x + np.arange(10, dtype=np.int32),
-                                [(i,) for i in range(5)],
-                                skip=True)
+                                [(i,) for i in range(5)])
 
   test_array_array = expr_test(r"\x:((Fin 10)=>Float). for i. exp x.i",
                                np.exp,
-                               [(np.arange(10, dtype=np.float32),)],
-                               skip=True)
+                               [(np.arange(10, dtype=np.float32),)])
 
-  @unittest.skip
   def test_polymorphic_array_1d(self):
     m = dex.Module(dedent("""
     def addTwo {n} (x: (Fin n)=>Float) : (Fin n)=>Float = for i. x.i + 2.0
@@ -68,7 +62,6 @@ class JITTest(unittest.TestCase):
     check_atom(m.addTwo, lambda x: x + 2,
                [(np.arange(l, dtype=np.float32),) for l in (2, 5, 10)])
 
-  @unittest.skip
   def test_polymorphic_array_2d(self):
     m = dex.Module(dedent("""
     def myTranspose {n m} (x : (Fin n)=>(Fin m)=>Float) : (Fin m)=>(Fin n)=>Float =
@@ -78,7 +71,6 @@ class JITTest(unittest.TestCase):
                [(np.arange(a*b, dtype=np.float32).reshape((a, b)),)
                 for a, b in it.product((2, 5, 10), repeat=2)])
 
-  @unittest.skip
   def test_tuple_return(self):
     dex_func = dex.eval(r"\x: ((Fin 10) => Float). (x, 2. .* x, 3. .* x)")
     reference = lambda x: (x, 2 * x, 3 * x)

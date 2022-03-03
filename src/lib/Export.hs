@@ -17,13 +17,17 @@ module Export (
   ) where
 
 import Data.List (intercalate)
+import Control.Monad
 
 import Name
+import MTL1
 import Err
 import Syntax
 import Type
+import Builder
 import Simplify
 import Imp
+import Util (scanM)
 
 exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
@@ -39,10 +43,12 @@ prepareFunctionForExport f = do
   sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
     Success sig -> return sig
     Failure err -> throwErrs err
-  let argRecon = case sig of
-        ExportedSignature argSig _ _ -> runEnvReaderM emptyOutMap $ exportArgRecon argSig
+  argRecon <- case sig of
+    ExportedSignature argSig _ _ -> do
+      case sinkFromTop $ EmptyAbs argSig of
+        Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon argSig'
   fSimp <- simplifyTopFunction naryPi f
-  fImp <- toImpExportedFunction fSimp (sinkFromTop argRecon)
+  fImp <- toImpExportedFunction fSimp argRecon
   return (fImp, sig)
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
@@ -86,30 +92,67 @@ prepareFunctionForExport f = do
             ety <- toExportType ty
             cont $ Nest (ExportResult (b:>ety)) Empty
 
-    exportArgRecon :: (EnvReader m, EnvExtender m) => Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Atom) n)
-    exportArgRecon topArgs = go (ListE []) topArgs
+    exportArgRecon :: (EnvReader m, EnvExtender m) => Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Block) n)
+    exportArgRecon topArgs = go [] topArgs
       where
         go :: (EnvReader m, EnvExtender m)
-           => ListE Atom n -> Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Atom) n)
-        go argAtoms = \case
-          Empty -> return $ Abs Empty argAtoms
+           => [Block n] -> Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Block) n)
+        go argRecons = \case
+          Empty -> return $ Abs Empty $ ListE argRecons
           Nest (ExportArg _ b) bs ->
             refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) -> do
-              let (ity, atom) = typeToAtom ety v'
-              Abs ibs' allAtoms' <- go (ListE $ fromListE (sink argAtoms) ++ [atom]) bs'
-              return $ Abs (Nest (IBinder v' ity) ibs') allAtoms'
+              (ity, block) <- typeRecon (sink ety) $ Var $ binderName v'
+              Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) bs'
+              return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
 
-        typeToAtom :: ExportType n -> AtomNameBinder n l -> (IType, Atom l)
-        typeToAtom ety v = case ety of
-          ScalarType sbt             -> (Scalar sbt                    , Var $ binderName v)
-          RectContArrayPtr sbt shape -> (PtrType (Heap CPU, Scalar sbt), tableAtom shape   )
-            where tableAtom = undefined
+        typeRecon :: EnvExtender m => ExportType n -> Atom n -> m n (IType, Block n)
+        typeRecon ety v = case ety of
+          ScalarType sbt ->
+            return (Scalar sbt, Block (BlockAnn $ BaseTy $ Scalar sbt) Empty $ Atom v)
+          RectContArrayPtr sbt shape -> do
+              block <- liftBuilder $ buildBlock $ tableAtom (sink v) (sink $ shapeToE shape) [] []
+              return (PtrType (Heap CPU, Scalar sbt), block)
+            where
+              tableAtom :: Emits n => Atom n -> ListE (EitherE AtomName (LiftE Int)) n -> [Atom n] -> [Atom n] -> BuilderM n (Atom n)
+              tableAtom basePtr (ListE shapeTail) is sizes = case shapeTail of
+                (h:t) -> buildTabLam NoHint (Fin $ dimSize h) \i ->
+                  tableAtom (sink basePtr) (sink $ ListE t)
+                            (sinkList is ++ [Var i]) (sinkList $ sizes ++ [dimSize h])
+                [] -> do
+                  strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
+                                                     (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
+                  ords <- flip evalStateT1 mempty $ forM is \i -> do
+                    ity <- getType i
+                    appSimplifiedIxMethod ity simpleToOrdinal i
+                  offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
+                  unsafePtrLoad =<< ptrOffset basePtr offset
+
+              dup x = (x, x)
+              dimSize = \case LeftE n -> Var n; RightE (LiftE n) -> IdxRepVal (fromIntegral n)
 
     toExportType :: Fallible m => Type n -> m (ExportType n)
-    toExportType = \case
+    toExportType ty = case ty of
       BaseTy (Scalar sbt) -> return $ ScalarType sbt
-      -- TODO: Arrays!
-      ty -> throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+      TabTy  _ _          -> case parseTabTy ty of
+        Nothing  -> unsupported
+        Just ety -> return ety
+      _ -> unsupported
+      where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+
+    parseTabTy :: Type n -> Maybe (ExportType n)
+    parseTabTy = go []
+      where
+        go shape = \case
+          BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
+          TabTy  (PiBinder b (Fin n) _) a -> do
+            dim <- case n of
+              Var v       -> Just (Left v)
+              IdxRepVal s -> Just (Right $ fromIntegral s)
+              _           -> Nothing
+            case hoist b a of
+              HoistSuccess a' -> go (shape ++ [dim]) a'
+              HoistFailure _  -> Nothing
+          _ -> Nothing
 
 -- === Exported function signature ===
 
@@ -147,15 +190,8 @@ shapeFromE (ListE shape) = (dimFromE <$> shape)
 
 instance ToBinding ExportType AtomNameC where
   toBinding = \case
-    ScalarType sbt -> toBinding $ BaseTy $ Scalar sbt
-    RectContArrayPtr sbt shape -> toBinding $ buildArr $ shapeToE shape
-      where
-        buildArr :: ListE (EitherE AtomName (LiftE Int)) n -> Type n
-        buildArr (ListE sl) = case sl of
-          []    -> BaseTy $ Scalar sbt
-          (h:t) -> case toConstAbsPure (ListE t) of
-            Abs b t' -> TabTy (PiBinder b (Fin s) TabArrow) $ buildArr t'
-            where s = case h of LeftE v -> Var v; RightE (LiftE n) -> IdxRepVal $ fromIntegral n
+    ScalarType       sbt   -> toBinding $ BaseTy $ Scalar sbt
+    RectContArrayPtr sbt _ -> toBinding $ BaseTy $ PtrType (Heap CPU, Scalar sbt)
 
 deriving via (BinderP AtomNameC ExportType) instance GenericB   ExportResult
 deriving via (BinderP AtomNameC ExportType) instance ProvesExt  ExportResult

@@ -54,7 +54,7 @@ module Name (
   lookupEMap, eMapSingleton, eSetSingleton, eMapToList, eSetToList,
   eMapFromList, eSetFromList,
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
-  withFreshM, sink, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
+  withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
   envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   fmapNest, forEachNestItem, forEachNestItemM,
@@ -2269,6 +2269,9 @@ sink x = unsafeCoerceE x
 
 sinkR :: SinkableE e => e (n:=>:l) -> e l
 sinkR = unsafeCoerceE
+
+sinkList :: (SinkableE e, DExt n l) => [e n] -> [e l]
+sinkList = fromListE . sink . ListE
 
 class SinkableE (e::E) where
   sinkingProofE :: SinkingCoercion n l -> e n -> e l

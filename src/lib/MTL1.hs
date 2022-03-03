@@ -12,7 +12,7 @@
 module MTL1 (
     MonadTrans11 (..), HoistableState (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
-    StateT1, pattern StateT1, runStateT1, MonadState1,
+    StateT1, pattern StateT1, runStateT1, evalStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
     ScopedT1, pattern ScopedT1, runScopedT1
   ) where
@@ -110,6 +110,9 @@ type MonadState1 (e::E) (m::MonadKind1) = forall n. MonadState (e n) (m n)
 
 runStateT1 :: StateT1 s m n a -> s n -> m n (a, s n)
 runStateT1 = runStateT . runStateT1'
+
+evalStateT1 :: Monad1 m => StateT1 s m n a -> s n -> m n a
+evalStateT1 m s = fst <$> runStateT1 m s
 
 instance MonadTrans11 (StateT1 s) where
   lift11 = WrapStateT1 . lift

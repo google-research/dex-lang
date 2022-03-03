@@ -69,9 +69,9 @@ toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not im
 
 toImpExportedFunction :: EnvReader m
                       => NaryLamExpr n
-                      -> (Abs (Nest IBinder) (ListE Atom) n)
+                      -> (Abs (Nest IBinder) (ListE Block) n)
                       -> m n (ImpFunction n)
-toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) argRecon@(Abs baseArgBs _) = liftImpM do
+toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs baseArgBs argRecons) = liftImpM do
   case effs of
     Pure -> return ()
     _    -> throw TypeErr "Can only export pure functions"
@@ -89,7 +89,8 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) argRecon@
     let (args, ptrs) = splitAt (length argFormals) argsAndPtrs
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
     resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
-    argAtoms       <- fromListE <$> applyNaryAbs (sink argRecon) args
+    argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
+      traverse (translateBlock Nothing) $ fromListE argRecons
     extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []
