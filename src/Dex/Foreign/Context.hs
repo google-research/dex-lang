@@ -20,14 +20,11 @@ import Foreign.C.String
 
 import Control.Monad.IO.Class
 import Data.String
-import Data.Int
 import Data.Functor
 import Data.Foldable
 import qualified Data.Map.Strict as M
 
-import Resources
 import Syntax  hiding (sizeOf)
-import Type
 import TopLevel
 import Name
 import PPrint
@@ -41,11 +38,6 @@ import Dex.Foreign.Util
 data Context = Context EvalConfig TopStateEx
 data AtomEx where
   AtomEx :: Atom n -> AtomEx
-
-foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
-setError :: String -> IO ()
-setError msg = withCStringLen msg $ \(ptr, len) ->
-  internalSetErrorPtr ptr (fromIntegral len)
 
 dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do

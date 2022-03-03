@@ -140,7 +140,7 @@ class _SignatureParser:
     self.text = text
 
   def consume(self, char: str):
-    assert self.text[self.offset] == ord(char)
+    assert self.text[self.offset] == ord(char), (self.text, self.offset, char)
     self.offset += 1
 
   def maybe_consume(self, char: str) -> bool:
