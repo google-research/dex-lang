@@ -24,12 +24,13 @@ def check_atom(dex_atom, reference, args_iter):
                                rtol=1e-4, atol=1e-6)
   assert ran_any_iter, "Empty argument iterator!"
 
-def expr_test(dex_source, reference, args_iter):
+def expr_test(dex_source, reference, args_iter, skip=False):
   def test(self):
     return check_atom(dex.eval(dex_source), reference, args_iter)
+  if skip:
+    test = unittest.skip(test)
   return test
 
-@unittest.skip
 class JITTest(unittest.TestCase):
   test_sigmoid = expr_test(r"\x:Float. 1.0 / (1.0 + exp(-x))",
                            lambda x: np.float32(1.0) / (np.float32(1.0) + np.exp(-x)),
@@ -46,33 +47,38 @@ class JITTest(unittest.TestCase):
 
   test_array_scalar = expr_test(r"\x:((Fin 10)=>Float). sum x",
                                 np.sum,
-                                [(np.arange(10, dtype=np.float32),)])
+                                [(np.arange(10, dtype=np.float32),)],
+                                skip=True)
 
   test_scalar_array = expr_test(r"\x:Int. for i:(Fin 10). x + ordinal i",
                                 lambda x: x + np.arange(10, dtype=np.int32),
-                                [(i,) for i in range(5)])
+                                [(i,) for i in range(5)],
+                                skip=True)
 
   test_array_array = expr_test(r"\x:((Fin 10)=>Float). for i. exp x.i",
                                np.exp,
-                               [(np.arange(10, dtype=np.float32),)])
+                               [(np.arange(10, dtype=np.float32),)],
+                               skip=True)
 
+  @unittest.skip
   def test_polymorphic_array_1d(self):
     m = dex.Module(dedent("""
-    def addTwo (n: Int) ?-> (x: (Fin n)=>Float) : (Fin n)=>Float = for i. x.i + 2.0
+    def addTwo {n} (x: (Fin n)=>Float) : (Fin n)=>Float = for i. x.i + 2.0
     """))
     check_atom(m.addTwo, lambda x: x + 2,
                [(np.arange(l, dtype=np.float32),) for l in (2, 5, 10)])
 
+  @unittest.skip
   def test_polymorphic_array_2d(self):
     m = dex.Module(dedent("""
-    def myTranspose (n: Int) ?-> (m: Int) ?->
-                    (x : (Fin n)=>(Fin m)=>Float) : (Fin m)=>(Fin n)=>Float =
+    def myTranspose {n m} (x : (Fin n)=>(Fin m)=>Float) : (Fin m)=>(Fin n)=>Float =
       for i j. x.j.i
     """))
     check_atom(m.myTranspose, lambda x: x.T,
                [(np.arange(a*b, dtype=np.float32).reshape((a, b)),)
                 for a, b in it.product((2, 5, 10), repeat=2)])
 
+  @unittest.skip
   def test_tuple_return(self):
     dex_func = dex.eval(r"\x: ((Fin 10) => Float). (x, 2. .* x, 3. .* x)")
     reference = lambda x: (x, 2 * x, 3 * x)

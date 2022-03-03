@@ -121,8 +121,6 @@ class Atom:
     return eval(" ".join(f"python_arg{i}" for i in range(len(args) + 1)), module=self.module, _env=env)
 
   def compile(self):
-    raise NotImplementedError()
     func_ptr = api.compile(api.jit, self.module, self)
-    if not func_ptr:
-      api.raise_from_dex()
+    if not func_ptr: api.raise_from_dex()
     return NativeFunction(api.jit, func_ptr)

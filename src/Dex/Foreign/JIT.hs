@@ -5,10 +5,11 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Dex.Foreign.JIT (
-  JIT, NativeFunction, ExportedSignature,
+  JIT, NativeFunction, ClosedExportedSignature,
   dexCreateJIT, dexDestroyJIT,
   dexGetFunctionSignature, dexFreeFunctionSignature,
   dexCompile, dexUnload
@@ -32,24 +33,22 @@ import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.JIT
 import qualified LLVM.Shims
 
+import Name
 import Logging
+import Builder
 import LLVMExec
 import TopLevel
 import JIT
+import Export
 import Syntax  hiding (sizeOf)
 
 import Dex.Foreign.Util
 import Dex.Foreign.Context
 
--- TODO: Update Export to safer names
--- import Export
-newtype ExportedSignature = ExportedSignature ()
-exportedSignatureDesc :: ExportedSignature -> (String, String, String)
-exportedSignatureDesc = undefined
-
+type ClosedExportedSignature = ExportedSignature 'VoidS
 data NativeFunction =
   NativeFunction { nativeModule    :: LLVM.JIT.NativeModule
-                 , nativeSignature :: ExportedSignature }
+                 , nativeSignature :: ExportedSignature 'VoidS }
 type NativeFunctionAddr = Ptr NativeFunction
 
 data JIT = ForeignJIT { jit :: LLVM.JIT.JIT
@@ -57,12 +56,12 @@ data JIT = ForeignJIT { jit :: LLVM.JIT.JIT
                       , addrTableRef :: IORef (M.Map NativeFunctionAddr NativeFunction)
                       }
 
-instance Storable ExportedSignature where
+instance Storable (ExportedSignature 'VoidS) where
   sizeOf _ = 3 * sizeOf (undefined :: Ptr ())
   alignment _ = alignment (undefined :: Ptr ())
   peek _ = error "peek not implemented for ExportedSignature"
   poke addr sig = do
-    let strAddr = castPtr @ExportedSignature @CString addr
+    let strAddr = castPtr @(ExportedSignature 'VoidS) @CString addr
     let (arg, res, ccall) = exportedSignatureDesc sig
     pokeElemOff strAddr 0 =<< newCString arg
     pokeElemOff strAddr 1 =<< newCString res
@@ -70,49 +69,51 @@ instance Storable ExportedSignature where
 
 dexCreateJIT :: IO (Ptr JIT)
 dexCreateJIT = do
-  setError "currently disabled" $> nullPtr
-  --jitTargetMachine <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
-  --jit <- LLVM.JIT.createJIT jitTargetMachine
-  --addrTableRef <- newIORef mempty
-  --toStablePtr ForeignJIT{..}
+  jitTargetMachine <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
+  jit <- LLVM.JIT.createJIT jitTargetMachine
+  addrTableRef <- newIORef mempty
+  toStablePtr ForeignJIT{..}
 
 dexDestroyJIT :: Ptr JIT -> IO ()
 dexDestroyJIT jitPtr = do
-  return ()
-  --ForeignJIT{..} <- fromStablePtr jitPtr
-  --addrTable <- readIORef addrTableRef
-  --forM_ (M.toList addrTable) $ \(_, m) -> LLVM.JIT.unloadNativeModule $ nativeModule m
-  --LLVM.JIT.destroyJIT jit
-  --LLVM.Shims.disposeTargetMachine jitTargetMachine
+  ForeignJIT{..} <- fromStablePtr jitPtr
+  addrTable <- readIORef addrTableRef
+  forM_ (M.toList addrTable) $ \(_, m) -> LLVM.JIT.unloadNativeModule $ nativeModule m
+  LLVM.JIT.destroyJIT jit
+  LLVM.Shims.disposeTargetMachine jitTargetMachine
 
 dexCompile :: Ptr JIT -> Ptr Context -> Ptr AtomEx -> IO NativeFunctionAddr
-dexCompile jitPtr ctxPtr funcAtomPtr = do
-  setError "currently disabled" $> nullPtr
-  --ForeignJIT{..} <- fromStablePtr jitPtr
-  --Context _ (TopStateEx env) <- fromStablePtr ctxPtr
-  --funcAtom <- fromStablePtr funcAtomPtr
-  --let (impMod, nativeSignature) = prepareFunctionForExport
-                                    --(topBindings $ topStateD env) "userFunc" funcAtom
-  --nativeModule <- execLogger Nothing $ \logger -> do
-    --llvmAST <- impToLLVM logger impMod
-    --LLVM.JIT.compileModule jit llvmAST
-        --(standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
-  --funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
-  --modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
-  --return $ funcPtr
+dexCompile jitPtr ctxPtr funcAtomPtr = catchErrors $ do
+  ForeignJIT{..} <- fromStablePtr jitPtr
+  Context evalConfig initEnv <- fromStablePtr ctxPtr
+  AtomEx funcAtom <- fromStablePtr funcAtomPtr
+  fst <$> runTopperM evalConfig initEnv do
+    -- TODO: Check if atom is compatible with context! Use module name?
+    (impFunc, nativeSignature) <- prepareFunctionForExport (unsafeCoerceE funcAtom)
+    (_, llvmAST) <- impToLLVM "userFunc" impFunc
+    logger <- getLogger
+    objFileNames <- getAllRequiredObjectFiles
+    objFiles <- forM objFileNames \objFileName -> do
+      ObjectFileBinding (ObjectFile bytes _ _) <- lookupEnv objFileName
+      return bytes
+    liftIO do
+      nativeModule <- LLVM.JIT.compileModule jit objFiles llvmAST
+          (standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
+      funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
+      modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
+      return $ funcPtr
 
-dexGetFunctionSignature :: Ptr JIT -> NativeFunctionAddr -> IO (Ptr ExportedSignature)
+dexGetFunctionSignature :: Ptr JIT -> NativeFunctionAddr -> IO (Ptr (ExportedSignature 'VoidS))
 dexGetFunctionSignature jitPtr funcPtr = do
-  setError "currently disabled" $> nullPtr
-  --ForeignJIT{..} <- fromStablePtr jitPtr
-  --addrTable <- readIORef addrTableRef
-  --case M.lookup funcPtr addrTable of
-    --Nothing -> setError "Invalid function address" $> nullPtr
-    --Just NativeFunction{..} -> putOnHeap nativeSignature
+  ForeignJIT{..} <- fromStablePtr jitPtr
+  addrTable <- readIORef addrTableRef
+  case M.lookup funcPtr addrTable of
+    Nothing -> setError "Invalid function address" $> nullPtr
+    Just NativeFunction{..} -> putOnHeap nativeSignature
 
-dexFreeFunctionSignature :: Ptr ExportedSignature -> IO ()
+dexFreeFunctionSignature :: Ptr (ExportedSignature 'VoidS) -> IO ()
 dexFreeFunctionSignature sigPtr = do
-  let strPtr = castPtr @ExportedSignature @CString sigPtr
+  let strPtr = castPtr @(ExportedSignature 'VoidS) @CString sigPtr
   free =<< peekElemOff strPtr 0
   free =<< peekElemOff strPtr 1
   free =<< peekElemOff strPtr 2
@@ -120,8 +121,7 @@ dexFreeFunctionSignature sigPtr = do
 
 dexUnload :: Ptr JIT -> NativeFunctionAddr -> IO ()
 dexUnload jitPtr funcPtr = do
-  return ()
-  --ForeignJIT{..} <- fromStablePtr jitPtr
-  --addrTable <- readIORef addrTableRef
-  --LLVM.JIT.unloadNativeModule $ nativeModule $ addrTable M.! funcPtr
-  --modifyIORef addrTableRef $ M.delete funcPtr
+  ForeignJIT{..} <- fromStablePtr jitPtr
+  addrTable <- readIORef addrTableRef
+  LLVM.JIT.unloadNativeModule $ nativeModule $ addrTable M.! funcPtr
+  modifyIORef addrTableRef $ M.delete funcPtr
