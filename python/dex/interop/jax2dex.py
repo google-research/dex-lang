@@ -129,6 +129,8 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, cache)
 
+from .. import eval
+
 map = safe_map
 zip = safe_zip
 
@@ -174,6 +176,7 @@ def dexjit(fun: Callable, *, abstracted_axes: Optional[Any] = None) -> Callable:
     return tree_unflatten(out_tree, out_flat)
   return dex_fun
 
+# TODO try to delete this, rely on existing jax functions instead
 @cache()
 def make_jaxpr(fun: Callable, in_tree: PyTreeDef,
                in_avals: tuple[core.AbstractValue],  # with DBIdx in them
@@ -238,7 +241,10 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
     block = Block([], expr)
   print(jaxpr, end='\n\n')
   print(pprint(expr), end='\n\n')
-  return dex.eval(pprint(expr)).compile()
+  return eval(pprint(expr)).compile()
+
+def pprint(e):
+  return e.pprint()
 
 ExprMaker = Callable[[Any, ...], Expr]
 expr_makers: Dict[core.Primitive, ExprMaker] = {}
@@ -293,4 +299,8 @@ def aval_to_type(aval: core.AbstractValue) -> Type:
     return ty
   else:
     raise NotImplementedError(aval)
+
+
+###
+
 
