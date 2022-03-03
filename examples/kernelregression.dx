@@ -17,7 +17,7 @@ def solve' {m} (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
        (x', r', p')
   xOut
 
-def chol_solve (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
+def chol_solve {m} (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
     b' = forward_substitute l b
     u = transposeLowerToUpper l
     backward_substitute u b'
@@ -74,7 +74,7 @@ with the Bayes rule, gives the variance of the prediction.
 ' In this implementation, the conjugate gradient solver is replaced with the
 cholesky solver from `lib/linalg.dx` for efficiency.
 
-def gp_regress (kernel: a -> a -> Float) (xs: n=>a) (ys: n=>Float)
+def gp_regress {n a} (kernel: a -> a -> Float) (xs: n=>a) (ys: n=>Float)
     : (a -> (Float&Float)) =
     noise_var = 0.0001
     gram = for i j. kernel xs.i xs.j
