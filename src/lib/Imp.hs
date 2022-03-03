@@ -67,8 +67,11 @@ toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
       return []
 toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not implemented"
 
-toImpExportedFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
-toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) = liftImpM do
+toImpExportedFunction :: EnvReader m
+                      => NaryLamExpr n
+                      -> (Abs (Nest IBinder) (ListE Atom) n)
+                      -> m n (ImpFunction n)
+toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) argRecon@(Abs baseArgBs _) = liftImpM do
   case effs of
     Pure -> return ()
     _    -> throw TypeErr "Can only export pure functions"
@@ -81,18 +84,15 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) = liftImp
     AbsPtrs (Abs ptrBs' resDest') ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
     let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> ("res"::NameHint, PtrType bt)
     return (Abs tbs' (Abs ptrBs' resDest'), ptrFormals)
-  let argFormals = nestToList formalForBinder bs
+  let argFormals = nestToList ((NoHint,) . iBinderType) baseArgBs
   dropSubst $ buildImpFunction CEntryFun (argFormals ++ ptrFormals) \argsAndPtrs -> do
     let (args, ptrs) = splitAt (length argFormals) argsAndPtrs
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
     resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
-    extendSubst (bs @@> map SubstVal (Var <$> args)) do
+    argAtoms       <- fromListE <$> applyNaryAbs (sink argRecon) args
+    extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []
-  where
-    formalForBinder b = case binderType b of
-      BaseTy bt -> (NoHint, bt)
-      _ -> error "Expected all binders to be of a BaseType"
 
 loadArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> m n ([Atom n], Dest n)
 loadArgDests (Abs Empty resultDest) = return ([], resultDest)
