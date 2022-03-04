@@ -22,7 +22,7 @@ from .. import api
 def primitive(f):
   if not isinstance(f, Atom):
     raise TypeError("DexPrimitive expects a function atom as an argument")
-  return partial(dex_call_p.bind, func_atom=f)
+  return partial(dex_apply_p.bind, func_atom=f)
 
 compiler_cache = WeakKeyDictionary()
 def get_compiled(func_atom):
@@ -32,9 +32,9 @@ def get_compiled(func_atom):
   return compiled
 
 
-dex_call_p = jax.core.Primitive('dex_call')
+dex_apply_p = jax.core.Primitive('dex_apply')
 
-@dex_call_p.def_impl
+@dex_apply_p.def_impl
 def dex_call_impl(*args, func_atom):
   return get_compiled(func_atom)(*args)
 
@@ -80,7 +80,7 @@ def dex_call_abstract_eval_with_shape(*args, func_atom):
   assert len(result_avals) == 1  # TODO: Make dex_call a multiple_results primitive
   return result_avals[0], shape_vars
 
-@dex_call_p.def_abstract_eval
+@dex_apply_p.def_abstract_eval
 def dex_call_abstract_eval(*args, **kwargs):
   return dex_call_abstract_eval_with_shape(*args, **kwargs)[0]
 
@@ -140,7 +140,7 @@ def dex_call_cpu_translation(b, *args, func_atom):
     custom_call_name, *_ = custom_call
   return xc.ops.CustomCall(b, custom_call_name, operands=args, shape=result_xshape)
 
-jax.interpreters.xla.backend_specific_translations['cpu'][dex_call_p] = dex_call_cpu_translation
+jax.interpreters.xla.backend_specific_translations['cpu'][dex_apply_p] = dex_call_cpu_translation
 
 
 # === batching ===
@@ -193,7 +193,7 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
   return primitive(batched_fn)(*uniform_batched_args), 0
 
 
-batching.primitive_batchers[dex_call_p] = dex_call_batched
+batching.primitive_batchers[dex_apply_p] = dex_call_batched
 
 
 # === jvp / linearize  ===
@@ -271,7 +271,7 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
       primitive(evaluate_linearized)(*arg_values, *tangents_no_zeros),
   )
 
-jax.interpreters.ad.primitive_jvps[dex_call_p] = dex_call_jvp
+jax.interpreters.ad.primitive_jvps[dex_apply_p] = dex_call_jvp
 
 # === transpose ===
 
@@ -398,4 +398,4 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
 
   return tuple(result)
 
-jax.interpreters.ad.primitive_transposes[dex_call_p] = dex_call_evaluate_linearized_transpose
+jax.interpreters.ad.primitive_transposes[dex_apply_p] = dex_call_evaluate_linearized_transpose
