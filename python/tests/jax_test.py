@@ -13,8 +13,7 @@ import jax.numpy as jnp
 from jax import lax
 
 import dex
-from dex.interop.jax import primitive
-from dex.interop.jax2dex import dexjit
+from dex.interop.jax import primitive, dexjit
 
 
 class JAXTest(unittest.TestCase):

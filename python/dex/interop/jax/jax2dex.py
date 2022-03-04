@@ -21,7 +21,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, cache)
 
-from .. import eval
+from ... import eval
 
 map = safe_map
 zip = safe_zip

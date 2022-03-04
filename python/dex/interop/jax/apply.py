@@ -15,9 +15,9 @@ from jax.lib import xla_client as xc
 from jax.interpreters import xla
 from jax.interpreters import batching
 
-from .. import Atom
-from ..native_function import IdxRepTy, ScalarType, RectContArrayType
-from .. import api
+from ... import Atom
+from ...native_function import IdxRepTy, ScalarType, RectContArrayType
+from ... import api
 
 def primitive(f):
   if not isinstance(f, Atom):
