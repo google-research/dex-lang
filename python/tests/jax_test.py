@@ -6,9 +6,11 @@
 
 import unittest
 import numpy as np
+from functools import partial
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 
 import dex
 from dex.interop.jax import primitive
@@ -206,16 +208,29 @@ class JAXTest(unittest.TestCase):
         jax.jit(grad_dex)(x, y),
         jax.jit(grad_jax)(x, y))
 
+def lax_test(prim, arg_thunk, **kwargs):
+  def test(self):
+    f = dexjit(partial(prim, **kwargs))
+    args = arg_thunk()
+    np.testing.assert_allclose(f(*args), prim(*args, **kwargs))
+  return test
+
+def rn(*shape):
+  return np.random.default_rng(seed=1).normal(size=shape).astype(np.float32)
+
 class JAX2DexTest(unittest.TestCase):
+  test_sin = lax_test(lax.sin, lambda: (rn(10, 10),))
+  test_cos = lax_test(lax.cos, lambda: (rn(10, 10),))
+  test_neg = lax_test(lax.neg, lambda: (rn(10, 10),))
 
-  def test_basic(self):
-    @dexjit
-    def f(x, y):
-      assert x.ndim == y.ndim == 0
-      return x + y
-
-    f(1., 2.)
-
+def check_broadcasting_pointwise(prim):
+  setattr(JAX2DexTest, 'test_' + prim.__name__,
+          lax_test(prim, lambda: (rn(10, 10), rn(10, 1))))
+check_broadcasting_pointwise(lax.add)
+check_broadcasting_pointwise(lax.mul)
+check_broadcasting_pointwise(lax.sub)
+check_broadcasting_pointwise(lax.div)
+check_broadcasting_pointwise(lax.max)
 
 if __name__ == "__main__":
   unittest.main()
