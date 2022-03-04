@@ -898,7 +898,7 @@ inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UEx
 inferNaryApp fCtx f args = addSrcContext fCtx do
   let (_, _, arr, _) :| _ = args
   fTy <- getType f
-  Just naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
+  Just naryPi <- asNaryPiType AnyFlavor <$> Pi <$> fromPiType True arr fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
   let appExpr = App f inferredArgs
   addEffects =<< exprEffects appExpr
