@@ -23,7 +23,8 @@ module Type (
   sourceNameType,
   checkUnOp, checkBinOp,
   oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
-  isSingletonType, singletonTypeVal, asNaryPiType, numNaryPiArgs, naryLamExprType,
+  isSingletonType, singletonTypeVal, asNaryPiType, NaryPiFlavor (..),
+  numNaryPiArgs, naryLamExprType,
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
@@ -983,15 +984,29 @@ naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftHardFailTyperT 
 checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
 checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
 
-asNaryPiType :: Type n -> Maybe (NaryPiType n)
-asNaryPiType ty = case ty of
-  Pi (PiType b effs resultTy) -> case effs of
-   Pure -> case asNaryPiType resultTy of
+data NaryPiFlavor = TabOnlyFlavor  -- nary pi nest of TabArrows
+                  | NonTabFlavor   -- nary pi nest of non-table arrows
+                  | AnyFlavor      -- nary pi nest of either only tab arrow or only non-tab arrows
+
+asNaryPiType :: NaryPiFlavor -> Type n -> Maybe (NaryPiType n)
+asNaryPiType flavor ty = case ty of
+  Pi (PiType b@(PiBinder _ _ arr) effs resultTy) | matchesFlavor arr -> case effs of
+   Pure -> case asNaryPiType (inferFlavor arr) resultTy of
      Just (NaryPiType (NonEmptyNest b' bs) effs' resultTy') ->
         Just $ NaryPiType (NonEmptyNest b (Nest b' bs)) effs' resultTy'
      Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
    _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
   _ -> Nothing
+  where
+    matchesFlavor arr = case flavor of
+      AnyFlavor     -> True
+      TabOnlyFlavor -> arr == TabArrow
+      NonTabFlavor  -> arr /= TabArrow
+
+    inferFlavor arr = case flavor of
+      AnyFlavor -> if arr == TabArrow then TabOnlyFlavor else NonTabFlavor
+      _         -> flavor
+
 
 checkArgTys
   :: Typer m
@@ -1336,7 +1351,7 @@ runCheck cont = do
 
 asFFIFunType :: EnvReader m => Type n -> m n (Maybe (IFunType, NaryPiType n))
 asFFIFunType ty = return do
-  naryPiTy <- asNaryPiType ty
+  naryPiTy <- asNaryPiType NonTabFlavor ty
   impTy <- checkFFIFunTypeM naryPiTy
   return (impTy, naryPiTy)
 
@@ -1375,7 +1390,7 @@ asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
 
 asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
 asFirstOrderFunctionM ty = do
-  naryPi@(NaryPiType bs eff resultTy) <- liftMaybe $ asNaryPiType ty
+  naryPi@(NaryPiType bs eff resultTy) <- liftMaybe $ asNaryPiType NonTabFlavor ty
   substBinders bs \(NonEmptyNest b' bs') -> do
       ts <- mapM sinkM $ bindersTypes $ Nest b' bs'
       dropSubst $ mapM_ checkDataLike ts
