@@ -70,9 +70,11 @@ getError = dex_func('dexGetError', ctypes.c_char_p)
 
 createContext  = dex_func('dexCreateContext',  HsContextPtr)
 destroyContext = dex_func('dexDestroyContext', HsContextPtr, None)
+forkContext    = dex_func('dexForkContext',    HsContextPtr, HsContextPtr)
 
-eval     = dex_func('dexEval',     HsContextPtr, ctypes.c_char_p, HsContextPtr)
-lookup   = dex_func('dexLookup',   HsContextPtr, ctypes.c_char_p, HsAtomPtr)
+eval      = dex_func('dexEval',      HsContextPtr, ctypes.c_char_p, HsContextPtr)
+lookup    = dex_func('dexLookup',    HsContextPtr, ctypes.c_char_p, HsAtomPtr)
+freshName = dex_func('dexFreshName', HsContextPtr, ctypes.c_char_p)
 
 print     = dex_func('dexPrint',     HsContextPtr, HsAtomPtr, ctypes.c_char_p)
 toCAtom   = dex_func('dexToCAtom',   HsAtomPtr,    CAtomPtr,  ctypes.c_int)

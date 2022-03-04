@@ -15,13 +15,14 @@ void dexFini() {
   hs_exit();
 }
 
-__thread char err_storage[2048];
+__thread char dex_err_storage[2048];
 
 const char* dexGetError() {
-  return err_storage;
+  return dex_err_storage;
 }
 
 void _internal_dexSetError(char* new_err, int64_t len) {
-  memcpy(err_storage, new_err, len);
-  err_storage[2047] = 0;
+  if (len > 2048) len = 2048;
+  memcpy(dex_err_storage, new_err, len);
+  dex_err_storage[2047] = 0;
 }

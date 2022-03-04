@@ -23,9 +23,11 @@ import Dex.Foreign.JIT
 -- Context
 foreign export ccall "dexCreateContext"  dexCreateContext  :: IO (Ptr Context)
 foreign export ccall "dexDestroyContext" dexDestroyContext :: Ptr Context -> IO ()
-foreign export ccall "dexInsert"   dexInsert   :: Ptr Context -> CString   -> Ptr AtomEx -> IO (Ptr Context)
-foreign export ccall "dexEval"     dexEval     :: Ptr Context -> CString   -> IO (Ptr Context)
-foreign export ccall "dexLookup"   dexLookup   :: Ptr Context -> CString   -> IO (Ptr AtomEx)
+foreign export ccall "dexForkContext"    dexForkContext    :: Ptr Context -> IO (Ptr Context)
+foreign export ccall "dexInsert"     dexInsert    :: Ptr Context -> CString   -> Ptr AtomEx -> IO (Ptr Context)
+foreign export ccall "dexEval"       dexEval      :: Ptr Context -> CString   -> IO (Ptr Context)
+foreign export ccall "dexLookup"     dexLookup    :: Ptr Context -> CString   -> IO (Ptr AtomEx)
+foreign export ccall "dexFreshName"  dexFreshName :: Ptr Context              -> IO CString
 
 -- Serialization
 foreign export ccall "dexPrint"     dexPrint      :: Ptr Context -> Ptr AtomEx     -> IO CString

@@ -5,18 +5,20 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Dex.Foreign.Context (
   Context (..), AtomEx (..),
   setError,
-  dexCreateContext, dexDestroyContext,
+  dexCreateContext, dexDestroyContext, dexForkContext,
   dexInsert, dexLookup,
-  dexEval,
+  dexEval, dexFreshName,
   ) where
 
 import Foreign.Ptr
 import Foreign.StablePtr
 import Foreign.C.String
+import System.Random
 
 import Control.Monad.IO.Class
 import Data.String
@@ -51,6 +53,9 @@ dexCreateContext = do
 dexDestroyContext :: Ptr Context -> IO ()
 dexDestroyContext = freeStablePtr . castPtrToStablePtr . castPtr
 
+dexForkContext :: Ptr Context -> IO (Ptr Context)
+dexForkContext ctxPtr = toStablePtr =<< fromStablePtr ctxPtr
+
 dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
   Context evalConfig initEnv <- fromStablePtr ctxPtr
@@ -82,4 +87,19 @@ dexLookup ctxPtr namePtr = do
         LetBound (DeclBinding _ _ (Atom atom)) -> liftIO $ toStablePtr $ AtomEx atom
         _ -> liftIO $ setError "Looking up an unevaluated atom?" $> nullPtr
       Just _  -> liftIO $ setError "Only Atom names can be looked up" $> nullPtr
-      Nothing -> liftIO $ setError "Unbound name" $> nullPtr
+      Nothing -> liftIO $ setError ("Unbound name: " ++ name) $> nullPtr
+
+dexFreshName :: Ptr Context -> IO CString
+dexFreshName ctxPtr = do
+  Context evalConfig env <- fromStablePtr ctxPtr
+  (cstr, _) <- runTopperM evalConfig env genName
+  return cstr
+  where
+    genName :: Topper m => m n CString
+    genName = do
+      -- TODO: Find a thread-safe way?
+      i <- show . abs <$> liftIO (randomIO @Int)
+      let name = "D_" ++ i ++ "_INTERNAL_NAME"
+      lookupSourceMap name >>= \case
+        Nothing -> liftIO $ newCString name
+        Just _  -> genName
