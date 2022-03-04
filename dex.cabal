@@ -136,7 +136,7 @@ foreign-library Dex
   type:                native-shared
   other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
                      , Dex.Foreign.Context, Dex.Foreign.Serialize
-  build-depends:       base, mtl, containers, llvm-hs, dex
+  build-depends:       base, mtl, containers, llvm-hs, dex, random
   if os(darwin)
     build-depends:     dex-resources
   hs-source-dirs:      src/

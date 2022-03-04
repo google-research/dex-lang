@@ -15,7 +15,7 @@ from jax.lib import xla_client as xc
 from jax.interpreters import xla
 from jax.interpreters import batching
 
-from .. import Atom, eval
+from .. import Atom
 from ..native_function import IdxRepTy, ScalarType, RectContArrayType
 from .. import api
 
@@ -159,6 +159,8 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
     2-tuple containing the result of the batched function, and the result axis
     which was batched, which is always zero.
   """
+  module = func_atom.module.copy()
+
   # Move axes so that we only have to deal with the zero axis being batched.
   uniform_batched_args = [
       batching.moveaxis(arg, bd, 0) if bd is not batching.not_mapped else arg
@@ -172,7 +174,8 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
 
   # Add the current function atom as a variable in the context, so that we can
   # use it to apply batching.
-  env = api.insert(func_atom.module, api.as_cstr("jax_batched_func"), func_atom)
+  func_name = func_atom.name
+  assert func_name is not None
 
   # Only index into the arguments which are batched. `i` is the index used for
   # the Dex for loop constructor.
@@ -182,10 +185,10 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
   ]
 
   # This is the actual batching expression
-  batched_fn = eval(
+  batched_fn = module.eval(
       r"\ " + " ".join(f"x{i}" for i in range(len(batched_args))) + ". "
-      + f"for i:(Fin {batch_size}). jax_batched_func "
-      + " ".join(batched_fn_params), module=env)
+      + f"for i:(Fin {batch_size}). {func_name} "
+      + " ".join(batched_fn_params))
 
   return primitive(batched_fn)(*uniform_batched_args), 0
 
@@ -212,6 +215,7 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   """
   assert len(func_atom.compile().result_signature) == 1
   num_args = len(arg_values)
+  module = func_atom.module.copy()
 
   # Helper functions to build strings of primal and tangent inputs.
   def arg_string(prefix):
@@ -222,7 +226,9 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
 
   # Add the current function atom as a variable in the context, so that we can
   # use it to apply batching.
-  env = api.insert(func_atom.module, api.as_cstr("jax_func"), func_atom)
+
+  jax_func_name = func_atom.name
+  assert jax_func_name is not None
 
   # `linearize` only seems to work properly for functions which take a single
   # input argument, so we uncurry `func_atom` to make it into this form. The
@@ -230,13 +236,10 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   # ```
   # \ (x0, x1, x2). jax_func x0 x1 x2
   # ```
-  uncurried = eval(
-      f"\\ {tuple_string('x')}. jax_func {arg_string('x')}",
-      module=env)
-  old_env, env = env, api.insert(env, api.as_cstr("jax_func_uncurried"),
-                                 uncurried)
-  # Destroy the intermediate context.
-  api.destroyContext(old_env)
+  uncurried = module.eval(
+      f"\\ {tuple_string('x')}. {jax_func_name} {arg_string('x')}")
+  jax_func_uncurried_name = uncurried.name
+  assert jax_func_uncurried_name is not None
 
   # We create separate primitives for the primal and tangent evaluations, since
   # we only want to apply tranposition to the tangent evaluation function.
@@ -248,11 +251,10 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   #   linearized = linearize jax_func_uncurried (x0, x1, x2)
   #   snd linearized (u0 u1 u2)
   # ```
-  evaluate_linearized = eval(
+  evaluate_linearized = module.eval(
       f"\\ {arg_string('x')} {arg_string('u')}." +
-      f"\n  linearized = linearize jax_func_uncurried {tuple_string('x')}" +
-      f"\n  snd linearized {tuple_string('u')}",
-      module=env)
+      f"\n  linearized = linearize {jax_func_uncurried_name} {tuple_string('x')}" +
+      f"\n  snd linearized {tuple_string('u')}")
 
   # Materialize jax.ad.Zero values into actual arrays of zeros.
   # TODO: Make the handling of Zeros more efficient by omitting them from the
@@ -293,6 +295,7 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
 
   assert len(args) % 2 == 0
   num_primals = len(args) // 2
+  module = func_atom.module.copy()
 
   primals, tangents = args[:num_primals], args[num_primals:]
 
@@ -316,7 +319,8 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
     raise RuntimeError("Primal inputs to transpose primitive are undefined.")
 
   # Add `func_atom` as a variable `linearized` in the context.
-  env = api.insert(func_atom.module, api.as_cstr("linearized"), func_atom)
+  linearized_name = func_atom.name
+  assert linearized_name is not None
 
   # Form lists of the indices in `tangents` which correspond to linear inputs
   # (which we are expected to transpose w.r.t.) and constant inputs (which we
@@ -370,10 +374,9 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
 
   # \ x0 x1 x2 u1 ct.
   #   transposeLinear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
-  transposed = eval(
+  transposed = module.eval(
       f"\\ {transposed_atom_params}. transposeLinear " +
-      f"(\ {linear_lambda_params}. linearized {linearized_inputs}) ct",
-      module=env
+      f"(\ {linear_lambda_params}. {linearized_name} {linearized_inputs}) ct"
   )
 
   # Tuple of cotangents relating to linear tangent inputs. In the given
