@@ -1,4 +1,5 @@
 import set
+import sort
 
 '# Example tables
 
@@ -200,12 +201,22 @@ def values {n a} : n=>a -> n=>a = id
 def crossJoin {n m f f'} (t:n=>{&...f}) (t':m=>{&...f'}) : (n & m)=>{...f & ...f'} =
   for (i, j). {...(t.i), ...(t'.j)}
 
+-- Subtable is used in this example, but its definition appears to be missing.
+def subTable {n m a f'} (rows:m=>n) (f: Fields) (t: n=>{...f & ...f'}) : m=>{&...f} =
+  for i:m.
+    {@...f=v, ...} = t.(rows.i)
+    v
+
 -- > petiteJelly = subTable(jellyAnon, [0, 1], [0, 1, 2])
 -- > petiteJelly
 -- | get acne | red   | black |
 -- | -------- | ----- | ----- |
 -- | =True     | =False | =False |
 -- | =True     | =False | =True  |
+
+
+-- :p crossJoin students petiteJelly
+
 -- > crossJoin(students, petiteJelly)
 -- | name    | age | favorite color | get acne | red   | black |
 -- | ------- | --- | -------------- | -------- | ----- | ----- |
@@ -224,15 +235,62 @@ def crossJoin {n m f f'} (t:n=>{&...f}) (t':m=>{&...f'}) : (n & m)=>{...f & ...f
 -- It should be sufficient to do the join on a single column. One can always
 -- restructure the table so that the join happens on a tuple of values from
 -- the flattened columns.
-def leftJoin = todo
--- def leftJoin (c:Label) (l:n=>{@c: a & ...f}) (r:m=>{@c: a & ...f'})
---       : n=>{extra: Maybe {...f'} & ...f} = todo
+
+def findInUnordered {a n} [Eq a] (xs:n=>a) (v:a) : Maybe n =
+  -- Wasteful, but at least the parallelism is exposed.
+  (AsList num_found found_table) = argFilter (\x. x == v) xs
+  case num_found == 0 of
+    True -> Nothing
+    False -> Just found_table.(unsafeFromOrdinal _ 0)
+
+-- The implementation below takes (n * m) time, but could be done in O(n log m)
+-- if table r was indexed by a set of values of type a
+
+def leftJoin {n m a f f'} [Eq a]
+  (c:Label)
+  (left: n=>{@c: a & ...f})
+  (right:m=>{@c: a & ...f'})
+  : n=>{@c: a & extra: Maybe { &...f'} & ...f} =
+    right_c_vals = get_column c right
+    for i:n.
+      {@c=left_c_val, ...rest_left} = left.i
+      newdata = case findInUnordered right_c_vals left_c_val of
+        Nothing -> Nothing
+        Just j ->
+          {@c=_, ...rest_right} = right.j
+          Just rest_right
+      {@c=left_c_val, extra=newdata, ...rest_left}
+
+:p leftJoin ##name students gradebook
+
+-- TODO: Match the example below exactly once multiple fields are supported.
+--:p leftJoin students gradebook {name:_ ? age:_}
+
+
 -- > leftJoin(students, gradebook, ["name", "age"])
 -- | name    | age | favorite color | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
 -- | ------- | --- | -------------- | ----- | ----- | ------- | ----- | ----- | ----- |
 -- | "Bob"   | 12  | "blue"         | 8     | 9     | 77      | 7     | 9     | 87    |
 -- | "Alice" | 17  | "green"        | 6     | 8     | 88      | 8     | 7     | 85    |
 -- | "Eve"   | 13  | "red"          | 7     | 9     | 84      | 8     | 8     | 77    |
+
+-- The original example is ill-formed, because employees has deptID as Maybe Int,
+-- while departments has deptID as Int.  So we need to fix the tables up a bit.
+departments_maybe_deptID = for i.
+  {deptID=d, ...rest} = departments.i
+  {deptID=Just d, ...rest}
+
+-- Todo: move to prelude
+instance {a} [Eq a] Eq (Maybe a)
+  (==) = \maybe_x maybe_y. case maybe_x of
+    Nothing -> case maybe_y of
+      Nothing -> True
+      Just y -> False
+    Just x -> case maybe_y of
+      Just y -> x == y
+      Nothing -> False
+
+:p leftJoin ##deptID employees departments_maybe_deptID
 -- > leftJoin(employees, departments, ["Department ID"])
 -- | Last Name    | Department ID | Department Name |
 -- | ------------ | ------------- | --------------- |
@@ -328,6 +386,7 @@ def selectColumns {n f'} (f: Fields) (t: n=>{...f & ...f'}) : n=>{&...f} =
 
 
 def head' {n a} (xs:n=>a) (num:Int) : Maybe ((Fin num)=>a) =
+  -- TODO: allow negative arguments to `head'`
   s = size n
   case s < num of
     True -> Nothing
@@ -344,7 +403,15 @@ def head' {n a} (xs:n=>a) (num:Int) : Maybe ((Fin num)=>a) =
 
 '### TODO: `distinct` (type-classes for records)
 
-def distinct = todo
+-- TODO: Will work once we can make typeclass interfaces for arbitrary records.
+-- Here we need to construct an Ord instance to do this efficiently, and Eq to
+-- to it at all.
+def distinct {n a} [Ord a] (t:n=>a) : List a =
+  (UnsafeAsSet _ uniquetable) = toSet t
+  AsList _ uniquetable
+
+:p distinct students
+
 -- > distinct(students)
 -- | name    | age | favorite color |
 -- | ------- | --- | -------------- |
@@ -384,6 +451,10 @@ def tfilter {n a} (t:n=>a) (keep:a -> Bool) : List a =
 -- | ----- | --- | -------------- |
 -- | "Bob" | 12  | "blue"         |
 -- | "Eve" | 13  | "red"          |
+
+:p tfilter students \{name, ..._}.
+  (listLength name) > 3
+
 -- > nameLongerThan3Letters =
 --     function(r):
 --       length(getValue(r, "name")) > 3
@@ -466,17 +537,59 @@ def orderBy = todo
 
 '## Aggregate
 
-'### TODO: `count` (groupBy)
+'### `count` (groupBy)
+Takes a `Table` and a `ColName` representing the name of a column in that `Table`.
+Produces a `Table` that summarizes how many rows have each value in the given column.
 
-def count = todo
--- Takes a `Table` and a `ColName` representing the name of a column in that `Table`. Produces a `Table` that summarizes how many rows have each value in the given column.
---
+'#### Some setup to get efficient counting of duplicates.
+This is mostly copied + modified from `set.dx`, could potentially be unified.
+
+def unsafeAllExceptFirst {n a} (xs:n=>a) : List a =
+  shortSize = Fin (max 0 ((size n) - 1))
+  allButFirst = for i:shortSize. xs.(unsafeFromOrdinal _ ((ordinal i) + 1))
+  (AsList _ allButFirst)
+
+def mergeUniqueSortedListsWithCounts {a} [Eq a] (xlist:List (a & Int))
+                                                (ylist:List (a & Int)) : List (a & Int) =
+    -- This function is associative, for use in a monoidal reduction.
+    -- Assumes all xs are <= all ys.
+    -- The element at the end of xs might equal the
+    -- element at the beginning of ys.  If so, this
+    -- function removes the duplicate when concatenating the lists.
+    (AsList nx xs) = xlist
+    (AsList _  ys) = ylist
+    case last xs of
+      Nothing -> ylist
+      Just (last_x, x_count) -> case first ys of
+        Nothing -> xlist
+        Just (first_y, y_count) -> case last_x == first_y of
+          False -> concat [xlist,            ylist]
+          True ->
+            concat [allExceptLast xs,
+                    (AsList 1 [(last_x, x_count + y_count)]),
+                    unsafeAllExceptFirst ys]
+
+def removeDuplicatesFromSortedWithCounts {n a} [Eq a] (xs:n=>a) : List (a & Int) =
+  xlists = for i:n. (AsList 1 ([(xs.i, 1)]))
+  reduce (AsList 0 []) mergeUniqueSortedListsWithCounts xlists
+
+def count {n a f} [Ord a] (c:Label) (t:n=>{@c:a & ...f}) : List {value:a & count:Int} =
+  c_vals = get_column c t
+  sorted_c_vals = sort c_vals
+  (AsList _ distinct_vals) = removeDuplicatesFromSortedWithCounts sorted_c_vals
+  AsList _ for i.
+    (value, count) = distinct_vals.i
+    {value, count}
+
+:p count ##favColor students
 -- > count(students, "favorite color")
 -- | value   | count |
 -- | ------- | ----- |
 -- | "blue"  | 1     |
 -- | "green" | 1     |
 -- | "red"   | 1     |
+
+:p count ##age gradebook
 -- > count(gradebook, "age")
 -- | value | count |
 -- | ----- | ----- |
@@ -484,17 +597,35 @@ def count = todo
 -- | 17    | 1     |
 -- | 13    | 1     |
 
-'### TODO: `bin` (groupBy)
+
+'### `bin` (groupBy)
 
 -- ### `bin :: t1:Table * c:ColName * n:Number -> t2:Table`
-def bin = todo
--- Groups the values of a numeric column into bins. The parameter `n` specifies the bin width. This function is useful in creating histograms and converting continuous random variables to categorical ones.
---
+-- Groups the values of a numeric column into bins.
+-- The parameter `n` specifies the bin width.
+-- This function is useful in creating histograms and converting continuous
+-- random variables to categorical ones.
+
+def bin {m f} (c:Label) (t:m=>{@c:Int & ...f}) (n:Int)
+                        : List {lower:Int & upper:Int & count:Int} =
+  -- Can only handle positive integers.
+  c_vals = get_column c t
+  binned = for i. rem c_vals.i n
+  (AsList _ distinct_vals) = removeDuplicatesFromSortedWithCounts binned
+  AsList _ for i.
+    (value, count) = distinct_vals.i
+    {lower=value * n, upper=(value + 1) * n - 1, count}
+
+:p bin ##age students 5
+
 -- > bin(students, "age", 5)
 -- | group            | count |
 -- | ---------------- | ----- |
 -- | "10 <= age < 15" | 2     |
 -- | "15 <= age < 20" | 1     |
+
+:p bin ##final gradebook 5
+
 -- > bin(gradebook, "final", 5)
 -- | group            | count |
 -- | ---------------- | ----- |
@@ -504,11 +635,17 @@ def bin = todo
 
 
 '### TODO: `pivotTable` (groupBy)
+Partitions rows into groups and summarize each group with the functions in `agg`.
+Each element of `agg` specifies the output column, the input column,
+and the function that compute the summarizing value (e.g. average, sum, and count).
 
+-- Inexpressible? Seems lke we can't match description exactly without allowing
+-- some sort of type-level "unzip" for the output fields.
 -- ### `pivotTable :: t1:Table * cs:Seq<ColName> * aggs:Seq<ColName * ColName * Function> -> t2:Table`
-def pivotTable (c:Label) (t:n=>{@c:a & ...f}) (agg: List {&...f} -> {&...f'}) : n=>{@c:a & ...f'} = todo
--- Partitions rows into groups and summarize each group with the functions in `agg`. Each element of `agg` specifies the output column, the input column, and the function that compute the summarizing value (e.g. average, sum, and count).
---
+def pivotTable {n a f f'} (c:Label) (t:n=>{@c:a & ...f})
+  (agg: List ({&...f} -> {&...f'})) :  n=>{@c:a & ...f'} =
+    todo
+
 -- ```lua
 -- > pivotTable(students, ["favorite color"], [("age-average", "age", average)])
 -- | favorite color | age-average |
@@ -537,15 +674,19 @@ def pivotTable (c:Label) (t:n=>{@c:a & ...f}) (agg: List {&...f} -> {&...f'}) : 
 
 
 '### TODO: `groupBy` (groupBy)
+Groups the rows of a table according to a specified key selector function and
+creates a result value from each group and its key.
+The rows of each group are projected by using a specified function.
 
 -- TODO: Write this out to flatten out key and row' as records in the output
-def groupBy (t:n=>row)
+def groupBy {n row row' key value}
+            (t:n=>row)
             (getKey:row -> key)
             (project:row -> value)
             (aggregate:key -> List value -> row')
-            : List (key & row') = todo
+            : List (key & row') =
+  todo
 
--- Groups the rows of a table according to a specified key selector function and creates a result value from each group and its key. The rows of each group are projected by using a specified function.
 --
 -- > colorTemp =
 --     function(r):
