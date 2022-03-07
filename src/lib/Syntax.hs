@@ -56,7 +56,9 @@ module Syntax (
     ModuleName, Module (..), UModule (..), UModulePartialParse (..),
     UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), OutFormat (..),
-    EnvReader (..), EnvExtender (..),  Binding (..),
+    EnvReader (..), EnvReaderI (..), EnvReaderIT (..), runEnvReaderIT,
+    extendI, liftEnvReaderI, refreshAbsI, refreshLamI,
+    EnvExtender (..),  Binding (..),
     TopEnvFrag (..), ToBinding (..), PartialTopEnvFrag (..), withFreshBinders,
     refreshBinders, substBinders, withFreshBinder,
     withFreshLamBinder, withFreshPureLamBinder, captureClosure,
@@ -113,6 +115,7 @@ import Control.Applicative
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Control.Monad.State
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import qualified Control.Monad.Trans.Except as MTE
 import qualified Data.ByteString       as BS
@@ -808,6 +811,82 @@ instance (forall c. Color c => ToBinding (binding c) c)
   toEnvFrag (SomeDecl b binding) =
     withExtEvidence b $
       EnvFrag (RecSubstFrag $ b @> sink (toBinding binding)) Nothing
+
+-- === Env reader on the input side ===
+
+class Monad2 m => EnvReaderI (m::MonadKind2) where
+   getEnvI :: m i o (Env i)
+   getDistinctI :: m i o (DistinctEvidence i)
+   withEnvI :: Distinct i' => Env i' -> m i' o a -> m i o a
+
+newtype EnvReaderIT (m::MonadKind1) (i::S) (o::S) (a:: *) =
+  EnvReaderIT { runEnvReaderIT' :: ReaderT (DistinctEvidence i, Env i) (m o) a }
+  deriving (Functor, Applicative, Monad, MonadFail, Catchable, Fallible, CtxReader,
+            Alternative)
+
+runEnvReaderIT :: Distinct i => Env i -> EnvReaderIT m i o a -> m o a
+runEnvReaderIT env m = runReaderT (runEnvReaderIT' m) (Distinct, env)
+
+instance Monad1 m => EnvReaderI (EnvReaderIT m) where
+  getEnvI = EnvReaderIT $ asks snd
+  getDistinctI = EnvReaderIT $ asks fst
+  withEnvI env cont = EnvReaderIT $ withReaderT (const (Distinct, env)) $
+    runEnvReaderIT' cont
+
+-- run a monadic EnvReaderM function over the in-space env
+liftEnvReaderI :: EnvReaderI m => EnvReaderM i a -> m i o a
+liftEnvReaderI cont = do
+  env <- getEnvI
+  Distinct <- getDistinctI
+  return $ runEnvReaderM env cont
+
+extendI :: (BindsEnv b, EnvReaderI m, Distinct i')
+        => b i i' -> m i' o a -> m i o a
+extendI b cont = do
+  env <- getEnvI
+  Distinct <- getDistinctI
+  withEnvI (extendOutMap env $ toEnvFrag b) cont
+
+refreshAbsI :: (EnvReaderI m, BindsEnv b, SubstB Name b, SubstE Name e)
+            => Abs b e i
+            -> (forall i'. DExt i i' => b i i' -> e i' -> m i' o a)
+            -> m i o a
+refreshAbsI ab cont = do
+  env <- getEnvI
+  Distinct <- getDistinctI
+  refreshAbsPure (toScope env) ab \_ b e ->
+    extendI b $ cont b e
+
+refreshLamI :: EnvReaderI m
+            => LamExpr i
+            -> (forall i'. DExt i i' => LamBinder i i' -> Block i' -> m i' o a)
+            -> m i o a
+refreshLamI _ _ = undefined
+
+instance EnvReader m => EnvReader (EnvReaderIT m i) where
+  unsafeGetEnv = EnvReaderIT $ lift unsafeGetEnv
+
+instance (ScopeReader m, EnvExtender m)
+         => EnvExtender (EnvReaderIT m i) where
+  refreshAbs ab cont = EnvReaderIT $ ReaderT \env ->
+    refreshAbs ab \b e -> do
+      let EnvReaderIT (ReaderT cont') = cont b e
+      cont' env
+
+instance ScopeReader m => ScopeReader (EnvReaderIT m i) where
+  unsafeGetScope = EnvReaderIT $ lift unsafeGetScope
+  getDistinct = EnvReaderIT $ lift getDistinct
+
+instance (ScopeReader m, ScopeExtender m)
+         => ScopeExtender (EnvReaderIT m i) where
+  refreshAbsScope ab cont = EnvReaderIT $ ReaderT \env ->
+    refreshAbsScope ab \b e -> do
+      let EnvReaderIT (ReaderT cont') = cont b e
+      cont' env
+
+deriving instance MonadIO1 m => MonadIO (EnvReaderIT m i o)
+deriving instance (Monad1 m, MonadState (s o) (m o))
+                  => MonadState (s o) (EnvReaderIT m i o)
 
 -- === reconstruction abstractions ===
 
