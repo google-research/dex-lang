@@ -58,7 +58,9 @@ example = [5, 4, 3, 2, 1, 100, 1000, 10]
 -- Argsort gives a perumatation that sorts the array.
 argsorted = argsort example
 :p isSorted for i. example.(argsorted.i)
+> True
 
 -- Argsort of argsort gives a permutation that un-sorts the array.
 rank = argsort $ argsort example
 :p all for i. example.i == (sort example).(rank.i)
+> True

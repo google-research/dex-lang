@@ -93,12 +93,12 @@ def gradebookTable : (Fin 3)=>{name:String & age:Int & quizzes:(Fin 4=>{quiznum:
 
 '# Experiment: Indexing by sets
 
-def get_column {n f a} (c:Label) (t:n=>{@c:a & ...f}) : n=>a =
+def getColumn {n f a} (c:Label) (t:n=>{@c:a & ...f}) : n=>a =
   for i.
     {@c=val, ...r} = t.i
     val
 
-student_names = get_column ##name students
+student_names = getColumn ##name students
 studentIx = StringSetIx $ toSet student_names
 
 students_ix_by_names = for i:studentIx.
@@ -108,7 +108,7 @@ students_ix_by_names = for i:studentIx.
 -- Note:  It'd be nice to wrap this logic in a helper function like this:
 -- def reindex_table_by_column {n f a} (c:Label) (t:n=>{@c:String & ...f}) :
 --   (StringSetIx set)=>{&...f} =
---     ix_vals = get_column c t
+--     ix_vals = getColumn c t
 --     newIx : Type = StringSetIx $ toSet ix_vals
 --     for i:newIx.
 --       {@c=_, ...r} = t.((ordinal i)@_)
@@ -251,7 +251,7 @@ def leftJoin {n m a f f'} [Eq a]
   (left: n=>{@c: a & ...f})
   (right:m=>{@c: a & ...f'})
   : n=>{@c: a & extra: Maybe { &...f'} & ...f} =
-    right_c_vals = get_column c right
+    right_c_vals = getColumn c right
     for i:n.
       {@c=left_c_val, ...rest_left} = left.i
       newdata = case findInUnordered right_c_vals left_c_val of
@@ -345,9 +345,15 @@ def getValue {f a} (c:Label) (r:{@c:a & ...f}) : a =
 -- ### (overloading 1/2) `getColumn :: t:Table * n:Number -> vs:Seq<Value>`
 
 -- ### (overloading 2/2) `getColumn :: t:Table * c:ColName -> vs:Seq<Value>`
-def getColumn {f n a} (c:Label) (t:n=>{@c:a & ...f}) : n=>a = todo
+
+-- Define above.
+-- def getColumn {f n a} (c:Label) (t:n=>{@c:a & ...f}) : n=>a = todo
+
+:p getColumn ##age students
 -- > getColumn(students, "age")
 -- [12, 17, 13]
+
+:p getColumn ##name gradebook
 -- > getColumn(gradebook, "name")
 -- ["Bob", "Alice", "Eve"]
 
@@ -467,18 +473,21 @@ def tfilter {n a} (t:n=>a) (keep:a -> Bool) : List a =
 
 '## Ordering
 
--- TODO: We could the sort on the full data, with an Ord instance that only looks at the column
 -- ### `tsort :: t1:Table * c:ColName * b:Boolean -> t2:Table`
-def tsort {n f a} [Ord a] (c:Label) (t:n=>{@c: a & ...f}) : n=>{@c: a & ...f} =
+-- TODO Boolean argument
+def tsort {n f a} [Eq n, Ord a] (c:Label) (t:n=>{@c: a & ...f}) : n=>{@c: a & ...f} =
   ixs = argsort $ getColumn c t
   for i. t.(ixs.i)
 
+:p tsort ##age students
 -- > tsort(students, "age", true)
 -- | name    | age | favorite color |
 -- | ------- | --- | -------------- |
 -- | "Bob"   | 12  | "blue"         |
 -- | "Eve"   | 13  | "red"          |
 -- | "Alice" | 17  | "green"        |
+
+:p tsort ##final gradebook
 -- > tsort(gradebook, "final", false)
 -- | name    | age | quiz1 | quiz2 | midterm | quiz3 | quiz4 | final |
 -- | ------- | --- | ----- | ----- | ------- | ----- | ----- | ----- |
@@ -489,6 +498,8 @@ def tsort {n f a} [Ord a] (c:Label) (t:n=>{@c: a & ...f}) : n=>{@c: a & ...f} =
 '### TODO: `sortByColumns` (lists of labels)
 
 -- ### `sortByColumns :: t1:Table * cs:Seq<ColName> -> t2:Table`
+def sortByColumns {n f f' a} [Eq n, Ord a] (f: Fields) (t:n=>{...f & ...f'}) : n=>{...f & ...f'} =
+  todo
 -- > sortByColumns(students, ["age"])
 -- | name    | age | favorite color |
 -- | ------- | --- | -------------- |
@@ -574,7 +585,7 @@ def removeDuplicatesFromSortedWithCounts {n a} [Eq a] (xs:n=>a) : List (a & Int)
   reduce (AsList 0 []) mergeUniqueSortedListsWithCounts xlists
 
 def count {n a f} [Ord a] (c:Label) (t:n=>{@c:a & ...f}) : List {value:a & count:Int} =
-  c_vals = get_column c t
+  c_vals = getColumn c t
   sorted_c_vals = sort c_vals
   (AsList _ distinct_vals) = removeDuplicatesFromSortedWithCounts sorted_c_vals
   AsList _ for i.
@@ -609,7 +620,7 @@ def count {n a f} [Ord a] (c:Label) (t:n=>{@c:a & ...f}) : List {value:a & count
 def bin {m f} (c:Label) (t:m=>{@c:Int & ...f}) (n:Int)
                         : List {lower:Int & upper:Int & count:Int} =
   -- Can only handle positive integers.
-  c_vals = get_column c t
+  c_vals = getColumn c t
   binned = for i. rem c_vals.i n
   (AsList _ distinct_vals) = removeDuplicatesFromSortedWithCounts binned
   AsList _ for i.
@@ -673,21 +684,70 @@ def pivotTable {n a f f'} (c:Label) (t:n=>{@c:a & ...f})
 -- | true     | true  | 0              | 0               |
 
 
-'### TODO: `groupBy` (groupBy)
+'### `groupBy` (groupBy)
 Groups the rows of a table according to a specified key selector function and
 creates a result value from each group and its key.
 The rows of each group are projected by using a specified function.
 
+def mergeUniqueSortedListsWithAux {a b} [Eq a]
+  (xlist:List (a & List b))
+  (ylist:List (a & List b)) : List (a & List b) =
+    -- This function is associative, for use in a monoidal reduction.
+    -- Assumes all xs are <= all ys.
+    -- The element at the end of xs might equal the
+    -- element at the beginning of ys.  If so, this
+    -- function removes the duplicate when concatenating the lists,
+    -- and appends the two lists of bs.
+    (AsList nx xs) = xlist
+    (AsList _  ys) = ylist
+    case last xs of
+      Nothing -> ylist
+      Just (last_x, x_b_list) -> case first ys of
+        Nothing -> xlist
+        Just (first_y, y_b_list) -> case last_x == first_y of
+          False -> concat [xlist,            ylist]
+          True ->
+            concat [allExceptLast xs,
+                    (AsList 1 [(last_x, concat [x_b_list, y_b_list])]),
+                    unsafeAllExceptFirst ys]
+
+def removeDuplicatesFromSortedWithAux {n a b} [Eq a] (xs:n=>(a & b)) : List (a & List b) =
+  xlists = for i:n.
+    (xa, xb) = xs.i
+    (AsList 1 [(xa, AsList 1 [xb])])
+  reduce (AsList 0 []) mergeUniqueSortedListsWithAux xlists
+
+
+
 -- TODO: Write this out to flatten out key and row' as records in the output
-def groupBy {n row row' key value}
+def groupBy {n row row' key value} [Eq key, Eq n, Ord key]
             (t:n=>row)
             (getKey:row -> key)
             (project:row -> value)
             (aggregate:key -> List value -> row')
             : List (key & row') =
-  todo
+  keys = for i. getKey t.i
+  sortedixs = argsort keys
+  sortedkeyvals = for i.
+    (keys.(sortedixs.i), project t.(sortedixs.i))
+  (AsList _ distinct_keys) = removeDuplicatesFromSortedWithAux sortedkeyvals
+  AsList _ for j.
+    (curkey, val_list) = distinct_keys.j
+    (curkey, aggregate curkey val_list)
 
---
+
+def colorTemp {f} ({favColor, ...}:{favColor:String & ...f}) : String =
+  case favColor == "red" of
+    True  -> "warm"
+    False -> "cool"
+
+def nameLength {f} ({name, ...}:{name:String & ...f}) : Int = listLength name
+def aggregate {a} (key:a) ((AsList _ vs):List Int) : ({key:a & average:Float}) =
+  {key, average=mean (map IToF vs)}
+
+-- This has two columns for "key", not sure what was meant by original semantics.
+:p groupBy students colorTemp nameLength aggregate
+
 -- > colorTemp =
 --     function(r):
 --       if getValue(r, "favorite color") == "red":
@@ -709,6 +769,16 @@ def groupBy {n row row' key value}
 -- | ------ | ------- |
 -- | "warm" | 3       |
 -- | "cool" | 4       |
+
+def abstractAge {f} ({age, ...}:{age:Int & ...f}) : String =
+  case age <= 12 of
+    True  -> "kid"
+    False -> case age <= 19 of
+      True  -> "teenager"
+      False -> "adult"
+
+:p groupBy gradebook abstractAge (\{final, ...}. final) aggregate
+
 -- > abstractAge =
 --     function(r):
 --       if (getValue(r, "age") <= 12):
