@@ -1140,7 +1140,7 @@ instance (HoistableE e, AlphaEqE e) => Eq (EKey e n) where
       ClosedWithScope scope (PairE x' y') ->
         runScopeReaderM scope $ alphaEq x' y'
 
-instance (AlphaEqE e, AlphaHashableE e) => Hashable (EKey e n) where
+instance (HoistableE e, AlphaEqE e, AlphaHashableE e) => Hashable (EKey e n) where
   hashWithSalt salt (EKey e) = alphaHashWithSalt salt e
 
 instance SubstE v   e => SubstE v   (EKey e)
