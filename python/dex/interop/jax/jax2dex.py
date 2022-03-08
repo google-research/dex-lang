@@ -63,6 +63,13 @@ class FinType(Type):
     return f'(Fin {self.size.pprint()})'
 
 @dataclass
+class PairType(Type):
+  lhs: Type
+  rhs: Type
+  def pprint(self) -> str:
+    return f'({self.lhs.pprint()} & {self.rhs.pprint()})'
+
+@dataclass
 class Literal(Expr):
   val: Any
   def pprint(self) -> str:
@@ -80,6 +87,21 @@ class Tuple(Expr):
   def pprint(self) -> str:
     elts_str = ','.join(f'({e.pprint()})' for e in self.elts)
     return f'({elts_str})'
+
+@dataclass
+class Table(Expr):
+  elts: typing.Tuple[Expr]
+  def pprint(self) -> str:
+    elts_str = ','.join(e.pprint() for e in self.elts)
+    return f'[{elts_str}]'
+
+@dataclass
+class BinOp(Expr):
+  lhs: Expr
+  operator: str
+  rhs: Expr
+  def pprint(self) -> str:
+    return f'({self.lhs.pprint()} {self.operator} {self.rhs.pprint()})'
 
 @dataclass
 class App(Expr):
@@ -225,11 +247,19 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
     in_avals = [typ(x) for x in e.invars]
     out_avals = [v.aval for v in e.outvars]
     ctx = LoweringRuleContext(counter, in_avals, out_avals)
-    expr = expr_makers[e.primitive](ctx, *map(read, e.invars), **e.params)
+    expr_or_block = expr_makers[e.primitive](ctx, *map(read, e.invars), **e.params)
     if e.primitive.multiple_results:
       assert False  # TODO
     else:
       name = next(varnames)
+      if isinstance(expr_or_block, Expr):
+        expr = expr_or_block
+      elif isinstance(expr_or_block, Block):
+        decls.extend(expr_or_block.decls)
+        expr = expr_or_block.expr
+      else:
+        raise TypeError(f"Dex lowering rule should return either an expression or"
+                        f"a block, but got: {type(expr_or_block)}")
       decls.append(Decl(name, expr))
       write(e.outvars[0], Var(name))
 
@@ -297,7 +327,7 @@ def _make_bcast_expr(idx_names, out_shape, in_shape, x):
   idxs = [unitIdx if in_size != out_size else Var(idx_name)
           for idx_name, out_size, in_size in zip(idx_names, out_shape, in_shape)]
   return Idx(x, tuple(idxs))
-unitIdx = Literal('(unsafeFromOrdinal (Fin 1) 0)')
+unitIdx = App(App(Var('unsafeFromOrdinal'), FinType(Literal(1))), Literal(0))
 
 expr_makers[lax.add_p] = partial(_broadcasting_binop, 'add')
 expr_makers[lax.sub_p] = partial(_broadcasting_binop, 'sub')
@@ -305,3 +335,57 @@ expr_makers[lax.mul_p] = partial(_broadcasting_binop, 'mul')
 expr_makers[lax.div_p] = partial(_broadcasting_binop, 'divide')
 expr_makers[lax.max_p] = partial(_broadcasting_binop, 'max')
 
+def _squeeze_lowering(ctx, x, dimensions):
+  in_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
+                              for sz in out_aval.shape)
+  idx_name = iter(idx_names)
+  idxs = [unitIdx if dim in dimensions else Var(next(idx_name))
+          for dim in range(in_aval.ndim)]
+  return For(tuple(idx_names), tuple(idx_tys), Idx(x, tuple(idxs)))
+expr_makers[lax.squeeze_p] = _squeeze_lowering
+
+def _slice_lowering(ctx, x, start_indices, limit_indices, strides):
+  if strides is not None and any(s != 1 for s in strides):
+    raise NotImplementedError("Strided slices not implemented yet!")
+  in_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
+  assert len(start_indices) == len(limit_indices) == in_aval.ndim == out_aval.ndim
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
+                              for sz in out_aval.shape)
+  input_ixs = [Var(ix) if in_size == out_size else
+               App(App(Var('unsafeFromOrdinal'), FinType(Literal(in_size))),
+                   BinOp(Literal(start), '+', App(Var('ordinal'), Var(ix))))
+               for ix, in_size, out_size, start
+               in zip(idx_names, in_aval.shape, out_aval.shape, start_indices)]
+  return For(tuple(idx_names), tuple(idx_tys), Idx(x, tuple(input_ixs)))
+expr_makers[lax.slicing.slice_p] = _slice_lowering
+
+def _dot_general_lowering(ctx, lhs, rhs, dimension_numbers, precision, preferred_element_type):
+  if precision is not None:
+    raise NotImplementedError("Precision control in dot_general not implemented")
+  if preferred_element_type is not None:
+    raise NotImplementedError("dtype selection in dot_general not implemented")
+  lhs_aval, rhs_aval = ctx.avals_in
+  # Support at least matrix multiply
+  if lhs_aval.ndim == rhs_aval.ndim == 2 and dimension_numbers == (((1,), (0,)), ((), ())):
+    return BinOp(lhs, '**', rhs)
+  raise NotImplementedError("Unimplemented dot_general kind")
+expr_makers[lax.dot_general_p] = _dot_general_lowering
+
+def _concatenate_lowering(ctx, *xs, dimension):
+  if dimension != 0:
+    raise NotImplementedError("Concatenation along dim > 0 not implemented")
+  in_avals = ctx.avals_in
+  if any(a.shape[dimension] != in_avals[0].shape[dimension] for a in in_avals):
+    raise NotImplementedError("Irregular concatenation not implemented")
+  dim_size = in_avals[0].shape[dimension]
+  i = ctx.fresh('i')
+  xs_v = ctx.fresh('xs')
+  return Block([
+      Decl(xs_v, Table(tuple(xs)))
+    ], App(App(Var('unsafeCastTable'), FinType(Literal(dim_size * len(xs)))),
+            For((i,), (PairType(FinType(Literal(len(xs))), FinType(Literal(dim_size))),),
+                App(App(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
+expr_makers[lax.concatenate_p] = _concatenate_lowering
