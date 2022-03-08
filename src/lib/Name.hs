@@ -1151,7 +1151,7 @@ instance Store (e n) => Store (EKey e n)
 data EMap (k::E) (v::E) (n::S) = EMap (HM.HashMap (EKey k n) (v n))
                                  deriving (Show, Generic)
 
-eMapSingleton :: (AlphaEqE k, AlphaHashableE k) => k n -> v n -> EMap k v n
+eMapSingleton :: (HoistableE k, AlphaEqE k, AlphaHashableE k) => k n -> v n -> EMap k v n
 eMapSingleton k v = EMap $ HM.singleton (EKey k) v
 
 eMapToList :: EMap k v n -> [(k n, v n)]
