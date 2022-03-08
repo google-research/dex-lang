@@ -1160,7 +1160,7 @@ eMapToList (EMap m) = [(k, v) | (EKey k, v) <- HM.toList m]
 eMapFromList :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => [(k n, v n)] -> EMap k v n
 eMapFromList xs = EMap $ HM.fromList [(EKey k, v) | (k, v) <- xs]
 
-eSetSingleton :: (AlphaEqE k, AlphaHashableE k) => k n -> ESet k n
+eSetSingleton :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => k n -> ESet k n
 eSetSingleton k = eMapSingleton k UnitE
 
 eSetToList :: ESet k n -> [k n]
