@@ -222,6 +222,19 @@ class JAX2DexTest(unittest.TestCase):
   test_cos = lax_test(lax.cos, lambda: (rn(10, 10),))
   test_neg = lax_test(lax.neg, lambda: (rn(10, 10),))
 
+  test_squeeze_none = lax_test(lambda x: lax.squeeze(x, [ ]), lambda: (rn(10, 10),))
+  test_squeeze_one = lax_test(lambda x: lax.squeeze(x, [1]), lambda: (rn(10, 1, 10),))
+  test_squeeze_two = lax_test(lambda x: lax.squeeze(x, [0, 2]), lambda: (rn(1, 10, 1),))
+
+  test_slice_1d = lax_test(lambda x: lax.slice(x, [2], [5], None), lambda: (rn(10),))
+  test_slice_3d = lax_test(lambda x: lax.slice(x, [2, 0, 0], [5, 10, 2], None), lambda: (rn(10, 10, 2),))
+
+  test_concat_uniform = lax_test(partial(lax.concatenate, dimension=0),
+                                 lambda: ([rn(4, 2) for _ in range(3)],))
+
+  test_dot_general_matmul = lax_test(partial(lax.dot_general, dimension_numbers=(((1,), (0,)), ((), ()))),
+                                     lambda: (rn(4, 8), rn(8, 16)))
+
 def check_broadcasting_pointwise(prim):
   setattr(JAX2DexTest, 'test_' + prim.__name__,
           lax_test(prim, lambda: (rn(10, 10), rn(10, 1))))
