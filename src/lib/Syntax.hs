@@ -484,6 +484,14 @@ instance ExtOutMap Env EnvFrag where
                        Just eff -> eff
         Env envTop (ModuleEnv imports sm scs obs newEff)
 
+instance ExtOutMap Env (Nest Decl) where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` toEnvFrag emissions
+
+instance ExtOutMap Env (RNest Decl) where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` toEnvFrag emissions
+
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
 bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
   execWriter $ bindingsFragToSynthCandidates' $ toSubstPairs frag
@@ -3009,6 +3017,10 @@ instance (BindsEnv b1, BindsEnv b2)
 instance BindsEnv b => (BindsEnv (Nest b)) where
   toEnvFrag Empty = emptyOutFrag
   toEnvFrag (Nest b rest) = toEnvFrag $ PairB b rest
+
+instance BindsEnv b => (BindsEnv (RNest b)) where
+  toEnvFrag REmpty = emptyOutFrag
+  toEnvFrag (RNest rest b) = toEnvFrag $ PairB rest b
 
 instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
   toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest

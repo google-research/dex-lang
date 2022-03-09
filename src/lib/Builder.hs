@@ -274,11 +274,7 @@ instance (SinkableE e, HoistableState e m, TopBuilder m) => TopBuilder (StateT1 
 
 -- === BuilderT ===
 
-type BuilderEmissions = Nest Decl
-
-instance ExtOutMap Env BuilderEmissions where
-  extendOutMap bindings emissions =
-    bindings `extendOutMap` toEnvFrag emissions
+type BuilderEmissions = RNest Decl
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Env BuilderEmissions m n a }
@@ -292,7 +288,7 @@ liftBuilderT cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
   return do
-    (Empty, result) <- runInplaceT env $ runBuilderT' cont
+    (REmpty, result) <- runInplaceT env $ runBuilderT' cont
     return result
 
 liftBuilder :: EnvReader m => BuilderM n a -> m n a
@@ -307,22 +303,23 @@ liftEmitBuilder cont = do
   Distinct <- getDistinct
   let (result, decls) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
   Emits <- fabricateEmitsEvidenceM
-  emitDecls (unsafeCoerceB decls) result
+  emitDecls (unsafeCoerceB $ unrevNest decls) result
 
 instance Fallible m => ScopableBuilder (BuilderT m) where
-  buildScoped cont = BuilderT $
-    locallyMutableInplaceT $
+  buildScoped cont = BuilderT do
+    Abs rdecls e <- locallyMutableInplaceT $
       runBuilderT' do
         Emits <- fabricateEmitsEvidenceM
         Distinct <- getDistinct
         cont
+    return $ Abs (unrevNest rdecls) e
 
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
     Abs b v <- newNameM hint
     let decl = Let b $ DeclBinding ann ty expr
-    BuilderT $ extendInplaceT $ Abs (Nest decl Empty) v
+    BuilderT $ extendInplaceT $ Abs (RNest REmpty decl) v
 
 instance Fallible m => EnvReader (BuilderT m) where
   unsafeGetEnv = BuilderT $ getOutMapInplaceT
