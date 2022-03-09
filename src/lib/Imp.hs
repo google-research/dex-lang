@@ -130,7 +130,7 @@ instance Pretty (ImpFunctionWithRecon n) where
 
 -- === ImpM monad ===
 
-type ImpBuilderEmissions = Nest ImpDecl
+type ImpBuilderEmissions = RNest ImpDecl
 
 newtype ImpM (n::S) (a:: *) =
   ImpM { runImpM' :: ScopedT1 IxCache
@@ -166,7 +166,7 @@ instance ImpBuilder ImpM where
       Abs bs vs <- return $ newNames $ length tys
       let impBs = makeImpBinders bs tys
       let decl = ImpLet impBs instr
-      liftM (,s) $ extendInplaceT $ Abs (Nest decl Empty) vs
+      liftM (,s) $ extendInplaceT $ Abs (RNest REmpty decl) vs
     return $ zipWith IVar vs tys
     where
      makeImpBinders :: Nest (NameBinder AtomNameC) n l -> [IType] -> Nest IBinder n l
@@ -175,14 +175,16 @@ instance ImpBuilder ImpM where
      makeImpBinders _ _ = error "zip error"
 
   buildScopedImp cont = ImpM $ ScopedT1 \s -> WriterT1 \w ->
-    liftM (, w) $ liftM (,s) $ locallyMutableInplaceT do
-      Emits <- fabricateEmitsEvidenceM
-      (result, (ListE ptrs)) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
-         Distinct <- getDistinct
-         cont
-      _ <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
-        forM ptrs \ptr -> emitStatement $ Free ptr
-      return result
+    liftM (, w) $ liftM (,s) do
+      Abs rdecls e <- locallyMutableInplaceT do
+        Emits <- fabricateEmitsEvidenceM
+        (result, (ListE ptrs)) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
+           Distinct <- getDistinct
+           cont
+        _ <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
+          forM ptrs \ptr -> emitStatement $ Free ptr
+        return result
+      return $ Abs (unRNest rdecls) e
 
   extendAllocsToFree ptr = ImpM $ lift11 $ tell $ ListE [ptr]
   {-# INLINE extendAllocsToFree #-}
@@ -204,7 +206,7 @@ liftImpM cont = do
   Distinct <- getDistinct
   case runHardFail $ runInplaceT env $ runWriterT1 $
          flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
-    (Empty, (result, ListE [])) -> return result
+    (REmpty, (result, ListE [])) -> return result
     _ -> error "shouldn't be possible because of `Emits` constraint"
 
 -- === the actual pass ===

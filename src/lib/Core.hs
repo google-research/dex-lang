@@ -17,6 +17,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Core where
 
@@ -324,6 +325,15 @@ nestToEnvFrag = nestToEnvFragRec emptyOutFrag
 instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
   toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest
 
+instance BindsEnv b => (BindsEnv (RNest b)) where
+  toEnvFrag n = rnestToEnvFragRec n emptyOutFrag
+  {-# INLINE toEnvFrag #-}
+
+rnestToEnvFragRec :: (BindsEnv b, Distinct l) => RNest b n h -> EnvFrag h l -> EnvFrag n l
+rnestToEnvFragRec n f = case n of
+  REmpty       -> f
+  RNest rest b -> withSubscopeDistinct f $ rnestToEnvFragRec rest (toEnvFrag b `catEnvFrags` f)
+
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (EitherB b1 b2)) where
   toEnvFrag (LeftB  b) = toEnvFrag b
@@ -331,6 +341,16 @@ instance (BindsEnv b1, BindsEnv b2)
 
 instance BindsEnv UnitB where
   toEnvFrag UnitB = emptyOutFrag
+
+instance ExtOutMap Env (Nest Decl) where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` toEnvFrag emissions
+  {-# INLINE extendOutMap #-}
+
+instance ExtOutMap Env (RNest Decl) where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` toEnvFrag emissions
+  {-# INLINE extendOutMap #-}
 
 -- === Monadic helpers ===
 
