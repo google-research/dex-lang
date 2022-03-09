@@ -97,13 +97,14 @@ prepareFunctionForExport f = do
       where
         go :: (EnvReader m, EnvExtender m)
            => [Block n] -> Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Block) n)
-        go argRecons = \case
-          Empty -> return $ Abs Empty $ ListE argRecons
-          Nest (ExportArg _ b) bs ->
-            refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) -> do
-              (ity, block) <- typeRecon (sink ety) $ Var $ binderName v'
-              Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) bs'
-              return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+        go argRecons = undefined
+        -- go argRecons = \case
+        --   Empty -> return $ Abs Empty $ ListE argRecons
+        --   Nest (ExportArg _ b) bs ->
+        --     refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) -> do
+        --       (ity, block) <- typeRecon (sink ety) $ Var $ binderName v'
+        --       Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) bs'
+        --       return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
 
         typeRecon :: EnvExtender m => ExportType n -> Atom n -> m n (IType, Block n)
         typeRecon ety v = case ety of

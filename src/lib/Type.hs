@@ -1362,15 +1362,11 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
     Empty -> do
       assertEq eff (oneEffect IOEffect) ""
       resultTys <- checkScalarOrPairType resultTy
-      let cc = case length resultTys of
-                 0 -> error "Not implemented"
-                 1 -> FFIFun
-                 _ -> FFIMultiResultFun
-      return $ IFunType cc [argTy] resultTys
+      return $ IFunType [argTy] resultTys
     Nest b' rest -> do
       let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy
-      IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
-      return $ IFunType cc (argTy:argTys) resultTys
+      IFunType argTys resultTys <- checkFFIFunTypeM naryPiRest
+      return $ IFunType (argTy:argTys) resultTys
 
 checkScalar :: Fallible m => Type n -> m BaseType
 checkScalar (BaseTy ty) = return ty

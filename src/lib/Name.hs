@@ -876,6 +876,13 @@ instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
+instance ColorsNotEqual AtomNameC ImpNameC        where notEqProof = \case
+
+instance ColorsNotEqual ImpNameC DataDefNameC where notEqProof = \case
+instance ColorsNotEqual ImpNameC ClassNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC SuperclassNameC where notEqProof = \case
+instance ColorsNotEqual ImpNameC ImpFunNameC     where notEqProof = \case
+instance ColorsNotEqual ImpNameC PtrNameC        where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1600,6 +1607,7 @@ instance Color ImpFunNameC     where getColorRep _ = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep _ = ObjectFileNameC
 instance Color ModuleNameC     where getColorRep _ = ModuleNameC
 instance Color PtrNameC        where getColorRep _ = ModuleNameC
+instance Color ImpNameC        where getColorRep _ = ImpNameC
 
 interpretColor :: C -> WithColor UnitV VoidS
 interpretColor c = case c of
@@ -1614,6 +1622,7 @@ interpretColor c = case c of
   ObjectFileNameC -> WithColor (UnitV :: UnitV ObjectFileNameC VoidS)
   ModuleNameC     -> WithColor (UnitV :: UnitV ModuleNameC     VoidS)
   PtrNameC        -> WithColor (UnitV :: UnitV PtrNameC        VoidS)
+  ImpNameC        -> WithColor (UnitV :: UnitV ImpNameC        VoidS)
 
 deriving instance (forall c. Show (v c n)) => Show (WithColor v n)
 
@@ -2080,6 +2089,7 @@ data C =
   | ObjectFileNameC
   | ModuleNameC
   | PtrNameC
+  | ImpNameC
     deriving (Eq, Ord, Generic)
 
 type E = S -> *       -- expression-y things, covariant in the S param
