@@ -211,7 +211,7 @@ def lax_test(prim, arg_thunk, **kwargs):
   def test(self):
     f = dexjit(partial(prim, **kwargs))
     args = arg_thunk()
-    np.testing.assert_allclose(f(*args), prim(*args, **kwargs))
+    np.testing.assert_allclose(f(*args), prim(*args, **kwargs), atol=1e-6, rtol=1e-6)
   return test
 
 def rn(*shape):
@@ -225,6 +225,7 @@ class JAX2DexTest(unittest.TestCase):
   test_squeeze_none = lax_test(lambda x: lax.squeeze(x, [ ]), lambda: (rn(10, 10),))
   test_squeeze_one = lax_test(lambda x: lax.squeeze(x, [1]), lambda: (rn(10, 1, 10),))
   test_squeeze_two = lax_test(lambda x: lax.squeeze(x, [0, 2]), lambda: (rn(1, 10, 1),))
+  test_squeeze_all = lax_test(lambda x: lax.squeeze(x, [0, 1]), lambda: (rn(1, 1),))
 
   test_slice_1d = lax_test(lambda x: lax.slice(x, [2], [5], None), lambda: (rn(10),))
   test_slice_3d = lax_test(lambda x: lax.slice(x, [2, 0, 0], [5, 10, 2], None), lambda: (rn(10, 10, 2),))
@@ -234,11 +235,18 @@ class JAX2DexTest(unittest.TestCase):
 
   test_dot_general_matmul = lax_test(partial(lax.dot_general, dimension_numbers=(((1,), (0,)), ((), ()))),
                                      lambda: (rn(4, 8), rn(8, 16)))
+  test_dot_general_matvec = lax_test(partial(lax.dot_general, dimension_numbers=(((1,), (0,)), ((), ()))),
+                                     lambda: (rn(4, 8), rn(8)))
 
-def check_broadcasting_pointwise(prim):
+def check_broadcasting_pointwise(prim, full=False):
   setattr(JAX2DexTest, 'test_' + prim.__name__,
-          lax_test(prim, lambda: (rn(10, 10), rn(10, 1))))
-check_broadcasting_pointwise(lax.add)
+          lax_test(prim, lambda: (rn(10, 10), rn(10, 10))))
+  if full:
+    setattr(JAX2DexTest, 'test_' + prim.__name__ + '_expand',
+            lax_test(prim, lambda: (rn(10, 10), rn(10, 1))))
+    setattr(JAX2DexTest, 'test_' + prim.__name__ + '_scalar',
+            lax_test(prim, lambda: (rn(10, 10), rn())))
+check_broadcasting_pointwise(lax.add, full=True)
 check_broadcasting_pointwise(lax.mul)
 check_broadcasting_pointwise(lax.sub)
 check_broadcasting_pointwise(lax.div)
