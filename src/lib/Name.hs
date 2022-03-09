@@ -19,7 +19,8 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), PairB (..), UnitB (..), NonEmptyNest (..), nonEmptyToNest,
+  Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..), nonEmptyToNest,
+  PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
@@ -53,7 +54,7 @@ module Name (
   HasNameHint (..), NameHint, noHint, Color (..),
   GenericE (..), GenericB (..),
   EitherE2, EitherE3, EitherE4, EitherE5, EitherE6 (..),
-  splitNestAt, joinNest, nestLength, nestToList, binderAnn,
+  splitNestAt, joinNest, joinRNest, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT,
   ExtWitness (..),
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
@@ -248,6 +249,12 @@ instance (SinkableB b, BindsNames b) => OutFrag (Nest b) where
   catOutFrags _ = (>>>)
   {-# INLINE catOutFrags #-}
 
+instance (SinkableB b, BindsNames b) => OutFrag (RNest b) where
+  emptyOutFrag = id
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags _ = (>>>)
+  {-# INLINE catOutFrags #-}
+
 updateSubstFrag :: Color c => Name c i -> v c o -> SubstFrag v VoidS i o
                 -> SubstFrag v VoidS i o
 updateSubstFrag (UnsafeMakeName v) rhs (UnsafeMakeSubst m) =
@@ -319,6 +326,18 @@ deriving instance (ShowB b, ShowE e) => Show (Abs b e n)
 data Nest (binder::B) (n::S) (l::S) where
   Nest  :: binder n h -> Nest binder h l -> Nest binder n l
   Empty ::                                  Nest binder n n
+
+data RNest (binder::B) (n::S) (l::S) where
+  RNest  :: RNest binder n h -> binder h l -> RNest binder n l
+  REmpty ::                                   RNest binder n n
+
+unRNest :: RNest b n l -> Nest b n l
+unRNest rn = go Empty rn
+  where
+    go :: Nest b h l -> RNest b n h -> Nest b n l
+    go acc = \case
+      REmpty     -> acc
+      RNest bs b -> go (Nest b acc) bs
 
 data BinderP (c::C) (ann::E) (n::S) (l::S) =
   (:>) (NameBinder c n l) (ann n)
@@ -802,6 +821,16 @@ doJoinNest :: Nest b n m -> Nest b m l -> Nest b n l
 doJoinNest l r = case l of
   Empty     -> r
   Nest b lt -> Nest b $ doJoinNest lt r
+
+joinRNest :: RNest b n m -> RNest b m l -> RNest b n l
+joinRNest l r = case r of
+  REmpty     -> l
+  RNest bs b -> RNest (joinRNest l bs) b
+{-# NOINLINE joinRNest #-}
+{-# RULES
+      "joinRNest REmpty *"    forall n.   joinRNest REmpty n = n;
+      "joinRNest * REmpty"    forall n.   joinRNest n REmpty = n;
+  #-}
 
 binderAnn :: BinderP c ann n l -> ann n
 binderAnn (_:>ann) = ann
@@ -1850,6 +1879,17 @@ instance Color c => ProvesExt  (BinderP c ann)
 instance Color c => BindsNames (BinderP c ann) where
   toScopeFrag (b :> _) = toScopeFrag b
 
+instance BindsNames b => ProvesExt  (RNest b) where
+instance BindsNames b => BindsNames (RNest b) where
+  toScopeFrag REmpty = id
+  toScopeFrag (RNest rest b) = toScopeFrag rest >>> toScopeFrag b
+instance (BindsNames b, SubstB v b, SinkableV v) => SubstB v (RNest b) where
+  substB env (RNest bs b) cont =
+    substB env bs \env' bs' ->
+      substB env' b \env'' b' ->
+        cont env'' $ RNest bs' b'
+  substB env REmpty cont = cont env REmpty
+
 instance BindsNames b => ProvesExt  (Nest b) where
 instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
@@ -2737,6 +2777,12 @@ instance Category (Nest b) where
   (.) = flip joinNest
   {-# INLINE (.) #-}
 
+instance Category (RNest b) where
+  id = REmpty
+  {-# INLINE id #-}
+  (.) = flip joinRNest
+  {-# INLINE (.) #-}
+
 instance ProvesExt (SubstPair v o) where
   toExtEvidence (SubstPair b _) = toExtEvidence b
 
@@ -2790,6 +2836,17 @@ instance SinkableB b => SinkableB (Nest b) where
 instance HoistableB b => HoistableB (Nest b) where
   freeVarsB Empty = mempty
   freeVarsB (Nest b rest) = freeVarsB (PairB b rest)
+
+instance SinkableB b => SinkableB (RNest b) where
+  sinkingProofB fresh REmpty cont = cont fresh REmpty
+  sinkingProofB fresh (RNest rest b) cont =
+    sinkingProofB fresh rest \fresh' rest' ->
+      sinkingProofB fresh' b \fresh'' b' ->
+        cont fresh'' (RNest rest' b')
+
+instance HoistableB b => HoistableB (RNest b) where
+  freeVarsB REmpty = mempty
+  freeVarsB (RNest rest b) = freeVarsB (PairB rest b)
 
 instance (forall c n. Pretty (v c n)) => Pretty (SubstFrag v i i' o) where
   pretty (UnsafeMakeSubst m) =
