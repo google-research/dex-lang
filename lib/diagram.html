@@ -300,7 +300,7 @@ function render(renderMode) {
         };
     }
 }
-render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Vector graphics library</h1>
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Vector graphics library</h1>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Point</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>)
@@ -314,8 +314,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">HtmlColor</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Word8</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showHex&quot; showHexFFI <span class="symbol">:</span> <span class="type-name">Word8</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showHex (x<span class="symbol">:</span><span class="type-name">Word8</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> unsafeIO <span class="symbol">\</span>()<span class="symbol">.</span>
-  (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showHex (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>) x
+  (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showHexFFI x
   stringFromCharPtr n (<span class="type-name">MkPtr</span> ptr)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">black <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [<span class="type-name">IToW8</span>   0<span class="symbol">,</span> <span class="type-name">IToW8</span>   0<span class="symbol">,</span> <span class="type-name">IToW8</span>   0]
@@ -341,7 +343,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   mempty <span class="symbol">=</span> <span class="type-name">MkDiagram</span> mempty
   mcombine <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagram</span> d1) (<span class="type-name">MkDiagram</span> d2)<span class="symbol">.</span> <span class="type-name">MkDiagram</span> <span class="symbol">$</span> d1 <span class="symbol">&lt;&gt;</span> d2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concatDiagrams (diagrams<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concatDiagrams {n} (diagrams<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
   <span class="type-name">MkDiagram</span> <span class="symbol">$</span> concat <span class="keyword">for</span> i<span class="symbol">.</span>
     (<span class="type-name">MkDiagram</span> d) <span class="symbol">=</span> diagrams<span class="symbol">.</span>i
     d
@@ -401,9 +403,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><h2>Serialization to SVG string</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).</p>
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> strCatUncurried ((xs<span class="symbol">,</span>ys)<span class="symbol">:</span>(<span class="type-name">String</span> <span class="symbol">&amp;</span> <span class="type-name">String</span>)) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> xs <span class="symbol">&lt;&gt;</span> ys
+<span class="keyword">def</span> strCat (xs<span class="symbol">:</span><span class="type-name">String</span>) (ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> xs <span class="symbol">&lt;&gt;</span> ys
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;.&gt;</span>) (xs<span class="symbol">:</span><span class="type-name">String</span>) (ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> strCatUncurried (xs<span class="symbol">,</span> ys)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;.&gt;</span>) (xs<span class="symbol">:</span><span class="type-name">String</span>) (ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> strCat xs ys
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quote (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> &quot;<span class="symbol">\</span>&quot;&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">\</span>&quot;&quot;
 </div></div><div class="cell"><div class="code-block">
@@ -411,7 +413,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 <span class="keyword">def</span> strSpaceCatUncurried ((s1<span class="symbol">,</span>s2)<span class="symbol">:</span>(<span class="type-name">String</span> <span class="symbol">&amp;</span> <span class="type-name">String</span>)) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   s1 <span class="symbol">&lt;.&gt;</span> &quot; &quot; <span class="symbol">&lt;.&gt;</span> s2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;+&gt;</span>) [<span class="type-name">Show</span> a<span class="symbol">,</span> <span class="type-name">Show</span> b] (s1<span class="command">:a</span>) (s2<span class="command">:b</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;+&gt;</span>) {a b} [<span class="type-name">Show</span> a<span class="symbol">,</span> <span class="type-name">Show</span> b] (s1<span class="command">:a</span>) (s2<span class="command">:b</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   strSpaceCatUncurried ((show s1)<span class="symbol">,</span> (show s2))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> selfClosingBrackets (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> &quot;<span class="symbol">&lt;</span>&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">/&gt;</span>&quot;
@@ -426,7 +428,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tagBracketsAttr (tag<span class="symbol">:</span><span class="type-name">String</span>) (attr<span class="symbol">:</span><span class="type-name">String</span>) (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   tagBracketsAttrUncurried (tag<span class="symbol">,</span> attr<span class="symbol">,</span> s)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;=&gt;</span>) [<span class="type-name">Show</span> b] (attr<span class="symbol">:</span><span class="type-name">String</span>) (val<span class="command">:b</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;=&gt;</span>) {b} [<span class="type-name">Show</span> b] (attr<span class="symbol">:</span><span class="type-name">String</span>) (val<span class="command">:b</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   attr <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">=</span>&quot; <span class="symbol">&lt;.&gt;</span> quote (show val)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> htmlColor(cs<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
@@ -443,7 +445,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="symbol">&lt;+&gt;</span> (&quot;fill&quot;         <span class="symbol">&lt;=&gt;</span> (optionalHtmlColor <span class="symbol">$</span> getAt <span class="iso-sugar">#fillColor</span>   attr))
   <span class="symbol">&lt;+&gt;</span> (&quot;stroke<span class="symbol">-</span>width&quot; <span class="symbol">&lt;=&gt;</span> (getAt <span class="iso-sugar">#strokeWidth</span> attr)))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> renderGeom (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) ((x<span class="symbol">,</span>y)<span class="symbol">:</span><span class="type-name">Point</span>) (geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> renderGeom (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) ((x<span class="symbol">,</span>y)<span class="symbol">:</span><span class="type-name">Point</span>) (geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   <span class="comment">-- For things that are solid. SVG says they have fill=stroke.
 </span>  solidAttr <span class="symbol">=</span> setAt <span class="iso-sugar">#fillColor</span> (getAt <span class="iso-sugar">#strokeColor</span> attr) attr
 
@@ -480,7 +483,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">BoundingBox</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Point</span> <span class="symbol">&amp;</span> <span class="type-name">Point</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> computeBounds (d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">BoundingBox</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> computeBounds (d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">BoundingBox</span> <span class="symbol">=</span>
   computeSubBound <span class="symbol">=</span> <span class="symbol">\</span>sel op (_<span class="symbol">,</span> p<span class="symbol">,</span> geom)<span class="symbol">.</span>
     sel p <span class="symbol">+</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
       <span class="type-name">PointGeom</span>     <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
@@ -501,7 +505,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     )
   )
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> renderSVG (d<span class="symbol">:</span><span class="type-name">Diagram</span>) (bounds<span class="symbol">:</span><span class="type-name">BoundingBox</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> renderSVG (d<span class="symbol">:</span><span class="type-name">Diagram</span>) (bounds<span class="symbol">:</span><span class="type-name">BoundingBox</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   ((xmin<span class="symbol">,</span> ymin)<span class="symbol">,</span> (xmax<span class="symbol">,</span> ymax)) <span class="symbol">=</span> bounds
   imgWidth <span class="symbol">=</span> 400<span class="symbol">.</span>0
   scaleFactor <span class="symbol">=</span> imgWidth <span class="symbol">/</span> (xmax <span class="symbol">-</span> xmin)

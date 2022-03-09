@@ -300,7 +300,7 @@ function render(renderMode) {
         };
     }
 }
-render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Rotations with quaternions</h1>
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Rotations with quaternions</h1>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>(This is a Dex reimplementation of the @imadr's lovely little blog post <a href="https://imadr.github.io/rotations-with-quaternions/">Rotation with Quaternions</a> that includes an example front-end in three.js.)</p>
 </div></div><div class="cell"><div class="prose-block"><p>A quaternion is a 4 dimensional complex-like number, it has four components, three of which are the &quot;imaginary&quot; part.</p>
@@ -317,19 +317,19 @@ Initializing a quaternion:</p>
 </div><div class="result-block">(Q {w = 4., x = 1., y = 2., z = 3.})</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Quaternion magnitude</h2>
 <p>A quaternion is basically a 4 dimensional vector.</p>
-</div></div><div class="cell"><div class="code-block">as_vec <span class="symbol">=</span> <span class="symbol">\</span> <span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}<span class="symbol">.</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]
-</div></div><div class="cell"><div class="code-block">from_vec <span class="symbol">=</span> <span class="symbol">\</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]<span class="symbol">.</span> <span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}
+</div></div><div class="cell"><div class="code-block">as_vec <span class="symbol">=</span> <span class="symbol">\</span><span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}<span class="symbol">.</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]
+</div></div><div class="cell"><div class="code-block">from_vec <span class="symbol">=</span> <span class="symbol">\</span>[x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]<span class="symbol">.</span> <span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$</p>
 </div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> magnitude (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> x<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> magnitude {a} (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> x<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Quaternion normalization</h2>
 <p>Like vectors a quaternion can be normalized by dividing each component by the magnitude:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> a<span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> (magnitude x) <span class="symbol">.*</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize {a} (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> a<span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> (magnitude x) <span class="symbol">.*</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>A special property of quaternions is that a unit quaternion (a quaternion with magnitude (1)) represents a rotation in 3D space.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Scaling a quaternion</h2>
@@ -398,12 +398,12 @@ $$</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> euler_to_quat ((<span class="type-name">E</span> v)<span class="symbol">:</span><span class="type-name">Euler</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
     [sx<span class="symbol">,</span> sy<span class="symbol">,</span> sz] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sin v<span class="symbol">.</span>i
     [cx<span class="symbol">,</span> cy<span class="symbol">,</span> cz] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> cos v<span class="symbol">.</span>i
-    <span class="type-name">Q</span> { 
+    <span class="type-name">Q</span> {
         x <span class="symbol">=</span> sx<span class="symbol">*</span>cy<span class="symbol">*</span>cz <span class="symbol">-</span> cx<span class="symbol">*</span>sy<span class="symbol">*</span>sz<span class="symbol">,</span>
         y <span class="symbol">=</span> cx<span class="symbol">*</span>sy<span class="symbol">*</span>cz <span class="symbol">+</span> sx<span class="symbol">*</span>cy<span class="symbol">*</span>sz<span class="symbol">,</span>
         z <span class="symbol">=</span> cx<span class="symbol">*</span>cy<span class="symbol">*</span>sz <span class="symbol">-</span> sx<span class="symbol">*</span>sy<span class="symbol">*</span>cz<span class="symbol">,</span>
         w <span class="symbol">=</span> cx<span class="symbol">*</span>cy<span class="symbol">*</span>cz <span class="symbol">+</span> sx<span class="symbol">*</span>sy<span class="symbol">*</span>sz
-    }   
+    }
 </div></div><div class="cell"><div class="code-block">
 
 
@@ -413,10 +413,10 @@ $$</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> show3D ((<span class="type-name">Q</span> {x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w})<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
     &quot;<span class="symbol">&lt;</span>iframe width<span class="symbol">=\</span>&quot;100%<span class="symbol">\</span>&quot; frameborder<span class="symbol">=\</span>&quot;0<span class="symbol">\</span>&quot; scrolling<span class="symbol">=\</span>&quot;no<span class="symbol">\</span>&quot;  onload<span class="symbol">=\</span>&quot;this<span class="symbol">.</span>style<span class="symbol">.</span>height<span class="symbol">=</span>this<span class="symbol">.</span>contentWindow<span class="symbol">.</span>document<span class="symbol">.</span>body<span class="symbol">.</span>scrollHeight<span class="symbol">+</span>&#39;px&#39;<span class="symbol">\</span>&quot;;
-srcdoc<span class="symbol">=</span>&#39;<span class="symbol">&lt;</span>html<span class="symbol">&gt;</span> 
-    <span class="symbol">&lt;</span>head<span class="symbol">&gt;&lt;</span>script src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>cdn<span class="symbol">.</span>jsdelivr<span class="symbol">.</span>net<span class="symbol">/</span>npm<span class="symbol">/</span>three<span class="symbol">-</span>js<span class="symbol">@</span>79<span class="symbol">.</span>0<span class="symbol">.</span>0<span class="symbol">/</span>three<span class="symbol">.</span>js<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>script<span class="symbol">&gt;</span>  
-    <span class="symbol">&lt;/</span>head<span class="symbol">&gt;</span> 
-    <span class="symbol">&lt;</span>body<span class="symbol">&gt;</span> 
+srcdoc<span class="symbol">=</span>&#39;<span class="symbol">&lt;</span>html<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;</span>head<span class="symbol">&gt;&lt;</span>script src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>cdn<span class="symbol">.</span>jsdelivr<span class="symbol">.</span>net<span class="symbol">/</span>npm<span class="symbol">/</span>three<span class="symbol">-</span>js<span class="symbol">@</span>79<span class="symbol">.</span>0<span class="symbol">.</span>0<span class="symbol">/</span>three<span class="symbol">.</span>js<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>script<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>head<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;</span>body<span class="symbol">&gt;</span>
            <span class="symbol">&lt;</span>script<span class="symbol">&gt;</span>const scene <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Scene</span>();
                    <span class="symbol">//</span> <span class="type-name">Generic</span> scene construction
                    const camera <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">PerspectiveCamera</span>( 75<span class="symbol">,</span> window<span class="symbol">.</span>innerWidth <span class="symbol">/</span> window<span class="symbol">.</span>innerHeight<span class="symbol">,</span> 0<span class="symbol">.</span>1<span class="symbol">,</span> 1000 );
@@ -452,19 +452,19 @@ srcdoc<span class="symbol">=</span>&#39;<span class="symbol">&lt;</span>html<spa
                    (show z) <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span>
                    (show w) <span class="symbol">&lt;&gt;</span> &quot;));
 
-                   
+
                    renderer<span class="symbol">.</span>render( scene<span class="symbol">,</span> camera );
-           <span class="symbol">&lt;/</span>script<span class="symbol">&gt;</span> 
+           <span class="symbol">&lt;/</span>script<span class="symbol">&gt;</span>
     <span class="symbol">&lt;/</span>body<span class="symbol">&gt;</span>
     <span class="symbol">&lt;/</span>html<span class="symbol">&gt;</span>&#39;<span class="symbol">&gt;</span>
     <span class="symbol">&lt;/</span>iframe<span class="symbol">&gt;</span>&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D one
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -496,21 +496,21 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">rot <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi <span class="symbol">/</span> 16<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]) 
+</div></div><div class="cell"><div class="code-block">rot <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi <span class="symbol">/</span> 16<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0])
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -542,18 +542,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.195090324, 0, 0, 0.980785251));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -585,18 +585,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.382683426, 0, 0, 0.923879445));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -628,18 +628,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.555570245, 0, 0, 0.831469476));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -671,22 +671,22 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.707106769, 0, 0, 0.70710659));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>All the way around!</p>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">rot2 <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi <span class="symbol">/</span> 16<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]) 
+</div></div><div class="cell"><div class="code-block">rot2 <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi <span class="symbol">/</span> 16<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0])
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> rot2
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -718,9 +718,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.180239946, 0.375330299, -0.0746578425, 0.906127393));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -748,12 +748,12 @@ Multiplying a quaternion by its inverse results in the identity quaternion:</p>
 </div></div><div class="cell"><div class="code-block">q&#39; <span class="symbol">=</span> from_vec <span class="symbol">$</span> normalize <span class="symbol">$</span> as_vec <span class="symbol">$</span> <span class="type-name">Q</span> { x<span class="symbol">=</span>1<span class="symbol">.</span>0<span class="symbol">,</span> y<span class="symbol">=</span>2<span class="symbol">.</span>0<span class="symbol">,</span> z<span class="symbol">=</span>0<span class="symbol">.</span>5<span class="symbol">,</span> w<span class="symbol">=</span>10<span class="symbol">.</span>0}
 </div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one 
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -785,18 +785,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> q&#39;
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -828,18 +828,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.0974740386, 0.194948077, 0.0487370193, 0.974740386));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> (inv q&#39;)
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -871,18 +871,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(-0.0974740386, -0.194948077, -0.0487370193, 0.974740386));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> q&#39; <span class="symbol">*</span> (inv q&#39;)
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -914,9 +914,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 4.65661287e-10, 3.7252903e-09, 1));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -932,10 +932,10 @@ srcdoc='<html>
 </div></div><div class="cell"><div class="code-block">rot_right <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0])
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> rot_right
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -967,19 +967,19 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 0.382683456, 0, 0.923879504));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">rot_right_down <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi<span class="symbol">/</span>16<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]) 
+</div></div><div class="cell"><div class="code-block">rot_right_down <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi<span class="symbol">/</span>16<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0])
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> rot_right_down
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1011,9 +1011,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.180239946, 0.375330299, -0.0746578425, 0.906127393));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -1021,10 +1021,10 @@ srcdoc='<html>
 </div></div><div class="cell"><div class="code-block">rot_down <span class="symbol">=</span> difference rot_right_down rot_right
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> rot_down
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1056,9 +1056,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(-0.195090324, -2.98023224e-08, 7.4505806e-09, 0.98078537));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -1089,7 +1089,7 @@ srcdoc='<html>
 </div></div><div class="cell"><div class="prose-block"><p>Tangent: to implement quaternion logs we need arccos. We don't have this yet in Dex
 so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)</p>
 </div></div><div class="cell"><div class="prose-block"><p>NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> acos (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> acos (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   negate <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0
   x <span class="symbol">=</span> abs x
   ret1 <span class="symbol">=</span> (<span class="symbol">-</span>0<span class="symbol">.</span>0187293 <span class="symbol">*</span> x) <span class="symbol">+</span> 0<span class="symbol">.</span>0742610
@@ -1098,8 +1098,8 @@ so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
   ret4 <span class="symbol">=</span> (ret3 <span class="symbol">*</span> (sqrt (1<span class="symbol">.</span>0<span class="symbol">-</span>x)))
   ret5 <span class="symbol">=</span> ret4 <span class="symbol">-</span> (2<span class="symbol">.</span>0 <span class="symbol">*</span> negate <span class="symbol">*</span> ret4)
   negate <span class="symbol">*</span> pi <span class="symbol">+</span> ret5
-</div></div><div class="cell"><div class="code-block">    
 </div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><p>The logarithm of a quaternion is also a quaternion and is given by this formula:</p>
 </div></div><div class="cell"><div class="prose-block"><p>$$\log(q) = \begin{pmatrix}
 \frac{v_{x}}{||v||}\arccos(\frac{w}{||q||})\\
@@ -1135,10 +1135,10 @@ so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
 
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D (q_pow rot_right 5<span class="symbol">.</span>0)
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1170,18 +1170,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 0.923825026, 0, -0.382814795));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D (q_pow rot_right 15<span class="symbol">.</span>0)
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1213,9 +1213,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(-0, -0.382289112, -0, 0.924042761));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -1228,10 +1228,10 @@ srcdoc='<html>
 
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D one
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1263,9 +1263,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -1273,10 +1273,10 @@ srcdoc='<html>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D goal
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1308,9 +1308,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.326640666, 0.680194139, -0.135299027, 0.642133772));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
@@ -1318,10 +1318,10 @@ srcdoc='<html>
 </div></div><div class="cell"><div class="prose-block"><p>Here's what it looks like each step of the way</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1353,18 +1353,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 0<span class="symbol">.</span>25
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1396,18 +1396,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.0923158228, 0.192237794, -0.0382384732, 0.976247966));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 0<span class="symbol">.</span>5
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1439,18 +1439,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.180246279, 0.375343561, -0.0746604726, 0.90612042));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 0<span class="symbol">.</span>75
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1482,18 +1482,18 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.259614319, 0.540619016, -0.107535802, 0.792948484));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 1<span class="symbol">.</span>0
 </div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
-srcdoc='<html> 
-    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
-    </head> 
-    <body> 
+srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>
+    </head>
+    <body>
            <script>const scene = new THREE.Scene();
                    // Generic scene construction
                    const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -1525,9 +1525,9 @@ srcdoc='<html>
                    // Rotate by our angles.
                    cube.quaternion.copy(new THREE.Quaternion(0.326649666, 0.680212915, -0.135302752, 0.6421085));
 
-                   
+
                    renderer.render( scene, camera );
-           </script> 
+           </script>
     </body>
     </html>'>
     </iframe></div><div class="cell"><div class="code-block">
