@@ -238,6 +238,16 @@ class JAX2DexTest(unittest.TestCase):
   test_dot_general_matvec = lax_test(partial(lax.dot_general, dimension_numbers=(((1,), (0,)), ((), ()))),
                                      lambda: (rn(4, 8), rn(8)))
 
+  def test_canonicalize_dtype(self):
+    c = np.arange(5, dtype=np.float64)
+    f = lambda x: x * c
+    x = np.ones(5, dtype=np.float64)
+    dy = dexjit(f)(x)
+    jy = jax.jit(f)(x)
+    np.testing.assert_allclose(dy, jy)
+    self.assertEqual(dy.dtype, jy.dtype)
+
+
 def check_broadcasting_pointwise(prim, full=False):
   setattr(JAX2DexTest, 'test_' + prim.__name__,
           lax_test(prim, lambda: (rn(10, 10), rn(10, 10))))

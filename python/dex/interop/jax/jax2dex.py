@@ -207,14 +207,19 @@ def make_jaxpr(fun: Callable, in_tree: PyTreeDef,
   jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug,
                                                 keep_inputs=keep_inputs)
   jaxpr = pe.convert_constvars_jaxpr(jaxpr_)
+  consts = [_canonicalize_arg(c) for c in consts]
   return jaxpr, consts, out_tree()
+
+def _canonicalize_arg(arg):
+  return np.asarray(arg, dtype=dtypes.dtype(arg, canonicalize=True), order='C')
 
 dex_call_p = core.Primitive('dex_call')
 dex_call_p.multiple_results = True
 
 @dex_call_p.def_impl
 def dex_call_impl(*args, jaxpr):
-  return dex_executable(jaxpr)(*args),  # TODO tuples ignored?
+  cargs_gen = (_canonicalize_arg(arg) for arg in args)
+  return dex_executable(jaxpr)(*cargs_gen),  # TODO tuples ignored?
 
 @cache()
 def dex_executable(jaxpr: core.Jaxpr) -> Callable:
