@@ -444,6 +444,14 @@ simplifyOp op = case op of
     _ -> error "Not a variant type"
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
+  -- Those are not no-ops! Builder methods do algebraic simplification!
+  ScalarBinOp ISub x y -> isub x y
+  ScalarBinOp IAdd x y -> iadd x y
+  ScalarBinOp IMul x y -> imul x y
+  ScalarBinOp IDiv x y -> idiv x y
+  ScalarBinOp (ICmp Less ) x y -> ilt x y
+  ScalarBinOp (ICmp Equal) x y -> ieq x y
+  Select c x y -> select c x y
   _ -> emitOp op
 
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
