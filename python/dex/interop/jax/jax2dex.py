@@ -130,7 +130,7 @@ class Lam(Expr):
     expr = self.block.expr.pprint()
     newline = '\n' if decls else ''
     block = textwrap.indent(f'{decls}{newline}{expr}', '  ')
-    return f'\ {self.name}:{ty}.\n{block}'
+    return f'\\ {self.name}:{ty}.\n{block}'
 
 @dataclass
 class For(Expr):
