@@ -140,7 +140,7 @@ simplifyExpr expr = case expr of
         Abs bs body <- return $ alts !! i
         extendSubst (bs @@> map SubstVal args) $ simplifyBlock body
       Nothing -> do
-        substM resultTy >>= isData >>= \case
+        isData resultTy' >>= \case
           True -> do
             alts' <- forM alts \(Abs bs body) -> do
               bs' <- substM $ EmptyAbs bs
@@ -230,6 +230,7 @@ simplifyAtom atom = case atom of
   -- Tables that only contain data aren't necessarily getting inlined,
   -- so this might be the last chance to simplify them.
   TabVal _ _ -> do
+    -- TODO(subst): Use EnvReaderI to getType before subst
     substM atom >>= getType >>= isData >>= \case
       True -> do
         ~(tab, IdentityRecon) <- simplifyLam atom
@@ -303,18 +304,29 @@ simplifyVar v = do
         _ -> return $ Var v'
 
 simplifyLam :: (Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
-simplifyLam lam = do
-  Lam (LamExpr b body) <- substM lam
-  (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyAbs $ Abs (Nest b Empty) body
-  return (Lam $ LamExpr b' body', recon)
+simplifyLam = simpl True
+  where
+    simpl :: Simplifier m => Bool -> Atom i -> m i o (Atom o, ReconstructAtom o)
+    simpl canSubst = \case
+      Lam (LamExpr b body) -> do
+        (Abs (Nest b' Empty) body', recon) <- simplifyAbs $
+          Abs (Nest b Empty) body
+        return (Lam $ LamExpr b' body', recon)
+      atom | canSubst -> substM atom >>= dropSubst . simpl False
+      _ -> error "Not a lambda expression"
 
 simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
-simplifyBinaryLam binaryLam = do
-  Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) <- substM binaryLam
-  (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
-      dropSubst $ simplifyAbs $ Abs (Nest b1 (Nest b2 Empty)) body
-  let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
-  return (binaryLam', recon)
+simplifyBinaryLam = simpl True
+  where
+    simpl :: Simplifier m => Bool -> Atom i -> m i o (Atom o, ReconstructAtom o)
+    simpl canSubst = \case
+      Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> do
+        (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
+          simplifyAbs $ Abs (Nest b1 (Nest b2 Empty)) body
+        let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
+        return (binaryLam', recon)
+      atom | canSubst -> substM atom >>= dropSubst . simpl False
+      _ -> error "Not a binary lambda expression"
 
 data SplitDataNonData n = SplitDataNonData
   { dataTy    :: Type n
