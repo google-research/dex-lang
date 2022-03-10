@@ -28,7 +28,7 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unrevNest, NonEmptyNest (..), nonEmptyToNest,
+  Abs (..), Nest (..), CNest (..), flattenCNest, NonEmptyNest (..), nonEmptyToNest,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
@@ -236,7 +236,7 @@ instance (SinkableB b, BindsNames b) => OutFrag (Nest b) where
   emptyOutFrag = id
   catOutFrags _ = (>>>)
 
-instance (SinkableB b, BindsNames b) => OutFrag (RNest b) where
+instance (SinkableB b, BindsNames b) => OutFrag (CNest b) where
   emptyOutFrag = id
   catOutFrags _ = (>>>)
 
@@ -308,17 +308,19 @@ data Nest (binder::B) (n::S) (l::S) where
   Nest  :: binder n h -> Nest binder h l -> Nest binder n l
   Empty ::                                  Nest binder n n
 
-data RNest (binder::B) (n::S) (l::S) where
-  RNest  :: RNest binder n h -> binder h l -> RNest binder n l
-  REmpty ::                                   RNest binder n n
+data CNest (binder::B) (n::S) (l::S) where
+  CConcat :: CNest binder n h -> CNest binder h l -> CNest binder n l
+  CNest   ::       binder n h -> CNest binder h l -> CNest binder n l
+  CEmpty  ::                                         CNest binder n n
 
-unrevNest :: RNest b n l -> Nest b n l
-unrevNest rn = go Empty rn
+flattenCNest :: CNest b n l -> Nest b n l
+flattenCNest rn = go Empty rn
   where
-    go :: Nest b h l -> RNest b n h -> Nest b n l
+    go :: Nest b h l -> CNest b n h -> Nest b n l
     go acc = \case
-      REmpty     -> acc
-      RNest bs b -> go (Nest b acc) bs
+      CEmpty         -> acc
+      CNest   b bs   -> Nest b $ go acc bs
+      CConcat bs bs' -> go (go acc bs') bs
 
 data BinderP (c::C) (ann::E) (n::S) (l::S) =
   (:>) (NameBinder c n l) (ann n)
@@ -1738,16 +1740,23 @@ instance (Color c, SinkableE ann, SubstE v ann, SinkableV v) => SubstB v (Binder
 instance Color c => ProvesExt  (BinderP c ann)
 instance Color c => BindsNames (BinderP c ann)
 
-instance BindsNames b => ProvesExt  (RNest b) where
-instance BindsNames b => BindsNames (RNest b) where
-  toScopeFrag REmpty = id
-  toScopeFrag (RNest rest b) = toScopeFrag rest >>> toScopeFrag b
-instance (BindsNames b, SubstB v b, SinkableV v) => SubstB v (RNest b) where
-  substB env (RNest bs b) cont =
-    substB env bs \env' bs' ->
-      substB env' b \env'' b' ->
-        cont env'' $ RNest bs' b'
-  substB env REmpty cont = cont env REmpty
+instance BindsNames b => ProvesExt  (CNest b) where
+instance BindsNames b => BindsNames (CNest b) where
+  toScopeFrag = \case
+    CEmpty         -> id
+    CNest   b  bs  -> toScopeFrag b  >>> toScopeFrag bs
+    CConcat bs bs' -> toScopeFrag bs >>> toScopeFrag bs'
+instance (BindsNames b, SubstB v b, SinkableV v) => SubstB v (CNest b) where
+  substB env nest cont = case nest of
+    CEmpty -> cont env CEmpty
+    CNest b bs ->
+      substB env b \env' b' ->
+        substB env' bs \env'' bs' ->
+          cont env'' (CNest b' bs')
+    CConcat bs bs2 ->
+      substB env bs \env' bs' ->
+        substB env' bs2 \env'' bs2' ->
+          cont env'' $ CConcat bs' bs2'
 
 instance BindsNames b => ProvesExt  (Nest b) where
 instance BindsNames b => BindsNames (Nest b) where
@@ -2599,11 +2608,12 @@ instance Category (Nest b) where
     Empty -> nest'
     Nest b rest -> Nest b $ rest >>> nest'
 
-instance Category (RNest b) where
-  id = REmpty
-  nest' . nest = case nest' of
-    REmpty     -> nest
-    RNest bs b -> RNest (bs . nest) b
+instance Category (CNest b) where
+  id = CEmpty
+  CEmpty . nest   = nest
+  nest'  . CEmpty = nest'
+  nest'  . (CNest b CEmpty) = CNest b nest'
+  nest'  . nest   = CConcat nest nest'
 
 instance ProvesExt (SubstPair v o) where
   toExtEvidence (SubstPair b _) = toExtEvidence b
@@ -2657,16 +2667,22 @@ instance HoistableB b => HoistableB (Nest b) where
   freeVarsB Empty = mempty
   freeVarsB (Nest b rest) = freeVarsB (PairB b rest)
 
-instance SinkableB b => SinkableB (RNest b) where
-  sinkingProofB fresh REmpty cont = cont fresh REmpty
-  sinkingProofB fresh (RNest rest b) cont =
-    sinkingProofB fresh rest \fresh' rest' ->
-      sinkingProofB fresh' b \fresh'' b' ->
-        cont fresh'' (RNest rest' b')
+instance SinkableB b => SinkableB (CNest b) where
+  sinkingProofB fresh nest cont = case nest of
+    CEmpty -> cont fresh CEmpty
+    CNest b bs ->
+      sinkingProofB fresh b \fresh' b' ->
+        sinkingProofB fresh' bs \fresh'' bs' ->
+          cont fresh'' (CNest b' bs')
+    CConcat bs bs2 ->
+      sinkingProofB fresh bs \fresh' bs' ->
+        sinkingProofB fresh' bs2 \fresh'' bs2' ->
+          cont fresh'' (CConcat bs' bs2')
 
-instance HoistableB b => HoistableB (RNest b) where
-  freeVarsB REmpty = mempty
-  freeVarsB (RNest rest b) = freeVarsB (PairB rest b)
+instance HoistableB b => HoistableB (CNest b) where
+  freeVarsB CEmpty = mempty
+  freeVarsB (CNest b bs) = freeVarsB (PairB b bs)
+  freeVarsB (CConcat bs bs') = freeVarsB (PairB bs bs')
 
 instance (forall c n. Pretty (v c n)) => Pretty (SubstFrag v i i' o) where
   pretty (UnsafeMakeSubst m) =

@@ -488,7 +488,7 @@ instance ExtOutMap Env (Nest Decl) where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toEnvFrag emissions
 
-instance ExtOutMap Env (RNest Decl) where
+instance ExtOutMap Env (CNest Decl) where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toEnvFrag emissions
 
@@ -3018,9 +3018,10 @@ instance BindsEnv b => (BindsEnv (Nest b)) where
   toEnvFrag Empty = emptyOutFrag
   toEnvFrag (Nest b rest) = toEnvFrag $ PairB b rest
 
-instance BindsEnv b => (BindsEnv (RNest b)) where
-  toEnvFrag REmpty = emptyOutFrag
-  toEnvFrag (RNest rest b) = toEnvFrag $ PairB rest b
+instance BindsEnv b => (BindsEnv (CNest b)) where
+  toEnvFrag CEmpty           = emptyOutFrag
+  toEnvFrag (CNest   b  bs ) = toEnvFrag $ PairB b  bs
+  toEnvFrag (CConcat bs bs') = toEnvFrag $ PairB bs bs'
 
 instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
   toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest

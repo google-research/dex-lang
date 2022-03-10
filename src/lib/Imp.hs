@@ -131,7 +131,7 @@ instance Pretty (ImpFunctionWithRecon n) where
 
 -- === ImpM monad ===
 
-type ImpBuilderEmissions = RNest ImpDecl
+type ImpBuilderEmissions = CNest ImpDecl
 
 newtype ImpM (n::S) (a:: *) =
   ImpM { runImpM' :: ScopedT1 IxCache
@@ -167,7 +167,7 @@ instance ImpBuilder ImpM where
       Abs bs vs <- return $ newNames $ map (const "v") tys
       let impBs = makeImpBinders bs tys
       let decl = ImpLet impBs instr
-      liftM (,s) $ extendInplaceT $ Abs (RNest REmpty decl) vs
+      liftM (,s) $ extendInplaceT $ Abs (CNest decl CEmpty) vs
     return $ zipWith IVar vs tys
     where
      makeImpBinders :: Nest (NameBinder AtomNameC) n l -> [IType] -> Nest IBinder n l
@@ -185,7 +185,7 @@ instance ImpBuilder ImpM where
         _ <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
           forM ptrs \ptr -> emitStatement $ Free ptr
         return result
-      return $ Abs (unrevNest rdecls) e
+      return $ Abs (flattenCNest rdecls) e
 
   extendAllocsToFree ptr = ImpM $ lift11 $ tell $ ListE [ptr]
 
@@ -203,7 +203,7 @@ liftImpM cont = do
   Distinct <- getDistinct
   case runHardFail $ runInplaceT env $ runWriterT1 $
          flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
-    (REmpty, (result, ListE [])) -> return result
+    (CEmpty, (result, ListE [])) -> return result
     _ -> error "shouldn't be possible because of `Emits` constraint"
 
 -- === the actual pass ===
