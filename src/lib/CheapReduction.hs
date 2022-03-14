@@ -200,7 +200,7 @@ instance CheaplyReducibleE Expr Atom where
     Atom atom -> cheapReduceE atom
     App f' xs' -> do
       f <- cheapReduceE f'
-      case fromNaryLam (length xs') f of
+      case fromNaryLamExact (length xs') f of
         Just (NaryLamExpr bs _ body) -> do
           xs <- mapM cheapReduceE xs'
           let subst = bs @@> fmap SubstVal xs

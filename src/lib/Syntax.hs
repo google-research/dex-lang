@@ -86,7 +86,7 @@ module Syntax (
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
     Output (..), PassName (..), Result (..), BenchStats,
     IsCUDARequired (..),
-    NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryPiType,
+    NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryLamExact, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
     ObjectFile (..), ObjectFileName, CFunName, CFun (..),
@@ -1871,16 +1871,25 @@ pattern BinaryLamExpr :: LamBinder n l1 -> LamBinder l1 l2 -> Block l2 -> LamExp
 pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
 
 -- first argument is the number of args expected
-fromNaryLam :: Int -> Atom n -> Maybe (NaryLamExpr n)
-fromNaryLam n _ | n <= 0 = error "expected positive number of args"
-fromNaryLam 1 lam = case lam of
-  Lam (LamExpr (LamBinder b ty _ effs) body) ->
-    Just $ NaryLamExpr (NonEmptyNest (b:>ty) Empty) effs body
+fromNaryLamExact :: Int -> Atom n -> Maybe (NaryLamExpr n)
+fromNaryLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
+fromNaryLamExact exactDepth lam = do
+  (realDepth, naryLam) <- fromNaryLam exactDepth lam
+  guard $ realDepth == exactDepth
+  return naryLam
+
+fromNaryLam :: Int -> Atom n -> Maybe (Int, NaryLamExpr n)
+fromNaryLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
+fromNaryLam maxDepth = \case
+  (Lam (LamExpr (LamBinder b ty _ effs) body)) ->
+    extend <|> (Just $ (1, NaryLamExpr (NonEmptyNest (b:>ty) Empty) effs body))
+    where
+      extend = case (effs, body) of
+        (Pure, AtomicBlock lam) | maxDepth > 1 -> do
+          (d, NaryLamExpr (NonEmptyNest b2 bs2) effs2 body2) <- fromNaryLam (maxDepth - 1) lam
+          return $ (d + 1, NaryLamExpr (NonEmptyNest (b:>ty) (Nest b2 bs2)) effs2 body2)
+        _ -> Nothing
   _ -> Nothing
-fromNaryLam n (Lam (LamExpr (LamBinder b1 ty _ Pure) (AtomicBlock lam))) = do
-  NaryLamExpr (NonEmptyNest b2 bs) effs body <- fromNaryLam (n-1) lam
-  return $ NaryLamExpr (NonEmptyNest (b1:>ty) (Nest b2 bs)) effs body
-fromNaryLam _ _ = Nothing
 
 -- first argument is the number of args expected
 fromNaryPiType :: Int -> Type n -> Maybe (NaryPiType n)
@@ -1893,12 +1902,14 @@ fromNaryPiType n (Pi (PiType b1 Pure piTy)) = do
   Just $ NaryPiType (NonEmptyNest b1 (Nest b2 bs)) effs resultTy
 fromNaryPiType _ _ = Nothing
 
+-- WARNING: This is not exactly faithful, because NaryPiType erases intermediate arrows!
 naryPiTypeAsType :: NaryPiType n -> Type n
 naryPiTypeAsType (NaryPiType (NonEmptyNest b bs) effs resultTy) = case bs of
   Empty -> Pi $ PiType b effs resultTy
   Nest b' rest -> Pi $ PiType b Pure restTy
     where restTy = naryPiTypeAsType $ NaryPiType (NonEmptyNest b' rest) effs resultTy
 
+-- WARNING: This is not exactly faithful, because NaryLamExpr erases intermediate arrows!
 naryLamExprAsAtom :: NaryLamExpr n -> Atom n
 naryLamExprAsAtom (NaryLamExpr (NonEmptyNest (b:>ty) bs) effs body) = case bs of
   Empty -> Lam $ LamExpr (LamBinder b ty PlainArrow effs) body
