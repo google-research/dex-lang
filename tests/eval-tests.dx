@@ -979,3 +979,12 @@ interface AssociatedPermutedParams a c
 --     False -> (x, \x:Int. x)
 --   for i:(Fin n). 1.0
 -- > [1., 1.]
+
+1.0e-4
+> 0.0001
+
+-2.0e-2
+> -0.02
+
+4.0e4
+> 40000.

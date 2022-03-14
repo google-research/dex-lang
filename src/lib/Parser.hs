@@ -18,6 +18,7 @@ import qualified Text.Megaparsec.Char as MC
 import Data.ByteString.UTF8 (toString)
 import Data.Functor
 import Data.Foldable
+import qualified Data.Scientific as Scientific
 import Data.Maybe (fromMaybe)
 import Data.Void
 import qualified Data.Set as S
@@ -1155,6 +1156,11 @@ doubleLit :: Lexer Double
 doubleLit = lexeme $
       try L.float
   <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
+  <|> try do
+    s <- L.scientific
+    case Scientific.toBoundedRealFloat s of
+      Right f -> return f
+      Left  _ -> fail "Non-representable floating point literal"
 
 knownSymStrs :: [String]
 knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":=",
