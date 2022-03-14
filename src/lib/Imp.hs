@@ -261,7 +261,7 @@ translateExpr maybeDest expr = case expr of
     xs <- mapM substM xs'
     getType f >>= \case
       TabTy _ _ -> do
-        case fromNaryLam (length xs) f of
+        case fromNaryLamExact (length xs) f of
           Just (NaryLamExpr bs _ body) -> do
             let subst = bs @@> fmap SubstVal xs
             body' <- applySubst subst body

@@ -206,23 +206,25 @@ defuncCase scrut alts resultTy = do
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> NonEmpty (Atom o) -> m i o (Atom o)
-simplifyApp f xs = case f of
-  Lam (LamExpr b body) -> do
-    let x:|rest = xs
-    case nonEmpty rest of
-      Nothing -> dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
-      Just rest' -> do
-       ans <- dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
-       simplifyApp ans rest'
-  ACase e alts ty -> do
-    resultTy <- getAppType ty $ toList xs
-    alts' <- forM alts \(Abs bs a) -> do
-      buildAlt (EmptyAbs bs) \vs -> do
-        a' <- applySubst (bs@@>vs) a
-        naryApp a' (map sink $ toList xs)
-    eff <- getAllowedEffects -- TODO: more precise effects
-    dropSubst $ simplifyExpr $ Case e alts' resultTy eff
-  _ -> naryApp f $ toList xs
+simplifyApp f xs = case fromNaryLam (NE.length xs) f of
+  Just (bsCount, NaryLamExpr bs _ body) -> do
+    let (xsPref, xsRest) = NE.splitAt bsCount xs
+    ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyBlock body
+    case nonEmpty xsRest of
+      Nothing    -> return ans
+      Just rest' -> simplifyApp ans rest'
+  _ -> case f of
+    ACase e alts ty -> do
+      -- TODO: Don't rebuild the alts here! Factor out Case simplification
+      -- with lazy substitution and call it from here!
+      resultTy <- getAppType ty $ toList xs
+      alts' <- forM alts \(Abs bs a) -> do
+        buildAlt (EmptyAbs bs) \vs -> do
+          a' <- applySubst (bs@@>vs) a
+          naryApp a' (map sink $ toList xs)
+      eff <- getAllowedEffects -- TODO: more precise effects
+      dropSubst $ simplifyExpr $ Case e alts' resultTy eff
+    _ -> naryApp f $ toList xs
 
 simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
 simplifyAtom atom = case atom of

@@ -114,7 +114,7 @@ evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of
   App f xs -> do
     f' <- evalAtom f
-    case fromNaryLam (length xs) f' of
+    case fromNaryLamExact (length xs) f' of
       Just (NaryLamExpr bs _ body) -> do
         xs' <- mapM evalAtom xs
         let subst = bs @@> fmap SubstVal xs'
