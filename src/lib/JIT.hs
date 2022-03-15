@@ -148,10 +148,11 @@ compileFunction logger fName fun@(ImpFunction (IFunType cc argTys retTys)
   CEntryFun -> liftCompile CPU $ do
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CEntryFun doesn't support returning values"
+    initializeOutputStream $ L.ConstantOperand $ C.Int 32 1  -- print to stdout
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs, [])
+    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
   EntryFun requiresCUDA -> liftCompile CPU $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64

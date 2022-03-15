@@ -221,6 +221,12 @@ class JAX2DexTest(unittest.TestCase):
   test_sin = lax_test(lax.sin, lambda: (rn(10, 10),))
   test_cos = lax_test(lax.cos, lambda: (rn(10, 10),))
   test_neg = lax_test(lax.neg, lambda: (rn(10, 10),))
+  test_log = lax_test(lax.log, lambda: (rn(10, 10),))
+  test_exp = lax_test(lax.exp, lambda: (rn(10, 10),))
+  test_pow = lax_test(lax.pow, lambda: (rn(10), jnp.arange(10, dtype=np.float32)))
+  test_integer_pow = lax_test(lambda x: lax.integer_pow(x, 2), lambda: (rn(10, 10),))
+  test_scalar_select_lt = lax_test(lambda i, x, y: lax.select(i < 2.0, x, y),
+                                   lambda: (1.0, rn(10), rn(10)))
 
   test_squeeze_none = lax_test(lambda x: lax.squeeze(x, [ ]), lambda: (rn(10, 10),))
   test_squeeze_one = lax_test(lambda x: lax.squeeze(x, [1]), lambda: (rn(10, 1, 10),))
@@ -232,6 +238,8 @@ class JAX2DexTest(unittest.TestCase):
 
   test_concat_uniform = lax_test(partial(lax.concatenate, dimension=0),
                                  lambda: ([rn(4, 2) for _ in range(3)],))
+  test_concat_ragged = lax_test(partial(lax.concatenate, dimension=0),
+                                lambda: ([rn(1, 2, 4), rn(5, 2, 4), rn(2, 2, 4)],))
 
   test_dot_general_matmul = lax_test(partial(lax.dot_general, dimension_numbers=(((1,), (0,)), ((), ()))),
                                      lambda: (rn(4, 8), rn(8, 16)))
