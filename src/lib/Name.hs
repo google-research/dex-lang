@@ -55,7 +55,7 @@ module Name (
   eMapFromList, eSetFromList,
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
   withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
-  envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
+  substFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
@@ -111,6 +111,7 @@ import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Text as T
 import GHC.Stack
 import GHC.Exts (Constraint)
+import qualified GHC.Exts as GHC.Exts
 import GHC.Generics (Generic (..), Rep)
 import Data.Store.Internal
 
@@ -141,7 +142,7 @@ idNameSubst = idSubst
 
 idSubstFrag :: (BindsNames b, FromName v) => b n l -> SubstFrag v n l l
 idSubstFrag b =
-  fmapSubstFrag (\v _ -> fromName $ sinkR v) $ scopeFragToSubstFrag (toScopeFrag b)
+  scopeFragToSubstFrag (\v -> fromName $ sinkR v) (toScopeFrag b)
 
 infixl 9 !
 (!) :: Color c => Subst v i o -> Name c i -> v c o
@@ -392,7 +393,7 @@ traverseNames
 traverseNames f e = do
   let vs = freeVarsE e
   m <- M.fromList <$> forM (M.toList vs)
-         \(rawName, WithColor (UnitV :: UnitV c UnsafeS)) -> do
+         \(rawName, WithColor (_ :: GHC.Exts.Any c UnsafeS)) -> do
             x <- f (UnsafeMakeName rawName :: Name c i)
             return (rawName, WithColor x)
   fmapNamesM (\((UnsafeMakeName v) :: Name c i) -> case M.lookup v m of
@@ -683,7 +684,7 @@ applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 lookupSubstFragProjected :: Color c => SubstFrag v i i' o -> Name c i'
                          -> Either (Name c i) (v c o)
 lookupSubstFragProjected m name =
-  case projectName (envFragAsScope m) name of
+  case projectName (substFragAsScope m) name of
     Left  name' -> Left name'
     Right name' -> Right $ lookupSubstFrag m name'
 
@@ -1913,9 +1914,9 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
 
 instance ProvesExt  (RecSubstFrag v) where
 instance BindsNames (RecSubstFrag v) where
-  toScopeFrag env = envFragAsScope $ fromRecSubstFrag env
+  toScopeFrag env = substFragAsScope $ fromRecSubstFrag env
 instance HoistableV v => HoistableB (RecSubstFrag v) where
-  freeVarsB (RecSubstFrag env) = freeVarsE (Abs (envFragAsScope env) env)
+  freeVarsB (RecSubstFrag env) = freeVarsE (Abs (substFragAsScope env) env)
 
 -- Traversing a recursive set of bindings is a bit tricky because we have to do
 -- two passes: first we rename the binders, then we go and subst the payloads.
@@ -1971,7 +1972,6 @@ instance ( forall c. Color c => Store (v c o')
 instance ( forall c. Color c => Store (v c o)
          , forall c. Color c => Generic (v c o))
          => Store (RecSubst v o)
-instance Store (ScopeFrag n l)
 instance Store (Scope n)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
 
@@ -2092,11 +2092,26 @@ type B = S -> S -> *  -- binder-y things, covariant in the first param and
 type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
-type ColorRep = WithColor UnitV UnsafeS
+type ColorRep = WithColor GHC.Exts.Any UnsafeS
 type NameSet (n::S) = M.Map RawName ColorRep
 
-newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScopeFrag (M.Map RawName [ColorRep]) deriving Generic
+-- ScopeFrag is a SubstFrag that can contain _any_ V-kinded thing.
+-- Semantically it is equivalent to M.Map RawName [C].
+--
+-- WARNING!
+-- The "any" part is really important, beacuse we often use unsafeCoerce
+-- to cheaply construct scopes out of substitutions. After composing a few of
+-- those, there may be multiple different types of Vs embeded here. You should
+-- never assume _anything_ about those and it is not safe to cast them back to
+-- any other V. The only allowed operation is looking up colors embedded in
+-- WithColor constructors.
+newtype ScopeFrag (n::S) (l::S) = UnsafeScopeFromSubst (SubstFrag GHC.Exts.Any n l UnsafeS)
+                                  deriving Generic
 newtype Scope (n::S) = Scope { fromScope :: ScopeFrag VoidS n }  deriving Generic
+
+pattern UnsafeMakeScopeFrag :: M.Map RawName [ColorRep] -> ScopeFrag n l
+pattern UnsafeMakeScopeFrag m = UnsafeScopeFromSubst (UnsafeMakeSubst m)
+{-# COMPLETE UnsafeMakeScopeFrag #-}
 
 instance Category ScopeFrag where
   id = UnsafeMakeScopeFrag mempty
@@ -2107,15 +2122,16 @@ instance Category ScopeFrag where
     UnsafeMakeScopeFrag $ M.unionWith (++) s2 s1
 
 instance Color c => BindsNames (NameBinder c) where
-  toScopeFrag (UnsafeMakeBinder v) =
-    UnsafeMakeScopeFrag $ M.singleton v [WithColor (UnitV :: UnitV c UnsafeS)]
+  toScopeFrag (UnsafeMakeBinder v) = substFragAsScope $
+    UnsafeMakeSubst $ M.singleton v [WithColor (UnitV :: UnitV c UnsafeS)]
 
 absurdNameFunction :: Name v VoidS -> a
 absurdNameFunction _ = error "Void names shouldn't exist"
 
-scopeFragToSubstFrag :: ScopeFrag n l -> SubstFrag (ConstE UnitE) n l VoidS
-scopeFragToSubstFrag (UnsafeMakeScopeFrag m) =
-  unsafeCoerceE $ UnsafeMakeSubst m
+scopeFragToSubstFrag :: forall v i i' o
+                      . (forall c. Color c => Name c (i:=>:i') -> v c o)
+                     -> ScopeFrag i i' -> SubstFrag v i i' o
+scopeFragToSubstFrag f (UnsafeScopeFromSubst m) = fmapSubstFrag (\n _ -> f n) m
 
 type NameText = T.Text
 data RawName = RawName !NameText !Int deriving (Show, Eq, Ord, Generic)
@@ -2172,13 +2188,12 @@ withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
 freshRawName :: NameHint -> M.Map RawName a -> RawName
 freshRawName hint usedNames = RawName tag nextNum
   where
-    nextNum = case M.lookupLT (RawName tag bigInt) usedNames of
+    nextNum = case M.lookupLT (RawName tag maxBound) usedNames of
                 Just (RawName tag' i, _)
-                  | tag' /= tag -> 0
-                  | i < bigInt  -> i + 1
-                  | otherwise   -> error "Ran out of numbers!"
+                  | tag' /= tag  -> 0
+                  | i < maxBound -> i + 1
+                  | otherwise    -> error "Ran out of numbers!"
                 _ -> 0
-    bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
     tag = interpretHint hint
 
 interpretHint :: NameHint -> NameText
@@ -2404,7 +2419,7 @@ nameSetToList nameSet =
   catMaybes $ flip map (M.toList nameSet) \(rawName, withColor) ->
     case fromWithColor withColor of
       Nothing -> Nothing
-      Just (ConstE UnitE :: UnitV c UnsafeS)-> Just $ UnsafeMakeName rawName
+      Just (_ :: GHC.Exts.Any c UnsafeS) -> Just $ UnsafeMakeName rawName
 
 toNameSet :: ScopeFrag n l -> NameSet l
 toNameSet (UnsafeMakeScopeFrag s) = M.map head s
@@ -2458,7 +2473,8 @@ instance Color c => HoistableB (NameBinder c) where
 
 instance Color c => HoistableE (Name c) where
   freeVarsE name =
-    M.singleton (getRawName name) (WithColor (UnitV :: UnitV c UnsafeS))
+    M.singleton (getRawName name) $
+      TrulyUnsafe.unsafeCoerce $ WithColor (UnitV :: UnitV c UnsafeS)
 
 instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
   freeVarsB (PairB b1 b2) =
@@ -2481,7 +2497,7 @@ instance HoistableE e => HoistableE (ListE e) where
 -- Instead, we use this unsafely-implemented data type for efficiency, to avoid
 -- long chains of case analyses as we extend environments one name at a time.
 
-data SubstFrag
+newtype SubstFrag
   (v ::V)  -- env payload, as a function of the name's color
   (i ::S)  -- starting scope parameter for names we can look up in this env
   (i'::S)  -- ending   scope parameter for names we can look up in this env
@@ -2514,18 +2530,15 @@ singletonSubst :: Color c => NameBinder c i i' -> v c o -> SubstFrag v i i' o
 singletonSubst (UnsafeMakeBinder name) x =
   UnsafeMakeSubst (M.singleton name [WithColor x])
 
-fmapSubstFrag :: SinkableV v
-            => (forall c. Color c => Name c (i:=>:i') -> v c o -> v' c o')
-            -> SubstFrag v i i' o -> SubstFrag v' i i' o'
+fmapSubstFrag :: (forall c. Color c => Name c (i:=>:i') -> v c o -> v' c o')
+              -> SubstFrag v i i' o -> SubstFrag v' i i' o'
 fmapSubstFrag f (UnsafeMakeSubst m) = UnsafeMakeSubst m'
   where m' = flip M.mapWithKey m $ \k xs ->
                 flip map xs \(WithColor val) ->
                   WithColor $ f (UnsafeMakeName k) val
 
-envFragAsScope :: forall v i i' o. SubstFrag v i i' o -> ScopeFrag i i'
-envFragAsScope (UnsafeMakeSubst m) =
-  UnsafeMakeScopeFrag $ flip fmap m \xs ->
-    flip map xs \(WithColor (_ :: v c o)) -> WithColor (UnitV :: UnitV c UnsafeS)
+substFragAsScope :: forall v i i' o. SubstFrag v i i' o -> ScopeFrag i i'
+substFragAsScope m = UnsafeMakeScopeFrag $ TrulyUnsafe.unsafeCoerce m
 
 -- === garbage collection ===
 
@@ -2662,11 +2675,28 @@ instance (forall c. Color c => Store (v c n)) => Store (WithColor v n) where
     poke c
     poke v
 
+data StoreNothingV (c::C) (n::S) = StoreNothingV
+
+instance Store (StoreNothingV c n) where
+  size = ConstSize 0
+  peek = return StoreNothingV
+  poke = const $ return ()
+
+pokeableScopeFrag :: SubstFrag GHC.Exts.Any n l o -> SubstFrag StoreNothingV n l o
+pokeableScopeFrag = TrulyUnsafe.unsafeCoerce
+
+fromPeekedScopeFrag :: SubstFrag StoreNothingV n l o -> SubstFrag GHC.Exts.Any n l o
+fromPeekedScopeFrag = TrulyUnsafe.unsafeCoerce
+
+instance Store (ScopeFrag n l) where
+  size = VarSize \(UnsafeScopeFromSubst s) -> getSize $ pokeableScopeFrag s
+  peek = UnsafeScopeFromSubst . fromPeekedScopeFrag <$> peek
+  poke (UnsafeScopeFromSubst s) = poke $ pokeableScopeFrag s
+
 instance SinkableV v => SinkableE (WithColor v) where
   sinkingProofE = todoSinkableProof
 
-instance ( forall c. Color c => Store (v c o)
-         , forall c. Color c => Generic (v c o))
+instance (forall c. Color c => Store (v c o))
          => Store (SubstFrag v i i' o) where
 
 instance ( Store   (b UnsafeS UnsafeS)
