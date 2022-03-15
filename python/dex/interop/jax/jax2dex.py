@@ -4,7 +4,7 @@ from functools import partial
 import itertools as it
 import textwrap
 import typing
-from typing import Any, NamedTuple, Dict, Optional, List, Callable, Sequence
+from typing import Any, NamedTuple, Dict, Optional, List, Callable, Sequence, Union
 from string import ascii_lowercase
 import numpy as np
 
@@ -37,17 +37,25 @@ class Type:
 class Expr:
   pass
 
+_dtypes = {
+  np.dtype('float32'): 'Float32',
+  np.dtype('float64'): 'Float64',
+  np.dtype('int32'): 'Int32',
+  np.dtype('bool'): 'Bool',
+}
+
+_io_dtypes = {
+  np.dtype('float32'), np.dtype('float64'), np.dtype('int32'),
+}
 
 @dataclass
 class EType(Type):
   dtype: Any
   def pprint(self) -> str:
-    if np.dtype(self.dtype) == np.dtype('float32'):
-      return 'Float'
-    elif np.dtype(self.dtype) == np.dtype('int32'):
-      return 'Int32'
-    else:
+    ty_str = _dtypes.get(np.dtype(self.dtype), None)
+    if ty_str is None:
       raise NotImplementedError(self.dtype)
+    return ty_str
 
 @dataclass
 class FinTabType(Type):
@@ -110,9 +118,25 @@ class App(Expr):
   def pprint(self) -> str:
     return f'({self.fun.pprint()}) ({self.argument.pprint()})'
 
-class Decl(NamedTuple):
-  name: str
+@dataclass
+class Pattern:
+  pass
+
+@dataclass
+class ConPattern(Pattern):
+  con: str
+  fields: typing.Tuple[Optional[str]]
+  def pprint(self) -> str:
+    fields_str = ' '.join(f if f is not None else '_' for f in self.fields)
+    return f'({self.con} {fields_str})'
+
+@dataclass
+class Decl:
+  name: Union[str, Pattern]
   expr: Expr
+  def pprint(self) -> str:
+    name_str = self.name if isinstance(self.name, str) else self.name.pprint()
+    return f'{name_str} = {self.expr.pprint()}'
 
 @dataclass
 class Block:
@@ -126,7 +150,7 @@ class Lam(Expr):
   block: Block
   def pprint(self) -> str:
     ty = self.ty.pprint()
-    decls = '\n'.join(f'{name} = {e.pprint()}' for name, e in self.block.decls)
+    decls = '\n'.join(d.pprint() for d in self.block.decls)
     expr = self.block.expr.pprint()
     newline = '\n' if decls else ''
     block = textwrap.indent(f'{decls}{newline}{expr}', '  ')
@@ -224,7 +248,7 @@ def dex_call_impl(*args, jaxpr):
 @cache()
 def dex_executable(jaxpr: core.Jaxpr) -> Callable:
   assert not jaxpr.constvars
-  varnames = (''.join(chars) for n in it.count(1)
+  varnames = ('v' + ''.join(chars) for n in it.count(1)
               for chars in it.product(ascii_lowercase, repeat=n))
 
   env: Dict[core.Var, Var] = {}
@@ -268,8 +292,13 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
       write(e.outvars[0], Var(name))
 
   expr = Tuple(tuple(map(read, jaxpr.outvars)))
+  for v in jaxpr.outvars:
+    if v.aval.dtype not in _io_dtypes:
+      raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit output")
   block = Block(decls, expr)
   for v in reversed([*jaxpr.constvars, *jaxpr.invars]):
+    if v.aval.dtype not in _io_dtypes:
+      raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit input")
     expr = Lam(read(v).name, aval_to_type(v.aval), block)
     block = Block([], expr)
   return eval(expr.pprint()).compile()
@@ -304,6 +333,8 @@ from jax._src.lax import lax
 expr_makers[lax.neg_p] = lambda ctx, x: App(Var('neg'), x)
 expr_makers[lax.sin_p] = lambda ctx, x: App(Var('sin'), x)
 expr_makers[lax.cos_p] = lambda ctx, x: App(Var('cos'), x)
+expr_makers[lax.log_p] = lambda ctx, x: App(Var('log'), x)
+expr_makers[lax.exp_p] = lambda ctx, x: App(Var('exp'), x)
 
 def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   idx_names = [ctx.fresh('i') for _ in range(len(shape))]
@@ -314,17 +345,17 @@ def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   return For(tuple(idx_names), tuple(tys), x_indexed)
 expr_makers[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
-def _broadcasting_binop(name: str, ctx, x, y):
+def _broadcasting_binop(binop_expr: Expr, ctx, x, y):
   x_aval, y_aval = ctx.avals_in
   out_aval, = ctx.avals_out
   if not out_aval.shape:
-    return App(App(Var(name), x), y)
+    return App(App(binop_expr, x), y)
   idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
                               for sz in out_aval.shape)
   x_expr = _make_bcast_expr(idx_names, out_aval.shape, x_aval.shape, x)
   y_expr = _make_bcast_expr(idx_names, out_aval.shape, y_aval.shape, y)
   out = For(tuple(idx_names), tuple(idx_tys),
-            App(App(Var(name), x_expr), y_expr))
+            App(App(binop_expr, x_expr), y_expr))
   return out
 
 def _make_bcast_expr(idx_names, out_shape, in_shape, x):
@@ -337,11 +368,28 @@ def _make_bcast_expr(idx_names, out_shape, in_shape, x):
   return Idx(x, tuple(idxs))
 unitIdx = App(App(Var('unsafeFromOrdinal'), FinType(Literal(1))), Literal(0))
 
-expr_makers[lax.add_p] = partial(_broadcasting_binop, 'add')
-expr_makers[lax.sub_p] = partial(_broadcasting_binop, 'sub')
-expr_makers[lax.mul_p] = partial(_broadcasting_binop, 'mul')
-expr_makers[lax.div_p] = partial(_broadcasting_binop, 'divide')
-expr_makers[lax.max_p] = partial(_broadcasting_binop, 'max')
+expr_makers[lax.add_p] = partial(_broadcasting_binop, Var('add'))
+expr_makers[lax.sub_p] = partial(_broadcasting_binop, Var('sub'))
+expr_makers[lax.mul_p] = partial(_broadcasting_binop, Var('mul'))
+expr_makers[lax.div_p] = partial(_broadcasting_binop, Var('divide'))
+expr_makers[lax.max_p] = partial(_broadcasting_binop, Var('max'))
+expr_makers[lax.pow_p] = partial(_broadcasting_binop, Var('pow'))
+expr_makers[lax.lt_p] = partial(_broadcasting_binop,  Var('(<)'))
+
+def _integer_pow_lowering(ctx, x, y):
+  if y == 2:
+    return BinOp(x, '*', x)
+  raise NotImplementedError()
+expr_makers[lax.integer_pow_p] = _integer_pow_lowering
+
+def _select_lowering(ctx, c, *args):
+  if len(args) != 2:
+    raise NotImplementedError()
+  if ctx.avals_in[0].shape:
+    raise NotImplementedError()
+  x, y = args
+  return App(App(App(Var('select'), c), y), x)
+expr_makers[lax.select_n_p] = _select_lowering
 
 def _squeeze_lowering(ctx, x, dimensions):
   in_aval, = ctx.avals_in
@@ -393,14 +441,22 @@ def _concatenate_lowering(ctx, *xs, dimension):
   if dimension != 0:
     raise NotImplementedError("Concatenation along dim > 0 not implemented")
   in_avals = ctx.avals_in
-  if any(a.shape[dimension] != in_avals[0].shape[dimension] for a in in_avals):
-    raise NotImplementedError("Irregular concatenation not implemented")
-  dim_size = in_avals[0].shape[dimension]
-  i = ctx.fresh('i')
+  out_aval, = ctx.avals_out
+  # Regular concatenation
+  if all(a.shape[dimension] == in_avals[0].shape[dimension] for a in in_avals):
+    dim_size = in_avals[0].shape[dimension]
+    i = ctx.fresh('i')
+    xs_v = ctx.fresh('xs')
+    return Block([
+        Decl(xs_v, Table(tuple(xs)))
+      ], App(App(Var('unsafeCastTable'), FinType(Literal(dim_size * len(xs)))),
+              For((i,), (PairType(FinType(Literal(len(xs))), FinType(Literal(dim_size))),),
+                  App(App(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
+  # Irregular concatenation
+  # TODO: Generate specialized code
   xs_v = ctx.fresh('xs')
   return Block([
-      Decl(xs_v, Table(tuple(xs)))
-    ], App(App(Var('unsafeCastTable'), FinType(Literal(dim_size * len(xs)))),
-            For((i,), (PairType(FinType(Literal(len(xs))), FinType(Literal(dim_size))),),
-                App(App(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
+        Decl(ConPattern('AsList', (None, xs_v)),
+             App(Var('concat'), Table(tuple(App(Var('toList'), x) for x in xs)))),
+      ], App(App(Var('unsafeCastTable'), FinType(Literal(out_aval.shape[0]))), Var(xs_v)))
 expr_makers[lax.concatenate_p] = _concatenate_lowering
