@@ -148,9 +148,9 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-module-tests:
+module-tests: build
 	misc/check-quine tests/module-tests.dx \
-           $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
+    $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
 
 
 tests: quine-tests repl-test module-tests
