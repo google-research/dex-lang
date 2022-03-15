@@ -46,16 +46,21 @@ newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 
 runWriterT1 :: WriterT1 w m n a -> m n (a, w n)
 runWriterT1 = runWriterT . runWriterT1'
+{-# INLINE runWriterT1 #-}
 
 instance Monoid1 w => MonadTrans11 (WriterT1 w) where
   lift11 = WriterT1 . lift
+  {-# INLINE lift11 #-}
 
 instance (SinkableE w, Monoid1 w, EnvReader m) => EnvReader (WriterT1 w m) where
   unsafeGetEnv = lift11 unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) where
   unsafeGetScope = lift11 unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
   getDistinct = lift11 getDistinct
+  {-# INLINE getDistinct #-}
 
 instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
@@ -75,16 +80,21 @@ newtype ReaderT1 (r :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 
 runReaderT1 :: r n -> ReaderT1 r m n a -> m n a
 runReaderT1 r m = runReaderT (runReaderT1' m) r
+{-# INLINE runReaderT1 #-}
 
 instance MonadTrans11 (ReaderT1 r) where
   lift11 = ReaderT1 . lift
+  {-# INLINE lift11 #-}
 
 instance (SinkableE r, EnvReader m) => EnvReader (ReaderT1 r m) where
   unsafeGetEnv = lift11 unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
   unsafeGetScope = lift11 unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
   getDistinct = lift11 getDistinct
+  {-# INLINE getDistinct #-}
 
 instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
   refreshAbs ab cont = ReaderT1 $ ReaderT \r -> do
@@ -93,6 +103,7 @@ instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
 instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
   throwErrs = lift11 . throwErrs
   addErrCtx ctx (ReaderT1 m) = ReaderT1 $ addErrCtx ctx m
+  {-# INLINE addErrCtx #-}
 
 -------------------- StateT1 --------------------
 
@@ -103,36 +114,43 @@ newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 
 pattern StateT1 :: ((s n) -> m n (a, s n)) -> StateT1 s m n a
 pattern StateT1 f = WrapStateT1 (StateT f)
+{-# COMPLETE StateT1 #-}
 
 type MonadState1 (e::E) (m::MonadKind1) = forall n. MonadState (e n) (m n)
 
-{-# COMPLETE StateT1 #-}
-
 runStateT1 :: StateT1 s m n a -> s n -> m n (a, s n)
 runStateT1 = runStateT . runStateT1'
+{-# INLINE runStateT1 #-}
 
 evalStateT1 :: Monad1 m => StateT1 s m n a -> s n -> m n a
 evalStateT1 m s = fst <$> runStateT1 m s
+{-# INLINE evalStateT1 #-}
 
 instance MonadTrans11 (StateT1 s) where
   lift11 = WrapStateT1 . lift
+  {-# INLINE lift11 #-}
 
 instance (SinkableE s, EnvReader m) => EnvReader (StateT1 s m) where
   unsafeGetEnv = lift11 unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance (SinkableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
   unsafeGetScope = lift11 unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
   getDistinct = lift11 getDistinct
+  {-# INLINE getDistinct #-}
 
 instance (Monad1 m, Fallible (m n)) => Fallible (StateT1 s m n) where
   throwErrs = lift11 . throwErrs
   addErrCtx ctx (WrapStateT1 m) = WrapStateT1 $ addErrCtx ctx m
+  {-# INLINE addErrCtx #-}
 
 instance (Monad1 m, Catchable (m n)) => Catchable (StateT1 s m n) where
   catchErr (WrapStateT1 m) f = WrapStateT1 $ catchErr m (runStateT1' . f)
 
 instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
   getErrCtx = lift11 getErrCtx
+  {-# INLINE getErrCtx #-}
 
 class HoistableState (s::E) (m::MonadKind1) where
   hoistState :: BindsNames b => s n -> b n l -> s l -> m n (s n)
@@ -157,9 +175,11 @@ newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 
 pattern ScopedT1 :: ((s n) -> m n (a, s n)) -> ScopedT1 s m n a
 pattern ScopedT1 f = WrapScopedT1 (StateT1 f)
+{-# COMPLETE ScopedT1 #-}
 
 runScopedT1 :: Monad1 m => ScopedT1 s m n a -> s n -> m n a
 runScopedT1 m s = fst <$> runStateT1 (runScopedT1' m) s
+{-# INLINE runScopedT1 #-}
 
 deriving instance (Monad1 m, Fallible1 m) => Fallible (ScopedT1 s m n)
 deriving instance (Monad1 m, Catchable1 m) => Catchable (ScopedT1 s m n)
@@ -178,23 +198,30 @@ newtype MaybeT1 (m :: MonadKind1) (n :: S) (a :: *) =
 
 runMaybeT1 :: MaybeT1 m n a -> m n (Maybe a)
 runMaybeT1 = runMaybeT . runMaybeT1'
+{-# INLINE runMaybeT1 #-}
 
 instance MonadTrans11 MaybeT1 where
   lift11 = MaybeT1 . lift
+  {-# INLINE lift11 #-}
 
 instance Monad (m n) => MonadFail (MaybeT1 m n) where
   fail s = MaybeT1 (fail s)
+  {-# INLINE fail #-}
 
 instance Monad (m n) => Fallible (MaybeT1 m n) where
   throwErrs _ = empty
   addErrCtx _ cont = cont
+  {-# INLINE addErrCtx #-}
 
 instance EnvReader m => EnvReader (MaybeT1 m) where
   unsafeGetEnv = lift11 unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance ScopeReader m => ScopeReader (MaybeT1 m) where
   unsafeGetScope = lift11 unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
   getDistinct = lift11 getDistinct
+  {-# INLINE getDistinct #-}
 
 instance EnvExtender m => EnvExtender (MaybeT1 m) where
   refreshAbs ab cont = MaybeT1 $ MaybeT $

@@ -1389,14 +1389,15 @@ asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))
 asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
 
 asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
-asFirstOrderFunctionM ty = do
-  naryPi@(NaryPiType bs eff resultTy) <- liftMaybe $ asNaryPiType NonTabFlavor ty
-  substBinders bs \(NonEmptyNest b' bs') -> do
+asFirstOrderFunctionM ty = case asNaryPiType NonTabFlavor ty of
+  Nothing -> throw TypeErr "Not a monomorphic first-order function"
+  Just naryPi@(NaryPiType bs eff resultTy) -> do
+    substBinders bs \(NonEmptyNest b' bs') -> do
       ts <- mapM sinkM $ bindersTypes $ Nest b' bs'
       dropSubst $ mapM_ checkDataLike ts
       Pure <- return eff
       checkDataLike resultTy
-  substM naryPi
+    substM naryPi
 
 isData :: EnvReader m => Type n -> m n Bool
 isData ty = liftM isJust $ runCheck do

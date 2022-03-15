@@ -48,6 +48,7 @@ liftInterpM :: (EnvReader m, MonadIO1 m) => InterpM n n a -> m n a
 liftInterpM cont = do
   resultIO <- liftEnvReaderT $ runSubstReaderT idSubst $ runInterpM' cont
   liftIO resultIO
+{-# INLINE liftInterpM #-}
 
 evalBlock :: Interp m => Block i -> m i o (Atom o)
 evalBlock (Block _ decls result) = evalDecls decls $ evalExpr result
