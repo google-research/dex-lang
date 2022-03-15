@@ -101,9 +101,11 @@ type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
 
 emit :: (Builder m, Emits n) => Expr n -> m n (AtomName n)
 emit expr = emitDecl NoHint PlainLet expr
+{-# INLINE emit #-}
 
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
+{-# INLINE emitOp #-}
 
 emitUnOp :: (Builder m, Emits n) => UnOp -> Atom n -> m n (Atom n)
 emitUnOp op x = emitOp $ ScalarUnOp op x
@@ -227,6 +229,7 @@ liftTopBuilderTWith modifyInner cont = TopBuilderT $
 
 instance Fallible m => EnvReader (TopBuilderT m) where
   unsafeGetEnv = TopBuilderT $ getOutMapInplaceT
+  {-# INLINE unsafeGetEnv #-}
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
   emitBinding hint binding = do
@@ -241,20 +244,27 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     TopBuilderT $ extendInplaceT ab'
 
   emitEnv ab = TopBuilderT $ extendInplaceT ab
+  {-# INLINE emitEnv #-}
 
   emitNamelessEnv bs = TopBuilderT $ extendTrivialInplaceT bs
+  {-# INLINE emitNamelessEnv #-}
 
   localTopBuilder cont = TopBuilderT $
     locallyMutableInplaceT $ runTopBuilderT' cont
+  {-# INLINE localTopBuilder #-}
 
 instance (SinkableV v, TopBuilder m) => TopBuilder (SubstReaderT v m i) where
   emitBinding hint binding = SubstReaderT $ lift $ emitBinding hint binding
+  {-# INLINE emitBinding #-}
   emitEnv ab = SubstReaderT $ lift $ emitEnv ab
+  {-# INLINE emitEnv #-}
   emitNamelessEnv bs = SubstReaderT $ lift $ emitNamelessEnv bs
+  {-# INLINE emitNamelessEnv #-}
   localTopBuilder cont = SubstReaderT $ ReaderT \env -> do
     localTopBuilder do
       Distinct <- getDistinct
       runReaderT (runSubstReaderT' cont) (sink env)
+  {-# INLINE localTopBuilder #-}
 
 runTopBuilderT
   :: (Fallible m, Distinct n)
@@ -263,13 +273,17 @@ runTopBuilderT
   -> m a
 runTopBuilderT bindings cont = do
   liftM snd $ runInplaceT bindings $ runTopBuilderT' $ cont
+{-# INLINE runTopBuilderT #-}
 
 type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
 
 instance (SinkableE e, HoistableState e m, TopBuilder m) => TopBuilder (StateT1 e m) where
   emitBinding hint binding = lift11 $ emitBinding hint binding
+  {-# INLINE emitBinding #-}
   emitEnv ab = lift11 $ emitEnv ab
+  {-# INLINE emitEnv #-}
   emitNamelessEnv frag = lift11 $ emitNamelessEnv frag
+  {-# INLINE emitNamelessEnv #-}
   localTopBuilder _ = error "not implemented"
 
 -- === BuilderT ===
@@ -279,6 +293,7 @@ type BuilderEmissions = Nest Decl
 instance ExtOutMap Env BuilderEmissions where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toEnvFrag emissions
+  {-# INLINE extendOutMap #-}
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Env BuilderEmissions m n a }
@@ -294,9 +309,11 @@ liftBuilderT cont = do
   return do
     (Empty, result) <- runInplaceT env $ runBuilderT' cont
     return result
+{-# INLINE liftBuilderT #-}
 
 liftBuilder :: EnvReader m => BuilderM n a -> m n a
 liftBuilder cont = liftM runHardFail $ liftBuilderT cont
+{-# INLINE liftBuilder #-}
 
 -- XXX: this uses unsafe functions in its implementations. It should be safe to
 -- use, but be careful changing it.
@@ -316,6 +333,7 @@ instance Fallible m => ScopableBuilder (BuilderT m) where
         Emits <- fabricateEmitsEvidenceM
         Distinct <- getDistinct
         cont
+  {-# INLINE buildScoped #-}
 
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
@@ -323,46 +341,57 @@ instance Fallible m => Builder (BuilderT m) where
     Abs b v <- newNameM hint
     let decl = Let b $ DeclBinding ann ty expr
     BuilderT $ extendInplaceT $ Abs (Nest decl Empty) v
+  {-# INLINE emitDecl #-}
 
 instance Fallible m => EnvReader (BuilderT m) where
   unsafeGetEnv = BuilderT $ getOutMapInplaceT
+  {-# INLINE unsafeGetEnv #-}
 
 instance Fallible m => EnvExtender (BuilderT m) where
   refreshAbs ab cont = BuilderT $ refreshAbs ab \b e -> runBuilderT' $ cont b e
+  {-# INLINE refreshAbs #-}
 
 instance (SinkableV v, ScopableBuilder m) => ScopableBuilder (SubstReaderT v m i) where
   buildScoped cont = SubstReaderT $ ReaderT \env ->
     buildScoped $
       runReaderT (runSubstReaderT' cont) (sink env)
+  {-# INLINE buildScoped #-}
 
 instance (SinkableV v, Builder m) => Builder (SubstReaderT v m i) where
   emitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
+  {-# INLINE emitDecl #-}
 
 instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (OutReaderT e m) where
   buildScoped cont = OutReaderT $ ReaderT \env ->
     buildScoped do
       env' <- sinkM env
       runReaderT (runOutReaderT' cont) env'
+  {-# INLINE buildScoped #-}
 
 instance (SinkableE e, Builder m) => Builder (OutReaderT e m) where
   emitDecl hint ann expr =
     OutReaderT $ lift $ emitDecl hint ann expr
+  {-# INLINE emitDecl #-}
 
 instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (ReaderT1 e m) where
   buildScoped cont = ReaderT1 $ ReaderT \env ->
     buildScoped do
       env' <- sinkM env
       runReaderT (runReaderT1' cont) env'
+  {-# INLINE buildScoped #-}
 
 instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
   emitDecl hint ann expr =
     ReaderT1 $ lift $ emitDecl hint ann expr
+  {-# INLINE emitDecl #-}
 
 instance (SinkableE e, HoistableState e m, Builder m) => Builder (StateT1 e m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+  {-# INLINE emitDecl #-}
 
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+  {-# INLINE emitDecl #-}
 
 -- === Emits predicate ===
 
@@ -378,14 +407,18 @@ instance Emits UnsafeS
 fabricateEmitsEvidence :: forall n. EmitsEvidence n
 fabricateEmitsEvidence =
   withEmitsEvidence (error "pure fabrication" :: EmitsEvidence n) Emits
+{-# INLINE fabricateEmitsEvidence #-}
 
 fabricateEmitsEvidenceM :: forall m n. Monad1 m => m n (EmitsEvidence n)
 fabricateEmitsEvidenceM = return fabricateEmitsEvidence
+{-# INLINE fabricateEmitsEvidenceM #-}
 
 withEmitsEvidence :: forall n a. EmitsEvidence n -> (Emits n => a) -> a
 withEmitsEvidence _ cont = fromWrapWithEmits
  ( TrulyUnsafe.unsafeCoerce ( WrapWithEmits cont :: WrapWithEmits n       a
                                                ) :: WrapWithEmits UnsafeS a)
+{-# INLINE withEmitsEvidence #-}
+
 newtype WrapWithEmits n r =
   WrapWithEmits { fromWrapWithEmits :: Emits n => r }
 

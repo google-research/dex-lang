@@ -451,12 +451,15 @@ catEnvFrags (EnvFrag frag1 maybeEffs1)
 
 instance OutFrag EnvFrag where
   emptyOutFrag = EnvFrag emptyOutFrag Nothing
+  {-# INLINE emptyOutFrag #-}
   catOutFrags _ frag1 frag2 = catEnvFrags frag1 frag2
+  {-# INLINE catOutFrags #-}
 
 instance OutMap Env where
   emptyOutMap =
     Env (TopEnv emptyOutMap (RecSubst emptyInFrag) mempty emptyLoadedModules)
         emptyModuleEnv
+  {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   extendOutMap (Env (TopEnv scope defs cache loaded)
@@ -522,6 +525,7 @@ class ScopeReader m => EnvReader (m::MonadKind1) where
 
 withEnv :: (SinkableE e, EnvReader m) => (Env n -> e n) -> m n (e n)
 withEnv f = f <$> unsafeGetEnv
+{-# INLINE withEnv #-}
 
 data DistinctEnv n where
   DB :: Distinct n => Env n -> DistinctEnv n
@@ -539,6 +543,7 @@ type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
 instance (SinkableE e, EnvReader m)
          => EnvReader (OutReaderT e m) where
   unsafeGetEnv = OutReaderT $ lift $ unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance (SinkableE e, ScopeReader m, EnvExtender m)
          => EnvExtender (OutReaderT e m) where
@@ -553,21 +558,26 @@ newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
   deriving (Functor, Applicative, Monad, MonadFail, Fallible, Alternative)
 
 type EnvReaderM = EnvReaderT Identity
+
 runEnvReaderM :: Distinct n => Env n -> EnvReaderM n a -> a
 runEnvReaderM bindings m = runIdentity $ runEnvReaderT bindings m
+{-# INLINE runEnvReaderM #-}
 
 runEnvReaderT :: Distinct n => Env n -> EnvReaderT m n a -> m a
 runEnvReaderT bindings cont =
   runReaderT (runEnvReaderT' cont) (Distinct, bindings)
+{-# INLINE runEnvReaderT #-}
 
 liftEnvReaderM :: EnvReader m => EnvReaderM n a -> m n a
 liftEnvReaderM cont = liftM runIdentity $ liftEnvReaderT cont
+{-# INLINE liftEnvReaderM #-}
 
 liftEnvReaderT :: EnvReader m' => EnvReaderT m n a -> m' n (m a)
 liftEnvReaderT cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
   return $ runReaderT (runEnvReaderT' cont) (Distinct, env)
+{-# INLINE liftEnvReaderT #-}
 
 type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
 
@@ -576,9 +586,11 @@ liftSubstEnvReaderM
   => SubstEnvReaderM v n n a
   -> m n a
 liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
+{-# INLINE liftSubstEnvReaderM #-}
 
 instance Monad m => EnvReader (EnvReaderT m) where
   unsafeGetEnv = EnvReaderT $ asks snd
+  {-# INLINE unsafeGetEnv #-}
 
 instance Monad m => EnvExtender (EnvReaderT m) where
   refreshAbs ab cont = EnvReaderT $ ReaderT
@@ -589,13 +601,17 @@ instance Monad m => EnvExtender (EnvReaderT m) where
 
 instance Monad m => ScopeReader (EnvReaderT m) where
   getDistinct = EnvReaderT $ asks fst
+  {-# INLINE getDistinct #-}
   unsafeGetScope = toScope <$> snd <$> EnvReaderT ask
+  {-# INLINE unsafeGetScope #-}
 
 instance MonadIO m => MonadIO (EnvReaderT m n) where
   liftIO m = EnvReaderT $ lift $ liftIO m
+  {-# INLINE liftIO #-}
 
 instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
   unsafeGetEnv = SubstReaderT $ lift unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance (SinkableV v, ScopeReader m, EnvExtender m)
          => EnvExtender (SubstReaderT v m i) where
@@ -608,6 +624,7 @@ instance (SinkableV v, ScopeReader m, EnvExtender m)
 instance (Monad m, ExtOutMap Env decls)
          => EnvReader   (InplaceT Env decls m) where
   unsafeGetEnv = getOutMapInplaceT
+  {-# INLINE unsafeGetEnv #-}
 
 instance (Monad m, ExtOutMap Env decls)
          => EnvExtender (InplaceT Env decls m) where
@@ -674,12 +691,15 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 
 lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
 lookupEnv v = withEnv $ flip lookupEnvPure v
+{-# INLINE lookupEnv #-}
 
 lookupAtomName :: EnvReader m => AtomName n -> m n (AtomBinding n)
 lookupAtomName name = lookupEnv name >>= \case AtomNameBinding x -> return x
+{-# INLINE lookupAtomName #-}
 
 lookupImpFun :: EnvReader m => ImpFunName n -> m n (ImpFunction n)
 lookupImpFun name = lookupEnv name >>= \case ImpFunBinding f -> return f
+{-# INLINE lookupImpFun #-}
 
 lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = do
@@ -691,6 +711,7 @@ lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
 
 lookupSourceMapPure :: SourceMap n -> SourceName -> [SourceNameDef n]
 lookupSourceMapPure (SourceMap m) v = M.findWithDefault [] v m
+{-# INLINE lookupSourceMapPure #-}
 
 lookupSourceMap :: EnvReader m => SourceName -> m n (Maybe (UVar n))
 lookupSourceMap sourceName = do
@@ -826,12 +847,16 @@ newtype EnvReaderIT (m::MonadKind1) (i::S) (o::S) (a:: *) =
 
 runEnvReaderIT :: Distinct i => Env i -> EnvReaderIT m i o a -> m o a
 runEnvReaderIT env m = runReaderT (runEnvReaderIT' m) (Distinct, env)
+{-# INLINE runEnvReaderIT #-}
 
 instance Monad1 m => EnvReaderI (EnvReaderIT m) where
   getEnvI = EnvReaderIT $ asks snd
+  {-# INLINE getEnvI #-}
   getDistinctI = EnvReaderIT $ asks fst
+  {-# INLINE getDistinctI #-}
   withEnvI env cont = EnvReaderIT $ withReaderT (const (Distinct, env)) $
     runEnvReaderIT' cont
+  {-# INLINE withEnvI #-}
 
 -- run a monadic EnvReaderM function over the in-space env
 liftEnvReaderI :: EnvReaderI m => EnvReaderM i a -> m i o a
@@ -839,6 +864,7 @@ liftEnvReaderI cont = do
   env <- getEnvI
   Distinct <- getDistinctI
   return $ runEnvReaderM env cont
+{-# INLINE liftEnvReaderI #-}
 
 extendI :: (BindsEnv b, EnvReaderI m, Distinct i')
         => b i i' -> m i' o a -> m i o a
@@ -846,6 +872,7 @@ extendI b cont = do
   env <- getEnvI
   Distinct <- getDistinctI
   withEnvI (extendOutMap env $ toEnvFrag b) cont
+{-# INLINE extendI #-}
 
 refreshAbsI :: (EnvReaderI m, BindsEnv b, SubstB Name b, SubstE Name e)
             => Abs b e i
@@ -865,6 +892,7 @@ refreshLamI _ _ = undefined
 
 instance EnvReader m => EnvReader (EnvReaderIT m i) where
   unsafeGetEnv = EnvReaderIT $ lift unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 instance (ScopeReader m, EnvExtender m)
          => EnvExtender (EnvReaderIT m i) where
@@ -875,7 +903,9 @@ instance (ScopeReader m, EnvExtender m)
 
 instance ScopeReader m => ScopeReader (EnvReaderIT m i) where
   unsafeGetScope = EnvReaderIT $ lift unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
   getDistinct = EnvReaderIT $ lift getDistinct
+  {-# INLINE getDistinct #-}
 
 instance (ScopeReader m, ScopeExtender m)
          => ScopeExtender (EnvReaderIT m i) where
@@ -940,18 +970,23 @@ runFallibleT1 m =
 
 instance Monad1 m => MonadFail (FallibleT1 m n) where
   fail s = throw MonadFailErr s
+  {-# INLINE fail #-}
 
 instance Monad1 m => Fallible (FallibleT1 m n) where
   throwErrs (Errs errs) = FallibleT1 $ ReaderT \ambientCtx ->
     MTE.throwE $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
+  {-# INLINE addErrCtx #-}
 
 instance ScopeReader m => ScopeReader (FallibleT1 m) where
   unsafeGetScope = FallibleT1 $ lift $ lift unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
   getDistinct = FallibleT1 $ lift $ lift $ getDistinct
+  {-# INLINE getDistinct #-}
 
 instance EnvReader m => EnvReader (FallibleT1 m) where
   unsafeGetEnv = FallibleT1 $ lift $ lift unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
 
 -- === Querying static env ===
 
@@ -1421,6 +1456,7 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 
 extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
+{-# INLINE extendEffRow #-}
 
 instance OrdE name => Semigroup (EffectRowP name n) where
   EffectRow effs t <> EffectRow effs' t' =
@@ -1503,6 +1539,7 @@ data ImpInstr n =
 
 iBinderType :: IBinder n l -> IType
 iBinderType (IBinder _ ty) = ty
+{-# INLINE iBinderType #-}
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | MLIR | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
@@ -3341,12 +3378,14 @@ instance BindsNames  TopEnvFrag
 
 instance OutFrag TopEnvFrag where
   emptyOutFrag = TopEnvFrag emptyOutFrag mempty
+  {-# INLINE emptyOutFrag #-}
   catOutFrags scope (TopEnvFrag frag1 partial1)
                     (TopEnvFrag frag2 partial2) =
     withExtEvidence frag2 $
       TopEnvFrag
         (catOutFrags scope frag1 frag2)
         (sink partial1 <> partial2)
+  {-# INLINE catOutFrags #-}
 
 -- XXX: unlike `ExtOutMap Env EnvFrag` instance, this once doesn't
 -- extend the synthesis candidates based on the annotated let-bound names. It
