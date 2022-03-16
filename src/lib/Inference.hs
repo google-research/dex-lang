@@ -12,7 +12,7 @@
 
 module Inference
   ( inferTopUDecl, checkTopUType, inferTopUExpr, applyUDeclAbs
-  , trySynthDict, trySynthDictBlock
+  , trySynthDictBlock
   , synthTopBlock, UDeclInferenceResult (..), synthIx ) where
 
 import Prelude hiding ((.), id)
@@ -57,6 +57,7 @@ checkTopUType ty = liftInfererM do
     ty' <- checkUType ty
     applyDefaults
     return ty'
+{-# SCC checkTopUType #-}
 
 inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (Block n)
 inferTopUExpr e = liftInfererM do
@@ -64,6 +65,7 @@ inferTopUExpr e = liftInfererM do
     e' <- inferSigma e
     applyDefaults
     return e'
+{-# SCC inferTopUExpr #-}
 
 data UDeclInferenceResult e n =
    UDeclResultDone (e n)  -- used for UDataDefDecl and UInterface
@@ -106,7 +108,6 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     applyDefaults
     return val
   return $ UDeclResultWorkRemaining block $ Abs decl result
-
 inferTopUDecl decl@(UInstance ~(InternalName _ className) argBinders params methods _) result = do
   block <- liftInfererM $ solveLocal $ buildBlockInf do
     instanceDict <- checkInstanceArgs argBinders do
@@ -116,6 +117,7 @@ inferTopUDecl decl@(UInstance ~(InternalName _ className) argBinders params meth
     applyDefaults
     return instanceDict
   return $ UDeclResultWorkRemaining block $ Abs decl result
+{-# SCC inferTopUDecl #-}
 
 -- We use this to finish the processing the decl after we've completely
 -- evaluated the right-hand side
@@ -1685,6 +1687,7 @@ synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
 synthIx ty = do
   ClassDef _ _ dictDataDefName <- getIxClassDef
   trySynthDictBlock $ TypeCon "Ix" dictDataDefName [ty]
+{-# SCC synthIx #-}
 
 -- === Solver ===
 
@@ -2060,6 +2063,7 @@ renameForPrinting e = do
 synthTopBlock :: (EnvReader m, Fallible1 m) => Block n -> m n (Block n)
 synthTopBlock block = do
   (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
+{-# SCC synthTopBlock #-}
 
 -- main entrypoint to dictionary synthesizer
 trySynthDict :: (Emits n, Builder m, Fallible1 m, EnvExtender m, EnvReader m)
@@ -2080,6 +2084,7 @@ trySynthDictBlock ty = do
       case solutions of
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
         (d, _):_ -> return d
+{-# SCC trySynthDictBlock #-}
 
 data Givens n = Givens { fromGivens :: HM.HashMap (EKey Type n) (Given n) }
 

@@ -10,7 +10,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 
 module SourceRename ( renameSourceNamesTopUDecl, uDeclErrSourceMap
-                    , renameSourceNamesUExpr) where
+                    , renameSourceNamesUExpr ) where
 
 import Prelude hiding (id, (.))
 import Data.List (sort)
@@ -34,15 +34,18 @@ renameSourceNamesTopUDecl mname decl = do
   let sourceMap = SourceMap $ fmap (fmap (\(LocalVar v) -> ModuleVar mname (Just v))) $
                     fromSourceMap sourceMapLocalNames
   return $ Abs renamedDecl sourceMap
+{-# SCC renameSourceNamesTopUDecl #-}
 
 uDeclErrSourceMap:: ModuleSourceName -> UDecl VoidS VoidS -> SourceMap n
 uDeclErrSourceMap mname decl =
   SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
+{-# SCC uDeclErrSourceMap #-}
 
 renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
 renameSourceNamesUExpr expr = do
   Distinct <- getDistinct
   liftRenamer $ sourceRenameE expr
+{-# SCC renameSourceNamesUExpr #-}
 
 sourceRenameTopUDecl
   :: (Renamer m, Distinct o)

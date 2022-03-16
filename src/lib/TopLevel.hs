@@ -159,6 +159,7 @@ ensureModuleLoaded moduleSourceName = do
   forM_ depsRequired \md -> do
     evaluated <- evalPartiallyParsedUModuleCached md
     bindModule (umppName md) evaluated
+{-# SCC ensureModuleLoaded #-}
 
 evalSourceBlock :: (Topper m, Mut n)
                 => ModuleSourceName -> SourceBlock -> m n Result
@@ -174,6 +175,7 @@ evalSourceBlock mname block = do
       _ -> return ()
     _ -> return ()
   return $ filterLogs block $ addResultCtx block result
+{-# SCC evalSourceBlock #-}
 
 evalSourceBlock' :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
 evalSourceBlock' mname block = case sbContents block of
@@ -349,6 +351,7 @@ importModule name = do
       Module _ _ transImports' _ _ _ <- lookupModule name'
       let importStatus = ImportStatus (S.singleton name') (S.singleton name' <> transImports')
       emitLocalModuleEnv $ mempty { envImportStatus = importStatus }
+{-# SCC importModule #-}
 
 evalFile :: (Topper m, Mut n) => FilePath -> m n [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
@@ -400,6 +403,7 @@ evalUExpr expr = do
   renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
   typed <- checkPass TypePass $ inferTopUExpr renamed
   evalBlock typed
+{-# SCC evalUExpr #-}
 
 evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBlock typed = do
@@ -407,6 +411,7 @@ evalBlock typed = do
   SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
   result <- evalBackend simp
   applyRecon recon result
+{-# SCC evalBlock #-}
 
 execUDecl :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do
@@ -422,6 +427,7 @@ execUDecl mname decl = do
         _ -> return result
       emitSourceMap =<< applyUDeclAbs declAbs result'
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
+{-# SCC execUDecl #-}
 
 compileTopLevelFun :: (Topper m, Mut n) => NameHint -> Atom n -> m n (Atom n)
 compileTopLevelFun hint f = do
@@ -439,6 +445,7 @@ compileTopLevelFun hint f = do
   fObj <- toCFunction cFunName fImp
   extendObjCache fImpName fObj
   return $ Var fSimpName
+{-# SCC compileTopLevelFun #-}
 
 toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
 toCFunction fname f = do
@@ -473,6 +480,7 @@ evalLLVM block = do
                   llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
+{-# SCC evalLLVM #-}
 
 evalBackend :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBackend (AtomicBlock result) = return result
@@ -498,7 +506,7 @@ checkPass name cont = do
     result <- cont
     return result
   logTop $ MiscLog $ "Running checks"
-  checkTypesM result
+  {-# SCC afterPassTypecheck #-} checkTypesM result
   logTop $ MiscLog $ "Checks passed"
   return result
 
@@ -514,7 +522,7 @@ logPass passName cont = do
   logTop $ PassInfo passName $ "=== " <> pprint passName <> " ==="
   logTop $ MiscLog $ "Starting "++ pprint passName
   result <- cont
-  logTop $ PassInfo passName $ "=== Result ===\n" <> pprint result
+  {-# SCC logPassPrinting #-} logTop $ PassInfo passName $ "=== Result ===\n" <> pprint result
   return result
 
 loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m File
@@ -531,6 +539,7 @@ loadModuleSource config moduleName = do
     findFullPath fname = case libPath config of
       Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
       Just path -> return $ path </> fname
+{-# SCC loadModuleSource #-}
 
 -- === saving cache to disk ===
 
@@ -548,6 +557,7 @@ loadCache = liftIO do
         Right result -> restorePtrSnapshots result
         _            -> removeFile cachePath >> return initTopState
     else return initTopState
+{-# SCC loadCache #-}
 
 storeCache :: MonadIO m => TopStateEx -> m ()
 storeCache env = liftIO do
@@ -555,6 +565,7 @@ storeCache env = liftIO do
   createDirectoryIfMissing True =<< getCacheDir
   envToStore <- snapshotPtrs $ stripEnvForSerialization env
   BS.writeFile cachePath $ encode envToStore
+{-# SCC storeCache #-}
 
 getCacheDir :: MonadIO m => m FilePath
 getCacheDir = liftIO $ getXdgDirectory XdgCache "dex"

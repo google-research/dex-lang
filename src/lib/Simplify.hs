@@ -9,7 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-                , simplifyBlock, liftSimplifyM, buildBlockSimplified
+                , liftSimplifyM, buildBlockSimplified
                 , IxCache, MonadIxCache1, SimpleIxInstance (..)
                 , simplifiedIxInstance, appSimplifiedIxMethod ) where
 
@@ -52,7 +52,7 @@ liftSimplifyM cont = do
   liftBuilder $ runSubstReaderT idSubst $ runSimplifyM' cont
 
 buildBlockSimplified
-  :: (Builder m)
+  :: (EnvReader m)
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Block n)
 buildBlockSimplified m =
@@ -81,11 +81,13 @@ simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
 simplifyTopBlock block = liftSimplifyM do
   (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
   return $ SimplifiedBlock block' recon
+{-# SCC simplifyTopBlock #-}
 
 simplifyTopFunction :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
 simplifyTopFunction ty f = liftSimplifyM do
   buildNaryLamExpr ty \xs -> do
     dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
+{-# SCC simplifyTopFunction #-}
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
@@ -663,6 +665,7 @@ simplifiedIxInstance ty = do
         Block _ simpDecls (Atom (ProdVal [Lam size, Lam toOrd, Lam fromOrd])) -> do
           return $ SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
         _ -> error "Failed to simplify Ix methods"
+{-# SCC simplifiedIxInstance #-}
 
 appSimplifiedIxMethod
   :: (Emits n, Builder m, MonadIxCache1 m)
@@ -674,3 +677,4 @@ appSimplifiedIxMethod ty method x = do
   Distinct <- getDistinct
   case f' of
     LamExpr fx' fb' -> emitBlock =<< applySubst (fx' @> SubstVal x) fb'
+{-# SCC appSimplifiedIxMethod #-}

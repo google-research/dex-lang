@@ -84,6 +84,7 @@ compileAndEval logger objFiles ast fname args resultTypes = do
           checkedCallFunPtr fd argsPtr resultPtr
         logThis logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
+{-# SCC compileAndEval #-}
 
 compileAndBench :: Bool -> Logger [Output] -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
@@ -114,6 +115,7 @@ compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
             return (avgTime, benchRuns, results)
           logThis logger [EvalTime avgTime (Just (benchRuns, totalTime))]
           return results
+{-# SCC compileAndBench #-}
 
 withPipeToLogger :: Logger [Output] -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
@@ -146,12 +148,13 @@ standardCompilationPipeline :: Logger [Output] -> [String] -> T.TargetMachine ->
 standardCompilationPipeline logger exports tm m = do
   linkDexrt                 m
   internalize    exports    m
-  showModule                m >>= logPass JitPass
-  L.verify                  m
+  {-# SCC showLLVM   #-} showModule m >>= logPass JitPass
+  {-# SCC verifyLLVM #-} L.verify m
   runDefaultPasses tm       m
-  showModule                m >>= logPass LLVMOpt
-  showAsm          tm       m >>= logPass AsmPass
+  {-# SCC showOptimizedLLVM #-} showModule m >>= logPass LLVMOpt
+  {-# SCC showAssembly      #-} showAsm tm m >>= logPass AsmPass
   where logPass passName s = logThis logger [PassInfo passName s]
+{-# SCC standardCompilationPipeline #-}
 
 
 -- === object file export ===
@@ -160,6 +163,7 @@ exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFil
 exportObjectFileVal deps m fname = do
   contents <- exportObjectFile [(m, [fname])] Mod.moduleObject
   return $ ObjectFile contents [fname] deps
+{-# SCC exportObjectFileVal #-}
 
 -- Each module comes with a list of exported functions
 exportObjectFile :: [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
@@ -186,6 +190,7 @@ exportObjectFile modules exportFn = do
       where
         go (h:t) args = h \arg -> go t (arg:args)
         go []    args = f args
+{-# SCC exportObjectFile #-}
 
 
 -- === LLVM passes ===
@@ -393,6 +398,7 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
                 -- TODO: B.readFile might be faster, but withSystemTempFile seems to lock the file...
                 CUDAKernel <$> B.hGetContents sassH
           else return $ CUDAKernel ptx
+{-# SCC compileCUDAKernel #-}
 
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module

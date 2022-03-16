@@ -42,3 +42,7 @@ loadCUDAArray :: Ptr () -> Ptr () -> Int -> IO ()
 loadCUDAArray hostPtr devicePtr bytes = do
   ensureHasCUDAContext
   cuMemcpyDToH (fromIntegral bytes) devicePtr hostPtr
+
+{-# SCC synchronizeCUDA #-}
+{-# SCC ensureHasCUDAContext #-}
+{-# SCC loadCUDAArray #-}

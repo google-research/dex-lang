@@ -8,9 +8,9 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
 module Interpreter (
-  evalBlock, evalExpr, indices,
+  evalBlock, evalExpr, evalAtom,
   liftInterpM, InterpM, Interp,
-  traverseSurfaceAtomNames, evalAtom, matchUPat) where
+  indices, matchUPat) where
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -58,6 +58,7 @@ evalDecls Empty cont = cont
 evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
   result <- evalExpr rhs
   extendSubst (b @> SubstVal result) $ evalDecls rest cont
+{-# SCC evalDecls #-}
 
 -- XXX: this doesn't go under lambda or pi binders
 traverseSurfaceAtomNames
@@ -110,6 +111,7 @@ evalAtom atom = traverseSurfaceAtomNames atom \v -> do
           ~(PtrBinding ptr) <- lookupEnv ptrName
           return $ Con $ Lit $ PtrLit ptr
         _ -> error "shouldn't have irreducible atom names left"
+{-# SCC evalAtom #-}
 
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of
@@ -144,6 +146,7 @@ evalExpr expr = case expr of
       extendSubst (b @> SubstVal UnitTy) $
         evalBlock body
     _ -> error $ "Not implemented: " ++ pprint expr
+{-# SCC evalExpr #-}
 
 evalOp :: Interp m => Op i -> m i o (Atom o)
 evalOp expr = mapM evalAtom expr >>= \case
@@ -280,3 +283,4 @@ indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $ do
       runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
       runInterpM bindings cont =
         runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
+{-# SCC indices #-}

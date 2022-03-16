@@ -50,9 +50,11 @@ toImpFunction :: EnvReader m
               -> m n (ImpFunctionWithRecon n)
 toImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc Nothing absBlock
+{-# SCC toImpFunction #-}
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
 toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
+{-# SCC toImpStandaloneFunction #-}
 
 toImpStandaloneFunction' :: Imper m => NaryLamExpr o -> m i o (ImpFunction o)
 toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
@@ -94,6 +96,7 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs base
     extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []
+{-# SCC toImpExportedFunction #-}
 
 loadArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> m n ([Atom n], Dest n)
 loadArgDests (Abs Empty resultDest) = return ([], resultDest)
@@ -1289,12 +1292,6 @@ computeOffset idxNest' idxs = do
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-emitSimplified
-  :: (Emits n, Builder m)
-  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> m n (Atom n)
-emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
-
 elemCountCPoly :: (EnvExtender m, EnvReader m, Fallible1 m, MonadIxCache1 m)
                => IndexStructure n -> m n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
@@ -1468,10 +1465,14 @@ liftBuilderImpSimplify
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Atom n)
 liftBuilderImpSimplify cont = do
-  block <- dceApproxBlock <$> liftSimplifyM do
-    block <- liftBuilder $ buildBlock cont
-    buildBlock $ simplifyBlock block
+  block <- dceApproxBlock <$> buildBlockSimplified cont
   runSubstReaderT idSubst $ translateBlock Nothing block
+
+emitSimplified
+  :: (Emits n, Builder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
 
 appSimplifiedIxMethodImp
   :: (Emits n, ImpBuilder m)

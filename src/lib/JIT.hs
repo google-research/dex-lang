@@ -104,6 +104,7 @@ impToLLVM :: (Mut n, TopBuilder m, MonadIO1 m, MonadLogger1 [Output] m)
 impToLLVM name f =  do
   logger <- getLogger
   ([],) <$> impToLLVM' logger name f
+{-# SCC impToLLVM #-}
 
 impToLLVM' :: (EnvReader m, MonadIO1 m) => Logger [Output]
            -> SourceName -> ImpFunction n -> m n L.Module
