@@ -5,9 +5,9 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
-               finishUModuleParse, parseData, preludeImportBlock,
-               parseTopDeclRepl, uint, withSource,
-               emptyLines, brackets, symbol, symChar, keyWordStrs) where
+               finishUModuleParse, preludeImportBlock,
+               parseTopDeclRepl, withSource,
+               symbol, symChar, keyWordStrs) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -44,6 +44,7 @@ type Parser = ReaderT ParseCtx (Parsec Void String)
 parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
 parseUModuleDeps name file = deps
   where UModule _ deps _ = parseUModule name $ toString $ fContents file
+{-# SCC parseUModuleDeps #-}
 
 finishUModuleParse :: UModulePartialParse -> UModule
 finishUModuleParse (UModulePartialParse name _ file) =
@@ -59,18 +60,17 @@ parseUModule name s = do
                   ImportModule moduleName -> [moduleName]
                   _ -> []
   UModule name imports blocks'
+{-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
 preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule Prelude
-
-parseData :: String -> Except (UExpr VoidS)
-parseData s = parseit s $ expr <* (optional eol >> eof)
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
   _ -> Just b
   where b = mustParseit s sourceBlock
+{-# SCC parseTopDeclRepl #-}
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case parse (runReaderT p (ParseCtx 0 False False)) "" s of
@@ -1222,9 +1222,6 @@ lineComment = do
   try $ string "--" >> notFollowedBy (void (char 'o'))
   void (takeWhileP (Just "char") (/= '\n'))
 
-emptyLines :: Parser ()
-emptyLines = void $ many (sc >> eol)
-
 outputLines :: Parser ()
 outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> ((eol >> return ()) <|> eof))
 
@@ -1258,9 +1255,6 @@ nameString = lexeme . try $ (:) <$> lowerChar <*> many alphaNumChar
 
 thisNameString :: String -> Parser ()
 thisNameString s = lexeme $ try $ string s >> notFollowedBy alphaNumChar
-
-uint :: Parser Int
-uint = L.decimal <* sc
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc

@@ -35,6 +35,7 @@ cheapReduce :: forall e' e m n
              . (EnvReader m, CheaplyReducibleE e e', NiceE e, NiceE e')
             => e n -> m n (Maybe (e' n), Maybe (ESet Type n))
 cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
+{-# SCC cheapReduce #-}
 
 -- Second result contains the set of dictionary types that failed to synthesize
 -- during traversal of the supplied decls.
@@ -47,6 +48,7 @@ cheapReduceWithDecls decls result = do
   liftCheapReducerM idSubst $
     cheapReduceWithDeclsB decls' $
       cheapReduceE result'
+{-# SCC cheapReduceWithDecls #-}
 
 cheapNormalize :: (EnvReader m, CheaplyReducibleE e e, NiceE e) => e n -> m n (e n)
 cheapNormalize a = fromJust . fst <$> cheapReduce a

@@ -53,6 +53,7 @@ import PPrint ()
 
 checkTypes :: (EnvReader m, CheckableE e) => e n -> m n (Except ())
 checkTypes e = liftTyperT $ void $ checkE e
+{-# SCC checkTypes #-}
 
 checkTypesM :: (EnvReader m, Fallible1 m, CheckableE e) => e n -> m n ()
 checkTypesM e = liftExcept =<< checkTypes e

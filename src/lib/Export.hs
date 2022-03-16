@@ -31,6 +31,7 @@ import Util (scanM)
 
 exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
+{-# SCC exportFunctions #-}
 
 prepareFunctionForExport :: (EnvReader m, Fallible1 m) => Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
 prepareFunctionForExport f = do
@@ -153,6 +154,7 @@ prepareFunctionForExport f = do
               HoistSuccess a' -> go (shape ++ [dim]) a'
               HoistFailure _  -> Nothing
           _ -> Nothing
+{-# SCC prepareFunctionForExport #-}
 
 -- === Exported function signature ===
 

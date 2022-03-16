@@ -337,6 +337,7 @@ instance Fallible Maybe where
 
 pprint :: Pretty a => a -> String
 pprint x = docAsStr $ pretty x
+{-# SCC pprint #-}
 
 docAsStr :: Doc ann -> String
 docAsStr doc = unpack $ renderStrict $ layoutPretty layout $ doc

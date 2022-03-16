@@ -96,6 +96,7 @@ compileModule moduleJIT@JIT{..} objFiles ast compilationPipeline = do
       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
         \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (LLVM.AST.Name dname), _]) ->
           (n, C8BS.unpack $ SBS.fromShort dname)
+{-# SCC compileModule #-}
 
 foreign import ccall "dynamic"
   callDtor :: FunPtr (IO ()) -> IO ()
@@ -105,6 +106,7 @@ unloadNativeModule :: NativeModule -> IO ()
 unloadNativeModule NativeModule{..} = do
   -- TODO: Clear the dylib
   forM_ moduleDtors callDtor
+{-# SCC unloadNativeModule #-}
 
 withNativeModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
 withNativeModule jit objs m p = bracket (compileModule jit objs m p) unloadNativeModule
@@ -129,3 +131,4 @@ loadObjectFile jit dylib objFileContents = do
     BS.hPut h objFileContents
     hFlush h
     OrcJIT.addObjectFile (objectLayer jit) dylib path
+{-# SCC loadObjectFile #-}

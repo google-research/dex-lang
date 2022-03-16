@@ -229,6 +229,7 @@ linearize :: EnvReader m => Atom n -> m n (Atom n)
 linearize x = liftBuilder $
   runPrimalM idSubst emptyActivePrimals $
     linearizeLambda' x
+{-# SCC linearize #-}
 
 -- reify the tangent builder as a lambda
 linearizeLambda' :: Atom i -> PrimalM i o (Atom o)

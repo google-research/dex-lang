@@ -8,8 +8,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE CPP #-}
 
-module Serialize (pprintVal, cached, getDexString, cachedWithSnapshot,
-                 HasPtrs (..), takePtrSnapshot, restorePtrSnapshot) where
+module Serialize (pprintVal, getDexString,
+                  HasPtrs (..), takePtrSnapshot, restorePtrSnapshot) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad
@@ -17,10 +17,6 @@ import qualified Data.ByteString as BS
 import Data.Functor ((<&>))
 import Data.ByteString.Internal (memcpy)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
-import System.Directory
-import System.FilePath
-import Control.Monad.Writer
-import Control.Monad.State.Strict
 import Data.Foldable
 import qualified Data.Map.Strict as M
 import Data.Int
@@ -47,6 +43,7 @@ foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
 
 pprintVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
 pprintVal val = docAsStr <$> prettyVal val
+{-# SCC pprintVal #-}
 
 -- TODO: get the pointer rather than reading char by char
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
@@ -54,6 +51,7 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = do
   xs' <- getTableElements xs
   forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
 getDexString x = error $ "Not a string: " ++ pprint x
+{-# SCC getDexString #-}
 
 getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n [Atom n]
 getTableElements tab = do
@@ -130,15 +128,6 @@ type RawPtr = Ptr ()
 class HasPtrs a where
   traversePtrs :: Applicative f => (PtrType -> RawPtr -> f RawPtr) -> a -> f a
 
-takeSnapshot :: HasPtrs a => a -> IO (WithSnapshot a)
-takeSnapshot x =
-  -- TODO: we're using `Writer []` (as we do elsewhere) which has bad
-  -- asymptotics. We should switch all of these uses to use snoc lists instead.
-  liftM (WithSnapshot x) $ execWriterT $ flip traversePtrs x \ptrTy ptrVal -> do
-    snapshot <- lift $ takePtrSnapshot ptrTy ptrVal
-    tell [snapshot]
-    return ptrVal
-
 takePtrSnapshot :: PtrType -> RawPtr -> IO PtrSnapshot
 takePtrSnapshot _ ptrVal | ptrVal == nullPtr = return NullPtr
 takePtrSnapshot (Heap CPU, ptrTy) ptrVal = case ptrTy of
@@ -148,6 +137,7 @@ takePtrSnapshot (Heap CPU, ptrTy) ptrVal = case ptrTy of
   _ -> ByteArray <$> loadPtrBytes ptrVal
 takePtrSnapshot (Heap GPU, _) _ = error "Snapshots of GPU memory not implemented"
 takePtrSnapshot (Stack   , _) _ = error "Can't take snapshots of stack memory"
+{-# SCC takePtrSnapshot #-}
 
 loadPtrBytes :: RawPtr -> IO BS.ByteString
 loadPtrBytes ptr = do
@@ -159,18 +149,12 @@ loadPtrPtrs ptr = do
   numBytes <- fromIntegral <$> dexAllocSize ptr
   peekArray (numBytes `div` ptrSize) $ castPtr ptr
 
-restoreSnapshot :: HasPtrs a => WithSnapshot a -> IO a
-restoreSnapshot (WithSnapshot x snapshots) =
-  flip evalStateT snapshots $ flip traversePtrs x \_ _ -> do
-    (s:ss) <- get
-    put ss
-    lift $ restorePtrSnapshot s
-
 restorePtrSnapshot :: PtrSnapshot -> IO RawPtr
 restorePtrSnapshot snapshot = case snapshot of
   PtrArray  children -> storePtrPtrs =<< mapM restorePtrSnapshot children
   ByteArray bytes    -> storePtrBytes bytes
   NullPtr            -> return nullPtr
+{-# SCC restorePtrSnapshot #-}
 
 storePtrBytes :: BS.ByteString -> IO RawPtr
 storePtrBytes xs = do
@@ -186,44 +170,6 @@ storePtrPtrs ptrs = do
   ptr <- dexMalloc $ fromIntegral $ length ptrs * ptrSize
   pokeArray (castPtr ptr) ptrs
   return ptr
-
--- === persistent cache ===
-
--- TODO: this isn't enough, since this module's compilation might be cached
-curCompilerVersion :: String
-curCompilerVersion = __TIME__
-
-cachedWithSnapshot :: (Eq k, Store k, Store a, HasPtrs a)
-                   => String -> k -> IO a -> IO a
-cachedWithSnapshot cacheName key create = do
-  result <- cached cacheName key $ create >>= takeSnapshot
-  restoreSnapshot result
-
-cached :: (Eq k, Store k, Store a) => String -> k -> IO a -> IO a
-cached cacheName key create = do
-  cacheDir <- getXdgDirectory XdgCache "dex"
-  createDirectoryIfMissing True cacheDir
-  let cacheKeyPath = cacheDir </> (cacheName ++ ".key")
-  let cachePath    = cacheDir </> (cacheName ++ ".cache")
-  cacheExists <- (&&) <$> doesFileExist cacheKeyPath <*> doesFileExist cachePath
-  cacheUpToDate <- case cacheExists of
-                     False -> return False
-                     True -> do
-                       maybeCacheKey <- decode <$> BS.readFile cacheKeyPath
-                       case maybeCacheKey of
-                         Right cacheKey -> return $ cacheKey == (curCompilerVersion, key)
-                         Left  _        -> return False
-  if cacheUpToDate
-    then do
-      decoded <- decode <$> BS.readFile cachePath
-      case decoded of
-        Right result -> return result
-        _            -> removeFile cachePath >> cached cacheName key create
-    else do
-      result <- create
-      BS.writeFile cacheKeyPath $ encode (curCompilerVersion, key)
-      BS.writeFile cachePath    $ encode result
-      return result
 
 -- === instances ===
 

@@ -33,6 +33,7 @@ transpose lam = liftBuilder do
       withAccumulator (sink argTy) \ref ->
         extendSubst (b @> LinRef ref) $
           transposeBlock body (sink $ Var ct)
+{-# SCC transpose #-}
 
 -- === transposition monad ===
 
