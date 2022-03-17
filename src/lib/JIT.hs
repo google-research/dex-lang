@@ -99,15 +99,15 @@ instance Compiler CompileM
 
 -- === Imp to LLVM ===
 
-impToLLVM :: (Mut n, TopBuilder m, MonadIO1 m, MonadLogger1 [Output] m)
-          => SourceName -> ImpFunction n -> m n ([ObjectFileName n], L.Module)
-impToLLVM name f =  do
-  logger <- getLogger
-  ([],) <$> impToLLVM' logger name f
+impToLLVM :: (Mut n, TopBuilder m, MonadIO1 m)
+          => FilteredLogger PassName [Output] -> SourceName -> ImpFunction n
+          -> m n ([ObjectFileName n], L.Module)
+impToLLVM logger name f = ([],) <$> impToLLVM' logger name f
 {-# SCC impToLLVM #-}
 
-impToLLVM' :: (EnvReader m, MonadIO1 m) => Logger [Output]
-           -> SourceName -> ImpFunction n -> m n L.Module
+impToLLVM' :: (EnvReader m, MonadIO1 m)
+           => FilteredLogger PassName [Output] -> SourceName -> ImpFunction n
+           -> m n L.Module
 impToLLVM' logger fName f = do
   (defns, externSpecs, globalDtors) <- compileFunction logger fName f
   let externDefns = map externDecl $ toList externSpecs
@@ -131,7 +131,7 @@ impToLLVM' logger fName f = do
         }
 
 compileFunction :: (EnvReader m, MonadIO1 m)
-                => Logger [Output] -> SourceName -> ImpFunction n
+                => FilteredLogger PassName [Output] -> SourceName -> ImpFunction n
                 -> m n ([L.Definition], S.Set ExternFunSpec, [L.Name])
 compileFunction _ _ (FFIFunction ty f) =
   return ([], S.singleton (makeFunSpec f ty), [])

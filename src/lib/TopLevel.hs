@@ -61,19 +61,21 @@ import JIT
 -- === top-level monad ===
 
 data EvalConfig = EvalConfig
-  { backendName :: Backend
-  , libPath     :: Maybe FilePath
-  , preludeFile :: Maybe FilePath
-  , logFile     :: Maybe FilePath }
+  { backendName   :: Backend
+  , libPath       :: Maybe FilePath
+  , preludeFile   :: Maybe FilePath
+  , logFile       :: Maybe FilePath }
 
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
 data PassCtx = PassCtx
-  { requiresBench :: Bool }
+  { requiresBench :: Bool
+  , shouldLogPass :: PassName -> Bool
+  }
 
 initPassCtx :: PassCtx
-initPassCtx = PassCtx False
+initPassCtx = PassCtx False (const True)
 
 class Monad m => PassCtxReader m where
   getPassCtx :: m PassCtx
@@ -166,7 +168,8 @@ evalSourceBlock :: (Topper m, Mut n)
 evalSourceBlock mname block = do
   result <- withCompileTime do
      (maybeErr, logs) <- catchLogsAndErrs $
-       withPassCtx (PassCtx $ blockRequiresBench block) $
+       withPassCtx (PassCtx (blockRequiresBench block)
+                            (passLogFilter $ sbLogLevel block)) $
          evalSourceBlock' mname block
      return $ Result logs maybeErr
   case resultErrs result of
@@ -356,6 +359,14 @@ importModule name = do
 evalFile :: (Topper m, Mut n) => FilePath -> m n [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
 
+passLogFilter :: LogLevel -> PassName -> Bool
+passLogFilter = \case
+  LogAll           -> const True
+  LogNothing       -> const False
+  LogPasses passes -> (`elem` passes)
+  PrintEvalTime    -> const False
+  PrintBench _     -> const False
+
 processLogs :: LogLevel -> [Output] -> [Output]
 processLogs logLevel logs = case logLevel of
   LogAll -> logs
@@ -449,7 +460,9 @@ compileTopLevelFun hint f = do
 
 toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
 toCFunction fname f = do
-  (deps, m) <- impToLLVM fname f
+  PassCtx{..} <- getPassCtx
+  logger  <- getLogger
+  (deps, m) <- impToLLVM (FilteredLogger shouldLogPass logger) fname f
   objFile <- liftIO $ exportObjectFileVal deps m fname
   objFileName <- emitObjFile (getNameHint fname) objFile
   return $ CFun fname objFileName
@@ -462,21 +475,22 @@ mainFuncName = "entryFun"
 evalLLVM :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
-  bench   <- requiresBench <$> getPassCtx
+  PassCtx{..} <- getPassCtx
+  logger  <- getLogger
+  let filteredLogger = FilteredLogger shouldLogPass logger
   (blockAbs, ptrVals) <- abstractPtrLiterals block
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
                                              toImpFunction backend cc blockAbs
-  (_, llvmAST) <- impToLLVM mainFuncName impFun
+  (_, llvmAST) <- impToLLVM filteredLogger mainFuncName impFun
   let IFunType _ _ resultTypes = impFunType impFun
-  let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  logger  <- getLogger
+  let llvmEvaluate = if requiresBench then compileAndBench needsSync else compileAndEval
   objFileNames <- getAllRequiredObjectFiles
   objFiles <- forM objFileNames  \objFileName -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile
-  resultVals <- liftIO $ llvmEvaluate logger objFiles
+  resultVals <- liftIO $ llvmEvaluate filteredLogger objFiles
                   llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs

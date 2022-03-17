@@ -73,7 +73,7 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-compileAndEval :: Logger [Output] -> [ObjectFile n] -> L.Module -> String
+compileAndEval :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndEval logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
@@ -82,11 +82,11 @@ compileAndEval logger objFiles ast fname args resultTypes = do
         storeLitVals argsPtr args
         evalTime <- compileOneOff logger objFiles ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
-        logThis logger [EvalTime evalTime Nothing]
+        logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 {-# SCC compileAndEval #-}
 
-compileAndBench :: Bool -> Logger [Output] -> [ObjectFile n] -> L.Module -> String
+compileAndBench :: Bool -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
@@ -113,14 +113,14 @@ compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
               sync
             let avgTime = totalTime / (fromIntegral benchRuns)
             return (avgTime, benchRuns, results)
-          logThis logger [EvalTime avgTime (Just (benchRuns, totalTime))]
+          logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
           return results
 {-# SCC compileAndBench #-}
 
-withPipeToLogger :: Logger [Output] -> (FD -> IO a) -> IO a
+withPipeToLogger :: FilteredLogger PassName [Output] -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
   result <- snd <$> withPipe
-    (\h -> readStream h \s -> logThis logger [TextOut s])
+    (\h -> readStream h \s -> logSkippingFilter logger [TextOut s])
     (\h -> handleToFd h >>= writeAction)
   case result of
     Left e -> E.throw e
@@ -134,8 +134,9 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
     return exitCode
   unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
+{-# SCC checkedCallFunPtr #-}
 
-compileOneOff :: Logger [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileOneOff :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
 compileOneOff logger objFiles ast name f = do
   withHostTargetMachine \tm ->
     withJIT tm \jit -> do
@@ -144,16 +145,18 @@ compileOneOff logger objFiles ast name f = do
       withNativeModule jit objFileContents ast pipeline \compiled ->
         f =<< getFunctionPtr compiled name
 
-standardCompilationPipeline :: Logger [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
+standardCompilationPipeline :: FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
 standardCompilationPipeline logger exports tm m = do
-  linkDexrt                 m
-  internalize    exports    m
-  {-# SCC showLLVM   #-} showModule m >>= logPass JitPass
+  linkDexrt m
+  internalize exports m
+  {-# SCC showLLVM   #-} logPass JitPass $ showModule m
   {-# SCC verifyLLVM #-} L.verify m
-  runDefaultPasses tm       m
-  {-# SCC showOptimizedLLVM #-} showModule m >>= logPass LLVMOpt
-  {-# SCC showAssembly      #-} showAsm tm m >>= logPass AsmPass
-  where logPass passName s = logThis logger [PassInfo passName s]
+  {-# SCC runPasses  #-} runDefaultPasses tm m
+  {-# SCC showOptimizedLLVM #-} logPass LLVMOpt $ showModule m
+  {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
+  where
+    logPass :: PassName -> IO String -> IO ()
+    logPass passName cont = logFiltered logger passName $ cont >>= \s -> return [PassInfo passName s]
 {-# SCC standardCompilationPipeline #-}
 
 
@@ -174,7 +177,9 @@ exportObjectFile modules exportFn = do
         Mod.withModuleFromAST c L.defaultModule \exportMod -> do
           void $ foldM linkModules exportMod mods
           execLogger Nothing \logger ->
-            standardCompilationPipeline logger allExports tm exportMod
+            standardCompilationPipeline
+              (FilteredLogger (const False) logger)
+              allExports tm exportMod
           exportFn tm exportMod
   where
     allExports = foldMap snd modules
@@ -372,7 +377,7 @@ data LLVMKernel = LLVMKernel L.Module
 cudaPath :: IO String
 cudaPath = maybe "/usr/local/cuda" id <$> E.lookupEnv "CUDA_PATH"
 
-compileCUDAKernel :: Logger [Output] -> LLVMKernel -> String -> IO CUDAKernel
+compileCUDAKernel :: FilteredLogger PassName [Output] -> LLVMKernel -> String -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) arch = do
   T.initializeAllTargets
   withContext \ctx ->

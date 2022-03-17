@@ -90,15 +90,17 @@ dexCompile jitPtr ctxPtr funcAtomPtr = catchErrors $ do
   fst <$> runTopperM evalConfig initEnv do
     -- TODO: Check if atom is compatible with context! Use module name?
     (impFunc, nativeSignature) <- prepareFunctionForExport (unsafeCoerceE funcAtom)
-    (_, llvmAST) <- impToLLVM "userFunc" impFunc
-    logger <- getLogger
+    filteredLogger <- FilteredLogger (const False) <$> getLogger
+    (_, llvmAST) <- impToLLVM filteredLogger "userFunc" impFunc
     objFileNames <- getAllRequiredObjectFiles
     objFiles <- forM objFileNames \objFileName -> do
       ObjectFileBinding (ObjectFile bytes _ _) <- lookupEnv objFileName
       return bytes
     liftIO do
-      nativeModule <- LLVM.JIT.compileModule jit objFiles llvmAST
-          (standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
+      nativeModule <- LLVM.JIT.compileModule jit objFiles llvmAST $
+          standardCompilationPipeline
+            filteredLogger
+            ["userFunc"] jitTargetMachine
       funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
       modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
       return $ funcPtr

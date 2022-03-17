@@ -10,6 +10,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Logging (Logger, LoggerT (..), MonadLogger (..), logIO, runLoggerT,
+                FilteredLogger (..), logFiltered, logSkippingFilter,
                 MonadLogger1, MonadLogger2,
                 runLogger, execLogger, logThis, readLog, ) where
 
@@ -25,6 +26,8 @@ import Err
 import Name
 
 data Logger l = Logger (MVar l) (Maybe Handle)
+
+data FilteredLogger k l = FilteredLogger (k -> Bool) (Logger l)
 
 runLogger :: (Monoid l, MonadIO m) => Maybe FilePath -> (Logger l -> m a) -> m (a, l)
 runLogger maybePath m = do
@@ -43,6 +46,13 @@ logThis (Logger log maybeLogHandle) x = liftIO $ do
     hPutStrLn h $ pprint x
     hFlush h
   modifyMVar_ log \cur -> return (cur <> x)
+
+logFiltered :: (Monoid l, MonadIO m, Pretty l) => FilteredLogger k l -> k -> m l -> m ()
+logFiltered (FilteredLogger shouldLog logger) k m =
+  when (shouldLog k) $ m >>= logThis logger
+
+logSkippingFilter :: (Monoid l, MonadIO m, Pretty l) => FilteredLogger k l -> l -> m ()
+logSkippingFilter (FilteredLogger _ logger) = logThis logger
 
 readLog :: MonadIO m => Logger l -> m l
 readLog (Logger log _) = liftIO $ readMVar log
