@@ -60,8 +60,8 @@ spawnLink canTrap body = do
   liftIO $ do
     links <- readIORef (linksPtr cfg)
     (child, childChan) <- spawnIO canTrap [selfProc cfg] body
-    -- potential bug if we get killed right here, before we've linked the child.
-    -- 'mask' from Control.Exception might be a solution
+    -- potential bug if we get killed right here, before we've linked
+    -- the child.  'mask' from Control.Exception might be a solution
     writeIORef (linksPtr cfg) (child : links)
     return (child, childChan)
 
@@ -126,10 +126,11 @@ newBackChan :: IO (BackChan a)
 newBackChan = liftM2 BackChan (newIORef []) newChan
 
 readBackChan :: BackChan a -> IO a
-readBackChan (BackChan ptr chan) = do xs <- readIORef ptr
-                                      case xs of []     -> readChan chan
-                                                 x:rest -> do writeIORef ptr rest
-                                                              return x
+readBackChan (BackChan ptr chan) =
+  do xs <- readIORef ptr
+     case xs of []     -> readChan chan
+                x:rest -> do writeIORef ptr rest
+                             return x
 
 pushBackChan :: BackChan a -> [a] -> IO ()
 pushBackChan (BackChan ptr _) xs = do xs' <- readIORef ptr

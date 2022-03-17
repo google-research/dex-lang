@@ -55,7 +55,8 @@ runTerminal fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   displayResultsTerm resultsChan
 
-watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO (ReqChan RFragment)
+watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx
+                 -> IO (ReqChan RFragment)
 watchAndEvalFile fname opts env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
   let cfg = (opts, subChan Push resultsChan)
