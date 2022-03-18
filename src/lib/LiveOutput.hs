@@ -1,15 +1,12 @@
--- Copyright 2019 Google LLC
+-- Copyright 2022 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module LiveOutput (runWeb, runTerminal) where
 
 import Control.Concurrent
-import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 
@@ -20,22 +17,23 @@ import qualified Data.Map.Strict as M
 import Network.Wai
 import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (status200, status404)
-import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
+import Data.ByteString.Lazy (toStrict)
+
 import System.Console.ANSI
 import System.Directory
 import System.IO
 
-import Paths_dex  (getDataFileName)
+import Paths_dex (getDataFileName)
 
-import Cat
-import Syntax
 import Actor
-import TopLevel
-import RenderHtml
-import PPrint
+import Cat
 import Parser
+import PPrint (printLitBlock)
+import RenderHtml
+import Syntax
+import TopLevel
 
 type NodeId = Int
 data WithId a = WithId { getNodeId :: NodeId
@@ -48,21 +46,23 @@ runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runWeb fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   putStrLn "Streaming output to localhost:8000"
-  run 8000 $ serveResults $ resultStream resultsChan
+  run 8000 $ serveResults resultsChan
 
 runTerminal :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runTerminal fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   displayResultsTerm resultsChan
 
+-- Start watching and evaluating the given file.  Returns a channel on
+-- which one can subscribe to updates to the evaluation state.
 watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx
-                 -> IO (ReqChan RFragment)
-watchAndEvalFile fname opts env = runActor $ do
-  (_, resultsChan) <- spawn Trap logServer
-  let cfg = (opts, subChan Push resultsChan)
-  (_, sourceChan) <- spawn Trap $ runDriver cfg env
-  liftIO $ watchFile fname sourceChan
-  return $ subChan Request resultsChan
+                 -> IO (PChan (PChan RFragment))
+watchAndEvalFile fname opts env = do
+  (_, resultsChan) <- spawn logServer
+  let cfg = (opts, subChan Publish resultsChan)
+  (_, sourceChan) <- spawn $ runDriver cfg env
+  forkWatchFile fname sourceChan
+  return $ subChan Subscribe resultsChan
 
 -- === executing blocks concurrently ===
 
@@ -70,9 +70,7 @@ type SourceContents = String
 
 type DriverCfg = (EvalConfig, PChan RFragment)
 type DriverState = (WithId TopStateEx, CacheState)
-type DriverM = ReaderT DriverCfg
-                 (StateT DriverState
-                     (Actor SourceContents))
+type DriverM = ReaderT DriverCfg (StateT DriverState IO)
 
 type EvalCache = M.Map (SourceBlock, WithId TopStateEx) (NodeId, WithId TopStateEx)
 data CacheState = CacheState
@@ -83,10 +81,10 @@ data CacheState = CacheState
 emptyCache :: CacheState
 emptyCache = CacheState 0 1 mempty
 
-runDriver :: DriverCfg -> TopStateEx -> Actor SourceContents ()
-runDriver cfg env =
+runDriver :: DriverCfg -> TopStateEx -> Actor SourceContents
+runDriver cfg env self =
   liftM fst $ flip runStateT (WithId 0 env, emptyCache) $ flip runReaderT cfg $
-    forever $ receive >>= evalSource
+    forever $ (liftIO $ readChan self) >>= evalSource
 
 evalSource :: SourceContents -> DriverM ()
 evalSource source = withLocalTopState do
@@ -114,7 +112,7 @@ evalBlock (WithId blockId block) = do
   opts <- asks fst
   (result, s) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
   resultsChan <- asks snd
-  resultsChan `send` oneResult blockId result
+  liftIO $ resultsChan `sendPChan` oneResult blockId result
   newState <- makeNewStateId s
   updateTopState newState
   insertCache (block, oldState) (blockId, newState)
@@ -129,7 +127,7 @@ makeNewBlockId block = do
   newId <- gets $ nextBlockId . snd
   modify \(s, cache) -> (s, cache {nextBlockId = newId + 1 })
   resultsChan <- asks snd
-  resultsChan `send` oneSourceBlock newId block
+  liftIO $ resultsChan `sendPChan` oneSourceBlock newId block
   return $ WithId newId block
 
 makeNewStateId :: TopStateEx -> DriverM (WithId TopStateEx)
@@ -154,7 +152,7 @@ withLocalTopState cont = do
 updateResultList :: [NodeId] -> DriverM ()
 updateResultList ids = do
   resultChan <- asks snd
-  resultChan `send` RFragment (Set ids) mempty mempty
+  liftIO $ resultChan `sendPChan` RFragment (Set ids) mempty mempty
 
 oneResult :: NodeId -> Result -> RFragment
 oneResult k r = RFragment mempty mempty (M.singleton k r)
@@ -164,8 +162,8 @@ oneSourceBlock k b = RFragment mempty (M.singleton k b) mempty
 
 -- === serving results via web ===
 
-serveResults :: StreamingBody -> Application
-serveResults results request respond = do
+serveResults :: ToJSON a => PChan (PChan a) -> Application
+serveResults resultsSubscribe request respond = do
   print (pathInfo request)
   case pathInfo request of
     []            -> respondWith "static/dynamic.html" "text/html"
@@ -173,7 +171,8 @@ serveResults results request respond = do
     ["index.js"]  -> respondWith "static/index.js"   "text/javascript"
     ["getnext"]   -> respond $ responseStream status200
                        [ ("Content-Type", "text/event-stream")
-                       , ("Cache-Control", "no-cache")] results
+                       , ("Cache-Control", "no-cache")]
+                       $ resultStream resultsSubscribe
     _ -> respond $ responseLBS status404
            [("Content-Type", "text/plain")] "404 - Not Found"
   where
@@ -181,12 +180,12 @@ serveResults results request respond = do
       fname <- getDataFileName dataFname
       respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
 
-resultStream :: ToJSON a => ReqChan a -> StreamingBody
-resultStream resultsRequest write flush = runActor $ do
-  liftIO $ write (makeBuilder ("start"::String)) >> flush
-  subscribe resultsRequest
-  forever $ do msg <- receive
-               liftIO $ write (makeBuilder msg) >> flush
+resultStream :: ToJSON a => PChan (PChan a) -> StreamingBody
+resultStream resultsSubscribe write flush = runActor \self -> do
+  write (makeBuilder ("start"::String)) >> flush
+  resultsSubscribe `sendPChan` (sendOnly self)
+  forever $ do msg <- readChan self
+               write (makeBuilder msg) >> flush
 
 makeBuilder :: ToJSON a => a -> Builder
 makeBuilder = fromByteString . toStrict . wrap . encode
@@ -215,21 +214,18 @@ toHtmlFragment x = [([], pprintHtml x)]
 type DisplayPos = Int
 data KeyboardCommand = ScrollUp | ScrollDown | ResetDisplay
 
-type TermDisplayM = StateT DisplayPos
-                      (CatT RFragment
-                         (Actor (Either RFragment KeyboardCommand)))
+type TermDisplayM = StateT DisplayPos (CatT RFragment IO)
 
-displayResultsTerm :: ReqChan RFragment -> IO ()
-displayResultsTerm reqChan =
-  void $ runActor $ evalCatT $ flip evalStateT 0 $ do
-     c <- myChan
-     send reqChan $ subChan Left c
-     void $ spawn Trap $ monitorKeyboard $ subChan Right c
-     forever termDisplayLoop
+displayResultsTerm :: PChan (PChan RFragment) -> IO ()
+displayResultsTerm resultsSubscribe =
+  runActor \self -> do
+     resultsSubscribe `sendPChan` subChan Left (sendOnly self)
+     void $ forkIO $ monitorKeyboard $ subChan Right (sendOnly self)
+     evalCatT $ flip evalStateT 0 $ forever $ termDisplayLoop self
 
-termDisplayLoop :: TermDisplayM ()
-termDisplayLoop = do
-  req <- receive
+termDisplayLoop :: (Chan (Either RFragment KeyboardCommand)) -> TermDisplayM ()
+termDisplayLoop self = do
+  req <- liftIO $ readChan self
   case req of
     Left result -> extend result
     Right command -> case command of
@@ -258,28 +254,30 @@ renderResults (RFragment (Set ids) blocks results) =
     r <- M.lookup i results
     return $ printLitBlock True b r
 
-monitorKeyboard :: PChan KeyboardCommand -> Actor () ()
+-- A non-Actor source.  Sends keyboard command signals as they occur.
+monitorKeyboard :: PChan KeyboardCommand -> IO ()
 monitorKeyboard chan = do
-  liftIO $ hSetBuffering stdin NoBuffering
+  hSetBuffering stdin NoBuffering
   forever $ do
-    c <- liftIO getChar
+    c <- getChar
     case c of
-      'k' -> send chan ScrollUp
-      'j' -> send chan ScrollDown
-      'q' -> send chan ResetDisplay
+      'k' -> chan `sendPChan` ScrollUp
+      'j' -> chan `sendPChan` ScrollDown
+      'q' -> chan `sendPChan` ResetDisplay
       _   -> return ()
 
 -- === watching files ===
 
--- sends file contents to channel whenever file is modified
-watchFile :: FilePath -> PChan String -> IO ()
-watchFile fname chan = onmod fname $ sendFileContents fname chan
+-- A non-Actor source.  Sends file contents to channel whenever file
+-- is modified.
+forkWatchFile :: FilePath -> PChan String -> IO ()
+forkWatchFile fname chan = onmod fname $ sendFileContents fname chan
 
 sendFileContents :: String -> PChan String -> IO ()
 sendFileContents fname chan = do
   putStrLn $ fname ++ " updated"
   s <- readFile fname
-  sendFromIO chan s
+  sendPChan chan s
 
 onmod :: FilePath -> IO () -> IO ()
 onmod fname action = do
