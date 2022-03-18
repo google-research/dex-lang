@@ -519,9 +519,13 @@ checkPass name cont = do
   result <- logPass name do
     result <- cont
     return result
+#ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
   {-# SCC afterPassTypecheck #-} checkTypesM result
   logTop $ MiscLog $ "Checks passed"
+#else
+  logTop $ MiscLog $ "Checks skipped (not a debug build)"
+#endif
   return result
 
 addResultCtx :: SourceBlock -> Result -> Result
