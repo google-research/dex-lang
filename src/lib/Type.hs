@@ -225,7 +225,7 @@ class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
     -- relation on names.
     alphaEq reqTy ty >>= \case
       True  -> return ()
-      False -> do
+      False -> {-# SCC typeNormalization #-} do
         reqTy' <- cheapNormalize reqTy
         ty'    <- cheapNormalize ty
         alphaEq reqTy' ty' >>= \case
@@ -616,11 +616,14 @@ typeCheckPrimCon con = case con of
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
   TabCon ty xs -> do
-    ty'@(TabPi tabPi) <- checkTypeE TyKind ty
-    idxs <- indices $ argType tabPi
-    forMZipped_ xs idxs \x i -> do
-      eltTy <- instantiateTabPi tabPi i
-      x |: eltTy
+    ty'@(TabPi tabPi@(TabPiType b restTy)) <- checkTypeE TyKind ty
+    case fromConstAbs (Abs b restTy) of
+      HoistSuccess elTy -> forM_ xs (|: elTy)
+      HoistFailure _    -> do
+        idxs <- indices $ argType tabPi
+        forMZipped_ xs idxs \x i -> do
+          eltTy <- instantiateTabPi tabPi i
+          x |: eltTy
     return ty'
   ScalarBinOp binop x y -> do
     xTy <- typeCheckBaseType x
