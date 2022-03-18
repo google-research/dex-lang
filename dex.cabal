@@ -59,7 +59,7 @@ library
                        Simplify, Imp, Algebra, Linearize, Transpose, Export,
                        LLVM.HEAD.JIT
   if flag(live)
-    exposed-modules:   Actor, RenderHtml, LiveOutput
+    exposed-modules:   Actor, RenderHtml, LiveEval, LiveWebOutput
   other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs, transformers, hashable, unordered-containers,

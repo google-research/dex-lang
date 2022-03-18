@@ -1,37 +1,29 @@
--- Copyright 2022 Google LLC
+-- Copyright 2019 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module LiveOutput (runWeb, runTerminal) where
+module LiveEval (RFragment (..), SetVal(..), watchAndEvalFile, runTerminal) where
 
 import Control.Concurrent
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 
-import Data.Binary.Builder (fromByteString, Builder)
 import Data.Foldable (fold)
 import qualified Data.Map.Strict as M
-
-import Network.Wai
-import Network.Wai.Handler.Warp (run)
-import Network.HTTP.Types (status200, status404)
-import Data.Aeson hiding (Result, Null, Value)
+import Data.Aeson (ToJSON, toJSON, (.=))
 import qualified Data.Aeson as A
-import Data.ByteString.Lazy (toStrict)
 
 import System.Console.ANSI
 import System.Directory
 import System.IO
 
-import Paths_dex (getDataFileName)
-
 import Actor
 import Cat
 import Parser
 import PPrint (printLitBlock)
-import RenderHtml
+import RenderHtml (ToMarkup, pprintHtml)
 import Syntax
 import TopLevel
 
@@ -41,12 +33,6 @@ data WithId a = WithId { getNodeId :: NodeId
 data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
-
-runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
-runWeb fname opts env = do
-  resultsChan <- watchAndEvalFile fname opts env
-  putStrLn "Streaming output to localhost:8000"
-  run 8000 $ serveResults resultsChan
 
 runTerminal :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runTerminal fname opts env = do
@@ -160,55 +146,6 @@ oneResult k r = RFragment mempty mempty (M.singleton k r)
 oneSourceBlock :: NodeId -> SourceBlock -> RFragment
 oneSourceBlock k b = RFragment mempty (M.singleton k b) mempty
 
--- === serving results via web ===
-
-serveResults :: ToJSON a => PChan (PChan a) -> Application
-serveResults resultsSubscribe request respond = do
-  print (pathInfo request)
-  case pathInfo request of
-    []            -> respondWith "static/dynamic.html" "text/html"
-    ["style.css"] -> respondWith "static/style.css"  "text/css"
-    ["index.js"]  -> respondWith "static/index.js"   "text/javascript"
-    ["getnext"]   -> respond $ responseStream status200
-                       [ ("Content-Type", "text/event-stream")
-                       , ("Cache-Control", "no-cache")]
-                       $ resultStream resultsSubscribe
-    _ -> respond $ responseLBS status404
-           [("Content-Type", "text/plain")] "404 - Not Found"
-  where
-    respondWith dataFname ctype = do
-      fname <- getDataFileName dataFname
-      respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
-
-resultStream :: ToJSON a => PChan (PChan a) -> StreamingBody
-resultStream resultsSubscribe write flush = runActor \self -> do
-  write (makeBuilder ("start"::String)) >> flush
-  resultsSubscribe `sendPChan` (sendOnly self)
-  forever $ do msg <- readChan self
-               write (makeBuilder msg) >> flush
-
-makeBuilder :: ToJSON a => a -> Builder
-makeBuilder = fromByteString . toStrict . wrap . encode
-  where wrap s = "data:" <> s <> "\n\n"
-
-instance ToJSON a => ToJSON (SetVal a) where
-  toJSON (Set x) = object ["val" .= toJSON x]
-  toJSON NotSet  = A.Null
-
-instance (ToJSON k, ToJSON v) => ToJSON (MonMap k v) where
-  toJSON (MonMap m) = toJSON (M.toList m)
-
-instance ToJSON RFragment where
-  toJSON (RFragment ids blocks results) = toJSON (ids, contents)
-    where contents = MonMap (M.map toHtmlFragment blocks)
-                  <> MonMap (M.map toHtmlFragment results)
-
-type TreeAddress = [Int]
-type HtmlFragment = [(TreeAddress, String)]
-
-toHtmlFragment :: ToMarkup a => a -> HtmlFragment
-toHtmlFragment x = [([], pprintHtml x)]
-
 -- === serving results via terminal ===
 
 type DisplayPos = Int
@@ -305,10 +242,27 @@ instance Eq (WithId a) where
 instance Ord (WithId a) where
   compare (WithId x _) (WithId y _) = compare x y
 
+instance ToJSON a => ToJSON (SetVal a) where
+  toJSON (Set x) = A.object ["val" .= toJSON x]
+  toJSON NotSet  = A.Null
+
+instance (ToJSON k, ToJSON v) => ToJSON (MonMap k v) where
+  toJSON (MonMap m) = toJSON (M.toList m)
+
+instance ToJSON RFragment where
+  toJSON (RFragment ids blocks results) = toJSON (ids, contents)
+    where contents = MonMap (M.map toHtmlFragment blocks)
+                  <> MonMap (M.map toHtmlFragment results)
+
+type TreeAddress = [Int]
+type HtmlFragment = [(TreeAddress, String)]
+
+toHtmlFragment :: ToMarkup a => a -> HtmlFragment
+toHtmlFragment x = [([], pprintHtml x)]
+
 -- === some handy monoids ===
 
 data SetVal a = Set a | NotSet
-newtype MonMap k v = MonMap (M.Map k v)  deriving (Show, Eq)
 
 instance Semigroup (SetVal a) where
   x <> NotSet = x
@@ -316,6 +270,8 @@ instance Semigroup (SetVal a) where
 
 instance Monoid (SetVal a) where
   mempty = NotSet
+
+newtype MonMap k v = MonMap (M.Map k v)  deriving (Show, Eq)
 
 instance (Ord k, Semigroup v) => Semigroup (MonMap k v) where
   MonMap m <> MonMap m' = MonMap $ M.unionWith (<>) m m'
