@@ -2209,6 +2209,7 @@ givensFromEnv = do
   projs <- getSuperclassProjs
   let givensBlocks = map AtomicBlock givens
   getSuperclassClosure projs (Givens HM.empty) givensBlocks
+{-# SCC givensFromEnv #-}
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
@@ -2317,6 +2318,7 @@ synthDict ty@(TypeCon _ dataDef _) = do
   reqDicts <- mapM synthDict reqDictTys
   naryApp polyDict $ params ++ reqDicts
 synthDict ty = error $ "Not a valid dictionary type: " ++ pprint ty
+{-# SCC synthDict #-}
 
 instantiateDictParams :: (Fallible1 m, EnvReader m)
                       => Type n -> Type n -> m n (PairE (ListE Atom) (ListE Type) n)

@@ -128,12 +128,10 @@ simplifyExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
 simplifyExpr expr = case expr of
   App f xs -> do
     xs' <- mapM simplifyAtom xs
-    f' <- simplifyAtom f
-    simplifyApp f' xs'
+    simplifyApp f xs'
   TabApp f xs -> do
     xs' <- mapM simplifyAtom xs
-    f' <- simplifyAtom f
-    simplifyTabApp f' xs'
+    simplifyTabApp f xs'
   Atom x -> simplifyAtom x
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
@@ -211,47 +209,116 @@ defuncCase scrut alts resultTy = do
                             (Atom (PairVal resultData newResult))
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
-simplifyApp :: (Emits o, Simplifier m) => Atom o -> NonEmpty (Atom o) -> m i o (Atom o)
-simplifyApp f xs = case fromNaryLam (NE.length xs) f of
-  Just (bsCount, NaryLamExpr bs _ body) -> do
-    let (xsPref, xsRest) = NE.splitAt bsCount xs
-    ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyBlock body
-    case nonEmpty xsRest of
-      Nothing    -> return ans
-      Just rest' -> simplifyApp ans rest'
-  _ -> case f of
-    ACase e alts ty -> do
-      -- TODO: Don't rebuild the alts here! Factor out Case simplification
-      -- with lazy substitution and call it from here!
-      resultTy <- getAppType ty $ toList xs
-      alts' <- forM alts \(Abs bs a) -> do
-        buildAlt (EmptyAbs bs) \vs -> do
-          a' <- applySubst (bs@@>vs) a
-          naryApp a' (map sink $ toList xs)
-      eff <- getAllowedEffects -- TODO: more precise effects
-      dropSubst $ simplifyExpr $ Case e alts' resultTy eff
-    _ -> naryApp f $ toList xs
+simplifyApp :: forall i o m. (Emits o, Simplifier m) => Atom i -> NonEmpty (Atom o) -> m i o (Atom o)
+simplifyApp f xs =
+  simplifyFuncAtom f >>= \case
+    Left  lam  -> fast lam
+    Right atom -> slow atom
+  where
+    fast :: LamExpr i' -> m i' o (Atom o)
+    fast lam = case fromNaryLam (NE.length xs) (Lam lam) of
+      Just (bsCount, NaryLamExpr bs _ (Block _ decls expr)) -> do
+          let (xsPref, xsRest) = NE.splitAt bsCount xs
+          extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
+            case nonEmpty xsRest of
+              Nothing    -> simplifyExpr expr
+              Just rest' ->
+                case expr of
+                  Atom atom -> simplifyApp atom rest'
+                  _         -> do
+                    atom <- simplifyExpr expr
+                    dropSubst $ simplifyApp atom rest'
+      Nothing -> error "should never happen"
+
+    slow :: Atom o -> m i o (Atom o)
+    slow atom = case atom of
+      Lam   lam       -> dropSubst $ fast lam
+      ACase e alts ty -> do
+        -- TODO: Don't rebuild the alts here! Factor out Case simplification
+        -- with lazy substitution and call it from here!
+        resultTy <- getAppType ty $ toList xs
+        alts' <- forM alts \(Abs bs a) -> do
+          buildAlt (EmptyAbs bs) \vs -> do
+            a' <- applySubst (bs@@>vs) a
+            naryApp a' (map sink $ toList xs)
+        eff <- getAllowedEffects -- TODO: more precise effects
+        dropSubst $ simplifyExpr $ Case e alts' resultTy eff
+      _ -> naryApp atom $ toList xs
+
+    -- TODO: This function could just become a special case for an app of a lambda.
+    -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
+    simplifyFuncAtom :: Atom i -> m i o (Either (LamExpr i) (Atom o))
+    simplifyFuncAtom func = case func of
+      Lam lam -> return $ Left lam
+      Var v -> do
+        env <- getSubst
+        case env ! v of
+          SubstVal x -> return $ Right x
+          Rename v' -> do
+            AtomNameBinding bindingInfo <- lookupEnv v'
+            case bindingInfo of
+              LetBound (DeclBinding _ _ (Atom x)) -> case x of
+                Lam _ -> return $ Right x
+                _     -> dropSubst $ Right <$> simplifyAtom x
+              _ -> return $ Right $ Var v'
+      _ -> Right <$> simplifyAtom func
+{-# SCC simplifyApp #-}
 
 -- TODO: de-dup this and simplifyApp?
-simplifyTabApp :: (Emits o, Simplifier m) => Atom o -> NonEmpty (Atom o) -> m i o (Atom o)
-simplifyTabApp f xs = case fromNaryTabLam (NE.length xs) f of
-  Just (bsCount, NaryLamExpr bs _ body) -> do
-    let (xsPref, xsRest) = NE.splitAt bsCount xs
-    ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyBlock body
-    case nonEmpty xsRest of
-      Nothing    -> return ans
-      Just rest' -> simplifyTabApp ans rest'
-  _ -> case f of
-    ACase e alts ty -> do
-      -- TODO: Don't rebuild the alts here! Factor out Case simplification
-      -- with lazy substitution and call it from here!
-      resultTy <- getTabAppType ty $ toList xs
-      alts' <- forM alts \(Abs bs a) -> do
-        buildAlt (EmptyAbs bs) \vs -> do
-          a' <- applySubst (bs@@>vs) a
-          naryTabApp a' (map sink $ toList xs)
-      dropSubst $ simplifyExpr $ Case e alts' resultTy Pure
-    _ -> naryTabApp f $ toList xs
+simplifyTabApp :: forall i o m. (Emits o, Simplifier m) => Atom i -> NonEmpty (Atom o) -> m i o (Atom o)
+simplifyTabApp f xs =
+  simplifyFuncAtom f >>= \case
+    Left  lam  -> fast lam
+    Right atom -> slow atom
+  where
+    fast :: TabLamExpr i' -> m i' o (Atom o)
+    fast lam = case fromNaryTabLam (NE.length xs) (TabLam lam) of
+      Just (bsCount, NaryLamExpr bs _ (Block _ decls expr)) -> do
+          let (xsPref, xsRest) = NE.splitAt bsCount xs
+          extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
+            case nonEmpty xsRest of
+              Nothing    -> simplifyExpr expr
+              Just rest' ->
+                case expr of
+                  Atom atom -> simplifyTabApp atom rest'
+                  _         -> do
+                    atom <- simplifyExpr expr
+                    dropSubst $ simplifyTabApp atom rest'
+      Nothing -> error "should never happen"
+
+    slow :: Atom o -> m i o (Atom o)
+    slow atom = case atom of
+      TabLam   lam       -> dropSubst $ fast lam
+      ACase e alts ty -> do
+        -- TODO: Don't rebuild the alts here! Factor out Case simplification
+        -- with lazy substitution and call it from here!
+        resultTy <- getTabAppType ty $ toList xs
+        alts' <- forM alts \(Abs bs a) -> do
+          buildAlt (EmptyAbs bs) \vs -> do
+            a' <- applySubst (bs@@>vs) a
+            naryTabApp a' (map sink $ toList xs)
+        eff <- getAllowedEffects -- TODO: more precise effects
+        dropSubst $ simplifyExpr $ Case e alts' resultTy eff
+      _ -> naryTabApp atom $ toList xs
+
+    -- TODO: This function could just become a special case for an app of a lambda.
+    -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
+    simplifyFuncAtom :: Atom i -> m i o (Either (TabLamExpr i) (Atom o))
+    simplifyFuncAtom func = case func of
+      TabLam lam -> return $ Left lam
+      Var v -> do
+        env <- getSubst
+        case env ! v of
+          SubstVal x -> return $ Right x
+          Rename v' -> do
+            AtomNameBinding bindingInfo <- lookupEnv v'
+            case bindingInfo of
+              LetBound (DeclBinding _ _ (Atom x)) -> case x of
+                TabLam _ -> return $ Right x
+                _        -> dropSubst $ Right <$> simplifyAtom x
+              _ -> return $ Right $ Var v'
+      _ -> Right <$> simplifyAtom func
+{-# SCC simplifyTabApp #-}
 
 simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
 simplifyAtom atom = case atom of
@@ -311,7 +378,7 @@ simplifyAtom atom = case atom of
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _     -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
-  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
+  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
 
 simplifyExtLabeledItems
   :: Simplifier m
@@ -675,21 +742,20 @@ simplifiedIxInstance ty = do
       return a
   where
     simplifyInstance = liftSimplifyM do
-      Block _ decls expr <- liftBuilder $ buildBlock $ do
+      Abs decls methods <- liftBuilder $ buildScoped $ do
         impl <- getIxImpl $ sink ty
-        return $ ProdVal [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
-      simpBlock <- buildBlock $ simplifyDecls decls $
-        simplifyExpr expr >>= \case
-          ProdVal [size, toOrd, fromOrd] -> dropSubst do
-            (size'   , IdentityRecon) <- simplifyLam size
-            (toOrd'  , IdentityRecon) <- simplifyLam toOrd
-            (fromOrd', IdentityRecon) <- simplifyLam fromOrd
-            return $ ProdVal [size', toOrd', fromOrd']
-          _ -> error "Failed to simplify Ix methods"
-      case simpBlock of
-        Block _ simpDecls (Atom (ProdVal [Lam size, Lam toOrd, Lam fromOrd])) -> do
-          return $ SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
-        _ -> error "Failed to simplify Ix methods"
+        return $ ListE [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
+      simpAbs <- buildScoped $ simplifyDecls decls $
+          ListE <$> forM (fromListE methods) simplifyMethod
+      return $ case simpAbs of
+        Abs simpDecls (ListE ~[Lam size, Lam toOrd, Lam fromOrd]) ->
+          SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
+    {-# SCC simplifyInstance #-}
+
+    simplifyMethod :: Simplifier m => (Atom i) -> m i o (Atom o)
+    simplifyMethod method = do
+      (method', IdentityRecon) <- simplifyLam method
+      return method'
 {-# SCC simplifiedIxInstance #-}
 
 appSimplifiedIxMethod
@@ -702,4 +768,3 @@ appSimplifiedIxMethod ty method x = do
   Distinct <- getDistinct
   case f' of
     LamExpr fx' fb' -> emitBlock =<< applySubst (fx' @> SubstVal x) fb'
-{-# SCC appSimplifiedIxMethod #-}

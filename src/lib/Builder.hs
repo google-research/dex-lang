@@ -432,7 +432,7 @@ buildBlock
 buildBlock cont = do
   Abs decls results <- buildScoped do
     result <- cont
-    ty <- cheapNormalize =<< getType result
+    ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType result
     return $ result `PairE` ty
   let (result `PairE` ty) = results
   ty' <- liftHoistExcept $ hoist decls ty
@@ -441,7 +441,7 @@ buildBlock cont = do
 
 makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
-  ty <- cheapNormalize =<< getType expr
+  ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType expr
   let ty' = ignoreHoistFailure $ hoist decls ty
   return $ Block (BlockAnn ty') decls expr
 
@@ -1080,6 +1080,7 @@ getUnpacked atom = do
   ty <- getType atom'
   len <- projectLength ty
   return $ map (\i -> getProjection [i] atom') [0..(len-1)]
+{-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
 emitUnpacked tup = do
