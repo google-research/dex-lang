@@ -4,25 +4,19 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module LiveEval (RFragment (..), SetVal(..), watchAndEvalFile, runTerminal) where
+module LiveEval (RFragment (..), SetVal(..), watchAndEvalFile) where
 
-import Control.Concurrent
+import Control.Concurrent (forkIO, readChan, threadDelay)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-
-import Data.Foldable (fold)
 import qualified Data.Map.Strict as M
+
 import Data.Aeson (ToJSON, toJSON, (.=))
 import qualified Data.Aeson as A
-
-import System.Console.ANSI
-import System.Directory
-import System.IO
+import System.Directory (getModificationTime)
 
 import Actor
-import Cat
 import Parser
-import PPrint (printLitBlock)
 import RenderHtml (ToMarkup, pprintHtml)
 import Syntax
 import TopLevel
@@ -33,11 +27,6 @@ data WithId a = WithId { getNodeId :: NodeId
 data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
-
-runTerminal :: FilePath -> EvalConfig -> TopStateEx -> IO ()
-runTerminal fname opts env = do
-  resultsChan <- watchAndEvalFile fname opts env
-  displayResultsTerm resultsChan
 
 -- Start watching and evaluating the given file.  Returns a channel on
 -- which one can subscribe to updates to the evaluation state.
@@ -145,63 +134,6 @@ oneResult k r = RFragment mempty mempty (M.singleton k r)
 
 oneSourceBlock :: NodeId -> SourceBlock -> RFragment
 oneSourceBlock k b = RFragment mempty (M.singleton k b) mempty
-
--- === serving results via terminal ===
-
-type DisplayPos = Int
-data KeyboardCommand = ScrollUp | ScrollDown | ResetDisplay
-
-type TermDisplayM = StateT DisplayPos (CatT RFragment IO)
-
-displayResultsTerm :: PChan (PChan RFragment) -> IO ()
-displayResultsTerm resultsSubscribe =
-  runActor \self -> do
-     resultsSubscribe `sendPChan` subChan Left (sendOnly self)
-     void $ forkIO $ monitorKeyboard $ subChan Right (sendOnly self)
-     evalCatT $ flip evalStateT 0 $ forever $ termDisplayLoop self
-
-termDisplayLoop :: (Chan (Either RFragment KeyboardCommand)) -> TermDisplayM ()
-termDisplayLoop self = do
-  req <- liftIO $ readChan self
-  case req of
-    Left result -> extend result
-    Right command -> case command of
-      ScrollUp     -> modify (+ 4)
-      ScrollDown   -> modify (\p -> max 0 (p - 4))
-      ResetDisplay -> put 0
-  results <- look
-  pos <- get
-  case renderResults results of
-    Nothing -> return ()
-    Just s  -> liftIO $ do
-      let cropped = cropTrailingLines pos s
-      setCursorPosition 0 0
-      clearScreen -- TODO: clean line-by-line instead
-      putStr cropped
-
-cropTrailingLines :: Int -> String -> String
-cropTrailingLines n s = unlines $ reverse $ drop n $ reverse $ lines s
-
--- TODO: show incremental results
-renderResults :: RFragment -> Maybe String
-renderResults (RFragment NotSet _ _) = Nothing
-renderResults (RFragment (Set ids) blocks results) =
-  liftM fold $ forM ids $ \i -> do
-    b <- M.lookup i blocks
-    r <- M.lookup i results
-    return $ printLitBlock True b r
-
--- A non-Actor source.  Sends keyboard command signals as they occur.
-monitorKeyboard :: PChan KeyboardCommand -> IO ()
-monitorKeyboard chan = do
-  hSetBuffering stdin NoBuffering
-  forever $ do
-    c <- getChar
-    case c of
-      'k' -> chan `sendPChan` ScrollUp
-      'j' -> chan `sendPChan` ScrollDown
-      'q' -> chan `sendPChan` ResetDisplay
-      _   -> return ()
 
 -- === watching files ===
 

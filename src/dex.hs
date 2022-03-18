@@ -31,7 +31,7 @@ import Name
 import Parser (parseTopDeclRepl, keyWordStrs, preludeImportBlock)
 #ifdef DEX_LIVE
 import RenderHtml
-import LiveEval (runTerminal)
+import LiveTerminalOutput (runTerminal)
 import LiveWebOutput (runWeb)
 #endif
 
