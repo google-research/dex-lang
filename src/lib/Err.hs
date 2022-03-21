@@ -242,6 +242,9 @@ catchIOExcept :: MonadIO m => IO a -> m (Except a)
 catchIOExcept m = liftIO $ (liftM Success m) `catches`
   [ Handler \(e::Errs)           -> return $ Failure e
   , Handler \(e::IOError)        -> return $ Failure $ Errs [Err DataIOErr   mempty $ show e]
+  -- Propagate asynchronous exceptions like ThreadKilled; they are
+  -- part of normal operation (of the live evaluation modes), not
+  -- compiler bugs.
   , Handler \(e::AsyncException) -> liftIO $ throwIO e
   , Handler \(e::SomeException)  -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
   ]

@@ -6,13 +6,14 @@
 
 module Live.Eval (RFragment (..), SetVal(..), watchAndEvalFile) where
 
-import Control.Concurrent (forkIO, readChan, threadDelay)
+import Control.Concurrent (forkIO, killThread, readChan, threadDelay, ThreadId)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import qualified Data.Map.Strict as M
 
 import Data.Aeson (ToJSON, toJSON, (.=))
 import qualified Data.Aeson as A
+import Data.Text.Prettyprint.Doc
 import System.Directory (getModificationTime)
 
 import Actor
@@ -20,23 +21,41 @@ import Parser
 import RenderHtml (ToMarkup, pprintHtml)
 import Syntax
 import TopLevel
+import Util (onFst, onSnd)
 
 type NodeId = Int
 data WithId a = WithId { getNodeId :: NodeId
                        , withoutId :: a }
+                deriving Show
+
 data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
 
 -- Start watching and evaluating the given file.  Returns a channel on
 -- which one can subscribe to updates to the evaluation state.
+--
+-- The overall system looks like this:
+-- - `forkWatchFile` creates an actor that watches the file for
+--   changes and sends `FileChanged` messages to the driver.
+-- - `runDriver` creates the main driver actor, which manages
+--   the evaluation state and produces rendering fragments.
+-- - `logServer` creates an actor that accumulates rendering fragments
+--   from the driver and broadcasts them to any subscribed clients.
+--
+-- `FileChanged` messages from the watch file actor may invalidate the
+-- current state.  The driver delegates the actual evaluation to a
+-- sub-thread so it can remain responsive.
+--
+-- `watchAndEvalFile` returns the channel by which a client may
+-- subscribe by sending a write-only view of its input channel.
 watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx
                  -> IO (PChan (PChan RFragment))
 watchAndEvalFile fname opts env = do
   (_, resultsChan) <- spawn logServer
   let cfg = (opts, subChan Publish resultsChan)
-  (_, sourceChan) <- spawn $ runDriver cfg env
-  forkWatchFile fname sourceChan
+  (_, driverChan) <- spawn $ runDriver cfg env
+  forkWatchFile fname $ subChan FileChanged driverChan
   return $ subChan Subscribe resultsChan
 
 -- === executing blocks concurrently ===
@@ -44,8 +63,30 @@ watchAndEvalFile fname opts env = do
 type SourceContents = String
 
 type DriverCfg = (EvalConfig, PChan RFragment)
-type DriverState = (WithId TopStateEx, CacheState)
-type DriverM = ReaderT DriverCfg (StateT DriverState IO)
+
+-- The evaluation-in-progress state is
+-- - The (identified) current top-level environment
+-- - If a worker is currently running, its ThreadId and the
+--   SourceBlock it it working on (necessarily in the current
+--   top-level environment)
+-- - The list of blocks that remain to be evaluated (if any) after
+--   the current worker completes.  If nonempty, there should be
+--   a current worker.
+-- This is consistent at entry and exit from handling each message,
+-- but may be briefly inconsistent while a message is being handled.
+type WorkerSpec = Maybe (ThreadId, WithId SourceBlock)
+data SourceEvalState = SourceEvalState
+  (WithId TopStateEx) WorkerSpec [WithId SourceBlock]
+
+initialEvalState :: TopStateEx -> SourceEvalState
+initialEvalState env = (SourceEvalState (WithId 0 env) Nothing [])
+
+newtype DriverM a = DriverM
+  { drive :: (ReaderT DriverCfg
+              (ReaderT (PChan DriverEvent)
+               (StateT (SourceEvalState, CacheState) IO)) a)
+  }
+  deriving (Functor, Applicative, Monad, MonadIO)
 
 type EvalCache = M.Map (SourceBlock, WithId TopStateEx) (NodeId, WithId TopStateEx)
 data CacheState = CacheState
@@ -56,77 +97,206 @@ data CacheState = CacheState
 emptyCache :: CacheState
 emptyCache = CacheState 0 1 mempty
 
-runDriver :: DriverCfg -> TopStateEx -> Actor SourceContents
+class (Monad m, MonadIO m) => Driver m where
+  askOptions :: m EvalConfig
+  askResultsOutput :: m (PChan RFragment)
+  askSelf :: m (PChan DriverEvent)
+  getTopState :: m (WithId TopStateEx)
+  putTopState :: WithId TopStateEx -> m ()
+  -- Resets the evaluation state to initial, from the given TopStateEx.
+  -- Returns the old top state and the old worker spec, for reuse
+  refresh :: TopStateEx -> m (WithId TopStateEx, WorkerSpec)
+  -- Get the work chunk we are waiting for, if any
+  getWorkingBlock :: m (Maybe (WithId SourceBlock))
+  -- Run the action if there is no worker, otherwise don't
+  whenNoWorker :: m () -> m ()
+  putWorker :: WorkerSpec -> m ()
+  -- If a block is pending, remove it from the queue and run the
+  -- action on it, otherwise don't.
+  popPending :: (WithId SourceBlock -> m ()) -> m ()
+  putPending :: [WithId SourceBlock] -> m ()
+  newBlockId :: m Int
+  newStateId :: m Int
+  lookupCache :: SourceBlock
+              -> WithId TopStateEx
+              -> m (Maybe (NodeId, WithId TopStateEx))
+  insertCache :: SourceBlock
+              -> WithId TopStateEx
+              -> (NodeId, WithId TopStateEx)
+              -> m ()
+
+-- The externally visible behavior of the main driver loop:
+-- - When the source file changes, send the new set of visible node IDs
+--   (`updateResultList`) to the `PChan RFragment`
+-- - When a new source block is discovered, assign an ID to it and send
+--   the association of that block with that ID (`makeNewBlockId`)
+-- - When a source block is successfully evaluated, associate the result
+--   with its ID and send that (inside `evalBlock`)
+
+-- Internally, we implement this behavior with a driver thread that
+-- forks a worker thread.  Why two threads?  So the driver can notice
+-- if a source block in progress has disappeared from the file and
+-- kill the worker when that happens.
+
+-- The worker communicates with the driver by sending a "work
+-- complete" message.  Note that a worker due to be killed may send a
+-- "work complete" message before the driver actually kills it.  If a
+-- "file changed" message arrived in the interim, the TopState the
+-- worker delivers remains valid to enter into the cache, but should
+-- not change the driver's then-current TopState.
+
+-- For this reason, the WorkComplete message contains the ids of the
+-- TopStateEx and SourceBlock that the woker evaluated.
+
+data DriverEvent = FileChanged SourceContents
+                 | WorkComplete (WithId TopStateEx) (WithId SourceBlock) (Result, TopStateEx)
+
+runDriver :: DriverCfg -> TopStateEx -> Actor DriverEvent
 runDriver cfg env self =
-  liftM fst $ flip runStateT (WithId 0 env, emptyCache) $ flip runReaderT cfg $
-    forever $ (liftIO $ readChan self) >>= evalSource
+  liftM fst
+  $ flip runStateT (initialEvalState env, emptyCache)
+  $ flip runReaderT (sendOnly self)
+  $ flip runReaderT cfg
+  $ drive $ forever $ do
+      msg <- liftIO $ readChan self
+      case msg of
+        (FileChanged source) -> evalSource env source
+        (WorkComplete block topState payload) -> processWork block topState payload
 
-evalSource :: SourceContents -> DriverM ()
-evalSource source = withLocalTopState do
-    let UModule _ _ blocks = parseUModule Main source
-    (evaluated, remaining) <- tryEvalBlocksCached blocks
-    remaining' <- mapM makeNewBlockId remaining
-    updateResultList $ map getNodeId $ evaluated ++ remaining'
-    mapM_ evalBlock remaining'
+-- Start evaluation of the (updated) source file in the given (fresh)
+-- evaluation state.  The evaluation state carried in the monad is
+-- still the state as of the end of the previous message.
+evalSource :: Driver m => TopStateEx -> SourceContents -> m ()
+evalSource env source = do
+  -- Save the old state from the monad, because we need to kill or
+  -- reuse the worker from it.
+  (oldTopState, oldWorker) <- refresh env
+  let UModule _ _ blocks = parseUModule Main source
+  (evaluated, remaining) <- tryEvalBlocksCached blocks
+  (reused, remaining') <- tryReuseWorker oldTopState oldWorker remaining
+  remaining'' <- mapM makeNewBlockId remaining'
+  updateResultList $ map getNodeId $ evaluated ++ reused ++ remaining''
+  putPending $ reused ++ remaining''
+  maybeLaunchWorker
 
-tryEvalBlocksCached :: [SourceBlock] -> DriverM ([WithId SourceBlock], [SourceBlock])
+-- See which blocks already have completed values and reuse those.
+tryEvalBlocksCached :: Driver m
+                    => [SourceBlock]
+                    -> m ([WithId SourceBlock], [SourceBlock])
 tryEvalBlocksCached [] = return ([], [])
 tryEvalBlocksCached blocks@(block:rest) = do
-  (env, cache) <- get
-  case M.lookup (block, env) (evalCache cache) of
+  env <- getTopState
+  res <- lookupCache block env
+  case res of
     Nothing -> return ([], blocks)
     Just (blockId, env') -> do
       let block' = WithId blockId block
-      updateTopState env'
+      putTopState env'
       (evaluated, remaining) <- tryEvalBlocksCached rest
       return (block':evaluated, remaining)
 
-evalBlock :: WithId SourceBlock -> DriverM ()
-evalBlock (WithId blockId block) = do
-  oldState <- gets fst
-  opts <- asks fst
-  (result, s) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
-  resultsChan <- asks snd
+-- See whether the formerly active worker (if any) is still doing
+-- something useful given the list of blocks we are waiting to finish;
+-- if so reuse it, and if not kill it.
+tryReuseWorker :: Driver m
+               => WithId TopStateEx
+               -> WorkerSpec
+               -> [SourceBlock]
+               -> m ([WithId SourceBlock], [SourceBlock])
+tryReuseWorker _ w [] =
+  liftIO (forM_ w (killThread . fst)) >> return ([], [])
+tryReuseWorker _ Nothing blocks =
+  return ([], blocks)
+tryReuseWorker oldEnv w@(Just (_, oldNext)) (next:rest) = do
+  curEnv <- getTopState
+  if (curEnv == oldEnv) && (withoutId oldNext == next) then do
+    -- Reuse the worker
+    putWorker w
+    return ([oldNext], rest)
+  else
+    liftIO (forM_ w (killThread . fst)) >> return ([], next:rest)
+
+processWork :: Driver m
+            => WithId TopStateEx
+            -> WithId SourceBlock
+            -> (Result, TopStateEx)
+            -> m ()
+processWork oldState block answer = do
+  -- The computed result is true regardless of whether this is the
+  -- worker we are waiting for or not, and therefore safe to cache
+  -- outside the `when` clause.  There is a narrow benefit here: if a
+  -- worker completes normally while we're processing a FileChanged
+  -- message, it can send a sound WorkComplete message before we
+  -- actually kill it.  We record that result in case the user edits
+  -- back to a state where it can be shown.
+  newState <- recordTruth oldState block answer
+  curState <- getTopState
+  waitingFor <- getWorkingBlock
+  when (oldState == curState
+        && (fmap withoutId waitingFor == Just (withoutId block))) $ do
+    -- We only update our working state if this message is, in fact,
+    -- from the worker we are currently waiting for.
+    rotateWorkingState newState
+
+-- Record what the worker computed in our cache of truths, and return
+-- the updated environment.  This is sound regardless of whether we
+-- are waiting for this evaluation or not.
+recordTruth :: Driver m
+            => WithId TopStateEx
+            -> WithId SourceBlock
+            -> (Result, TopStateEx)
+            -> m (WithId TopStateEx)
+recordTruth oldState (WithId blockId block) (result, s) = do
+  resultsChan <- askResultsOutput
   liftIO $ resultsChan `sendPChan` oneResult blockId result
   newState <- makeNewStateId s
-  updateTopState newState
-  insertCache (block, oldState) (blockId, newState)
+  insertCache block oldState (blockId, newState)
+  return newState
+
+-- Update our current evaluation state assuming the work we were
+-- waiting for was just completed with the given new evaluation
+-- environment.
+rotateWorkingState :: Driver m => WithId TopStateEx -> m ()
+rotateWorkingState newState = do
+  putTopState newState
+  putWorker Nothing  -- Worker finished
+  maybeLaunchWorker
 
 -- === DriverM utils ===
 
-updateTopState :: WithId TopStateEx -> DriverM ()
-updateTopState s = modify \(_,c) -> (s, c)
+-- If we have work to do but no worker doing it, launch such a worker.
+maybeLaunchWorker :: (Driver m) => m ()
+maybeLaunchWorker = do
+  whenNoWorker $ popPending \next -> do
+    curState <- getTopState
+    opts <- askOptions
+    self <- askSelf
+    tid <- liftIO $ forkWorker opts curState next self
+    putWorker $ Just (tid, next)
 
-makeNewBlockId :: SourceBlock -> DriverM (WithId SourceBlock)
+forkWorker :: EvalConfig -> WithId TopStateEx -> WithId SourceBlock
+           -> PChan DriverEvent -> IO ThreadId
+forkWorker opts curState block chan = forkIO $ do
+  result <- evalSourceBlockIO opts (withoutId curState) (withoutId block)
+  chan `sendPChan` (WorkComplete curState block result)
+
+makeNewBlockId :: Driver m => SourceBlock -> m (WithId SourceBlock)
 makeNewBlockId block = do
-  newId <- gets $ nextBlockId . snd
-  modify \(s, cache) -> (s, cache {nextBlockId = newId + 1 })
-  resultsChan <- asks snd
+  newId <- newBlockId
+  resultsChan <- askResultsOutput
   liftIO $ resultsChan `sendPChan` oneSourceBlock newId block
   return $ WithId newId block
 
-makeNewStateId :: TopStateEx -> DriverM (WithId TopStateEx)
+makeNewStateId :: Driver m => TopStateEx -> m (WithId TopStateEx)
 makeNewStateId env = do
-  newId <- gets $ nextStateId . snd
-  modify \(s, cache) -> (s, cache {nextStateId = newId + 1 })
+  newId <- newStateId
   return $ WithId newId env
-
-insertCache :: (SourceBlock, WithId TopStateEx) -> (NodeId, WithId TopStateEx) -> DriverM ()
-insertCache key val = modify \(s, cache) ->
-  (s, cache { evalCache = M.insert key val $ evalCache cache })
-
-withLocalTopState :: DriverM a -> DriverM a
-withLocalTopState cont = do
-  startState <- gets fst
-  result <- cont
-  updateTopState startState
-  return result
 
 -- === utils for sending results ===
 
-updateResultList :: [NodeId] -> DriverM ()
+updateResultList :: Driver m => [NodeId] -> m ()
 updateResultList ids = do
-  resultChan <- asks snd
+  resultChan <- askResultsOutput
   liftIO $ resultChan `sendPChan` RFragment (Set ids) mempty mempty
 
 oneResult :: NodeId -> Result -> RFragment
@@ -162,6 +332,65 @@ onmod fname action = do
 
 -- === instances ===
 
+instance Driver DriverM where
+  askOptions = DriverM $ asks fst
+  askResultsOutput = DriverM $ asks snd
+  askSelf = DriverM $ lift $ ask
+
+  getTopState = DriverM $ do
+    (SourceEvalState s _ _) <- gets fst
+    return s
+
+  putTopState s = DriverM $ modify $ onFst \(SourceEvalState _ w blocks)
+    -> (SourceEvalState s w blocks)
+
+  refresh env = DriverM $ do
+    (SourceEvalState oldState oldWorker _) <- gets fst
+    modify $ onFst $ const $ initialEvalState env
+    return (oldState, oldWorker)
+
+  getWorkingBlock = DriverM $ do
+    (SourceEvalState _ w _) <- gets fst
+    return $ (fmap snd) w
+
+  whenNoWorker (DriverM action) = DriverM $ do
+    (SourceEvalState _ w _) <- gets fst
+    case w of
+      (Just _) -> return ()
+      Nothing -> action
+
+  putWorker w = DriverM $ modify $ onFst \(SourceEvalState s _ blocks)
+    -> (SourceEvalState s w blocks)
+
+  popPending action = do
+    (SourceEvalState _ _ curPending) <- DriverM $ gets fst
+    case curPending of
+      [] -> return ()
+      (next:rest) -> do
+        DriverM $ modify $ onFst \(SourceEvalState s w _)
+          -> (SourceEvalState s w rest)
+        action next
+
+  putPending blocks = DriverM $ modify $ onFst \(SourceEvalState s w _)
+    -> (SourceEvalState s w blocks)
+
+  lookupCache block env = DriverM $ do
+    cache <- gets (evalCache . snd)
+    return $ M.lookup (block, env) cache
+
+  newBlockId = DriverM $ do
+    newId <- gets $ nextBlockId . snd
+    modify $ onSnd \cache -> cache {nextBlockId = newId + 1 }
+    return newId
+
+  newStateId = DriverM $ do
+    newId <- gets $ nextStateId . snd
+    modify $ onSnd \cache -> cache {nextStateId = newId + 1 }
+    return newId
+
+  insertCache block env val = DriverM $ modify $ onSnd \cache ->
+    cache { evalCache = M.insert (block, env) val $ evalCache cache }
+
 instance Semigroup RFragment where
   (RFragment x y z) <> (RFragment x' y' z') = RFragment (x<>x') (y<>y') (z<>z')
 
@@ -191,6 +420,20 @@ type HtmlFragment = [(TreeAddress, String)]
 
 toHtmlFragment :: ToMarkup a => a -> HtmlFragment
 toHtmlFragment x = [([], pprintHtml x)]
+
+instance Pretty SourceEvalState where
+  pretty (SourceEvalState env worker pending) =
+    "In env ID" <+> pretty (getNodeId env) <> line
+    <> "waiting for" <+> pretty (show worker) <+> "to evaluate" <> line
+    <> pretty (map prettify pending) where
+    prettify (WithId blockId block) = (blockId, block)
+
+instance Pretty DriverEvent where
+  pretty (FileChanged contents) = "New file contents" <> line <> pretty contents
+  pretty (WorkComplete env (WithId blockId block) (result, _)) =
+    "Finished evaluating" <+> pretty (blockId, block)
+    <+> "in env with ID" <+> pretty (getNodeId env)
+    <+> "got" <+> pretty result
 
 -- === some handy monoids ===
 
