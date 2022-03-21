@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module LiveTerminalOutput (runTerminal) where
+module Live.Terminal (runTerminal) where
 
 import Control.Concurrent (Chan, readChan, forkIO)
 import Control.Monad.State.Strict
@@ -16,7 +16,7 @@ import System.IO (BufferMode (..), hSetBuffering, stdin)
 
 import Actor
 import Cat
-import LiveEval
+import Live.Eval
 import PPrint (printLitBlock)
 import TopLevel
 

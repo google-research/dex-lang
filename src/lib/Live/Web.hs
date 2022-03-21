@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module LiveWebOutput (runWeb) where
+module Live.Web (runWeb) where
 
 import Control.Concurrent (readChan)
 import Control.Monad (forever)
@@ -20,7 +20,7 @@ import Data.ByteString.Lazy (toStrict)
 import Paths_dex (getDataFileName)
 
 import Actor
-import LiveEval
+import Live.Eval
 import TopLevel
 
 runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()

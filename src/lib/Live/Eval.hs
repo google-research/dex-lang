@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module LiveEval (RFragment (..), SetVal(..), watchAndEvalFile) where
+module Live.Eval (RFragment (..), SetVal(..), watchAndEvalFile) where
 
 import Control.Concurrent (forkIO, readChan, threadDelay)
 import Control.Monad.Reader
