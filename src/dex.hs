@@ -31,7 +31,8 @@ import Name
 import Parser (parseTopDeclRepl, keyWordStrs, preludeImportBlock)
 #ifdef DEX_LIVE
 import RenderHtml
-import LiveOutput
+import Live.Terminal (runTerminal)
+import Live.Web (runWeb)
 #endif
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
