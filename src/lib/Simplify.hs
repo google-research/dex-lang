@@ -262,7 +262,7 @@ simplifyAtom atom = case atom of
     -- TODO(subst): Use EnvReaderI to getType before subst
     substM atom >>= getType >>= isData >>= \case
       True -> do
-        (Abs (Nest b' Empty) body', IdentityRecon) <- simplifyAbs $ Abs (Nest b Empty) body
+        (Abs b' body', IdentityRecon) <- simplifyAbs $ Abs b body
         return $ TabLam $ TabLamExpr b' body'
       False -> substM atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
@@ -339,8 +339,7 @@ simplifyLam = simpl True
     simpl :: Simplifier m => Bool -> Atom i -> m i o (Atom o, ReconstructAtom o)
     simpl canSubst = \case
       Lam (LamExpr b body) -> do
-        (Abs (Nest b' Empty) body', recon) <- simplifyAbs $
-          Abs (Nest b Empty) body
+        (Abs b' body', recon) <- simplifyAbs $ Abs b body
         return (Lam $ LamExpr b' body', recon)
       atom | canSubst -> substM atom >>= dropSubst . simpl False
       _ -> error "Not a lambda expression"
