@@ -29,6 +29,7 @@ import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Data.Coerce
 import Data.Text (unpack)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -192,7 +193,26 @@ instance FallibleApplicative m => Applicative (FallibleApplicativeWrapper m) whe
 -- work by trusting decl annotations and skipping the checks.
 newtype HardFailM a =
   HardFailM { runHardFail' :: Identity a }
-  deriving (Functor, Applicative, Monad)
+  -- We don't derive Functor, Applicative and Monad, because Identity doesn't
+  -- use INLINE pragmas in its own instances, which unnecessarily inhibits optimizations.
+
+instance Functor HardFailM where
+  fmap f (HardFailM (Identity x)) = HardFailM $ Identity $ f x
+  {-# INLINE fmap #-}
+
+instance Applicative HardFailM where
+  pure = HardFailM . Identity
+  {-# INLINE pure #-}
+  (<*>) = coerce
+  {-# INLINE (<*>) #-}
+  liftA2 = coerce
+  {-# INLINE liftA2 #-}
+
+instance Monad HardFailM where
+  (HardFailM (Identity x)) >>= k = k x
+  {-# INLINE (>>=) #-}
+  return = HardFailM . Identity
+  {-# INLINE return #-}
 
 runHardFail :: HardFailM a -> a
 runHardFail m = runIdentity $ runHardFail' m

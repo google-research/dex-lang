@@ -7,6 +7,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
                 , liftSimplifyM, buildBlockSimplified
@@ -44,12 +46,13 @@ class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM' :: SubstReaderT AtomSubstVal (BuilderT HardFailM) i o a }
-  deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender
-           , Builder, EnvReader, SubstReader AtomSubstVal, MonadFail)
+  deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
+           , Builder, EnvReader, SubstReader AtomSubstVal, MonadFail )
 
 liftSimplifyM :: (SinkableE e, EnvReader m) => SimplifyM n n (e n) -> m n (e n)
 liftSimplifyM cont = do
   liftBuilder $ runSubstReaderT idSubst $ runSimplifyM' cont
+{-# INLINE liftSimplifyM #-}
 
 buildBlockSimplified
   :: (EnvReader m)
@@ -62,14 +65,11 @@ buildBlockSimplified m =
 
 instance Simplifier SimplifyM
 
-instance Fallible (SimplifyM i o) where
-  throwErrs _ = undefined
-  addErrCtx _ _ = undefined
-
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance ScopableBuilder (SimplifyM i) where
   buildScoped cont = SimplifyM $ SubstReaderT $ ReaderT \env ->
     buildScoped $ runSubstReaderT (sink env) (runSimplifyM' cont)
+  {-# INLINE buildScoped #-}
 
 -- === Top-level API ===
 
@@ -84,8 +84,8 @@ simplifyTopBlock block = liftSimplifyM do
 {-# SCC simplifyTopBlock #-}
 
 simplifyTopFunction :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
-simplifyTopFunction ty f = liftSimplifyM do
-  buildNaryLamExpr ty \xs -> do
+simplifyTopFunction ty f = liftSimplifyM $
+  buildNaryLamExpr ty \xs ->
     dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
 {-# SCC simplifyTopFunction #-}
 
@@ -107,25 +107,22 @@ instance Pretty (SimplifiedBlock n) where
 
 -- === All the bits of IR  ===
 
-simplifyDecl ::  (Emits o, Simplifier m) => Decl i i' -> m i' o a -> m i o a
-simplifyDecl (Let b (DeclBinding _ _ expr)) cont = do
-  x <- simplifyExpr expr
-  extendSubst (b@>SubstVal x) cont
+simplifyDecls :: Emits o => Nest Decl i i' -> SimplifyM i' o a -> SimplifyM i o a
+simplifyDecls topDecls cont = do
+  s  <- getSubst
+  s' <- simpDeclsSubst s topDecls
+  withSubst s' cont
+{-# INLINE simplifyDecls #-}
 
-simplifyDecls ::  (Emits o, Simplifier m) => Nest Decl i i' -> m i' o a -> m i o a
-simplifyDecls Empty cont = cont
-simplifyDecls (Nest decl rest) cont = simplifyDecl decl $ simplifyDecls rest cont
+simpDeclsSubst :: Emits o => Subst AtomSubstVal l o -> Nest Decl l i' -> SimplifyM i o (Subst AtomSubstVal i' o)
+simpDeclsSubst !s = \case
+  Empty -> return s
+  Nest (Let b (DeclBinding _ _ expr)) rest -> do
+    x <- withSubst s $ simplifyExpr expr
+    simpDeclsSubst (s <>> (b@>SubstVal x)) rest
 
-_simplifyStandalone :: Simplifier m => Expr i -> m i o (Atom o)
-_simplifyStandalone (Atom (Lam (LamExpr (LamBinder b argTy arr Pure) body))) = do
-  argTy' <- substM argTy
-  buildPureLam (getNameHint b) arr argTy' \v ->
-    extendSubst (b@>Rename v) $ simplifyBlock body
-_simplifyStandalone block =
-  error $ "@noinline decorator applied to non-pure-function" ++ pprint block
-
-simplifyExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
-simplifyExpr expr = case expr of
+simplifyExpr :: Emits o => Expr i -> SimplifyM i o (Atom o)
+simplifyExpr expr = confuseGHC >>= \_ -> case expr of
   App f xs -> do
     xs' <- mapM simplifyAtom xs
     simplifyApp f xs'
@@ -154,7 +151,7 @@ simplifyExpr expr = case expr of
             liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
 
-defuncCase :: (Emits o, Simplifier m) => Atom o -> [Alt i] -> Type o -> m i o (Atom o)
+defuncCase :: Emits o => Atom o -> [Alt i] -> Type o -> SimplifyM i o (Atom o)
 defuncCase scrut alts resultTy = do
   split <- splitDataComponents resultTy
   (alts', recons) <- unzip <$> mapM (simplifyAlt split) alts
@@ -190,8 +187,8 @@ defuncCase scrut alts resultTy = do
     -- first component is data. The reconstruction returned only applies to the
     -- second component.
     simplifyAlt
-      :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
-      => SplitDataNonData n -> Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
+      :: (BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
+      => SplitDataNonData n -> Abs b Block i -> SimplifyM i o (Abs b Block o, ReconstructAtom o)
     simplifyAlt split (Abs bs body) = fromPairE <$> do
       substBinders bs \bs' -> do
         ab <- buildScoped $ simplifyBlock body
@@ -209,13 +206,13 @@ defuncCase scrut alts resultTy = do
                             (Atom (PairVal resultData newResult))
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
-simplifyApp :: forall i o m. (Emits o, Simplifier m) => Atom i -> NonEmpty (Atom o) -> m i o (Atom o)
+simplifyApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
 simplifyApp f xs =
   simplifyFuncAtom f >>= \case
     Left  lam  -> fast lam
     Right atom -> slow atom
   where
-    fast :: LamExpr i' -> m i' o (Atom o)
+    fast :: LamExpr i' -> SimplifyM i' o (Atom o)
     fast lam = case fromNaryLam (NE.length xs) (Lam lam) of
       Just (bsCount, NaryLamExpr bs _ (Block _ decls expr)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
@@ -230,7 +227,7 @@ simplifyApp f xs =
                     dropSubst $ simplifyApp atom rest'
       Nothing -> error "should never happen"
 
-    slow :: Atom o -> m i o (Atom o)
+    slow :: Atom o -> SimplifyM i o (Atom o)
     slow atom = case atom of
       Lam   lam       -> dropSubst $ fast lam
       ACase e alts ty -> do
@@ -247,7 +244,7 @@ simplifyApp f xs =
 
     -- TODO: This function could just become a special case for an app of a lambda.
     -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
-    simplifyFuncAtom :: Atom i -> m i o (Either (LamExpr i) (Atom o))
+    simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       Lam lam -> return $ Left lam
       Var v -> do
@@ -265,13 +262,13 @@ simplifyApp f xs =
 {-# SCC simplifyApp #-}
 
 -- TODO: de-dup this and simplifyApp?
-simplifyTabApp :: forall i o m. (Emits o, Simplifier m) => Atom i -> NonEmpty (Atom o) -> m i o (Atom o)
+simplifyTabApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
 simplifyTabApp f xs =
   simplifyFuncAtom f >>= \case
     Left  lam  -> fast lam
     Right atom -> slow atom
   where
-    fast :: TabLamExpr i' -> m i' o (Atom o)
+    fast :: TabLamExpr i' -> SimplifyM i' o (Atom o)
     fast lam = case fromNaryTabLam (NE.length xs) (TabLam lam) of
       Just (bsCount, NaryLamExpr bs _ (Block _ decls expr)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
@@ -286,7 +283,7 @@ simplifyTabApp f xs =
                     dropSubst $ simplifyTabApp atom rest'
       Nothing -> error "should never happen"
 
-    slow :: Atom o -> m i o (Atom o)
+    slow :: Atom o -> SimplifyM i o (Atom o)
     slow atom = case atom of
       TabLam   lam       -> dropSubst $ fast lam
       ACase e alts ty -> do
@@ -303,7 +300,7 @@ simplifyTabApp f xs =
 
     -- TODO: This function could just become a special case for an app of a lambda.
     -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
-    simplifyFuncAtom :: Atom i -> m i o (Either (TabLamExpr i) (Atom o))
+    simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (TabLamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       TabLam lam -> return $ Left lam
       Var v -> do
@@ -320,8 +317,8 @@ simplifyTabApp f xs =
       _ -> Right <$> simplifyAtom func
 {-# SCC simplifyTabApp #-}
 
-simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
-simplifyAtom atom = case atom of
+simplifyAtom :: Atom i -> SimplifyM i o (Atom o)
+simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   Var v -> simplifyVar v
   -- Tables that only contain data aren't necessarily getting inlined,
   -- so this might be the last chance to simplify them.
@@ -342,7 +339,7 @@ simplifyAtom atom = case atom of
   TC tc -> TC <$> mapM simplifyAtom tc
   Eff eff -> Eff <$> substM eff
   TypeCon name def params ->
-    TypeCon name <$>  substM def <*> mapM simplifyAtom params
+    TypeCon name <$> substM def <*> mapM simplifyAtom params
   DataCon name def params con args ->
     DataCon name <$> substM def <*> mapM simplifyAtom params
                  <*> pure con <*> mapM simplifyAtom args
@@ -354,7 +351,10 @@ simplifyAtom atom = case atom of
     types' <- fromExtLabeledItemsE <$> substM (ExtLabeledItemsE types)
     value' <- simplifyAtom value
     return $ Variant types' label i value'
-  VariantTy items -> VariantTy <$> simplifyExtLabeledItems items
+  VariantTy (Ext items ext) -> VariantTy <$> do
+    items' <- mapM simplifyAtom items
+    ext' <- liftM fromExtLabeledItemsE $ substM $ ExtLabeledItemsE $ Ext NoLabeledItems ext
+    return $ prefixExtLabeledItems items' ext'
   LabeledRow elems -> substM elems >>= \elems' -> case fromFieldRowElems elems' of
     [StaticFields items] -> do
       items' <- dropSubst $ mapM simplifyAtom items
@@ -380,16 +380,7 @@ simplifyAtom atom = case atom of
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
 
-simplifyExtLabeledItems
-  :: Simplifier m
-  => ExtLabeledItems (Atom i) (AtomName i)
-  -> m i o (ExtLabeledItems (Atom o) (AtomName o))
-simplifyExtLabeledItems (Ext items ext) = do
-    items' <- mapM simplifyAtom items
-    ext' <- liftM fromExtLabeledItemsE $ substM $ ExtLabeledItemsE $ Ext NoLabeledItems ext
-    return $ prefixExtLabeledItems items' ext'
-
-simplifyVar :: Simplifier m => AtomName i -> m i o (Atom o)
+simplifyVar :: AtomName i -> SimplifyM i o (Atom o)
 simplifyVar v = do
   env <- getSubst
   case env ! v of
@@ -400,29 +391,30 @@ simplifyVar v = do
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
 
-simplifyLam :: (Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
-simplifyLam = simpl True
+simplifyLam :: Atom i -> SimplifyM i o (Atom o, ReconstructAtom o)
+simplifyLam atom = case atom of
+  Lam (LamExpr b body) -> doSimpLam b body
+  _ -> substM atom >>= \case
+    Lam (LamExpr b body) -> dropSubst $ doSimpLam b body
+    _ -> error "Not a lambda expression"
   where
-    simpl :: Simplifier m => Bool -> Atom i -> m i o (Atom o, ReconstructAtom o)
-    simpl canSubst = \case
-      Lam (LamExpr b body) -> do
-        (Abs b' body', recon) <- simplifyAbs $ Abs b body
-        return (Lam $ LamExpr b' body', recon)
-      atom | canSubst -> substM atom >>= dropSubst . simpl False
-      _ -> error "Not a lambda expression"
+    doSimpLam :: LamBinder i i' -> Block i' -> SimplifyM i o (Atom o, ReconstructAtom o)
+    doSimpLam b body = do
+      (Abs b' body', recon) <- simplifyAbs $ Abs b body
+      return $! (Lam $ LamExpr b' body', recon)
 
-simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
-simplifyBinaryLam = simpl True
+simplifyBinaryLam :: Emits o => Atom i -> SimplifyM i o (Atom o, ReconstructAtom o)
+simplifyBinaryLam atom = case atom of
+  Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> doSimpBinaryLam b1 b2 body
+  _ -> substM atom >>= \case
+    Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> dropSubst $ doSimpBinaryLam b1 b2 body
+    _ -> error "Not a binary lambda expression"
   where
-    simpl :: Simplifier m => Bool -> Atom i -> m i o (Atom o, ReconstructAtom o)
-    simpl canSubst = \case
-      Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> do
-        (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
-          simplifyAbs $ Abs (Nest b1 (Nest b2 Empty)) body
-        let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
-        return (binaryLam', recon)
-      atom | canSubst -> substM atom >>= dropSubst . simpl False
-      _ -> error "Not a binary lambda expression"
+    doSimpBinaryLam :: LamBinder i i' -> LamBinder i' i'' -> Block i'' -> SimplifyM i o (Atom o, ReconstructAtom o)
+    doSimpBinaryLam b1 b2 body = do
+      (Abs (b1' `PairB` b2') body', recon) <- simplifyAbs $ Abs (b1 `PairB` b2) body
+      let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
+      return (binaryLam', recon)
 
 data SplitDataNonData n = SplitDataNonData
   { dataTy    :: Type n
@@ -458,10 +450,11 @@ splitDataComponents = \case
       , nonDataTy = ty
       , toSplit = \x -> return (UnitVal, x)
       , fromSplit = \_ x -> return x }
+{-# SPECIALIZE splitDataComponents :: Type o -> SimplifyM i o (SplitDataNonData o) #-}
 
 simplifyAbs
-  :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
-  => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
+  :: (BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
+  => Abs b Block i -> SimplifyM i o (Abs b Block o, ReconstructAtom o)
 simplifyAbs (Abs bs body) = fromPairE <$> do
   substBinders bs \bs' -> do
     ab <- buildScoped $ simplifyBlock body
@@ -480,7 +473,7 @@ simplifyAbs (Abs bs body) = fromPairE <$> do
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
-simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
+simplifyOp :: Emits o => Op o -> SimplifyM i o (Atom o)
 simplifyOp op = case op of
   RecordCons left right -> getType left >>= \case
     StaticRecordTy leftTys -> getType right >>= \case
@@ -562,7 +555,7 @@ simplifyOp op = case op of
   Select c x y -> select c x y
   _ -> emitOp op
 
-simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
+simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
   For d lam@(Lam lamExpr) -> do
     ixTy <- substM $ argType lamExpr
@@ -602,27 +595,27 @@ simplifyHof hof = case hof of
     ans <- emit $ Hof $ RunIO lam'
     applyRecon recon $ Var ans
   Linearize lam -> do
-    ~(lam', IdentityRecon) <- simplifyLam lam
+    (lam', IdentityRecon) <- simplifyLam lam
     linearize lam'
   Transpose lam -> do
-    ~(lam', IdentityRecon) <- simplifyLam lam
+    (lam', IdentityRecon) <- simplifyLam lam
     transpose lam'
   CatchException lam -> do
     (Lam (LamExpr b body), IdentityRecon) <- simplifyLam lam
     dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
   _ -> error $ "not implemented: " ++ pprint hof
 
-simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
+simplifyBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
 
-exceptToMaybeBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
+exceptToMaybeBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
 exceptToMaybeBlock (Block (BlockAnn ty) decls result) = do
   ty' <- substM ty
   exceptToMaybeDecls ty' decls result
 exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr result
 exceptToMaybeBlock _ = error "impossible"
 
-exceptToMaybeDecls :: (Emits o, Simplifier m) => Type o -> Nest Decl i i' -> Expr i' -> m i o (Atom o)
+exceptToMaybeDecls :: Emits o => Type o -> Nest Decl i i' -> Expr i' -> SimplifyM i o (Atom o)
 exceptToMaybeDecls _ Empty result = exceptToMaybeExpr result
 exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResult = do
   maybeResult <- exceptToMaybeExpr rhs
@@ -635,7 +628,7 @@ exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResu
           (\v -> extendSubst (b@> Rename v) $
                    exceptToMaybeDecls (sink resultTy) decls finalResult)
 
-exceptToMaybeExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
+exceptToMaybeExpr :: Emits o => Expr i -> SimplifyM i o (Atom o)
 exceptToMaybeExpr expr = case expr of
   Case e alts resultTy _ -> do
     e' <- substM e
@@ -735,27 +728,27 @@ simplifiedIxInstance
 simplifiedIxInstance ty = do
   let key = EKey ty
   gets (HM.lookup key . fromHashMapE) >>= \case
-    Just a -> return a
-    Nothing -> do
-      a <- simplifyInstance
+    Just a  -> return a
+    Nothing -> {-# SCC simplifyInstance #-} do
+      a <- liftSimplifyM simplifyInstance
       modify (<> (HashMapE $ HM.singleton key a))
       return a
   where
     simplifyInstance = liftSimplifyM do
-      Abs decls methods <- liftBuilder $ buildScoped $ do
-        impl <- getIxImpl $ sink ty
-        return $ ListE [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
-      simpAbs <- buildScoped $ simplifyDecls decls $
-          ListE <$> forM (fromListE methods) simplifyMethod
-      return $ case simpAbs of
-        Abs simpDecls (ListE ~[Lam size, Lam toOrd, Lam fromOrd]) ->
-          SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
-    {-# SCC simplifyInstance #-}
+      Abs decls inst <- liftBuilder $ buildScoped $ getIxImpl $ sink ty
+      simpAbs <- buildScoped $ simplifyDecls decls do
+        (s , IdentityRecon) <- simplifyLam $ ixSize inst
+        (to, IdentityRecon) <- simplifyLam $ toOrdinal inst
+        (fo, IdentityRecon) <- simplifyLam $ unsafeFromOrdinal inst
+        return $! IxImpl{ ixSize = s, toOrdinal = to, unsafeFromOrdinal = fo }
+      return $! case simpAbs of
+        Abs simpDecls IxImpl{..} ->
+          SimpleIxInstance
+            (Abs simpDecls $ fromLam ixSize           )
+            (Abs simpDecls $ fromLam toOrdinal        )
+            (Abs simpDecls $ fromLam unsafeFromOrdinal)
 
-    simplifyMethod :: Simplifier m => (Atom i) -> m i o (Atom o)
-    simplifyMethod method = do
-      (method', IdentityRecon) <- simplifyLam method
-      return method'
+    fromLam = \case Lam l -> l; _ -> error "Not a lambda!"
 {-# SCC simplifiedIxInstance #-}
 
 appSimplifiedIxMethod
@@ -768,3 +761,36 @@ appSimplifiedIxMethod ty method x = do
   Distinct <- getDistinct
   case f' of
     LamExpr fx' fb' -> emitBlock =<< applySubst (fx' @> SubstVal x) fb'
+
+-- === GHC performance hacks ===
+
+{-# SPECIALIZE
+  buildNaryAbs
+    :: (SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
+    => EmptyAbs (Nest Binder) n
+    -> (forall l. DExt n l => [AtomName l] -> SimplifyM i l (e l))
+    -> SimplifyM i n (Abs (Nest Binder) e n) #-}
+
+-- Note [Confuse GHC]
+-- I can't explain this, but for some reason using this function in strategic
+-- places makes GHC produce significantly better code. If we define
+--
+-- simplifyAtom = \case
+--   ...
+--   Con con -> traverse simplifyAtom con
+--   ...
+--
+-- then GHC is reluctant to generate a fast-path worker function for simplifyAtom
+-- that would return unboxed tuples, because (at least that's my guess) it's afraid
+-- that it will have to allocate a reader closure for the traverse, which does not
+-- get inlined. For some reason writing the `confuseGHC >>= \_ -> case atom of ...`
+-- makes GHC do the right thing, i.e. generate unboxed worker + a tiny wrapper that
+-- allocates -- a closure to be passed into traverse.
+--
+-- What's so special about this, I don't know. `return ()` is insufficient and doesn't
+-- make the optimization go through. I'll just take the win for now...
+--
+-- NB: We should revise this whenever we upgrade to a newer GHC version.
+confuseGHC :: SimplifyM i o (DistinctEvidence o)
+confuseGHC = getDistinct
+{-# INLINE confuseGHC #-}
