@@ -474,6 +474,8 @@ instance OutMap Env where
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
+  -- TODO: We might want to reorganize this struct to make this
+  -- do less explicit sinking etc. It's a hot operation!
   extendOutMap (Env (TopEnv scope defs cache loaded)
                     (ModuleEnv imports sm scs objs effs)) frag =
     withExtEvidence frag $ Env
@@ -488,10 +490,10 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
         (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag Nothing))
         (sink objs)
         (sink effs))
+  {-# INLINE extendOutMap #-}
 
 instance ExtOutMap Env EnvFrag where
-  extendOutMap env frag = do
-    let EnvFrag newEnv maybeNewEff = frag
+  extendOutMap env (EnvFrag newEnv maybeNewEff) = do
     case extendOutMap env newEnv of
       Env envTop (ModuleEnv imports sm scs obs oldEff) -> do
         let newEff = case maybeNewEff of
@@ -747,6 +749,7 @@ refreshBinders
   -> (forall l'. DExt n l' => b n l' -> SubstFrag Name n l l' -> m l' a)
   -> m n a
 refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
+{-# INLINE refreshBinders #-}
 
 substBinders
   :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
@@ -758,6 +761,7 @@ substBinders b cont = do
   ab <- substM $ Abs b $ idSubstFrag b
   refreshAbs ab \b' subst ->
     extendSubst subst $ cont b'
+{-# INLINE substBinders #-}
 
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
@@ -2944,7 +2948,9 @@ instance AlphaEqB Decl
 instance AlphaHashableB Decl
 instance ProvesExt  Decl
 instance BindsNames Decl
-instance BindsEnv Decl
+instance BindsEnv Decl where
+  toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
+  {-# INLINE toEnvFrag #-}
 
 instance Pretty Arrow where
   pretty arr = case arr of
@@ -3168,6 +3174,7 @@ instance (BindsEnv b1, BindsEnv b2)
 instance BindsEnv b => (BindsEnv (Nest b)) where
   toEnvFrag Empty = emptyOutFrag
   toEnvFrag (Nest b rest) = toEnvFrag $ PairB b rest
+  {-# INLINABLE toEnvFrag #-}
 
 instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
   toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest

@@ -172,6 +172,7 @@ class InMap (env :: S -> S -> *) (envFrag :: S -> S -> S -> *) | env -> envFrag 
 class (SinkableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -> S -> *) where
   emptyOutFrag :: scopeFrag n n
   -- The scope is here because solver subst concatenation needs it
+  -- TODO: Removing the scope argument would let us implement a faster Applicative for InplaceT!
   catOutFrags  :: Distinct n3 => Scope n3 -> scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
 
 class HasScope scope => OutMap scope where
@@ -694,16 +695,19 @@ applySubst substFrag x = do
   let fullSubst = sink idSubst <>> substFrag
   WithScope scope fullSubst' <- addScope fullSubst
   sinkM $ fmapNames scope (fullSubst' !) x
+{-# INLINE applySubst #-}
 
 applyAbs :: ( SinkableV v, SinkableE e
             , FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
          => Abs b e n -> v c n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (b@>x) body
+{-# INLINE applyAbs #-}
 
 applyNaryAbs :: ( SinkableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
                 , SubstB v b, SinkableE e)
              => Abs b e n -> [v c n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
+{-# INLINE applyNaryAbs #-}
 
 lookupSubstFragProjected :: Color c => SubstFrag v i i' o -> Name c i'
                          -> Either (Name c i) (v c o)
@@ -1273,8 +1277,10 @@ instance (forall n. Functor (m n)) => Functor (SubstReaderT v m i o) where
 instance Monad1 m => Applicative (SubstReaderT v m i o) where
   pure   = SubstReaderT . pure
   {-# INLINE pure #-}
-  liftA2 = liftM2
+  liftA2 f (SubstReaderT x) (SubstReaderT y) = SubstReaderT $ liftA2 f x y
   {-# INLINE liftA2 #-}
+  (SubstReaderT f) <*> (SubstReaderT x) = SubstReaderT $ f <*> x
+  {-# INLINE (<*>) #-}
 
 instance (forall n. Monad (m n)) => Monad (SubstReaderT v m i o) where
   return = SubstReaderT . return
@@ -1552,6 +1558,8 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
   {-# INLINE pure #-}
   liftA2 = liftM2
   {-# INLINE liftA2 #-}
+  f <*> x = do { f' <- f; x' <- x; return (f' x') }
+  {-# INLINE (<*>) #-}
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where

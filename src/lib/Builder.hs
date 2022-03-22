@@ -604,19 +604,19 @@ buildNaryAbs
   => EmptyAbs (Nest Binder) n
   -> (forall l. DExt n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
-buildNaryAbs (EmptyAbs Empty) body = do
-  Distinct <- getDistinct
-  Abs Empty <$> body []
-buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
-  Abs b' (Abs bs' body') <-
-    buildAbs (getNameHint b) ty \v -> do
-      ab <- sinkM $ Abs b (EmptyAbs bs)
-      bs' <- applyAbs ab v
-      buildNaryAbs bs' \vs -> do
-        v' <- sinkM v
-        body $ v' : vs
-  return $ Abs (Nest b' bs') body'
-buildNaryAbs _ _ = error "impossible"
+buildNaryAbs (Abs n UnitE) body = do
+  a <- liftBuilder $ buildNaryAbsRec [] n
+  refreshAbs a \freshNest (ListE freshNames) ->
+    Abs freshNest <$> body freshNames
+{-# INLINE buildNaryAbs #-}
+
+buildNaryAbsRec :: [AtomName n] -> Nest Binder n l -> BuilderM n (Abs (Nest Binder) (ListE AtomName) n)
+buildNaryAbsRec ns x = confuseGHC >>= \_ -> case x of
+  Empty -> return $ Abs Empty $ ListE $ reverse ns
+  Nest b bs -> do
+    refreshAbs (Abs b (EmptyAbs bs)) \b' (EmptyAbs bs') -> do
+      Abs bs'' ns'' <- buildNaryAbsRec (binderName b' : sinkList ns) bs'
+      return $ Abs (Nest b' bs'') ns''
 
 -- TODO: probably deprectate this version in favor of `buildNaryLamExpr`
 buildNaryLam
@@ -1164,6 +1164,11 @@ clampPositive x = do
   select isNegative (IdxRepVal 0) x
 
 data IxImpl n = IxImpl { ixSize :: Atom n, toOrdinal :: Atom n, unsafeFromOrdinal :: Atom n }
+instance GenericE IxImpl where
+  type RepE IxImpl = Atom `PairE` Atom `PairE` Atom
+  fromE IxImpl{..} = ixSize `PairE` toOrdinal `PairE` unsafeFromOrdinal
+  toE (ixSize `PairE` toOrdinal `PairE` unsafeFromOrdinal) = IxImpl{..}
+instance SinkableE IxImpl
 
 getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
 getIxImpl ty = do
@@ -1439,3 +1444,8 @@ instance SubstE AtomSubstVal ReconstructAtom
 instance Pretty (ReconstructAtom n) where
   pretty IdentityRecon = "Identity reconstruction"
   pretty (LamRecon ab) = "Reconstruction abs: " <> pretty ab
+
+-- See Note [Confuse GHC] from Simplify.hs
+confuseGHC :: BuilderM n (DistinctEvidence n)
+confuseGHC = getDistinct
+{-# INLINE confuseGHC #-}

@@ -38,6 +38,10 @@ STACK_FLAGS = --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
 endif
 
+ifeq (1,$(DEX_DUMP_GHC))
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:optimized --ghc-options="-fno-prof-auto -ddump-simpl -ddump-stg -ddump-to-file -dsuppress-all -dno-suppress-type-signatures"
+endif
+
 # libpng
 ifneq (,$(wildcard /usr/local/include/png.h))
 CFLAGS := $(CFLAGS) -I/usr/local/include
