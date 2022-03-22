@@ -48,7 +48,9 @@ module Syntax (
     SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
-    ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
+    ULamExpr (..), UPiExpr (..), UTabLamExpr (..), UTabPiExpr (..),
+    TabLamExpr (..), TabPiType (..),
+    UDeclExpr (..), UForExpr (..), UAlt (..),
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
@@ -70,12 +72,13 @@ module Syntax (
     SubstEnvReaderM,
     EnvReaderM, runEnvReaderM,
     EnvReaderT (..), EnvReader2, EnvExtender2, DistinctEnv (..),
-    naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
+    naryNonDepPiType, naryNonDepTabPiType, nonDepPiType, nonDepTabPiType,
+    fromNonDepPiType, fromNaryNonDepPiType, fromNaryNonDepTabType,
     considerNonDepPiType, trySelectBranch,
-    fromNonDepTabTy, nonDepDataConTys, binderType, bindersTypes,
+    fromNonDepTabType, nonDepDataConTys, binderType, bindersTypes,
     atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    piArgType, lamArgType, piArrow, extendEffRow,
+    HasArgType (..), piArrow, extendEffRow,
     bindingsFragToSynthCandidates,
     getLambdaDicts, getSuperclassProjs, getInstanceDicts,
     getAllowedEffects, withAllowedEffects, todoSinkableProof,
@@ -86,7 +89,9 @@ module Syntax (
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
     Output (..), PassName (..), Result (..), BenchStats,
     IsCUDARequired (..),
-    NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryLamExact, fromNaryPiType,
+    NaryLamExpr (..), NaryPiType (..), fromNaryLam,
+    fromNaryTabLam, fromNaryTabLamExact,
+    fromNaryLamExact, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
     ObjectFile (..), ObjectFileName, CFunName, CFun (..),
@@ -97,10 +102,9 @@ module Syntax (
     pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
-    pattern PairVal, pattern TyKind,
+    pattern PairVal, pattern TyKind, pattern TabTy, pattern TabVal,
     pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTyAbs, pattern TabTy, pattern TabVal,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern BinaryLamExpr,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
@@ -148,6 +152,8 @@ data Atom (n::S) =
    Var (AtomName n)
  | Lam (LamExpr n)
  | Pi  (PiType  n)
+ | TabLam (TabLamExpr n)
+ | TabPi  (TabPiType n)
  | DepPairTy (DepPairType n)
  | DepPair   (Atom n) (Atom n) (DepPairType n)
    -- SourceName is purely for printing
@@ -179,6 +185,7 @@ data Atom (n::S) =
 
 data Expr n =
    App (Atom n) (NonEmpty (Atom n))
+ | TabApp (Atom n) (NonEmpty (Atom n)) -- TODO: put this in PrimOp?
  | Case (Atom n) [Alt n] (Type n) (EffectRow n)
  | Atom (Atom n)
  | Op  (Op  n)
@@ -255,6 +262,12 @@ data LamBinder (n::S) (l::S) =
 data LamExpr (n::S) where
   LamExpr :: LamBinder n l -> Block l -> LamExpr n
 
+data TabLamExpr (n::S) where
+  TabLamExpr :: Binder n l -> Block l -> TabLamExpr n
+
+data TabPiType (n::S) where
+  TabPiType :: Binder n l -> Type l -> TabPiType n
+
 -- TODO: sometimes I wish we'd written these this way instead:
 --   data NaryLamExpr (n::S) where
 --     UnaryLamExpr :: LamExpr n -> NaryLamExpr n
@@ -285,7 +298,6 @@ data Arrow =
    PlainArrow
  | ImplicitArrow
  | ClassArrow
- | TabArrow
  | LinArrow
    deriving (Show, Eq, Generic)
 
@@ -1066,7 +1078,10 @@ data UExpr' (n::S) =
    UVar (SourceNameOr UVar n)
  | ULam (ULamExpr n)
  | UPi  (UPiExpr n)
- | UApp Arrow (UExpr n) (UExpr n)
+ | UApp (UExpr n) (UExpr n)
+ | UTabLam (UTabLamExpr n)
+ | UTabPi  (UTabPiExpr n)
+ | UTabApp (UExpr n) (UExpr n)
  | UDecl (UDeclExpr n)
  | UFor Direction (UForExpr n)
  | UCase (UExpr n) [UAlt n]
@@ -1098,6 +1113,12 @@ data ULamExpr (n::S) where
 
 data UPiExpr (n::S) where
   UPiExpr :: Arrow -> UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
+
+data UTabLamExpr (n::S) where
+  UTabLamExpr :: UPatAnn n l -> UType l -> UTabLamExpr n
+
+data UTabPiExpr (n::S) where
+  UTabPiExpr :: UPatAnn n l -> UType l -> UTabPiExpr n
 
 data UDeclExpr (n::S) where
   UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
@@ -1718,11 +1739,20 @@ infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
-piArgType :: PiType n -> Type n
-piArgType (PiType (PiBinder _ ty _) _ _) = ty
+class HasArgType (e::E) where
+  argType :: e n -> Type n
 
-lamArgType :: LamExpr n -> Type n
-lamArgType (LamExpr (LamBinder _ ty _ _) _) = ty
+instance HasArgType PiType where
+  argType (PiType (PiBinder _ ty _) _ _) = ty
+
+instance HasArgType TabPiType where
+  argType (TabPiType (_:>ty) _) = ty
+
+instance HasArgType LamExpr where
+  argType (LamExpr (LamBinder _ ty _ _) _) = ty
+
+instance HasArgType TabLamExpr where
+  argType (TabLamExpr (_:>ty) _) = ty
 
 piArrow :: PiType n -> Arrow
 piArrow (PiType (PiBinder _ _ arr) _ _) = arr
@@ -1733,6 +1763,11 @@ nonDepPiType arr argTy eff resultTy =
   toConstAbs (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
       return $ PiType (PiBinder b argTy arr) eff' resultTy'
+
+nonDepTabPiType :: ScopeReader m => Type n -> Type n -> m n (TabPiType n)
+nonDepTabPiType argTy resultTy =
+  toConstAbs resultTy >>= \case
+    Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
 
 considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
 considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
@@ -1755,6 +1790,12 @@ naryNonDepPiType arr eff (ty:tys) resultTy = do
   innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
   Pi <$> nonDepPiType arr ty Pure innerFunctionTy
 
+naryNonDepTabPiType :: ScopeReader m =>  [Type n] -> Type n -> m n (Type n)
+naryNonDepTabPiType [] resultTy = return resultTy
+naryNonDepTabPiType (ty:tys) resultTy = do
+  innerFunctionTy <- naryNonDepTabPiType tys resultTy
+  ty ==> innerFunctionTy
+
 fromNaryNonDepPiType :: (ScopeReader m, MonadFail1 m)
                      => [Arrow] -> Type n -> m n ([Type n], EffectRow n, Type n)
 fromNaryNonDepPiType [] ty = return ([], Pure, ty)
@@ -1766,10 +1807,19 @@ fromNaryNonDepPiType (arr:arrs) ty = do
   (argTys, eff, resultTy) <- fromNaryNonDepPiType arrs innerTy
   return (argTy:argTys, eff, resultTy)
 
-fromNonDepTabTy :: (ScopeReader m, MonadFail1 m) => Type n -> m n (Type n, Type n)
-fromNonDepTabTy ty = do
-  (idxTy, Pure, resultTy) <- fromNonDepPiType TabArrow ty
-  return (idxTy, resultTy)
+fromNaryNonDepTabType :: (ScopeReader m, MonadFail1 m)
+                      => [()] -> Type n -> m n ([Type n], Type n)
+fromNaryNonDepTabType [] ty = return ([], ty)
+fromNaryNonDepTabType (():rest) ty = do
+  (argTy, innerTy) <- fromNonDepTabType ty
+  (argTys, resultTy) <- fromNaryNonDepTabType rest innerTy
+  return (argTy:argTys, resultTy)
+
+fromNonDepTabType :: (ScopeReader m, MonadFail1 m) => Type n -> m n (Type n, Type n)
+fromNonDepTabType ty = do
+  TabPi (TabPiType (b:>argTy) resultTy) <- return ty
+  HoistSuccess resultTy' <- return $ hoist b resultTy
+  return (argTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [Type n]
 nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
@@ -1792,7 +1842,7 @@ a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
 a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
 (==>) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a ==> b = Pi <$> nonDepPiType TabArrow a Pure b
+a ==> b = TabPi <$> nonDepTabPiType a b
 
 pattern IntLitExpr :: Int -> UExpr' n
 pattern IntLitExpr x = UIntLit x
@@ -1872,15 +1922,11 @@ pattern RefTy r a = TC (RefType (Just r) a)
 pattern RawRefTy :: Type n -> Type n
 pattern RawRefTy a = TC (RefType Nothing a)
 
-pattern TabTyAbs :: PiType n -> Type n
-pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
+pattern TabTy :: Binder n l -> Type l -> Type n
+pattern TabTy b body = TabPi (TabPiType b body)
 
-pattern TabTy :: PiBinder n l -> Type l -> Type n
-pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
-  where TabTy b body = Pi (PiType b Pure body)
-
-pattern TabVal :: LamBinder n l -> Block l -> Atom n
-pattern TabVal b body <- Lam (LamExpr b@(LamBinder _ _ TabArrow _) body)
+pattern TabVal :: Binder n l -> Block l -> Atom n
+pattern TabVal b body = TabLam (TabLamExpr b body)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
@@ -1927,6 +1973,27 @@ fromNaryLam maxDepth = \case
           return $ (d + 1, NaryLamExpr (NonEmptyNest (b:>ty) (Nest b2 bs2)) effs2 body2)
         _ -> Nothing
   _ -> Nothing
+
+fromNaryTabLam :: Int -> Atom n -> Maybe (Int, NaryLamExpr n)
+fromNaryTabLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
+fromNaryTabLam maxDepth = \case
+  (TabLam (TabLamExpr (b:>ty) body)) ->
+    extend <|> (Just $ (1, NaryLamExpr (NonEmptyNest (b:>ty) Empty) Pure body))
+    where
+      extend = case body of
+        AtomicBlock lam | maxDepth > 1 -> do
+          (d, NaryLamExpr (NonEmptyNest b2 bs2) effs2 body2) <- fromNaryTabLam (maxDepth - 1) lam
+          return $ (d + 1, NaryLamExpr (NonEmptyNest (b:>ty) (Nest b2 bs2)) effs2 body2)
+        _ -> Nothing
+  _ -> Nothing
+
+-- first argument is the number of args expected
+fromNaryTabLamExact :: Int -> Atom n -> Maybe (NaryLamExpr n)
+fromNaryTabLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
+fromNaryTabLamExact exactDepth lam = do
+  (realDepth, naryLam) <- fromNaryTabLam exactDepth lam
+  guard $ realDepth == exactDepth
+  return naryLam
 
 -- first argument is the number of args expected
 fromNaryPiType :: Int -> Type n -> Maybe (NaryPiType n)
@@ -2188,7 +2255,7 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
 
 instance GenericE Atom where
   type RepE Atom =
-      EitherE5
+      EitherE6
               (EitherE2
                    -- We isolate those few cases (and reorder them
                    -- compared to the data definition) because they need special
@@ -2196,9 +2263,12 @@ instance GenericE Atom where
                    -- like containers
   {- Var -}        AtomName
   {- ProjectElt -} ( LiftE (NE.NonEmpty Int) `PairE` AtomName )
-            ) (EitherE6
+            ) (EitherE4
   {- Lam -}        LamExpr
   {- Pi -}         PiType
+  {- TabLam -}     TabLamExpr
+  {- TabPi -}      TabPiType
+            ) (EitherE4
   {- DepPairTy -}  DepPairType
   {- DepPair -}    ( Atom `PairE` Atom `PairE` DepPairType)
   {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
@@ -2230,31 +2300,33 @@ instance GenericE Atom where
     ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
     Lam lamExpr -> Case1 (Case0 lamExpr)
     Pi  piExpr  -> Case1 (Case1 piExpr)
-    DepPairTy ty -> Case1 (Case2 ty)
-    DepPair l r ty -> Case1 (Case3 $ l `PairE` r `PairE` ty)
-    DataCon printName defName params con args -> Case1 $ Case4 $
+    TabLam lamExpr -> Case1 (Case2 lamExpr)
+    TabPi  piExpr  -> Case1 (Case3 piExpr)
+    DepPairTy ty -> Case2 (Case0 ty)
+    DepPair l r ty -> Case2 (Case1 $ l `PairE` r `PairE` ty)
+    DataCon printName defName params con args -> Case2 $ Case2 $
       LiftE (printName, con) `PairE`
             defName          `PairE`
       ListE params           `PairE`
       ListE args
-    TypeCon sourceName defName params -> Case1 $ Case5 $
+    TypeCon sourceName defName params -> Case2 $ Case3 $
       LiftE sourceName `PairE` defName `PairE` ListE params
-    LabeledRow elems    -> Case2 $ Case0 $ elems
-    Record items        -> Case2 $ Case1 $ ComposeE items
-    RecordTy elems -> Case2 $ Case2 elems
-    Variant extItems l con payload -> Case2 $ Case3 $
+    LabeledRow elems    -> Case3 $ Case0 $ elems
+    Record items        -> Case3 $ Case1 $ ComposeE items
+    RecordTy elems -> Case3 $ Case2 elems
+    Variant extItems l con payload -> Case3 $ Case3 $
       ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
-    VariantTy extItems  -> Case2 $ Case4 $ ExtLabeledItemsE extItems
-    Con con -> Case3 $ Case0 $ ComposeE con
-    TC  con -> Case3 $ Case1 $ ComposeE con
-    Eff effs -> Case4 $ Case0 $ effs
-    ACase scrut alts ty -> Case4 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
+    VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
+    Con con -> Case4 $ Case0 $ ComposeE con
+    TC  con -> Case4 $ Case1 $ ComposeE con
+    Eff effs -> Case5 $ Case0 $ effs
+    ACase scrut alts ty -> Case5 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
     DataConRef defName params bs ->
-      Case4 $ Case2 $ defName `PairE` ListE params `PairE` bs
+      Case5 $ Case2 $ defName `PairE` ListE params `PairE` bs
     BoxedRef ptrsAndSizes ab ->
-      Case4 $ Case3 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
+      Case5 $ Case3 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
     DepPairRef lhs rhs ty ->
-      Case4 $ Case4 $ lhs `PairE` rhs `PairE` ty
+      Case5 $ Case4 $ lhs `PairE` rhs `PairE` ty
 
   toE atom = case atom of
     Case0 val -> case val of
@@ -2264,17 +2336,21 @@ instance GenericE Atom where
     Case1 val -> case val of
       Case0 lamExpr -> Lam lamExpr
       Case1 piExpr  -> Pi  piExpr
-      Case2 ty      -> DepPairTy ty
-      Case3 (l `PairE` r `PairE` ty) -> DepPair l r ty
-      Case4 ( LiftE (printName, con) `PairE`
+      Case2 lamExpr -> TabLam lamExpr
+      Case3 piExpr  -> TabPi  piExpr
+      _ -> error "impossible"
+    Case2 val -> case val of
+      Case0 ty      -> DepPairTy ty
+      Case1 (l `PairE` r `PairE` ty) -> DepPair l r ty
+      Case2 ( LiftE (printName, con) `PairE`
                     defName          `PairE`
               ListE params           `PairE`
               ListE args ) ->
         DataCon printName defName params con args
-      Case5 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
+      Case3 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
         TypeCon sourceName defName params
       _ -> error "impossible"
-    Case2 val -> case val of
+    Case3 val -> case val of
       Case0 elems -> LabeledRow elems
       Case1 (ComposeE items) -> Record items
       Case2 elems -> RecordTy elems
@@ -2283,11 +2359,11 @@ instance GenericE Atom where
               payload) -> Variant extItems l con payload
       Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
-    Case3 val -> case val of
+    Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
       Case1 (ComposeE con) -> TC con
       _ -> error "impossible"
-    Case4 val -> case val of
+    Case5 val -> case val of
       Case0 effs -> Eff effs
       Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       Case2 (defName `PairE` ListE params `PairE` bs) ->
@@ -2336,25 +2412,28 @@ trySelectBranch e = case e of
 
 instance GenericE Expr where
   type RepE Expr =
-     EitherE5
+     EitherE6
+        (Atom `PairE` Atom `PairE` ListE Atom)
         (Atom `PairE` Atom `PairE` ListE Atom)
         (Atom `PairE` ListE Alt `PairE` Type `PairE` EffectRow)
         (Atom)
         (ComposeE PrimOp Atom)
         (ComposeE PrimHof Atom)
   fromE = \case
-    App f (x:|xs)  -> Case0 (f `PairE` x `PairE` ListE xs)
-    Case e alts ty eff -> Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff)
-    Atom x         -> Case2 (x)
-    Op op          -> Case3 (ComposeE op)
-    Hof hof        -> Case4 (ComposeE hof)
+    App    f (x:|xs)  -> Case0 (f `PairE` x `PairE` ListE xs)
+    TabApp f (x:|xs)  -> Case1 (f `PairE` x `PairE` ListE xs)
+    Case e alts ty eff -> Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff)
+    Atom x         -> Case3 (x)
+    Op op          -> Case4 (ComposeE op)
+    Hof hof        -> Case5 (ComposeE hof)
 
   toE = \case
-    Case0 (f `PairE` x `PairE` ListE xs)    -> App f (x:|xs)
-    Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
-    Case2 (x)                               -> Atom x
-    Case3 (ComposeE op)                     -> Op op
-    Case4 (ComposeE hof)                    -> Hof hof
+    Case0 (f `PairE` x `PairE` ListE xs)    -> App    f (x:|xs)
+    Case1 (f `PairE` x `PairE` ListE xs)    -> TabApp f (x:|xs)
+    Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
+    Case3 (x)                               -> Atom x
+    Case4 (ComposeE op)                     -> Op op
+    Case5 (ComposeE hof)                    -> Hof hof
     _ -> error "impossible"
 
 instance SinkableE Expr
@@ -2518,6 +2597,21 @@ instance SubstE AtomSubstVal LamExpr
 deriving instance Show (LamExpr n)
 deriving via WrapE LamExpr n instance Generic (LamExpr n)
 
+instance GenericE TabLamExpr where
+  type RepE TabLamExpr = Abs Binder Block
+  fromE (TabLamExpr b block) = Abs b block
+  toE   (Abs b block) = TabLamExpr b block
+
+instance SinkableE TabLamExpr
+instance HoistableE  TabLamExpr
+instance AlphaEqE TabLamExpr
+instance AlphaHashableE TabLamExpr
+instance SubstE Name TabLamExpr
+instance SubstE AtomSubstVal TabLamExpr
+deriving instance Show (TabLamExpr n)
+deriving via WrapE TabLamExpr n instance Generic (TabLamExpr n)
+
+
 instance GenericE PiBinding where
   type RepE PiBinding = PairE (LiftE Arrow) Type
   fromE (PiBinding arr ty) = PairE (LiftE arr) ty
@@ -2576,6 +2670,20 @@ instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
 deriving instance Show (PiType n)
 deriving via WrapE PiType n instance Generic (PiType n)
+
+instance GenericE TabPiType where
+  type RepE TabPiType = Abs Binder Type
+  fromE (TabPiType b resultTy) = Abs b resultTy
+  toE   (Abs b resultTy) = TabPiType b resultTy
+
+instance SinkableE TabPiType
+instance HoistableE  TabPiType
+instance AlphaEqE TabPiType
+instance AlphaHashableE TabPiType
+instance SubstE Name TabPiType
+instance SubstE AtomSubstVal TabPiType
+deriving instance Show (TabPiType n)
+deriving via WrapE TabPiType n instance Generic (TabPiType n)
 
 instance GenericE NaryPiType where
   type RepE NaryPiType = Abs (PairB PiBinder (Nest PiBinder)) (PairE EffectRow Type)
@@ -2841,7 +2949,6 @@ instance BindsEnv Decl
 instance Pretty Arrow where
   pretty arr = case arr of
     PlainArrow     -> "->"
-    TabArrow       -> "=>"
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
     ClassArrow     -> "?=>"
@@ -2953,9 +3060,11 @@ instance Store (DataConDef n)
 instance Store (Block n)
 instance Store (LamBinder n l)
 instance Store (LamExpr n)
+instance Store (TabLamExpr n)
 instance Store (PiBinding n)
 instance Store (PiBinder n l)
-instance Store (PiType  n)
+instance Store (PiType n)
+instance Store (TabPiType n)
 instance Store (DepPairType  n)
 instance Store Arrow
 instance Store (ClassDef       n)
@@ -3040,6 +3149,8 @@ deriving instance Show (UBinder s n l)
 deriving instance Show (UDataDefTrail n)
 deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
+deriving instance Show (UTabLamExpr n)
+deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDeclExpr n)
 deriving instance Show (UDataDef n)
 deriving instance Show (UDecl n l)

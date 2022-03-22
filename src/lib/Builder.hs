@@ -26,6 +26,7 @@ module Builder (
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
+  tabApp, naryTabApp,
   indexRef, naryIndexRef,
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
@@ -467,7 +468,11 @@ buildTabLam
   => NameHint -> Type n
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildTabLam hint ty body = buildLam hint TabArrow ty Pure body
+buildTabLam hint ty fBody = do
+  withFreshBinder hint ty \b -> do
+    let v = binderName b
+    body <- withAllowedEffects Pure $ buildBlock $ fBody $ sink v
+    return $ TabLam $ TabLamExpr (b:>ty) body
 
 buildLam
   :: ScopableBuilder m
@@ -763,10 +768,10 @@ buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
 unzipTab :: (Emits n, Builder m) => Atom n -> m n (Atom n, Atom n)
 unzipTab tab = do
   TabTy b _ <- getType tab
-  fsts <- liftEmitBuilder $ buildLam "i" TabArrow (binderType b) Pure \i ->
-            liftM fst $ app (sink tab) (Var i) >>= fromPair
-  snds <- liftEmitBuilder $ buildLam "i" TabArrow (binderType b) Pure \i ->
-            liftM snd $ app (sink tab) (Var i) >>= fromPair
+  fsts <- liftEmitBuilder $ buildTabLam "i" (binderType b) \i ->
+            liftM fst $ tabApp (sink tab) (Var i) >>= fromPair
+  snds <- liftEmitBuilder $ buildTabLam "i" (binderType b) \i ->
+            liftM snd $ tabApp (sink tab) (Var i) >>= fromPair
   return (fsts, snds)
 
 emitRunWriter
@@ -837,9 +842,9 @@ maybeTangentType :: Type n -> Maybe (Type n)
 maybeTangentType ty = case ty of
   StaticRecordTy items -> StaticRecordTy <$> mapM maybeTangentType items
   TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
-  Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) -> do
+  TabTy b bodyTy -> do
     bodyTanTy <- maybeTangentType bodyTy
-    return $ Pi (PiType b Pure bodyTanTy)
+    return $ TabTy b bodyTanTy
   TC con    -> case con of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
@@ -866,7 +871,7 @@ addTangent x y = do
       elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
       return $ Record $ restructure elems tys
     TabTy b _  -> liftEmitBuilder $ buildFor (getNameHint b) Fwd (binderType b) \i -> do
-      bindM2 addTangent (app (sink x) (Var i)) (app (sink y) (Var i))
+      bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
     TC con -> case con of
       BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
       BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
@@ -1089,6 +1094,14 @@ naryApp f xs = case nonEmpty xs of
   Nothing -> return f
   Just xs' -> Var <$> emit (App f xs')
 
+tabApp :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+tabApp x i = Var <$> emit (TabApp x (i:|[]))
+
+naryTabApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
+naryTabApp f xs = case nonEmpty xs of
+  Nothing -> return f
+  Just xs' -> Var <$> emit (TabApp f xs')
+
 indexRef :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 indexRef ref i = emitOp $ IndexRef ref i
 
@@ -1129,14 +1142,14 @@ liftMonoidCombine :: (Builder m, Emits n)
                   -> m n (Atom n)
 liftMonoidCombine accTy bc x y = do
   Pi baseCombineTy <- getType bc
-  let baseTy = piArgType baseCombineTy
+  let baseTy = argType baseCombineTy
   alphaEq accTy baseTy >>= \case
     True -> naryApp bc [x, y]
     False -> case accTy of
       TabTy b eltTy -> do
         liftEmitBuilder $ buildFor "i" Fwd (binderType b) \i -> do
-          xElt <- app (sink x) (Var i)
-          yElt <- app (sink y) (Var i)
+          xElt <- tabApp (sink x) (Var i)
+          yElt <- tabApp (sink y) (Var i)
           eltTy' <- applySubst (b@>i) eltTy
           liftMonoidCombine eltTy' (sink bc) xElt yElt
       _ -> error $ "Base monoid type mismatch: can't lift " ++
@@ -1224,7 +1237,7 @@ reduceE monoid xs = liftEmitBuilder do
   a' <- return $ ignoreHoistFailure $ hoist n a
   getSnd =<< emitRunWriter "ref" a' monoid \_ ref ->
     buildFor "i" Fwd (sink $ binderType n) \i -> do
-      x <- app (sink xs) (Var i)
+      x <- tabApp (sink xs) (Var i)
       emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid n)
@@ -1241,7 +1254,7 @@ mapE :: (Emits n, ScopableBuilder m)
 mapE f xs = do
   TabTy n _ <- getType xs
   buildFor (getNameHint n) Fwd (binderType n) \i -> do
-    x <- app (sink xs) (Var i)
+    x <- tabApp (sink xs) (Var i)
     f x
 
 -- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =

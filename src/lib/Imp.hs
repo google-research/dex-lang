@@ -262,30 +262,31 @@ translateExpr maybeDest expr = case expr of
   App f' xs' -> do
     f <- substM f'
     xs <- mapM substM xs'
-    getType f >>= \case
-      TabTy _ _ -> do
-        case fromNaryLamExact (length xs) f of
-          Just (NaryLamExpr bs _ body) -> do
-            let subst = bs @@> fmap SubstVal xs
-            body' <- applySubst subst body
-            dropSubst $ translateBlock maybeDest body'
-          _ -> notASimpExpr
-      _ -> case f of
-        Var v -> lookupAtomName v >>= \case
-          FFIFunBound _ v' -> do
-            resultTy <- getType $ App f xs
-            scalarArgs <- liftM toList $ mapM fromScalarAtom xs
-            results <- emitMultiReturnInstr $ ICall v' scalarArgs
-            restructureScalarOrPairType resultTy results
-          SimpLamBound piTy _ -> do
-            if length (toList xs') /= numNaryPiArgs piTy
-              then notASimpExpr
-              else do
-                Just fImp <- queryImpCache v
-                result <- emitCall piTy fImp $ toList xs
-                returnVal result
-          _ -> notASimpExpr
+    case f of
+      Var v -> lookupAtomName v >>= \case
+        FFIFunBound _ v' -> do
+          resultTy <- getType $ App f xs
+          scalarArgs <- liftM toList $ mapM fromScalarAtom xs
+          results <- emitMultiReturnInstr $ ICall v' scalarArgs
+          restructureScalarOrPairType resultTy results
+        SimpLamBound piTy _ -> do
+          if length (toList xs') /= numNaryPiArgs piTy
+            then notASimpExpr
+            else do
+              Just fImp <- queryImpCache v
+              result <- emitCall piTy fImp $ toList xs
+              returnVal result
         _ -> notASimpExpr
+      _ -> notASimpExpr
+  TabApp f' xs' -> do
+    f <- substM f'
+    xs <- mapM substM xs'
+    case fromNaryTabLamExact (length xs) f of
+      Just (NaryLamExpr bs _ body) -> do
+        let subst = bs @@> fmap SubstVal xs
+        body' <- applySubst subst body
+        dropSubst $ translateBlock maybeDest body'
+      _ -> notASimpExpr
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
   Case e alts ty _ -> do
@@ -313,8 +314,8 @@ translateExpr maybeDest expr = case expr of
 toImpOp :: forall m i o .
            (Imper m, Emits o) => MaybeDest o -> PrimOp (Atom o) -> m i o (Atom o)
 toImpOp maybeDest op = case op of
-  TabCon ~(Pi tabTy) rows -> do
-    let ixTy = piArgType tabTy
+  TabCon ~(TabPi tabTy) rows -> do
+    let ixTy = argType tabTy
     resultTy <- resultTyM
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) \(i, row) -> do
@@ -680,9 +681,9 @@ buildTabLamDest
   -> (forall l. (Emits l, DExt n l) => AtomName l -> DestM l (Atom l))
   -> DestM n (Atom n)
 buildTabLamDest hint ty cont = do
-  Abs (b:>_) body <- buildAbsDest hint (LamBinding TabArrow ty) \v ->
+  Abs (b:>_) body <- buildAbsDest hint (MiscBound ty) \v ->
     buildBlockDest $ sinkM v >>= cont
-  return $ Lam $ LamExpr (LamBinder b ty TabArrow Pure) body
+  return $ TabLam $ TabLamExpr (b:>ty) body
 
 instance EnvExtender DestM where
   refreshAbs ab cont = DestM $ StateT1 \s -> do
@@ -841,7 +842,7 @@ buildDepDest idxs depVars hint ty cont =
 -- sizes can't.
 makeDestRec :: forall n. Emits n => DestIdxs n -> DepVars n -> Type n -> DestM n (Dest n)
 makeDestRec idxs depVars ty = case ty of
-  TabTy (PiBinder b iTy _) bodyTy -> do
+  TabTy (b:>iTy) bodyTy -> do
     if depVars `areFreeIn` iTy
       then do
         AbsPtrs absDest ptrsInfo <- buildLocalDest $ makeSingleDest [] $ sink ty
@@ -952,7 +953,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         (RecordRef refs, Record vals)
           | fmap (const ()) refs == fmap (const ()) vals -> do
               zipWithM_ copyRec (toList refs) (toList vals)
-        (TabRef _, Lam _) -> zipTabDestAtom copyRec dest src
+        (TabRef _, TabLam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
           src' <- fromScalarAtom src
@@ -987,15 +988,16 @@ zipTabDestAtom :: (Emits n, ImpBuilder m)
                => (forall l. (Emits l, DExt n l) => Dest l -> Atom l -> m l ())
                -> Dest n -> Atom n -> m n ()
 zipTabDestAtom f dest src = do
-  Con (TabRef (Lam (LamExpr b _))) <- return dest
-  Lam (LamExpr b' _)               <- return src
+  Con (TabRef (TabLam (TabLamExpr b _))) <- return dest
+  TabLam (TabLamExpr b' _)               <- return src
   checkAlphaEq (binderType b) (binderType b')
   let idxTy = binderType b
   n <- indexSetSizeImp idxTy
   emitLoop "i" Fwd n \i -> do
     idx <- intToIndexImp (sink idxTy) i
     destIndexed <- destGet (sink dest) idx
-    srcIndexed  <- runSubstReaderT idSubst $ translateExpr Nothing (App (sink src) (idx:|[]))
+    srcIndexed  <- runSubstReaderT idSubst $
+      translateExpr Nothing (TabApp (sink src) (idx:|[]))
     f destIndexed srcIndexed
 
 zipWithRefConM :: Monad m => (Dest n -> Atom n -> m ()) -> Con n -> Con n -> m ()
@@ -1028,7 +1030,7 @@ alloc :: (ImpBuilder m, Emits n) => Type n -> m n (Dest n)
 alloc ty = makeAllocDest Managed ty
 
 indexDest :: (Builder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
-indexDest (Con (TabRef (Lam (LamExpr b body)))) i = do
+indexDest (Con (TabRef (TabVal b body))) i = do
   body' <- applyAbs (Abs b body) $ SubstVal i
   emitBlock body'
 indexDest dest _ = error $ pprint dest
@@ -1049,8 +1051,8 @@ loadDest (BoxedRef ptrsSizes absDest) = do
 loadDest (Con dest) = do
  case dest of
    BaseTypeRef ptr -> unsafePtrLoad ptr
-   TabRef (Lam (LamExpr b body)) ->
-     liftEmitBuilder $ buildLam (getNameHint b) TabArrow (binderType b) Pure \i -> do
+   TabRef (TabLam (TabLamExpr b body)) ->
+     liftEmitBuilder $ buildTabLam (getNameHint b) (binderType b) \i -> do
        body' <- applySubst (b@>i) body
        result <- emitBlock body'
        loadDest result

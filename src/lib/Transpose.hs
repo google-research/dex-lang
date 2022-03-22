@@ -132,9 +132,8 @@ transposeExpr expr ct = case expr of
   Atom atom     -> transposeAtom atom ct
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
-  App x is -> do
-    -- TODO: we should check that it's a table type here, but it's awkward to do
-    -- because we need something in the o-space to do that.
+  App _ _ -> error "shouldn't have App left"
+  TabApp x is -> do
     is' <- mapM substNonlin is
     case x of
       Var v -> do
@@ -201,7 +200,7 @@ transposeOp op ct = case op of
     idxTy <- substNonlin $ binderType b
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- intToIndex idxTy (IdxRepVal $ fromIntegral ordinalIdx)
-      app ct i >>= transposeAtom e
+      tabApp ct i >>= transposeAtom e
   IndexRef     _ _      -> notImplemented
   ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
@@ -252,15 +251,17 @@ transposeAtom atom ct = case atom of
   TabVal b body   -> do
     ty <- substNonlin $ binderType b
     void $ buildFor "i" Fwd ty \i -> do
-      ct' <- app (sink ct) (Var i)
+      ct' <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
       return UnitVal
   Lam _           -> notTangent
+  TabLam _        -> notTangent
   TypeCon _ _ _   -> notTangent
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent
   VariantTy _     -> notTangent
   Pi _            -> notTangent
+  TabPi _         -> notTangent
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
@@ -282,7 +283,7 @@ transposeHof hof ct = case hof of
   For ann (Lam (LamExpr b  body)) -> do
     ty <- substNonlin $ binderType b
     void $ buildForAnn (getNameHint b) (flipDir ann) ty \i -> do
-      ctElt <- app (sink ct) (Var i)
+      ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal
   RunState s (Lam (BinaryLamExpr hB refB body)) -> do

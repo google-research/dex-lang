@@ -34,6 +34,7 @@ class (ScopableBuilder2 m, SubstReader Name m)
 traverseExprDefault :: Emits o => GenericTraverser m => Expr i -> m i o (Expr o)
 traverseExprDefault expr = case expr of
   App g xs -> App <$> tge g <*> mapM tge xs
+  TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
   Op  op  -> Op   <$> mapM tge op
   Hof hof -> Hof  <$> mapM tge hof
@@ -58,6 +59,18 @@ traverseAtomDefault atom = case atom of
     withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
       extendRenamer (b@>binderName b') $
         Pi <$> (PiType b' <$> substM eff <*> tge resultTy)
+  TabLam (TabLamExpr (b:>ty) body) -> do
+    ty' <- tge ty
+    let hint = getNameHint b
+    withFreshBinder hint ty' \b' -> do
+      extendRenamer (b@>binderName b') do
+        body' <- tge body
+        return $ TabLam $ TabLamExpr (b':>ty') body'
+  TabPi (TabPiType (b:>ty) resultTy) -> do
+    ty' <- tge ty
+    withFreshBinder (getNameHint b) ty' \b' -> do
+      extendRenamer (b@>binderName b') $
+        TabPi <$> (TabPiType (b':>ty') <$> tge resultTy)
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom

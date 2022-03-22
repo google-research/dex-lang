@@ -119,6 +119,13 @@ class App(Expr):
     return f'({self.fun.pprint()}) ({self.argument.pprint()})'
 
 @dataclass
+class TabApp(Expr):
+  fun: Expr
+  argument: Expr
+  def pprint(self) -> str:
+    return f'({self.fun.pprint()}).({self.argument.pprint()})'
+
+@dataclass
 class Pattern:
   pass
 
@@ -451,7 +458,7 @@ def _concatenate_lowering(ctx, *xs, dimension):
         Decl(xs_v, Table(tuple(xs)))
       ], App(App(Var('unsafeCastTable'), FinType(Literal(dim_size * len(xs)))),
               For((i,), (PairType(FinType(Literal(len(xs))), FinType(Literal(dim_size))),),
-                  App(App(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
+                  TabApp(TabApp(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
   # Irregular concatenation
   # TODO: Generate specialized code
   xs_v = ctx.fresh('xs')
