@@ -130,6 +130,10 @@ simplifyExpr expr = case expr of
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
     simplifyApp f' xs'
+  TabApp f xs -> do
+    xs' <- mapM simplifyAtom xs
+    f' <- simplifyAtom f
+    simplifyTabApp f' xs'
   Atom x -> simplifyAtom x
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
@@ -228,21 +232,43 @@ simplifyApp f xs = case fromNaryLam (NE.length xs) f of
       dropSubst $ simplifyExpr $ Case e alts' resultTy eff
     _ -> naryApp f $ toList xs
 
+-- TODO: de-dup this and simplifyApp?
+simplifyTabApp :: (Emits o, Simplifier m) => Atom o -> NonEmpty (Atom o) -> m i o (Atom o)
+simplifyTabApp f xs = case fromNaryTabLam (NE.length xs) f of
+  Just (bsCount, NaryLamExpr bs _ body) -> do
+    let (xsPref, xsRest) = NE.splitAt bsCount xs
+    ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyBlock body
+    case nonEmpty xsRest of
+      Nothing    -> return ans
+      Just rest' -> simplifyTabApp ans rest'
+  _ -> case f of
+    ACase e alts ty -> do
+      -- TODO: Don't rebuild the alts here! Factor out Case simplification
+      -- with lazy substitution and call it from here!
+      resultTy <- getTabAppType ty $ toList xs
+      alts' <- forM alts \(Abs bs a) -> do
+        buildAlt (EmptyAbs bs) \vs -> do
+          a' <- applySubst (bs@@>vs) a
+          naryTabApp a' (map sink $ toList xs)
+      dropSubst $ simplifyExpr $ Case e alts' resultTy Pure
+    _ -> naryTabApp f $ toList xs
+
 simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
 simplifyAtom atom = case atom of
   Var v -> simplifyVar v
   -- Tables that only contain data aren't necessarily getting inlined,
   -- so this might be the last chance to simplify them.
-  TabVal _ _ -> do
+  TabLam (TabLamExpr b body) -> do
     -- TODO(subst): Use EnvReaderI to getType before subst
     substM atom >>= getType >>= isData >>= \case
       True -> do
-        ~(tab, IdentityRecon) <- simplifyLam atom
-        return tab
+        (Abs (Nest b' Empty) body', IdentityRecon) <- simplifyAbs $ Abs (Nest b Empty) body
+        return $ TabLam $ TabLamExpr b' body'
       False -> substM atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
-  Lam _ -> substM atom
-  Pi  _ -> substM atom
+  Lam _    -> substM atom
+  Pi  _   -> substM atom
+  TabPi _ -> substM atom
   DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
   Con con -> Con <$> mapM simplifyAtom con
@@ -473,14 +499,14 @@ simplifyOp op = case op of
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
 simplifyHof hof = case hof of
   For d lam@(Lam lamExpr) -> do
-    ixTy <- substM $ lamArgType lamExpr
+    ixTy <- substM $ argType lamExpr
     (lam', recon) <- simplifyLam lam
     ans <- liftM Var $ emit $ Hof $ For d lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
-        buildPureLam "i" TabArrow ixTy \i' -> do
-          elt <- app (sink ans) $ Var i'
+        buildTabLam "i" ixTy \i' -> do
+          elt <- tabApp (sink ans) $ Var i'
           applyReconAbs (sink reconAbs) elt
   While body -> do
     (lam', IdentityRecon) <- simplifyLam body

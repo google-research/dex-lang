@@ -74,7 +74,6 @@ prepareFunctionForExport f = do
                 PlainArrow    -> return ExplicitArg
                 ImplicitArrow -> return ImplicitArg
                 ClassArrow    -> invalidArrow
-                TabArrow      -> invalidArrow
                 LinArrow      -> invalidArrow
               ety <- toExportType ty
               goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
@@ -145,7 +144,7 @@ prepareFunctionForExport f = do
       where
         go shape = \case
           BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
-          TabTy  (PiBinder b (Fin n) _) a -> do
+          TabTy  (b:>Fin n) a -> do
             dim <- case n of
               Var v       -> Just (Left v)
               IdxRepVal s -> Just (Right $ fromIntegral s)

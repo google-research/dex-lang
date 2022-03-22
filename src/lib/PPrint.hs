@@ -24,7 +24,7 @@ module PPrint (
 import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Exts (Constraint)
 import GHC.Float
-import Data.Foldable (toList)
+import Data.Foldable (toList, fold)
 import Data.Functor ((<&>))
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.List.NonEmpty as NE
@@ -129,6 +129,7 @@ instance Pretty (Expr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr n) where
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
+  prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Op  op ) = prettyPrec op
   prettyPrec (Hof (For ann (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
@@ -179,12 +180,14 @@ instance Pretty (PiBinder n l) where
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
   prettyPrec lamExpr = case lamExpr of
-    LamExpr (LamBinder _ _ TabArrow _) _ ->
-      atPrec LowestPrec $ "\\for"
-      <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
     LamExpr (LamBinder _ _ arr _) _ ->
       atPrec LowestPrec $ "\\"
       <> prettyLamHelper lamExpr (PrettyLam arr)
+
+instance Pretty (TabLamExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (TabLamExpr n) where
+  prettyPrec (TabLamExpr b body) =
+    atPrec LowestPrec $ "view" <+> p b <+> "." <+> p body
 
 instance Pretty (DepPairType n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (DepPairType n) where
@@ -197,6 +200,8 @@ instance PrettyPrec (Atom n) where
     Var v -> atPrec ArgPrec $ p v
     Lam lamExpr -> prettyPrec lamExpr
     Pi piType -> atPrec LowestPrec $ align $ p piType
+    TabLam lamExpr -> prettyPrec lamExpr
+    TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <> ",>" <+> p y
@@ -287,13 +292,25 @@ forStr ParallelFor      = "pfor"
 
 instance Pretty (PiType n) where
   pretty (PiType (PiBinder b ty arr) eff body) = let
-    prettyBinder = if binderName b `isFreeIn` PairE eff body
-                     then parens $ p (b:>ty)
-                     else p ty
+    prettyBinder = prettyBinderHelper (b:>ty) (PairE eff body)
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
     in prettyBinder <> (group $ line <> p arr <+> prettyBody)
+
+instance Pretty (TabPiType n) where
+  pretty (TabPiType b body) = let
+    prettyBinder = prettyBinderHelper b body
+    prettyBody = case body of
+      Pi subpi -> pretty subpi
+      _ -> pLowest body
+    in prettyBinder <> (group $ line <> "=>" <+> prettyBody)
+
+prettyBinderHelper :: HoistableE e => Binder n l -> e l -> Doc ann
+prettyBinderHelper (b:>ty) body =
+  if binderName b `isFreeIn` body
+    then parens $ p (b:>ty)
+    else p ty
 
 data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 
@@ -493,12 +510,22 @@ instance PrettyPrec (ULamExpr n) where
                           PlainArrow -> "."
                           _          -> " " <> p arr
 
+instance Pretty (UTabLamExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UTabLamExpr n) where
+  prettyPrec (UTabLamExpr pat body) = atPrec LowestPrec $ align $
+    "view" <> p pat <> "." <+> nest 2 (pLowest body)
+
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
   prettyPrec (UPiExpr arr pat Pure ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> pLowest ty
   prettyPrec (UPiExpr arr pat _ ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> "{todo: pretty effects}" <+> pLowest ty
+
+instance Pretty (UTabPiExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UTabPiExpr n) where
+  prettyPrec (UTabPiExpr pat ty) = atPrec LowestPrec $ align $
+    p pat <+> "=>" <+> pLowest ty
 
 instance Pretty (UDeclExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UDeclExpr n) where
@@ -510,14 +537,16 @@ instance PrettyPrec (UExpr' n) where
   prettyPrec expr = case expr of
     UVar v -> atPrec ArgPrec $ p v
     ULam lam -> prettyPrec lam
-    UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
-    UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
+    UTabLam lam -> prettyPrec lam
+    UApp    f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
+    UTabApp f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UFor dir (UForExpr binder body) ->
       atPrec LowestPrec $ kw <+> p binder <> "."
                              <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi piType -> prettyPrec piType
+    UTabPi piType -> prettyPrec piType
     UDecl declExpr -> prettyPrec declExpr
     UHole -> atPrec ArgPrec "_"
     UTypeAnn v ty -> atPrec LowestPrec $
@@ -624,6 +653,9 @@ prettyUFieldRowPat separator bindwith pat =
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
 spaced xs = hsep $ map p $ toList xs
+
+dotted :: (Foldable f, Pretty a) => f a -> Doc ann
+dotted xs = fold $ punctuate "." $ map p $ toList xs
 
 instance Pretty (UPatAnn n l) where
   pretty (UPatAnn pat ann) = p pat <> annDoc where

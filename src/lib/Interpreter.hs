@@ -68,8 +68,10 @@ traverseSurfaceAtomNames
   -> m i o (Atom o)
 traverseSurfaceAtomNames atom doWithName = case atom of
   Var v -> doWithName v
-  Lam _ -> substM atom
-  Pi  _ -> substM atom
+  Lam _    -> substM atom
+  TabLam _ -> substM atom
+  Pi  _    -> substM atom
+  TabPi  _ -> substM atom
   DepPair l r ty -> DepPair <$> rec l <*> rec r <*> substM ty
   DepPairTy _ -> substM atom
   Con con -> Con <$> mapM rec con
@@ -117,21 +119,27 @@ evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of
   App f xs -> do
     f' <- evalAtom f
-    case fromNaryLamExact (length xs) f' of
-      Just (NaryLamExpr bs _ body) -> do
-        xs' <- mapM evalAtom xs
-        let subst = bs @@> fmap SubstVal xs'
-        dropSubst $ extendSubst subst $ evalBlock body
-      _ -> do
-        when (length xs == 1) $ error "Failed to reduce application!"
-        case NE.uncons xs of
-          (x, maybeRest) -> do
-            ans <- evalExpr $ App f $ x :| []
-            case maybeRest of
-              Nothing   -> return ans
-              Just rest -> do
-                NonEmptyListE rest' <- substM $ NonEmptyListE rest
-                dropSubst $ evalExpr $ App ans rest'
+    xs' <- mapM evalAtom xs
+    case fromNaryLam (length xs) f' of
+      Just (bsCount, NaryLamExpr bs _ body) -> do
+        let (xsPref, xsRest) = NE.splitAt bsCount xs'
+        ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock body
+        case nonEmpty xsRest of
+          Nothing    -> return ans
+          Just rest' -> dropSubst $ evalExpr $ App ans rest'
+      Nothing -> error $ "Failed to reduce application!" ++ pprint expr
+  -- TODO: de-dup with App
+  TabApp f xs -> do
+    f' <- evalAtom f
+    xs' <- mapM evalAtom xs
+    case fromNaryTabLam (length xs) f' of
+      Just (bsCount, NaryLamExpr bs _ body) -> do
+        let (xsPref, xsRest) = NE.splitAt bsCount xs'
+        ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock body
+        case nonEmpty xsRest of
+          Nothing    -> return ans
+          Just rest' -> dropSubst $ evalExpr $ TabApp ans rest'
+      Nothing -> error "Failed to reduce application!"
   Atom atom -> evalAtom atom
   Op op     -> evalOp op
   Case e alts _ _ -> do
@@ -250,7 +258,7 @@ matchUPat (WithSrcB _ pat) x = do
         TabTy b _ -> do
           xs <- dropSubst do
             idxs <- indices (binderType b)
-            forM idxs \i -> evalExpr $ App tab (i:|[])
+            forM idxs \i -> evalExpr $ TabApp tab (i:|[])
           matchUPats bs xs
         _ -> error $ "not a table: " ++ pprint tab
     _ -> error "bad pattern match"

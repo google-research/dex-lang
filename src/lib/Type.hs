@@ -15,15 +15,15 @@
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM,
-  getType, getAppType, getTypeSubst, litType, getBaseMonoidType,
-  instantiatePi, instantiateDepPairTy,
+  getType, getAppType, getTabAppType, getTypeSubst, litType, getBaseMonoidType,
+  instantiatePi, instantiateTabPi, instantiateDepPairTy,
   checkExtends, checkedApplyDataDefParams,
   instantiateDataDef,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType,
   checkUnOp, checkBinOp,
   oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
-  isSingletonType, singletonTypeVal, asNaryPiType, NaryPiFlavor (..),
+  isSingletonType, singletonTypeVal, asNaryPiType,
   numNaryPiArgs, naryLamExprType,
   extendEffect, exprEffects, getReferentTy) where
 
@@ -66,6 +66,11 @@ getAppType f xs = case nonEmpty xs of
   Nothing -> getType f
   Just xs' -> liftHardFailTyperT $ checkApp f xs'
 
+getTabAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
+getTabAppType f xs = case nonEmpty xs of
+  Nothing -> getType f
+  Just xs' -> liftHardFailTyperT $ checkTabApp f xs'
+
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
 getTypeSubst e = do
@@ -87,6 +92,9 @@ instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Type n
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
+
+instantiateTabPi :: ScopeReader m => TabPiType n -> Atom n -> m n (Type n)
+instantiateTabPi (TabPiType b body) x = applyAbs (Abs b body) (SubstVal x)
 
 sourceNameType :: (EnvReader m, Fallible1 m)
                => SourceName -> m n (Type n)
@@ -118,7 +126,8 @@ exprEffects expr = case expr of
         let subst = bs @@> fmap SubstVal xs
         applySubst subst effs
       Nothing -> error $
-        "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint fTy
+        "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint expr
+  TabApp _ _ -> return Pure
   Op op   -> case op of
     PrimEffect ref m -> do
       RefTy (Var h) _ <- getType ref
@@ -338,6 +347,8 @@ instance HasType Atom where
     Var name -> getTypeE name
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
+    TabLam lamExpr -> getTypeE lamExpr
+    TabPi piType -> getTypeE piType
     DepPair l r ty -> do
       ty' <- checkTypeE TyKind ty
       l'  <- checkTypeE (depPairLeftTy ty') l
@@ -367,14 +378,14 @@ instance HasType Atom where
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     Variant vtys@(Ext (LabeledItems types) _) label i arg -> do
       let ty = VariantTy vtys
-      let argTy = do
+      let maybeArgTy = do
             labelTys <- M.lookup label types
             guard $ i < length labelTys
             return $ labelTys NE.!! i
-      case argTy of
-        Just argType -> do
-          argType' <- substM argType
-          arg |: argType'
+      case maybeArgTy of
+        Just argTy -> do
+          argTy' <- substM argTy
+          arg |: argTy'
         Nothing -> throw TypeErr $ "Bad variant: " <> pprint atom
                                    <> " with type " <> pprint ty
       checkTypeE TyKind ty
@@ -443,6 +454,9 @@ instance HasType Expr where
     App f xs -> do
       fTy <- getTypeE f
       checkApp fTy xs
+    TabApp f xs -> do
+      fTy <- getTypeE f
+      checkTabApp fTy xs
     Atom x   -> getTypeE x
     Op   op  -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof
@@ -496,6 +510,12 @@ instance HasType LamExpr where
       bodyTy <- getTypeE body
       return $ lamExprTy b' bodyTy
 
+instance HasType TabLamExpr where
+  getTypeE (TabLamExpr b body) = do
+    checkB b \b' -> do
+      bodyTy <- getTypeE body
+      return $ TabTy b' bodyTy
+
 instance HasType DepPairType where
   getTypeE (DepPairType b ty) = do
     checkB b \_ -> ty |: TyKind
@@ -511,6 +531,11 @@ instance HasType PiType where
     checkB b \_ -> do
       void $ checkE eff
       resultTy|:TyKind
+    return TyKind
+
+instance HasType TabPiType where
+  getTypeE (TabPiType b resultTy) = do
+    checkB b \_ -> resultTy|:TyKind
     return TyKind
 
 instance CheckableB PiBinder where
@@ -566,9 +591,8 @@ typeCheckPrimCon con = case con of
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
   TabRef tabTy -> do
-    Pi (PiType binder Pure (RawRefTy a)) <- getTypeE tabTy
-    PiBinder _ _ TabArrow <- return binder
-    return $ RawRefTy $ Pi $ PiType binder Pure a
+    TabTy binder (RawRefTy a) <- getTypeE tabTy
+    return $ RawRefTy $ TabTy binder a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM typeCheckRef xs)
     IntRangeVal     l h i -> do
@@ -592,10 +616,10 @@ typeCheckPrimCon con = case con of
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
   TabCon ty xs -> do
-    ty'@(TabTyAbs piTy) <- checkTypeE TyKind ty
-    idxs <- indices $ piArgType piTy
+    ty'@(TabPi tabPi) <- checkTypeE TyKind ty
+    idxs <- indices $ argType tabPi
     forMZipped_ xs idxs \x i -> do
-      (_, eltTy) <- instantiatePi piTy i
+      eltTy <- instantiateTabPi tabPi i
       x |: eltTy
     return ty'
   ScalarBinOp binop x y -> do
@@ -628,7 +652,7 @@ typeCheckPrimOp op = case op of
       MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
     getTypeE ref >>= \case
-      RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) -> do
+      RefTy h (TabTy (b:>iTy) eltTy) -> do
         i' <- checkTypeE iTy i
         eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
         return $ RefTy h eltTy'
@@ -797,26 +821,26 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
     eff' <- liftHoistExcept $ hoist b eff
     declareEffs eff'
-    return $ Pi $ PiType (PiBinder b argTy TabArrow) Pure eltTy
+    return $ TabTy (b:>argTy) eltTy
   Tile dim fT fS -> do
     (TC (IndexSlice n l), effT, tr) <- getTypeE fT >>= fromNonDepPiType PlainArrow
     (sTy                , effS, sr) <- getTypeE fS >>= fromNonDepPiType PlainArrow
     checkAlphaEq n sTy
     checkAlphaEq effT effS
     declareEffs effT
-    (leadingIdxTysT, Pure, resultTyT) <- fromNaryNonDepPiType (replicate dim TabArrow) tr
-    (leadingIdxTysS, Pure, resultTyS) <- fromNaryNonDepPiType (replicate dim TabArrow) sr
-    (dvTy, Pure, resultTyT') <- fromNonDepPiType TabArrow resultTyT
+    (leadingIdxTysT, resultTyT) <- fromNaryNonDepTabType (replicate dim ()) tr
+    (leadingIdxTysS, resultTyS) <- fromNaryNonDepTabType (replicate dim ()) sr
+    (dvTy, resultTyT') <- fromNonDepTabType resultTyT
     checkAlphaEq l dvTy
     checkAlphaEq (ListE leadingIdxTysT) (ListE leadingIdxTysS)
     checkAlphaEq resultTyT' resultTyS
-    naryNonDepPiType TabArrow Pure (leadingIdxTysT ++ [n]) resultTyT'
+    naryNonDepTabPiType (leadingIdxTysT ++ [n]) resultTyT'
   PTileReduce baseMonoids n mapping -> do
     -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
     ([_gtid, _nthr], Pure, mapResultTy) <-
       getTypeE mapping >>= fromNaryNonDepPiType [PlainArrow, PlainArrow]
     (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
-    (_, tileElemTy) <- fromNonDepTabTy tiledArrTy
+    (_, tileElemTy) <- fromNonDepTabType tiledArrTy
     -- TOOD: figure out what's going on with threadRange
     --   let threadRange = TC $ ParIndexRange n (binderAsVar gtid) (binderAsVar nthr)
     --   checkAlphaEq threadRange threadRange'
@@ -966,6 +990,17 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
+checkTabApp :: Typer m => Type o -> NonEmpty (Atom i) -> m i o (Type o)
+checkTabApp tabTy xs = go tabTy $ toList xs
+  where
+    go :: Typer m => Type o -> [Atom i] -> m i o (Type o)
+    go ty [] = return ty
+    go ty (i:rest) = do
+      TabTy (b:>ixTy) resultTy <- return ty
+      i' <- checkTypeE ixTy i
+      resultTy' <- applySubst (b@>SubstVal i') resultTy
+      go resultTy' rest
+
 numNaryPiArgs :: NaryPiType n -> Int
 numNaryPiArgs (NaryPiType (NonEmptyNest _ bs) _ _) = 1 + nestLength bs
 
@@ -985,29 +1020,15 @@ naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftHardFailTyperT 
 checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
 checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
 
-data NaryPiFlavor = TabOnlyFlavor  -- nary pi nest of TabArrows
-                  | NonTabFlavor   -- nary pi nest of non-table arrows
-                  | AnyFlavor      -- nary pi nest of either only tab arrow or only non-tab arrows
-
-asNaryPiType :: NaryPiFlavor -> Type n -> Maybe (NaryPiType n)
-asNaryPiType flavor ty = case ty of
-  Pi (PiType b@(PiBinder _ _ arr) effs resultTy) | matchesFlavor arr -> case effs of
-   Pure -> case asNaryPiType (inferFlavor arr) resultTy of
+asNaryPiType :: Type n -> Maybe (NaryPiType n)
+asNaryPiType ty = case ty of
+  Pi (PiType b effs resultTy) -> case effs of
+   Pure -> case asNaryPiType resultTy of
      Just (NaryPiType (NonEmptyNest b' bs) effs' resultTy') ->
         Just $ NaryPiType (NonEmptyNest b (Nest b' bs)) effs' resultTy'
      Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
    _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
   _ -> Nothing
-  where
-    matchesFlavor arr = case flavor of
-      AnyFlavor     -> True
-      TabOnlyFlavor -> arr == TabArrow
-      NonTabFlavor  -> arr /= TabArrow
-
-    inferFlavor arr = case flavor of
-      AnyFlavor -> if arr == TabArrow then TabOnlyFlavor else NonTabFlavor
-      _         -> flavor
-
 
 checkArgTys
   :: Typer m
@@ -1202,10 +1223,10 @@ singletonTypeVal'
   :: (MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
   => Type i -> m i o (Atom o)
 singletonTypeVal' ty = case ty of
-  Pi (PiType b@(PiBinder _ _ TabArrow) Pure body) ->
+  TabPi (TabPiType b body) ->
     substBinders b \b' -> do
       body' <- singletonTypeVal' body
-      return $ Pi $ PiType b' Pure body'
+      return $ TabLam $ TabLamExpr b' $ AtomicBlock body'
   StaticRecordTy items -> Record <$> traverse singletonTypeVal' items
   TC con -> case con of
     ProdType tys -> ProdVal <$> traverse singletonTypeVal' tys
@@ -1352,7 +1373,7 @@ runCheck cont = do
 
 asFFIFunType :: EnvReader m => Type n -> m n (Maybe (IFunType, NaryPiType n))
 asFFIFunType ty = return do
-  naryPiTy <- asNaryPiType NonTabFlavor ty
+  naryPiTy <- asNaryPiType ty
   impTy <- checkFFIFunTypeM naryPiTy
   return (impTy, naryPiTy)
 
@@ -1390,7 +1411,7 @@ asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))
 asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
 
 asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
-asFirstOrderFunctionM ty = case asNaryPiType NonTabFlavor ty of
+asFirstOrderFunctionM ty = case asNaryPiType ty of
   Nothing -> throw TypeErr "Not a monomorphic first-order function"
   Just naryPi@(NaryPiType bs eff resultTy) -> do
     substBinders bs \(NonEmptyNest b' bs') -> do
@@ -1408,7 +1429,7 @@ isData ty = liftM isJust $ runCheck do
 checkDataLike :: Typer m => Type i -> m i o ()
 checkDataLike ty = case ty of
   Var _ -> error "Not implemented"
-  TabTy b eltTy -> do
+  TabPi (TabPiType b eltTy) -> do
     substBinders b \_ ->
       checkDataLike eltTy
   StaticRecordTy items -> mapM_ recur items

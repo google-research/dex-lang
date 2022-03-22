@@ -469,6 +469,14 @@ buildLam binders body@(WithSrcE pos _) = case binders of
      where UPatAnn (WithSrcB pos' _) _ = b
            lam = ULamExpr arr b $ buildLam bs body
 
+buildTabLam :: [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
+buildTabLam binders body@(WithSrcE pos _) = case binders of
+  [] -> body
+  -- TODO: join with source position of binders too
+  b:bs -> WithSrcE (joinPos pos' pos) $ UTabLam lam
+   where UPatAnn (WithSrcB pos' _) _ = b
+         lam = UTabLamExpr b $ buildTabLam bs body
+
 -- TODO Does this generalize?  Swap list for Nest?
 buildFor :: SrcPos -> Direction -> [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
 buildFor pos dir binders body = case binders of
@@ -481,7 +489,7 @@ uViewExpr = do
   bs <- some patAnn
   argTerm
   body <- blockOrExpr
-  return $ buildLam (zipWith UPatAnnArrow bs (repeat TabArrow)) body
+  return $ buildTabLam bs body
 
 uForExpr :: Parser (UExpr VoidS)
 uForExpr = do
@@ -541,9 +549,13 @@ uStatement = withPos $   liftM LeftB  (instanceDef True <|> decl)
 
 -- TODO: put the `try` only around the `x:` not the annotation itself
 uPiType :: Parser (UExpr VoidS)
-uPiType = withSrc $ upi <$> piBinderPat <*> arrow effects <*> uType
+uPiType = withSrc do
+  p <- piBinderPat
+  (     (sym "=>" >> (UTabPi <$> UTabPiExpr p <$> uType))
+    <|> (upi p <$> arrow effects <*> uType))
   where
     upi binder (arr, eff) ty = UPi $ UPiExpr arr binder (fromMaybe Pure eff) ty
+
     piBinderPat :: Parser (UPatAnn VoidS VoidS)
     piBinderPat = do
       UAnnBinder b ty@(WithSrcE pos _) <- annBinder
@@ -568,7 +580,6 @@ anonBinder =
 
 arrow :: Parser eff -> Parser (Arrow, Maybe eff)
 arrow p =   (sym "->"  >> liftM ((PlainArrow,) . Just) p)
-        <|> (sym "=>"  $> (TabArrow, Nothing))
         <|> (sym "--o" $> (LinArrow, Nothing))
         <|> (sym "?->" $> (ImplicitArrow, Nothing))
         <|> (sym "?=>" $> (ClassArrow, Nothing))
@@ -713,7 +724,7 @@ uIsoSugar = withSrc (char '#' *> options) where
   alt = UAlt
   recordFieldIso :: Label -> UExpr' VoidS
   recordFieldIso field =
-    UApp plain (ns "MkIso") $
+    UApp (ns "MkIso") $
       ns $ URecord
         [ UStaticField "fwd" (lam
             (uPatRecordLit [(field, "x")] (Just "r"))
@@ -724,7 +735,7 @@ uIsoSugar = withSrc (char '#' *> options) where
         ]
   variantFieldIso :: Label -> UExpr' VoidS
   variantFieldIso field =
-    UApp plain "MkIso" $
+    UApp "MkIso" $
       ns $ URecord
         [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatVariant NoLabeledItems field "x")
@@ -740,7 +751,7 @@ uIsoSugar = withSrc (char '#' *> options) where
             ])
         ]
   recordZipIso field =
-    UApp plain "MkIso" $
+    UApp "MkIso" $
       ns $ URecord
         [ UStaticField "fwd" (lam
           (nsB $ UPatPair $ PairB
@@ -759,7 +770,7 @@ uIsoSugar = withSrc (char '#' *> options) where
         ]
   variantZipIso :: Label -> UExpr' VoidS
   variantZipIso field =
-    UApp plain "MkIso" $
+    UApp "MkIso" $
       ns $ URecord
         [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatCon "Left" (toNest ["l"]))
@@ -945,12 +956,12 @@ fallBackTo optionA optionB = do
 -- literal symbols here must only use chars from `symChars`
 ops :: [[Operator Parser (UExpr VoidS)]]
 ops =
-  [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
+  [ [InfixL $ sym "." $> mkTabApp , symOp "!"]
   , [InfixL $ sc $> mkApp]
   , [prefixNegOp]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
-     InfixR $ sym "=>" $> mkArrow TabArrow Pure,
+     InfixR $ sym "=>" $> mkTabType,
      InfixL $ opWithSrc $ backquoteName >>= (return . binApp),
      symOp "<<<", symOp ">>>", symOp "<<&", symOp "&>>"]
   , [annotatedExpr]
@@ -1005,11 +1016,11 @@ binApp :: SourceName -> SrcPos -> UExpr VoidS -> UExpr VoidS -> UExpr VoidS
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
   where f' = WithSrcE (Just pos) $ fromString f
 
-mkGenApp :: Arrow -> UExpr (n::S) -> UExpr n -> UExpr n
-mkGenApp arr f x = joinSrc f x $ UApp arr f x
-
 mkApp :: UExpr (n::S) -> UExpr n -> UExpr n
-mkApp = mkGenApp PlainArrow
+mkApp f x = joinSrc f x $ UApp f x
+
+mkTabApp :: UExpr (n::S) -> UExpr n -> UExpr n
+mkTabApp f x = joinSrc f x $ UTabApp f x
 
 infixArrow :: Parser (UType VoidS -> UType VoidS -> UType VoidS)
 infixArrow = do
@@ -1017,8 +1028,8 @@ infixArrow = do
   ((arr, eff), pos) <- withPos $ arrow effects
   return \a b -> WithSrcE (Just pos) $ UPi $ UPiExpr arr (UPatAnn (nsB UPatIgnore) (Just a)) (fromMaybe Pure eff) b
 
-mkArrow :: Arrow -> UEffectRow VoidS -> UExpr VoidS -> UExpr VoidS -> UExpr VoidS
-mkArrow arr eff a b = joinSrc a b $ UPi $ UPiExpr arr (UPatAnn (nsB UPatIgnore) (Just a)) eff b
+mkTabType :: UExpr VoidS -> UExpr VoidS -> UExpr VoidS
+mkTabType a b = joinSrc a b $ UTabPi $ UTabPiExpr (UPatAnn (nsB UPatIgnore) (Just a)) b
 
 withSrc :: Parser (a n) -> Parser (WithSrcE a n)
 withSrc p = do

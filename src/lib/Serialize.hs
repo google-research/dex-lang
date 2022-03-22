@@ -57,14 +57,14 @@ getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n [Atom
 getTableElements tab = do
   TabTy b _ <- getType tab
   idxs <- indices $ binderType b
-  forM idxs \i -> liftInterpM $ evalExpr $ App tab (i:|[])
+  forM idxs \i -> liftInterpM $ evalExpr $ TabApp tab (i:|[])
 
 -- Pretty-print values, e.g. for displaying in the REPL.
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
 prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
 prettyVal val = case val of
   -- Pretty-print tables.
-  Lam (LamExpr (LamBinder _ _ TabArrow _) _) -> do
+  TabVal _ _ -> do
     atoms <- getTableElements val
     elems <- forM atoms \atom -> do
       case atom of

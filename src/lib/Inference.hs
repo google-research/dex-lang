@@ -624,7 +624,7 @@ checkSigma expr sTy = case sTy of
         -- we have to add the lambda argument corresponding to the implicit pi
         -- type argument
         _ -> do
-          buildLamInf (getNameHint b) arrow (piArgType piTy) (\_-> return Pure)
+          buildLamInf (getNameHint b) arrow (argType piTy) (\_-> return Pure)
             \x -> do
               piTy' <- sinkM piTy
               (Pure, bodyTy) <- instantiatePi piTy' (Var x)
@@ -678,18 +678,26 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     argTy <- checkAnn ann
     v <- freshInferenceName argTy
     bindLamPat p v $ checkOrInferRho body reqTy
-  ULam lamExpr@(ULamExpr _ b _) -> do
-    ans@(Lam (LamExpr (LamBinder _ bty arr _) _)) <- case reqTy of
+  ULam lamExpr -> do
+    case reqTy of
       Check (Pi piTy) -> checkULam lamExpr piTy
       Check _ -> inferULam Pure lamExpr >>= matchRequirement
       Infer   -> inferULam Pure lamExpr
-    when (arr == TabArrow) $ checkIx (annTypePos b) bty
-    return ans
+  UTabLam (UTabLamExpr b body) -> do
+    let uLamExpr = ULamExpr PlainArrow b body
+    Lam (LamExpr (LamBinder b' ty' _ _) body') <- case reqTy of
+      Check (TabPi tabPiTy) -> do
+        lamPiTy <- buildForTypeFromTabType Pure tabPiTy
+        checkULam uLamExpr lamPiTy
+      Check _ -> inferULam Pure uLamExpr
+      Infer   -> inferULam Pure uLamExpr
+    checkIx (annTypePos b) ty'
+    matchRequirement $ TabLam $ TabLamExpr (b':>ty') body'
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
     lam@(Lam (LamExpr b' _)) <- case reqTy of
-      Check (Pi tabPiTy) -> do
+      Check (TabPi tabPiTy) -> do
         lamPiTy <- buildForTypeFromTabType allowedEff tabPiTy
         checkULam uLamExpr lamPiTy
       Check _ -> inferULam allowedEff uLamExpr
@@ -697,13 +705,17 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     result <- liftM Var $ emit $ Hof $ For (RegularFor dir) lam
     checkIx (annTypePos b) $ binderType b'
     matchRequirement result
-  UApp _ _ _ -> do
+  UApp _ _ -> do
     let (f, args) = asNaryApp $ WithSrcE pos expr
     f' <- inferFunNoInstantiation f >>= zonk
     inferNaryApp (srcPos f) f' (NE.fromList args) >>= matchRequirement
+  UTabApp _ _ -> do
+    let (tab, args) = asNaryTabApp $ WithSrcE pos expr
+    tab' <- inferRho tab >>= zonk
+    inferNaryTabApp (srcPos tab) tab' (NE.fromList args) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
-    piTy@(PiType b _ _) <- checkAnnWithMissingDicts ann \missingDs getAnnType -> do
+    piTy <- checkAnnWithMissingDicts ann \missingDs getAnnType -> do
       -- Note that we can't automatically quantify class Pis, because the class dict
       -- might have been bound on the rhs of a let and it would get bound to the
       -- inserted arguments instead of the desired dict. It's not a fundemental
@@ -712,7 +724,6 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       let checkNoMissing = addSrcContext pos' $ unless (null $ eSetToList missingDs) $ throw TypeErr $
             "Couldn't synthesize a class dictionary for: " ++ pprint (head $ eSetToList missingDs)
       autoDs <- case arr of
-        TabArrow   -> checkNoMissing $> mempty
         ClassArrow -> checkNoMissing $> mempty
         _          -> return $ missingDs
       introDictTys (eSetToList autoDs) $ do
@@ -732,8 +743,23 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
                 | null (eSetToList ds)  -> return $ (effs', ty')
               _ -> throw TypeErr $ "Can't reduce type expression: " ++
                      pprint (Block (BlockAnn TyKind) decls $ Atom $ snd $ fromPairE piResult)
-    when (arr == TabArrow) $ checkIx pos' $ binderType b
     matchRequirement $ Pi piTy
+  UTabPi (UTabPiExpr (UPatAnn (WithSrcB pos' pat) ann) ty) -> do
+    ann' <- checkAnn ann
+    piTy <- addSrcContext pos' case pat of
+      UPatBinder UIgnore ->
+        buildTabPiInf "_ign" ann' \_ -> checkUType ty
+      _ -> buildTabPiInf (getNameHint pat) ann' \v -> do
+        Abs decls piResult <- buildDeclsInf do
+          v' <- sinkM v
+          bindLamPat (WithSrcB pos' pat) v' $ checkUType ty
+        cheapReduceWithDecls decls piResult >>= \case
+          (Just ty', Just ds)
+            | null (eSetToList ds)  -> return ty'
+          _ -> throw TypeErr $ "Can't reduce type expression: " ++
+                 pprint (Block (BlockAnn TyKind) decls $ Atom piResult)
+    checkIx pos' $ argType piTy
+    matchRequirement $ TabPi piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
   UCase scrut alts -> do
@@ -889,18 +915,46 @@ inferFunNoInstantiation expr@(WithSrcE pos expr') = do
     substM v >>= inferUVar
   _ -> inferRho expr
 
-type UExprArg n = (SrcPosCtx, SrcPosCtx, Arrow, UExpr n)
+type UExprArg n = (SrcPosCtx, UExpr n)
 asNaryApp :: UExpr n -> (UExpr n, [UExprArg n])
-asNaryApp (WithSrcE appCtx (UApp arr f x)) =
-  (f', xs ++ [(appCtx, srcPos x, arr, x)])
+asNaryApp (WithSrcE appCtx (UApp f x)) =
+  (f', xs ++ [(appCtx, x)])
   where (f', xs) = asNaryApp f
 asNaryApp e = (e, [])
 
+asNaryTabApp :: UExpr n -> (UExpr n, [UExprArg n])
+asNaryTabApp (WithSrcE appCtx (UTabApp f x)) =
+  (f', xs ++ [(appCtx, x)])
+  where (f', xs) = asNaryTabApp f
+asNaryTabApp e = (e, [])
+
+inferNaryTabApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UExprArg i) -> m i o (Atom o)
+inferNaryTabApp tabCtx tab args = addSrcContext tabCtx do
+  tabTy <- getType tab
+  (arg':args') <- inferNaryTabAppArgs tabTy $ toList args
+  liftM Var $ emit $ TabApp tab $ arg' :| args'
+
+inferNaryTabAppArgs
+  :: (EmitsBoth o, Inferer m)
+  => Type o -> [UExprArg i] -> m i o [Atom o]
+inferNaryTabAppArgs _ [] = return []
+inferNaryTabAppArgs tabTy ((appCtx, arg):rest) = do
+  TabPiType (b:>argTy) resultTy <- fromTabPiType True tabTy
+  checkIx Nothing argTy
+  let isDependent = binderName b `isFreeIn` resultTy
+  arg' <- addSrcContext appCtx $
+    if isDependent
+      then checkSigmaDependent arg argTy
+      else checkSigma arg argTy
+  arg'' <- zonk arg'
+  resultTy' <- applySubst (b @> SubstVal arg'') resultTy
+  rest' <- inferNaryTabAppArgs resultTy' rest
+  return $ arg'':rest'
+
 inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UExprArg i) -> m i o (Atom o)
 inferNaryApp fCtx f args = addSrcContext fCtx do
-  let (_, _, arr, _) :| _ = args
   fTy <- getType f
-  Just naryPi <- asNaryPiType AnyFlavor <$> Pi <$> fromPiType True arr fTy
+  Just naryPi <- asNaryPiType <$> Pi <$> fromPiType True PlainArrow fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
   let appExpr = App f inferredArgs
   addEffects =<< exprEffects appExpr
@@ -938,19 +992,22 @@ inferNaryAppArgs (NaryPiType (NonEmptyNest b1 (Nest b2 rest)) effs resultTy) uAr
 inferAppArg
   :: (EmitsBoth o, Inferer m)
   => Bool -> PiBinder o o' -> NonEmpty (UExprArg i) -> m i o (Atom o, [UExprArg i])
-inferAppArg isDependent b@(PiBinder _ _ arr) uArgs = getImplicitArg b >>= \case
+inferAppArg isDependent b@(PiBinder _ argTy _) uArgs = getImplicitArg b >>= \case
   Just x -> return $ (x, toList uArgs)
   Nothing -> do
-    when (arr == TabArrow) $ checkIx Nothing $ binderType b
-    let (appCtx, argCtx, _, arg) :| restUArgs = uArgs
+    let (appCtx, arg) :| restUArgs = uArgs
     liftM (,restUArgs) $ addSrcContext appCtx $
       if isDependent
-        then do
-          Abs decls result <- buildDeclsInf $ checkSigma arg (sink $ binderType b)
-          cheapReduceWithDecls decls result >>= \case
-            (Just x', Just ds) -> forM_ (eSetToList ds) reportUnsolvedInterface >> return x'
-            _ -> addSrcContext argCtx $ throw TypeErr $ depFunErrMsg
-        else checkSigma arg (binderType b)
+        then checkSigmaDependent arg argTy
+        else checkSigma arg argTy
+
+checkSigmaDependent :: (EmitsBoth o, Inferer m) => UExpr i
+                    -> SigmaType o -> m i o (Atom o)
+checkSigmaDependent e@(WithSrcE ctx _) ty = do
+  Abs decls result <- buildDeclsInf $ checkSigma e (sink ty)
+  cheapReduceWithDecls decls result >>= \case
+    (Just x', Just ds) -> forM_ (eSetToList ds) reportUnsolvedInterface >> return x'
+    _ -> addSrcContext ctx $ throw TypeErr $ depFunErrMsg
   where
     depFunErrMsg =
       "Dependent functions can only be applied to fully evaluated expressions. " ++
@@ -1070,12 +1127,11 @@ inferUVar = \case
     return getter
 
 buildForTypeFromTabType :: (Fallible1 m, Builder m)
-                        => EffectRow n -> PiType n -> m n (PiType n)
-buildForTypeFromTabType effs tabPiTy@(PiType (PiBinder bPi piArgTy arr) _ _) = do
-  unless (arr == TabArrow) $ throw TypeErr $ "Not an table arrow type: " ++ pprint arr
-  buildPi (getNameHint bPi) PlainArrow piArgTy \i -> do
+                        => EffectRow n -> TabPiType n -> m n (PiType n)
+buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
+  buildPi (getNameHint b) PlainArrow ixTy \i -> do
     Distinct <- getDistinct
-    (_, resultTy) <- instantiatePi (sink tabPiTy) $ Var i
+    resultTy <- instantiateTabPi (sink tabPiTy) $ Var i
     return (sink effs, resultTy)
 
 inferUDeclLocal ::  (EmitsBoth o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
@@ -1217,7 +1273,7 @@ inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
 
 checkULam :: (EmitsBoth o, Inferer m) => ULamExpr i -> PiType o -> m i o (Atom o)
 checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
-  let argTy = piArgType piTy
+  let argTy = argType piTy
   checkAnn ann >>= constrainEq argTy
   -- XXX: we're ignoring the ULam arrow here. Should we be checking that it's
   -- consistent with the arrow supplied by the pi type?
@@ -1522,7 +1578,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (nestLength ps) <> " patterns."
-    xs <- forM idxs \i -> emit $ App (Var v) (i:|[])
+    xs <- forM idxs \i -> emit $ TabApp (Var v) (i:|[])
     bindLamPats ps xs cont
 
 checkAnn :: (EmitsInf o, Inferer m) => Maybe (UType i) -> m i o (Type o)
@@ -1604,13 +1660,13 @@ checkExtLabeledRow (Ext types (Just ext)) = do
 inferTabCon :: (EmitsBoth o, Inferer m) => [UExpr i] -> RequiredTy RhoType o -> m i o (Atom o)
 inferTabCon xs reqTy = do
   (tabTy, xs') <- case reqTy of
-    Check tabTy@(TabTyAbs piTy) | null $ freeVarsE (piArgType piTy) -> do
-      idx <- indices $ piArgType piTy
+    Check tabTy@(TabPi piTy) | null $ freeVarsE (argType piTy) -> do
+      idx <- indices $ argType piTy
       -- TODO: Check length!!
       unless (length idx == length xs) $
         throw TypeErr "Table type doesn't match annotation"
       xs' <- forM (zip xs idx) \(x, i) -> do
-        (_, xTy) <- instantiatePi piTy i
+        xTy <- instantiateTabPi piTy i
         checkOrInferRho x $ Check xTy
       return (tabTy, xs')
     _ -> do
@@ -1629,6 +1685,17 @@ inferTabCon xs reqTy = do
       xs' <- mapM (flip checkRho elemTy) xs
       return (tabTy, xs')
   liftM Var $ emit $ Op $ TabCon tabTy xs'
+
+-- Bool flag is just to tweak the reported error message
+fromTabPiType :: (EmitsBoth o, Inferer m) => Bool -> Type o -> m i o (TabPiType o)
+fromTabPiType _ (TabPi piTy) = return piTy
+fromTabPiType expectPi ty = do
+  a <- freshType TyKind
+  b <- freshType TyKind
+  piTy <- nonDepTabPiType a b
+  if expectPi then  constrainEq (TabPi piTy) ty
+              else  constrainEq ty (TabPi piTy)
+  return piTy
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: (EmitsBoth o, Inferer m) => Bool -> Arrow -> Type o -> m i o (PiType o)
@@ -1903,6 +1970,7 @@ instance Unifiable Atom where
      unifyZip :: (EmitsInf n, Unifier m) => Type n -> Type n -> m n ()
      unifyZip t1 t2 = case (t1, t2) of
        (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
+       (TabPi piTy, TabPi piTy') -> unifyTabPiType piTy piTy'
        (RecordTy els, RecordTy els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
        (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
        (TypeCon _ c xs, TypeCon _ c' xs') ->
@@ -2012,6 +2080,14 @@ unifyPiType (PiType (PiBinder b1 ann1 arr1) eff1 ty1)
   PairE eff2' ty2' <- applyAbs (Abs b2 (PairE eff2 ty2)) v
   unify ty1'  ty2'
   unify eff1' eff2'
+
+unifyTabPiType :: (EmitsInf n, Unifier m) => TabPiType n -> TabPiType n -> m n ()
+unifyTabPiType (TabPiType (b1:>ann1) ty1) (TabPiType (b2:>ann2) ty2) = do
+  unify ann1 ann2
+  v <- freshSkolemName ann1
+  ty1' <- applyAbs (Abs b1 ty1) v
+  ty2' <- applyAbs (Abs b2 ty2) v
+  unify ty1'  ty2'
 
 extendSolution :: Unifier m => AtomName n -> Type n -> m n ()
 extendSolution v t =
@@ -2353,6 +2429,17 @@ buildPiInf hint arr ty body = do
         (effs, resultTy) <- body v
         return $ PairE effs resultTy
   return $ PiType (PiBinder b ty arr) effs resultTy
+
+buildTabPiInf
+  :: (EmitsInf n, Solver m, InfBuilder m)
+  => NameHint -> Type n
+  -> (forall l. (EmitsInf l, Ext n l) => AtomName l -> m l (Type l))
+  -> m n (TabPiType n)
+buildTabPiInf hint ty body = do
+  Abs (b:>_) resultTy <-
+    buildAbsInf hint ty \v ->
+      withAllowedEffects Pure $ body v
+  return $ TabPiType (b:>ty) resultTy
 
 buildUnaryAltInf
   :: (EmitsInf n, Solver m, InfBuilder m)

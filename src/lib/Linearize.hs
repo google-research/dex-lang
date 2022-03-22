@@ -251,7 +251,7 @@ linearizeAtom atom = case atom of
       Nothing -> withZeroT $ return (Var v')
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
   Con con -> linearizePrimCon con
-  TabVal b body -> do
+  TabLam (TabLamExpr b body) -> do
     ty <- substM $ binderType b
     wrt <- getActivePrimals
     subst <- getSubst
@@ -273,6 +273,7 @@ linearizeAtom atom = case atom of
   RecordTy _      -> emitZeroT
   VariantTy _     -> emitZeroT
   Pi _            -> emitZeroT
+  TabPi _         -> emitZeroT
   DepPairTy _     -> emitZeroT
   TC _            -> emitZeroT
   Eff _           -> emitZeroT
@@ -316,12 +317,10 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
 linearizeExpr :: Emits o => Expr i -> LinM i o Atom Atom
 linearizeExpr expr = case expr of
   Atom x -> linearizeAtom x
-  App x idxs -> do
-    substM x >>= getType >>= \case
-      TabTy _ _ ->
-        zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
-         \(PairE x' (ListE idxs')) -> naryApp x' idxs'
-      _ -> error "not implemented"
+  App _ _ -> error "not implemented"
+  TabApp x idxs -> do
+    zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
+      \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
   Op op      -> linearizeOp op
   Hof e      -> linearizeHof e
   Case e alts resultTy _ -> do
@@ -515,7 +514,7 @@ linearizeHof hof = case hof of
     (ans, linTab) <- unzipTab ansWithLinTab
     return $ WithTangent ans do
       buildFor (getNameHint i) d (sink ty') \i' ->
-        app (sink linTab) (Var i') >>= applyLinToTangents
+        tabApp (sink linTab) (Var i') >>= applyLinToTangents
   RunReader r lam -> do
     WithTangent r' rLin <- linearizeAtom r
     lam' <- linearizeEffectFun Reader lam
