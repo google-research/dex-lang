@@ -95,7 +95,7 @@ library
                        BlockArguments, GADTs, TypeOperators, DataKinds, KindSignatures
                        ConstraintKinds, FlexibleContexts, RankNTypes, QuantifiedConstraints,
                        TypeOperators, MultiParamTypeClasses, FunctionalDependencies,
-                       GeneralizedNewtypeDeriving
+                       GeneralizedNewtypeDeriving, BangPatterns
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include

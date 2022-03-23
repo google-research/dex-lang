@@ -8,7 +8,7 @@ module Actor (PChan, sendPChan, sendOnly, subChan,
               Actor, runActor, spawn,
               LogServerMsg (..), logServer) where
 
-import Control.Concurrent
+import Control.Concurrent (Chan, forkIO, newChan, readChan, ThreadId, writeChan)
 import Control.Monad.State.Strict
 
 import Util (onFst, onSnd)
@@ -32,7 +32,7 @@ type Actor a = Chan a -> IO ()
 newtype PChan a = PChan { sendPChan :: a -> IO () }
 
 sendOnly :: Chan a -> PChan a
-sendOnly chan = PChan $ writeChan chan
+sendOnly chan = PChan $ \ !x -> writeChan chan x
 
 subChan :: (a -> b) -> PChan b -> PChan a
 subChan f chan = PChan (sendPChan chan . f)
