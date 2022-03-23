@@ -148,11 +148,6 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-module-tests: build
-	misc/check-quine tests/module-tests.dx \
-    $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
-
-
 tests: quine-tests repl-test module-tests
 
 quine-tests: $(quine-test-targets)
@@ -160,9 +155,9 @@ quine-tests: $(quine-test-targets)
 run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t
 
-run-tests/%: tests/%.dx build
+run-tests/%: tests/%.dx just-build
 	misc/check-quine $< $(dex) script --allow-errors
-run-examples/%: examples/%.dx build
+run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) script --allow-errors
 
 # Run these with profiling on while they're catching lots of crashes
@@ -174,27 +169,31 @@ update-%: export DEX_TEST_MODE=t
 
 update-all: $(update-test-targets) $(update-example-targets)
 
-update-tests/%: tests/%.dx build
+update-tests/%: tests/%.dx just-build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-update-examples/%: examples/%.dx build
+update-examples/%: examples/%.dx just-build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
 run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
-run-gpu-tests: tests/gpu-tests.dx build
+run-gpu-tests: tests/gpu-tests.dx just-build
 	misc/check-quine $< $(dex) --backend llvm-cuda script --allow-errors
 
 update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
-update-gpu-tests: tests/gpu-tests.dx build
+update-gpu-tests: tests/gpu-tests.dx just-build
 	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-repl-test: build
+repl-test: just-build
 	misc/check-no-diff \
 	  tests/repl-multiline-test-expected-output \
 	  <($(dex) repl < tests/repl-multiline-test.dx)
+
+module-tests: just-build
+	misc/check-quine tests/module-tests.dx \
+    $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
 
 # --- running and querying benchmarks ---
 
