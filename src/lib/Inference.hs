@@ -1268,12 +1268,12 @@ inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
     bindLamPat p v $ inferSigma body
 
 checkULam :: (EmitsBoth o, Inferer m) => ULamExpr i -> PiType o -> m i o (Atom o)
-checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
+checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ _ arr) _ _) = do
   let argTy = argType piTy
   checkAnn ann >>= constrainEq argTy
   -- XXX: we're ignoring the ULam arrow here. Should we be checking that it's
   -- consistent with the arrow supplied by the pi type?
-  buildLamInf (getNameHint p) (piArrow piTy) argTy
+  buildLamInf (getNameHint p) arr argTy
     (\v -> do
         piTy' <- sinkM piTy
         fst <$> instantiatePi piTy' (Var v) )

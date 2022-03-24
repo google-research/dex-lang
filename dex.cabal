@@ -62,6 +62,7 @@ library
                      , CUDA
                      , Cat
                      , CheapReduction
+                     , Core
                      , Err
                      , Export
                      , GenericTraversal
@@ -87,6 +88,10 @@ library
                      , TopLevel
                      , Transpose
                      , Type
+                     , Types.Core
+                     , Types.Imp
+                     , Types.Primitives
+                     , Types.Source
                      , Util
   if flag(live)
     exposed-modules:   Actor

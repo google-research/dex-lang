@@ -12,6 +12,7 @@ module TopLevel (
   evalFile, evalSourceText, initTopState, TopStateEx (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
+import Data.Maybe
 import Data.Functor
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
@@ -617,6 +618,22 @@ traverseBindingsTopStateEx
 traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
   defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
   return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv)
+
+abstractPtrLiterals
+  :: (EnvReader m, HoistableE e)
+  => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
+abstractPtrLiterals block = do
+  let fvs = freeAtomVarsList block
+  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
+    lookupAtomName v >>= \case
+      PtrLitBound _ name -> lookupEnv name >>= \case
+        PtrBinding (PtrLitVal ty ptr) ->
+          return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
+        PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
+      _ -> return Nothing
+  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
+  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
+  return (Abs ptrBinders block', ptrVals)
 
 -- -- === instances ===
 
