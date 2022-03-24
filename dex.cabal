@@ -13,10 +13,14 @@ maintainer:          dougalm@google.com
 license-file:        LICENSE
 build-type:          Simple
 
-data-files:          lib/*.dx, static/*.html, static/*.js, static/*.css
-extra-source-files:  lib/*.dx,
-                     src/lib/dexrt.bc,
-                     static/index.js, static/style.css
+data-files:          lib/*.dx
+                   , static/*.css
+                   , static/*.html
+                   , static/*.js
+extra-source-files:  lib/*.dx
+                   , src/lib/dexrt.bc
+                   , static/index.js
+                   , static/style.css
 
 flag cuda
   description:         Enables building with CUDA support
@@ -45,35 +49,88 @@ flag debug
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
-  build-depends:       base, bytestring, file-embed
+  build-depends:       base
+                     , bytestring
+                     , file-embed
   hs-source-dirs:      src/resources
   default-language:    Haskell2010
   default-extensions:  CPP
 
 library
-  exposed-modules:     Syntax, Cat, Util, PPrint, Serialize
-                       TopLevel, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
-                       Err, LabeledItems, SourceRename, Name, Parser, MTL1,
-                       Type, Builder, Inference, CheapReduction, GenericTraversal,
-                       Simplify, Imp, Algebra, Linearize, Transpose, Export,
-                       LLVM.HEAD.JIT
+  exposed-modules:     Algebra
+                     , Builder
+                     , CUDA
+                     , Cat
+                     , CheapReduction
+                     , Err
+                     , Export
+                     , GenericTraversal
+                     , Imp
+                     , Inference
+                     , Interpreter
+                     , JIT
+                     , LLVM.HEAD.JIT
+                     , LLVM.JIT
+                     , LLVM.Shims
+                     , LLVMExec
+                     , LabeledItems
+                     , Linearize
+                     , Logging
+                     , MTL1
+                     , Name
+                     , PPrint
+                     , Parser
+                     , Serialize
+                     , Simplify
+                     , SourceRename
+                     , Syntax
+                     , TopLevel
+                     , Transpose
+                     , Type
+                     , Util
   if flag(live)
-    exposed-modules:   Actor, RenderHtml, Live.Eval, Live.Terminal, Live.Web
+    exposed-modules:   Actor
+                     , Live.Eval
+                     , Live.Terminal
+                     , Live.Web
+                     , RenderHtml
   other-modules:       Paths_dex
-  build-depends:       base, containers, mtl, bytestring,
-                       llvm-hs-pure, llvm-hs, transformers, hashable, unordered-containers,
-                       exceptions, utf8-string, cryptonite, scientific,
+  build-depends:       base
+                     , bytestring
+                     , containers
+                     , cryptonite
+                     , exceptions
+                     , hashable
+                     , llvm-hs
+                     , llvm-hs-pure
+                     , mtl
+                     , scientific
+                     , transformers
+                     , unordered-containers
+                     , utf8-string
                        -- Parsing
-                       megaparsec, parser-combinators,
+                     , megaparsec
+                     , parser-combinators
                        -- Text output
-                       prettyprinter, text,
+                     , prettyprinter
+                     , text
                        -- Portable system utilities
-                       filepath, directory, ansi-terminal, process, temporary, haskeline,
+                     , ansi-terminal
+                     , directory
+                     , filepath
+                     , haskeline
+                     , process
+                     , temporary
                        -- Serialization
-                       store, aeson
+                     , aeson
+                     , store
   if flag(live)
-    build-depends:     warp, wai, blaze-html, http-types, cmark, binary
+    build-depends:     binary
+                     , blaze-html
+                     , cmark
+                     , http-types
+                     , wai
+                     , warp
     cpp-options:       -DDEX_LIVE
     cxx-options:       -DDEX_LIVE
   if flag(debug)
@@ -86,8 +143,10 @@ library
     build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
-  ghc-options:         -Wall -fPIC -optP-Wno-nonportable-include-path
+  ghc-options:         -Wall
                        -Wno-unticked-promoted-constructors
+                       -fPIC
+                       -optP-Wno-nonportable-include-path
   cxx-sources:         src/lib/dexrt.cpp
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
@@ -110,15 +169,26 @@ library
 executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
-  build-depends:       dex, base, containers, haskeline, prettyprinter, mtl,
-                       optparse-applicative, ansi-wl-pprint,
-                       unix, store, bytestring, directory, exceptions
+  build-depends:       dex
+                     , ansi-wl-pprint
+                     , base
+                     , bytestring
+                     , containers
+                     , directory
+                     , exceptions
+                     , haskeline
+                     , mtl
+                     , optparse-applicative
+                     , prettyprinter
+                     , store
+                     , unix
   if os(darwin)
     build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src
   default-extensions:  CPP, LambdaCase, BlockArguments
-  ghc-options:         -threaded -optP-Wno-nonportable-include-path
+  ghc-options:         -threaded
+                       -optP-Wno-nonportable-include-path
   if flag(cuda)
     cpp-options:       -DDEX_CUDA
   if flag(live)
@@ -134,15 +204,25 @@ foreign-library Dex
   else
     buildable: False
   type:                native-shared
-  other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
-                     , Dex.Foreign.Context, Dex.Foreign.Serialize
-  build-depends:       base, mtl, containers, llvm-hs, dex, random
+  other-modules:       Dex.Foreign.API
+                     , Dex.Foreign.Context
+                     , Dex.Foreign.JIT
+                     , Dex.Foreign.Serialize
+                     , Dex.Foreign.Util
+  build-depends:       dex
+                     , base
+                     , containers
+                     , llvm-hs
+                     , mtl
+                     , random
   if os(darwin)
     build-depends:     dex-resources
   hs-source-dirs:      src/
   c-sources:           src/Dex/Foreign/rts.c
   cc-options:          -std=c11 -fPIC
-  ghc-options:         -Wall -fPIC -optP-Wno-nonportable-include-path
+  ghc-options:         -Wall
+                       -fPIC
+                       -optP-Wno-nonportable-include-path
   default-language:    Haskell2010
   default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase,
                        BlockArguments, DataKinds, GADTs
