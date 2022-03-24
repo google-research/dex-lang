@@ -5,7 +5,6 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE Rank2Types #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module JIT (impToLLVM) where
