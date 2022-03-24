@@ -75,7 +75,7 @@ module Syntax (
     naryNonDepPiType, naryNonDepTabPiType, nonDepPiType, nonDepTabPiType,
     fromNonDepPiType, fromNaryNonDepPiType, fromNaryNonDepTabType,
     considerNonDepPiType, trySelectBranch,
-    fromNonDepTabType, nonDepDataConTys, binderType, bindersTypes,
+    fromNonDepTabType, nonDepDataConTys, bindersTypes,
     atomBindingType, getProjection,
     HasArgType (..), extendEffRow,
     bindingsFragToSynthCandidates,

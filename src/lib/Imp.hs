@@ -564,12 +564,27 @@ instance SubstB Name DestEmissions
 instance HoistableB  DestEmissions
 
 instance OutFrag DestEmissions where
-  emptyOutFrag = DestEmissions [] Empty Empty
-  catOutFrags _ (DestEmissions p1 b1 d1) (DestEmissions p2 b2 d2) =
-    ignoreHoistFailure do
-      ListE p2' <- hoist (PairB b1 d1) (ListE p2)
-      PairB b2' d1' <- withSubscopeDistinct d2 $exchangeBs $ PairB d1 b2
-      return $ DestEmissions (p1 <> p2') (b1 >>> b2') (d1' >>> d2)
+  emptyOutFrag = emptyDestEmissions
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags _ = catDestEmissions
+  {-# INLINE catOutFrags #-}
+
+emptyDestEmissions :: DestEmissions n n
+emptyDestEmissions = DestEmissions [] Empty Empty
+{-# NOINLINE [1] emptyDestEmissions #-}
+
+catDestEmissions :: Distinct l => DestEmissions n h -> DestEmissions h l -> DestEmissions n l
+catDestEmissions (DestEmissions p1 b1 d1) (DestEmissions p2 b2 d2) =
+  ignoreHoistFailure do
+    ListE p2' <- hoist (PairB b1 d1) (ListE p2)
+    PairB b2' d1' <- withSubscopeDistinct d2 $exchangeBs $ PairB d1 b2
+    return $ DestEmissions (p1 <> p2') (b1 >>> b2') (d1' >>> d2)
+{-# NOINLINE [1] catDestEmissions #-}
+{-# RULES
+      "catDestEmissions Empty *"  forall e. catDestEmissions emptyDestEmissions e = e;
+      "catDestEmissions * Empty"  forall e. catDestEmissions e emptyDestEmissions = e;
+      "catDestEmissions reassoc"  forall e1 e2 e3. catDestEmissions e1 (catDestEmissions e2 e3) = withSubscopeDistinct e3 (catDestEmissions (catDestEmissions e1 e2) e3)
+  #-}
 
 newtype DestM (n::S) (a:: *) =
   DestM { runDestM' :: StateT1 IxCache
@@ -590,9 +605,11 @@ liftDestM allocInfo cache m = do
   case result of
     (DestEmissions _ Empty Empty, result') -> return result'
     _ -> error "not implemented"
+{-# INLINE liftDestM #-}
 
 getAllocInfo :: DestM n AllocInfo
 getAllocInfo = DestM $ lift11 $ lift1 ask
+{-# INLINE getAllocInfo #-}
 
 introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
 introduceNewPtr hint ptrTy numel = do
@@ -905,7 +922,6 @@ makeDestRec idxs depVars ty = case ty of
     IndexRange t l h -> do
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IndexRangeVal t l h x
-
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
