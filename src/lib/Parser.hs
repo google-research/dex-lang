@@ -7,7 +7,7 @@
 module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
                finishUModuleParse, preludeImportBlock,
                parseTopDeclRepl, withSource,
-               symbol, symChar, keyWordStrs) where
+               symbol, symChar, keyWordStrs, showPrimName) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -15,9 +15,12 @@ import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
+import qualified Data.Map.Strict       as M
 import Data.ByteString.UTF8 (toString)
+import Data.Tuple
 import Data.Functor
 import Data.Foldable
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Scientific as Scientific
 import Data.Maybe (fromMaybe)
 import Data.Void
@@ -29,8 +32,10 @@ import qualified Text.Megaparsec.Debug
 import Err
 import LabeledItems
 import Name
-import Syntax
 import Util (File (..))
+
+import Types.Source
+import Types.Primitives
 
 -- canPair is used for the ops (,) (|) (&) which should only appear inside
 -- parentheses (to avoid conflicts with records and other syntax)
@@ -1329,3 +1334,109 @@ failIf False _ = return ()
 
 _debug :: Show a => String -> Parser a -> Parser a
 _debug s m = mapReaderT (Text.Megaparsec.Debug.dbg s) m
+
+-- === primitive constructors and operators ===
+
+type PrimName = PrimExpr ()
+
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s builtinNames
+
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
+  Just s  -> s
+  Nothing -> show prim
+
+showPrimName :: PrimExpr e -> String
+showPrimName prim = primNameToStr $ fmap (const ()) prim
+
+-- TODO: Can we derive these generically? Or use Show/Read?
+--       (These prelude-only names don't have to be pretty.)
+builtinNames :: M.Map String PrimName
+builtinNames = M.fromList
+  [ ("iadd", binOp IAdd), ("isub", binOp ISub)
+  , ("imul", binOp IMul), ("fdiv", binOp FDiv)
+  , ("fadd", binOp FAdd), ("fsub", binOp FSub)
+  , ("fmul", binOp FMul), ("idiv", binOp IDiv)
+  , ("irem", binOp IRem)
+  , ("fpow", binOp FPow)
+  , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot), ("xor", binOp BXor)
+  , ("shl" , binOp BShL), ("shr" , binOp BShR)
+  , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
+  , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
+  , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
+  , ("fneg", unOp  FNeg)
+  , ("exp" , unOp  Exp), ("exp2"  , unOp  Exp2)
+  , ("log" , unOp Log), ("log2" , unOp Log2 ), ("log10" , unOp Log10)
+  , ("sin" , unOp  Sin), ("cos" , unOp Cos)
+  , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
+  , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
+  , ("log1p", unOp Log1p), ("lgamma", unOp LGamma)
+  , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
+  , ("idxSetSize"  , OpExpr $ IdxSetSize ())
+  , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
+  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
+  , ("sumToVariant"   , OpExpr $ SumToVariant ())
+  , ("throwError"     , OpExpr $ ThrowError ())
+  , ("throwException" , OpExpr $ ThrowException ())
+  , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
+  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend (BaseMonoid () ()) ())
+  , ("get"        , OpExpr $ PrimEffect () $ MGet)
+  , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
+  , ("indexRef"   , OpExpr $ IndexRef () ())
+  , ("inject"     , OpExpr $ Inject ())
+  , ("select"     , OpExpr $ Select () () ())
+  , ("while"           , HofExpr $ While ())
+  , ("linearize"       , HofExpr $ Linearize ())
+  , ("linearTranspose" , HofExpr $ Transpose ())
+  , ("runReader"       , HofExpr $ RunReader () ())
+  , ("runWriter"       , HofExpr $ RunWriter (BaseMonoid () ()) ())
+  , ("runState"        , HofExpr $ RunState  () ())
+  , ("runIO"           , HofExpr $ RunIO ())
+  , ("catchException"  , HofExpr $ CatchException ())
+  , ("tiled"           , HofExpr $ Tile 0 () ())
+  , ("tiledd"          , HofExpr $ Tile 1 () ())
+  , ("TyKind"    , TCExpr $ TypeKind)
+  , ("Float64"   , TCExpr $ BaseType $ Scalar Float64Type)
+  , ("Float32"   , TCExpr $ BaseType $ Scalar Float32Type)
+  , ("Int64"     , TCExpr $ BaseType $ Scalar Int64Type)
+  , ("Int32"     , TCExpr $ BaseType $ Scalar Int32Type)
+  , ("Word8"     , TCExpr $ BaseType $ Scalar Word8Type)
+  , ("Word32"    , TCExpr $ BaseType $ Scalar Word32Type)
+  , ("Word64"    , TCExpr $ BaseType $ Scalar Word64Type)
+  , ("Int32Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Int32Type)
+  , ("Word8Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
+  , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
+  , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
+  , ("IntRange"  , TCExpr $ IntRange () ())
+  , ("Label"     , TCExpr $ LabelType)
+  , ("Ref"       , TCExpr $ RefType (Just ()) ())
+  , ("PairType"  , TCExpr $ ProdType [(), ()])
+  , ("UnitType"  , TCExpr $ ProdType [])
+  , ("EffKind"   , TCExpr $ EffectRowKind)
+  , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
+  , ("IndexSlice", TCExpr $ IndexSlice () ())
+  , ("pair", ConExpr $ ProdCon [(), ()])
+  , ("fstRef", OpExpr $ ProjRef 0 ())
+  , ("sndRef", OpExpr $ ProjRef 1 ())
+  -- TODO: Lift vectors to constructors
+  --, ("VectorFloatType",  TCExpr $ BaseType $ Vector FloatType)
+  , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
+  , ("vectorIndex", OpExpr $ VectorIndex () ())
+  , ("cast", OpExpr  $ CastOp () ())
+  , ("sliceOffset", OpExpr $ SliceOffset () ())
+  , ("sliceCurry", OpExpr $ SliceCurry () ())
+  , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
+  , ("free" , OpExpr $ IOFree ())
+  , ("ptrOffset", OpExpr $ PtrOffset () ())
+  , ("ptrLoad"  , OpExpr $ PtrLoad ())
+  , ("ptrStore" , OpExpr $ PtrStore () ())
+  , ("dataConTag", OpExpr $ DataConTag ())
+  , ("toEnum"    , OpExpr $ ToEnum () ())
+  , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
+  ]
+  where
+    vbinOp op = OpExpr $ VectorBinOp op () ()
+    binOp  op = OpExpr $ ScalarBinOp op () ()
+    unOp   op = OpExpr $ ScalarUnOp  op ()
+    ptrTy  ty = PtrType (Heap CPU, ty)

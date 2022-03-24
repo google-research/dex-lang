@@ -14,13 +14,15 @@ module MTL1 (
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
     StateT1, pattern StateT1, runStateT1, evalStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
-    ScopedT1, pattern ScopedT1, runScopedT1
+    ScopedT1, pattern ScopedT1, runScopedT1,
+    FallibleT1, runFallibleT1
   ) where
 
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
+import qualified Control.Monad.Trans.Except as MTE
 import Control.Applicative
 
 import Name
@@ -226,3 +228,36 @@ instance ScopeReader m => ScopeReader (MaybeT1 m) where
 instance EnvExtender m => EnvExtender (MaybeT1 m) where
   refreshAbs ab cont = MaybeT1 $ MaybeT $
     refreshAbs ab \b e -> runMaybeT $ runMaybeT1' $ cont b e
+
+-------------------- FallibleT1 --------------------
+
+newtype FallibleT1 (m::MonadKind1) (n::S) a =
+  FallibleT1 { fromFallibleT :: ReaderT ErrCtx (MTE.ExceptT Errs (m n)) a }
+  deriving (Functor, Applicative, Monad)
+
+runFallibleT1 :: Monad1 m => FallibleT1 m n a -> m n (Except a)
+runFallibleT1 m =
+  MTE.runExceptT (runReaderT (fromFallibleT m) mempty) >>= \case
+    Right ans -> return $ Success ans
+    Left errs -> return $ Failure errs
+{-# INLINE runFallibleT1 #-}
+
+instance Monad1 m => MonadFail (FallibleT1 m n) where
+  fail s = throw MonadFailErr s
+  {-# INLINE fail #-}
+
+instance Monad1 m => Fallible (FallibleT1 m n) where
+  throwErrs (Errs errs) = FallibleT1 $ ReaderT \ambientCtx ->
+    MTE.throwE $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
+  addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
+  {-# INLINE addErrCtx #-}
+
+instance ScopeReader m => ScopeReader (FallibleT1 m) where
+  unsafeGetScope = FallibleT1 $ lift $ lift unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
+  getDistinct = FallibleT1 $ lift $ lift $ getDistinct
+  {-# INLINE getDistinct #-}
+
+instance EnvReader m => EnvReader (FallibleT1 m) where
+  unsafeGetEnv = FallibleT1 $ lift $ lift unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}

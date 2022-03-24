@@ -46,6 +46,7 @@ import LabeledItems
 import Err
 import Name
 import Syntax
+import Parser (showPrimName)
 
 -- Specifies what kinds of operations are allowed to be printed at this point.
 -- Printing at AppPrec level means that applications can be printed

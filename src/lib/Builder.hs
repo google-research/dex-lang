@@ -80,7 +80,7 @@ import PPrint ()
 import CheapReduction
 import {-# SOURCE #-} Inference
 import MTL1
-
+import {-# SOURCE #-} Interpreter
 import LabeledItems
 import Util (enumerate, restructure, transitiveClosureM, bindM2)
 import Err

@@ -1549,3 +1549,29 @@ impOpType pop = case pop of
 
 instance CheckableE ImpFunction where
   checkE = substM -- TODO!
+
+-- TODO: Don't use Core Envs for Imp!
+instance BindsEnv ImpDecl where
+  toEnvFrag (ImpLet bs _) =
+    toEnvFrag bs
+
+instance BindsEnv IBinder where
+  toEnvFrag (IBinder b ty) = toEnvFrag $ b :> BaseTy ty
+
+captureClosure
+  :: (HoistableB b, HoistableE e, Color c)
+  => b n l -> e l -> ([Name c l], NaryAbs c e n)
+captureClosure decls result = do
+  let vs = capturedVars decls result
+  let ab = abstractFreeVarsNoAnn vs result
+  case hoist decls ab of
+    HoistSuccess abHoisted -> (vs, abHoisted)
+    HoistFailure _ ->
+      error "shouldn't happen"  -- but it will if we have types that reference
+                                -- local vars. We really need a telescope.
+
+capturedVars :: (Color c, BindsNames b, HoistableE e)
+             => b n l -> e l -> [Name c l]
+capturedVars b e = nameSetToList nameSet
+  where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+

@@ -10,7 +10,9 @@
 module Interpreter (
   evalBlock, evalExpr, evalAtom,
   liftInterpM, InterpM, Interp,
-  indices, matchUPat) where
+  indices, matchUPat,
+  applyIntBinOp, applyIntCmpOp,
+  applyFloatBinOp, applyFloatUnOp) where
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -31,6 +33,7 @@ import Syntax
 import Simplify
 import Type
 import PPrint ()
+import Util ((...))
 
 newtype InterpM (i::S) (o::S) (a:: *) =
   InterpM { runInterpM' :: SubstReaderT AtomSubstVal (EnvReaderT IO) i o a }
@@ -292,3 +295,30 @@ indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $ do
       runInterpM bindings cont =
         runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
 {-# SCC indices #-}
+
+-- === Helpers for function evaluation over fixed-width types ===
+
+applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
+               => (a -> Atom n) -> a -> a -> Atom n) -> Atom n -> Atom n -> Atom n
+applyIntBinOp' f x y = case (x, y) of
+  (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
+  (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
+  (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
+  (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
+  (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
+  _ -> error "Expected integer atoms"
+
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
+applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
+
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom n -> Atom n -> Atom n
+applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
+
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
+applyFloatBinOp f x y = case (x, y) of
+  (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
+  (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
+  _ -> error "Expected float atoms"
+
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom n -> Atom n
+applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
