@@ -429,13 +429,18 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
   {-# INLINE extendOutMap #-}
 
 instance ExtOutMap Env EnvFrag where
-  extendOutMap env (EnvFrag newEnv maybeNewEff) = do
-    case extendOutMap env newEnv of
-      Env envTop (ModuleEnv imports sm scs obs oldEff) -> do
-        let newEff = case maybeNewEff of
-                       Nothing  -> sink oldEff
-                       Just eff -> eff
-        Env envTop (ModuleEnv imports sm scs obs newEff)
+  extendOutMap = extendEnv
+  {-# INLINE extendOutMap #-}
+
+extendEnv :: Distinct l => Env n -> EnvFrag n l -> Env l
+extendEnv env (EnvFrag newEnv maybeNewEff) = do
+  case extendOutMap env newEnv of
+    Env envTop (ModuleEnv imports sm scs obs oldEff) -> do
+      let newEff = case maybeNewEff of
+                     Nothing  -> sink oldEff
+                     Just eff -> eff
+      Env envTop (ModuleEnv imports sm scs obs newEff)
+{-# NOINLINE [1] extendEnv #-}
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
 bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
@@ -486,10 +491,7 @@ naryLamExprAsAtom (NaryLamExpr (NonEmptyNest (b:>ty) bs) effs body) = case bs of
 -- But maybe we don't need one. Or maybe we can make one using just
 -- `BindsOneName b AtomNameC` and `BindsEnv b`.
 class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
-  boundAtomBinding :: b n l -> AtomBinding n
-
-binderType :: BindsOneAtomName b => b n l -> Type n
-binderType b =  atomBindingType $ toBinding $ boundAtomBinding b
+  binderType :: b n l -> Type n
 
 bindersTypes :: (Distinct l, ProvesExt b, BindsNames b, BindsOneAtomName b)
              => Nest b n l -> [Type l]
@@ -498,15 +500,13 @@ bindersTypes (Nest b bs) = ty : bindersTypes bs
   where ty = withExtEvidence b $ withSubscopeDistinct bs $ sink (binderType b)
 
 instance BindsOneAtomName (BinderP AtomNameC Type) where
-  boundAtomBinding (_ :> ty) = MiscBound ty
+  binderType (_ :> ty) = ty
 
 instance BindsOneAtomName LamBinder where
-  boundAtomBinding (LamBinder _ ty arr _) =
-    LamBound $ LamBinding arr ty
+  binderType (LamBinder _ ty _ _) = ty
 
 instance BindsOneAtomName PiBinder where
-  boundAtomBinding (PiBinder _ ty arr) =
-    PiBound $ PiBinding arr ty
+  binderType (PiBinder _ ty _) = ty
 
 -- === ToBinding ===
 

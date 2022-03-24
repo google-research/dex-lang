@@ -285,6 +285,7 @@ instance BindsEnv TopEnvFrag where
 
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
+  {-# INLINE toEnvFrag #-}
 
 instance BindsEnv (RecSubstFrag Binding) where
   toEnvFrag frag = EnvFrag frag mempty
@@ -298,9 +299,23 @@ instance (BindsEnv b1, BindsEnv b2)
       toEnvFrag b1 `catEnvFrags` bindings2
 
 instance BindsEnv b => (BindsEnv (Nest b)) where
-  toEnvFrag Empty = emptyOutFrag
-  toEnvFrag (Nest b rest) = toEnvFrag $ PairB b rest
-  {-# INLINABLE toEnvFrag #-}
+  toEnvFrag = nestToEnvFrag
+  {-# INLINE toEnvFrag #-}
+
+nestToEnvFragRec :: (BindsEnv b, Distinct l) => EnvFrag n h -> Nest b h l -> EnvFrag n l
+nestToEnvFragRec f = \case
+  Empty       -> f
+  Nest b rest -> withSubscopeDistinct rest $ nestToEnvFragRec (f `catEnvFrags` toEnvFrag b) rest
+
+nestToEnvFrag :: (BindsEnv b, Distinct l) => Nest b n l -> EnvFrag n l
+nestToEnvFrag = nestToEnvFragRec emptyOutFrag
+{-# NOINLINE [1] nestToEnvFrag #-}
+-- The unsafeCoerceB is necessary for this rule to trigger for (>>=) of InplaceT.
+-- Otherwise GHC core (on which the matching is performed) will include a coercion
+-- that's impossible to match on in here.
+{-# RULES
+      "extendEnv * Empty"  forall env. extendEnv env (nestToEnvFrag (unsafeCoerceB Empty)) = env
+  #-}
 
 instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
   toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest

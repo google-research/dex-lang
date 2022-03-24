@@ -770,6 +770,11 @@ joinNest :: Nest b n m -> Nest b m l -> Nest b n l
 joinNest l r = case l of
   Empty     -> r
   Nest b lt -> Nest b $ joinNest lt r
+{-# NOINLINE [1] joinNest #-}
+{-# RULES
+      "joinNest Empty *"    forall n. joinNest Empty n = n;
+      "joinNest * Empty"    forall n. joinNest n Empty = n;
+  #-}
 
 binderAnn :: BinderP c ann n l -> ann n
 binderAnn (_:>ann) = ann
@@ -1822,7 +1827,8 @@ instance GenericB (BinderP c ann) where
 instance (Color c, SinkableE ann) => SinkableB (BinderP c ann)
 instance (Color c, SinkableE ann, SubstE v ann, SinkableV v) => SubstB v (BinderP c ann)
 instance Color c => ProvesExt  (BinderP c ann)
-instance Color c => BindsNames (BinderP c ann)
+instance Color c => BindsNames (BinderP c ann) where
+  toScopeFrag (b :> _) = toScopeFrag b
 
 instance BindsNames b => ProvesExt  (Nest b) where
 instance BindsNames b => BindsNames (Nest b) where
@@ -2699,9 +2705,8 @@ data WithRenamer e i o where
 instance Category (Nest b) where
   id = Empty
   {-# INLINE id #-}
-  nest' . nest = case nest of
-    Empty -> nest'
-    Nest b rest -> Nest b $ rest >>> nest'
+  (.) = flip joinNest
+  {-# INLINE (.) #-}
 
 instance ProvesExt (SubstPair v o) where
   toExtEvidence (SubstPair b _) = toExtEvidence b
@@ -2730,11 +2735,11 @@ instance SubstV substVal v => SubstE substVal (SubstFrag v i i') where
 
 unsafeCoerceE :: forall (e::E) i o . e i -> e o
 unsafeCoerceE = TrulyUnsafe.unsafeCoerce
-{-# INLINE unsafeCoerceE #-}
+{-# NOINLINE [1] unsafeCoerceE #-}
 
 unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
 unsafeCoerceB = TrulyUnsafe.unsafeCoerce
-{-# INLINE unsafeCoerceB #-}
+{-# NOINLINE [1] unsafeCoerceB #-}
 
 -- === instances ===
 
