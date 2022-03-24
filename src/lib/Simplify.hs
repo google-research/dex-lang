@@ -4,12 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE BangPatterns #-}
-
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
                 , liftSimplifyM, buildBlockSimplified
                 , IxCache, MonadIxCache1, SimpleIxInstance (..)

@@ -4,10 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE CPP #-}
-
 module Serialize (pprintVal, getDexString,
                   HasPtrs (..), takePtrSnapshot, restorePtrSnapshot) where
 

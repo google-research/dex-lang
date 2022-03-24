@@ -4,9 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ViewPatterns #-}
-
 module Parallelize (parallelizeModule, dceModule) where
 
 import Control.Monad.State.Strict
