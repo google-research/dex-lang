@@ -4,9 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module Dex.Foreign.Context (
   Context (..), AtomEx (..),
   setError,

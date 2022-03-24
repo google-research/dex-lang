@@ -281,8 +281,15 @@ foreign-library Dex
                        -fPIC
                        -optP-Wno-nonportable-include-path
   default-language:    Haskell2010
-  default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase,
-                       BlockArguments, DataKinds, GADTs
+  default-extensions:  BlockArguments
+                     , DataKinds
+                     , FlexibleInstances
+                     , GADTs
+                     , LambdaCase
+                     , OverloadedStrings
+                     , RecordWildCards
+                     , ScopedTypeVariables
+                     , TypeApplications
   if flag(optimized)
     ghc-options:       -O3
   else
