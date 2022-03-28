@@ -23,8 +23,8 @@ import qualified Control.Monad.Trans.Except as MTE
 import Control.Applicative
 
 import Name
-import Syntax
 import Err
+import Core (EnvReader (..), EnvExtender (..))
 
 class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where
   lift11 :: Monad1 m => m n a -> t m n a

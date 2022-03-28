@@ -29,8 +29,6 @@ import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
 import System.CPUTime
 
-import Cat
-
 class IsBool a where
   toBool :: a -> Bool
 
@@ -206,13 +204,13 @@ for = flip fmap
 
 transitiveClosure :: forall a. Ord a => (a -> [a]) -> [a] -> [a]
 transitiveClosure getParents seeds =
-  toList $ snd $ runCat (mapM_ go seeds) mempty
+  toList $ execState (mapM_ go seeds) mempty
   where
-    go :: a -> Cat (Set.Set a) ()
+    go :: a -> State (Set.Set a) ()
     go x = do
-      visited <- look
+      visited <- get
       unless (x `Set.member` visited) $ do
-        extend $ Set.singleton x
+        modify $ Set.insert x
         mapM_ go $ getParents x
 
 transitiveClosureM :: forall m a. (Monad m, Ord a) => (a -> m [a]) -> [a] -> m [a]

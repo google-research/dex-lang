@@ -62,6 +62,7 @@ import Resources
 import CUDA (synchronizeCUDA)
 import LLVM.JIT
 import Util (measureSeconds)
+import PPrint ()
 
 -- === One-shot evaluation ===
 
