@@ -30,14 +30,14 @@ import Name
 import Util (IsBool (..))
 
 import Types.Primitives
-import Types.Source
-import {-# SOURCE #-} Types.Core (AtomName, AtomSubstVal) -- TODO: Disentangle that!
+
+-- We use AtomName because we convert between atoms and imp
+-- expressions without chaning names. Maybe we shouldn't do that.
+type ImpName = Name AtomNameC
 
 type ImpFunName = Name ImpFunNameC
 data IExpr n = ILit LitVal
-             -- We use AtomName because we convert between atoms and imp
-             -- expressions without chaning names. Maybe we shouldn't do that.
-             | IVar (AtomName n) BaseType
+             | IVar (ImpName n) BaseType
                deriving (Show, Generic)
 
 data IBinder n l = IBinder (NameBinder AtomNameC n l) IType
@@ -48,7 +48,9 @@ type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
 type Size = IExpr
 
-type IFunVar = (SourceName, IFunType)
+type IFunName = String
+
+type IFunVar = (IFunName, IFunType)
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
                 deriving (Show, Eq, Generic)
 
@@ -70,7 +72,7 @@ data CallingConvention =
 
 data ImpFunction n =
    ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
- | FFIFunction IFunType SourceName
+ | FFIFunction IFunType IFunName
    deriving (Show, Generic)
 
 data ImpBlock n where
@@ -196,7 +198,7 @@ deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 
 instance GenericE IExpr where
   type RepE IExpr = EitherE2 (LiftE LitVal)
-                             (PairE AtomName (LiftE BaseType))
+                             (PairE ImpName (LiftE BaseType))
   fromE iexpr = case iexpr of
     ILit x -> Case0 (LiftE x)
     IVar v ty -> Case1 (v `PairE` LiftE ty)
@@ -233,7 +235,6 @@ instance ProvesExt  IBinder
 instance SinkableB IBinder
 instance HoistableB  IBinder
 instance SubstB Name IBinder
-instance SubstB AtomSubstVal IBinder
 instance AlphaEqB IBinder
 instance AlphaHashableB IBinder
 
@@ -252,7 +253,7 @@ instance BindsNames ImpDecl
 
 instance GenericE ImpFunction where
   type RepE ImpFunction = EitherE2 (LiftE IFunType `PairE` Abs (Nest IBinder) ImpBlock)
-                                   (LiftE (IFunType, SourceName))
+                                   (LiftE (IFunType, IFunName))
   fromE f = case f of
     ImpFunction ty ab   -> Case0 $ LiftE ty `PairE` ab
     FFIFunction ty name -> Case1 $ LiftE (ty, name)

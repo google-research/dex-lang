@@ -105,6 +105,10 @@ type PtrName     = Name PtrNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
+type Effect    = EffectP    AtomName
+type EffectRow = EffectRowP AtomName
+type BaseMonoid n = BaseMonoidP (Atom n)
+
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
 type AtomBinderP = BinderP AtomNameC

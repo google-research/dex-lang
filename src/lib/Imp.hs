@@ -1553,6 +1553,8 @@ instance BindsEnv ImpDecl where
 instance BindsEnv IBinder where
   toEnvFrag (IBinder b ty) = toEnvFrag $ b :> BaseTy ty
 
+instance SubstB AtomSubstVal IBinder
+
 captureClosure
   :: (HoistableB b, HoistableE e, Color c)
   => b n l -> e l -> ([Name c l], NaryAbs c e n)
@@ -1569,4 +1571,3 @@ capturedVars :: (Color c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
 capturedVars b e = nameSetToList nameSet
   where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
-

@@ -36,9 +36,6 @@ import Name
 import Err
 import LabeledItems
 
--- TODO: Disentangle that
-import {-# SOURCE #-} Types.Core (Atom, AtomName)
-
 data PrimExpr e =
         TCExpr  (PrimTC  e)
       | ConExpr (PrimCon e)
@@ -152,7 +149,6 @@ data PrimHof e =
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
                      deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-type BaseMonoid n = BaseMonoidP (Atom n)
 
 data PrimEffect e = MAsk | MExtend (BaseMonoidP e) e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -188,13 +184,10 @@ data EffectP (name::E) (n::S) =
   RWSEffect RWS (Maybe (name n)) | ExceptionEffect | IOEffect
   deriving (Show, Eq, Ord, Generic)
 
-type Effect = EffectP AtomName
 
 data EffectRowP (name::E) (n::S) =
   EffectRow (S.Set (EffectP name n)) (Maybe (name n))
   deriving (Show, Eq, Ord, Generic)
-
-type EffectRow = EffectRowP AtomName
 
 pattern Pure :: Ord (name n) => EffectRowP name n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
@@ -213,7 +206,7 @@ instance OrdE name => Semigroup (EffectRowP name n) where
 instance OrdE name => Monoid (EffectRowP name n) where
   mempty = EffectRow mempty Nothing
 
-extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
+extendEffRow :: Ord (name n) => S.Set (EffectP name n) -> EffectRowP name n -> EffectRowP name n
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 {-# INLINE extendEffRow #-}
 
@@ -333,11 +326,11 @@ instance GenericE (EffectP name) where
     RightE (LiftE (Left  ())) -> ExceptionEffect
     RightE (LiftE (Right ())) -> IOEffect
 
-instance SinkableE   name => SinkableE   (EffectP name)
-instance HoistableE     name => HoistableE     (EffectP name)
-instance AlphaEqE       name => AlphaEqE       (EffectP name)
-instance AlphaHashableE name => AlphaHashableE (EffectP name)
-instance SubstE Name (EffectP AtomName)
+instance Color c => SinkableE      (EffectP (Name c))
+instance Color c => HoistableE     (EffectP (Name c))
+instance Color c => AlphaEqE       (EffectP (Name c))
+instance Color c => AlphaHashableE (EffectP (Name c))
+instance Color c => SubstE Name    (EffectP (Name c))
 
 instance OrdE name => GenericE (EffectRowP name) where
   type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE name)
@@ -349,11 +342,11 @@ instance OrdE name => GenericE (EffectRowP name) where
                              NothingE -> Nothing
                              _ -> error "impossible"
 
-instance SinkableE (EffectRowP AtomName)
-instance HoistableE  (EffectRowP AtomName)
-instance SubstE Name (EffectRowP AtomName)
-instance AlphaEqE    (EffectRowP AtomName)
-instance AlphaHashableE    (EffectRowP AtomName)
+instance Color c => SinkableE         (EffectRowP (Name c))
+instance Color c => HoistableE        (EffectRowP (Name c))
+instance Color c => SubstE Name       (EffectRowP (Name c))
+instance Color c => AlphaEqE          (EffectRowP (Name c))
+instance Color c => AlphaHashableE    (EffectRowP (Name c))
 
 instance Store Arrow
 instance Store LetAnn
@@ -369,8 +362,8 @@ instance Store LitVal
 instance Store ScalarBaseType
 instance Store Device
 
-instance Store (EffectRow n)
-instance Store (Effect n)
+instance Color c => Store (EffectRowP (Name c) n)
+instance Color c => Store (EffectP    (Name c) n)
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)

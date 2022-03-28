@@ -18,7 +18,6 @@ import Control.Concurrent.MVar
 import Prelude hiding (log)
 import System.IO
 
-import PPrint
 import Err
 import Name
 

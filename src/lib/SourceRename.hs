@@ -19,8 +19,11 @@ import qualified Data.Map.Strict as M
 import Err
 import LabeledItems
 import Name
-import Syntax
-import PPrint()
+import Core (EnvReader (..), withEnv, lookupSourceMapPure)
+import PPrint ()
+import Types.Source
+import Types.Primitives
+import Types.Core (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
   :: (Fallible1 m, EnvReader m)

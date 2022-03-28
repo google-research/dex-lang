@@ -32,9 +32,11 @@ endif
 
 CFLAGS := -fPIC
 
+STACK_FLAGS := --ghc-options="-j +RTS -A256m -n2m -RTS"
+
 # CUDA
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
-STACK_FLAGS = --flag dex:cuda
+STACK_FLAGS = $(STACK_FLAGS) --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
 endif
 
