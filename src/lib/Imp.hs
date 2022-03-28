@@ -19,7 +19,6 @@ import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Class
 import Control.Monad.Writer.Strict
-import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
@@ -51,7 +50,7 @@ toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
 toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
 {-# SCC toImpStandaloneFunction #-}
 
-toImpStandaloneFunction' :: Imper m => NaryLamExpr o -> m i o (ImpFunction o)
+toImpStandaloneFunction' :: NaryLamExpr o -> SubstImpM i o (ImpFunction o)
 toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
   ty <- naryLamExprType lam
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty
@@ -93,7 +92,7 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs base
       return []
 {-# SCC toImpExportedFunction #-}
 
-loadArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> m n ([Atom n], Dest n)
+loadArgDests :: Emits n => NaryLamDest n -> SubstImpM i n ([Atom n], Dest n)
 loadArgDests (Abs Empty resultDest) = return ([], resultDest)
 loadArgDests (Abs (Nest (b:>argDest) bs) resultDest) = do
   arg <- destToAtom argDest
@@ -101,7 +100,7 @@ loadArgDests (Abs (Nest (b:>argDest) bs) resultDest) = do
   (args, resultDest') <- loadArgDests restDest
   return (arg:args, resultDest')
 
-storeArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> [Atom n] -> m n (Dest n)
+storeArgDests :: Emits n => NaryLamDest n -> [Atom n] -> SubstImpM i n (Dest n)
 storeArgDests (Abs Empty resultDest) [] = return resultDest
 storeArgDests (Abs (Nest (b:>argDest) bs) resultDest) (x:xs) = do
   copyAtom argDest x
@@ -159,7 +158,7 @@ instance EnvExtender ImpM where
         _ -> error "shouldn't be able to emit pointers without `Mut`"
 
 instance ImpBuilder ImpM where
-  emitMultiReturnInstr instr = do
+  emitMultiReturnInstr instr = confuseGHC >>= \_ -> do
     tys <- impInstrTypes instr
     ListE vs <- ImpM $ ScopedT1 \s -> lift11 do
       Abs bs vs <- return $ newNames $ map (const "v") tys
@@ -184,12 +183,16 @@ instance ImpBuilder ImpM where
       return result
 
   extendAllocsToFree ptr = ImpM $ lift11 $ tell $ ListE [ptr]
+  {-# INLINE extendAllocsToFree #-}
 
 instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
   emitMultiReturnInstr instr = SubstReaderT $ lift $ emitMultiReturnInstr instr
+  {-# INLINE emitMultiReturnInstr #-}
   buildScopedImp cont = SubstReaderT $ ReaderT \env ->
     buildScopedImp $ runSubstReaderT (sink env) $ cont
+  {-# INLINE buildScopedImp #-}
   extendAllocsToFree ptr = SubstReaderT $ lift $ extendAllocsToFree ptr
+  {-# INLINE extendAllocsToFree #-}
 
 instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)
 
@@ -206,11 +209,10 @@ liftImpM cont = do
 
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
-translateTopLevel :: Imper m
-                  => CallingConvention
+translateTopLevel :: CallingConvention
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
-                  -> m i o (ImpFunctionWithRecon o)
+                  -> SubstImpM i o (ImpFunctionWithRecon o)
 translateTopLevel cc maybeDest (Abs bs body) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
   ab  <- buildImpNaryAbs argTys \vs ->
@@ -237,22 +239,26 @@ buildRecon b x = do
     return $ IVar v ty
   return (xs, recon)
 
-translateBlock :: forall m i o. (Imper m, Emits o)
-               => MaybeDest o -> Block i -> m i o (Atom o)
+translateBlock :: forall i o. Emits o
+               => MaybeDest o -> Block i -> SubstImpM i o (Atom o)
 translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest result
 
-translateDeclNest :: (Imper m, Emits o) => Nest Decl i i' -> m i' o a -> m i o a
-translateDeclNest Empty cont = cont
-translateDeclNest (Nest decl rest) cont =
-  translateDecl decl $ translateDeclNest rest cont
+translateDeclNestSubst :: Emits o => Subst AtomSubstVal l o -> Nest Decl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
+translateDeclNestSubst !s = \case
+  Empty -> return s
+  Nest (Let b (DeclBinding _ _ expr)) rest -> do
+    x <- withSubst s $ translateExpr Nothing expr
+    translateDeclNestSubst (s <>> (b@>SubstVal x)) rest
 
-translateDecl :: (Imper m, Emits o) => Decl i i' -> m i' o a -> m i o a
-translateDecl (Let b (DeclBinding _ _ expr)) cont = do
-  ans <- translateExpr Nothing expr
-  extendSubst (b @> SubstVal ans) $ cont
+translateDeclNest :: Emits o => Nest Decl i i' -> SubstImpM i' o a -> SubstImpM i o a
+translateDeclNest decls cont = do
+  s  <- getSubst
+  s' <- translateDeclNestSubst s decls
+  withSubst s' cont
+{-# INLINE translateDeclNest #-}
 
-translateExpr :: (Imper m, Emits o) => MaybeDest o -> Expr i -> m i o (Atom o)
-translateExpr maybeDest expr = case expr of
+translateExpr :: Emits o => MaybeDest o -> Expr i -> SubstImpM i o (Atom o)
+translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   Hof hof -> toImpHof maybeDest hof
   App f' xs' -> do
     f <- substM f'
@@ -306,8 +312,8 @@ translateExpr maybeDest expr = case expr of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
 
-toImpOp :: forall m i o .
-           (Imper m, Emits o) => MaybeDest o -> PrimOp (Atom o) -> m i o (Atom o)
+toImpOp :: forall i o .
+           Emits o => MaybeDest o -> PrimOp (Atom o) -> SubstImpM i o (Atom o)
 toImpOp maybeDest op = case op of
   TabCon ~(TabPi tabTy) rows -> do
     let ixTy = argType tabTy
@@ -458,13 +464,13 @@ toImpOp maybeDest op = case op of
     instr <- IPrimOp <$> mapM fromScalarAtom op
     emitInstr instr >>= toScalarAtom >>= returnVal
   where
-    resultTyM :: m i o (Type o)
+    resultTyM :: SubstImpM i o (Type o)
     resultTyM = getType $ Op op
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
 
-toImpHof :: (Imper m, Emits o) => Maybe (Dest o) -> PrimHof (Atom i) -> m i o (Atom o)
+toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (Atom i) -> SubstImpM i o (Atom o)
 toImpHof maybeDest hof = do
   -- TODO: it's a shame to have to substitute the whole expression just to get its type.
   -- Laziness *might* save us, but we should check.
@@ -744,8 +750,7 @@ instance SubstE Name e => SubstE Name (AbsPtrs e)
 instance SubstE AtomSubstVal e => SubstE AtomSubstVal (AbsPtrs e)
 
 -- builds a dest and a list of pointer binders along with their required allocation sizes
-makeDest :: (ImpBuilder m, EnvReader m)
-         => AllocInfo -> Type n -> m n (AbsPtrs Dest n)
+makeDest :: AllocInfo -> Type n -> SubstImpM i n (AbsPtrs Dest n)
 makeDest allocInfo ty = do
    cache <- get
    (result, cache') <- liftDestM allocInfo cache $
@@ -786,8 +791,7 @@ sinkDestIdxs (idxsTy, idxs) = (sink idxsTy, map sink idxs)
 -- TODO: de-dup some of the plumbing stuff here with the ordinary makeDest path
 type NaryLamDest = Abs (Nest (BinderP AtomNameC Dest)) Dest
 
-makeNaryLamDest :: (ImpBuilder m, EnvReader m)
-                => NaryPiType n -> m n (AbsPtrs NaryLamDest n)
+makeNaryLamDest :: NaryPiType n -> SubstImpM i n (AbsPtrs NaryLamDest n)
 makeNaryLamDest piTy = do
   cache <- get
   let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
@@ -922,16 +926,16 @@ makeBaseTypePtr (idxsTy, idxs) ty = do
   ptr <- Var <$> introduceNewPtr "ptr" ptrTy numel
   ptrOffset ptr offset
 
-copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
+copyAtom :: Emits n => Dest n -> Atom n -> SubstImpM i n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
   where
-    copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
+    copyRec :: Emits n => Dest n -> Atom n -> SubstImpM i n ()
     copyRec dest src = case (dest, src) of
       (BoxedRef ptrsSizes absDest, _) -> do
         -- TODO: load old ptr and free (recursively)
         ptrs <- forM ptrsSizes \(ptrPtr, sizeBlock) -> do
           PtrTy (_, (PtrType ptrTy)) <- getType ptrPtr
-          size <- liftBuilderImp $ emitBlock =<< sinkM sizeBlock
+          size <- dropSubst $ translateBlock Nothing sizeBlock
           ptr <- emitAlloc ptrTy =<< fromScalarAtom size
           ptrPtr' <- fromScalarAtom ptrPtr
           storeAnywhere ptrPtr' ptr
@@ -974,63 +978,58 @@ copyAtom topDest topSrc = copyRec topDest topSrc
             copyRec tag (TagRepVal $ fromIntegral index)
             zipWithM_ copyRec (payload !! index) [x]
           _ -> error "unexpected src/dest pair"
-        (ConRef destCon, Con srcCon) ->
-          zipWithRefConM copyRec destCon srcCon
+        (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
+          (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
+          (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> copyRec iRef i
+          (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> copyRec iRef i
+          _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
         _ -> error "unexpected src/dest pair"
       _ -> error "unexpected src/dest pair"
 
-zipTabDestAtom :: (Emits n, ImpBuilder m)
-               => (forall l. (Emits l, DExt n l) => Dest l -> Atom l -> m l ())
-               -> Dest n -> Atom n -> m n ()
-zipTabDestAtom f dest src = do
-  Con (TabRef (TabLam (TabLamExpr b _))) <- return dest
-  TabLam (TabLamExpr b' _)               <- return src
-  checkAlphaEq (binderType b) (binderType b')
-  let idxTy = binderType b
-  n <- indexSetSizeImp idxTy
-  emitLoop "i" Fwd n \i -> do
-    idx <- intToIndexImp (sink idxTy) i
-    destIndexed <- destGet (sink dest) idx
-    srcIndexed  <- runSubstReaderT idSubst $
-      translateExpr Nothing (TabApp (sink src) (idx:|[]))
-    f destIndexed srcIndexed
+    zipTabDestAtom :: Emits n
+                   => (forall l. (Emits l, DExt n l) => Dest l -> Atom l -> SubstImpM i l ())
+                   -> Dest n -> Atom n -> SubstImpM i n ()
+    zipTabDestAtom f dest src = do
+      Con (TabRef (TabLam (TabLamExpr b _))) <- return dest
+      TabLam (TabLamExpr b' _)               <- return src
+      checkAlphaEq (binderType b) (binderType b')
+      let idxTy = binderType b
+      n <- indexSetSizeImp idxTy
+      emitLoop "i" Fwd n \i -> do
+        idx <- intToIndexImp (sink idxTy) i
+        destIndexed <- destGet (sink dest) idx
+        srcIndexed  <- dropSubst $ translateExpr Nothing (TabApp (sink src) (idx:|[]))
+        f destIndexed srcIndexed
 
-zipWithRefConM :: Monad m => (Dest n -> Atom n -> m ()) -> Con n -> Con n -> m ()
-zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
-  (ProdCon ds, ProdCon ss) -> zipWithM_ f ds ss
-  (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> f iRef i
-  (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> f iRef i
-  _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
+    copyDataConArgs :: Emits n
+                    => EmptyAbs (Nest DataConRefBinding) n -> [Atom n] -> SubstImpM i n ()
+    copyDataConArgs (Abs Empty UnitE) [] = return ()
+    copyDataConArgs (Abs (Nest (DataConRefBinding b ref) rest) UnitE) (x:xs) = do
+      copyAtom ref x
+      rest' <- applySubst (b@>SubstVal x) (EmptyAbs rest)
+      copyDataConArgs rest' xs
+    copyDataConArgs bindings args =
+      error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
 
-copyDataConArgs :: (ImpBuilder m, Emits n)
-                => EmptyAbs (Nest DataConRefBinding) n -> [Atom n] -> m n ()
-copyDataConArgs (Abs Empty UnitE) [] = return ()
-copyDataConArgs (Abs (Nest (DataConRefBinding b ref) rest) UnitE) (x:xs) = do
-  copyAtom ref x
-  rest' <- applySubst (b@>SubstVal x) (EmptyAbs rest)
-  copyDataConArgs rest' xs
-copyDataConArgs bindings args =
-  error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
-
-loadAnywhere :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
+loadAnywhere :: Emits n => IExpr n -> SubstImpM i n (IExpr n)
 loadAnywhere ptr = load ptr -- TODO: generalize to GPU backend
 
-storeAnywhere :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n ()
+storeAnywhere :: Emits n => IExpr n -> IExpr n -> SubstImpM i n ()
 storeAnywhere ptr val = store ptr val
 
-store :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n ()
+store :: Emits n => IExpr n -> IExpr n -> SubstImpM i n ()
 store dest src = emitStatement $ Store dest src
 
-alloc :: (ImpBuilder m, Emits n) => Type n -> m n (Dest n)
+alloc :: Emits n => Type n -> SubstImpM i n (Dest n)
 alloc ty = makeAllocDest Managed ty
 
-indexDest :: (Builder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
+indexDest :: Emits n => Dest n -> Atom n -> BuilderM n (Dest n)
 indexDest (Con (TabRef (TabVal b body))) i = do
   body' <- applyAbs (Abs b body) $ SubstVal i
   emitBlock body'
 indexDest dest _ = error $ pprint dest
 
-loadDest :: (Builder m, Emits n) => Dest n -> m n (Atom n)
+loadDest :: Emits n => Dest n -> BuilderM n (Atom n)
 loadDest (DataConRef def params bs) = do
   DataDef _ _ cons <- lookupDataDef def
   let DataConDef conName _ = cons !! 0
@@ -1061,7 +1060,7 @@ loadDest (Con dest) = do
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest
 
-loadDataConArgs :: (Builder m, Emits n) => EmptyAbs (Nest DataConRefBinding) n -> m n [Atom n]
+loadDataConArgs :: Emits n => EmptyAbs (Nest DataConRefBinding) n -> BuilderM n [Atom n]
 loadDataConArgs (Abs bs UnitE) = case bs of
   Empty -> return []
   Nest (DataConRefBinding b ref) rest -> do
@@ -1069,26 +1068,17 @@ loadDataConArgs (Abs bs UnitE) = case bs of
     rest' <- applySubst (b @> SubstVal val) $ EmptyAbs rest
     (val:) <$> loadDataConArgs rest'
 
-_emitWhen :: (ImpBuilder m, Emits n)
-         => IExpr n
-         -> (forall l. (Emits l, DExt n l) => m l ())
-         -> m n ()
-_emitWhen cond doIfTrue =
-  emitSwitch cond [False, True] \case False -> return ()
-                                      True  -> doIfTrue
-
 -- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
-emitSwitch :: forall m n a.
-              (ImpBuilder m, Emits n)
+emitSwitch :: forall i n a.  Emits n
            => IExpr n
            -> [a]
-           -> (forall l. (Emits l, DExt n l) => a -> m l ())
-           -> m n ()
+           -> (forall l. (Emits l, DExt n l) => a -> SubstImpM i l ())
+           -> SubstImpM i n ()
 emitSwitch testIdx args cont = do
   Distinct <- getDistinct
   rec 0 args
   where
-    rec :: forall l. (Emits l, DExt n l) => Int -> [a] -> m l ()
+    rec :: forall l. (Emits l, DExt n l) => Int -> [a] -> SubstImpM i l ()
     rec _ [] = error "Shouldn't have an empty list of alternatives"
     rec _ [arg] = cont arg
     rec curIdx (arg:rest) = do
@@ -1098,10 +1088,10 @@ emitSwitch testIdx args cont = do
       otherCases <- buildBlockImp $ rec (curIdx + 1) rest >> return []
       emitStatement $ ICond cond thisCase otherCases
 
-emitLoop :: (ImpBuilder m, Emits n)
+emitLoop :: Emits n
          => NameHint -> Direction -> IExpr n
-         -> (forall l. (DExt n l, Emits l) => IExpr l -> m l ())
-         -> m n ()
+         -> (forall l. (DExt n l, Emits l) => IExpr l -> SubstImpM i l ())
+         -> SubstImpM i n ()
 emitLoop hint d n cont = do
   loopBody <- do
     withFreshIBinder hint (getIType n) \b@(IBinder _ ty)  -> do
@@ -1112,35 +1102,32 @@ emitLoop hint d n cont = do
       return $ Abs b body
   emitStatement $ IFor d n loopBody
 
-restructureScalarOrPairType :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n)
-restructureScalarOrPairType ty xs =
-  restructureScalarOrPairTypeRec ty xs >>= \case
+restructureScalarOrPairType :: Type n -> [IExpr n] -> SubstImpM i n (Atom n)
+restructureScalarOrPairType topTy topXs =
+  go topTy topXs >>= \case
     (atom, []) -> return atom
     _ -> error "Wrong number of scalars"
-
-restructureScalarOrPairTypeRec
-  :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n, [IExpr n])
-restructureScalarOrPairTypeRec (PairTy t1 t2) xs = do
-  (atom1, rest1) <- restructureScalarOrPairTypeRec t1 xs
-  (atom2, rest2) <- restructureScalarOrPairTypeRec t2 rest1
-  return (PairVal atom1 atom2, rest2)
-restructureScalarOrPairTypeRec (BaseTy _) (x:xs) = do
-  x' <- toScalarAtom x
-  return (x', xs)
-restructureScalarOrPairTypeRec ty _ = error $ "Not a scalar or pair: " ++ pprint ty
+  where
+    go (PairTy t1 t2) xs = do
+      (atom1, rest1) <- go t1 xs
+      (atom2, rest2) <- go t2 rest1
+      return (PairVal atom1 atom2, rest2)
+    go (BaseTy _) (x:xs) = do
+      x' <- toScalarAtom x
+      return (x', xs)
+    go ty _ = error $ "Not a scalar or pair: " ++ pprint ty
 
 buildBlockImp
-  :: ImpBuilder m
-  => (forall l. (Emits l, DExt n l) => m l [IExpr l])
-  -> m n (ImpBlock n)
+  :: (forall l. (Emits l, DExt n l) => SubstImpM i l [IExpr l])
+  -> SubstImpM i n (ImpBlock n)
 buildBlockImp cont = do
   Abs decls (ListE results) <- buildScopedImp $ ListE <$> cont
   return $ ImpBlock decls results
 
-destToAtom :: (ImpBuilder m, Emits n) => Dest n -> m n (Atom n)
+destToAtom :: Emits n => Dest n -> SubstImpM i n (Atom n)
 destToAtom dest = liftBuilderImp $ loadDest =<< sinkM dest
 
-destGet :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
+destGet :: Emits n => Dest n -> Atom n -> SubstImpM i n (Dest n)
 destGet dest i = liftBuilderImp $ do
   Distinct <- getDistinct
   indexDest (sink dest) (sink i)
@@ -1155,7 +1142,7 @@ _fromDestConsList dest = case dest of
   Con (ConRef (ProdCon []))     -> []
   _ -> error $ "Not a dest cons list: " ++ pprint dest
 
-makeAllocDest :: (ImpBuilder m, Emits n) => AllocType -> Type n -> m n (Dest n)
+makeAllocDest :: Emits n => AllocType -> Type n -> SubstImpM i n (Dest n)
 makeAllocDest allocTy ty = fst <$> makeAllocDestWithPtrs allocTy ty
 
 backend_TODO_DONT_HARDCODE :: Backend
@@ -1164,15 +1151,15 @@ backend_TODO_DONT_HARDCODE = LLVM
 curDev_TODO_DONT_HARDCODE :: Device
 curDev_TODO_DONT_HARDCODE = CPU
 
-makeAllocDestWithPtrs :: (ImpBuilder m, Emits n)
-                      => AllocType -> Type n -> m n (Dest n, [IExpr n])
+makeAllocDestWithPtrs :: Emits n
+                      => AllocType -> Type n -> SubstImpM i n (Dest n, [IExpr n])
 makeAllocDestWithPtrs allocTy ty = do
   let backend = backend_TODO_DONT_HARDCODE
   let curDev  = curDev_TODO_DONT_HARDCODE
   AbsPtrs absDest ptrDefs <- makeDest (backend, curDev, allocTy) ty
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
     Distinct <- getDistinct
-    size <- liftBuilderImp $ emitBlock $ sink sizeBlock
+    size <- dropSubst $ translateBlock Nothing sizeBlock
     ptr <- emitAlloc ptrTy =<< fromScalarAtom size
     case ptrTy of
       (Heap _, _) | allocTy == Managed -> extendAllocsToFree ptr
@@ -1182,12 +1169,12 @@ makeAllocDestWithPtrs allocTy ty = do
   dest' <- applyNaryAbs absDest $ map SubstVal ptrAtoms
   return (dest', ptrs)
 
-_copyDest :: (ImpBuilder m, Emits n) => Maybe (Dest n) -> Atom n -> m n (Atom n)
+_copyDest :: Emits n => Maybe (Dest n) -> Atom n -> SubstImpM i n (Atom n)
 _copyDest maybeDest atom = case maybeDest of
   Nothing   -> return atom
   Just dest -> copyAtom dest atom >> return atom
 
-allocDest :: (ImpBuilder m, Emits n) => Maybe (Dest n) -> Type n -> m n (Dest n)
+allocDest :: Emits n => Maybe (Dest n) -> Type n -> SubstImpM i n (Dest n)
 allocDest maybeDest t = case maybeDest of
   Nothing   -> alloc t
   Just dest -> return dest
@@ -1229,7 +1216,7 @@ _deviceFromCallingConvention cc = case cc of
 
 type IndexStructure = EmptyAbs IdxNest :: E
 
-computeElemCount :: (Emits n, Builder m, MonadIxCache1 m) => IndexStructure n -> m n (Atom n)
+computeElemCount :: Emits n => IndexStructure n -> DestM n (Atom n)
 computeElemCount (EmptyAbs Empty) =
   -- XXX: this optimization is important because we don't want to emit any decls
   -- in the case that we don't have any indices. The more general path will
@@ -1257,8 +1244,8 @@ dceApproxBlock block@(Block _ decls expr) = case hoist decls expr of
   HoistSuccess expr' -> Block NoBlockAnn Empty expr'
   HoistFailure _     -> block
 
-computeOffset :: forall n m. (Emits n, Builder m, MonadIxCache1 m)
-              => IndexStructure n -> [AtomName n] -> m n (Atom n)
+computeOffset :: forall n. Emits n
+              => IndexStructure n -> [AtomName n] -> DestM n (Atom n)
 computeOffset idxNest' idxs = do
   let (idxList , idxNest ) = indexStructureSplit idxNest'
   let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
@@ -1277,7 +1264,7 @@ computeOffset idxNest' idxs = do
   where
    accumStrided (total, stride) (size, i) = (,) <$> (iadd total =<< imul i stride) <*> imul stride size
    -- Recursively process the dependent part of the nest
-   rec :: IndexStructure n -> [AtomName n] -> m n (Atom n)
+   rec :: IndexStructure n -> [AtomName n] -> DestM n (Atom n)
    rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
    rec (Abs (Nest b bs) UnitE) (i:is) = do
      rhsElemCounts <- refreshBinders b \(b':>_) s -> do
@@ -1289,8 +1276,7 @@ computeOffset idxNest' idxs = do
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: (EnvExtender m, EnvReader m, Fallible1 m, MonadIxCache1 m)
-               => IndexStructure n -> m n (A.ClampPolynomial n)
+elemCountCPoly :: IndexStructure n -> DestM n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
   Nest b rest -> do
@@ -1329,14 +1315,15 @@ withFreshIBinder
 withFreshIBinder hint ty cont = do
   withFreshBinder hint (MiscBound $ BaseTy ty) \b ->
     cont $ IBinder b ty
+{-# INLINE withFreshIBinder #-}
 
-emitCall :: (Emits n, ImpBuilder m)
-         => NaryPiType n -> ImpFunName n -> [Atom n] -> m n (Atom n)
+emitCall :: Emits n
+         => NaryPiType n -> ImpFunName n -> [Atom n] -> SubstImpM i n (Atom n)
 emitCall piTy f xs = do
   AbsPtrs absDest ptrDefs <- makeNaryLamDest piTy
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
     Distinct <- getDistinct
-    size <- liftBuilderImp $ emitBlock $ sink sizeBlock
+    size <- dropSubst $ translateBlock Nothing sizeBlock
     emitAlloc ptrTy =<< fromScalarAtom size
   ptrAtoms <- mapM toScalarAtom ptrs
   dest <- applyNaryAbs absDest $ map SubstVal ptrAtoms
@@ -1345,11 +1332,10 @@ emitCall piTy f xs = do
   destToAtom resultDest
 
 buildImpFunction
-  :: ImpBuilder m
-  => CallingConvention
+  :: CallingConvention
   -> [(NameHint, IType)]
-  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l [IExpr l])
-  -> m n (ImpFunction n)
+  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> SubstImpM i l [IExpr l])
+  -> SubstImpM i n (ImpFunction n)
 buildImpFunction cc argHintsTys body = do
   Abs bs (Abs decls (ListE results)) <-
     buildImpNaryAbs argHintsTys \vs -> ListE <$> body vs
@@ -1358,10 +1344,10 @@ buildImpFunction cc argHintsTys body = do
   return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
 
 buildImpNaryAbs
-  :: (ImpBuilder m, SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  :: (SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => [(NameHint, IType)]
-  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l (e l))
-  -> m n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
+  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> SubstImpM i l (e l))
+  -> SubstImpM i n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
 buildImpNaryAbs [] cont = do
   Distinct <- getDistinct
   Abs Empty <$> buildScopedImp (cont [])
@@ -1378,68 +1364,53 @@ emitInstr instr = do
   xs <- emitMultiReturnInstr instr
   case xs of
     [x] -> return x
-    _ -> error "unexpected numer of return values"
+    _   -> error "unexpected numer of return values"
+{-# INLINE emitInstr #-}
 
 emitStatement :: (ImpBuilder m, Emits n) => ImpInstr n -> m n ()
 emitStatement instr = do
   xs <- emitMultiReturnInstr instr
   case xs of
     [] -> return ()
-    _ -> error "unexpected numer of return values"
+    _   -> error "unexpected numer of return values"
+{-# INLINE emitStatement #-}
 
 emitAlloc :: (ImpBuilder m, Emits n) => PtrType -> IExpr n -> m n (IExpr n)
 emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
+{-# INLINE emitAlloc #-}
 
-buildBinOp :: (ImpBuilder m, Emits n)
+buildBinOp :: Emits n
            => (forall l. (Emits l, DExt n l) => Atom l -> Atom l -> BuilderM l (Atom l))
-           -> IExpr n -> IExpr n -> m n (IExpr n)
+           -> IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 buildBinOp f x y = fromScalarAtom =<< liftBuilderImp do
   Distinct <- getDistinct
   x' <- toScalarAtom $ sink x
   y' <- toScalarAtom $ sink y
   f x' y'
 
-iaddI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+iaddI :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 iaddI = buildBinOp iadd
 
-_isubI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-_isubI = buildBinOp isub
-
-_imulI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-_imulI = buildBinOp imul
-
-_idivI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-_idivI = buildBinOp idiv
-
-_iltI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-_iltI = buildBinOp ilt
-
-_ieqI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-_ieqI = buildBinOp ieq
-
-_bandI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-_bandI x y = emitInstr $ IPrimOp $ ScalarBinOp BAnd x y
-
-impOffset :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
 
-cast :: (ImpBuilder m, Emits n) => IExpr n -> BaseType -> m n (IExpr n)
+cast :: Emits n => IExpr n -> BaseType -> SubstImpM i n (IExpr n)
 cast x bt = emitInstr $ ICastOp bt x
 
-load :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
+load :: Emits n => IExpr n -> SubstImpM i n (IExpr n)
 load x = emitInstr $ IPrimOp $ PtrLoad x
 
 -- === Atom <-> IExpr conversions ===
 
-fromScalarAtom :: HasCallStack => EnvReader m => Atom n -> m n (IExpr n)
-fromScalarAtom atom = case atom of
+fromScalarAtom :: Atom n -> SubstImpM i n (IExpr n)
+fromScalarAtom atom = confuseGHC >>= \_ -> case atom of
   Var v -> do
-    ~(BaseTy b) <- getType $ Var v
+    BaseTy b <- getType v
     return $ IVar v b
   Con (Lit x) -> return $ ILit x
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
-toScalarAtom :: EnvReader m => IExpr n -> m n (Atom n)
+toScalarAtom :: Monad m => IExpr n -> m (Atom n)
 toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
@@ -1448,22 +1419,22 @@ toScalarAtom ie = case ie of
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
-liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
+liftBuilderImp :: (Emits n, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, DExt n l) => BuilderM l (e l))
-               -> m n (e n)
+               -> SubstImpM i n (e n)
 liftBuilderImp cont = do
   Abs decls result <- liftBuilder $ buildScoped cont
-  runSubstReaderT idSubst $ translateDeclNest decls $ substM result
+  dropSubst $ translateDeclNest decls $ substM result
 
 -- TODO: should we merge this with `liftBuilderImp`? Not much harm in
 -- simplifying even if it's not needed.
 liftBuilderImpSimplify
-  :: (Emits n, ImpBuilder m)
+  :: Emits n
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> m n (Atom n)
+  -> SubstImpM i n (Atom n)
 liftBuilderImpSimplify cont = do
   block <- dceApproxBlock <$> buildBlockSimplified cont
-  runSubstReaderT idSubst $ translateBlock Nothing block
+  dropSubst $ translateBlock Nothing block
 
 emitSimplified
   :: (Emits n, Builder m)
@@ -1472,28 +1443,28 @@ emitSimplified
 emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
 
 appSimplifiedIxMethodImp
-  :: (Emits n, ImpBuilder m)
+  :: Emits n
   => Type n -> (SimpleIxInstance n -> Abs (Nest Decl) LamExpr n)
-  -> Atom n -> m n (Atom n)
+  -> Atom n -> SubstImpM i n (Atom n)
 appSimplifiedIxMethodImp ty method x = do
   -- TODO: Is this safe? Shouldn't I use x' here? It errors then!
   Abs decls f <- method <$> simplifiedIxInstance ty
   let decls' = decls
   case f of
     LamExpr fx' fb' ->
-      runSubstReaderT idSubst $ translateDeclNest decls' $
+      dropSubst $ translateDeclNest decls' $
         extendSubst (fx'@>SubstVal x) $ translateBlock Nothing fb'
 
-intToIndexImp :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
+intToIndexImp :: Emits n => Type n -> IExpr n -> SubstImpM i n (Atom n)
 intToIndexImp ty i =
   appSimplifiedIxMethodImp ty simpleUnsafeFromOrdinal =<< toScalarAtom i
 
-indexToIntImp :: (ImpBuilder m, Emits n) => Atom n -> m n (IExpr n)
+indexToIntImp :: Emits n => Atom n -> SubstImpM i n (IExpr n)
 indexToIntImp idx = do
   ty <- getType idx
   fromScalarAtom =<< appSimplifiedIxMethodImp ty simpleToOrdinal  idx
 
-indexSetSizeImp :: (ImpBuilder m, Emits n) => Type n -> m n (IExpr n)
+indexSetSizeImp :: Emits n => Type n -> SubstImpM i n (IExpr n)
 indexSetSizeImp ty = do
   fromScalarAtom =<< appSimplifiedIxMethodImp ty simpleIxSize UnitVal
 
@@ -1529,9 +1500,9 @@ impInstrTypes instr = case instr of
 -- TODO: reuse type rules in Type.hs
 impOpType :: IPrimOp n -> IType
 impOpType pop = case pop of
-  ScalarBinOp op x y -> ignoreExcept $ checkBinOp op (getIType x) (getIType y)
-  ScalarUnOp  op x   -> ignoreExcept $ checkUnOp  op (getIType x)
-  VectorBinOp op x y -> ignoreExcept $ checkBinOp op (getIType x) (getIType y)
+  ScalarBinOp op x y -> runHardFail $ checkBinOp op (getIType x) (getIType y)
+  ScalarUnOp  op x   -> runHardFail $ checkUnOp  op (getIType x)
+  VectorBinOp op x y -> runHardFail $ checkBinOp op (getIType x) (getIType y)
   Select  _ x  _     -> getIType x
   VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
   VectorIndex x _    -> Scalar ty  where Vector ty = getIType x
@@ -1571,3 +1542,8 @@ capturedVars :: (Color c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
 capturedVars b e = nameSetToList nameSet
   where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+
+-- See Note [Confuse GHC] from Simplify.hs
+confuseGHC :: EnvReader m => m n (DistinctEvidence n)
+confuseGHC = getDistinct
+{-# INLINE confuseGHC #-}

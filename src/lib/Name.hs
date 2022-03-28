@@ -1493,6 +1493,7 @@ extendInplaceT ab = do
   UnsafeMakeInplaceT \env ->
     refreshAbsPure (toScope env) ab \_ decls result ->
       return (unsafeCoerceE result, unsafeCoerceB decls)
+{-# INLINE extendInplaceT #-}
 
 locallyMutableInplaceT
   :: forall m b d n e.
@@ -1504,6 +1505,7 @@ locallyMutableInplaceT cont = do
     (e, decls) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
                     unsafeRunInplaceT cont bindings
     return (Abs (unsafeCoerceB decls) e, emptyOutFrag)
+{-# INLINE locallyMutableInplaceT #-}
 
 liftBetweenInplaceTs
   :: Monad m
@@ -1517,6 +1519,7 @@ liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
     (result, declsInner) <- liftInner $ f $ lowerBindings bindingsOuter
     withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (result, liftDecls declsInner)
+{-# INLINE liftBetweenInplaceTs #-}
 
 -- === predicates for mutable and immutable scope parameters ===
 
@@ -1528,11 +1531,14 @@ instance Mut UnsafeS
 fabricateMutEvidence :: forall n. MutEvidence n
 fabricateMutEvidence =
   withMutEvidence (error "pure fabrication" :: MutEvidence n) Mut
+{-# INLINE fabricateMutEvidence #-}
 
 withMutEvidence :: forall n a. MutEvidence n -> (Mut n => a) -> a
 withMutEvidence _ cont = fromWrapWithMut
  ( TrulyUnsafe.unsafeCoerce ( WrapWithMut cont :: WrapWithMut n       a
                                              ) :: WrapWithMut UnsafeS a)
+{-# INLINE withMutEvidence #-}
+
 newtype WrapWithMut n r =
   WrapWithMut { fromWrapWithMut :: Mut n => r }
 

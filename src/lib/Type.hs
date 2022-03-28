@@ -52,6 +52,7 @@ checkTypesM e = liftExcept =<< checkTypes e
 
 getType :: (EnvReader m, HasType e) => e n -> m n (Type n)
 getType e = liftHardFailTyperT $ getTypeE e
+{-# INLINE getType #-}
 
 getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getAppType f xs = case nonEmpty xs of
@@ -192,9 +193,11 @@ liftTyperT cont =
   liftEnvReaderT $
     runSubstReaderT idSubst $
       runTyperT' cont
+{-# INLINE liftTyperT #-}
 
 liftHardFailTyperT :: EnvReader m' => TyperT HardFailM n n a -> m' n a
 liftHardFailTyperT cont = liftM runHardFail $ liftTyperT cont
+{-# INLINE liftHardFailTyperT #-}
 
 instance Fallible m => Typer (TyperT m)
 
@@ -333,6 +336,7 @@ instance HasType AtomName where
   getTypeE name = do
     name' <- substM name
     atomBindingType <$> lookupEnv name'
+  {-# INLINE getTypeE #-}
 
 instance HasType Atom where
   getTypeE atom = case atom of
