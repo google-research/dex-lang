@@ -1,13 +1,14 @@
 '## Base 64 encoder
 
-encodingTable = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-                 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
-                 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
-                 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
-                 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-                 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
-                 'w', 'x', 'y', 'z', '0', '1', '2', '3',
-                 '4', '5', '6', '7', '8', '9', '+', '/']
+encodingTable =
+  ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+   'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+   'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+   'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+   'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+   'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+   'w', 'x', 'y', 'z', '0', '1', '2', '3',
+   '4', '5', '6', '7', '8', '9', '+', '/']
 
 -- TODO: make `Word8` an index set instead of using `Fin 256`
 decodingTable : Fin 256 => Maybe Char =
@@ -22,8 +23,8 @@ Base64 = Byte -- first two bits should be zero
 -- This could go in the prelude, or in a library of array-dicing functions.
 -- An explicit "view" builder would be good here, to avoid copies
 def getChunks {n a}
-    (chunkSize:Int) (padVal:a) (xs:n=>a)
-    : List (Fin chunkSize => a) =
+      (chunkSize:Int) (padVal:a) (xs:n=>a)
+      : List (Fin chunkSize => a) =
   numChunks = idivCeil (size n) chunkSize
   paddedSize = numChunks * chunkSize
   xsPadded = padTo (Fin paddedSize) padVal xs

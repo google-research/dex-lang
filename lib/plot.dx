@@ -24,8 +24,9 @@ def Color : Type = Fin 3 => Float
 
 def applyScale {a} (s:Scale a) (x:a) : Maybe Float = getAt #mapping s x
 
-unitTypeScale : Scale Unit = { mapping = \(). Just 0.0
-                             , range   = AsList _ [Singleton 0.0] }
+unitTypeScale : Scale Unit =
+  { mapping = \(). Just 0.0
+  , range   = AsList _ [Singleton 0.0] }
 
 def projectUnitInterval (x:Float) : Maybe Float =
   case x >= 0.0 && x <= 1.0 of
@@ -83,7 +84,7 @@ def blankData {n} [Ix n] : ScaledData n Unit =
   {scale = unitTypeScale, dat = for i. ()}
 
 def blankPlot {n} [Ix n] : Plot n Unit Unit Unit =
-  { xs = blankData, ys = blankData, cs = blankData }
+  {xs = blankData, ys = blankData, cs = blankData}
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def autoScale {n} (xs:n=>Float) : ScaledData n Float =
@@ -94,7 +95,7 @@ def autoScale {n} (xs:n=>Float) : ScaledData n Float =
   padding = maximum [space, max * 0.001, 0.000001]
   {scale = floatScale (min - padding) (max + padding), dat = xs}
 
-def setXData {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c=
+def setXData {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c =
   -- We can't use `setAt` here because we're changing the type
   {xs = xs, ys = getAt #ys plot, cs = getAt #cs plot}
 

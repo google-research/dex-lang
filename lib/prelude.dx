@@ -1078,12 +1078,15 @@ def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 def (+>)  {n l} (t:Tile n l) (i : l) : n = %sliceOffset t i
 def (++>) {n u v} (t : Tile n (u & v)) (i : u) : Tile n v = %sliceCurry t i
 
-def tile  {n l a eff} [Ix n, Ix l]
-          (fTile : (t:(Tile n l) -> {|eff} l=>a))
-          (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
+def tile {n l a eff} [Ix n, Ix l]
+      (fTile : (t:(Tile n l) -> {|eff} l=>a))
+      (fScalar : n -> {|eff} a) : {|eff} n=>a =
+  %tiled fTile fScalar
+
 def tile1 {n m l a eff} [Ix m, Ix n, Ix l]
-          (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
-          (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
+      (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
+      (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a =
+  %tiledd fTile fScalar
 
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
 --       once we are able to eliminate temporary arrays. Until then, we inline for performance...
@@ -1229,7 +1232,8 @@ by using `splitR &>> iso`
 
 def splitR {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
-def overFields {a b c v} [Ix b, Ix c] (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
+def overFields {a b c v} [Ix b, Ix c]
+      (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
   overLens (splitR &>> iso) tab
 
 'Convert a variant zipper isomorphism to a normal prism-like isomorphism
@@ -1245,9 +1249,10 @@ def sliceFields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v
 
 -- TODO: would be nice to be able to use records here
 data DynBuffer a =
-  MkDynBuffer { size    : Ptr Int
-              & maxSize : Ptr Int
-              & buffer  : Ptr (Ptr a) }
+  MkDynBuffer {
+      size    : Ptr Int
+    & maxSize : Ptr Int
+    & buffer  : Ptr (Ptr a) }
 
 def withDynamicBuffer {a b} [Storable a]
       (action: DynBuffer a -> {IO} b) : {IO} b =
@@ -1256,15 +1261,15 @@ def withDynamicBuffer {a b} [Storable a]
     store sizePtr 0
     store maxSizePtr initMaxSize
     store bufferPtr $ malloc initMaxSize
-    result = action $ MkDynBuffer { size    = sizePtr
-                                  , maxSize = maxSizePtr
-                                  , buffer  = bufferPtr }
-
+    result = action $ MkDynBuffer {
+        size    = sizePtr
+      , maxSize = maxSizePtr
+      , buffer  = bufferPtr }
     free $ load bufferPtr
     result
 
 def maybeIncreaseBufferSize {a} [Storable a]
-    ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {IO} Unit =
+      ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {IO} Unit =
   size    = load $ getAt #size    db
   maxSize = load $ getAt #maxSize db
   bufPtr  = load $ getAt #buffer  db
@@ -1282,7 +1287,7 @@ def addAtIntPtr (ptr: Ptr Int) (n:Int) : {IO} Unit =
   store ptr (load ptr + n)
 
 def extendDynBuffer {a} [Storable a]
-    (buf: DynBuffer a) (new:List a) : {IO} Unit =
+      (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
   maybeIncreaseBufferSize buf n
   (MkDynBuffer db) = buf
@@ -1474,8 +1479,9 @@ def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
     Just ans -> ans
     Nothing -> unreachable ()
 
-def boundedIter {a eff} (maxIters:Int) (fallback:a)
-                (body: Int -> {|eff} IterResult a) : {|eff} a  =
+def boundedIter {a eff}
+      (maxIters:Int) (fallback:a)
+      (body: Int -> {|eff} IterResult a) : {|eff} a  =
   iter \i.
     if i >= maxIters
       then Done fallback
@@ -1563,7 +1569,8 @@ def deleteFile (f:FilePath) : {IO} Unit =
     removeFFI ptr
   ()
 
-def withFile {a} (f:FilePath) (mode:StreamMode)
+def withFile {a}
+      (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
       : {IO} a =
   stream = fopen f mode
@@ -1741,8 +1748,8 @@ instance {n a} [Arbitrary a] Arbitrary (n=>a)
 
 instance {a b} [Arbitrary a, Arbitrary b] Arbitrary (a & b)
   arb = \key.
-      [k1, k2] = splitKey key
-      (arb k1, arb k2)
+    [k1, k2] = splitKey key
+    (arb k1, arb k2)
 
 instance {n} Arbitrary (Fin n)
   arb = randIdx
@@ -1799,32 +1806,32 @@ def argmin {n o} [Ord o] (xs:n=>o) : n = argscan (<) xs
 def argmax {n o} [Ord o] (xs:n=>o) : n = argscan (>) xs
 
 def lexicalOrder {n} [Ord n]
-  (compareElements:n->n->Bool)
-  (compareLengths:Int->Int->Bool)
-  ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
-    -- Orders Lists according to the order of their elements,
-    -- in the same way a dictionary does.
-    -- For example, this lets us sort Strings.
-    --
-    -- More precisely, it returns True iff compareElements xs.i ys.i is true
-    -- at the first location they differ.
-    --
-    -- This function operates serially and short-circuits
-    -- at the first difference.  One could also write this
-    -- function as a parallel reduction, but it would be
-    -- wasteful in the case where there is an early difference,
-    -- because we can't short circuit.
-    iter \i.
-      case i == min nx ny of
-        True -> Done $ compareLengths nx ny
-        False ->
-          xi = xs.(unsafeFromOrdinal _ i)
-          yi = ys.(unsafeFromOrdinal _ i)
-          case compareElements xi yi of
-            True -> Done True
-            False -> case xi == yi of
-              True -> Continue
-              False -> Done False
+      (compareElements:n->n->Bool)
+      (compareLengths:Int->Int->Bool)
+      ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
+  -- Orders Lists according to the order of their elements,
+  -- in the same way a dictionary does.
+  -- For example, this lets us sort Strings.
+  --
+  -- More precisely, it returns True iff compareElements xs.i ys.i is true
+  -- at the first location they differ.
+  --
+  -- This function operates serially and short-circuits
+  -- at the first difference.  One could also write this
+  -- function as a parallel reduction, but it would be
+  -- wasteful in the case where there is an early difference,
+  -- because we can't short circuit.
+  iter \i.
+    case i == min nx ny of
+      True -> Done $ compareLengths nx ny
+      False ->
+        xi = xs.(unsafeFromOrdinal _ i)
+        yi = ys.(unsafeFromOrdinal _ i)
+        case compareElements xi yi of
+          True -> Done True
+          False -> case xi == yi of
+            True -> Continue
+            False -> Done False
 
 instance {n} [Ord n] Ord (List n)
   (>) = lexicalOrder (>) (>)

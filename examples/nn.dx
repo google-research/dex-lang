@@ -41,8 +41,8 @@ def dense (a:Type) (b:Type) : Layer (a=>Float) (b=>Float) (DenseParams a b) =
     forward = (\ ((weight, bias)) x .
                for j. (bias.j + sum for i. weight.i.j * x.i)),
     init = arb
-   }
-  
+  }
+
 
 ' CNN layer
 
@@ -50,18 +50,19 @@ def CNNParams (inc:Type) (outc:Type) (kw:Int) (kh:Int) : Type =
   ((outc=>inc=>Fin kh=>Fin kw=>Float) &
    (outc=>Float))
 
-def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
-           (kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float) :
-     outc=>(Fin h)=>(Fin w)=>Float =
-     for o i j.
-         (i', j') = (ordinal i, ordinal j)
-         case (i' + kh) <= h && (j' + kw) <= w of
-          True ->
-              sum for (ki, kj, inp).
-                  (di, dj) = (fromOrdinal (Fin h) (i' + (ordinal ki)),
-                              fromOrdinal (Fin w) (j' + (ordinal kj)))
-                  x.inp.di.dj * kernel.o.inp.ki.kj
-          False -> zero
+def conv2d
+      (x:inc=>(Fin h)=>(Fin w)=>Float)
+      (kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float)
+      : outc=>(Fin h)=>(Fin w)=>Float =
+  for o i j.
+    (i', j') = (ordinal i, ordinal j)
+    case (i' + kh) <= h && (j' + kw) <= w of
+      True ->
+        sum for (ki, kj, inp).
+          (di, dj) = (fromOrdinal (Fin h) (i' + (ordinal ki)),
+                      fromOrdinal (Fin w) (j' + (ordinal kj)))
+          x.inp.di.dj * kernel.o.inp.ki.kj
+      False -> zero
 
 def cnn (h:Int) ?-> (w:Int) ?-> (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
     Layer (inc=>(Fin h)=>(Fin w)=>Float)
@@ -75,14 +76,14 @@ def cnn (h:Int) ?-> (w:Int) ?-> (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
 ' Pooling 
 
 def split (x: m=>v) : n=>o=>v =
-    for i j. x.((ordinal (i,j))@m)
+  for i j. x.((ordinal (i,j))@m)
             
 def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
-    for kw kh w h. (split (split x).w.kw).h.kh
+  for kw kh w h. (split (split x).w.kw).h.kh
 
 def meanpool (kh: Type) (kw: Type) (x : m=>n=> Float) : ( h=>w=> Float) =
-    out : (kh => kw => h => w => Float) = imtile x
-    mean for (i,j). out.i.j
+  out : (kh => kw => h => w => Float) = imtile x
+  mean for (i,j). out.i.j
 
 ' ## Simple point classifier
 
@@ -115,13 +116,14 @@ simple = \h1.
 ' Train a multiclass classifier with minibatch SGD
 ' `minibatch * minibatches = batch`
 
-def trainClass [VSpace p] (model: Layer a (b=>Float) p)
-                           (x: batch=>a)
-                           (y: batch=>b)
-                           (epochs : Type)
-                           (minibatch : Type)
-                           (minibatches : Type) :
-    (epochs => p & epochs => Float ) =
+def trainClass [VSpace p]
+      (model: Layer a (b=>Float) p)
+      (x: batch=>a)
+      (y: batch=>b)
+      (epochs : Type)
+      (minibatch : Type)
+      (minibatches : Type)
+      : (epochs => p & epochs => Float ) =
   xs : minibatches => minibatch => a = split x
   ys : minibatches => minibatch => b = split y
   unzip $ withState (init model $ newKey 0) $ \params .
@@ -142,8 +144,8 @@ simple_model = simple (Fin 10)
 
 span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
-        r = forward simple_model all_params.((ordinal h * 10)@_) [span.i, span.j]
-        [exp r.(1@_), exp r.(0@_), 0.0]
+    r = forward simple_model all_params.((ordinal h * 10)@_) [span.i, span.j]
+    [exp r.(1@_), exp r.(0@_), 0.0]
         
 
 :html imseqshow tests
@@ -182,9 +184,6 @@ lenet = \h1 h2 h3 .
 
 
 ' ## Data Loading
-
-
-
 
 
 Batch = Fin 5000
@@ -244,6 +243,3 @@ init_param = (init model  $ newKey 0)
 (all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
 
 :p losses'
-
-
-

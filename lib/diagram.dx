@@ -25,13 +25,13 @@ red   : HtmlColor = [IToW8 255, IToW8   0, IToW8   0]
 green : HtmlColor = [IToW8   0, IToW8 255, IToW8   0]
 blue  : HtmlColor = [IToW8   0, IToW8   0, IToW8 255]
 
-GeomStyle : Type =
-  { fillColor   : Maybe HtmlColor
+GeomStyle : Type = {
+    fillColor   : Maybe HtmlColor
   & strokeColor : Maybe HtmlColor
   & strokeWidth : Int }
 
-defaultGeomStyle : GeomStyle =
-  { fillColor   = Nothing
+defaultGeomStyle : GeomStyle = {
+    fillColor   = Nothing
   , strokeColor = Just black
   , strokeWidth = 1 }
 

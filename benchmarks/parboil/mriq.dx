@@ -1,17 +1,19 @@
--- def mriq (kx : ks=>Float) (ky : ks=>Float) (kz : ks=>Float)
---          (x : cs=>Float)  (y : cs=>Float)  (z : cs=>Float)
---          (phiR : ks=>Float) (phiI : ks=>Float)
---            : (cs=>Float & cs=>Float) =
+-- def mriq
+--       (kx : ks=>Float) (ky : ks=>Float) (kz : ks=>Float)
+--       (x : cs=>Float)  (y : cs=>Float)  (z : cs=>Float)
+--       (phiR : ks=>Float) (phiI : ks=>Float)
+--       : (cs=>Float & cs=>Float) =
 --   phiMags = for i. phiR.i * phiR.i + phiI.i * phiI.i
 --   expArgs = for i:cs j:ks.  2.0 * pi * (kx.j * x.i + ky.j * y.i + kz.j * z.i)
 --   qr = for i. sum $ for j. cos $ expArgs.i.j * phiMags.j
 --   qi = for i. sum $ for j. sin $ expArgs.i.j * phiMags.j
 --   (qr, qi)
 
-def mriq (kx : ks=>Float) (ky : ks=>Float) (kz : ks=>Float)
-         (x : cs=>Float)  (y : cs=>Float)  (z : cs=>Float)
-         (phiR : ks=>Float) (phiI : ks=>Float)
-           : (cs=>Float & cs=>Float) =
+def mriq
+      (kx : ks=>Float) (ky : ks=>Float) (kz : ks=>Float)
+      (x : cs=>Float)  (y : cs=>Float)  (z : cs=>Float)
+      (phiR : ks=>Float) (phiI : ks=>Float)
+      : (cs=>Float & cs=>Float) =
   unzip $ for i.
     runAccum (AddMonoid Float) \qi.
       yieldAccum (AddMonoid Float) \qr.

@@ -8,9 +8,10 @@
 'This is a normal ADT, and you can construct your own isomorphisms.
 
 def cycleThree {a b c} : Iso (a & b & c) (b & c & a) =
-  MkIso { fwd = \(a, b, c). (b, c, a)
-        , bwd = \(b, c, a). (a, b, c)
-        }
+  MkIso {
+      fwd = \(a, b, c). (b, c, a)
+    , bwd = \(b, c, a). (a, b, c)
+    }
 
 'Isomorphisms can be applied with `appIso`, applied in reverse with `revIso`,
 and flipped with `flipIso`

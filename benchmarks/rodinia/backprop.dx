@@ -3,18 +3,20 @@ MOMENTUM = 0.3
 
 def squash (x : Float) : Float = 1.0 / (1.0 + exp (-x))
 
-def layerForward (input : in=>Float)
-                 (params : { b: Unit| w: in }=>out=>Float)
-                   : out=>Float =
+def layerForward
+      (input : in=>Float)
+      (params : { b: Unit| w: in }=>out=>Float)
+      : out=>Float =
   bias = params.{| b=() |}
   total = (sum $ for i:in j:out. params.{| w=i |}.j * input.i) + bias
   for i. squash total.i
 
-def adjustWeights (delta : out=>Float)
-                  (input : in=>Float)
-                  (weight : { b: Unit | w: in }=>out=>Float)
-                  (oldWeight : { b: Unit | w: in }=>out=>Float)
-                  : ({ b: Unit | w: in }=>out=>Float & { b: Unit | w: in }=>out=>Float) =
+def adjustWeights
+      (delta : out=>Float)
+      (input : in=>Float)
+      (weight : { b: Unit | w: in }=>out=>Float)
+      (oldWeight : { b: Unit | w: in }=>out=>Float)
+      : ({ b: Unit | w: in }=>out=>Float & { b: Unit | w: in }=>out=>Float) =
   weight' = for k:{ b: Unit | w: in } j:out.
     i = case k of
       {| b=() |} -> 1.0
@@ -23,9 +25,10 @@ def adjustWeights (delta : out=>Float)
     weight.k.j + d
   (weight', weight)
 
-def outputError (target : out=>Float)
-                (output : out=>Float)
-                  : (Float & out=>Float) =
+def outputError
+      (target : out=>Float)
+      (output : out=>Float)
+      : (Float & out=>Float) =
   swap $ runAccum (AddMonoid Float) \err.
     for i.
       o = output.i
@@ -33,10 +36,11 @@ def outputError (target : out=>Float)
       err += abs d
       d
 
-def hiddenError (outputDelta : out=>Float)
-                (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
-                (hidden : hid=>Float)
-                  : (Float & hid=>Float) =
+def hiddenError
+      (outputDelta : out=>Float)
+      (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
+      (hidden : hid=>Float)
+      : (Float & hid=>Float) =
   swap $ runAccum (AddMonoid Float) \err.
     for i:hid.
       mult = sum $ for j. outputDelta.j * hiddenWeights.{| w = i |}.j
@@ -44,16 +48,17 @@ def hiddenError (outputDelta : out=>Float)
       err += abs r
       r
 
-def backprop (input : in=>Float)
-             (target : out=>Float)
-             (inputWeights : { b: Unit | w: in }=>hid=>Float)
-             (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
-             (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
-             (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
-               : ( Float
-                 & Float
-                 & { b: Unit | w: in }=>hid=>Float
-                 & { b: Unit | w: hid }=>out=>Float) =
+def backprop
+      (input : in=>Float)
+      (target : out=>Float)
+      (inputWeights : { b: Unit | w: in }=>hid=>Float)
+      (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
+      (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
+      (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
+      : ( Float
+        & Float
+        & { b: Unit | w: in }=>hid=>Float
+        & { b: Unit | w: hid }=>out=>Float) =
   hidden = layerForward input  inputWeights
   output = layerForward hidden hiddenWeights
 

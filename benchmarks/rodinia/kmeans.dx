@@ -12,11 +12,12 @@ def centroidsOf (points : n=>d=>Float) (membership : n=>k) : k=>d=>Float =
 def argminBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : n =
   minimumBy (\i. f xs.i) (for i. i)
 
-def kmeans (points : n=>d=>Float)
-           (k : Int)
-           (threshold : Int)
-           (maxIterations : Int)
-           : (Fin k)=>d=>Float =
+def kmeans
+      (points : n=>d=>Float)
+      (k : Int)
+      (threshold : Int)
+      (maxIterations : Int)
+      : (Fin k)=>d=>Float =
   initCentroids = for i:(Fin k). points.(ordinal i@_)
   initMembership = for c:n. ((ordinal c `mod` k)@_)
   final = yieldState (initMembership, initCentroids, 0) \ref.
