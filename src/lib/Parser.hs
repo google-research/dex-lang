@@ -7,7 +7,7 @@
 module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
                finishUModuleParse, preludeImportBlock,
                parseTopDeclRepl, withSource,
-               symbol, symChar, keyWordStrs, showPrimName) where
+               symbol, symChar, SP.keyWordStrs, showPrimName) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -21,7 +21,6 @@ import Data.Tuple
 import Data.Functor
 import Data.Foldable
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Scientific as Scientific
 import Data.Maybe (fromMaybe)
 import Data.Void
 import qualified Data.Set as S
@@ -33,6 +32,7 @@ import Err
 import LabeledItems
 import Name
 import Util (File (..))
+import SpaceParser qualified as SP
 
 import Types.Source
 import Types.Primitives
@@ -123,7 +123,7 @@ recover e = do
   return (LogNothing, UnParseable reachedEOF errmsg)
 
 consumeTillBreak :: Parser ()
-consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
+consumeTillBreak = lift $ SP.consumeTillBreak
 
 logLevel :: Parser LogLevel
 logLevel = do
@@ -166,7 +166,7 @@ sourceBlock' =
   <|> hidden (sc >> eol >> return CommentLine)
 
 proseBlock :: Parser SourceBlock'
-proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSource consumeTillBreak)
+proseBlock = label "prose block" $ lift $ fmap ProseBlock SP.proseBlock
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
@@ -1098,12 +1098,10 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
 
 upperName :: Lexer SourceName
-upperName = label "upper-case name" $ lexeme $
-  checkNotKeyword $ (:) <$> upperChar <*> many nameTailChar
+upperName = label "upper-case name" $ lexeme $ lift SP.upperName
 
 lowerName  :: Lexer SourceName
-lowerName = label "lower-case name" $ lexeme $
-  checkNotKeyword $ (:) <$> lowerChar <*> many nameTailChar
+lowerName = label "lower-case name" $ lexeme $ lift SP.lowerName
 
 anyCaseName  :: Lexer SourceName
 anyCaseName = lowerName <|> upperName
@@ -1111,14 +1109,8 @@ anyCaseName = lowerName <|> upperName
 anyName  :: Lexer SourceName
 anyName = lowerName <|> upperName <|> symName
 
-checkNotKeyword :: Parser String -> Parser String
-checkNotKeyword p = try $ do
-  s <- p
-  failIf (s `elem` keyWordStrs) $ show s ++ " is a reserved word"
-  return s
-
 keyWord :: KeyWord -> Lexer ()
-keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
+keyWord kw = lexeme $ lift $ try $ string s >> notFollowedBy SP.nameTailChar
   where
     s = case kw of
       DefKW  -> "def"
@@ -1146,37 +1138,23 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ImportKW -> "import"
       ForeignKW -> "foreign"
 
-keyWordStrs :: [String]
-keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
-               "Read", "Write", "Accum", "Except", "IO", "data", "interface",
-               "instance", "named-instance", "where", "if", "then", "else",
-               "do", "view", "import", "foreign"]
-
 fieldLabel :: Lexer Label
-fieldLabel = label "field label" $ lexeme $
-  checkNotKeyword $ (:) <$> (lowerChar <|> upperChar) <*> many nameTailChar
+fieldLabel = label "field label" $ lexeme $ lift $ SP.fieldLabel
 
 primName :: Lexer String
-primName = lexeme $ try $ char '%' >> some alphaNumChar
+primName = lexeme $ lift SP.primName
 
 charLit :: Lexer Char
-charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
+charLit = lexeme $ lift SP.charLit
 
 strLit :: Lexer String
-strLit = lexeme $ char '"' >> manyTill L.charLiteral (char '"')
+strLit = lexeme $ lift SP.strLit
 
 intLit :: Lexer Int
-intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
+intLit = lexeme $ lift SP.intLit
 
 doubleLit :: Lexer Double
-doubleLit = lexeme $
-      try L.float
-  <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
-  <|> try do
-    s <- L.scientific
-    case Scientific.toBoundedRealFloat s of
-      Right f -> return f
-      Left  _ -> fail "Non-representable floating point literal"
+doubleLit = lexeme $ lift SP.doubleLit
 
 knownSymStrs :: [String]
 knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":=",
@@ -1185,23 +1163,25 @@ knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+
 
 -- string must be in `knownSymStrs`
 sym :: String -> Lexer ()
-sym s = lexeme $ try $ string s >> notFollowedBy symChar
+sym s = lexeme $ lift $ try $ string s >> notFollowedBy SP.symChar
 
 anySym :: Lexer String
-anySym = lexeme $ try $ do
-  s <- some symChar
+anySym = lexeme $ lift $ try $ do
+  s <- some SP.symChar
   -- TODO: consider something faster than linear search here
-  failIf (s `elem` knownSymStrs) ""
+  SP.failIf (s `elem` knownSymStrs) ""
   return $ "(" <> s <> ")"
 
+symChar :: Lexer Char
+symChar = lift SP.symChar
+
 symName :: Lexer SourceName
-symName = label "symbol name" $ lexeme $ try $ do
-  s <- between (char '(') (char ')') $ some symChar
+symName = label "symbol name" $ lexeme $ lift do
+  s <- SP.symName
   return $ "(" <> s <> ")"
 
 backquoteName :: Lexer SourceName
-backquoteName = label "backquoted name" $
-  lexeme $ try $ between (char '`') (char '`') (upperName <|> lowerName)
+backquoteName = label "backquoted name" $ lexeme $ lift SP.backquoteName
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
@@ -1218,15 +1198,6 @@ underscore = charLexeme '_'
 
 charLexeme :: Char -> Parser ()
 charLexeme c = void $ lexeme $ char c
-
-nameTailChar :: Parser Char
-nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
-
-symChar :: Parser Char
-symChar = choice $ map char symChars
-
-symChars :: [Char]
-symChars = ".,!$^&*:-~+/=<>|?\\@"
 
 -- === Util ===
 
@@ -1327,10 +1298,6 @@ eol = void MC.eol
 
 eolf :: Parser ()
 eolf = eol <|> eof
-
-failIf :: Bool -> String -> Parser ()
-failIf True s = fail s
-failIf False _ = return ()
 
 _debug :: Show a => String -> Parser a -> Parser a
 _debug s m = mapReaderT (Text.Megaparsec.Debug.dbg s) m

@@ -81,9 +81,11 @@ library
                      , Name
                      , PPrint
                      , Parser
+                     , Renamer
                      , Serialize
                      , Simplify
                      , SourceRename
+                     , SpaceParser
                      , Syntax
                      , TopLevel
                      , Transpose
@@ -104,6 +106,7 @@ library
                      , bytestring
                      , containers
                      , cryptonite
+                     , deepseq
                      , exceptions
                      , hashable
                      , llvm-hs

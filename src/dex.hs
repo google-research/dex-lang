@@ -32,6 +32,7 @@ import RenderHtml
 import Live.Terminal (runTerminal)
 import Live.Web (runWeb)
 #endif
+import Renamer (rename)
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly
@@ -43,6 +44,7 @@ data DocFmt = ResultOnly
 data EvalMode = ReplMode String
               | ScriptMode FilePath DocFmt ErrorHandling
               | ExportMode FilePath FilePath -- Dex path, .o path
+              | RenameMode String String [FilePath]
               | ClearCache
 #ifdef DEX_LIVE
               | WebMode    FilePath
@@ -77,6 +79,7 @@ runMode evalMode opts = case evalMode of
   --   TopStateEx env' <- return env
   --   -- exportFunctions objPath exportedFuns $ getNameBindings env'
   --   error "not implemented"
+  RenameMode from to files -> rename from to files
   ClearCache -> clearCache
 #ifdef DEX_LIVE
   -- These are broken if the prelude produces any arrays because the blockId
@@ -169,6 +172,7 @@ parseMode = subparser $
   <> command "watch"  (simpleInfo (WatchMode  <$> sourceFileInfo))
 #endif
   <> command "clean"  (simpleInfo (pure ClearCache))
+  <> command "rename" (simpleInfo (RenameMode <$> nameInfo <*> nameInfo <*> sourceFiles))
   <> command "export" (simpleInfo (ExportMode <$> sourceFileInfo <*> objectFileInfo))
   <> command "script" (simpleInfo (ScriptMode <$> sourceFileInfo
   <*> option
@@ -186,6 +190,8 @@ parseMode = subparser $
   where
     sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
     objectFileInfo = argument str (metavar "OBJFILE" <> help "Output path (.o file)")
+    nameInfo = argument str (metavar "NAME" <> help "Dex name")
+    sourceFiles = many $ sourceFileInfo
 
 optionList :: [(String, a)] -> ReadM a
 optionList opts = eitherReader \s -> case lookup s opts of
