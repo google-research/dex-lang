@@ -250,7 +250,7 @@ add5 1.0
   the table argument.
 
 def tableAdd5' {n} (x : n => Float32) : n => Float32 =
-    for i. x.i + 5.0
+  for i. x.i + 5.0
 
 :t tableAdd5' y
 > ((Fin 3 & Fin 8) => Float32)
@@ -262,12 +262,12 @@ def tableAdd5' {n} (x : n => Float32) : n => Float32 =
 ' Imagine we have `transpose` function. We can encode the shape change in the type.
 
 def transFloat {m n} (x : m => n => Float32) : n => m => Float32 =
-    for i. for j. x.j.i
+  for i. for j. x.j.i
 
 ' We can even make it more generic by abstracting over the value type.
 
 def trans {m n v} (x : m => n => v) : n => m => v =
-    for i. for j. x.j.i
+  for i. for j. x.j.i
 
 ' We can also use this to check for shape errors:
 
@@ -275,7 +275,7 @@ def trans {m n v} (x : m => n => v) : n => m => v =
 > ((Fin 3) => (Fin 8) => Float32)
 
 def tableAdd' {m n} (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
-    for i. for j. x.i.j + y.i.j
+  for i. for j. x.i.j + y.i.j
 
 :t tableAdd' x x
 > ((Fin 3) => (Fin 8) => Float32)
@@ -316,23 +316,23 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
   ignore it for now.
 
 def pixel (x:Char) : Float32 =
-     r = W8ToI x
-     IToF case r < 0 of
-             True -> 256 + r
-             False -> r
+  r = W8ToI x
+  IToF case r < 0 of
+    True -> 256 + r
+    False -> r
 
 def getIm : Batch => Image =
-    -- File is unsigned bytes offset with 16 starting bytes
-    (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
-    raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
-    for b: Batch i j.
-        pixel raw.((ordinal (b, i, j)) @ Full)
+  -- File is unsigned bytes offset with 16 starting bytes
+  (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
+  raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
+  for b: Batch i j.
+    pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
-    -- File is unsigned bytes offset with 8 starting bytes
-    (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
-    r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
-    for i. (W8ToI r.i @ Class)
+  -- File is unsigned bytes offset with 8 starting bytes
+  (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
+  r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
+  for i. (W8ToI r.i @ Class)
 
 all_ims = getIm
 all_labels = getLabel
@@ -364,9 +364,9 @@ imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 ' This one shows all the images on one channel over the base plot.
 
 imscolor2 = for b. for i. for j. for c:Channels.
-          case ordinal c == 0 of
-             True -> (sum ims).i.j / (IToF (size Batch))
-             False -> ims.b.i.j
+  case ordinal c == 0 of
+    True  -> (sum ims).i.j / (IToF (size Batch))
+    False -> ims.b.i.j
 
 :html imseqshow (imscolor2 / 255.0)
 > <html output>
@@ -377,12 +377,13 @@ imscolor2 = for b. for i. for j. for c:Channels.
   types.
 
 def split {m n o v} [Ix n, Ix o] (x: m=>v) : n=>o=>v =
-    for i j. x.(ordinal (i,j)@_)
+  for i j. x.(ordinal (i,j)@_)
 
 def imtile {a b n o p q v}
-           [Ix n, Ix o, Ix p, Ix q]
-           (x: a=>b=>v) : n=>o=>p=>q=>v =
-    for kh kw h w. (split (split x).h.kh).w.kw
+      [Ix n, Ix o, Ix p, Ix q]
+      (x: a=>b=>v)
+      : n=>o=>p=>q=>v =
+  for kh kw h w. (split (split x).h.kh).w.kw
 
 im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@_)
 
@@ -420,14 +421,14 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
   and `:=` assignment). Here's what it looks like:
 
 def tableMean {n} (x : n => Float32) : Float32 =
-    -- acc = 0
-    withState 0.0 $ \acc.
-         -- for i in range(len(x))
-         for i.
-             -- acc = acc + x[i]
-             acc := (get acc) + x.i
-         -- return acc / len(x)
-         (get acc) / (IToF (size n))
+  -- acc = 0
+  withState 0.0 $ \acc.
+    -- for i in range(len(x))
+    for i.
+      -- acc = acc + x[i]
+      acc := (get acc) + x.i
+    -- return acc / len(x)
+    (get acc) / (IToF (size n))
 
 
 tableMean [0.0, 1.0, 0.5]
@@ -469,9 +470,9 @@ tableMean [0.0, 1.0, 0.5]
   Here's a simple example:
 
 withState 10 $ \ state.
-     state := 30
-     state := 10
-     get state
+  state := 30
+  state := 10
+  get state
 > 10
 
 ' The element returned is the body function's result (`10`)
@@ -597,11 +598,11 @@ instance {v w} [VSpace v, VSpace w] VSpace (v & w)
 Pixels = Fin 256
 
 def bincount {a b} [Ix b] (inp : a => b) : b => Int =
-    withState zero \acc .
-        for i.
-            v = acc!(inp.i)
-            v := (get v) + 1
-        get acc
+  withState zero \acc .
+    for i.
+      v = acc!(inp.i)
+      v := (get v) + 1
+    get acc
 
 ' Plot how many times each pixel value occurs in an image:
 
@@ -615,12 +616,12 @@ hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
 ' Find nearest images in the dataset:
 
 def imdot {m n} (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
-    sum for (i, j). x.i.j * y.i.j
+  sum for (i, j). x.i.j * y.i.j
 
 dist = for b1. for b2.
-        case b1 == b2 of
-             True -> 0.0
-             False -> -imdot ims.b1 ims.b2
+  case b1 == b2 of
+    True  -> 0.0
+    False -> -imdot ims.b1 ims.b2
 
 nearest = for i. argmin dist.i
 
@@ -657,8 +658,7 @@ toList for i:Height. 0.0
 ' Tables of lists can be concatenated down to
   single lists.
 
-z = concat [toList [3.0],
-            toList [1.0, 2.0 ]]
+z = concat [toList [3.0], toList [1.0, 2.0 ]]
 z
 > (AsList 3 [3., 1., 2.])
 
@@ -674,9 +674,9 @@ temptab
 shoes = (5 @ Class)
 
 def findShoes {a b} (x : a=>b) (y : a=>Class) : List b =
-    concat for i. case (y.i == (5 @ _)) of
-            True -> toList [x.i]
-            False -> toList []
+  concat for i. case (y.i == (5 @ _)) of
+    True  -> toList [x.i]
+    False -> toList []
 
 ' Note though that the type here does not tell us
   how many there are. The type system cannot know this.

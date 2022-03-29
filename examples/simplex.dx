@@ -198,9 +198,10 @@ def cononicalize_constraint (inequality: Constraint vars):
     GreaterThan -> (-coeffs, -offset)
 
 def build_tableau [Eq cons]
-    (ineqs: cons=>Constraint vars)
-    (objective: vars=>Float)
-    (objType:ObjectiveType) : Tableau cons vars =
+      (ineqs: cons=>Constraint vars)
+      (objective: vars=>Float)
+      (objType:ObjectiveType)
+      : Tableau cons vars =
 
   table = for i. case i of
     {|constraints=i|} ->
@@ -221,7 +222,8 @@ def build_tableau [Eq cons]
   (basics, nonbasics, table)
 
 def negate_constraints_with_negative_offsets [Eq cons]
-  (tableau: (Tableau cons vars)): Tableau cons vars =
+      (tableau: (Tableau cons vars))
+      : Tableau cons vars =
   (basics, nonbasics, table) = tableau
   table' = yieldState table \tableRef.
     for i:cons.
@@ -232,7 +234,8 @@ def negate_constraints_with_negative_offsets [Eq cons]
   (basics, nonbasics, table')
 
 def build_feasibility_tableau [Eq cons]
-  (tableau: (Tableau cons vars)): FeasibilityTableau cons vars =
+      (tableau: (Tableau cons vars))
+      : FeasibilityTableau cons vars =
   -- Builds an expanded tableau, with an extra variable for each constraint.
   -- If these new variables can be driven to zero,
   -- while satisfying all constraints, then the original problem is feasible.
@@ -293,8 +296,9 @@ def chooseColumn (tableau: (AbsTableau cons vars extra)) : ColIx cons vars =
   col = argmax_suchthat objective_coeffs \x. x > 0.0
   nonbasics.col
 
-def findPivotIndex (tableau: (AbsTableau cons vars extra))
- : Maybe (RowIx cons extra & ColIx cons vars) =
+def findPivotIndex
+      (tableau: (AbsTableau cons vars extra))
+      : Maybe (RowIx cons extra & ColIx cons vars) =
   -- Chooses row and column to pivot around next.
   (_, _, table) = tableau
   pivotcol = chooseColumn tableau  
@@ -314,9 +318,9 @@ def findPivotIndex (tableau: (AbsTableau cons vars extra))
 
 
 def pivot [Eq cons, Eq extra, Eq vars]
-          (tableau:(AbsTableau cons vars extra))
-          ((pivotrow, pivotcol):(RowIx cons extra & ColIx cons vars)) :
-          (AbsTableau cons vars extra) =
+      (tableau:(AbsTableau cons vars extra))
+      ((pivotrow, pivotcol):(RowIx cons extra & ColIx cons vars))
+      : (AbsTableau cons vars extra) =
   (basics, nonbasics, table) = tableau
 
   newTable = for row.
@@ -340,9 +344,9 @@ def pivot [Eq cons, Eq extra, Eq vars]
 ' #### Transition between phase 1 and 2: `feasibilityTableauToNormalTableau`
 
 def find_non_artificial_pivcol [Eq cons, Eq vars]
-  (tableau: FeasibilityTableau cons vars)
-  (pivrow: RowIx cons Unit)
-  : ColIx cons {realvars: vars | artificials: cons} =
+      (tableau: FeasibilityTableau cons vars)
+      (pivrow: RowIx cons Unit)
+      : ColIx cons {realvars: vars | artificials: cons} =
   (basics, nonbasics, table) = tableau
   coeff = for i.
     col = nonbasics.i
@@ -356,7 +360,8 @@ def find_non_artificial_pivcol [Eq cons, Eq vars]
 
 
 def pivot_artificials [Eq cons, Eq vars]
-  (tableau: FeasibilityTableau cons vars) : (FeasibilityTableau cons vars) =
+      (tableau: FeasibilityTableau cons vars)
+      : (FeasibilityTableau cons vars) =
   -- Pivot out all the artificial variables out of the basis
   yieldState tableau \tRef.
     tableau = get tRef
@@ -373,31 +378,33 @@ def pivot_artificials [Eq cons, Eq vars]
             tRef := pivot tableau (pivrow, pivcol)
 
 def deduce_nonbasics [Eq cons, Eq vars]
-  (basics: cons=>(ColIx cons vars)) : vars=>(ColIx cons vars) =
+      (basics: cons=>(ColIx cons vars))
+      : vars=>(ColIx cons vars) =
 
-    not_in_basics = \c. not $ any for r.
-      case basics.r of
-        {|slacks=r|}    -> case c of
-          {|slacks=c|}    -> r == c
-          {|variables=_|} -> False
-          {|value=_|}     -> True
-        {|variables=r|} -> case c of
-          {|slacks=_|}    -> False
-          {|variables=c|} -> r == c
-          {|value=_|}     -> True
+  not_in_basics = \c. not $ any for r.
+    case basics.r of
+      {|slacks=r|}    -> case c of
+        {|slacks=c|}    -> r == c
+        {|variables=_|} -> False
+        {|value=_|}     -> True
+      {|variables=r|} -> case c of
+        {|slacks=_|}    -> False
+        {|variables=c|} -> r == c
+        {|value=_|}     -> True
 
-    all_columns = for i. i
-    nonBasicsList = filter not_in_basics all_columns
+  all_columns = for i. i
+  nonBasicsList = filter not_in_basics all_columns
 
-    -- We know that there will be one nonbasic for every variable,
-    -- but don't know how to tell the compiler that, so
-    -- need to use an unsafe cast.
-    (AsList n nonBasicsTable) = nonBasicsList
-    unsafeCastTable vars nonBasicsTable
+  -- We know that there will be one nonbasic for every variable,
+  -- but don't know how to tell the compiler that, so
+  -- need to use an unsafe cast.
+  (AsList n nonBasicsTable) = nonBasicsList
+  unsafeCastTable vars nonBasicsTable
 
 
 def eliminate_artificials [Eq cons, Eq vars]
-  (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
+      (tableau: FeasibilityTableau cons vars)
+      : (Tableau cons vars) =
 
   (basics, nonbasics, table) = tableau
 
@@ -424,7 +431,8 @@ def eliminate_artificials [Eq cons, Eq vars]
 
 
 def feasibilityTableauToNormalTableau [Eq cons, Eq vars]
-  (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
+      (tableau: FeasibilityTableau cons vars)
+      : (Tableau cons vars) =
   ft = pivot_artificials tableau
   eliminate_artificials ft
 
@@ -455,9 +463,10 @@ def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
 '# Main Simplex Algorithm
 
 def simplex [Eq cons, Eq vars]
-  (ineqs: cons=>Constraint vars)
-  (objective: vars=>Float)
-  (objType:ObjectiveType) : SimplexResult vars =
+      (ineqs: cons=>Constraint vars)
+      (objective: vars=>Float)
+      (objType:ObjectiveType)
+      : SimplexResult vars =
   -- Note: Also enforces that all vars are >= 0.0
   -- Operates in two phases:
   -- First, finds a point within the simplex (or return infeasible)
@@ -524,9 +533,10 @@ unbounded_constraints =
 -- Introduction to Linear Optimization
 -- by D. Bertsimas and J. Tsitsiklis
 obj = [10.0, 12.0, 12.0]
-a = [[1., 2., 2.],
-     [2., 1., 2.],
-     [2., 2., 1.]]
+a =
+  [[1., 2., 2.],
+   [2., 1., 2.],
+   [2., 2., 1.]]
 textbook_constraints =
   for i. {coeffs=a.i, offset=20.0, conType=LessThan}
 
@@ -536,9 +546,10 @@ textbook_constraints =
 
 -- A feasible problem from Waterloo notes
 obj' = [1., -1.,  1.]
-a' = [[ 2., -1.,  2.],
-     [ 2., -3.,  1.],
-     [-1.,  1., -2.]]
+a' =
+  [[ 2., -1.,  2.],
+   [ 2., -3.,  1.],
+   [-1.,  1., -2.]]
 b' = [4., -5., -1.]
 textbook_constraints' =
   for i. {coeffs=a'.i, offset=b'.i, conType=LessThan}

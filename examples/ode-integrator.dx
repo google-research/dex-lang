@@ -13,7 +13,8 @@ def length {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 def (./) {d} (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
 
 def fit_4th_order_polynomial {v} [VSpace v]
-    (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =
+      (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time)
+      : (Fin 5)=>v =
   -- dz0 and dz1 are gradient evaluations.
   a = -2. * dt .* dz0 + 2. * dt .* dz1 -  8. .* z0 -  8. .* z1 + 16. .* z_mid
   b =  5. * dt .* dz0 - 3. * dt .* dz1 + 18. .* z0 + 14. .* z1 - 32. .* z_mid
@@ -22,18 +23,22 @@ def fit_4th_order_polynomial {v} [VSpace v]
   e = z0
   [a, b, c, d, e]  -- polynomial coefficients.
 
-dps_c_mid = [6025192743. /30085553152. /2., 0., 51252292925. /65400821598. /2.,
-            -2691868925. /45128329728. /2., 187940372067. /1594534317056. /2.,
-            -1776094331. /19743644256. /2., 11237099. /235043384. /2.]
+dps_c_mid = [
+   6025192743. /30085553152. /2., 0., 51252292925. /65400821598. /2.,
+  -2691868925. /45128329728. /2., 187940372067. /1594534317056. /2.,
+  -1776094331. /19743644256. /2., 11237099. /235043384. /2.]
 
 def interp_fit_dopri {v} [VSpace v]
-    (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time) : (Fin 5)=>v =
+      (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time)
+      : (Fin 5)=>v =
   -- Fit a polynomial to the results of a Runge-Kutta step.
   z_mid = z0 + dt .* (dot dps_c_mid k)
   fit_4th_order_polynomial z0 z1 z_mid k.(0@_) k.(1@_) dt
 
-def initial_step_size {d} (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Float)
-                      (order:Int) (rtol:Float) (atol:Float) (f0:d=>Float) : Time =
+def initial_step_size {d}
+      (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Float)
+      (order:Int) (rtol:Float) (atol:Float) (f0:d=>Float)
+      : Time =
   -- Algorithm from: E. Hairer, S. P. Norsett G. Wanner,
   -- Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
   scale = for i. atol + ((abs z0.i) * rtol)
@@ -52,20 +57,22 @@ def initial_step_size {d} (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Fl
 alpha = [1. / 5., 3. / 10., 4. / 5., 8. / 9., 1., 1.]
 
 beta : (i:(Fin 6)=>(..i)=>Float) =  -- triangular array type.
-       [[1. / 5.],
-       [3. / 40., 9. / 40.],
-       [44. / 45., -56. / 15., 32.0 / 9.],
-       [19372. / 6561., -25360. / 2187., 64448. / 6561., -212. / 729.],
-       [9017./3168., -355./33., 46732./5247., 49./176., -5103./18656.],
-       [35. / 384., 0., 500. / 1113., 125./192., -2187./6784., 11./84.]]
+  [[1. / 5.],
+   [3. / 40., 9. / 40.],
+   [44. / 45., -56. / 15., 32.0 / 9.],
+   [19372. / 6561., -25360. / 2187., 64448. / 6561., -212. / 729.],
+   [9017./3168., -355./33., 46732./5247., 49./176., -5103./18656.],
+   [35. / 384., 0., 500. / 1113., 125./192., -2187./6784., 11./84.]]
 
 c_sol = [35. /384., 0., 500. /1113., 125. /192., -2187. /6784., 11. / 84., 0.]
-c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
-           125. / 192. - 451. / 720., -2187. / 6784. + 12231. / 42400.,
-           11. / 84. - 649. / 6300., -1. / 60.]
+c_error =
+  [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
+   125. / 192. - 451. / 720., -2187. / 6784. + 12231. / 42400.,
+   11. / 84. - 649. / 6300., -1. / 60.]
 
 def runge_kutta_step {v} [VSpace v] (func:v->Time->v)
-    (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
+      (z0:v) (f0:v) (t0:Time) (dt:Time)
+      : (v & v & v & (Fin 7)=>v) =
 
   evals_init = yieldState zero \r.
     r!(0@_) := f0
@@ -81,8 +88,10 @@ def runge_kutta_step {v} [VSpace v] (func:v->Time->v)
   f_last = evals_filled.(6@_)
   (z_last, f_last, z_last_error, evals_filled)
 
-def error_ratio {d} (error_estimates:d=>Float) (rtol:Float) (atol:Float)
-                (z0:d=>Float) (z1:d=>Float) : Float =
+def error_ratio {d}
+      (error_estimates:d=>Float) (rtol:Float) (atol:Float)
+      (z0:d=>Float) (z1:d=>Float)
+      : Float =
   err_tols = for i. atol + rtol * (max (abs z0.i) (abs z1.i))
   err_ratios = error_estimates ./ err_tols
   mean for i. sq err_ratios.i
@@ -99,8 +108,10 @@ def optimal_step_size (last_step:Time) (mean_error_ratio:Float) : Time =
   select (mean_error_ratio == 0.) (last_step * ifactor) (last_step / factor)
 
 
-def odeint {d n} (func: d=>Float -> Time -> d=>Float)
-           (z0: d=>Float) (t0: Time) (times: n=>Time) : n=>d=>Float =
+def odeint {d n}
+      (func: d=>Float -> Time -> d=>Float)
+      (z0: d=>Float) (t0: Time) (times: n=>Time)
+      : n=>d=>Float =
   -- Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
   --  Args:
   --    func: time derivative of the solution z at time t.

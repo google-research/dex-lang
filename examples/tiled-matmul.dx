@@ -1,16 +1,19 @@
 -- We definitely want to improve this in the future, but it's fine if we only care
 -- about matrices that tile perfectly.
-def tile2d (n : Type) ?-> (m : Type) ?-> (b : Type) ?-> (nl : Type) ?-> (ml : Type) ?->
-           (fTile : Tile n nl -> Tile m ml -> nl=>ml=>b)
-           (fScalar : n -> m -> b) : n=>m=>b =
+def tile2d
+      (n : Type) ?-> (m : Type) ?-> (b : Type) ?-> (nl : Type) ?-> (ml : Type) ?->
+      (fTile : Tile n nl -> Tile m ml -> nl=>ml=>b)
+      (fScalar : n -> m -> b)
+      : n=>m=>b =
   (tile
     (\nt:(Tile n nl).
       (tile1 (\mt:(Tile m ml). fTile nt mt)
              (\mi:m. for ni:nl. fScalar (nt +> ni) mi)))
     (\ni:n. for mi:m. fScalar ni mi))
 
-def matmul (k : Type) ?-> (n : Type) ?-> (m : Type) ?->
-           (a : n=>k=>Float) (b : k=>m=>Float) : n=>m=>Float =
+def matmul
+      (k : Type) ?-> (n : Type) ?-> (m : Type) ?->
+      (a : n=>k=>Float) (b : k=>m=>Float) : n=>m=>Float =
   rowTile = Fin 3
   colVectors = Fin 3
   vectorTile = Fin VectorWidth

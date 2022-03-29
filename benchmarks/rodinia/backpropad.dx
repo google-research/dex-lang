@@ -3,9 +3,10 @@ MOMENTUM = 0.3
 
 def squash (x : Float) : Float = 1.0 / (1.0 + exp (-x))
 
-def layerForward (input : in=>Float)
-                 (params : { b: Unit| w: in }=>out=>Float)
-                   : out=>Float =
+def layerForward
+      (input : in=>Float)
+      (params : { b: Unit| w: in }=>out=>Float)
+      : out=>Float =
   bias = params.{| b=() |}
   total = (sum $ for i:in j:out. params.{| w=i |}.j  * input.i) + bias
   for i. squash total.i
@@ -13,22 +14,24 @@ def layerForward (input : in=>Float)
 def lossForward (input : n=>Float) (target : n=>Float) : Float =
   sum $ input - target
 
-def adjustWeights (gradWeight : { b: Unit | w: in }=>out=>Float)
-                  (weight : { b: Unit | w: in }=>out=>Float)
-                  (oldWeight : { b: Unit | w: in }=>out=>Float)
-                  : ({ b: Unit | w: in }=>out=>Float) =
+def adjustWeights
+      (gradWeight : { b: Unit | w: in }=>out=>Float)
+      (weight : { b: Unit | w: in }=>out=>Float)
+      (oldWeight : { b: Unit | w: in }=>out=>Float)
+      : ({ b: Unit | w: in }=>out=>Float) =
   for k j.
     d = ETA * gradWeight.k.j + MOMENTUM * oldWeight.k.j
     weight.k.j + d
 
-def backpropad (input : in=>Float)
-               (target : out=>Float)
-               (inputWeights : { b: Unit | w: in }=>hid=>Float)
-               (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
-               (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
-               (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
-                 : ( { b: Unit | w: in }=>hid=>Float
-                   & { b: Unit | w: hid }=>out=>Float) =
+def backpropad
+      (input : in=>Float)
+      (target : out=>Float)
+      (inputWeights : { b: Unit | w: in }=>hid=>Float)
+      (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
+      (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
+      (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
+      : ( { b: Unit | w: in }=>hid=>Float
+        & { b: Unit | w: hid }=>out=>Float) =
   (gradInputWeights, gradHiddenWeights) =
     flip grad (inputWeights, hiddenWeights) \(iw, hw).
       hidden = layerForward input  inputWeights

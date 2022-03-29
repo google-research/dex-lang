@@ -87,9 +87,10 @@ def myLogProb (x:(Fin 2)=>Float) : LogProb =
   x' = x - [1.5, 2.5]
   neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
 
-numSamples = if dex_test_mode ()
-               then 1000
-               else 10000
+numSamples =
+  if dex_test_mode ()
+    then 1000
+    else 10000
 k0 = newKey 1
 
 mhParams = 0.1

@@ -25,10 +25,11 @@ def (-|) (i:n) (off:Int) : n =
     True  -> unsafeFromOrdinal _ newOrd
     False -> i
 
-def hotspot (numIterations: Int)
-            (tsInit : r=>c=>Float)
-            (p : r=>c=>Float)
-            : r=>c=>Float =
+def hotspot
+      (numIterations: Int)
+      (tsInit : r=>c=>Float)
+      (p : r=>c=>Float)
+      : r=>c=>Float =
   gridHeight = chipHeight / (IToF $ size r)
   gridWidth  = chipWidth  / (IToF $ size c)
   cap = factorChip * specHeatSI * tChip * gridWidth * gridHeight

@@ -47,12 +47,11 @@ def logaddexp (x:Float) (y:Float) : Float =
   m = max x y
   m + ( log ( (exp (x - m) + exp (y - m))))
 
-def ctc {vocab time position}
-        [Eq vocab, Eq position, Eq time]
-        (blank:  vocab)
-        (logits: time=>vocab=>Float)
-        (labels: position=>vocab)
-        : Float =
+def ctc {vocab time position} [Eq vocab, Eq position, Eq time]
+      (blank:  vocab)
+      (logits: time=>vocab=>Float)
+      (labels: position=>vocab)
+      : Float =
   -- Computes log p(labels | logits), marginalizing over possible alignments.
   -- Todo: remove unnecessary implicit type annotations once
   -- Dex starts putting implicit types in scope.

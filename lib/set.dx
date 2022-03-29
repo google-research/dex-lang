@@ -21,20 +21,20 @@ def allExceptLast {n a} (xs:n=>a) : List a =
   (AsList _ allButLast)
 
 def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
-    -- This function is associative, for use in a monoidal reduction.
-    -- Assumes all xs are <= all ys.
-    -- The element at the end of xs might equal the
-    -- element at the beginning of ys.  If so, this
-    -- function removes the duplicate when concatenating the lists.
-    (AsList nx xs) = xlist
-    (AsList _  ys) = ylist
-    case last xs of
-      Nothing -> ylist
-      Just last_x -> case first ys of
-        Nothing -> xlist
-        Just first_y -> case last_x == first_y of
-          False -> concat [xlist,            ylist]
-          True ->  concat [allExceptLast xs, ylist]
+  -- This function is associative, for use in a monoidal reduction.
+  -- Assumes all xs are <= all ys.
+  -- The element at the end of xs might equal the
+  -- element at the beginning of ys.  If so, this
+  -- function removes the duplicate when concatenating the lists.
+  (AsList nx xs) = xlist
+  (AsList _  ys) = ylist
+  case last xs of
+    Nothing -> ylist
+    Just last_x -> case first ys of
+      Nothing -> xlist
+      Just first_y -> case last_x == first_y of
+        False -> concat [xlist,            ylist]
+        True ->  concat [allExceptLast xs, ylist]
 
 def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
   xlists = for i:n. (AsList 1 [xs.i])
@@ -61,21 +61,21 @@ instance {a} [Eq a] Eq (Set a)
     (AsList _ xs) == (AsList _ ys)
 
 def setUnion {a}
-  ((UnsafeAsSet nx xs):Set a)
-  ((UnsafeAsSet ny ys):Set a) : Set a =
-    combined = mergeSortedTables xs ys
-    (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted combined
-    UnsafeAsSet _ sorted_unique_xs
+      ((UnsafeAsSet nx xs):Set a)
+      ((UnsafeAsSet ny ys):Set a) : Set a =
+  combined = mergeSortedTables xs ys
+  (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted combined
+  UnsafeAsSet _ sorted_unique_xs
 
 def setIntersect {a}
-  ((UnsafeAsSet nx xs):Set a)
-  ((UnsafeAsSet ny ys):Set a) : Set a =
-    -- This could be done in O(nx + ny) instead of O(nx log ny).
-    isInYs = \x. case searchSorted ys x of
-      Just x -> True
-      Nothing -> False
-    (AsList n' intersection) = filter isInYs xs
-    UnsafeAsSet _ intersection
+      ((UnsafeAsSet nx xs):Set a)
+      ((UnsafeAsSet ny ys):Set a) : Set a =
+  -- This could be done in O(nx + ny) instead of O(nx log ny).
+  isInYs = \x. case searchSorted ys x of
+    Just x -> True
+    Nothing -> False
+  (AsList n' intersection) = filter isInYs xs
+  UnsafeAsSet _ intersection
 
 
 '### Index set for sets of strings
