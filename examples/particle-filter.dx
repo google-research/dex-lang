@@ -39,7 +39,7 @@ def particleFilter {s a v}
       p_prev = get p_ref
       logLikelihoods = for i. snd (observe p_prev.i) obs.t
       [resample_key, dynamics_key] = split_key (ixkey key t)
-      resampled_idxs = categoricalBatch logLikelihoods resample_key
+      resampled_idxs = categorical_batch logLikelihoods resample_key
       p_resampled = for i. p_prev.(resampled_idxs.i)
       p_next = for i. fst (dynamics p_resampled.i) (ixkey dynamics_key i)
       p_ref := p_next

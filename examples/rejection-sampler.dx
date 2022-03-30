@@ -73,7 +73,7 @@ inversionSamples = rand_vec numSamples (binomialSample n p) k0
 def binomialBatch {a} [Ix a] (n:Int) (p:Prob) (k:Key) : a => Int =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
-  map ordinal $ categoricalBatch logprobs k
+  map ordinal $ categorical_batch logprobs k
 
 inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Int
 

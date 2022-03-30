@@ -2139,7 +2139,7 @@ def categorical {n} (logprobs: n=>Float) (key: Key) : n =
 
 -- batch variant to share the work of forming the cumsum
 -- (alternatively we could rely on hoisting of loop constants)
-def categoricalBatch {n m} [Ix m] (logprobs: n=>Float) (key: Key) : m=>n =
+def categorical_batch {n m} [Ix m] (logprobs: n=>Float) (key: Key) : m=>n =
   cdf = cdf_for_categorical logprobs
   for i. categorical_from_cdf cdf $ ixkey key i
 
