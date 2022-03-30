@@ -409,9 +409,10 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a record
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- num samples, num bounces, share seed?
-</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Params</span> <span class="symbol">=</span> { numSamples <span class="symbol">:</span> <span class="type-name">Int</span>
-         <span class="symbol">&amp;</span> maxBounces <span class="symbol">:</span> <span class="type-name">Int</span>
-         <span class="symbol">&amp;</span> shareSeed  <span class="symbol">:</span> <span class="type-name">Bool</span> }
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Params</span> <span class="symbol">=</span> {
+    numSamples <span class="symbol">:</span> <span class="type-name">Int</span>
+  <span class="symbol">&amp;</span> maxBounces <span class="symbol">:</span> <span class="type-name">Int</span>
+  <span class="symbol">&amp;</span> shareSeed  <span class="symbol">:</span> <span class="type-name">Bool</span> }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a list instead, once they work
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Scene</span> n<span class="symbol">:</span><span class="type-name">Type</span> [<span class="type-name">Ix</span> n] <span class="symbol">=</span> <span class="type-name">MkScene</span> (n<span class="symbol">=&gt;</span><span class="type-name">Object</span>)
@@ -543,8 +544,8 @@ described
             <span class="type-name">Continue</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Assumes we&#39;re looking towards -z.
-</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Camera</span> <span class="symbol">=</span>
-  { numPix     <span class="symbol">:</span> <span class="type-name">Int</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Camera</span> <span class="symbol">=</span> {
+    numPix     <span class="symbol">:</span> <span class="type-name">Int</span>
   <span class="symbol">&amp;</span> pos        <span class="symbol">:</span> <span class="type-name">Position</span>  <span class="comment">-- pinhole position
 </span>  <span class="symbol">&amp;</span> halfWidth  <span class="symbol">:</span> <span class="type-name">Float</span>     <span class="comment">-- sensor half-width
 </span>  <span class="symbol">&amp;</span> sensorDist <span class="symbol">:</span> <span class="type-name">Float</span> }   <span class="comment">-- pinhole-sensor distance
@@ -584,31 +585,33 @@ described
 </div></div><div class="cell"><div class="code-block">blockColor     <span class="symbol">=</span> [200<span class="symbol">.</span>0<span class="symbol">,</span> 200<span class="symbol">.</span>0<span class="symbol">,</span> 255<span class="symbol">.</span>0] <span class="symbol">/</span> 255<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">theScene <span class="symbol">=</span> <span class="type-name">MkScene</span> <span class="symbol">$</span>
-    [ <span class="type-name">Light</span> (1<span class="symbol">.</span>9 <span class="symbol">.*</span> yHat) 0<span class="symbol">.</span>5 lightColor
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      xHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> leftWallColor)
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span> (neg xHat) 2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> rightWallColor)
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      yHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span> (neg yHat) 2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      zHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Block</span>  [ 1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>1<span class="symbol">.</span>6<span class="symbol">,</span>  1<span class="symbol">.</span>2] [0<span class="symbol">.</span>6<span class="symbol">,</span> 0<span class="symbol">.</span>8<span class="symbol">,</span> 0<span class="symbol">.</span>6] 0<span class="symbol">.</span>5) (<span class="type-name">Matte</span> blockColor)
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Sphere</span> [<span class="symbol">-</span>1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>1<span class="symbol">.</span>2<span class="symbol">,</span>  0<span class="symbol">.</span>2] 0<span class="symbol">.</span>8) (<span class="type-name">Matte</span> (0<span class="symbol">.</span>7<span class="symbol">.*</span> whiteWallColor))
-    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Sphere</span> [ 2<span class="symbol">.</span>0<span class="symbol">,</span>  2<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>2<span class="symbol">.</span>0] 1<span class="symbol">.</span>5) (<span class="type-name">Mirror</span>)
-    ]
+  [ <span class="type-name">Light</span> (1<span class="symbol">.</span>9 <span class="symbol">.*</span> yHat) 0<span class="symbol">.</span>5 lightColor
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      xHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> leftWallColor)
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span> (neg xHat) 2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> rightWallColor)
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      yHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span> (neg yHat) 2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      zHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Block</span>  [ 1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>1<span class="symbol">.</span>6<span class="symbol">,</span>  1<span class="symbol">.</span>2] [0<span class="symbol">.</span>6<span class="symbol">,</span> 0<span class="symbol">.</span>8<span class="symbol">,</span> 0<span class="symbol">.</span>6] 0<span class="symbol">.</span>5) (<span class="type-name">Matte</span> blockColor)
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Sphere</span> [<span class="symbol">-</span>1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>1<span class="symbol">.</span>2<span class="symbol">,</span>  0<span class="symbol">.</span>2] 0<span class="symbol">.</span>8) (<span class="type-name">Matte</span> (0<span class="symbol">.</span>7<span class="symbol">.*</span> whiteWallColor))
+  <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Sphere</span> [ 2<span class="symbol">.</span>0<span class="symbol">,</span>  2<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>2<span class="symbol">.</span>0] 1<span class="symbol">.</span>5) (<span class="type-name">Mirror</span>)
+  ]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">defaultParams <span class="symbol">=</span> { numSamples <span class="symbol">=</span> 50
-                <span class="symbol">,</span> maxBounces <span class="symbol">=</span> 10
-                <span class="symbol">,</span> shareSeed  <span class="symbol">=</span> <span class="type-name">True</span> }
+</div></div><div class="cell"><div class="code-block">defaultParams <span class="symbol">=</span> {
+    numSamples <span class="symbol">=</span> 50
+  <span class="symbol">,</span> maxBounces <span class="symbol">=</span> 10
+  <span class="symbol">,</span> shareSeed  <span class="symbol">=</span> <span class="type-name">True</span> }
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">defaultCamera <span class="symbol">=</span> { numPix     <span class="symbol">=</span> 250
-                <span class="symbol">,</span> pos        <span class="symbol">=</span> 10<span class="symbol">.</span>0 <span class="symbol">.*</span> zHat
-                <span class="symbol">,</span> halfWidth  <span class="symbol">=</span> 0<span class="symbol">.</span>3
-                <span class="symbol">,</span> sensorDist <span class="symbol">=</span> 1<span class="symbol">.</span>0 }
+</div></div><div class="cell"><div class="code-block">defaultCamera <span class="symbol">=</span> {
+    numPix     <span class="symbol">=</span> 250
+  <span class="symbol">,</span> pos        <span class="symbol">=</span> 10<span class="symbol">.</span>0 <span class="symbol">.*</span> zHat
+  <span class="symbol">,</span> halfWidth  <span class="symbol">=</span> 0<span class="symbol">.</span>3
+  <span class="symbol">,</span> sensorDist <span class="symbol">=</span> 1<span class="symbol">.</span>0 }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- We change to a small num pix here to reduce the compute needed for tests
 </span></div></div><div class="cell"><div class="code-block">params <span class="symbol">=</span> defaultParams
 </div></div><div class="cell"><div class="code-block">camera <span class="symbol">=</span> <span class="keyword">if</span> dex_test_mode ()
-           <span class="keyword">then</span> defaultCamera <span class="symbol">|&gt;</span> setAt <span class="iso-sugar">#numPix</span> 10
-           <span class="keyword">else</span> defaultCamera
+  <span class="keyword">then</span> defaultCamera <span class="symbol">|&gt;</span> setAt <span class="iso-sugar">#numPix</span> 10
+  <span class="keyword">else</span> defaultCamera
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- %time
 </span></div></div><div class="cell"><div class="code-block">(<span class="type-name">MkImage</span> _ _ image) <span class="symbol">=</span> takePicture params theScene camera

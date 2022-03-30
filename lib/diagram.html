@@ -326,13 +326,13 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">green <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [<span class="type-name">IToW8</span>   0<span class="symbol">,</span> <span class="type-name">IToW8</span> 255<span class="symbol">,</span> <span class="type-name">IToW8</span>   0]
 </div></div><div class="cell"><div class="code-block">blue  <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [<span class="type-name">IToW8</span>   0<span class="symbol">,</span> <span class="type-name">IToW8</span>   0<span class="symbol">,</span> <span class="type-name">IToW8</span> 255]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="type-name">GeomStyle</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  { fillColor   <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">GeomStyle</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> {
+    fillColor   <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
   <span class="symbol">&amp;</span> strokeColor <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
   <span class="symbol">&amp;</span> strokeWidth <span class="symbol">:</span> <span class="type-name">Int</span> }
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">defaultGeomStyle <span class="symbol">:</span> <span class="type-name">GeomStyle</span> <span class="symbol">=</span>
-  { fillColor   <span class="symbol">=</span> <span class="type-name">Nothing</span>
+</div></div><div class="cell"><div class="code-block">defaultGeomStyle <span class="symbol">:</span> <span class="type-name">GeomStyle</span> <span class="symbol">=</span> {
+    fillColor   <span class="symbol">=</span> <span class="type-name">Nothing</span>
   <span class="symbol">,</span> strokeColor <span class="symbol">=</span> <span class="type-name">Just</span> black
   <span class="symbol">,</span> strokeWidth <span class="symbol">=</span> 1 }
 </div></div><div class="cell"><div class="code-block">

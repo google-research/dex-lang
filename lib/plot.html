@@ -325,8 +325,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> applyScale {a} (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span> getAt <span class="iso-sugar">#mapping</span> s x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">unitTypeScale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Unit</span> <span class="symbol">=</span> { mapping <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> <span class="type-name">Just</span> 0<span class="symbol">.</span>0
-                             <span class="symbol">,</span> range   <span class="symbol">=</span> <span class="type-name">AsList</span> _ [<span class="type-name">Singleton</span> 0<span class="symbol">.</span>0] }
+</div></div><div class="cell"><div class="code-block">unitTypeScale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+  { mapping <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> <span class="type-name">Just</span> 0<span class="symbol">.</span>0
+  <span class="symbol">,</span> range   <span class="symbol">=</span> <span class="type-name">AsList</span> _ [<span class="type-name">Singleton</span> 0<span class="symbol">.</span>0] }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> projectUnitInterval (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="keyword">case</span> x <span class="symbol">&gt;=</span> 0<span class="symbol">.</span>0 <span class="symbol">&amp;&amp;</span> x <span class="symbol">&lt;=</span> 1<span class="symbol">.</span>0 <span class="keyword">of</span>
@@ -384,7 +385,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   {scale <span class="symbol">=</span> unitTypeScale<span class="symbol">,</span> dat <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ()}
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> blankPlot {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
-  { xs <span class="symbol">=</span> blankData<span class="symbol">,</span> ys <span class="symbol">=</span> blankData<span class="symbol">,</span> cs <span class="symbol">=</span> blankData }
+  {xs <span class="symbol">=</span> blankData<span class="symbol">,</span> ys <span class="symbol">=</span> blankData<span class="symbol">,</span> cs <span class="symbol">=</span> blankData}
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- -- TODO: generalize beyond Float with a type class for auto scaling
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> autoScale {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Float</span> <span class="symbol">=</span>
@@ -395,7 +396,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   padding <span class="symbol">=</span> maximum [space<span class="symbol">,</span> max <span class="symbol">*</span> 0<span class="symbol">.</span>001<span class="symbol">,</span> 0<span class="symbol">.</span>000001]
   {scale <span class="symbol">=</span> floatScale (min <span class="symbol">-</span> padding) (max <span class="symbol">+</span> padding)<span class="symbol">,</span> dat <span class="symbol">=</span> xs}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setXData {n a b c new} (xs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n new b c<span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setXData {n a b c new} (xs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n new b c <span class="symbol">=</span>
   <span class="comment">-- We can&#39;t use `setAt` here because we&#39;re changing the type
 </span>  {xs <span class="symbol">=</span> xs<span class="symbol">,</span> ys <span class="symbol">=</span> getAt <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> getAt <span class="iso-sugar">#cs</span> plot}
 </div></div><div class="cell"><div class="code-block">

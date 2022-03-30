@@ -1343,12 +1343,15 @@ It's a kind of <code>scan</code>.</p>
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+&gt;</span>)  {n l} (t<span class="symbol">:</span><span class="type-name">Tile</span> n l) (i <span class="symbol">:</span> l) <span class="symbol">:</span> n <span class="symbol">=</span> %sliceOffset t i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">++&gt;</span>) {n u v} (t <span class="symbol">:</span> <span class="type-name">Tile</span> n (u <span class="symbol">&amp;</span> v)) (i <span class="symbol">:</span> u) <span class="symbol">:</span> <span class="type-name">Tile</span> n v <span class="symbol">=</span> %sliceCurry t i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tile  {n l a eff} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> l]
-          (fTile <span class="symbol">:</span> (t<span class="symbol">:</span>(<span class="type-name">Tile</span> n l) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} l<span class="symbol">=&gt;</span>a))
-          (fScalar <span class="symbol">:</span> n <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> %tiled fTile fScalar
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tile {n l a eff} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> l]
+      (fTile <span class="symbol">:</span> (t<span class="symbol">:</span>(<span class="type-name">Tile</span> n l) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} l<span class="symbol">=&gt;</span>a))
+      (fScalar <span class="symbol">:</span> n <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  %tiled fTile fScalar
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tile1 {n m l a eff} [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> l]
-          (fTile <span class="symbol">:</span> (t<span class="symbol">:</span>(<span class="type-name">Tile</span> n l) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} m<span class="symbol">=&gt;</span>l<span class="symbol">=&gt;</span>a))
-          (fScalar <span class="symbol">:</span> n <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> %tiledd fTile fScalar
+      (fTile <span class="symbol">:</span> (t<span class="symbol">:</span>(<span class="type-name">Tile</span> n l) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} m<span class="symbol">=&gt;</span>l<span class="symbol">=&gt;</span>a))
+      (fScalar <span class="symbol">:</span> n <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  %tiledd fTile fScalar
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: This should become just `loadVector $ for i. arr.(t +&gt; i)`
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--       once we are able to eliminate temporary arrays. Until then, we inline for performance...
@@ -1485,7 +1488,8 @@ It's a kind of <code>scan</code>.</p>
 by using <code>splitR &amp;&gt;&gt; iso</code></p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> splitR {a} <span class="symbol">:</span> <span class="type-name">Iso</span> a ({<span class="symbol">&amp;</span>} <span class="symbol">&amp;</span> a) <span class="symbol">=</span> <span class="type-name">MkIso</span> {fwd<span class="symbol">=\</span>x<span class="symbol">.</span> ({}<span class="symbol">,</span> x)<span class="symbol">,</span> bwd<span class="symbol">=\</span>({}<span class="symbol">,</span> x)<span class="symbol">.</span> x}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> overFields {a b c v} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> c] (iso<span class="symbol">:</span> <span class="type-name">Iso</span> ({<span class="symbol">&amp;</span>} <span class="symbol">&amp;</span> a) (b <span class="symbol">&amp;</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> overFields {a b c v} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> c]
+      (iso<span class="symbol">:</span> <span class="type-name">Iso</span> ({<span class="symbol">&amp;</span>} <span class="symbol">&amp;</span> a) (b <span class="symbol">&amp;</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
   overLens (splitR <span class="symbol">&amp;&gt;&gt;</span> iso) tab
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Convert a variant zipper isomorphism to a normal prism-like isomorphism
@@ -1499,9 +1503,10 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
 </div></div><div class="cell"><div class="prose-block"><h2>Dynamic buffer</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: would be nice to be able to use records here
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DynBuffer</span> a <span class="symbol">=</span>
-  <span class="type-name">MkDynBuffer</span> { size    <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Int</span>
-              <span class="symbol">&amp;</span> maxSize <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Int</span>
-              <span class="symbol">&amp;</span> buffer  <span class="symbol">:</span> <span class="type-name">Ptr</span> (<span class="type-name">Ptr</span> a) }
+  <span class="type-name">MkDynBuffer</span> {
+      size    <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Int</span>
+    <span class="symbol">&amp;</span> maxSize <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Int</span>
+    <span class="symbol">&amp;</span> buffer  <span class="symbol">:</span> <span class="type-name">Ptr</span> (<span class="type-name">Ptr</span> a) }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withDynamicBuffer {a b} [<span class="type-name">Storable</span> a]
       (action<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} b) <span class="symbol">:</span> {<span class="type-name">IO</span>} b <span class="symbol">=</span>
@@ -1510,15 +1515,15 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
     store sizePtr 0
     store maxSizePtr initMaxSize
     store bufferPtr <span class="symbol">$</span> malloc initMaxSize
-    result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">MkDynBuffer</span> { size    <span class="symbol">=</span> sizePtr
-                                  <span class="symbol">,</span> maxSize <span class="symbol">=</span> maxSizePtr
-                                  <span class="symbol">,</span> buffer  <span class="symbol">=</span> bufferPtr }
-
+    result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">MkDynBuffer</span> {
+        size    <span class="symbol">=</span> sizePtr
+      <span class="symbol">,</span> maxSize <span class="symbol">=</span> maxSizePtr
+      <span class="symbol">,</span> buffer  <span class="symbol">=</span> bufferPtr }
     free <span class="symbol">$</span> load bufferPtr
     result
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maybeIncreaseBufferSize {a} [<span class="type-name">Storable</span> a]
-    ((<span class="type-name">MkDynBuffer</span> db)<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (sizeDelta<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+      ((<span class="type-name">MkDynBuffer</span> db)<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (sizeDelta<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   size    <span class="symbol">=</span> load <span class="symbol">$</span> getAt <span class="iso-sugar">#size</span>    db
   maxSize <span class="symbol">=</span> load <span class="symbol">$</span> getAt <span class="iso-sugar">#maxSize</span> db
   bufPtr  <span class="symbol">=</span> load <span class="symbol">$</span> getAt <span class="iso-sugar">#buffer</span>  db
@@ -1536,7 +1541,7 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
   store ptr (load ptr <span class="symbol">+</span> n)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> extendDynBuffer {a} [<span class="type-name">Storable</span> a]
-    (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (new<span class="symbol">:</span><span class="type-name">List</span> a) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+      (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (new<span class="symbol">:</span><span class="type-name">List</span> a) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   (<span class="type-name">AsList</span> n xs) <span class="symbol">=</span> new
   maybeIncreaseBufferSize buf n
   (<span class="type-name">MkDynBuffer</span> db) <span class="symbol">=</span> buf
@@ -1721,8 +1726,9 @@ Nor does it promise a particular level of precision for numeric values.</p>
     <span class="type-name">Just</span> ans <span class="symbol">-&gt;</span> ans
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> unreachable ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> boundedIter {a eff} (maxIters<span class="symbol">:</span><span class="type-name">Int</span>) (fallback<span class="command">:a</span>)
-                (body<span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">IterResult</span> a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a  <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> boundedIter {a eff}
+      (maxIters<span class="symbol">:</span><span class="type-name">Int</span>) (fallback<span class="command">:a</span>)
+      (body<span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">IterResult</span> a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a  <span class="symbol">=</span>
   iter <span class="symbol">\</span>i<span class="symbol">.</span>
     <span class="keyword">if</span> i <span class="symbol">&gt;=</span> maxIters
       <span class="keyword">then</span> <span class="type-name">Done</span> fallback
@@ -1803,7 +1809,8 @@ Not to be confused with a partially applied function</p>
     removeFFI ptr
   ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withFile {a} (f<span class="symbol">:</span><span class="type-name">FilePath</span>) (mode<span class="symbol">:</span><span class="type-name">StreamMode</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withFile {a}
+      (f<span class="symbol">:</span><span class="type-name">FilePath</span>) (mode<span class="symbol">:</span><span class="type-name">StreamMode</span>)
       (action<span class="symbol">:</span> <span class="type-name">Stream</span> mode <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} a)
       <span class="symbol">:</span> {<span class="type-name">IO</span>} a <span class="symbol">=</span>
   stream <span class="symbol">=</span> fopen f mode
@@ -1975,8 +1982,8 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Arbitrary</span> a<span class="symbol">,</span> <span class="type-name">Arbitrary</span> b] <span class="type-name">Arbitrary</span> (a <span class="symbol">&amp;</span> b)
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
-      [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey key
-      (arb k1<span class="symbol">,</span> arb k2)
+    [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey key
+    (arb k1<span class="symbol">,</span> arb k2)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Arbitrary</span> (<span class="type-name">Fin</span> n)
   arb <span class="symbol">=</span> randIdx
@@ -2028,32 +2035,32 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmax {n o} [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span> argscan (<span class="symbol">&gt;</span>) xs
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lexicalOrder {n} [<span class="type-name">Ord</span> n]
-  (compareElements<span class="command">:n</span><span class="symbol">-&gt;</span>n<span class="symbol">-&gt;</span><span class="type-name">Bool</span>)
-  (compareLengths<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">-&gt;</span><span class="type-name">Int</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>)
-  ((<span class="type-name">AsList</span> nx xs)<span class="symbol">:</span><span class="type-name">List</span> n) ((<span class="type-name">AsList</span> ny ys)<span class="symbol">:</span><span class="type-name">List</span> n) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
-    <span class="comment">-- Orders Lists according to the order of their elements,
-</span>    <span class="comment">-- in the same way a dictionary does.
-</span>    <span class="comment">-- For example, this lets us sort Strings.
-</span>    <span class="symbol">--</span>
-    <span class="comment">-- More precisely, it returns True iff compareElements xs.i ys.i is true
-</span>    <span class="comment">-- at the first location they differ.
-</span>    <span class="symbol">--</span>
-    <span class="comment">-- This function operates serially and short-circuits
-</span>    <span class="comment">-- at the first difference.  One could also write this
-</span>    <span class="comment">-- function as a parallel reduction, but it would be
-</span>    <span class="comment">-- wasteful in the case where there is an early difference,
-</span>    <span class="comment">-- because we can&#39;t short circuit.
-</span>    iter <span class="symbol">\</span>i<span class="symbol">.</span>
-      <span class="keyword">case</span> i <span class="symbol">==</span> min nx ny <span class="keyword">of</span>
-        <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="symbol">$</span> compareLengths nx ny
-        <span class="type-name">False</span> <span class="symbol">-&gt;</span>
-          xi <span class="symbol">=</span> xs<span class="symbol">.</span>(unsafeFromOrdinal _ i)
-          yi <span class="symbol">=</span> ys<span class="symbol">.</span>(unsafeFromOrdinal _ i)
-          <span class="keyword">case</span> compareElements xi yi <span class="keyword">of</span>
-            <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="type-name">True</span>
-            <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="keyword">case</span> xi <span class="symbol">==</span> yi <span class="keyword">of</span>
-              <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Continue</span>
-              <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="type-name">False</span>
+      (compareElements<span class="command">:n</span><span class="symbol">-&gt;</span>n<span class="symbol">-&gt;</span><span class="type-name">Bool</span>)
+      (compareLengths<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">-&gt;</span><span class="type-name">Int</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>)
+      ((<span class="type-name">AsList</span> nx xs)<span class="symbol">:</span><span class="type-name">List</span> n) ((<span class="type-name">AsList</span> ny ys)<span class="symbol">:</span><span class="type-name">List</span> n) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  <span class="comment">-- Orders Lists according to the order of their elements,
+</span>  <span class="comment">-- in the same way a dictionary does.
+</span>  <span class="comment">-- For example, this lets us sort Strings.
+</span>  <span class="symbol">--</span>
+  <span class="comment">-- More precisely, it returns True iff compareElements xs.i ys.i is true
+</span>  <span class="comment">-- at the first location they differ.
+</span>  <span class="symbol">--</span>
+  <span class="comment">-- This function operates serially and short-circuits
+</span>  <span class="comment">-- at the first difference.  One could also write this
+</span>  <span class="comment">-- function as a parallel reduction, but it would be
+</span>  <span class="comment">-- wasteful in the case where there is an early difference,
+</span>  <span class="comment">-- because we can&#39;t short circuit.
+</span>  iter <span class="symbol">\</span>i<span class="symbol">.</span>
+    <span class="keyword">case</span> i <span class="symbol">==</span> min nx ny <span class="keyword">of</span>
+      <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="symbol">$</span> compareLengths nx ny
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span>
+        xi <span class="symbol">=</span> xs<span class="symbol">.</span>(unsafeFromOrdinal _ i)
+        yi <span class="symbol">=</span> ys<span class="symbol">.</span>(unsafeFromOrdinal _ i)
+        <span class="keyword">case</span> compareElements xi yi <span class="keyword">of</span>
+          <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="type-name">True</span>
+          <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="keyword">case</span> xi <span class="symbol">==</span> yi <span class="keyword">of</span>
+            <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Continue</span>
+            <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} [<span class="type-name">Ord</span> n] <span class="type-name">Ord</span> (<span class="type-name">List</span> n)
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> lexicalOrder (<span class="symbol">&gt;</span>) (<span class="symbol">&gt;</span>)

@@ -306,9 +306,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; {bwd: b -&gt; a &amp; fwd: a -&gt; b} -&gt; Iso a b)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>This is a normal ADT, and you can construct your own isomorphisms.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cycleThree {a b c} <span class="symbol">:</span> <span class="type-name">Iso</span> (a <span class="symbol">&amp;</span> b <span class="symbol">&amp;</span> c) (b <span class="symbol">&amp;</span> c <span class="symbol">&amp;</span> a) <span class="symbol">=</span>
-  <span class="type-name">MkIso</span> { fwd <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b<span class="symbol">,</span> c)<span class="symbol">.</span> (b<span class="symbol">,</span> c<span class="symbol">,</span> a)
-        <span class="symbol">,</span> bwd <span class="symbol">=</span> <span class="symbol">\</span>(b<span class="symbol">,</span> c<span class="symbol">,</span> a)<span class="symbol">.</span> (a<span class="symbol">,</span> b<span class="symbol">,</span> c)
-        }
+  <span class="type-name">MkIso</span> {
+      fwd <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b<span class="symbol">,</span> c)<span class="symbol">.</span> (b<span class="symbol">,</span> c<span class="symbol">,</span> a)
+    <span class="symbol">,</span> bwd <span class="symbol">=</span> <span class="symbol">\</span>(b<span class="symbol">,</span> c<span class="symbol">,</span> a)<span class="symbol">.</span> (a<span class="symbol">,</span> b<span class="symbol">,</span> c)
+    }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Isomorphisms can be applied with <code>appIso</code>, applied in reverse with <code>revIso</code>,
 and flipped with <code>flipIso</code></p>
