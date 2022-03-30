@@ -958,7 +958,7 @@ def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
 TODO: Move this to be with reductions?
 It's a kind of `scan`.
 
-def cumSum {n} (xs: n=>Float) : n=>Float =
+def cumsum {n} (xs: n=>Float) : n=>Float =
   withState 0.0 \total.
     for i.
       newTotal = get total + xs.i

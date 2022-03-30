@@ -329,7 +329,7 @@ chart2 = (AsVLDescriptor (pure Point) [("title", "Scatter")]
 
 
 y1 :  (Fin 3) => (Fin 10) => Float = arb $ newKey 0
-df3 = for i. cumSum . for j. select (y1.i.j > 0.0) (-1.0) 1.0
+df3 = for i. cumsum . for j. select (y1.i.j > 0.0) (-1.0) 1.0
 
 :t df3
 > ((Fin 3) => (Fin 10) => Float32)
