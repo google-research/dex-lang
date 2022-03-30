@@ -63,5 +63,5 @@ def (+|) {n} [Ix n] (i:n) (delta:Int) : n =
   i' = ordinal i + delta
   from_ordinal _ $ select (i' >= size n) (size n - 1) i'
 
-def isSorted {a n} [Ord a] (xs:n=>a) : Bool =
+def is_sorted {a n} [Ord a] (xs:n=>a) : Bool =
   all for i. xs.i <= xs.(i +| 1)
