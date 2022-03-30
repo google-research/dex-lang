@@ -13,7 +13,7 @@ def push {h a} (ref:Ref h (List a)) (x:a) : {State h} Unit =
   l = get ref
   ref := l <> AsList _ [x]
 
-def indexList {a} (l:List a) (i:Int) : {Except} a =
+def index_list {a} (l:List a) (i:Int) : {Except} a =
   (AsList n xs) = l
   xs.(from_ordinal_exc _ i)
 
@@ -38,7 +38,7 @@ def runParserPartial {a} (s:String) (parser:Parser a) : Maybe a =
 
 def pChar (c:Char) : Parser Unit = MkParser \(s, posRef).
   i = get posRef
-  c' = indexList s i
+  c' = index_list s i
   assert (c == c')
   posRef := i + 1
 
@@ -65,7 +65,7 @@ def runParser {a} (s:String) (parser:Parser a) : Maybe a =
 def parseAny : Parser Char = MkParser \h.
   (s, posRef) = h
   i = get posRef
-  c' = indexList s i
+  c' = index_list s i
   posRef := i + 1
   c'
 
