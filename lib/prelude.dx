@@ -1286,7 +1286,7 @@ def maybe_increase_buffer_size {a} [Storable a]
 def add_at_int_ptr (ptr: Ptr Int) (n:Int) : {IO} Unit =
   store ptr (load ptr + n)
 
-def extendDynBuffer {a} [Storable a]
+def extend_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
   maybe_increase_buffer_size buf n
@@ -1305,7 +1305,7 @@ def loadDynBuffer {a} [Storable a]
 
 def pushDynBuffer {a} [Storable a]
       (buf: DynBuffer a) (x:a) : {IO} Unit =
-  extendDynBuffer buf $ AsList _ [x]
+  extend_dynamic_buffer buf $ AsList _ [x]
 
 '## Strings and Characters
 
@@ -1521,7 +1521,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
       iter \_.
         (MkPtr rawPtr) = ptr
         numRead = i64_to_i $ freadFFI rawPtr (i_to_i64 1) (i_to_i64 n) stream'
-        extendDynBuffer buf $ stringFromCharPtr numRead ptr
+        extend_dynamic_buffer buf $ stringFromCharPtr numRead ptr
         if numRead == n
           then Continue
           else Done ()
