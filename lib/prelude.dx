@@ -1311,7 +1311,7 @@ def push_dynamic_buffer {a} [Storable a]
 
 String : Type = List Char
 
-def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {IO} String =
+def string_from_char_ptr (n:Int) (ptr:Ptr Char) : {IO} String =
   AsList n $ table_from_ptr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
@@ -1335,28 +1335,28 @@ foreign "showInt32" showInt32 : Int32 -> {IO} (Int32 & RawPtr)
 instance Show Int32
   show = \x. unsafe_io do
     (n, ptr) = showInt32 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 foreign "showInt64" showInt64 : Int64 -> {IO} (Int32 & RawPtr)
 
 instance Show Int64
   show = \x. unsafe_io do
     (n, ptr) = showInt64 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 foreign "showFloat32" showFloat32 : Float32 -> {IO} (Int32 & RawPtr)
 
 instance Show Float32
   show = \x. unsafe_io do
     (n, ptr) = showFloat32 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 foreign "showFloat64" showFloat64 : Float64 -> {IO} (Int32 & RawPtr)
 
 instance Show Float64
   show = \x. unsafe_io do
     (n, ptr) = showFloat64 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 instance {a b} [Show a, Show b] Show (a & b)
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
@@ -1521,7 +1521,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
       iter \_.
         (MkPtr rawPtr) = ptr
         numRead = i64_to_i $ freadFFI rawPtr (i_to_i64 1) (i_to_i64 n) stream'
-        extend_dynamic_buffer buf $ stringFromCharPtr numRead ptr
+        extend_dynamic_buffer buf $ string_from_char_ptr numRead ptr
         if numRead == n
           then Continue
           else Done ()
@@ -1602,7 +1602,7 @@ def newTempFile (_:Unit) : {IO} FilePath =
   withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
     fd = mkstempFFI ptr
     closeFFI fd
-    stringFromCharPtr 15 (MkPtr ptr)
+    string_from_char_ptr 15 (MkPtr ptr)
 
 def withTempFile {a} (action: FilePath -> {IO} a) : {IO} a =
   tmpFile = newTempFile ()

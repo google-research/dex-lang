@@ -17,7 +17,7 @@ foreign "showHex" showHexFFI : Word8 -> {IO} (Int32 & RawPtr)
 
 def showHex (x:Word8) : String = unsafe_io \().
   (n, ptr) = showHexFFI x
-  stringFromCharPtr n (MkPtr ptr)
+  string_from_char_ptr n (MkPtr ptr)
 
 black : HtmlColor = [i_to_w8   0, i_to_w8   0, i_to_w8   0]
 white : HtmlColor = [i_to_w8 255, i_to_w8 255, i_to_w8 255]
