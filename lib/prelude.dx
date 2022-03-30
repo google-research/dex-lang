@@ -2025,7 +2025,7 @@ def idiv_ceil (x:Int) (y:Int) : Int = idiv x y + b_to_i (rem x y /= 0)
 def intdiv2 (x:Int) : Int = %shr x (1 : Int)
 def intpow2 (power:Int) : Int = %shl (1 : Int) power
 def is_odd  (x:Int) : Bool = rem x 2 == 1
-def isEven (x:Int) : Bool = rem x 2 == 0
+def is_even (x:Int) : Bool = rem x 2 == 0
 
 def isPowerOf2 (x:Int) : Bool =
   -- A fast trick based on bitwise AND.
