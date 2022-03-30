@@ -1724,7 +1724,7 @@ def bern (p:Float) (k:Key) : Bool = rand k < p
 def randn_vec {n} [Ix n] (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
-def randIdx {n} [Ix n] (k:Key) : n =
+def rand_idx {n} [Ix n] (k:Key) : n =
   unif = rand k
   from_ordinal n $ FToI $ floor $ unif * i_to_f (size n)
 
@@ -1752,7 +1752,7 @@ instance {a b} [Arbitrary a, Arbitrary b] Arbitrary (a & b)
     (arb k1, arb k2)
 
 instance {n} Arbitrary (Fin n)
-  arb = randIdx
+  arb = rand_idx
 
 '## Ord on Arrays
 

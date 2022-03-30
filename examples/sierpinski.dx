@@ -4,7 +4,7 @@ import diagram
 import plot
 
 def update {n} (points:n=>Point) (key:Key) ((x,y):Point) : Point =
-  (x', y') = points.(randIdx key)
+  (x', y') = points.(rand_idx key)
   (0.5 * (x + x'), 0.5 * (y + y'))
 
 def runChain {a} (n:Int) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
