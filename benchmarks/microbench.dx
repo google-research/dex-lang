@@ -17,7 +17,7 @@ ans2 = gaussian_bench 100000000 0
 
 
 def matmul_bench (n:Int) (k:Int) : Fin n => Fin n => Float =
-  mat = randMat n n randn (new_key k)
+  mat = rand_mat n n randn (new_key k)
   mat ** mat
 
 %bench "matmul"
