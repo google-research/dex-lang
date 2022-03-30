@@ -649,16 +649,16 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 :t for i:Height. 0.0
 > ((Fin 3) => Float32)
 
-toList for i:Height. 0.0
+to_list for i:Height. 0.0
 > (AsList 3 [0., 0., 0.])
 
-:t toList for i:Height. 0.0
+:t to_list for i:Height. 0.0
 > (List Float32)
 
 ' Tables of lists can be concatenated down to
   single lists.
 
-z = concat [toList [3.0], toList [1.0, 2.0 ]]
+z = concat [to_list [3.0], to_list [1.0, 2.0 ]]
 z
 > (AsList 3 [3., 1., 2.])
 
@@ -675,8 +675,8 @@ shoes = (5 @ Class)
 
 def findShoes {a b} (x : a=>b) (y : a=>Class) : List b =
   concat for i. case (y.i == (5 @ _)) of
-    True  -> toList [x.i]
-    False -> toList []
+    True  -> to_list [x.i]
+    False -> to_list []
 
 ' Note though that the type here does not tell us
   how many there are. The type system cannot know this.

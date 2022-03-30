@@ -315,7 +315,7 @@ chart2 = (AsVLDescriptor (pure Point) [("title", "Scatter")]
      [{title="X1", encodings=pureLs X, encType=Quantitative, rows=wrapCol #x1 df2},
       {title="X2", encodings=pureLs Y, encType=Quantitative, rows=wrapCol #x2 df2},
       {title="Weight", encodings=pureLs Size, encType=Quantitative, rows=wrapCol #weight df2},
-      {title="Label", encodings=toList [pure Color, pure Tooltip], encType=Nominal, rows=wrapCol #label df2}])
+      {title="Label", encodings=to_list [pure Color, pure Tooltip], encType=Nominal, rows=wrapCol #label df2}])
 
 
 :html showVega $ toJSON chart2

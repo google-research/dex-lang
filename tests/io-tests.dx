@@ -49,8 +49,8 @@ unsafe_io \().
 
 :p unsafe_io \().
   withDynamicBuffer \buf.
-    extendDynBuffer buf $ toList for i:(Fin 1000). ordinal i
-    extendDynBuffer buf $ toList for i:(Fin 1000). ordinal i
+    extendDynBuffer buf $ to_list for i:(Fin 1000). ordinal i
+    extendDynBuffer buf $ to_list for i:(Fin 1000). ordinal i
     (AsList _ xs) = loadDynBuffer buf
     sum xs
 > 999000

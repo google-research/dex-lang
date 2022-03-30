@@ -310,8 +310,8 @@ data MySum2 =
 > (AsList 4 [(Foo2, Foo2), (Foo2, Foo2), (Foo2, Foo2), (Foo2, Foo2)])
 
 -- reproducer for a shadowing bug (PR #440)
-:p concat $ for i:(Fin 2). toList [(Just [0,0,0], Just [0,0,0]),
-                                   (Just [0,0,0], Just [0,0,0])]
+:p concat $ for i:(Fin 2). to_list [(Just [0,0,0], Just [0,0,0]),
+                                    (Just [0,0,0], Just [0,0,0])]
 > (AsList 4 [ ((Just [0, 0, 0]), (Just [0, 0, 0]))
 >           , ((Just [0, 0, 0]), (Just [0, 0, 0]))
 >           , ((Just [0, 0, 0]), (Just [0, 0, 0]))

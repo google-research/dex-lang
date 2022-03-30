@@ -1112,7 +1112,7 @@ instance {a} [Eq a] Eq (List a)
 def unsafe_cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
   for i. xs.(unsafe_from_ordinal _ (ordinal i))
 
-def toList {n a} (xs:n=>a) : List a =
+def to_list {n a} (xs:n=>a) : List a =
   n' = size n
   AsList _ $ unsafe_cast_table (Fin n') xs
 
@@ -1642,7 +1642,7 @@ def head {n a} (xs:n=>a) : a = xs.(0@_)
 
 def tail {n a} (xs:n=>a) (start:Int) : List a =
   numElts = size n - start
-  toList $ slice xs start (Fin numElts)
+  to_list $ slice xs start (Fin numElts)
 
 
 '## Pseudorandom number generator utilities

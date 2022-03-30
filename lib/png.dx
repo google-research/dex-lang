@@ -28,7 +28,7 @@ def getChunks {n a}
   numChunks = idivCeil (size n) chunkSize
   paddedSize = numChunks * chunkSize
   xsPadded = padTo (Fin paddedSize) padVal xs
-  toList for i:(Fin numChunks).
+  to_list for i:(Fin numChunks).
     slice xsPadded (ordinal i * chunkSize) (Fin chunkSize)
 
 def base64sToBytes (chunk : Fin 4 => Base64) : Fin 3 => Byte =
@@ -60,7 +60,7 @@ def base64Encode (s:String) : String =
   flattened = for (i,j). encodedChunks.i.j
   padChars = rem (3 - rem n 3) 3
   validOutputChars = (numChunks * 4) - padChars
-  toList for i. case ordinal i < validOutputChars of
+  to_list for i. case ordinal i < validOutputChars of
     True  -> flattened.i
     False -> '='
 
@@ -88,7 +88,7 @@ def base64Decode (s:String) : Maybe String =
     Nothing -> Nothing
     Just decodedChunks ->
       resultPadded = for (i,j). decodedChunks.i.j
-      Just $ toList $ slice resultPadded 0 (Fin numValidOutputChars)
+      Just $ to_list $ slice resultPadded 0 (Fin numValidOutputChars)
 
 '## PNG FFI
 
@@ -99,11 +99,11 @@ Gif  : Type = String
 foreign "encodePNG" encodePNG : RawPtr -> Int32 -> Int32 -> {IO} (Int32 & RawPtr)
 
 def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
-  (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
+  (AsList _ imgFlat) = to_list for (i,j,k). img.i.j.k
   with_table_ptr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
     (n, ptr') = encodePNG rawPtr (size m) (size n)
-    toList $ table_from_ptr (Fin n) $ MkPtr ptr'
+    to_list $ table_from_ptr (Fin n) $ MkPtr ptr'
 
 def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
   withTempFiles \pngFiles.

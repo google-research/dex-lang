@@ -55,7 +55,7 @@ def applyTransformation
       (transformGeom:  Geom -> Geom)
       (d:Diagram) : Diagram =
   (MkDiagram (AsList _ objs)) = d
-  MkDiagram $ toList for i.
+  MkDiagram $ to_list for i.
     (attr, p, geom) = objs.i
     (attr, transformPoint p, transformGeom geom)
 
@@ -79,7 +79,7 @@ def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
   applyTransformation (\(x,y). (x + offX, y + offY) ) id
 
 def singletonDefault (geom:Geom) : Diagram =
-  MkDiagram $ toList [(defaultGeomStyle, (0.0, 0.0), geom)]
+  MkDiagram $ to_list [(defaultGeomStyle, (0.0, 0.0), geom)]
 
 def pointDiagram               : Diagram = singletonDefault PointGeom
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r
@@ -89,7 +89,7 @@ def text   (x:String)          : Diagram = singletonDefault $ Text x
 
 def updateGeom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
   (MkDiagram (AsList _ objs)) = d
-  MkDiagram $ toList for i.
+  MkDiagram $ to_list for i.
     (attr       , geoms) = objs.i
     (update attr, geoms)
 
