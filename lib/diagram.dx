@@ -147,7 +147,7 @@ def attr_string (attr:GeomStyle) : String =
   <+> ("stroke-width" <=> (get_at #strokeWidth attr)))
 
 @noinline
-def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
+def render_geom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
   solidAttr = set_at #fillColor (get_at #strokeColor attr) attr
 
@@ -221,7 +221,7 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   tag_brackets_attr "svg" svgAttrStr $
     concat for i.
       (attr, pos, geom) = objs.i
-      renderGeom attr pos geom
+      render_geom attr pos geom
 
 renderScaledSVG = \d. renderSVG d (computeBounds d)
 
