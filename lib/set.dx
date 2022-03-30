@@ -15,7 +15,7 @@ def first {n a} (xs:n=>a) : Maybe a =
     True -> Nothing
     False -> Just xs.(unsafe_from_ordinal n 0)
 
-def allExceptLast {n a} (xs:n=>a) : List a =
+def all_except_last {n a} (xs:n=>a) : List a =
   shortSize = Fin (max 0 ((size n) - 1))
   allButLast = view i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
   (AsList _ allButLast)
@@ -34,7 +34,7 @@ def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
       Nothing -> xlist
       Just first_y -> case last_x == first_y of
         False -> concat [xlist,            ylist]
-        True ->  concat [allExceptLast xs, ylist]
+        True ->  concat [all_except_last xs, ylist]
 
 def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
   xlists = for i:n. (AsList 1 [xs.i])
