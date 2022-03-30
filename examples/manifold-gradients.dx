@@ -94,7 +94,7 @@ def manifoldGrad
 As a sense check we make sure that these functions give the same output as the
 non-manifold versions on functions which are defined on $\mathbb{R}^n$.
 
-x = for i:(Fin 10). IToF (ordinal i) / 10.
+x = for i:(Fin 10). i_to_f (ordinal i) / 10.
 
 def myFunc {n} (x : (n => Float)) : Float =
   sum $ for i. if (mod (ordinal i) 2 == 0) then (exp x.i) else (sin x.i)
@@ -283,7 +283,7 @@ instance Add Quaternion
 useful for numerical computations.
 
 instance VSpace Quaternion
-  scaleVec = \ s x. quatFromVec (s .* quatAsVec x)
+  scale_vec = \ s x. quatFromVec (s .* quatAsVec x)
 
 instance HasAllClose Quaternion
   allclose = \atol rtol a b.

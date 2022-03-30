@@ -65,7 +65,7 @@ lam4 = \{n m}. (Fin n, Fin m)
 > [1, 0, 0]
 
 :p
-  runState 5 \ref.
+  run_state 5 \ref.
     n = get ref
     for_ i:(Fin n).
       ref := get ref + 1

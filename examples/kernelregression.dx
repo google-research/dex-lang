@@ -19,7 +19,7 @@ def solve' {m} (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
 
 def chol_solve {m} (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
     b' = forward_substitute l b
-    u = transposeLowerToUpper l
+    u = transpose_lower_to_upper l
     backward_substitute u b'
 
 ' # Kernel ridge regression
@@ -35,7 +35,7 @@ where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda>0$ and $y = (y_1,\dots,
 -- Synthetic data
 Nx = Fin 100
 noise = 0.1
-[k1, k2] = splitKey (newKey 0)
+[k1, k2] = split_key (new_key 0)
 
 def trueFun (x:Float) : Float =
   x + sin (20.0 * x)
@@ -60,10 +60,10 @@ Nxtest = Fin 1000
 xtest : Nxtest=>Float = for i. rand (ixkey k1 i)
 preds = map predict xtest
 
-:html showPlot $ xyPlot xs ys
+:html show_plot $ xy_plot xs ys
 > <html output>
 
-:html showPlot $ xyPlot xtest preds
+:html show_plot $ xy_plot xtest preds
 > <html output>
 
 ' # Gaussian process regression
@@ -92,8 +92,8 @@ gp_predict = gp_regress (rbf 0.2) xs ys
 
 (gp_preds, vars) = unzip (map gp_predict xtest)
 
-:html showPlot $ xycPlot xtest gp_preds (map sqrt vars)
+:html show_plot $ xyc_plot xtest gp_preds (map sqrt vars)
 > <html output>
 
-:html showPlot $ xyPlot xtest vars
+:html show_plot $ xy_plot xtest vars
 > <html output>

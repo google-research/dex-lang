@@ -131,8 +131,8 @@ threeCaseTab : (Fin 4)=>ThreeCases =
   yieldAccum (AddMonoid Float) \ref.
     for i. case threeCaseTab.i of
       TheEmptyCase    -> ref += 1000.0
-      ThePairCase x y -> ref +=  100.0 + y + IToF x
-      TheIntCase x    -> ref +=   10.0 + IToF (x * 2)
+      ThePairCase x y -> ref +=  100.0 + y + i_to_f x
+      TheIntCase x    -> ref +=   10.0 + i_to_f (x * 2)
 > 2118.1
 
 data MyIntish = MkIntish Int
@@ -194,8 +194,8 @@ def catLists {a} (xs:List a) (ys:List a) : List a =
   zs = for i:(Fin nz).
     i' = ordinal i
     case i' < nx of
-      True  -> xs'.(fromOrdinal _ i')
-      False -> ys'.(fromOrdinal _ (i' - nx))
+      True  -> xs'.(from_ordinal _ i')
+      False -> ys'.(from_ordinal _ (i' - nx))
   AsList _ zs
 
 :p
@@ -223,7 +223,7 @@ def listToTable {a} ((AsList n xs): List a) : (Fin n)=>a = xs
   sum $ listToTable l
 > 6
 
-def listToTable2 {a} (l: List a) : (Fin (listLength l))=>a =
+def listToTable2 {a} (l: List a) : (Fin (list_length l))=>a =
   (AsList _ xs) = l
   xs
 
@@ -239,8 +239,8 @@ l2 = AsList _ [1, 2, 3]
 :p sum $ listToTable2 l2
 > 6
 
-def zerosLikeList {a} (l : List a) : (Fin (listLength l))=>Float =
-  for i:(Fin $ listLength l). 0.0
+def zerosLikeList {a} (l : List a) : (Fin (list_length l))=>Float =
+  for i:(Fin $ list_length l). 0.0
 
 :p zerosLikeList l2
 > [0., 0., 0.]
@@ -250,7 +250,7 @@ data Graph n:Type a:Type [Ix n] =
 
 def graphToAdjacencyMatrix {n a} ((MkGraph nodes (AsList _ edges)):Graph n a) : n=>n=>Bool =
   init = for i j. False
-  yieldState init \mRef.
+  yield_state init \mRef.
     for i.
       (from, to) = edges.i
       mRef!from!to := True
@@ -310,8 +310,8 @@ data MySum2 =
 > (AsList 4 [(Foo2, Foo2), (Foo2, Foo2), (Foo2, Foo2), (Foo2, Foo2)])
 
 -- reproducer for a shadowing bug (PR #440)
-:p concat $ for i:(Fin 2). toList [(Just [0,0,0], Just [0,0,0]),
-                                   (Just [0,0,0], Just [0,0,0])]
+:p concat $ for i:(Fin 2). to_list [(Just [0,0,0], Just [0,0,0]),
+                                    (Just [0,0,0], Just [0,0,0])]
 > (AsList 4 [ ((Just [0, 0, 0]), (Just [0, 0, 0]))
 >           , ((Just [0, 0, 0]), (Just [0, 0, 0]))
 >           , ((Just [0, 0, 0]), (Just [0, 0, 0]))

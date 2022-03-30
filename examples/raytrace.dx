@@ -26,9 +26,9 @@ def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
 def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
-  yieldState zero \total.
+  yield_state zero \total.
     for i:(Fin n).
-      total := get total + sample (ixkey k i) / IToF n
+      total := get total + sample (ixkey k i) / i_to_f n
 
 def positiveProjection {n} (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
@@ -68,7 +68,7 @@ def rotateZ (p:Vec 3) (angle:Angle) : Vec 3 =
   [c*px - s*py, s*px+c*py, pz]
 
 def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
-  [k1, k2] = splitKey k
+  [k1, k2] = split_key k
   u1 = rand k1
   u2 = rand k2
   uu = normalize $ cross normal [0.0, 1.1, 1.1]
@@ -158,7 +158,7 @@ def sdObject (pos:Position) (obj:Object) : Distance =
 
 def sdScene {n} (scene:Scene n) (pos:Position) : (Object & Distance) =
   (MkScene objs) = scene
-  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
+  (i, d) = minimum_by snd $ for i. (i, sdObject pos objs.i)
   (objs.i, d)
 
 def calcNormal (obj:Object) (pos:Position) : Direction =
@@ -176,8 +176,8 @@ def raymarch {n} (scene:Scene n) (ray:Ray) : RayMarchResult =
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
   (rayOrigin, rayDir) = ray
-  withState (10.0 * tol) \rayLength.
-    boundedIter maxIters HitNothing \_.
+  with_state (10.0 * tol) \rayLength.
+    bounded_iter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
       (obj, d) = sdScene scene $ rayPos
       -- 0.9 ensures we come close to the surface but don't touch it
@@ -204,7 +204,7 @@ def rayDirectRadiance {n} (scene:Scene n) (ray:Ray) : Radiance =
     HitObj _ _ -> zero
 
 def sampleSquare (hw:Float) (k:Key) : Position =
- [kx, kz] = splitKey k
+ [kx, kz] = split_key k
  x = randuniform (- hw) hw kx
  z = randuniform (- hw) hw kz
  [x, 0.0, z]
@@ -230,16 +230,16 @@ def sampleLightRadiance {n}
 def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
   yieldAccum (AddMonoid Float) \radiance.
-    runState  noFilter \filter.
-     runState initRay  \ray.
-      boundedIter (getAt #maxBounces params) () \i.
+    run_state  noFilter \filter.
+     run_state initRay  \ray.
+      bounded_iter (get_at #maxBounces params) () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->
             if i == 0 then radiance += intensity   -- TODO: scale etc
             Done ()
           HitObj incidentRay osurf ->
-            [k1, k2] = splitKey $ hash k i
+            [k1, k2] = split_key $ hash k i
             lightRadiance = sampleLightRadiance scene osurf incidentRay k1
             ray    := sampleReflection osurf incidentRay k2
             filter := surfaceFilter (get filter) (snd osurf)
@@ -256,28 +256,28 @@ Camera = {
 -- TODO: might be better with an anonymous dependent pair for the result
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
-  halfWidth = getAt #halfWidth camera
-  pixHalfWidth = halfWidth / IToF n
+  halfWidth = get_at #halfWidth camera
+  pixHalfWidth = halfWidth / i_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.
-    [kx, ky] = splitKey key
+    [kx, ky] = split_key key
     x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
-    (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
+    (get_at #pos camera, normalize [x, y, neg (get_at #sensorDist camera)])
 
 def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
-  n = getAt #numPix camera
+  n = get_at #numPix camera
   rays = cameraRays n camera
-  rootKey = newKey 0
+  rootKey = new_key 0
   image = for i j.
-    pixKey = if getAt #shareSeed params
+    pixKey = if get_at #shareSeed params
       then rootKey
       else ixkey (ixkey rootKey i) j
     sampleRayColor : Key -> Color =  \k.
-      [k1, k2] = splitKey k
+      [k1, k2] = split_key k
       trace params scene (rays.i.j k1) k2
-    sampleAveraged sampleRayColor (getAt #numSamples params) pixKey
+    sampleAveraged sampleRayColor (get_at #numSamples params) pixKey
   MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
 
 ' ### Define the scene and render it
@@ -314,7 +314,7 @@ defaultCamera = {
 -- We change to a small num pix here to reduce the compute needed for tests
 params = defaultParams
 camera = if dex_test_mode ()
-  then defaultCamera |> setAt #numPix 10
+  then defaultCamera |> set_at #numPix 10
   else defaultCamera
 
 -- %time
@@ -325,7 +325,7 @@ camera = if dex_test_mode ()
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
-params2 = defaultParams |> setAt #numSamples 1
+params2 = defaultParams |> set_at #numSamples 1
 (MkImage _ _ image2) = takePicture params2 theScene camera
 
 :html imshow image2

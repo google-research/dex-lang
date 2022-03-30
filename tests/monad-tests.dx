@@ -1,17 +1,17 @@
 
 :p
    def m {h:Type} (ref:Ref h Int) : {State h} Int = get ref
-   runState 2 m
+   run_state 2 m
 > (2, 2)
 
 :p
    def m {h:Type} (ref:Ref h Int) : {State h} Unit = ref := 3
-   runState 0 m
+   run_state 0 m
 > ((), 3)
 
 :p
    def m {h:Type} (ref:Ref h Int) : {Read h} Int = ask ref
-   withReader 5 m
+   with_reader 5 m
 > 5
 
 :p
@@ -21,7 +21,7 @@
      z = get ref
      ref := (z * 3.0)
 
-  runState 1.0 stateAction
+  run_state 1.0 stateAction
 > ((), 9.)
 
 :p
@@ -37,22 +37,22 @@
     w += 4.0
     r + 2
 
-  withReader 2 \r.
-    runState True \s.
-      runAccum (AddMonoid Float) \w.
+  with_reader 2 \r.
+    run_state True \s.
+      run_accum (AddMonoid Float) \w.
         rwsAction r w s
 > ((4, 6.), False)
 
 :p
    def m {h:Type} (s:Ref h (Fin 3=>Int)) : {State h} Unit =
-     s!(fromOrdinal _ 0) := 10
-     s!(fromOrdinal _ 2) := 20
-     x = get (s!(fromOrdinal _ 0))
-     s!(fromOrdinal _ 1) := x
-   runState [0,0,0] m
+     s!(from_ordinal _ 0) := 10
+     s!(from_ordinal _ 2) := 20
+     x = get (s!(from_ordinal _ 0))
+     s!(from_ordinal _ 1) := x
+   run_state [0,0,0] m
 > ((), [10, 10, 20])
 
-:p withReader [1,2,3] \r . ask r!(fromOrdinal _ 1)
+:p with_reader [1,2,3] \r . ask r!(from_ordinal _ 1)
 > 2
 
 :p
@@ -62,7 +62,7 @@
         : {Accum wh, State sh} Unit =
     x = get s
     w += x
-  runState 1.0 \s. runAccum (AddMonoid Float) \w . m w s
+  run_state 1.0 \s. run_accum (AddMonoid Float) \w . m w s
 > (((), 1.), 1.)
 
 def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
@@ -70,7 +70,7 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
   w += x
   w += 2.0
 
-:p withReader 1.5 \r. runAccum (AddMonoid Float) \w. myAction w r
+:p with_reader 1.5 \r. run_accum (AddMonoid Float) \w. myAction w r
 > ((), 3.5)
 
 :p
@@ -81,14 +81,14 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
     w1 += 1.0
     w2 += 3.0
     w1 += 1.0
-  runAccum (AddMonoid Float) \w1. runAccum (AddMonoid Float) \w2. m w1 w2
+  run_accum (AddMonoid Float) \w1. run_accum (AddMonoid Float) \w2. m w1 w2
 > (((), 3.), 2.)
 
 def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
-  s!(fromOrdinal _ 0) := 1
-  s!(fromOrdinal _ 2) := 2
+  s!(from_ordinal _ 0) := 1
+  s!(from_ordinal _ 2) := 2
 
-:p runState [0,0,0] foom
+:p run_state [0,0,0] foom
 > ((), [1, 0, 2])
 
 -- TODO: handle effects returning functions
@@ -127,10 +127,10 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 -- TODO: some way to explicitly give type to `runAccum`
 --       (maybe just explicit implicit args)
 :p
-  withReader 2.0 \r.
-    runAccum (AddMonoid Float) \w.
-      runAccum (AddMonoid Float) \w'.
-        runState 3 \s.
+  with_reader 2.0 \r.
+    run_accum (AddMonoid Float) \w.
+      run_accum (AddMonoid Float) \w'.
+        run_state 3 \s.
           x = ask r
           y = get s
           w += x
@@ -140,7 +140,7 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 > ((((2., 3), 4), 4.), 2.)
 
 def symmetrizeInPlace {n} (mat:n=>n=>Float) : n=>n=>Float =
-  yieldState mat \ref.
+  yield_state mat \ref.
     for i j.
        x = get ref!i!j
        y = get ref!j!i
@@ -151,7 +151,7 @@ def symmetrizeInPlace {n} (mat:n=>n=>Float) : n=>n=>Float =
 symmetrizeInPlace [[1.,2.],[3.,4.]]
 > [[1., 2.5], [2.5, 4.]]
 
-:p withReader 5 \r. ()
+:p with_reader 5 \r. ()
 > ()
 
 :p yieldAccum (AddMonoid Float) \w.
@@ -175,13 +175,13 @@ def effectsAtZero {eff:Effects} (f: Int ->{|eff} Unit) : {|eff} Unit =
   f 0
   ()
 
-:p runState 0 \ref. effectsAtZero \_. ref := 1
+:p run_state 0 \ref. effectsAtZero \_. ref := 1
 > ((), 1)
 
 :p filter (\x. x > 5) [0, 7, -1, 6]
 > (AsList 2 [7, 6])
 
-:p argFilter (\x. x > 5) [0, 7, -1, 6]
+:p arg_filter (\x. x > 5) [0, 7, -1, 6]
 > (AsList 2 [(1@Fin 4), (3@Fin 4)])
 
 -- Test list equality

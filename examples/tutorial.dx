@@ -176,7 +176,7 @@ row = x.(2 @ Height)
 ' If we want to convert these values to floats, we do it manually with the `IToF`
   function. We can use this to make an image gradient.
 
-gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
+gradient = for i:Height. for j:Width. i_to_f ((ordinal i) + (ordinal j))
 :html matshow gradient
 > <html output>
 
@@ -316,23 +316,23 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
   ignore it for now.
 
 def pixel (x:Char) : Float32 =
-  r = W8ToI x
-  IToF case r < 0 of
+  r = w8_to_i x
+  i_to_f case r < 0 of
     True -> 256 + r
     False -> r
 
 def getIm : Batch => Image =
   -- File is unsigned bytes offset with 16 starting bytes
-  (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
-  raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
+  (AsList _ im) = unsafe_io do read_file "examples/t10k-images-idx3-ubyte"
+  raw = unsafe_cast_table Full (for i:Full. im.((ordinal i + 16) @ _))
   for b: Batch i j.
     pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
   -- File is unsigned bytes offset with 8 starting bytes
-  (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
-  r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
-  for i. (W8ToI r.i @ Class)
+  (AsList _ lab) = unsafe_io do read_file "examples/t10k-labels-idx1-ubyte"
+  r = unsafe_cast_table Batch (for i:Batch. lab.((ordinal i + 8) @ _))
+  for i. (w8_to_i r.i @ Class)
 
 all_ims = getIm
 all_labels = getLabel
@@ -365,7 +365,7 @@ imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
 imscolor2 = for b. for i. for j. for c:Channels.
   case ordinal c == 0 of
-    True  -> (sum ims).i.j / (IToF (size Batch))
+    True  -> (sum ims).i.j / (i_to_f (size Batch))
     False -> ims.b.i.j
 
 :html imseqshow (imscolor2 / 255.0)
@@ -422,13 +422,13 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 def tableMean {n} (x : n => Float32) : Float32 =
   -- acc = 0
-  withState 0.0 $ \acc.
+  with_state 0.0 $ \acc.
     -- for i in range(len(x))
     for i.
       -- acc = acc + x[i]
       acc := (get acc) + x.i
     -- return acc / len(x)
-    (get acc) / (IToF (size n))
+    (get acc) / (i_to_f (size n))
 
 
 tableMean [0.0, 1.0, 0.5]
@@ -469,7 +469,7 @@ tableMean [0.0, 1.0, 0.5]
   "mutable value" reference (`acc` here), and returns the body function's result.
   Here's a simple example:
 
-withState 10 $ \ state.
+with_state 10 $ \ state.
   state := 30
   state := 10
   get state
@@ -560,16 +560,16 @@ instance Add (Float32 & Float32)
 ' And here is a `VSpace` instance for the float pair type:
 
 instance VSpace (Float32 & Float32)
-  scaleVec = \s (x, y). (x * s, y * s)
+  scale_vec = \s (x, y). (x * s, y * s)
 
 ' Once we have these two instance definitions, we can revisit our table sum
   function using them:
 
 def tableMean' {n v} [VSpace v] (x : n => v) : v =
-   withState zero $ \acc: (Ref _ v).
+   with_state zero $ \acc: (Ref _ v).
         for i.
             acc := add (get acc) x.i       -- `Add` requirement
-        (get acc) / (IToF (size n))  -- `VSpace` requirement
+        (get acc) / (i_to_f (size n))  -- `VSpace` requirement
 
 tableMean' [0.1, 0.5, 0.9]
 > 0.5
@@ -587,7 +587,7 @@ instance {v w} [Add v, Add w] Add (v & w)
   zero = (zero, zero)
 
 instance {v w} [VSpace v, VSpace w] VSpace (v & w)
-  scaleVec = \s (x, y). (scaleVec s x, scaleVec s y)
+  scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
 
 '## More Fashion MNist
 
@@ -598,7 +598,7 @@ instance {v w} [VSpace v, VSpace w] VSpace (v & w)
 Pixels = Fin 256
 
 def bincount {a b} [Ix b] (inp : a => b) : b => Int =
-  withState zero \acc .
+  with_state zero \acc .
     for i.
       v = acc!(inp.i)
       v := (get v) + 1
@@ -610,7 +610,7 @@ hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
 :t hist
 > ((Fin 256) => Int32)
 
-:html showPlot $ yPlot (for i. (IToF hist.i))
+:html show_plot $ y_plot (for i. (i_to_f hist.i))
 > <html output>
 
 ' Find nearest images in the dataset:
@@ -649,16 +649,16 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 :t for i:Height. 0.0
 > ((Fin 3) => Float32)
 
-toList for i:Height. 0.0
+to_list for i:Height. 0.0
 > (AsList 3 [0., 0., 0.])
 
-:t toList for i:Height. 0.0
+:t to_list for i:Height. 0.0
 > (List Float32)
 
 ' Tables of lists can be concatenated down to
   single lists.
 
-z = concat [toList [3.0], toList [1.0, 2.0 ]]
+z = concat [to_list [3.0], to_list [1.0, 2.0 ]]
 z
 > (AsList 3 [3., 1., 2.])
 
@@ -675,8 +675,8 @@ shoes = (5 @ Class)
 
 def findShoes {a b} (x : a=>b) (y : a=>Class) : List b =
   concat for i. case (y.i == (5 @ _)) of
-    True  -> toList [x.i]
-    False -> toList []
+    True  -> to_list [x.i]
+    False -> to_list []
 
 ' Note though that the type here does not tell us
   how many there are. The type system cannot know this.

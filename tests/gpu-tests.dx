@@ -1,5 +1,5 @@
 
-x = for i:(Fin 5). IToF $ ordinal i
+x = for i:(Fin 5). i_to_f $ ordinal i
 x
 > [0., 1., 2., 3., 4.]
 
@@ -10,7 +10,7 @@ x + x
 testNestedParallelism =
   for i:(Fin 10).
     x = ordinal i
-    q = for j:(Fin 2000). IToF $ x * ordinal j
+    q = for j:(Fin 2000). i_to_f $ x * ordinal j
     (2.0 .* q, 4.0 .* q)
 (fst testNestedParallelism.(2@_)).(5@_)
 > 20.

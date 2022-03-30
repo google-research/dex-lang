@@ -41,7 +41,7 @@ def clipidx (n:Type) [Ix n] (i:Int) : n =
   -- Returns element at 0 if less than zero.
   -- Ideally we could have an alternative
   -- to Fin that just clips the index at its bounds.
-  fromOrdinal n (select (i < 0) 0 i)
+  from_ordinal n (select (i < 0) 0 i)
 
 def logaddexp (x:Float) (y:Float) : Float =
   m = max x y
@@ -103,7 +103,7 @@ def ctc {vocab time position} [Eq vocab, Eq position, Eq time]
 
 def randIdxNoZero (n:Type) [Ix n] (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ (1 + (FToI (floor ( unif * IToF ((size n) - 1)))))
+  from_ordinal n $ (1 + (FToI (floor ( unif * i_to_f ((size n) - 1)))))
 
 Vocab = Fin 6
 position = Fin 3
@@ -111,10 +111,10 @@ blank = 0@Vocab
 
 -- Create random logits
 Time = Fin 4
-logits : Time => Vocab => Float = arb $ newKey 0
+logits : Time => Vocab => Float = arb $ new_key 0
 
 -- Create random labels
-labels = for i:position. randIdxNoZero Vocab (newKey (ordinal i))
+labels = for i:position. randIdxNoZero Vocab (new_key (ordinal i))
 :p labels
 > [(1@Fin 6), (5@Fin 6), (5@Fin 6)]
 

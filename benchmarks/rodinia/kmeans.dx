@@ -10,7 +10,7 @@ def centroidsOf (points : n=>d=>Float) (membership : n=>k) : k=>d=>Float =
   for i. clusterSums.i / (max clusterSizes.i 1.0)
 
 def argminBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : n =
-  minimumBy (\i. f xs.i) (for i. i)
+  minimum_by (\i. f xs.i) (for i. i)
 
 def kmeans
       (points : n=>d=>Float)
@@ -20,12 +20,12 @@ def kmeans
       : (Fin k)=>d=>Float =
   initCentroids = for i:(Fin k). points.(ordinal i@_)
   initMembership = for c:n. ((ordinal c `mod` k)@_)
-  final = yieldState (initMembership, initCentroids, 0) \ref.
+  final = yield_state (initMembership, initCentroids, 0) \ref.
     while do
       (membership, centroids, i) = get ref
       membership' = for i. argminBy (dist points.i) centroids
       centroids' = centroidsOf points membership'
-      delta = sum $ for i. BToI $ membership.i /= membership'.i
+      delta = sum $ for i. b_to_i $ membership.i /= membership'.i
       ref := (membership', centroids', i + 1)
       delta > threshold && i < maxIterations
   (_, centroids, _) = final

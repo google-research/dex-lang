@@ -23,7 +23,7 @@ gridSize = 41
 D = Fin gridSize
 
 -- Space discretization
-dx = 1. / IToF gridSize
+dx = 1. / i_to_f gridSize
 
 -- Time discretization (solution unstable if much higher)
 dt = 0.000001
@@ -44,17 +44,17 @@ def fToC (x:Float) : Complex = MkComplex x 0.
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension
-def ixToF {n} [Ix n] (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
+def ixToF {n} [Ix n] (i:n) : Float = (i_to_f (ordinal i)) / (i_to_f gridSize - 1.)
 
 -- Helper to generate zero-delay GIF animations
 def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
-  imgToHtml $ pngsToGif 0 $ map imgToPng imgs
+  img_to_html $ pngs_to_gif 0 $ map img_to_png imgs
 
 -- Cuts an array down to a smaller dimension.
 -- Useful for cutting out animation frames for a faster GIF.
 def cut {n m a} [Ix m] (x:n=>a) : m=>a =
   s = idiv (size n) (size m)
-  for i:m. x.(unsafeFromOrdinal _ $ s * ordinal i)
+  for i:m. x.(unsafe_from_ordinal _ $ s * ordinal i)
 
 -- Converts a given 2D matrix to a greyscale image.
 def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
@@ -72,7 +72,7 @@ def atBounds {n m} [Ix n, Ix m] (i:n) (j:m) : Bool =
    || ordinal j == (gridSize - 1))
 
 -- Operators for performing unsafe ordinal arithmetic
-def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
+def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafe_from_ordinal _ ((ordinal i) + off)
 def (-!) {n} [Ix n] (i:n) (off:Int) : n = i +! (-1 * off)
 
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
@@ -134,7 +134,7 @@ def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
 
 :html (run
         ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
-        (for i j. IToF $ ordinal i + ordinal j))
+        (for i j. i_to_f $ ordinal i + ordinal j))
 > <html output>
 
 ' Square wavefunction

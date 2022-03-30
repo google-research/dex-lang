@@ -225,7 +225,7 @@ def negate_constraints_with_negative_offsets [Eq cons]
       (tableau: (Tableau cons vars))
       : Tableau cons vars =
   (basics, nonbasics, table) = tableau
-  table' = yieldState table \tableRef.
+  table' = yield_state table \tableRef.
     for i:cons.
       cur_constraint = tableRef!{|constraints=i|}
       if (get cur_constraint!{|value=()|}) < 0.0
@@ -328,10 +328,10 @@ def pivot [Eq cons, Eq extra, Eq vars]
       True  -> for col. table.row.col / table.row.pivotcol
       False -> for col. table.row.col - table.row.pivotcol * table.pivotrow.col / table.pivotrow.pivotcol
 
-  i' = fromJust $ (matchWith #?constraints) pivotrow
+  i' = from_just $ (match_with #?constraints) pivotrow
 
   -- Swap in new basic variable.
-  newBasics = yieldState basics \ref.
+  newBasics = yield_state basics \ref.
     ref!i' := pivotcol
 
   -- Move old basic variable to nonbasics.
@@ -363,7 +363,7 @@ def pivot_artificials [Eq cons, Eq vars]
       (tableau: FeasibilityTableau cons vars)
       : (FeasibilityTableau cons vars) =
   -- Pivot out all the artificial variables out of the basis
-  yieldState tableau \tRef.
+  yield_state tableau \tRef.
     tableau = get tRef
     (basics, _, _) = tableau
     for v:cons.
@@ -399,7 +399,7 @@ def deduce_nonbasics [Eq cons, Eq vars]
   -- but don't know how to tell the compiler that, so
   -- need to use an unsafe cast.
   (AsList n nonBasicsTable) = nonBasicsList
-  unsafeCastTable vars nonBasicsTable
+  unsafe_cast_table vars nonBasicsTable
 
 
 def eliminate_artificials [Eq cons, Eq vars]
@@ -475,7 +475,7 @@ def simplex [Eq cons, Eq vars]
   -- Find a feasible initial solution.
   init_tableau = build_tableau ineqs objective objType
   initFeasibilityTableau = build_feasibility_tableau init_tableau
-  feasibilityAns = yieldState initFeasibilityTableau \tableauRef. iter \_.
+  feasibilityAns = yield_state initFeasibilityTableau \tableauRef. iter \_.
     tableau = get tableauRef
     isopt = isOptimal tableau
     case isopt of
@@ -493,7 +493,7 @@ def simplex [Eq cons, Eq vars]
       tf = feasibilityTableauToNormalTableau feasibilityAns
 
       -- Optimize within the simplex.
-      withState tf \tableauRef. iter \_.
+      with_state tf \tableauRef. iter \_.
         tableau = get tableauRef  -- Whole tableau will be overwritten.
         isopt = isOptimal tableau
         case isopt of
@@ -604,13 +604,13 @@ redundant_constraints =
 '### Plotting routines
 
 def float2pix (v:Fin 2=>Float) : (n & m) =
-  x = (FToI ((v.(0@_) * (IToF (size n)))))@n
-  y = (FToI ((v.(1@_) * (IToF (size m)))))@m
+  x = (FToI ((v.(0@_) * (i_to_f (size n)))))@n
+  y = (FToI ((v.(1@_) * (i_to_f (size m)))))@m
   (x, y)
 
 def pixToReal (px:n) (py:m): (Fin 2)=>Float =
-  x = ((IToF ((ordinal px)))) / (IToF (size n))
-  y = ((IToF ((ordinal py)))) / (IToF (size m))
+  x = ((i_to_f ((ordinal px)))) / (i_to_f (size n))
+  y = ((i_to_f ((ordinal py)))) / (i_to_f (size m))
   [x, y]
 
 def draw_point [Eq n, Eq m]

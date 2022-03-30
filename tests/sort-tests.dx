@@ -1,8 +1,8 @@
 import sort
 
-:p isSorted $ sort []:((Fin 0)=>Int)
+:p is_sorted $ sort []:((Fin 0)=>Int)
 > True
-:p isSorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
+:p is_sorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
 > True
 
 
@@ -47,5 +47,5 @@ import sort
 :p "Thomas" > "Thompson"
 > False
 
-:p isSorted $ sort ["Charlie", "Alice", "Bob", "Aaron"]
+:p is_sorted $ sort ["Charlie", "Alice", "Bob", "Aaron"]
 > True

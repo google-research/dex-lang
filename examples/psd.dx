@@ -5,13 +5,13 @@ import linalg
 def psdsolve {n} (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
   l = chol mat
   b' = forward_substitute l b
-  u = transposeLowerToUpper l
+  u = transpose_lower_to_upper l
   backward_substitute u b'
 
 ' Test
 
 N = Fin 4
-[k1, k2] = splitKey $ newKey 0
+[k1, k2] = split_key $ new_key 0
 
 psd : N=>N=>Float =
   a = for i:N j:N. randn $ ixkey2 k1 i j

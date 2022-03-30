@@ -39,7 +39,7 @@ class JITTest(unittest.TestCase):
                              ((x + 0.01, y) for x, y in it.product(example_floats, repeat=2)
                               if (x, y) != (0.0, 0.0)))
 
-  test_int_arg = expr_test(r"\x:Int64 y:Int. I64ToI x + y",
+  test_int_arg = expr_test(r"\x:Int64 y:Int. i64_to_i x + y",
                            lambda x, y: x + y,
                            it.product(example_ints, example_ints))
 

@@ -29,8 +29,8 @@ def matmul
                indexVector ct.i.j j')
           (\i:n. \j:m. fsum \l. a.i.l * b.l.j))
 
-a = for i:(Fin 5). for j:(Fin 8). IToF $ (iota _).(i,j)
-b = for i:(Fin 8). for j:(Fin 15). IToF $ (iota _).(i,j)
+a = for i:(Fin 5). for j:(Fin 8). i_to_f $ (iota _).(i,j)
+b = for i:(Fin 8). for j:(Fin 15). i_to_f $ (iota _).(i,j)
 c = matmul a b
 c.(0@_)
 > [ 2100.0

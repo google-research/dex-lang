@@ -209,9 +209,9 @@ x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 :p
   x : {a:Int | a:Float | b:Int} = {| a | a = 3.0 |}
   case x of
-    {| a = x |} -> IToF x
+    {| a = x |} -> i_to_f x
     {| a | a = x |} -> x
-    {| b = x |} -> IToF x
+    {| b = x |} -> i_to_f x
 > 3.
 
 'Table values and imp lowering
@@ -322,15 +322,15 @@ def abToPair {a b} : Iso {a:a & b:b} (b&a) =
   bwd = \(b, a). {a, b}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n & b:m}
-  getSize = \(). size n * size m
-  ordinal = ordinal <<< appIso abToPair
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToPair
+  get_size = \(). size n * size m
+  ordinal = ordinal <<< app_iso abToPair
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToPair
 
 :p size {a:Fin 10 & b:Fin 3}
 > 30
 :p ordinal {a=(7@Fin 10), b=(2@Fin 3)}
 > 27
-:p fromOrdinal {a:Fin 10 & b:Fin 3} 14
+:p from_ordinal {a:Fin 10 & b:Fin 3} 14
 > {a = (4@Fin 10), b = (1@Fin 3)}
 
 recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
@@ -354,9 +354,9 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
     Right x -> {|b=x|}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
-  getSize = \(). size n + size m
-  ordinal = ordinal <<< appIso abToEither
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
+  get_size = \(). size n + size m
+  ordinal = ordinal <<< app_iso abToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToEither
 
 :p size {a:Fin 10 | b:Fin 3}
 > 13
@@ -366,10 +366,10 @@ instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
   ordinal x
 > 12
 
-:p fromOrdinal {a:Fin 10 | b:Fin 3} 4
+:p from_ordinal {a:Fin 10 | b:Fin 3} 4
 > {| a = 4@Fin 10 |}
 
-:p fromOrdinal {a:Fin 10 | b:Fin 3} 11
+:p from_ordinal {a:Fin 10 | b:Fin 3} 11
 > {| b = 1@Fin 3 |}
 
 variantsAsIndices : {a:Fin 10 | b:Fin 3}=>{a:Fin 10 | b:Fin 3} = for i. i

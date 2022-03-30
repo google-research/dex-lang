@@ -12,15 +12,15 @@ LogProb = Float
 
 -- log probability density of a Binomial distribution
 def logBinomialProb (n:Int) (p:Prob) (counts:Int) : LogProb =
-  pSuccess = log p * IToF counts
-  pFailure = log1p (-p) * IToF (n - counts)
-  normConst = (lbeta (1. + IToF counts) (1. + IToF n - IToF counts) +
-               log1p (IToF n))
+  pSuccess = log p * i_to_f counts
+  pFailure = log1p (-p) * i_to_f (n - counts)
+  normConst = (lbeta (1. + i_to_f counts) (1. + i_to_f n - i_to_f counts) +
+               log1p (i_to_f n))
   pSuccess + pFailure - normConst
 
 def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
-  [k1, k2] = splitKey k
-  proposal = FToI $ floor $ rand k1 * IToF (n + 1)
+  [k1, k2] = split_key k
+  proposal = FToI $ floor $ rand k1 * i_to_f (n + 1)
   if proposal > n
     then Nothing
     else
@@ -37,9 +37,9 @@ def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
 n = 10
 p = 0.4
 numSamples = 5000
-k0 = newKey 0
+k0 = new_key 0
 
-rejectionSamples = randVec numSamples (rejectionSample $ trySampleBinomial n p) k0
+rejectionSamples = rand_vec numSamples (rejectionSample $ trySampleBinomial n p) k0
 
 :p slice rejectionSamples 0 $ Fin 10
 > [4, 2, 5, 4, 6, 7, 3, 6, 4, 3]
@@ -48,7 +48,7 @@ rejectionSamples = randVec numSamples (rejectionSample $ trySampleBinomial n p) 
 
 def meanAndVariance {n} (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
 
-:p meanAndVariance $ map IToF rejectionSamples
+:p meanAndVariance $ map i_to_f rejectionSamples
 > (3.9984, 2.361596)
 
 '## Alternative: Inversion sampling
@@ -60,12 +60,12 @@ def binomialSample (n:Int) (p:Prob) (k:Key) : Int =
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   ordinal $ categorical logprobs k
 
-inversionSamples = randVec numSamples (binomialSample n p) k0
+inversionSamples = rand_vec numSamples (binomialSample n p) k0
 
 :p slice inversionSamples 0 $ Fin 10
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
 
-:p meanAndVariance $ map IToF inversionSamples
+:p meanAndVariance $ map i_to_f inversionSamples
 > (3.9978, 2.409796)
 
 'The following variant is guaranteed to evaluate the CDF only once.
@@ -73,12 +73,12 @@ inversionSamples = randVec numSamples (binomialSample n p) k0
 def binomialBatch {a} [Ix a] (n:Int) (p:Prob) (k:Key) : a => Int =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
-  map ordinal $ categoricalBatch logprobs k
+  map ordinal $ categorical_batch logprobs k
 
 inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Int
 
 :p slice inversionBatchSamples 0 $ Fin 10
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
 
-:p meanAndVariance $ map IToF inversionBatchSamples
+:p meanAndVariance $ map i_to_f inversionBatchSamples
 > (3.9978, 2.409796)
