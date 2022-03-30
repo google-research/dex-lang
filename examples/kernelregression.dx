@@ -19,7 +19,7 @@ def solve' {m} (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
 
 def chol_solve {m} (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
     b' = forward_substitute l b
-    u = transposeLowerToUpper l
+    u = transpose_lower_to_upper l
     backward_substitute u b'
 
 ' # Kernel ridge regression
