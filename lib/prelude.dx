@@ -1200,7 +1200,7 @@ def swap_pair_iso {a b} : Iso (a & b) (b & a) =
 '### Complement lens
 Complement the focus of a lens-like isomorphism
 
-def exceptLens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
+def except_lens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
 
 def swapEitherIso {a b} : Iso (a | b) (b | a) =
   fwd = \x. case x of
