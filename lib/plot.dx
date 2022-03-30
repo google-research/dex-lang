@@ -70,7 +70,7 @@ def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
       Just x' -> case y of
         Just y' -> case c of
           Just c' ->
-            pointDiagram |> move_xy (x', y') |> setStrokeColor (colorScale c' )
+            point_diagram |> move_xy (x', y') |> setStrokeColor (colorScale c' )
           Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty

@@ -81,7 +81,7 @@ def move_xy ((offX, offY) : Point) : (Diagram -> Diagram) =
 def singleton_default (geom:Geom) : Diagram =
   MkDiagram $ to_list [(default_geom_style, (0.0, 0.0), geom)]
 
-def pointDiagram               : Diagram = singleton_default PointGeom
+def point_diagram               : Diagram = singleton_default PointGeom
 def circle (r:Float)           : Diagram = singleton_default $ Circle r
 def rect   (w:Float) (h:Float) : Diagram = singleton_default $ Rectangle w h
 def line   (p:Point)           : Diagram = singleton_default $ Line p
