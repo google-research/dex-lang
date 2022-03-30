@@ -71,7 +71,7 @@ def setIntersect {a}
       ((UnsafeAsSet nx xs):Set a)
       ((UnsafeAsSet ny ys):Set a) : Set a =
   -- This could be done in O(nx + ny) instead of O(nx log ny).
-  isInYs = \x. case searchSorted ys x of
+  isInYs = \x. case search_sorted ys x of
     Just x -> True
     Nothing -> False
   (AsList n' intersection) = filter isInYs xs
@@ -103,7 +103,7 @@ instance {set} Eq (StringSetIx set)
 
 def stringToSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
   (UnsafeAsSet n elements) = set
-  maybeIx = searchSorted elements s
+  maybeIx = search_sorted elements s
   case maybeIx of
     Nothing -> Nothing
     Just i -> Just $ MkSetIx (ordinal i)

@@ -1760,7 +1760,7 @@ instance {n} Arbitrary (Fin n)
 
 'returns the highest index `i` such that `xs.i <= x`
 
-def searchSorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
+def search_sorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
   if size n == 0
     then Nothing
     else if x < xs.(from_ordinal _ 0)
@@ -2125,7 +2125,7 @@ def cumSumLow {n} (xs: n=>Float) : n=>Float =
 -- cdf should include 0.0 but not 1.0
 def categoricalFromCDF {n} (cdf: n=>Float) (key: Key) : n =
   r = rand key
-  case searchSorted cdf r of
+  case search_sorted cdf r of
     Just i -> i
 
 def normalizePdf {d} (xs: d=>Float) : d=>Float = xs / sum xs
