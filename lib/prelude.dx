@@ -1604,7 +1604,7 @@ def new_temp_file (_:Unit) : {IO} FilePath =
     closeFFI fd
     string_from_char_ptr 15 (MkPtr ptr)
 
-def withTempFile {a} (action: FilePath -> {IO} a) : {IO} a =
+def with_temp_file {a} (action: FilePath -> {IO} a) : {IO} a =
   tmpFile = new_temp_file ()
   result = action tmpFile
   delete_file tmpFile

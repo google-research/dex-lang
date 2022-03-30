@@ -1,6 +1,6 @@
 
 :p unsafe_io \().
-  withTempFile \fname.
+  with_temp_file \fname.
     with_file fname WriteMode \stream.
       fwrite stream "lorem ipsum\n"
       fwrite stream "dolor sit amet\n"
@@ -57,7 +57,7 @@ unsafe_io \().
 
 :p unsafe_io \().
   s = for i:(Fin 10000). i_to_w8 $ FToI $ 128.0 * rand (ixkey (newKey 0) i)
-  withTempFile \fname.
+  with_temp_file \fname.
     with_file fname WriteMode \stream.
       fwrite stream $ AsList _ s
     (AsList _ s') = read_file fname
