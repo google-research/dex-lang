@@ -31,25 +31,25 @@ Float = Float32
 
 '### Casting
 
-def internalCast {a} (b:Type) (x:a) : b = %cast b x
+def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
-def F64ToF (x : Float64) : Float   = internalCast _ x
-def F32ToF (x : Float32) : Float   = internalCast _ x
-def FToF64 (x : Float)   : Float64 = internalCast _ x
-def FToF32 (x : Float)   : Float32 = internalCast _ x
-def I64ToI (x : Int64)   : Int     = internalCast _ x
-def I32ToI (x : Int32)   : Int     = internalCast _ x
-def W8ToI  (x : Word8)   : Int     = internalCast _ x
-def IToI64 (x : Int)     : Int64   = internalCast _ x
-def IToI32 (x : Int)     : Int32   = internalCast _ x
-def IToW8  (x : Int)     : Word8   = internalCast _ x
-def IToW32 (x : Int)     : Word32  = internalCast _ x
-def IToW64 (x : Int)     : Word64  = internalCast _ x
-def W32ToW64 (x : Word32): Word64  = internalCast _ x
-def IToF (x:Int) : Float = internalCast _ x
-def FToI (x:Float) : Int = internalCast _ x
-def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
-def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
+def F64ToF (x : Float64) : Float   = internal_cast _ x
+def F32ToF (x : Float32) : Float   = internal_cast _ x
+def FToF64 (x : Float)   : Float64 = internal_cast _ x
+def FToF32 (x : Float)   : Float32 = internal_cast _ x
+def I64ToI (x : Int64)   : Int     = internal_cast _ x
+def I32ToI (x : Int32)   : Int     = internal_cast _ x
+def W8ToI  (x : Word8)   : Int     = internal_cast _ x
+def IToI64 (x : Int)     : Int64   = internal_cast _ x
+def IToI32 (x : Int)     : Int32   = internal_cast _ x
+def IToW8  (x : Int)     : Word8   = internal_cast _ x
+def IToW32 (x : Int)     : Word32  = internal_cast _ x
+def IToW64 (x : Int)     : Word64  = internal_cast _ x
+def W32ToW64 (x : Word32): Word64  = internal_cast _ x
+def IToF (x:Int) : Float = internal_cast _ x
+def FToI (x:Float) : Int = internal_cast _ x
+def I64ToRawPtr (x:Int64 ) : RawPtr = internal_cast _ x
+def RawPtrToI64 (x:RawPtr) : Int64  = internal_cast _ x
 
 interface FromInteger a
   fromInteger : Int64 -> a
@@ -96,8 +96,8 @@ instance Bits Word64
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
-def lowWord  (x : Word64) : Word32 = internalCast _ (x .>>. 32)
-def highWord (x : Word64) : Word32 = internalCast _ x
+def lowWord  (x : Word64) : Word32 = internal_cast _ (x .>>. 32)
+def highWord (x : Word64) : Word32 = internal_cast _ x
 
 '### Basic Arithmetic
 #### Add
@@ -809,18 +809,18 @@ instance Storable Word8
   storageSize = 1
 
 instance Storable Int32
-  store = \(MkPtr ptr) x. %ptrStore (internalCast %Int32Ptr ptr) x
-  load  = \(MkPtr ptr)  . %ptrLoad  (internalCast %Int32Ptr ptr)
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Int32Ptr ptr) x
+  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Int32Ptr ptr)
   storageSize = 4
 
 instance Storable Float32
-  store = \(MkPtr ptr) x. %ptrStore (internalCast %Float32Ptr ptr) x
-  load = \(MkPtr ptr)   . %ptrLoad  (internalCast %Float32Ptr ptr)
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Float32Ptr ptr) x
+  load = \(MkPtr ptr)   . %ptrLoad  (internal_cast %Float32Ptr ptr)
   storageSize = 4
 
 instance {a} Storable (Ptr a)
-  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internalCast %PtrPtr ptr) x
-  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internalCast %PtrPtr ptr)
+  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast %PtrPtr ptr) x
+  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast %PtrPtr ptr)
   storageSize = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
@@ -1717,7 +1717,7 @@ def randn (k:Key) : Float =
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
 -- TODO: Make this better...
-def randInt (k:Key) : Int = (internalCast Int k) `mod` 2147483647
+def randInt (k:Key) : Int = (internal_cast Int k) `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 
