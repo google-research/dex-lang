@@ -190,7 +190,7 @@ Batch = Fin 5000
 Full = Fin ((size Batch) * H * W)
 
 def pixel (x:Char) : Float32 =
-     r = W8ToI x
+     r = w8_to_i x
      IToF case r < 0 of
              True -> (abs r) + 128
              False -> r
@@ -204,7 +204,7 @@ def getIm : Batch => Image =
 def getLabel : Batch => Class =
     (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
     r = unsafeCastTable Batch im2
-    for i. (W8ToI r.i @ Class)
+    for i. (w8_to_i r.i @ Class)
 
 
 ' ## Training loop

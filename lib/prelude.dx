@@ -39,7 +39,7 @@ def f_to_f64 (x : Float)   : Float64 = internal_cast _ x
 def f_to_f32 (x : Float)   : Float32 = internal_cast _ x
 def i64_to_i (x : Int64)   : Int     = internal_cast _ x
 def i32_to_i (x : Int32)   : Int     = internal_cast _ x
-def W8ToI  (x : Word8)   : Int     = internal_cast _ x
+def w8_to_i  (x : Word8)   : Int     = internal_cast _ x
 def IToI64 (x : Int)     : Int64   = internal_cast _ x
 def IToI32 (x : Int)     : Int32   = internal_cast _ x
 def IToW8  (x : Int)     : Word8   = internal_cast _ x
@@ -394,7 +394,7 @@ def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
-def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
+def BToI (x:Bool) : Int  = w8_to_i $ BToW8 x
 def BToF (x:Bool) : Float = IToF (BToI x)
 
 '## Ordering
@@ -1315,7 +1315,7 @@ def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {IO} String =
   AsList n $ tabFromPtr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
-def codepoint (c:Char) : Int = W8ToI c
+def codepoint (c:Char) : Int = w8_to_i c
 
 '### Show interface
 For things that can be shown.

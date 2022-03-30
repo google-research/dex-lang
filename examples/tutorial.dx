@@ -316,7 +316,7 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
   ignore it for now.
 
 def pixel (x:Char) : Float32 =
-  r = W8ToI x
+  r = w8_to_i x
   IToF case r < 0 of
     True -> 256 + r
     False -> r
@@ -332,7 +332,7 @@ def getLabel : Batch => Class =
   -- File is unsigned bytes offset with 8 starting bytes
   (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
   r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
-  for i. (W8ToI r.i @ Class)
+  for i. (w8_to_i r.i @ Class)
 
 all_ims = getIm
 all_labels = getLabel

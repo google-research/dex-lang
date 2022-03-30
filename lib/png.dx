@@ -47,7 +47,7 @@ def bytesToBase64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
     ,  c                    ]
 
 def base64ToAscii (x:Base64) : Char =
-  encodingTable.(fromOrdinal _ (W8ToI x))
+  encodingTable.(fromOrdinal _ (w8_to_i x))
 
 def encodeChunk (chunk : Fin 3 => Char) : Fin 4 => Char =
   map base64ToAscii $ bytesToBase64s chunk
@@ -65,7 +65,7 @@ def base64Encode (s:String) : String =
     False -> '='
 
 def asciiToBase64 (c:Char) : Maybe Base64 =
-  decodingTable.(fromOrdinal _ (W8ToI c))
+  decodingTable.(fromOrdinal _ (w8_to_i c))
 
 def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
   case seqMaybes $ map asciiToBase64 chunk of

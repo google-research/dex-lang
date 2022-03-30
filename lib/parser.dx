@@ -83,7 +83,7 @@ def try {a} (parser:Parser a) : Parser a = MkParser \h.
 
 def parseDigit : Parser Int = try $ MkParser \h.
   c = parse h $ parseAny
-  i = W8ToI c - 48
+  i = w8_to_i c - 48
   assert $ 0 <= i && i < 10
   i
 
