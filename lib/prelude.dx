@@ -1583,7 +1583,7 @@ def with_file {a}
       fclose stream
       result
 
-def writeFile (f:FilePath) (s:String) : {IO} Unit =
+def write_file (f:FilePath) (s:String) : {IO} Unit =
   with_file f WriteMode \stream. fwrite stream s
 
 def readFile (f:FilePath) : {IO} String =
