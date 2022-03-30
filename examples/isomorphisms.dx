@@ -176,7 +176,7 @@ when using a record type as an index set:
 'Note that `overFields` is just a simple wrapper combining `splitR` and
 `overLens`:
 
-:t splitR
+:t split_r
 > ((a:Type) ?-> Iso a ({&} & a))
 
 :t over_lens
@@ -217,7 +217,7 @@ instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
 
 '`splitR` can be used if you want to process multiple fields at once:
 
-:p push_at (splitR &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
+:p push_at (split_r &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
 > {a = 1, b = 2., c = 3, d = 4.}
 
 '## Variant zipper isomorphisms

@@ -1230,11 +1230,11 @@ Zipper isomorphisms to easily specify many record/variant fields:
 ' Convert a record zipper isomorphism to a normal lens-like isomorphism
 by using `splitR &>> iso`
 
-def splitR {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
+def split_r {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
 def overFields {a b c v} [Ix b, Ix c]
       (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  over_lens (splitR &>> iso) tab
+  over_lens (split_r &>> iso) tab
 
 'Convert a variant zipper isomorphism to a normal prism-like isomorphism
 by using `splitV &>> iso`
