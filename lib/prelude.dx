@@ -2123,7 +2123,7 @@ def cumsum_low {n} (xs: n=>Float) : n=>Float =
       oldTotal
 
 -- cdf should include 0.0 but not 1.0
-def categoricalFromCDF {n} (cdf: n=>Float) (key: Key) : n =
+def categorical_from_cdf {n} (cdf: n=>Float) (key: Key) : n =
   r = rand key
   case search_sorted cdf r of
     Just i -> i
@@ -2135,13 +2135,13 @@ def cdfForCategorical {n} (logprobs: n=>Float) : n=>Float =
   cumsum_low $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
 
 def categorical {n} (logprobs: n=>Float) (key: Key) : n =
-  categoricalFromCDF (cdfForCategorical logprobs) key
+  categorical_from_cdf (cdfForCategorical logprobs) key
 
 -- batch variant to share the work of forming the cumsum
 -- (alternatively we could rely on hoisting of loop constants)
 def categoricalBatch {n m} [Ix m] (logprobs: n=>Float) (key: Key) : m=>n =
   cdf = cdfForCategorical logprobs
-  for i. categoricalFromCDF cdf $ ixkey key i
+  for i. categorical_from_cdf cdf $ ixkey key i
 
 def logsumexp {n} (x: n=>Float) : Float =
   m = maximum x
