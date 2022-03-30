@@ -610,7 +610,7 @@ hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
 :t hist
 > ((Fin 256) => Int32)
 
-:html showPlot $ yPlot (for i. (i_to_f hist.i))
+:html show_plot $ yPlot (for i. (i_to_f hist.i))
 > <html output>
 
 ' Find nearest images in the dataset:

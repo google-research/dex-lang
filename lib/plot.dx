@@ -77,7 +77,7 @@ def plot_to_diagram {a b c n} (plot:Plot n a b c) : Diagram =
   boundingBox = move_xy (0.5, 0.5) $ rect 1.0 1.0
   boundingBox <> points
 
-def showPlot {a b c n} (plot:Plot n a b c) : String =
+def show_plot {a b c n} (plot:Plot n a b c) : String =
   render_svg (plot_to_diagram plot) ((0.0, 0.0), (1.0, 1.0))
 
 def blankData {n} [Ix n] : ScaledData n Unit =

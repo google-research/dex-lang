@@ -60,10 +60,10 @@ Nxtest = Fin 1000
 xtest : Nxtest=>Float = for i. rand (ixkey k1 i)
 preds = map predict xtest
 
-:html showPlot $ xyPlot xs ys
+:html show_plot $ xyPlot xs ys
 > <html output>
 
-:html showPlot $ xyPlot xtest preds
+:html show_plot $ xyPlot xtest preds
 > <html output>
 
 ' # Gaussian process regression
@@ -92,8 +92,8 @@ gp_predict = gp_regress (rbf 0.2) xs ys
 
 (gp_preds, vars) = unzip (map gp_predict xtest)
 
-:html showPlot $ xycPlot xtest gp_preds (map sqrt vars)
+:html show_plot $ xycPlot xtest gp_preds (map sqrt vars)
 > <html output>
 
-:html showPlot $ xyPlot xtest vars
+:html show_plot $ xyPlot xtest vars
 > <html output>
