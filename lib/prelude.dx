@@ -2078,7 +2078,7 @@ def from_just {a} (x:Maybe a) : a = case x of Just x' -> x'
 
 def any_sat {a n} (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 
-def seqMaybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
+def seq_maybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
   case any_sat is_nothing xs of

@@ -68,7 +68,7 @@ def asciiToBase64 (c:Char) : Maybe Base64 =
   decodingTable.(from_ordinal _ (w8_to_i c))
 
 def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
-  case seqMaybes $ map asciiToBase64 chunk of
+  case seq_maybes $ map asciiToBase64 chunk of
     Nothing -> Nothing
     Just base64s -> Just $ base64sToBytes base64s
 
@@ -84,7 +84,7 @@ def base64Decode (s:String) : Maybe String =
   numValidOutputChars = idiv (numValidInputChars * 3) 4
   csZeroed = map (replace ('=', 'A')) cs  -- swap padding char with 'zero' char
   (AsList _ chunks) = getChunks 4 '\NUL' csZeroed
-  case seqMaybes $ map decodeChunk chunks of
+  case seq_maybes $ map decodeChunk chunks of
     Nothing -> Nothing
     Just decodedChunks ->
       resultPadded = for (i,j). decodedChunks.i.j
