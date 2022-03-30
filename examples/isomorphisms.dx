@@ -304,9 +304,9 @@ instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
   v1 = x
-  v2 = sliceFields (#|a &>> #|b) x
-  v3 = sliceFields (#|a &>> #|c) x
-  v4 = sliceFields (#|a &>> #|b &>> #|c) x
+  v2 = slice_fields (#|a &>> #|b) x
+  v3 = slice_fields (#|a &>> #|c) x
+  v4 = slice_fields (#|a &>> #|b &>> #|c) x
   (v1, v2, v3, v4)
 > ( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
 > , ( [0, 1, 2, 3]@{a: Fin 2 | b: Fin 2}
