@@ -1529,11 +1529,11 @@ def fread (stream:Stream ReadMode) : {IO} String =
 
 '### Print
 
-def getOutputStream (_:Unit) : {IO} Stream WriteMode =
+def get_output_stream (_:Unit) : {IO} Stream WriteMode =
   MkStream $ %ptrLoad %outputStreamPtr
 
 def print (s:String) : {IO} Unit =
-  fwrite (getOutputStream ()) (s <> "\n")
+  fwrite (get_output_stream ()) (s <> "\n")
 
 '### Shelling Out
 
