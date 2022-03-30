@@ -422,7 +422,7 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 def tableMean {n} (x : n => Float32) : Float32 =
   -- acc = 0
-  withState 0.0 $ \acc.
+  with_state 0.0 $ \acc.
     -- for i in range(len(x))
     for i.
       -- acc = acc + x[i]
@@ -469,7 +469,7 @@ tableMean [0.0, 1.0, 0.5]
   "mutable value" reference (`acc` here), and returns the body function's result.
   Here's a simple example:
 
-withState 10 $ \ state.
+with_state 10 $ \ state.
   state := 30
   state := 10
   get state
@@ -566,7 +566,7 @@ instance VSpace (Float32 & Float32)
   function using them:
 
 def tableMean' {n v} [VSpace v] (x : n => v) : v =
-   withState zero $ \acc: (Ref _ v).
+   with_state zero $ \acc: (Ref _ v).
         for i.
             acc := add (get acc) x.i       -- `Add` requirement
         (get acc) / (i_to_f (size n))  -- `VSpace` requirement
@@ -598,7 +598,7 @@ instance {v w} [VSpace v, VSpace w] VSpace (v & w)
 Pixels = Fin 256
 
 def bincount {a b} [Ix b] (inp : a => b) : b => Int =
-  withState zero \acc .
+  with_state zero \acc .
     for i.
       v = acc!(inp.i)
       v := (get v) + 1

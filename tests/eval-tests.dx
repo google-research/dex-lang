@@ -737,7 +737,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > [0, 2, 4, 6]
 
 :p
-  f = withState 1 \ref.
+  f = with_state 1 \ref.
     x = get ref
     ref := 3 + x
     y = get ref

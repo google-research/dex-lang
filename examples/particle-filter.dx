@@ -15,7 +15,7 @@ def simulate {s v} (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
   (init, dynamics, observe) = model
   [key, subkey] = split_key key
   s0 = sample init subkey
-  withState s0 \s_ref .
+  with_state s0 \s_ref .
     for i.
       [k1, k2] = split_key (ixkey key i)
       s = get s_ref
@@ -34,7 +34,7 @@ def particleFilter {s a v}
   (init, dynamics, observe) = model
   [key, init_key] = split_key key
   init_particles = for i: (Fin num_particles). sample init (ixkey init_key i)
-  withState init_particles \p_ref .
+  with_state init_particles \p_ref .
     for t: (Fin num_timesteps).
       p_prev = get p_ref
       logLikelihoods = for i. snd (observe p_prev.i) obs.t

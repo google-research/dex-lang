@@ -126,7 +126,7 @@ def trainClass [VSpace p]
       : (epochs => p & epochs => Float ) =
   xs : minibatches => minibatch => a = split x
   ys : minibatches => minibatch => b = split y
-  unzip $ withState (init model $ new_key 0) $ \params .
+  unzip $ with_state (init model $ new_key 0) $ \params .
      for _ : epochs.
        loss = sum $ for b : minibatches. 
               (loss, gradfn) =  vjp (\ params.

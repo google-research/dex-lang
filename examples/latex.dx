@@ -35,7 +35,7 @@
 def arraySum (x:a=>Int32) : Int32 =
   initAcc = 0
   -- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
-  snd $ withState initAcc $ \acc.
+  snd $ with_state initAcc $ \acc.
     for i.
       acc := (get acc) + x.i
 

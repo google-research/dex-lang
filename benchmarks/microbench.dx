@@ -4,7 +4,7 @@ warmup = for i:(Fin 100). ordinal i + ordinal i
 
 def sum_bench (n:Int) (k:Int) : Fin n => Float =
   xs = rand_vec n randn (new_key k)
-  for i. snd $ withState  0.0 \ref. for j. ref := get ref + xs.i + xs.j
+  for i. snd $ with_state  0.0 \ref. for j. ref := get ref + xs.i + xs.j
 
 %bench "sum"
 ans1 = sum_bench 10000 0

@@ -21,7 +21,7 @@ def merge_sorted_tables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   --  2) Avoid needlessly initializing the return array.
   init = concat_table xs ys  -- Initialize array of correct size.
   yield_state init \buf.
-    withState (0, 0) \countrefs.
+    with_state (0, 0) \countrefs.
       for i:(m|n).
         (cur_x, cur_y) = get countrefs
         if cur_y >= size n  -- no ys left

@@ -560,7 +560,7 @@ def run_state
   def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
   %runState init explicitAction
 
-def withState
+def with_state
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
@@ -959,7 +959,7 @@ TODO: Move this to be with reductions?
 It's a kind of `scan`.
 
 def cumsum {n} (xs: n=>Float) : n=>Float =
-  withState 0.0 \total.
+  with_state 0.0 \total.
     for i.
       newTotal = get total + xs.i
       total := newTotal
@@ -1467,7 +1467,7 @@ def lift_state {a b c h eff} (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|e
 
 -- A little iteration combinator
 def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
-  result = yield_state Nothing \resultRef. withState 0 \i.
+  result = yield_state Nothing \resultRef. with_state 0 \i.
     while do
       continue = is_nothing $ get resultRef
       if continue then
@@ -1765,7 +1765,7 @@ def search_sorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
     then Nothing
     else if x < xs.(from_ordinal _ 0)
       then Nothing
-      else withState 0 \low. withState (size n) \high. iter \_.
+      else with_state 0 \low. with_state (size n) \high. iter \_.
         numLeft = get high - get low
         if numLeft == 1
           then Done $ Just $ from_ordinal _ $ get low
@@ -2059,7 +2059,7 @@ def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
   -- This could be nicer if there were a way to explicitly
   -- specify which typelcass instance to use for Mul.
   yield_state one \ans.
-    withState power \pow. withState base \z.
+    with_state power \pow. with_state base \z.
       while do
         if get pow > 0
           then
@@ -2097,8 +2097,8 @@ def list_length {a} ((AsList n _):List a) : Int = n
 -- TODO: we want this for any monoid but this implementation won't work.
 def concat {n a} (lists:n=>(List a)) : List a =
   totalSize = sum for i. list_length lists.i
-  AsList _ $ withState 0 \listIdx.
-    withState 0 \eltIdx.
+  AsList _ $ with_state 0 \listIdx.
+    with_state 0 \eltIdx.
       for i:(Fin totalSize).
         while do
           continue = get eltIdx >= list_length (lists.((get listIdx)@_))
@@ -2116,7 +2116,7 @@ def concat {n a} (lists:n=>(List a)) : List a =
 '## Probability
 
 def cumsum_low {n} (xs: n=>Float) : n=>Float =
-  withState 0.0 \total.
+  with_state 0.0 \total.
     for i.
       oldTotal = get total
       total := oldTotal + xs.i

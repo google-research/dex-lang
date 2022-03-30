@@ -176,7 +176,7 @@ def raymarch {n} (scene:Scene n) (ray:Ray) : RayMarchResult =
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
   (rayOrigin, rayDir) = ray
-  withState (10.0 * tol) \rayLength.
+  with_state (10.0 * tol) \rayLength.
     bounded_iter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
       (obj, d) = sdScene scene $ rayPos

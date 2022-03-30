@@ -493,7 +493,7 @@ def simplex [Eq cons, Eq vars]
       tf = feasibilityTableauToNormalTableau feasibilityAns
 
       -- Optimize within the simplex.
-      withState tf \tableauRef. iter \_.
+      with_state tf \tableauRef. iter \_.
         tableau = get tableauRef  -- Whole tableau will be overwritten.
         isopt = isOptimal tableau
         case isopt of

@@ -30,7 +30,7 @@ def parse {a h} (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a 
 
 def run_parser_partial {a} (s:String) (parser:Parser a) : Maybe a =
   (MkParser f) = parser
-  withState 0 \pos.
+  with_state 0 \pos.
     catch $ do
       f (s, pos)
 

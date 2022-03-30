@@ -98,7 +98,7 @@ def advect {n m a} [VSpace a] (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
 
 def fluidsim {n m a} [VSpace a] (num_steps: Int) (color_init: n=>m=>a)
   (v: n=>m=>(Fin 2)=>Float) : (Fin num_steps)=>n=>m=>a =
-  withState (color_init, v) \state.
+  with_state (color_init, v) \state.
     for i:(Fin num_steps).
       (color, v) = get state
       v = advect v v          -- Move velocities
