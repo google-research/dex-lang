@@ -44,7 +44,7 @@ def map_scale {a b} (s:Scale a) (f: b -> a) : Scale b =
 def float_scale (xmin:Float) (xmax:Float) : Scale Float =
   map_scale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
 
-def getScaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
+def get_scaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
   apply_scale (get_at #scale sd) (get_at #dat sd).i
 
 lowColor  = [1.0, 0.5, 0.0]
@@ -62,9 +62,9 @@ def colorScale (x:Float) : HtmlColor =
 
 def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   points = concat_diagrams for i.
-    x = getScaled (get_at #xs plot) i
-    y = getScaled (get_at #ys plot) i
-    c = getScaled (get_at #cs plot) i
+    x = get_scaled (get_at #xs plot) i
+    y = get_scaled (get_at #ys plot) i
+    c = get_scaled (get_at #cs plot) i
     -- TODO: nested may-fail patterns would make this much better
     case x of
       Just x' -> case y of
