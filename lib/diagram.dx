@@ -30,7 +30,7 @@ GeomStyle : Type = {
   & strokeColor : Maybe HtmlColor
   & strokeWidth : Int }
 
-defaultGeomStyle : GeomStyle = {
+default_geom_style : GeomStyle = {
     fillColor   = Nothing
   , strokeColor = Just black
   , strokeWidth = 1 }
@@ -79,7 +79,7 @@ def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
   applyTransformation (\(x,y). (x + offX, y + offY) ) id
 
 def singletonDefault (geom:Geom) : Diagram =
-  MkDiagram $ to_list [(defaultGeomStyle, (0.0, 0.0), geom)]
+  MkDiagram $ to_list [(default_geom_style, (0.0, 0.0), geom)]
 
 def pointDiagram               : Diagram = singletonDefault PointGeom
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r
