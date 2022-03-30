@@ -105,7 +105,7 @@ def parse_unsigned_int : Parser Int = MkParser \h.
   yield_state 0 \ref.
     for i. ref := 10 * get ref + digits.i
 
-def parseInt : Parser Int = MkParser \h.
+def parse_int : Parser Int = MkParser \h.
   negSign = parse h $ optional $ p_char '-'
   x       = parse h $ parse_unsigned_int
   case negSign of

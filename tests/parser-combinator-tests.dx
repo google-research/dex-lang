@@ -44,11 +44,11 @@ def parserTFTriple : Parser (Fin 3=>Bool) = MkParser \h.
 :p run_parser "1021389" $ parse_many parse_digit
 > (Just (AsList 7 [1, 0, 2, 1, 3, 8, 9]))
 
-:p run_parser "1389" $ parseInt
+:p run_parser "1389" $ parse_int
 > (Just 1389)
 
-:p run_parser "01389" $ parseInt
+:p run_parser "01389" $ parse_int
 > (Just 1389)
 
-:p run_parser "-1389" $ parseInt
+:p run_parser "-1389" $ parse_int
 > (Just -1389)
