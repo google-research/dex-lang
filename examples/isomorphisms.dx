@@ -154,7 +154,7 @@ right to the record on the left; when composed, they move both fields.
 'The main use for record zipper isomorphisms is to specify multiple named axes
 when using a record type as an index set:
 
-:t overFields
+:t over_fields
 > ((a:Type)
 >  ?-> (b:Type)
 >  ?-> (c:Type)
