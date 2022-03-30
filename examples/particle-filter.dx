@@ -13,11 +13,11 @@ def sample {a} (d: Distribution a) (k: Key) : a =
 
 def simulate {s v} (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
   (init, dynamics, observe) = model
-  [key, subkey] = splitKey key
+  [key, subkey] = split_key key
   s0 = sample init subkey
   withState s0 \s_ref .
     for i.
-      [k1, k2] = splitKey (ixkey key i)
+      [k1, k2] = split_key (ixkey key i)
       s = get s_ref
       s_next = sample (dynamics s) k1
       v = sample (observe s) k2
@@ -32,13 +32,13 @@ def particleFilter {s a v}
     (key: Key)
     : Fin num_timesteps => a =
   (init, dynamics, observe) = model
-  [key, init_key] = splitKey key
+  [key, init_key] = split_key key
   init_particles = for i: (Fin num_particles). sample init (ixkey init_key i)
   withState init_particles \p_ref .
     for t: (Fin num_timesteps).
       p_prev = get p_ref
       logLikelihoods = for i. snd (observe p_prev.i) obs.t
-      [resample_key, dynamics_key] = splitKey (ixkey key t)
+      [resample_key, dynamics_key] = split_key (ixkey key t)
       resampled_idxs = categoricalBatch logLikelihoods resample_key
       p_resampled = for i. p_prev.(resampled_idxs.i)
       p_next = for i. fst (dynamics p_resampled.i) (ixkey dynamics_key i)

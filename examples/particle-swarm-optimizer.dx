@@ -72,7 +72,7 @@ def optimize
             minbyfst pbests.p (f newPositions.p, newPositions.p)
         newGbest:(Float & d=>Float) =
             minbyfst gbest (minimumbyfst newPbests)
-        [keyG, keyP, keyNext] = splitKey keyL
+        [keyG, keyP, keyNext] = split_key keyL
         (gscore, gloc) = gbest
         plocs = map snd pbests
         gVel:(np=>d=>Float) = for p i.
@@ -87,7 +87,7 @@ def optimize
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     randInit1 = \keyI1. randBounded keyI1 lb ub
     randInit  = \keyI. for p:np. randInit1 $ ixkey keyI p
-    [keyPos, keyVel, keyLoop] = splitKey key
+    [keyPos, keyVel, keyLoop] = split_key key
     initPositions:(np=>d=>Float) = randInit keyPos
     initVelocities:(np=>d=>Float) = randInit keyVel
     initPs:(np=>(Float & d=>Float)) = for p. (f initPositions.p, initPositions.p)

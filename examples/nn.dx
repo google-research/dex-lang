@@ -87,7 +87,7 @@ def meanpool (kh: Type) (kw: Type) (x : m=>n=> Float) : ( h=>w=> Float) =
 
 ' ## Simple point classifier
 
-[k1, k2] = splitKey $ new_key 1
+[k1, k2] = split_key $ new_key 1
 x1 : Fin 100 => Float = arb k1
 x2 : Fin 100 => Float = arb k2
 y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0)) of
@@ -107,7 +107,7 @@ simple = \h1.
          x1 = for i. relu x1'.i
          logsoftmax $ forward ndense2 dense2 x1),
     init = (\key.
-         [k1, k2] = splitKey key
+         [k1, k2] = split_key key
          (init ndense1 k1, init ndense2 k2))
   }
 
@@ -175,7 +175,7 @@ lenet = \h1 h2 h3 .
          x4 = for i. relu x4'.i
          logsoftmax $ forward ndense2 dense2 x4),
     init = (\key.
-         [k1, k2, k3, k4] = splitKey key
+         [k1, k2, k3, k4] = split_key key
          (init ncnn1 k1, init ncnn2 k2,
          init ndense1 k3, init ndense2 k4))
   }

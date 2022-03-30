@@ -301,7 +301,7 @@ key : Key = new_key 1
 
 
 df2 :(Fin 100) => {x1:Float & x2:Float & weight:Float & label:Class}  =  for i: (Fin 100).
-     [k1, k2, k3, k4] = splitKey $ ixkey key i
+     [k1, k2, k3, k4] = split_key $ ixkey key i
      {x1=(arb k1),
       x2=arb k2,
       weight=arb k3,

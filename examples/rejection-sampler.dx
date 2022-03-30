@@ -19,7 +19,7 @@ def logBinomialProb (n:Int) (p:Prob) (counts:Int) : LogProb =
   pSuccess + pFailure - normConst
 
 def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
-  [k1, k2] = splitKey k
+  [k1, k2] = split_key k
   proposal = FToI $ floor $ rand k1 * i_to_f (n + 1)
   if proposal > n
     then Nothing

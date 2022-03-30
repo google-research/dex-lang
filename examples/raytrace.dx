@@ -68,7 +68,7 @@ def rotateZ (p:Vec 3) (angle:Angle) : Vec 3 =
   [c*px - s*py, s*px+c*py, pz]
 
 def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
-  [k1, k2] = splitKey k
+  [k1, k2] = split_key k
   u1 = rand k1
   u2 = rand k2
   uu = normalize $ cross normal [0.0, 1.1, 1.1]
@@ -204,7 +204,7 @@ def rayDirectRadiance {n} (scene:Scene n) (ray:Ray) : Radiance =
     HitObj _ _ -> zero
 
 def sampleSquare (hw:Float) (k:Key) : Position =
- [kx, kz] = splitKey k
+ [kx, kz] = split_key k
  x = randuniform (- hw) hw kx
  z = randuniform (- hw) hw kz
  [x, 0.0, z]
@@ -239,7 +239,7 @@ def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
             if i == 0 then radiance += intensity   -- TODO: scale etc
             Done ()
           HitObj incidentRay osurf ->
-            [k1, k2] = splitKey $ hash k i
+            [k1, k2] = split_key $ hash k i
             lightRadiance = sampleLightRadiance scene osurf incidentRay k1
             ray    := sampleReflection osurf incidentRay k2
             filter := surfaceFilter (get filter) (snd osurf)
@@ -261,7 +261,7 @@ def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.
-    [kx, ky] = splitKey key
+    [kx, ky] = split_key key
     x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
     (get_at #pos camera, normalize [x, y, neg (get_at #sensorDist camera)])
@@ -275,7 +275,7 @@ def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
       then rootKey
       else ixkey (ixkey rootKey i) j
     sampleRayColor : Key -> Color =  \k.
-      [k1, k2] = splitKey k
+      [k1, k2] = split_key k
       trace params scene (rays.i.j k1) k2
     sampleAveraged sampleRayColor (get_at #numSamples params) pixKey
   MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
