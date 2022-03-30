@@ -10,7 +10,7 @@ it's doing bubble / insertion sort with quadratic time cost.
 However, if breaks the list in half recursively, it'll be doing parallel mergesort.
 Currently it'll do the quadratic time version.
 
-def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
+def concat_table {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
   for idx. case idx of
     Left i  -> leftin.i
     Right i -> rightin.i
@@ -19,7 +19,7 @@ def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
   --  2) Avoid needlessly initializing the return array.
-  init = concatTable xs ys  -- Initialize array of correct size.
+  init = concat_table xs ys  -- Initialize array of correct size.
   yield_state init \buf.
     withState (0, 0) \countrefs.
       for i:(m|n).
