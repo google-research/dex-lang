@@ -1417,7 +1417,7 @@ data StreamMode =
 data Stream mode:StreamMode = MkStream RawPtr
 
 -- TODO: check the string contains no nulls
-def withCString {a} (s:String) (action: CString -> {IO} a) : {IO} a =
+def with_c_string {a} (s:String) (action: CString -> {IO} a) : {IO} a =
   (AsList n s') = s <> "\NUL"
   with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
 
@@ -1433,8 +1433,8 @@ def fopen (path:String) (mode:StreamMode) : {IO} (Stream mode) =
   modeStr = case mode of
     ReadMode  -> "r"
     WriteMode -> "w"
-  withCString path \(MkCString pathPtr).
-    withCString modeStr \(MkCString modePtr).
+  with_c_string path \(MkCString pathPtr).
+    with_c_string modeStr \(MkCString modePtr).
       MkStream $ fopenFFI pathPtr modePtr
 
 def fclose {mode} (stream:Stream mode) : {IO} Unit =
@@ -1504,7 +1504,7 @@ def fromCString (s:CString) : {IO} (Maybe String) =
 foreign "getenv" getenvFFI : RawPtr -> {IO} RawPtr
 
 def getEnv (name:String) : {IO} Maybe String =
-  withCString name \(MkCString ptr).
+  with_c_string name \(MkCString ptr).
     fromCString $ MkCString $ getenvFFI ptr
 
 def checkEnv (name:String) : {IO} Bool =
@@ -1544,8 +1544,8 @@ foreign "close" closeFFI : Int32 -> {IO} Int32
 
 def shellOut (command:String) : {IO} String =
   modeStr = "r"
-  withCString command \(MkCString commandPtr).
-    withCString modeStr \(MkCString modePtr).
+  with_c_string command \(MkCString commandPtr).
+    with_c_string modeStr \(MkCString modePtr).
       pipe = MkStream $ popenFFI commandPtr modePtr
       fread pipe
 
@@ -1565,7 +1565,7 @@ def todo {a} : a = error "TODO: implement it!"
 '### File Operations
 
 def deleteFile (f:FilePath) : {IO} Unit =
-  withCString f \(MkCString ptr).
+  with_c_string f \(MkCString ptr).
     removeFFI ptr
   ()
 
@@ -1599,7 +1599,7 @@ def hasFile (f:FilePath) : {IO} Bool =
 '### Temporary Files
 
 def newTempFile (_:Unit) : {IO} FilePath =
-  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
+  with_c_string "/tmp/dex-XXXXXX" \(MkCString ptr).
     fd = mkstempFFI ptr
     closeFFI fd
     string_from_char_ptr 15 (MkPtr ptr)
