@@ -44,7 +44,7 @@ def mergeSortedLists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) :
   -- (a | b)=>c to ((Fin d)=>c)
   sorted = mergeSortedTables xs ys
   newsize = nx + ny
-  AsList _ $ unsafeCastTable (Fin newsize) sorted
+  AsList _ $ unsafe_cast_table (Fin newsize) sorted
 
 def sort {a n} [Ord a] (xs: n=>a) : n=>a =
   -- Warning: Has quadratic runtime cost for now.
@@ -57,7 +57,7 @@ def sort {a n} [Ord a] (xs: n=>a) : n=>a =
 
   -- reduce might someday recursively subdivide the problem.
   (AsList _ r) = reduce mempty mcombine xlists
-  unsafeCastTable n r
+  unsafe_cast_table n r
 
 def (+|) {n} [Ix n] (i:n) (delta:Int) : n =
   i' = ordinal i + delta

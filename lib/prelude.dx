@@ -1109,12 +1109,12 @@ instance {a} [Eq a] Eq (List a)
       else all for i:(Fin nx).
         xs.i == ys.(unsafe_from_ordinal _ (ordinal i))
 
-def unsafeCastTable {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
+def unsafe_cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
   for i. xs.(unsafe_from_ordinal _ (ordinal i))
 
 def toList {n a} (xs:n=>a) : List a =
   n' = size n
-  AsList _ $ unsafeCastTable (Fin n') xs
+  AsList _ $ unsafe_cast_table (Fin n') xs
 
 instance {a} Monoid (List a)
   mempty = AsList _ []
@@ -1628,7 +1628,7 @@ def fromOrdinal (n:Type) [Ix n] (i:Int) : n =
 -- TODO: safe (runtime-checked) and unsafe versions
 def castTable {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
   case size m == size n of
-     True  -> unsafeCastTable _ xs
+     True  -> unsafe_cast_table _ xs
      False -> error $
        "Table size mismatch in cast: " <> show (size m) <> " vs " <> show (size n)
 

@@ -399,7 +399,7 @@ def deduce_nonbasics [Eq cons, Eq vars]
   -- but don't know how to tell the compiler that, so
   -- need to use an unsafe cast.
   (AsList n nonBasicsTable) = nonBasicsList
-  unsafeCastTable vars nonBasicsTable
+  unsafe_cast_table vars nonBasicsTable
 
 
 def eliminate_artificials [Eq cons, Eq vars]
