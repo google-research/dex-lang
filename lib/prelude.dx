@@ -2024,7 +2024,7 @@ def pad_to {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
 def idiv_ceil (x:Int) (y:Int) : Int = idiv x y + b_to_i (rem x y /= 0)
 def intdiv2 (x:Int) : Int = %shr x (1 : Int)
 def intpow2 (power:Int) : Int = %shl (1 : Int) power
-def isOdd  (x:Int) : Bool = rem x 2 == 1
+def is_odd  (x:Int) : Bool = rem x 2 == 1
 def isEven (x:Int) : Bool = rem x 2 == 0
 
 def isPowerOf2 (x:Int) : Bool =
@@ -2063,7 +2063,7 @@ def generalIntegerPower {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
       while do
         if get pow > 0
           then
-            if isOdd (get pow)
+            if is_odd (get pow)
               then ans := times (get ans) (get z)
             z := times (get z) (get z)
             pow := intdiv2 (get pow)
