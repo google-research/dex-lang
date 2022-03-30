@@ -10,7 +10,7 @@
 > ")
 
 :p unsafe_io \().
-  withAlloc 4 \ptr:(Ptr Int).
+  with_alloc 4 \ptr:(Ptr Int).
     for i:(Fin 4). store (ptr +>> ordinal i) (ordinal i)
     tabFromPtr (Fin 4) ptr
 > [0, 1, 2, 3]
@@ -42,7 +42,7 @@ unsafe_io \().
 > 4
 
 :p unsafe_io \().
-  withAlloc 1 \ptr:(Ptr Int).
+  with_alloc 1 \ptr:(Ptr Int).
     store ptr 3
     load ptr
 > 3

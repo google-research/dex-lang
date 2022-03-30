@@ -849,14 +849,14 @@ def memcpy {a} [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {IO} Unit =
 
 -- TODO: generalize these brackets to allow other effects
 -- TODO: make sure that freeing happens even if there are run-time errors
-def withAlloc {a b} [Storable a] (n:Int) (action: Ptr a -> {IO} b) : {IO} b =
+def with_alloc {a b} [Storable a] (n:Int) (action: Ptr a -> {IO} b) : {IO} b =
   ptr = malloc n
   result = action ptr
   free ptr
   result
 
 def withTabPtr {a b n} [Storable a] (xs:n=>a) (action : Ptr a -> {IO} b) : {IO} b =
-  withAlloc (size n) \ptr.
+  with_alloc (size n) \ptr.
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
@@ -1257,7 +1257,7 @@ data DynBuffer a =
 def withDynamicBuffer {a b} [Storable a]
       (action: DynBuffer a -> {IO} b) : {IO} b =
   initMaxSize = 256
-  withAlloc 1 \sizePtr. withAlloc 1 \maxSizePtr. withAlloc 1 \bufferPtr.
+  with_alloc 1 \sizePtr. with_alloc 1 \maxSizePtr. with_alloc 1 \bufferPtr.
     store sizePtr 0
     store maxSizePtr initMaxSize
     store bufferPtr $ malloc initMaxSize
@@ -1516,7 +1516,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
   n = 4096
-  withAlloc n \ptr:(Ptr Char).
+  with_alloc n \ptr:(Ptr Char).
     withDynamicBuffer \buf.
       iter \_.
         (MkPtr rawPtr) = ptr
