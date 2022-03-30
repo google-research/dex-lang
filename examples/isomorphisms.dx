@@ -22,7 +22,7 @@ and flipped with `flipIso`
 :p revIso cycleThree (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p app_iso (flipIso cycleThree) (1, 2.0, 3)
+:p app_iso (flip_iso cycleThree) (1, 2.0, 3)
 > (3, (1, 2.))
 
 'They can also be composed with `&>>`:

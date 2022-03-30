@@ -1161,11 +1161,11 @@ def app_iso {a b} (iso: Iso a b) (x:a) : b =
   (MkIso {fwd, bwd}) = iso
   fwd x
 
-def flipIso {a b} (iso: Iso a b) : Iso b a =
+def flip_iso {a b} (iso: Iso a b) : Iso b a =
   (MkIso {fwd, bwd}) = iso
   MkIso {fwd=bwd, bwd=fwd}
 
-def revIso {a b} (iso: Iso a b) (x:b) : a = app_iso (flipIso iso) x
+def revIso {a b} (iso: Iso a b) (x:b) : a = app_iso (flip_iso iso) x
 
 def idIso {a} : Iso a a = MkIso {fwd=id, bwd=id}
 
