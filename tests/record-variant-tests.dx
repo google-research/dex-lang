@@ -322,7 +322,7 @@ def abToPair {a b} : Iso {a:a & b:b} (b&a) =
   bwd = \(b, a). {a, b}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n & b:m}
-  getSize = \(). size n * size m
+  get_size = \(). size n * size m
   ordinal = ordinal <<< appIso abToPair
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToPair
 
@@ -354,7 +354,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
     Right x -> {|b=x|}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
-  getSize = \(). size n + size m
+  get_size = \(). size n + size m
   ordinal = ordinal <<< appIso abToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
 

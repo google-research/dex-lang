@@ -195,7 +195,7 @@ def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
   bwd = \(c, b, a). {a, b, c}
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
-  getSize = \(). size n * size m * size q
+  get_size = \(). size n * size m * size q
   ordinal = ordinal <<< appIso abcToTuple
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToTuple
 
@@ -204,7 +204,7 @@ def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
   bwd = \(c, b). {b, c}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
-  getSize = \(). size n * size m
+  get_size = \(). size n * size m
   ordinal = ordinal <<< appIso bcToPair
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso bcToPair
 
@@ -271,7 +271,7 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
       Right y -> {|c=y|}
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
-  getSize = \(). size n + size m + size q
+  get_size = \(). size n + size m + size q
   ordinal = ordinal <<< appIso abcToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToEither
 
@@ -284,7 +284,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
     Right x -> {|b=x|}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
-  getSize = \(). size n + size m
+  get_size = \(). size n + size m
   ordinal = ordinal <<< appIso abToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
 
@@ -297,7 +297,7 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
     Right x -> {|c=x|}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
-  getSize = \(). size n + size m
+  get_size = \(). size n + size m
   ordinal = ordinal <<< appIso acToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso acToEither
 

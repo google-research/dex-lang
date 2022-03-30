@@ -571,7 +571,7 @@ def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
   MkIso {fwd, bwd}
 
 instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
-  getSize = \(). size n + size m
+  get_size = \(). size n + size m
   ordinal = ordinal <<< appIso wbToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso wbToEither
 
