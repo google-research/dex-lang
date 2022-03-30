@@ -1,15 +1,15 @@
 import set
 
 -- check order invariance.
-:p (toSet ["Bob", "Alice", "Charlie"]) == (toSet ["Charlie", "Bob", "Alice"])
+:p (to_set ["Bob", "Alice", "Charlie"]) == (to_set ["Charlie", "Bob", "Alice"])
 > True
 
 -- check uniqueness.
-:p (toSet ["Bob", "Alice", "Alice", "Charlie"]) == (toSet ["Charlie", "Charlie", "Bob", "Alice"])
+:p (to_set ["Bob", "Alice", "Alice", "Charlie"]) == (to_set ["Charlie", "Charlie", "Bob", "Alice"])
 > True
 
-set1 = toSet ["Xeno", "Alice", "Bob"]
-set2 = toSet ["Bob", "Xeno", "Charlie"]
+set1 = to_set ["Xeno", "Alice", "Bob"]
+set2 = to_set ["Bob", "Xeno", "Charlie"]
 
 :p set1 == set2
 > False
@@ -34,7 +34,7 @@ set2 = toSet ["Bob", "Xeno", "Charlie"]
 
 '#### Empty set tests
 
-emptyset = toSet ([]:(Fin 0)=>String)
+emptyset = to_set ([]:(Fin 0)=>String)
 
 :p emptyset == emptyset
 > True
@@ -53,7 +53,7 @@ emptyset = toSet ([]:(Fin 0)=>String)
 
 '### Set Index Set tests
 
-names2 = toSet ["Bob", "Alice", "Charlie", "Alice"]
+names2 = to_set ["Bob", "Alice", "Charlie", "Alice"]
 
 :p size (StringSetIx names2)
 > 3

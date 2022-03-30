@@ -49,7 +49,7 @@ data Set a [Ord a] =
   -- Instead use the "toSet" function below.
   UnsafeAsSet n:Int elements:(Fin n => a)
 
-def toSet {n a} [Ord a] (xs:n=>a) : Set a =
+def to_set {n a} [Ord a] (xs:n=>a) : Set a =
   sorted_xs = sort xs
   (AsList n' sorted_unique_xs) = remove_duplicates_from_sorted sorted_xs
   UnsafeAsSet n' sorted_unique_xs
