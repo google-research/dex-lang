@@ -1462,7 +1462,7 @@ data IterResult a =
   Done a
 
 -- TODO: can we improve effect inference so we don't need this?
-def liftState {a b c h eff} (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
+def lift_state {a b c h eff} (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
   f x
 
 -- A little iteration combinator
@@ -1471,7 +1471,7 @@ def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
     while do
       continue = is_nothing $ get resultRef
       if continue then
-        case liftState resultRef (liftState i body) (get i) of
+        case lift_state resultRef (lift_state i body) (get i) of
           Continue -> i := get i + 1
           Done result -> resultRef := Just result
       continue
