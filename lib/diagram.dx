@@ -117,7 +117,7 @@ def str_space_cat_uncurried ((s1,s2):(String & String)) : String =
 def (<+>) {a b} [Show a, Show b] (s1:a) (s2:b) : String =
   str_space_cat_uncurried ((show s1), (show s2))
 
-def selfClosingBrackets (s:String) : String = "<" <.> s <.> "/>"
+def self_closing_brackets (s:String) : String = "<" <.> s <.> "/>"
 
 def tagBrackets (tag:String) (s:String) : String =
   "<" <.> tag <.> ">" <.> s <.> "</" <.> tag <.> ">"
@@ -155,19 +155,19 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   case geom of
     PointGeom ->
       pointAttr = set_at #fillColor (get_at #strokeColor attr) attr
-      groupEle solidAttr $ selfClosingBrackets $
+      groupEle solidAttr $ self_closing_brackets $
         ("circle" <+>
          "cx" <=> x <.>
          "cy" <=> y <.>
          "r=\"1\"")
     Circle r ->
-      groupEle attr $ selfClosingBrackets $
+      groupEle attr $ self_closing_brackets $
         ("circle" <+>
          "cx" <=> x <.>
          "cy" <=> y <.>
          "r"  <=> r)
     Rectangle w h ->
-      groupEle attr $ selfClosingBrackets $
+      groupEle attr $ self_closing_brackets $
         ("rect" <+>
          "width"  <=> w <.>
          "height" <=> h <.>
