@@ -25,7 +25,7 @@ Base64 = Byte -- first two bits should be zero
 def getChunks {n a}
       (chunkSize:Int) (padVal:a) (xs:n=>a)
       : List (Fin chunkSize => a) =
-  numChunks = idivCeil (size n) chunkSize
+  numChunks = idiv_ceil (size n) chunkSize
   paddedSize = numChunks * chunkSize
   xsPadded = pad_to (Fin paddedSize) padVal xs
   to_list for i:(Fin numChunks).
