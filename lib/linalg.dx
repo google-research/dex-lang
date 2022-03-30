@@ -21,7 +21,7 @@ def transposeLowerToUpper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
 
 def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
   -- Solves lower triangular linear system (inverse a) **. b
-  yieldState zero \sRef.
+  yield_state zero \sRef.
     for i:n.
       s = sum for k:(..<i).  -- dot product
         a.i.(cast k) .* get sRef!(%inject k)
@@ -29,7 +29,7 @@ def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v 
 
 def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
   -- Solves upper triangular linear system (inverse a) **. b
-  yieldState zero \sRef.
+  yield_state zero \sRef.
     rof i:n.
       s = sum for k:(i..).  -- dot product
         a.i.(cast k) .* get sRef!(%inject k)
@@ -46,7 +46,7 @@ def upperTriMat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b 
 '### Cholesky decomposition
 
 def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
-  yieldState zero \buf.
+  yield_state zero \buf.
     mat = lowerTriMat buf
     for i:n. for j':(..i).
       j = %inject j'
@@ -89,7 +89,7 @@ def permSign    {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 def pivotize {n} (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
-  yieldState identity_permutation \permRef.
+  yield_state identity_permutation \permRef.
     for j:n.
       row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j))
       case ordinal j == ordinal row_with_largest of
@@ -107,7 +107,7 @@ def lu {n} (a: n=>n=>Float) :
     select (ordinal i == (ordinal (%inject j'))) 1.0 0.0
   init_upper = zero
 
-  (lower, upper) = yieldState (init_lower, init_upper) \stateRef.
+  (lower, upper) = yield_state (init_lower, init_upper) \stateRef.
     lRef = fst_ref stateRef
     uRef = snd_ref stateRef
 

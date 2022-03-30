@@ -13,7 +13,7 @@ def (-|) (i:n) (off:Int) : n =
     False -> i
 
 def pathfinder (world : rows=>cols=>Int) : cols=>Int =
-  yieldState zero $ \costsRef.
+  yield_state zero $ \costsRef.
     for r.
       costs = get costsRef
       costsRef := for c. world.r.c + (min costs.c $ (min costs.(c -| 1)

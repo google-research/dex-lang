@@ -50,7 +50,7 @@ def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =
   log2n = intlog2 (size n)
   halfn = idiv (size n) 2
   
-  ans = yieldState x \xRef.
+  ans = yield_state x \xRef.
     for i:(Fin log2n).
       ipow2 = intpow 2 (ordinal i)
       xRef := yieldAccum (AddMonoid Complex) \bufRef.

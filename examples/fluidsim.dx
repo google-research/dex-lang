@@ -52,7 +52,7 @@ def project {n m a} [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
 
   div = -0.5 .* h .* (divergence vx vy)
 
-  p = yieldState zero \state.
+  p = yield_state zero \state.
     for i:(Fin 10).
       state := (1.0 / 4.0) .* (div + add_neighbours_2d (get state))
 

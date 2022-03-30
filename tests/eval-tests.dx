@@ -694,7 +694,7 @@ def newtonIter (f: Float -> Float) (x:Float) : Float =
   x - (f x / deriv f x)
 
 def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
-  yieldState x0 \x.
+  yield_state x0 \x.
     iter \i.
       if abs (f $ get x) <= tol
         then Done ()

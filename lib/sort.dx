@@ -20,7 +20,7 @@ def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   --  1) Using a SortedTable type.
   --  2) Avoid needlessly initializing the return array.
   init = concatTable xs ys  -- Initialize array of correct size.
-  yieldState init \buf.
+  yield_state init \buf.
     withState (0, 0) \countrefs.
       for i:(m|n).
         (cur_x, cur_y) = get countrefs

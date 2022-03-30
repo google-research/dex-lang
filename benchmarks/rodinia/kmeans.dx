@@ -20,7 +20,7 @@ def kmeans
       : (Fin k)=>d=>Float =
   initCentroids = for i:(Fin k). points.(ordinal i@_)
   initMembership = for c:n. ((ordinal c `mod` k)@_)
-  final = yieldState (initMembership, initCentroids, 0) \ref.
+  final = yield_state (initMembership, initCentroids, 0) \ref.
     while do
       (membership, centroids, i) = get ref
       membership' = for i. argminBy (dist points.i) centroids

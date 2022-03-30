@@ -250,7 +250,7 @@ data Graph n:Type a:Type [Ix n] =
 
 def graphToAdjacencyMatrix {n a} ((MkGraph nodes (AsList _ edges)):Graph n a) : n=>n=>Bool =
   init = for i j. False
-  yieldState init \mRef.
+  yield_state init \mRef.
     for i.
       (from, to) = edges.i
       mRef!from!to := True

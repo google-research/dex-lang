@@ -140,7 +140,7 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 > ((((2., 3), 4), 4.), 2.)
 
 def symmetrizeInPlace {n} (mat:n=>n=>Float) : n=>n=>Float =
-  yieldState mat \ref.
+  yield_state mat \ref.
     for i j.
        x = get ref!i!j
        y = get ref!j!i
