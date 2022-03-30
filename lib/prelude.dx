@@ -1618,7 +1618,7 @@ def with_temp_files {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
 
 '### Table operations
 
-def fromOrdinal (n:Type) [Ix n] (i:Int) : n =
+def from_ordinal (n:Type) [Ix n] (i:Int) : n =
   case (0 <= i) && (i < size n) of
     True  -> unsafe_from_ordinal _ i
     False -> error $
@@ -1632,11 +1632,11 @@ def castTable {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
      False -> error $
        "Table size mismatch in cast: " <> show (size m) <> " vs " <> show (size n)
 
-def asidx {n} [Ix n] (i:Int) : n = fromOrdinal n i
-def (@) (i:Int) (n:Type) [Ix n] : n = fromOrdinal n i
+def asidx {n} [Ix n] (i:Int) : n = from_ordinal n i
+def (@) (i:Int) (n:Type) [Ix n] : n = from_ordinal n i
 
 def slice {n a} (xs:n=>a) (start:Int) (m:Type) [Ix m] : m=>a =
-  for i. xs.(fromOrdinal _ (ordinal i + start))
+  for i. xs.(from_ordinal _ (ordinal i + start))
 
 def head {n a} (xs:n=>a) : a = xs.(0@_)
 
@@ -1726,7 +1726,7 @@ def randnVec {n} [Ix n] (k:Key) : n=>Float =
 
 def randIdx {n} [Ix n] (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ FToI $ floor $ unif * i_to_f (size n)
+  from_ordinal n $ FToI $ floor $ unif * i_to_f (size n)
 
 '## Arbitrary
 Type class for generating example values
@@ -1763,15 +1763,15 @@ instance {n} Arbitrary (Fin n)
 def searchSorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
   if size n == 0
     then Nothing
-    else if x < xs.(fromOrdinal _ 0)
+    else if x < xs.(from_ordinal _ 0)
       then Nothing
       else withState 0 \low. withState (size n) \high. iter \_.
         numLeft = get high - get low
         if numLeft == 1
-          then Done $ Just $ fromOrdinal _ $ get low
+          then Done $ Just $ from_ordinal _ $ get low
           else
             centerIx = get low + idiv numLeft 2
-            if x < xs.(fromOrdinal _ centerIx)
+            if x < xs.(from_ordinal _ centerIx)
               then high := centerIx
               else low  := centerIx
             Continue

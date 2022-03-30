@@ -45,14 +45,14 @@
 
 :p
    def m {h:Type} (s:Ref h (Fin 3=>Int)) : {State h} Unit =
-     s!(fromOrdinal _ 0) := 10
-     s!(fromOrdinal _ 2) := 20
-     x = get (s!(fromOrdinal _ 0))
-     s!(fromOrdinal _ 1) := x
+     s!(from_ordinal _ 0) := 10
+     s!(from_ordinal _ 2) := 20
+     x = get (s!(from_ordinal _ 0))
+     s!(from_ordinal _ 1) := x
    run_state [0,0,0] m
 > ((), [10, 10, 20])
 
-:p with_reader [1,2,3] \r . ask r!(fromOrdinal _ 1)
+:p with_reader [1,2,3] \r . ask r!(from_ordinal _ 1)
 > 2
 
 :p
@@ -85,8 +85,8 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
 > (((), 3.), 2.)
 
 def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
-  s!(fromOrdinal _ 0) := 1
-  s!(fromOrdinal _ 2) := 2
+  s!(from_ordinal _ 0) := 1
+  s!(from_ordinal _ 2) := 2
 
 :p run_state [0,0,0] foom
 > ((), [1, 0, 2])

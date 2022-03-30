@@ -47,8 +47,8 @@ def project {n m a} [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
   h = 1.0 / i_to_f (size n)
 
   -- unpack into two scalar fields
-  vx = for i j. v.i.j.(fromOrdinal _ 0)
-  vy = for i j. v.i.j.(fromOrdinal _ 1)
+  vx = for i j. v.i.j.(from_ordinal _ 0)
+  vy = for i j. v.i.j.(from_ordinal _ 1)
 
   div = -0.5 .* h .* (divergence vx vy)
 
@@ -76,8 +76,8 @@ def advect {n m a} [VSpace a] (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
 
   for i j.
     -- Location of source of flow for this cell.  No meshgrid!
-    center_xs = cell_xs.i - v.i.j.(fromOrdinal _ 0)
-    center_ys = cell_ys.j - v.i.j.(fromOrdinal _ 1)
+    center_xs = cell_xs.i - v.i.j.(from_ordinal _ 0)
+    center_ys = cell_ys.j - v.i.j.(from_ordinal _ 1)
 
     -- Index of source cell.
     source_col = floor center_xs

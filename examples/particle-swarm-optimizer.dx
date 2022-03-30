@@ -9,8 +9,8 @@ rosenbrock : Float -> Float -> Float =
 
 rosenbrock2 : ((Fin 2)=>Float) -> Float =
   \xs.
-    x = xs.(fromOrdinal _ 0)
-    y = xs.(fromOrdinal _ 1)
+    x = xs.(from_ordinal _ 0)
+    y = xs.(from_ordinal _ 1)
     rosenbrock x y
 
 ' Min should be at 1.0, 1.0

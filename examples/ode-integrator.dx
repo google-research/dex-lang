@@ -186,5 +186,5 @@ exact_e = [[exp 1.0]]
 times = linspace (Fin 100) 0.00001 1.0
 ys = odeint myDyn z0 t0 times
 
-:html showPlot $ yPlot for i. ys.i.(fromOrdinal _ 0)
+:html showPlot $ yPlot for i. ys.i.(from_ordinal _ 0)
 > <html output>

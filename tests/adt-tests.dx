@@ -194,8 +194,8 @@ def catLists {a} (xs:List a) (ys:List a) : List a =
   zs = for i:(Fin nz).
     i' = ordinal i
     case i' < nx of
-      True  -> xs'.(fromOrdinal _ i')
-      False -> ys'.(fromOrdinal _ (i' - nx))
+      True  -> xs'.(from_ordinal _ i')
+      False -> ys'.(from_ordinal _ (i' - nx))
   AsList _ zs
 
 :p

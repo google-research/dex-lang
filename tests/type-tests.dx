@@ -322,19 +322,19 @@ bad_range : Int = (1@Fin 3)..(2@_)
 >                ^^^
 
 def getFst1 {n:Type} {b} (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+  xs.(from_ordinal n 0)
 
 :p getFst1 [1,2,3]
 > 1
 
 def getFst2 {n b} (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+  xs.(from_ordinal n 0)
 
 :p getFst2 [1,2,3]
 > 1
 
 def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+  xs.(from_ordinal n 0)
 
 :p getFst3 [1,2,3]
 > 1

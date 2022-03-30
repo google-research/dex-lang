@@ -61,7 +61,7 @@ def sort {a n} [Ord a] (xs: n=>a) : n=>a =
 
 def (+|) {n} [Ix n] (i:n) (delta:Int) : n =
   i' = ordinal i + delta
-  fromOrdinal _ $ select (i' >= size n) (size n - 1) i'
+  from_ordinal _ $ select (i' >= size n) (size n - 1) i'
 
 def isSorted {a n} [Ord a] (xs:n=>a) : Bool =
   all for i. xs.i <= xs.(i +| 1)

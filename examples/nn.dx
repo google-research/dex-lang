@@ -59,8 +59,8 @@ def conv2d
     case (i' + kh) <= h && (j' + kw) <= w of
       True ->
         sum for (ki, kj, inp).
-          (di, dj) = (fromOrdinal (Fin h) (i' + (ordinal ki)),
-                      fromOrdinal (Fin w) (j' + (ordinal kj)))
+          (di, dj) = (from_ordinal (Fin h) (i' + (ordinal ki)),
+                      from_ordinal (Fin w) (j' + (ordinal kj)))
           x.inp.di.dj * kernel.o.inp.ki.kj
       False -> zero
 

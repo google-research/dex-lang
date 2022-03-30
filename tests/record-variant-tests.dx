@@ -330,7 +330,7 @@ instance {n m} [Ix n, Ix m] Ix {a:n & b:m}
 > 30
 :p ordinal {a=(7@Fin 10), b=(2@Fin 3)}
 > 27
-:p fromOrdinal {a:Fin 10 & b:Fin 3} 14
+:p from_ordinal {a:Fin 10 & b:Fin 3} 14
 > {a = (4@Fin 10), b = (1@Fin 3)}
 
 recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
@@ -366,10 +366,10 @@ instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
   ordinal x
 > 12
 
-:p fromOrdinal {a:Fin 10 | b:Fin 3} 4
+:p from_ordinal {a:Fin 10 | b:Fin 3} 4
 > {| a = 4@Fin 10 |}
 
-:p fromOrdinal {a:Fin 10 | b:Fin 3} 11
+:p from_ordinal {a:Fin 10 | b:Fin 3} 11
 > {| b = 1@Fin 3 |}
 
 variantsAsIndices : {a:Fin 10 | b:Fin 3}=>{a:Fin 10 | b:Fin 3} = for i. i
