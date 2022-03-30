@@ -1489,7 +1489,7 @@ def bounded_iter {a eff}
 
 '### Environment Variables
 
-def fromCString (s:CString) : {IO} (Maybe String) =
+def from_c_string (s:CString) : {IO} (Maybe String) =
   case c_string_ptr s of
     Nothing -> Nothing
     Just ptr ->
@@ -1505,7 +1505,7 @@ foreign "getenv" getenvFFI : RawPtr -> {IO} RawPtr
 
 def getEnv (name:String) : {IO} Maybe String =
   with_c_string name \(MkCString ptr).
-    fromCString $ MkCString $ getenvFFI ptr
+    from_c_string $ MkCString $ getenvFFI ptr
 
 def checkEnv (name:String) : {IO} Bool =
   is_just $ getEnv name
