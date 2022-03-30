@@ -35,7 +35,7 @@ def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
 def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
-def FToF64 (x : Float)   : Float64 = internal_cast _ x
+def f_to_f64 (x : Float)   : Float64 = internal_cast _ x
 def FToF32 (x : Float)   : Float32 = internal_cast _ x
 def I64ToI (x : Int64)   : Int     = internal_cast _ x
 def I32ToI (x : Int32)   : Int     = internal_cast _ x
@@ -61,7 +61,7 @@ instance FromInteger Int32
   fromInteger = \x. I64ToI x
 
 instance FromInteger Float64
-  fromInteger = \x. FToF64 $ IToF $ I64ToI x
+  fromInteger = \x. f_to_f64 $ IToF $ I64ToI x
 
 instance FromInteger Int64
   fromInteger = \x. x
@@ -115,7 +115,7 @@ def (-) {a} [Add a] : a -> a -> a = sub
 instance Add Float64
   add = \x y. %fadd x y
   sub = \x y. %fsub x y
-  zero = FToF64 0.0
+  zero = f_to_f64 0.0
 
 instance Add Float32
   add = \x y. %fadd x y
@@ -169,7 +169,7 @@ def (*) {a} [Mul a] : a -> a -> a = mul
 
 instance Mul Float64
   mul = \x y. %fmul x y
-  one = FToF64 1.0
+  one = f_to_f64 1.0
 
 instance Mul Float32
   mul = \x y. %fmul x y
@@ -745,10 +745,10 @@ def float32_cosh (x:Float32) : Float32 = %fdiv (%fadd (%exp x) (%exp (%fsub 0.0 
 def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) (%fadd (%exp x) (%exp (%fsub 0.0 x)))
 
 -- Todo: unify this with float32 functions.
-def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
-def float64_cosh (x:Float64) : Float64 = %fdiv (%fadd (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
-def float64_tanh (x:Float64) : Float64 = (%fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x)))
-                                                (%fadd (%exp x) (%exp (%fsub (FToF64 0.0) x))))
+def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (f_to_f64 0.0) x))) (f_to_f64 2.0)
+def float64_cosh (x:Float64) : Float64 = %fdiv (%fadd (%exp x) (%exp (%fsub (f_to_f64 0.0) x))) (f_to_f64 2.0)
+def float64_tanh (x:Float64) : Float64 = (%fdiv (%fsub (%exp x) (%exp (%fsub (f_to_f64 0.0) x)))
+                                                (%fadd (%exp x) (%exp (%fsub (f_to_f64 0.0) x))))
 
 instance Floating Float64
   exp    = \x. %exp x
@@ -1007,8 +1007,8 @@ instance HasDefaultTolerance Float32
   rtol = FToF32 0.0001
 
 instance HasDefaultTolerance Float64
-  atol = FToF64 0.00000001
-  rtol = FToF64 0.00001
+  atol = f_to_f64 0.00000001
+  rtol = f_to_f64 0.00001
 
 instance {n t} [HasAllClose t] HasAllClose (n=>t)
   allclose = \atol rtol a b.

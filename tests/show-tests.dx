@@ -53,26 +53,26 @@
 
 -- Float64
 
-:p show (FToF64 123.456789: Float64)
+:p show (f_to_f64 123.456789: Float64)
 > (AsList 16 "123.456787109375")
 
-:p show (FToF64 (pow 2. 16.): Float64)
+:p show (f_to_f64 (pow 2. 16.): Float64)
 > (AsList 5 "65536")
 
-:p show ((FToF64 nan): Float64)
+:p show ((f_to_f64 nan): Float64)
 > (AsList 3 "nan")
 
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
-:p (FToF64 nan)
+:p (f_to_f64 nan)
 > NaN
 
-:p show ((FToF64 infinity): Float64)
+:p show ((f_to_f64 infinity): Float64)
 > (AsList 3 "inf")
 
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
-:p (FToF64 infinity)
+:p (f_to_f64 infinity)
 > Infinity
 
 -- Tuples
