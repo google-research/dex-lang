@@ -36,7 +36,7 @@ def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v
       sRef!i := (b.i - s) / a.i.(0@_) -- 0 is the diagonal index
 
 -- Todo: get rid of these by writing a dependent indexing (!) operator.
-def lowerTriMat {a b h} (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
+def lower_tri_mat {a b h} (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
   d = %indexRef ref i
   d!j
 def upperTriMat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
@@ -47,7 +47,7 @@ def upperTriMat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b 
 
 def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
   yield_state zero \buf.
-    mat = lowerTriMat buf
+    mat = lower_tri_mat buf
     for i:n. for j':(..i).
       j = %inject j'
       row  = for k:(..<j). get $ mat i (cast k)
@@ -129,7 +129,7 @@ def lu {n} (a: n=>n=>Float) :
   --      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
   --    for i:n. ()
 
-    lmat = lowerTriMat lRef
+    lmat = lower_tri_mat lRef
     umat = upperTriMat uRef
     for j:n.
       for i:(..j).
