@@ -53,7 +53,7 @@ def encode_chunk (chunk : Fin 3 => Char) : Fin 4 => Char =
   map base64_to_ascii $ bytes_to_base64s chunk
 
 -- TODO: the `AsList` unpacking is very tedious. Daniel's change will help
-def base64Encode (s:String) : String =
+def base64_encode (s:String) : String =
   (AsList n cs) = s
   (AsList numChunks chunks) = get_chunks 3 '\NUL' cs
   encodedChunks = map encode_chunk chunks
@@ -117,7 +117,7 @@ def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
 
 def imgToHtml (png:String) : Html =
   ("<img class=\"plot-img\" src=\"data:image/png;base64, "
-   <> base64Encode png
+   <> base64_encode png
    <> "\">")
 
 def floatTo8Bit (x:Float) : Word8 =
