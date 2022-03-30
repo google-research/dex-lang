@@ -369,22 +369,22 @@ data Bool =
   False
   True
 
-def BToW8 (x : Bool) : Word8 = %dataConTag x
+def b_to_w8 (x : Bool) : Word8 = %dataConTag x
 
 def W8ToB (x : Word8) : Bool = %toEnum Bool x
 
 def (&&) (x:Bool) (y:Bool) : Bool =
-  x' = BToW8 x
-  y' = BToW8 y
+  x' = b_to_w8 x
+  y' = b_to_w8 y
   W8ToB $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
-  x' = BToW8 x
-  y' = BToW8 y
+  x' = b_to_w8 x
+  y' = b_to_w8 y
   W8ToB $ %or x' y'
 
 def not  (x:Bool) : Bool =
-  x' = BToW8 x
+  x' = b_to_w8 x
   W8ToB $ %not x'
 
 '## More Boolean operations
@@ -394,7 +394,7 @@ def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
-def BToI (x:Bool) : Int  = w8_to_i $ BToW8 x
+def BToI (x:Bool) : Int  = w8_to_i $ b_to_w8 x
 def BToF (x:Bool) : Float = i_to_f (BToI x)
 
 '## Ordering
@@ -621,7 +621,7 @@ instance Eq Word8
   (==) = \x y. W8ToB $ %ieq x y
 
 instance Eq Bool
-  (==) = \x y. BToW8 x == BToW8 y
+  (==) = \x y. b_to_w8 x == b_to_w8 y
 
 instance Eq Unit
   (==) = \x y. True
@@ -1454,7 +1454,7 @@ def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
 TODO: move this out of the file-system section
 
 def while {eff} (body: Unit -> {|eff} Bool) : {|eff} Unit =
-  body' : Unit -> {|eff} Word8 = \_. BToW8 $ body ()
+  body' : Unit -> {|eff} Word8 = \_. b_to_w8 $ body ()
   %while body'
 
 data IterResult a =
