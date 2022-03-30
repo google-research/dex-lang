@@ -113,7 +113,7 @@ def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
          "convert" <> " -delay " <> show delay <> " " <>
           concat (for i. "png:" <> pngFiles.i <> " ") <>
          "gif:" <> gifFile
-      readFile gifFile
+      read_file gifFile
 
 def imgToHtml (png:String) : Html =
   ("<img class=\"plot-img\" src=\"data:image/png;base64, "

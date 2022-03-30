@@ -1586,7 +1586,7 @@ def with_file {a}
 def write_file (f:FilePath) (s:String) : {IO} Unit =
   with_file f WriteMode \stream. fwrite stream s
 
-def readFile (f:FilePath) : {IO} String =
+def read_file (f:FilePath) : {IO} String =
   with_file f ReadMode \stream. fread stream
 
 def hasFile (f:FilePath) : {IO} Bool =

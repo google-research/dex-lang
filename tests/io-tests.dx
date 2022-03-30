@@ -4,7 +4,7 @@
     with_file fname WriteMode \stream.
       fwrite stream "lorem ipsum\n"
       fwrite stream "dolor sit amet\n"
-    readFile fname
+    read_file fname
 > (AsList 27 "lorem ipsum
 > dolor sit amet
 > ")
@@ -60,7 +60,7 @@ unsafe_io \().
   withTempFile \fname.
     with_file fname WriteMode \stream.
       fwrite stream $ AsList _ s
-    (AsList _ s') = readFile fname
+    (AsList _ s') = read_file fname
     sum (for i. w8_to_i s.i) == sum (for i. w8_to_i s'.i)
 > True
 
