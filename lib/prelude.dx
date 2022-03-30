@@ -1303,7 +1303,7 @@ def load_dynamic_buffer {a} [Storable a]
   size   = load $ get_at #size db
   AsList size $ table_from_ptr _ bufPtr
 
-def pushDynBuffer {a} [Storable a]
+def push_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) (x:a) : {IO} Unit =
   extend_dynamic_buffer buf $ AsList _ [x]
 
@@ -1498,7 +1498,7 @@ def fromCString (s:CString) : {IO} (Maybe String) =
         if c == '\NUL'
           then Done $ load_dynamic_buffer buf
           else
-            pushDynBuffer buf c
+            push_dynamic_buffer buf c
             Continue
 
 foreign "getenv" getenvFFI : RawPtr -> {IO} RawPtr
