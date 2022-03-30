@@ -1610,7 +1610,7 @@ def with_temp_file {a} (action: FilePath -> {IO} a) : {IO} a =
   delete_file tmpFile
   result
 
-def withTempFiles {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
+def with_temp_files {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
   tmpFiles = for i. new_temp_file ()
   result = action tmpFiles
   for i. delete_file tmpFiles.i

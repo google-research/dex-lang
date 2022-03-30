@@ -106,7 +106,7 @@ def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
     to_list $ table_from_ptr (Fin n) $ MkPtr ptr'
 
 def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
-  withTempFiles \pngFiles.
+  with_temp_files \pngFiles.
     for i. write_file pngFiles.i pngs.i
     with_temp_file \gifFile.
       shell_out $
