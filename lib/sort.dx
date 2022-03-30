@@ -39,7 +39,7 @@ def merge_sorted_tables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
                     countrefs := (cur_x, cur_y + 1)
                     buf!i := ys.(unsafe_from_ordinal _ cur_y)
 
-def mergeSortedLists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
+def merge_sorted_lists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
   -- Need this wrapper because Dex can't automatically weaken
   -- (a | b)=>c to ((Fin d)=>c)
   sorted = merge_sorted_tables xs ys
@@ -53,7 +53,7 @@ def sort {a n} [Ord a] (xs: n=>a) : n=>a =
 
   -- Merge sort monoid:
   mempty = AsList 0 []
-  mcombine = mergeSortedLists
+  mcombine = merge_sorted_lists
 
   -- reduce might someday recursively subdivide the problem.
   (AsList _ r) = reduce mempty mcombine xlists
