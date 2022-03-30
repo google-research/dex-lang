@@ -48,7 +48,7 @@ def ixToF {n} [Ix n] (i:n) : Float = (i_to_f (ordinal i)) / (i_to_f gridSize - 1
 
 -- Helper to generate zero-delay GIF animations
 def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
-  imgToHtml $ pngsToGif 0 $ map imgToPng imgs
+  imgToHtml $ pngs_to_gif 0 $ map imgToPng imgs
 
 -- Cuts an array down to a smaller dimension.
 -- Useful for cutting out animation frames for a faster GIF.

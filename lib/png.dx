@@ -105,7 +105,7 @@ def make_png {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
     (n, ptr') = encodePNG rawPtr (size m) (size n)
     to_list $ table_from_ptr (Fin n) $ MkPtr ptr'
 
-def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
+def pngs_to_gif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
   with_temp_files \pngFiles.
     for i. write_file pngFiles.i pngs.i
     with_temp_file \gifFile.
@@ -132,4 +132,4 @@ def imshow {n m} (img:n=>m=>(Fin 3)=>Float) : Html =
   imgToHtml $ imgToPng img
 
 def imseqshow {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
-  imgToHtml $ pngsToGif 50 $ map imgToPng imgs
+  imgToHtml $ pngs_to_gif 50 $ map imgToPng imgs
