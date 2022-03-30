@@ -1569,7 +1569,7 @@ def delete_file (f:FilePath) : {IO} Unit =
     removeFFI ptr
   ()
 
-def withFile {a}
+def with_file {a}
       (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
       : {IO} a =
@@ -1584,10 +1584,10 @@ def withFile {a}
       result
 
 def writeFile (f:FilePath) (s:String) : {IO} Unit =
-  withFile f WriteMode \stream. fwrite stream s
+  with_file f WriteMode \stream. fwrite stream s
 
 def readFile (f:FilePath) : {IO} String =
-  withFile f ReadMode \stream. fread stream
+  with_file f ReadMode \stream. fread stream
 
 def hasFile (f:FilePath) : {IO} Bool =
   stream = fopen f ReadMode
