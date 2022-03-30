@@ -10,7 +10,7 @@ def centroidsOf (points : n=>d=>Float) (membership : n=>k) : k=>d=>Float =
   for i. clusterSums.i / (max clusterSizes.i 1.0)
 
 def argminBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : n =
-  minimumBy (\i. f xs.i) (for i. i)
+  minimum_by (\i. f xs.i) (for i. i)
 
 def kmeans
       (points : n=>d=>Float)

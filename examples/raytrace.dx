@@ -158,7 +158,7 @@ def sdObject (pos:Position) (obj:Object) : Distance =
 
 def sdScene {n} (scene:Scene n) (pos:Position) : (Object & Distance) =
   (MkScene objs) = scene
-  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
+  (i, d) = minimum_by snd $ for i. (i, sdObject pos objs.i)
   (objs.i, d)
 
 def calcNormal (obj:Object) (pos:Position) : Direction =
