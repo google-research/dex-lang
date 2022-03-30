@@ -56,7 +56,7 @@ def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
 
 def return {a} (x:a) : Parser a = MkParser \_. x
 
-def runParser {a} (s:String) (parser:Parser a) : Maybe a =
+def run_parser {a} (s:String) (parser:Parser a) : Maybe a =
   run_parser_partial s $ MkParser \h.
     ans = parse h parser
     _   = parse h p_eof

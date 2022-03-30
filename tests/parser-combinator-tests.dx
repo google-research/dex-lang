@@ -6,16 +6,16 @@ parseABC : Parser Unit = MkParser \h.
   parse h $ p_char 'B'
   parse h $ p_char 'C'
 
-:p runParser "AAA" parseABC
+:p run_parser "AAA" parseABC
 > Nothing
 
-:p runParser "ABCABC" parseABC
+:p run_parser "ABCABC" parseABC
 > Nothing
 
-:p runParser "AB" parseABC
+:p run_parser "AB" parseABC
 > Nothing
 
-:p runParser "ABC" parseABC
+:p run_parser "ABC" parseABC
 > (Just ())
 
 def parseT : Parser Bool = MkParser \h.
@@ -32,23 +32,23 @@ def parseTF : Parser Bool =
 def parserTFTriple : Parser (Fin 3=>Bool) = MkParser \h.
   for i. parse h parseTF
 
-:p runParser "TTF" parserTFTriple
+:p run_parser "TTF" parserTFTriple
 > (Just [True, True, False])
 
-:p runParser "TTFX" parserTFTriple
+:p run_parser "TTFX" parserTFTriple
 > Nothing
 
-:p runParser "TTFFTT" $ parseMany parseTF
+:p run_parser "TTFFTT" $ parseMany parseTF
 > (Just (AsList 6 [True, True, False, False, True, True]))
 
-:p runParser "1021389" $ parseMany parseDigit
+:p run_parser "1021389" $ parseMany parseDigit
 > (Just (AsList 7 [1, 0, 2, 1, 3, 8, 9]))
 
-:p runParser "1389" $ parseInt
+:p run_parser "1389" $ parseInt
 > (Just 1389)
 
-:p runParser "01389" $ parseInt
+:p run_parser "01389" $ parseInt
 > (Just 1389)
 
-:p runParser "-1389" $ parseInt
+:p run_parser "-1389" $ parseInt
 > (Just -1389)
