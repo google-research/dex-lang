@@ -344,24 +344,24 @@ def const   {a b}   (x: a) (_: b) : a = x
 '## Vector spaces
 
 interface [Add a] VSpace a
-  scaleVec : Float -> a -> a
+  scale_vec : Float -> a -> a
 
-def (.*) {a} [VSpace a] : Float -> a -> a = scaleVec
-def (*.) {a} [VSpace a] : a -> Float -> a = flip scaleVec
+def (.*) {a} [VSpace a] : Float -> a -> a = scale_vec
+def (*.) {a} [VSpace a] : a -> Float -> a = flip scale_vec
 def (/)  {a} [VSpace a] (v:a) (s:Float) : a = divide 1.0 s .* v
 def neg  {a} [VSpace a] (v:a) : a = (-1.0) .* v
 
 instance VSpace Float
-  scaleVec = \x y. x * y
+  scale_vec = \x y. x * y
 
 instance {a n} [VSpace a] VSpace (n=>a)
-  scaleVec = \s xs. for i. s .* xs.i
+  scale_vec = \s xs. for i. s .* xs.i
 
 instance {a n} [VSpace a] VSpace (n->a)
-  scaleVec = \s f. \x. s .* (f x)
+  scale_vec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
-  scaleVec = \_ _. ()
+  scale_vec = \_ _. ()
 
 '## Boolean type
 
@@ -1911,7 +1911,7 @@ instance Mul Complex
   one = MkComplex 1.0 0.0
 
 instance VSpace Complex
-  scaleVec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+  scale_vec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
 
 -- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
 def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =

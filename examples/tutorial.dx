@@ -560,7 +560,7 @@ instance Add (Float32 & Float32)
 ' And here is a `VSpace` instance for the float pair type:
 
 instance VSpace (Float32 & Float32)
-  scaleVec = \s (x, y). (x * s, y * s)
+  scale_vec = \s (x, y). (x * s, y * s)
 
 ' Once we have these two instance definitions, we can revisit our table sum
   function using them:
@@ -587,7 +587,7 @@ instance {v w} [Add v, Add w] Add (v & w)
   zero = (zero, zero)
 
 instance {v w} [VSpace v, VSpace w] VSpace (v & w)
-  scaleVec = \s (x, y). (scaleVec s x, scaleVec s y)
+  scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
 
 '## More Fashion MNist
 

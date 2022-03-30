@@ -283,7 +283,7 @@ instance Add Quaternion
 useful for numerical computations.
 
 instance VSpace Quaternion
-  scaleVec = \ s x. quatFromVec (s .* quatAsVec x)
+  scale_vec = \ s x. quatFromVec (s .* quatAsVec x)
 
 instance HasAllClose Quaternion
   allclose = \atol rtol a b.
