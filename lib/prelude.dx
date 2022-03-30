@@ -1542,7 +1542,7 @@ foreign "remove" removeFFI : RawPtr -> {IO} Int64
 foreign "mkstemp" mkstempFFI : RawPtr -> {IO} Int32
 foreign "close" closeFFI : Int32 -> {IO} Int32
 
-def shellOut (command:String) : {IO} String =
+def shell_out (command:String) : {IO} String =
   modeStr = "r"
   with_c_string command \(MkCString commandPtr).
     with_c_string modeStr \(MkCString modePtr).

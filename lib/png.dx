@@ -109,7 +109,7 @@ def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
   withTempFiles \pngFiles.
     for i. writeFile pngFiles.i pngs.i
     withTempFile \gifFile.
-      shellOut $
+      shell_out $
          "convert" <> " -delay " <> show delay <> " " <>
           concat (for i. "png:" <> pngFiles.i <> " ") <>
          "gif:" <> gifFile
