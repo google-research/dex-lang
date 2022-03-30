@@ -115,7 +115,7 @@ def pngs_to_gif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
          "gif:" <> gifFile
       read_file gifFile
 
-def imgToHtml (png:String) : Html =
+def img_to_html (png:String) : Html =
   ("<img class=\"plot-img\" src=\"data:image/png;base64, "
    <> base64_encode png
    <> "\">")
@@ -129,7 +129,7 @@ def imgToPng {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
 '## API entry point
 
 def imshow {n m} (img:n=>m=>(Fin 3)=>Float) : Html =
-  imgToHtml $ imgToPng img
+  img_to_html $ imgToPng img
 
 def imseqshow {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
-  imgToHtml $ pngs_to_gif 50 $ map imgToPng imgs
+  img_to_html $ pngs_to_gif 50 $ map imgToPng imgs
