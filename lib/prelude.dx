@@ -1268,7 +1268,7 @@ def with_dynamic_buffer {a b} [Storable a]
     free $ load bufferPtr
     result
 
-def maybeIncreaseBufferSize {a} [Storable a]
+def maybe_increase_buffer_size {a} [Storable a]
       ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {IO} Unit =
   size    = load $ get_at #size    db
   maxSize = load $ get_at #maxSize db
@@ -1289,7 +1289,7 @@ def addAtIntPtr (ptr: Ptr Int) (n:Int) : {IO} Unit =
 def extendDynBuffer {a} [Storable a]
       (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
-  maybeIncreaseBufferSize buf n
+  maybe_increase_buffer_size buf n
   (MkDynBuffer db) = buf
   bufPtr = load $ get_at #buffer db
   size   = load $ get_at #size db
