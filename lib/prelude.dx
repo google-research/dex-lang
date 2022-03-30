@@ -1027,7 +1027,7 @@ def check_deriv_base (f:Float->Float) (x:Float) : Bool =
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
   ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
 
-def checkDeriv (f:Float->Float) (x:Float) : Bool =
+def check_deriv (f:Float->Float) (x:Float) : Bool =
   check_deriv_base f x && check_deriv_base (deriv f) x
 
 '## Vector support

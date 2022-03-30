@@ -105,28 +105,28 @@ f : Float -> Float = \x. yieldAccum (AddMonoid Float) \ref. ref += x
 :p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
 > (0.540302, -0.540302)
 
-:p checkDeriv sin 1.0
+:p check_deriv sin 1.0
 > True
 
-:p checkDeriv cos 1.0
+:p check_deriv cos 1.0
 > True
 
-:p checkDeriv exp 2.0
+:p check_deriv exp 2.0
 > True
 
-:p checkDeriv log 2.0
+:p check_deriv log 2.0
 > True
 
-:p checkDeriv (\x. exp (sin (cos x))) 2.0
+:p check_deriv (\x. exp (sin (cos x))) 2.0
 > True
 
-:p checkDeriv (deriv sin) 1.0
+:p check_deriv (deriv sin) 1.0
 > True
 
-:p checkDeriv (deriv cos) 1.0
+:p check_deriv (deriv cos) 1.0
 > True
 
-:p checkDeriv sqrt 4.0
+:p check_deriv sqrt 4.0
 > True
 
 -- badDerivFun : Float -> Float
@@ -169,7 +169,7 @@ tripleit : Float --o Float = \x. x + x + x
 myOtherSquare : Float -> Float =
   \x. yieldAccum (AddMonoid Float) \w. w += x * x
 
-:p checkDeriv myOtherSquare 3.0
+:p check_deriv myOtherSquare 3.0
 > True
 
 :p
@@ -237,7 +237,7 @@ vec = [1.]
     with_reader x \xr.
       with_reader x2 \x2r.
         5.0 * (ask x2r) + 4.0 * (ask xr) + 2.0
-  checkDeriv f 2.0
+  check_deriv f 2.0
 > True
 
 :p
@@ -245,14 +245,14 @@ vec = [1.]
     yield_state x \xr.
       for i:(Fin 2).
         xr := get xr * get xr
-  checkDeriv f 2.0
+  check_deriv f 2.0
 > True
 
 :p
   f = \rec.
     ({x=x, y=y, z=z}) = rec
     x * y * i_to_f z
-  (checkDeriv (\x. f {x=x, y=4.0, z=5}) 2.0, checkDeriv (\y. f {x=2.0, y=y, z=5}) 4.0)
+  (check_deriv (\x. f {x=x, y=4.0, z=5}) 2.0, check_deriv (\y. f {x=2.0, y=y, z=5}) 4.0)
 > (True, True)
 
 -- TODO: Re-enable once the big PR is merged
@@ -291,7 +291,7 @@ vec = [1.]
 :p
   xs = for i:(Fin 2). 2.0
   f = \x. sum xs
-  checkDeriv f 1.0
+  check_deriv f 1.0
 > True
 
 :p
@@ -301,7 +301,7 @@ vec = [1.]
       (c, v) = get r
       r := (c + sum v, v)
     c
-  checkDeriv f 1.0
+  check_deriv f 1.0
 > True
 
 -- Test reference indexing
@@ -311,5 +311,5 @@ vec = [1.]
     mat = yield_state zero \m. m!i!i := x
     mat.i.i
 
-  checkDeriv f 1.0
+  check_deriv f 1.0
 > True
