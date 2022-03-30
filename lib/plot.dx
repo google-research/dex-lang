@@ -83,7 +83,7 @@ def show_plot {a b c n} (plot:Plot n a b c) : String =
 def blank_data {n} [Ix n] : ScaledData n Unit =
   {scale = unit_type_scale, dat = for i. ()}
 
-def blankPlot {n} [Ix n] : Plot n Unit Unit Unit =
+def blank_plot {n} [Ix n] : Plot n Unit Unit Unit =
   {xs = blank_data, ys = blank_data, cs = blank_data}
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
@@ -106,10 +106,10 @@ def setCData {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a 
   {xs = get_at #xs plot, ys = get_at #ys plot, cs = cs}
 
 def xyPlot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
-  blankPlot |> setXData (autoScale xs) |> setYData (autoScale ys)
+  blank_plot |> setXData (autoScale xs) |> setYData (autoScale ys)
 
 def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
-  blankPlot |>
+  blank_plot |>
     setXData (autoScale xs) |>
     setYData (autoScale ys) |>
     setCData (autoScale cs)
