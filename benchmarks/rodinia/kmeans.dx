@@ -25,7 +25,7 @@ def kmeans
       (membership, centroids, i) = get ref
       membership' = for i. argminBy (dist points.i) centroids
       centroids' = centroidsOf points membership'
-      delta = sum $ for i. BToI $ membership.i /= membership'.i
+      delta = sum $ for i. b_to_i $ membership.i /= membership'.i
       ref := (membership', centroids', i + 1)
       delta > threshold && i < maxIterations
   (_, centroids, _) = final

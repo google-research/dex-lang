@@ -394,8 +394,8 @@ def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
-def BToI (x:Bool) : Int  = w8_to_i $ b_to_w8 x
-def BToF (x:Bool) : Float = i_to_f (BToI x)
+def b_to_i (x:Bool) : Int  = w8_to_i $ b_to_w8 x
+def BToF (x:Bool) : Float = i_to_f (b_to_i x)
 
 '## Ordering
 TODO: move this down to with `Ord`?
@@ -2021,7 +2021,7 @@ def padTo {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
       True  -> xs.(i'@_)
       False -> x
 
-def idivCeil (x:Int) (y:Int) : Int = idiv x y + BToI (rem x y /= 0)
+def idivCeil (x:Int) (y:Int) : Int = idiv x y + b_to_i (rem x y /= 0)
 def intdiv2 (x:Int) : Int = %shr x (1 : Int)
 def intpow2 (power:Int) : Int = %shl (1 : Int) power
 def isOdd  (x:Int) : Bool = rem x 2 == 1

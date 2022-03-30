@@ -80,7 +80,7 @@ def replace {a} [Eq a] ((old,new):(a&a)) (x:a) : a =
 
 def base64Decode (s:String) : Maybe String =
   (AsList n cs) = s
-  numValidInputChars = sum for i. BToI $ cs.i /= '='
+  numValidInputChars = sum for i. b_to_i $ cs.i /= '='
   numValidOutputChars = idiv (numValidInputChars * 3) 4
   csZeroed = map (replace ('=', 'A')) cs  -- swap padding char with 'zero' char
   (AsList _ chunks) = getChunks 4 '\NUL' csZeroed
