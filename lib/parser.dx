@@ -36,7 +36,7 @@ def run_parser_partial {a} (s:String) (parser:Parser a) : Maybe a =
 
 'Primitive combinators
 
-def pChar (c:Char) : Parser Unit = MkParser \(s, posRef).
+def p_char (c:Char) : Parser Unit = MkParser \(s, posRef).
   i = get posRef
   c' = index_list s i
   assert (c == c')
@@ -106,7 +106,7 @@ def parseUnsignedInt : Parser Int = MkParser \h.
     for i. ref := 10 * get ref + digits.i
 
 def parseInt : Parser Int = MkParser \h.
-  negSign = parse h $ optional $ pChar '-'
+  negSign = parse h $ optional $ p_char '-'
   x       = parse h $ parseUnsignedInt
   case negSign of
     Nothing -> x
@@ -120,4 +120,4 @@ def bracketed {a} (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a =
     ans
 
 def parens {a} (parser:Parser a) : Parser a =
-  bracketed (pChar '(') (pChar ')') parser
+  bracketed (p_char '(') (p_char ')') parser

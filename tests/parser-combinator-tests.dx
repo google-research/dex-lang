@@ -2,9 +2,9 @@
 import parser
 
 parseABC : Parser Unit = MkParser \h.
-  parse h $ pChar 'A'
-  parse h $ pChar 'B'
-  parse h $ pChar 'C'
+  parse h $ p_char 'A'
+  parse h $ p_char 'B'
+  parse h $ p_char 'C'
 
 :p runParser "AAA" parseABC
 > Nothing
@@ -19,11 +19,11 @@ parseABC : Parser Unit = MkParser \h.
 > (Just ())
 
 def parseT : Parser Bool = MkParser \h.
-  parse h $ pChar 'T'
+  parse h $ p_char 'T'
   True
 
 def parseF : Parser Bool = MkParser \h.
-  parse h $ pChar 'F'
+  parse h $ p_char 'F'
   False
 
 def parseTF : Parser Bool =
