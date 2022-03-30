@@ -15,7 +15,7 @@ def concat_table {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
     Left i  -> leftin.i
     Right i -> rightin.i
 
-def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
+def merge_sorted_tables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
   --  2) Avoid needlessly initializing the return array.
@@ -42,7 +42,7 @@ def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
 def mergeSortedLists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
   -- Need this wrapper because Dex can't automatically weaken
   -- (a | b)=>c to ((Fin d)=>c)
-  sorted = mergeSortedTables xs ys
+  sorted = merge_sorted_tables xs ys
   newsize = nx + ny
   AsList _ $ unsafe_cast_table (Fin newsize) sorted
 

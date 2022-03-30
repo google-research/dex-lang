@@ -63,7 +63,7 @@ instance {a} [Eq a] Eq (Set a)
 def set_union {a}
       ((UnsafeAsSet nx xs):Set a)
       ((UnsafeAsSet ny ys):Set a) : Set a =
-  combined = mergeSortedTables xs ys
+  combined = merge_sorted_tables xs ys
   (AsList n' sorted_unique_xs) = remove_duplicates_from_sorted combined
   UnsafeAsSet _ sorted_unique_xs
 
