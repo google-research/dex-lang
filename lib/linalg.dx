@@ -80,7 +80,7 @@ def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Un
   permRef!i := tempj
   signRef := -(get signRef)
 
-def permToTable {n} ((perm, _):Permutation n) : n=>n = perm
+def perm_to_table {n} ((perm, _):Permutation n) : n=>n = perm
 def permSign    {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 
