@@ -19,7 +19,7 @@ and flipped with `flipIso`
 :p app_iso cycleThree (1, 2.0, 3)
 > (2., (3, 1))
 
-:p revIso cycleThree (1, 2.0, 3)
+:p rev_iso cycleThree (1, 2.0, 3)
 > (3, (1, 2.))
 
 :p app_iso (flip_iso cycleThree) (1, 2.0, 3)
@@ -197,7 +197,7 @@ def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
   get_size = \(). size n * size m * size q
   ordinal = ordinal <<< app_iso abcToTuple
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abcToTuple
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToTuple
 
 def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
   fwd = \{b, c}. (c, b)
@@ -206,7 +206,7 @@ def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
 instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
   get_size = \(). size n * size m
   ordinal = ordinal <<< app_iso bcToPair
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso bcToPair
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso bcToPair
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -273,7 +273,7 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
   get_size = \(). size n + size m + size q
   ordinal = ordinal <<< app_iso abcToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abcToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToEither
 
 def abToEither {a b} : Iso {a:a | b:b} (a|b) =
   fwd = \v.  case v of
@@ -286,7 +286,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
   get_size = \(). size n + size m
   ordinal = ordinal <<< app_iso abToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToEither
 
 def acToEither {a c} : Iso {a:a | c:c} (a|c) =
   fwd = \v.  case v of
@@ -299,7 +299,7 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
 instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
   get_size = \(). size n + size m
   ordinal = ordinal <<< app_iso acToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso acToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso acToEither
 
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}

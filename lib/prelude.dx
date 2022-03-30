@@ -1165,7 +1165,7 @@ def flip_iso {a b} (iso: Iso a b) : Iso b a =
   (MkIso {fwd, bwd}) = iso
   MkIso {fwd=bwd, bwd=fwd}
 
-def revIso {a b} (iso: Iso a b) (x:b) : a = app_iso (flip_iso iso) x
+def rev_iso {a b} (iso: Iso a b) (x:b) : a = app_iso (flip_iso iso) x
 
 def idIso {a} : Iso a a = MkIso {fwd=id, bwd=id}
 
@@ -1181,7 +1181,7 @@ note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
 
 def getAt  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
 def popAt  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
-def pushAt {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
+def pushAt {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
 def setAt  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
   pushAt iso x $ popAt iso r
 
@@ -1192,7 +1192,7 @@ def matchWith {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
   case app_iso iso x of
     Left x -> Just x
     Right _ -> Nothing
-def buildWith {a b c} (iso: Iso a (b | c)) (x: b) : a = revIso iso $ Left x
+def buildWith {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
 
 def swapPairIso {a b} : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
@@ -1218,7 +1218,7 @@ def exceptPrism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEit
 
 -- Use a lens-like iso to split a 1d table into a 2d table
 def overLens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
-  for i j. tab.(revIso iso (i, j))
+  for i j. tab.(rev_iso iso (i, j))
 
 '### Zipper
 Zipper isomorphisms to easily specify many record/variant fields:

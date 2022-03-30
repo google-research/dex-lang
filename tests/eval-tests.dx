@@ -573,7 +573,7 @@ def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
 instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
   get_size = \(). size n + size m
   ordinal = ordinal <<< app_iso wbToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso wbToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso wbToEither
 
 -- Sum types as flattened index sets!
 def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
