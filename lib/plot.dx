@@ -28,13 +28,13 @@ unit_type_scale : Scale Unit =
   { mapping = \(). Just 0.0
   , range   = AsList _ [Singleton 0.0] }
 
-def projectUnitInterval (x:Float) : Maybe Float =
+def project_unit_interval (x:Float) : Maybe Float =
   case x >= 0.0 && x <= 1.0 of
     True  -> Just x
     False -> Nothing
 
 unitIntervalScale : Scale Float =
-  { mapping = projectUnitInterval
+  { mapping = project_unit_interval
   , range   = AsList _ [Interval 0.0 1.0] }
 
 def mapScale {a b} (s:Scale a) (f: b -> a) : Scale b =
