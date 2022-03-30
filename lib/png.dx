@@ -78,7 +78,7 @@ def replace {a} [Eq a] ((old,new):(a&a)) (x:a) : a =
     True  -> new
     False -> x
 
-def base64Decode (s:String) : Maybe String =
+def base64_decode (s:String) : Maybe String =
   (AsList n cs) = s
   numValidInputChars = sum for i. b_to_i $ cs.i /= '='
   numValidOutputChars = idiv (numValidInputChars * 3) 4
