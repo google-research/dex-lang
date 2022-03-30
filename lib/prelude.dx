@@ -41,7 +41,7 @@ def i64_to_i (x : Int64)   : Int     = internal_cast _ x
 def i32_to_i (x : Int32)   : Int     = internal_cast _ x
 def w8_to_i  (x : Word8)   : Int     = internal_cast _ x
 def i_to_i64 (x : Int)     : Int64   = internal_cast _ x
-def IToI32 (x : Int)     : Int32   = internal_cast _ x
+def i_to_i32 (x : Int)     : Int32   = internal_cast _ x
 def IToW8  (x : Int)     : Word8   = internal_cast _ x
 def IToW32 (x : Int)     : Word32  = internal_cast _ x
 def IToW64 (x : Int)     : Word64  = internal_cast _ x
@@ -130,7 +130,7 @@ instance Add Int64
 instance Add Int32
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToI32 0
+  zero = i_to_i32 0
 
 instance Add Word8
   add = \x y. %iadd x y
@@ -181,7 +181,7 @@ instance Mul Int64
 
 instance Mul Int32
   mul = \x y. %imul x y
-  one = IToI32 1
+  one = i_to_i32 1
 
 instance Mul Word8
   mul = \x y. %imul x y
