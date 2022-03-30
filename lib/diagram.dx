@@ -119,7 +119,7 @@ def (<+>) {a b} [Show a, Show b] (s1:a) (s2:b) : String =
 
 def self_closing_brackets (s:String) : String = "<" <.> s <.> "/>"
 
-def tagBrackets (tag:String) (s:String) : String =
+def tag_brackets (tag:String) (s:String) : String =
   "<" <.> tag <.> ">" <.> s <.> "</" <.> tag <.> ">"
 
 @noinline
