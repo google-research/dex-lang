@@ -511,7 +511,7 @@ def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 def fst_ref {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
 def snd_ref {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
-def runReader
+def run_reader
       {r a eff}
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
@@ -524,7 +524,7 @@ def withReader
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
-    runReader init action
+    run_reader init action
 
 def MonoidLifter (b:Type) (w:Type) : Type = h:Type ?-> AccumMonoid h b ?=> AccumMonoid h w
 
