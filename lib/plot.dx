@@ -41,7 +41,7 @@ def map_scale {a b} (s:Scale a) (f: b -> a) : Scale b =
   { mapping = \x. get_at #mapping s (f x)
   , range = get_at #range s }
 
-def floatScale (xmin:Float) (xmax:Float) : Scale Float =
+def float_scale (xmin:Float) (xmax:Float) : Scale Float =
   map_scale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
 
 def getScaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
@@ -93,7 +93,7 @@ def autoScale {n} (xs:n=>Float) : ScaledData n Float =
   -- Add 10% padding away from the plot area
   space = (max - min) * 0.05
   padding = maximum [space, max * 0.001, 0.000001]
-  {scale = floatScale (min - padding) (max + padding), dat = xs}
+  {scale = float_scale (min - padding) (max + padding), dat = xs}
 
 def setXData {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c =
   -- We can't use `setAt` here because we're changing the type
