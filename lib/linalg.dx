@@ -81,7 +81,7 @@ def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Un
   signRef := -(get signRef)
 
 def perm_to_table {n} ((perm, _):Permutation n) : n=>n = perm
-def permSign    {n} ((_, sign):Permutation n) : PermutationSign = sign
+def perm_sign    {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 
 
@@ -177,12 +177,12 @@ def invert {n} (a:n=>n=>Float) : n=>n=>Float =
 
 def determinant {n} (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
-  prod (for i. (upper_tri_diag u).i * (lower_tri_diag l).i) * permSign perm
+  prod (for i. (upper_tri_diag u).i * (lower_tri_diag l).i) * perm_sign perm
 
 def sign_and_log_determinant {n} (a:n=>n=>Float) : (Float & Float) =
   (l, u, perm) = lu a
   diags = for i. (upper_tri_diag u).i * (lower_tri_diag l).i
-  sign = (permSign perm) * prod for i. sign diags.i
+  sign = (perm_sign perm) * prod for i. sign diags.i
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
