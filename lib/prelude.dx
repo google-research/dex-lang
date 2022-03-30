@@ -371,21 +371,21 @@ data Bool =
 
 def b_to_w8 (x : Bool) : Word8 = %dataConTag x
 
-def W8ToB (x : Word8) : Bool = %toEnum Bool x
+def w8_to_b (x : Word8) : Bool = %toEnum Bool x
 
 def (&&) (x:Bool) (y:Bool) : Bool =
   x' = b_to_w8 x
   y' = b_to_w8 y
-  W8ToB $ %and x' y'
+  w8_to_b $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
   x' = b_to_w8 x
   y' = b_to_w8 y
-  W8ToB $ %or x' y'
+  w8_to_b $ %or x' y'
 
 def not  (x:Bool) : Bool =
   x' = b_to_w8 x
-  W8ToB $ %not x'
+  w8_to_b $ %not x'
 
 '## More Boolean operations
 TODO: move these with the others?
@@ -439,7 +439,7 @@ instance {a b} [Ix a, Ix b] Ix (a | b)
   unsafe_from_ordinal = \o.
     as = size a
     -- TODO: Reshuffle the prelude to be able to use (<) here
-    case W8ToB $ %ilt o as of
+    case w8_to_b $ %ilt o as of
       True  -> Left $ unsafe_from_ordinal a o
       False -> Right $ unsafe_from_ordinal b (o - as)
 
@@ -606,19 +606,19 @@ def (<=) {a} [Ord a] (x:a) (y:a) : Bool = x<y || x==y
 def (>=) {a} [Ord a] (x:a) (y:a) : Bool = x>y || x==y
 
 instance Eq Float64
-  (==) = \x y. W8ToB $ %feq x y
+  (==) = \x y. w8_to_b $ %feq x y
 
 instance Eq Float32
-  (==) = \x y. W8ToB $ %feq x y
+  (==) = \x y. w8_to_b $ %feq x y
 
 instance Eq Int64
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Int32
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Word8
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Bool
   (==) = \x y. b_to_w8 x == b_to_w8 y
@@ -630,24 +630,24 @@ instance Eq RawPtr
   (==) = \x y. raw_ptr_to_i64 x == raw_ptr_to_i64 y
 
 instance Ord Float64
-  (>) = \x y. W8ToB $ %fgt x y
-  (<) = \x y. W8ToB $ %flt x y
+  (>) = \x y. w8_to_b $ %fgt x y
+  (<) = \x y. w8_to_b $ %flt x y
 
 instance Ord Float32
-  (>) = \x y. W8ToB $ %fgt x y
-  (<) = \x y. W8ToB $ %flt x y
+  (>) = \x y. w8_to_b $ %fgt x y
+  (<) = \x y. w8_to_b $ %flt x y
 
 instance Ord Int64
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Int32
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Word8
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Unit
   (>) = \x y. False
