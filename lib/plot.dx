@@ -80,11 +80,11 @@ def plot_to_diagram {a b c n} (plot:Plot n a b c) : Diagram =
 def show_plot {a b c n} (plot:Plot n a b c) : String =
   render_svg (plot_to_diagram plot) ((0.0, 0.0), (1.0, 1.0))
 
-def blankData {n} [Ix n] : ScaledData n Unit =
+def blank_data {n} [Ix n] : ScaledData n Unit =
   {scale = unit_type_scale, dat = for i. ()}
 
 def blankPlot {n} [Ix n] : Plot n Unit Unit Unit =
-  {xs = blankData, ys = blankData, cs = blankData}
+  {xs = blank_data, ys = blank_data, cs = blank_data}
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def autoScale {n} (xs:n=>Float) : ScaledData n Float =
