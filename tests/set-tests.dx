@@ -23,7 +23,7 @@ set2 = toSet ["Bob", "Xeno", "Charlie"]
 :p setIntersect set1 set2
 > (UnsafeAsSet 2 [(AsList 3 "Bob"), (AsList 4 "Xeno")])
 
-:p removeDuplicatesFromSorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
+:p remove_duplicates_from_sorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
 > (AsList 3 [(AsList 5 "Alice"), (AsList 3 "Bob"), (AsList 7 "Charlie")])
 
 :p set1 == (setUnion set1 set1)

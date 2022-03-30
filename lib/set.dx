@@ -36,7 +36,7 @@ def merge_unique_sorted_lists {a} [Eq a] (xlist:List a) (ylist:List a) : List a 
         False -> concat [xlist,            ylist]
         True ->  concat [all_except_last xs, ylist]
 
-def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
+def remove_duplicates_from_sorted {n a} [Eq a] (xs:n=>a) : List a =
   xlists = for i:n. (AsList 1 [xs.i])
   reduce (AsList 0 []) merge_unique_sorted_lists xlists
 
@@ -51,7 +51,7 @@ data Set a [Ord a] =
 
 def toSet {n a} [Ord a] (xs:n=>a) : Set a =
   sorted_xs = sort xs
-  (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted sorted_xs
+  (AsList n' sorted_unique_xs) = remove_duplicates_from_sorted sorted_xs
   UnsafeAsSet n' sorted_unique_xs
 
 def setSize {a} ((UnsafeAsSet n _):Set a) : Int = n
@@ -64,7 +64,7 @@ def setUnion {a}
       ((UnsafeAsSet nx xs):Set a)
       ((UnsafeAsSet ny ys):Set a) : Set a =
   combined = mergeSortedTables xs ys
-  (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted combined
+  (AsList n' sorted_unique_xs) = remove_duplicates_from_sorted combined
   UnsafeAsSet _ sorted_unique_xs
 
 def setIntersect {a}
