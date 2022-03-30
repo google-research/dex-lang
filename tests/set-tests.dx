@@ -66,7 +66,7 @@ roundTrip = for i:(StringSetIx names2).
 
 -- Check that index to string and string to index are inverses.
 roundTrip2 = for i:(StringSetIx names2).
-  s = setIxToString i
+  s = set_ix_to_string i
   ix = string_to_set_ix s
   i == from_just ix
 :p all roundTrip2

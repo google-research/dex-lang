@@ -108,7 +108,7 @@ def string_to_set_ix {set:Set String} (s:String) : Maybe (StringSetIx set) =
     Nothing -> Nothing
     Just i -> Just $ MkSetIx (ordinal i)
 
-def setIxToString {set:Set String} (ix:StringSetIx set) : String =
+def set_ix_to_string {set:Set String} (ix:StringSetIx set) : String =
   (UnsafeAsSet n elements) = set
   elements.(unsafe_from_ordinal _ (ordinal ix))
 
