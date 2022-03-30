@@ -1778,14 +1778,14 @@ def search_sorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
 
 '### min / max etc
 
-def minBy {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def min_by {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
 def maxBy {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
 
-def min {o} [Ord o] (x1: o) (x2: o) : o = minBy id x1 x2
+def min {o} [Ord o] (x1: o) (x2: o) : o = min_by id x1 x2
 def max {o} [Ord o] (x1: o) (x2: o) : o = maxBy id x1 x2
 
 def minimumBy {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (minBy f) xs
+  reduce xs.(0@_) (min_by f) xs
 def maximumBy {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (maxBy f) xs
 

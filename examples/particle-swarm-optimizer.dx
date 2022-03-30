@@ -30,7 +30,7 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
 
 ' ## Helper functions
 
-def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = minBy fst
+def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = min_by fst
 
 def minimumbyfst {n a} : (n=>(Float & a)) -> (Float & a) = minimumBy fst
 
