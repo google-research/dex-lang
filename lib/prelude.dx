@@ -1283,7 +1283,7 @@ def maybe_increase_buffer_size {a} [Storable a]
     store (get_at #maxSize db) newMaxSize
     store (get_at #buffer  db) newBufPtr
 
-def addAtIntPtr (ptr: Ptr Int) (n:Int) : {IO} Unit =
+def add_at_int_ptr (ptr: Ptr Int) (n:Int) : {IO} Unit =
   store ptr (load ptr + n)
 
 def extendDynBuffer {a} [Storable a]
@@ -1294,7 +1294,7 @@ def extendDynBuffer {a} [Storable a]
   bufPtr = load $ get_at #buffer db
   size   = load $ get_at #size db
   store_table (bufPtr +>> size) xs
-  addAtIntPtr (get_at #size db) n
+  add_at_int_ptr (get_at #size db) n
 
 def loadDynBuffer {a} [Storable a]
       (buf: DynBuffer a) : {IO} (List a) =
