@@ -794,7 +794,7 @@ instance Floating Float32
 
 data Ptr a = MkPtr RawPtr
 
-def castPtr {a b} (ptr: Ptr a) : Ptr b =
+def cast_ptr {a b} (ptr: Ptr a) : Ptr b =
   (MkPtr rawPtr) = ptr
   MkPtr rawPtr
 
