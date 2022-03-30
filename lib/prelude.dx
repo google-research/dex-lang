@@ -801,32 +801,32 @@ def cast_ptr {a b} (ptr: Ptr a) : Ptr b =
 interface Storable a
   store : Ptr a -> a -> {IO} Unit
   load  : Ptr a ->      {IO} a
-  storageSize a : Int
+  storage_size a : Int
 
 instance Storable Word8
   store = \(MkPtr ptr) x. %ptrStore ptr x
   load  = \(MkPtr ptr)  . %ptrLoad  ptr
-  storageSize = 1
+  storage_size = 1
 
 instance Storable Int32
   store = \(MkPtr ptr) x. %ptrStore (internal_cast %Int32Ptr ptr) x
   load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Int32Ptr ptr)
-  storageSize = 4
+  storage_size = 4
 
 instance Storable Float32
   store = \(MkPtr ptr) x. %ptrStore (internal_cast %Float32Ptr ptr) x
   load = \(MkPtr ptr)   . %ptrLoad  (internal_cast %Float32Ptr ptr)
-  storageSize = 4
+  storage_size = 4
 
 instance {a} Storable (Ptr a)
   store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast %PtrPtr ptr) x
   load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast %PtrPtr ptr)
-  storageSize = 8  -- TODO: something more portable?
+  storage_size = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
 
 def malloc {a} [Storable a] (n:Int) : {IO} (Ptr a) =
-  numBytes = storageSize a * n
+  numBytes = storage_size a * n
   MkPtr $ %alloc numBytes
 
 def free {a} (ptr:Ptr a) : {IO} Unit =
@@ -835,7 +835,7 @@ def free {a} (ptr:Ptr a) : {IO} Unit =
 
 def (+>>) {a} [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   (MkPtr ptr') = ptr
-  i' = i * storageSize a
+  i' = i * storage_size a
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: consider making a Storable instance for tables instead

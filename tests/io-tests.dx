@@ -38,7 +38,7 @@ unsafe_io \().
 > 9 is odd
 > [(), (), (), (), (), (), (), (), (), ()]
 
-:p storageSize Int
+:p storage_size Int
 > 4
 
 :p unsafe_io \().
