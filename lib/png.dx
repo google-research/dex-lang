@@ -1,6 +1,6 @@
 '## Base 64 encoder
 
-encodingTable =
+encoding_table =
   ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
    'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
@@ -13,7 +13,7 @@ encodingTable =
 -- TODO: make `Word8` an index set instead of using `Fin 256`
 decodingTable : Fin 256 => Maybe Char =
   for i:(Fin 256).
-    idx = linear_search encodingTable (i_to_w8 (ordinal i))
+    idx = linear_search encoding_table (i_to_w8 (ordinal i))
     case idx of
       Nothing -> Nothing
       Just x  -> Just $ i_to_w8 $ ordinal x
@@ -47,7 +47,7 @@ def bytesToBase64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
     ,  c                    ]
 
 def base64ToAscii (x:Base64) : Char =
-  encodingTable.(from_ordinal _ (w8_to_i x))
+  encoding_table.(from_ordinal _ (w8_to_i x))
 
 def encodeChunk (chunk : Fin 3 => Char) : Fin 4 => Char =
   map base64ToAscii $ bytesToBase64s chunk
