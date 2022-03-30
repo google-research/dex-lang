@@ -13,7 +13,7 @@ encodingTable =
 -- TODO: make `Word8` an index set instead of using `Fin 256`
 decodingTable : Fin 256 => Maybe Char =
   for i:(Fin 256).
-    idx = linearSearch encodingTable (i_to_w8 (ordinal i))
+    idx = linear_search encodingTable (i_to_w8 (ordinal i))
     case idx of
       Nothing -> Nothing
       Just x  -> Just $ i_to_w8 $ ordinal x

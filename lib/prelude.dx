@@ -2085,7 +2085,7 @@ def seq_maybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
     True  -> Nothing
     False -> Just $ map from_just xs
 
-def linearSearch {n a} [Eq a] (xs:n=>a) (query:a) : Maybe n =
+def linear_search {n a} [Eq a] (xs:n=>a) (query:a) : Maybe n =
   yield_state Nothing \ref. for i.
     case xs.i == query of
       True  -> ref := Just i
