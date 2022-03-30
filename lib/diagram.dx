@@ -142,19 +142,19 @@ def optionalHtmlColor(c: Maybe HtmlColor) : String =
 
 @noinline
 def attrString (attr:GeomStyle) : String =
-  (   ("stroke"       <=> (optionalHtmlColor $ getAt #strokeColor attr))
-  <+> ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
-  <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
+  (   ("stroke"       <=> (optionalHtmlColor $ get_at #strokeColor attr))
+  <+> ("fill"         <=> (optionalHtmlColor $ get_at #fillColor   attr))
+  <+> ("stroke-width" <=> (get_at #strokeWidth attr)))
 
 @noinline
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
-  solidAttr = setAt #fillColor (getAt #strokeColor attr) attr
+  solidAttr = setAt #fillColor (get_at #strokeColor attr) attr
 
   groupEle = \attr. tagBracketsAttr "g" (attrString attr)
   case geom of
     PointGeom ->
-      pointAttr = setAt #fillColor (getAt #strokeColor attr) attr
+      pointAttr = setAt #fillColor (get_at #strokeColor attr) attr
       groupEle solidAttr $ selfClosingBrackets $
         ("circle" <+>
          "cx" <=> x <.>

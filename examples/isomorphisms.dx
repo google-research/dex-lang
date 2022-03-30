@@ -76,10 +76,10 @@ that produce isos. We will start with the first two:
 '## Record accessors and lens-like helpers
 Record accessor isomorphisms can be passed into the helper function `getAt`:
 
-:t getAt
+:t get_at
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> a -> b)
 
-:p getAt #foo {foo=1, bar=2.0}
+:p get_at #foo {foo=1, bar=2.0}
 > 1
 
 'We can also do other types of things:
@@ -99,7 +99,7 @@ we can select everything except for a particular field:
 :t exceptLens
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> Iso a (c & b))
 
-:p getAt (exceptLens #foo) {foo=1, bar=2.0, baz=3}
+:p get_at (exceptLens #foo) {foo=1, bar=2.0, baz=3}
 > {bar = 2., baz = 3}
 
 

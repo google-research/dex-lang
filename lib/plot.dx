@@ -22,7 +22,7 @@ def Plot (n:Type) [Ix n] (a:Type) (b:Type) (c:Type) : Type =
 
 def Color : Type = Fin 3 => Float
 
-def applyScale {a} (s:Scale a) (x:a) : Maybe Float = getAt #mapping s x
+def applyScale {a} (s:Scale a) (x:a) : Maybe Float = get_at #mapping s x
 
 unitTypeScale : Scale Unit =
   { mapping = \(). Just 0.0
@@ -38,14 +38,14 @@ unitIntervalScale : Scale Float =
   , range   = AsList _ [Interval 0.0 1.0] }
 
 def mapScale {a b} (s:Scale a) (f: b -> a) : Scale b =
-  { mapping = \x. getAt #mapping s (f x)
-  , range = getAt #range s }
+  { mapping = \x. get_at #mapping s (f x)
+  , range = get_at #range s }
 
 def floatScale (xmin:Float) (xmax:Float) : Scale Float =
   mapScale unitIntervalScale (\x. (x - xmin) / (xmax - xmin))
 
 def getScaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
-  applyScale (getAt #scale sd) (getAt #dat sd).i
+  applyScale (get_at #scale sd) (get_at #dat sd).i
 
 lowColor  = [1.0, 0.5, 0.0]
 highColor = [0.0, 0.5, 1.0]
@@ -62,9 +62,9 @@ def colorScale (x:Float) : HtmlColor =
 
 def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   points = concatDiagrams for i.
-    x = getScaled (getAt #xs plot) i
-    y = getScaled (getAt #ys plot) i
-    c = getScaled (getAt #cs plot) i
+    x = getScaled (get_at #xs plot) i
+    y = getScaled (get_at #ys plot) i
+    c = getScaled (get_at #cs plot) i
     -- TODO: nested may-fail patterns would make this much better
     case x of
       Just x' -> case y of
@@ -97,13 +97,13 @@ def autoScale {n} (xs:n=>Float) : ScaledData n Float =
 
 def setXData {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c =
   -- We can't use `setAt` here because we're changing the type
-  {xs = xs, ys = getAt #ys plot, cs = getAt #cs plot}
+  {xs = xs, ys = get_at #ys plot, cs = get_at #cs plot}
 
 def setYData {n a b c new} (ys:ScaledData n new) (plot:Plot n a b c) : Plot n a new c =
-  {xs = getAt #xs plot, ys = ys, cs = getAt #cs plot}
+  {xs = get_at #xs plot, ys = ys, cs = get_at #cs plot}
 
 def setCData {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
-  {xs = getAt #xs plot, ys = getAt #ys plot, cs = cs}
+  {xs = get_at #xs plot, ys = get_at #ys plot, cs = cs}
 
 def xyPlot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
   blankPlot |> setXData (autoScale xs) |> setYData (autoScale ys)

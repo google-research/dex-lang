@@ -1179,7 +1179,7 @@ def (<<&) {a b c} (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
 '### Lens-like accessors
 note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
 
-def getAt  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
+def get_at  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
 def popAt  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
 def pushAt {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
 def setAt  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
@@ -1270,9 +1270,9 @@ def withDynamicBuffer {a b} [Storable a]
 
 def maybeIncreaseBufferSize {a} [Storable a]
       ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {IO} Unit =
-  size    = load $ getAt #size    db
-  maxSize = load $ getAt #maxSize db
-  bufPtr  = load $ getAt #buffer  db
+  size    = load $ get_at #size    db
+  maxSize = load $ get_at #maxSize db
+  bufPtr  = load $ get_at #buffer  db
   newSize = sizeDelta + size
   if newSize > maxSize then
     -- TODO: maybe this should use integer arithmetic?
@@ -1280,8 +1280,8 @@ def maybeIncreaseBufferSize {a} [Storable a]
     newBufPtr = malloc newMaxSize
     memcpy newBufPtr bufPtr size
     free bufPtr
-    store (getAt #maxSize db) newMaxSize
-    store (getAt #buffer  db) newBufPtr
+    store (get_at #maxSize db) newMaxSize
+    store (get_at #buffer  db) newBufPtr
 
 def addAtIntPtr (ptr: Ptr Int) (n:Int) : {IO} Unit =
   store ptr (load ptr + n)
@@ -1291,16 +1291,16 @@ def extendDynBuffer {a} [Storable a]
   (AsList n xs) = new
   maybeIncreaseBufferSize buf n
   (MkDynBuffer db) = buf
-  bufPtr = load $ getAt #buffer db
-  size   = load $ getAt #size db
+  bufPtr = load $ get_at #buffer db
+  size   = load $ get_at #size db
   store_table (bufPtr +>> size) xs
-  addAtIntPtr (getAt #size db) n
+  addAtIntPtr (get_at #size db) n
 
 def loadDynBuffer {a} [Storable a]
       (buf: DynBuffer a) : {IO} (List a) =
   (MkDynBuffer db) = buf
-  bufPtr = load $ getAt #buffer db
-  size   = load $ getAt #size db
+  bufPtr = load $ get_at #buffer db
+  size   = load $ get_at #size db
   AsList size $ table_from_ptr _ bufPtr
 
 def pushDynBuffer {a} [Storable a]

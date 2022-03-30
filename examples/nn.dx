@@ -22,11 +22,11 @@ data Layer inp:Type out:Type params:Type =
 
 def forward (l:Layer i o p) (p : p) (x : i): o =
   (AsLayer l' ) = l
-  (getAt #forward l') p x
+  (get_at #forward l') p x
 
 def init (l:Layer i o p) (k:Key)  : p  =
   (AsLayer l') = l
-  (getAt #init l') k
+  (get_at #init l') k
 
 
 ' ## Layers 

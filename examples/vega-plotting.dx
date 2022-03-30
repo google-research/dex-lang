@@ -92,7 +92,7 @@ instance [ToJSON v] ToJSON (List (String & v))
 
 def wrapCol [ToJSON d]  (iso: Iso a (d & c)) (x:n=>a) : n=> Value =
     -- Helper function. Returns JSON of a column of a record
-    for i. toJSON $ getAt iso x.i
+    for i. toJSON $ get_at iso x.i
 
 ' ## Declarative Graph Grammars
 Graph grammars are a style of graphing that aims to separate the data representation
@@ -217,20 +217,20 @@ instance [ToJSON v] ToJSON (VLChart r c v)
     -- Make the data
     jdf = toJSON $ for row : r. toJSON $ for col : c.
                    ("col" <> (show $ ordinal col),
-                    toJSON (getAt #rows df.col).row)
+                    toJSON (get_at #rows df.col).row)
     jdata = ("data", toJSON [("values", jdf)])
 
     -- Make the encodings
     jencodings = toJSON $ concat $ for col : c.
-        (AsList v encopts) = getAt #encodings df.col
+        (AsList v encopts) = get_at #encodings df.col
         AsList v $ for f.
            (WithOpts channel encoptions) = encopts.f
            (show channel,
             mergeOpts encoptions
             [
               ("field", "col" <> (show $ ordinal col)),
-              ("type",  show $ getAt #encType df.col),
-              ("title", getAt #title df.col)
+              ("type",  show $ get_at #encType df.col),
+              ("title", get_at #title df.col)
               ])
     jencode = ("encoding", jencodings)
     mergeOpts opts [jdata, jmark, jencode]

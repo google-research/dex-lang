@@ -232,7 +232,7 @@ def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   yieldAccum (AddMonoid Float) \radiance.
     run_state  noFilter \filter.
      run_state initRay  \ray.
-      boundedIter (getAt #maxBounces params) () \i.
+      boundedIter (get_at #maxBounces params) () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->
@@ -256,7 +256,7 @@ Camera = {
 -- TODO: might be better with an anonymous dependent pair for the result
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
-  halfWidth = getAt #halfWidth camera
+  halfWidth = get_at #halfWidth camera
   pixHalfWidth = halfWidth / i_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
@@ -264,20 +264,20 @@ def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
     [kx, ky] = splitKey key
     x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
-    (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
+    (get_at #pos camera, normalize [x, y, neg (get_at #sensorDist camera)])
 
 def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
-  n = getAt #numPix camera
+  n = get_at #numPix camera
   rays = cameraRays n camera
   rootKey = newKey 0
   image = for i j.
-    pixKey = if getAt #shareSeed params
+    pixKey = if get_at #shareSeed params
       then rootKey
       else ixkey (ixkey rootKey i) j
     sampleRayColor : Key -> Color =  \k.
       [k1, k2] = splitKey k
       trace params scene (rays.i.j k1) k2
-    sampleAveraged sampleRayColor (getAt #numSamples params) pixKey
+    sampleAveraged sampleRayColor (get_at #numSamples params) pixKey
   MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
 
 ' ### Define the scene and render it
