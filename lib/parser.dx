@@ -2,7 +2,7 @@
 
 'Utilities unrelated to parsing
 
-def fromOrdinalExc (n:Type) [Ix n] (i:Int) : {Except} n =
+def from_ordinal_exc (n:Type) [Ix n] (i:Int) : {Except} n =
   if (0 <= i) && (i < size n)
     then unsafe_from_ordinal _ i
     else throw ()
@@ -15,7 +15,7 @@ def push {h a} (ref:Ref h (List a)) (x:a) : {State h} Unit =
 
 def indexList {a} (l:List a) (i:Int) : {Except} a =
   (AsList n xs) = l
-  xs.(fromOrdinalExc _ i)
+  xs.(from_ordinal_exc _ i)
 
 'The Parser type
 
