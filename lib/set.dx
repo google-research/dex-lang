@@ -20,7 +20,7 @@ def all_except_last {n a} (xs:n=>a) : List a =
   allButLast = view i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
   (AsList _ allButLast)
 
-def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
+def merge_unique_sorted_lists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
   -- This function is associative, for use in a monoidal reduction.
   -- Assumes all xs are <= all ys.
   -- The element at the end of xs might equal the
@@ -38,7 +38,7 @@ def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
 
 def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
   xlists = for i:n. (AsList 1 [xs.i])
-  reduce (AsList 0 []) mergeUniqueSortedLists xlists
+  reduce (AsList 0 []) merge_unique_sorted_lists xlists
 
 
 '### Sets
