@@ -101,7 +101,7 @@ instance {set} Eq (StringSetIx set)
 --   ixValue  : n -> IxValueType n
 --   lookupIx : IxValueType n -> n
 
-def stringToSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
+def string_to_set_ix {set:Set String} (s:String) : Maybe (StringSetIx set) =
   (UnsafeAsSet n elements) = set
   maybeIx = search_sorted elements s
   case maybeIx of

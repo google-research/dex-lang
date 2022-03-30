@@ -67,15 +67,15 @@ roundTrip = for i:(StringSetIx names2).
 -- Check that index to string and string to index are inverses.
 roundTrip2 = for i:(StringSetIx names2).
   s = setIxToString i
-  ix = stringToSetIx s
+  ix = string_to_set_ix s
   i == from_just ix
 :p all roundTrip2
 > True
 
-setix : StringSetIx names2 = from_just $ stringToSetIx "Bob"
+setix : StringSetIx names2 = from_just $ string_to_set_ix "Bob"
 :p setix
 > (MkSetIx 1)
 
-setix2 : StringSetIx names2 = from_just $ stringToSetIx "Charlie"
+setix2 : StringSetIx names2 = from_just $ string_to_set_ix "Charlie"
 :p setix2
 > (MkSetIx 2)
