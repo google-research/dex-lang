@@ -1181,9 +1181,9 @@ note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
 
 def get_at  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
 def pop_at  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
-def pushAt {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
+def push_at {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
 def setAt  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
-  pushAt iso x $ pop_at iso r
+  push_at iso x $ pop_at iso r
 
 '### Prism-like accessors
 note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
