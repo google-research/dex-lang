@@ -28,7 +28,7 @@ def parse {a h} (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a 
   (MkParser f) = parser
   f handle
 
-def runParserPartial {a} (s:String) (parser:Parser a) : Maybe a =
+def run_parser_partial {a} (s:String) (parser:Parser a) : Maybe a =
   (MkParser f) = parser
   withState 0 \pos.
     catch $ do
@@ -57,7 +57,7 @@ def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
 def return {a} (x:a) : Parser a = MkParser \_. x
 
 def runParser {a} (s:String) (parser:Parser a) : Maybe a =
-  runParserPartial s $ MkParser \h.
+  run_parser_partial s $ MkParser \h.
     ans = parse h parser
     _   = parse h pEOF
     ans
