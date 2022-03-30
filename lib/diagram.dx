@@ -15,7 +15,7 @@ HtmlColor : Type = Fin 3 => Word8
 
 foreign "showHex" showHexFFI : Word8 -> {IO} (Int32 & RawPtr)
 
-def showHex (x:Word8) : String = unsafeIO \().
+def showHex (x:Word8) : String = unsafe_io \().
   (n, ptr) = showHexFFI x
   stringFromCharPtr n (MkPtr ptr)
 

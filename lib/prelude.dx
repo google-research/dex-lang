@@ -572,10 +572,10 @@ def yield_state
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
       : {|eff} s = snd $ run_state init action
 
-def unsafeIO {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
+def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
   %runIO f
 
-def unreachable {a} (():Unit) : a = unsafeIO do
+def unreachable {a} (():Unit) : a = unsafe_io do
   %throwError a
 
 '## Type classes
@@ -1333,28 +1333,28 @@ instance Show String
 foreign "showInt32" showInt32 : Int32 -> {IO} (Int32 & RawPtr)
 
 instance Show Int32
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showInt32 x
     stringFromCharPtr n $ MkPtr ptr
 
 foreign "showInt64" showInt64 : Int64 -> {IO} (Int32 & RawPtr)
 
 instance Show Int64
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showInt64 x
     stringFromCharPtr n $ MkPtr ptr
 
 foreign "showFloat32" showFloat32 : Float32 -> {IO} (Int32 & RawPtr)
 
 instance Show Float32
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showFloat32 x
     stringFromCharPtr n $ MkPtr ptr
 
 foreign "showFloat64" showFloat64 : Float64 -> {IO} (Int32 & RawPtr)
 
 instance Show Float64
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showFloat64 x
     stringFromCharPtr n $ MkPtr ptr
 
@@ -1556,7 +1556,7 @@ Not to be confused with a partially applied function
 
 '### Error throwing
 
-def error {a} (s:String) : a = unsafeIO do
+def error {a} (s:String) : a = unsafe_io do
   print s
   %throwError a
 
@@ -1703,7 +1703,7 @@ Such as `randMat` with samples from the distribution of floating point matrices 
 
 foreign "randunif" randunifFFI : Word64 -> {IO} Float64
 
-def rand (k:Key) : Float =  unsafeIO do f64_to_f $ randunifFFI k
+def rand (k:Key) : Float =  unsafe_io do f64_to_f $ randunifFFI k
 def randVec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
@@ -2167,7 +2167,7 @@ def evalpoly {n v} [VSpace v] (coefficients:n=>v) (x:Float) : v =
 '## TestMode
 TODO: move this to be in Testing Helpers
 
-def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
+def dex_test_mode (():Unit) : Bool = unsafe_io do checkEnv "DEX_TEST_MODE"
 
 '## Exception effect
 TODO: move `error` and `todo` to here.

@@ -323,14 +323,14 @@ def pixel (x:Char) : Float32 =
 
 def getIm : Batch => Image =
   -- File is unsigned bytes offset with 16 starting bytes
-  (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
+  (AsList _ im) = unsafe_io do readFile "examples/t10k-images-idx3-ubyte"
   raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
   for b: Batch i j.
     pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
   -- File is unsigned bytes offset with 8 starting bytes
-  (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
+  (AsList _ lab) = unsafe_io do readFile "examples/t10k-labels-idx1-ubyte"
   r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
   for i. (w8_to_i r.i @ Class)
 

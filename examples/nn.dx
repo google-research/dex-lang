@@ -196,13 +196,13 @@ def pixel (x:Char) : Float32 =
                False -> r
 
 def getIm : Batch => Image = 
-    (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
+    (AsList _ im) = unsafe_io do readFile "examples/mnist.bin"
     raw = unsafeCastTable Full im
     for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
         pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
-    (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
+    (AsList _ im2) = unsafe_io do readFile "examples/labels.bin"
     r = unsafeCastTable Batch im2
     for i. (w8_to_i r.i @ Class)
 
