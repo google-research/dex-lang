@@ -57,7 +57,7 @@ def interpolate {a} [VSpace a] (low:a) (high:a) (x:Float) : a =
 def make_rgb_color (c : Color) : HtmlColor =
   for i. i_to_w8 $ FToI $ floor (255.0 * c.i)
 
-def colorScale (x:Float) : HtmlColor =
+def color_scale (x:Float) : HtmlColor =
   make_rgb_color $ interpolate low_color high_color x
 
 def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
@@ -70,7 +70,7 @@ def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
       Just x' -> case y of
         Just y' -> case c of
           Just c' ->
-            point_diagram |> move_xy (x', y') |> set_stroke_color (colorScale c' )
+            point_diagram |> move_xy (x', y') |> set_stroke_color (color_scale c' )
           Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty
