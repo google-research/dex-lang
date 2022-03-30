@@ -847,7 +847,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emitOp (VariantLift prev value')
   UIntLit x  -> do
-    lookupSourceMap "fromInteger" >>= \case
+    lookupSourceMap "from_integer" >>= \case
       Nothing ->
         -- fallback for missing protolude
         matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x

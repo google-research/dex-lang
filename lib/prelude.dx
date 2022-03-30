@@ -52,19 +52,19 @@ def i64_to_raw_ptr (x:Int64 ) : RawPtr = internal_cast _ x
 def raw_ptr_to_i64 (x:RawPtr) : Int64  = internal_cast _ x
 
 interface FromInteger a
-  fromInteger : Int64 -> a
+  from_integer : Int64 -> a
 
 instance FromInteger Float32
-  fromInteger = \x. i_to_f $ i64_to_i x
+  from_integer = \x. i_to_f $ i64_to_i x
 
 instance FromInteger Int32
-  fromInteger = \x. i64_to_i x
+  from_integer = \x. i64_to_i x
 
 instance FromInteger Float64
-  fromInteger = \x. f_to_f64 $ i_to_f $ i64_to_i x
+  from_integer = \x. f_to_f64 $ i_to_f $ i64_to_i x
 
 instance FromInteger Int64
-  fromInteger = \x. x
+  from_integer = \x. x
 
 '## Bitwise operations
 
