@@ -839,7 +839,7 @@ def (+>>) {a} [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: consider making a Storable instance for tables instead
-def storeTab {a n} [Storable a] (ptr: Ptr a) (tab:n=>a) : {IO} Unit =
+def store_table {a n} [Storable a] (ptr: Ptr a) (tab:n=>a) : {IO} Unit =
   for_ i. store (ptr +>> ordinal i) tab.i
 
 def memcpy {a} [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {IO} Unit =
@@ -1293,7 +1293,7 @@ def extendDynBuffer {a} [Storable a]
   (MkDynBuffer db) = buf
   bufPtr = load $ getAt #buffer db
   size   = load $ getAt #size db
-  storeTab (bufPtr +>> size) xs
+  store_table (bufPtr +>> size) xs
   addAtIntPtr (getAt #size db) n
 
 def loadDynBuffer {a} [Storable a]
