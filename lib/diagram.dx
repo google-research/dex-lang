@@ -97,7 +97,7 @@ def setFillColor   (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #fi
 def set_stroke_color (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #strokeColor (Just c)
 def set_stroke_width (w:Int)       : Diagram -> Diagram = update_geom $ set_at #strokeWidth w
 def remove_stroke                 : Diagram -> Diagram = update_geom $ set_at #strokeColor Nothing
-def removeFill                   : Diagram -> Diagram = update_geom $ set_at #fillColor   Nothing
+def remove_fill                   : Diagram -> Diagram = update_geom $ set_at #fillColor   Nothing
 
 '## Serialization to SVG string
 
