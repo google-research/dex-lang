@@ -20,7 +20,7 @@ set2 = to_set ["Bob", "Xeno", "Charlie"]
 >                , (AsList 7 "Charlie")
 >                , (AsList 4 "Xeno") ])
 
-:p setIntersect set1 set2
+:p set_intersect set1 set2
 > (UnsafeAsSet 2 [(AsList 3 "Bob"), (AsList 4 "Xeno")])
 
 :p remove_duplicates_from_sorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
@@ -29,7 +29,7 @@ set2 = to_set ["Bob", "Xeno", "Charlie"]
 :p set1 == (set_union set1 set1)
 > True
 
-:p set1 == (setIntersect set1 set1)
+:p set1 == (set_intersect set1 set1)
 > True
 
 '#### Empty set tests
@@ -42,13 +42,13 @@ emptyset = to_set ([]:(Fin 0)=>String)
 :p emptyset == (set_union emptyset emptyset)
 > True
 
-:p emptyset == (setIntersect emptyset emptyset)
+:p emptyset == (set_intersect emptyset emptyset)
 > True
 
 :p set1 == (set_union set1 emptyset)
 > True
 
-:p emptyset == (setIntersect set1 emptyset)
+:p emptyset == (set_intersect set1 emptyset)
 > True
 
 '### Set Index Set tests

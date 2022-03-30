@@ -67,7 +67,7 @@ def set_union {a}
   (AsList n' sorted_unique_xs) = remove_duplicates_from_sorted combined
   UnsafeAsSet _ sorted_unique_xs
 
-def setIntersect {a}
+def set_intersect {a}
       ((UnsafeAsSet nx xs):Set a)
       ((UnsafeAsSet ny ys):Set a) : Set a =
   -- This could be done in O(nx + ny) instead of O(nx log ny).
