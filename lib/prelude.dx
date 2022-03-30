@@ -96,7 +96,7 @@ instance Bits Word64
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
-def lowWord  (x : Word64) : Word32 = internal_cast _ (x .>>. 32)
+def low_word  (x : Word64) : Word32 = internal_cast _ (x .>>. 32)
 def highWord (x : Word64) : Word32 = internal_cast _ x
 
 '### Basic Arithmetic
@@ -1660,12 +1660,12 @@ def threeFry2x32 (k:Word64) (count:Word64) : Word64 =
   rotations1 = [13, 15, 26, 6]
   rotations2 = [17, 29, 16, 24]
 
-  k0 = lowWord k
+  k0 = low_word k
   k1 = highWord k
   -- TODO: add a fromHex
   k2 = k0 .^. k1 .^. (i_to_w32 466688986) -- 0x1BD11BDA
 
-  x = lowWord count
+  x = low_word count
   y = highWord count
   x = x + k0
   y = y + k1
