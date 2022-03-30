@@ -855,7 +855,7 @@ def with_alloc {a b} [Storable a] (n:Int) (action: Ptr a -> {IO} b) : {IO} b =
   free ptr
   result
 
-def withTabPtr {a b n} [Storable a] (xs:n=>a) (action : Ptr a -> {IO} b) : {IO} b =
+def with_table_ptr {a b n} [Storable a] (xs:n=>a) (action : Ptr a -> {IO} b) : {IO} b =
   with_alloc (size n) \ptr.
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
@@ -1419,7 +1419,7 @@ data Stream mode:StreamMode = MkStream RawPtr
 -- TODO: check the string contains no nulls
 def withCString {a} (s:String) (action: CString -> {IO} a) : {IO} a =
   (AsList n s') = s <> "\NUL"
-  withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
+  with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
 
 '### Stream IO
 
@@ -1445,7 +1445,7 @@ def fclose {mode} (stream:Stream mode) : {IO} Unit =
 def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
-  withTabPtr s' \(MkPtr ptr).
+  with_table_ptr s' \(MkPtr ptr).
     fwriteFFI ptr (i_to_i64 1) (i_to_i64 n) stream'
   fflushFFI stream'
   ()

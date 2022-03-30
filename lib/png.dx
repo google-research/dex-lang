@@ -100,7 +100,7 @@ foreign "encodePNG" encodePNG : RawPtr -> Int32 -> Int32 -> {IO} (Int32 & RawPtr
 
 def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
-  withTabPtr imgFlat \ptr.
+  with_table_ptr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
     (n, ptr') = encodePNG rawPtr (size m) (size n)
     toList $ tabFromPtr (Fin n) $ MkPtr ptr'
