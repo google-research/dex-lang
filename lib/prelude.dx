@@ -416,11 +416,11 @@ data Maybe a =
   Nothing
   Just a
 
-def isNothing {a} (x:Maybe a) : Bool = case x of
+def is_nothing {a} (x:Maybe a) : Bool = case x of
   Nothing -> True
   Just _ -> False
 
-def isJust {a} (x:Maybe a) : Bool = not $ isNothing x
+def isJust {a} (x:Maybe a) : Bool = not $ is_nothing x
 
 def maybe {a b} (d: b) (f : (a -> b)) (x: Maybe a) : b =
   case x of
@@ -1469,7 +1469,7 @@ def liftState {a b c h eff} (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|ef
 def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
   result = yieldState Nothing \resultRef. withState 0 \i.
     while do
-      continue = isNothing $ get resultRef
+      continue = is_nothing $ get resultRef
       if continue then
         case liftState resultRef (liftState i body) (get i) of
           Continue -> i := get i + 1
@@ -2081,7 +2081,7 @@ def anySat {a n} (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 def seqMaybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
-  case anySat isNothing xs of
+  case anySat is_nothing xs of
     True  -> Nothing
     False -> Just $ map fromJust xs
 
