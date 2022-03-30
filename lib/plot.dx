@@ -61,7 +61,7 @@ def colorScale (x:Float) : HtmlColor =
   makeRGBColor $ interpolate lowColor highColor x
 
 def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
-  points = concatDiagrams for i.
+  points = concat_diagrams for i.
     x = getScaled (get_at #xs plot) i
     y = getScaled (get_at #ys plot) i
     c = getScaled (get_at #cs plot) i

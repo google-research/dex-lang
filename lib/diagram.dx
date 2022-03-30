@@ -42,7 +42,7 @@ instance Monoid Diagram
   mempty = MkDiagram mempty
   mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
 
-def concatDiagrams {n} (diagrams:n=>Diagram) : Diagram =
+def concat_diagrams {n} (diagrams:n=>Diagram) : Diagram =
   MkDiagram $ concat for i.
     (MkDiagram d) = diagrams.i
     d
