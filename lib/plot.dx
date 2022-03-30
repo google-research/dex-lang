@@ -128,7 +128,7 @@ def matshow {n m} (img:n=>m=>Float) : Html =
   low  = minimum  $ for (i,j). img.i.j
   high = maximum $ for (i,j). img.i.j
   range = high - low
-  imgToHtml $ makePNG for i j.
+  imgToHtml $ make_png for i j.
     x = if range == 0.0
       then floatTo8Bit $ 0.5
       else floatTo8Bit $ (img.i.j - low) / range

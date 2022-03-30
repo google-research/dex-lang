@@ -98,7 +98,7 @@ Gif  : Type = String
 
 foreign "encodePNG" encodePNG : RawPtr -> Int32 -> Int32 -> {IO} (Int32 & RawPtr)
 
-def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
+def make_png {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
   (AsList _ imgFlat) = to_list for (i,j,k). img.i.j.k
   with_table_ptr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
@@ -124,7 +124,7 @@ def floatTo8Bit (x:Float) : Word8 =
   i_to_w8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
 def imgToPng {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
-  makePNG for i j k. floatTo8Bit img.i.j.k
+  make_png for i j k. floatTo8Bit img.i.j.k
 
 '## API entry point
 
