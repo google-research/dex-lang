@@ -16,21 +16,21 @@ def cycleThree {a b c} : Iso (a & b & c) (b & c & a) =
 'Isomorphisms can be applied with `appIso`, applied in reverse with `revIso`,
 and flipped with `flipIso`
 
-:p appIso cycleThree (1, 2.0, 3)
+:p app_iso cycleThree (1, 2.0, 3)
 > (2., (3, 1))
 
 :p revIso cycleThree (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p appIso (flipIso cycleThree) (1, 2.0, 3)
+:p app_iso (flipIso cycleThree) (1, 2.0, 3)
 > (3, (1, 2.))
 
 'They can also be composed with `&>>`:
 
-:p appIso (cycleThree &>> cycleThree) (1, 2.0, 3)
+:p app_iso (cycleThree &>> cycleThree) (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p appIso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
+:p app_iso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
 > (1, (2., 3))
 
 'Note that we assume but do not check that the isomorphism is lawful (i.e.
@@ -196,7 +196,7 @@ def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
   get_size = \(). size n * size m * size q
-  ordinal = ordinal <<< appIso abcToTuple
+  ordinal = ordinal <<< app_iso abcToTuple
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abcToTuple
 
 def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
@@ -205,7 +205,7 @@ def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
   get_size = \(). size n * size m
-  ordinal = ordinal <<< appIso bcToPair
+  ordinal = ordinal <<< app_iso bcToPair
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso bcToPair
 
 :p
@@ -272,7 +272,7 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
   get_size = \(). size n + size m + size q
-  ordinal = ordinal <<< appIso abcToEither
+  ordinal = ordinal <<< app_iso abcToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abcToEither
 
 def abToEither {a b} : Iso {a:a | b:b} (a|b) =
@@ -285,7 +285,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
   get_size = \(). size n + size m
-  ordinal = ordinal <<< appIso abToEither
+  ordinal = ordinal <<< app_iso abToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abToEither
 
 def acToEither {a c} : Iso {a:a | c:c} (a|c) =
@@ -298,7 +298,7 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
   get_size = \(). size n + size m
-  ordinal = ordinal <<< appIso acToEither
+  ordinal = ordinal <<< app_iso acToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso acToEither
 
 :p

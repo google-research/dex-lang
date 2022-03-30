@@ -572,7 +572,7 @@ def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
 
 instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
   get_size = \(). size n + size m
-  ordinal = ordinal <<< appIso wbToEither
+  ordinal = ordinal <<< app_iso wbToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso wbToEither
 
 -- Sum types as flattened index sets!

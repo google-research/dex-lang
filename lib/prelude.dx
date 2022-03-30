@@ -1157,7 +1157,7 @@ def arg_filter {a n} (condition:a->Bool) (xs:n=>a) : List n =
 
 data Iso a b = MkIso { fwd: a -> b & bwd: b -> a }
 
-def appIso {a b} (iso: Iso a b) (x:a) : b =
+def app_iso {a b} (iso: Iso a b) (x:a) : b =
   (MkIso {fwd, bwd}) = iso
   fwd x
 
@@ -1165,7 +1165,7 @@ def flipIso {a b} (iso: Iso a b) : Iso b a =
   (MkIso {fwd, bwd}) = iso
   MkIso {fwd=bwd, bwd=fwd}
 
-def revIso {a b} (iso: Iso a b) (x:b) : a = appIso (flipIso iso) x
+def revIso {a b} (iso: Iso a b) (x:b) : a = app_iso (flipIso iso) x
 
 def idIso {a} : Iso a a = MkIso {fwd=id, bwd=id}
 
@@ -1179,8 +1179,8 @@ def (<<&) {a b c} (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
 '### Lens-like accessors
 note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
 
-def getAt  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
-def popAt  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
+def getAt  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
+def popAt  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
 def pushAt {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
 def setAt  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
   pushAt iso x $ popAt iso r
@@ -1189,7 +1189,7 @@ def setAt  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
 note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
 
 def matchWith {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
-  case appIso iso x of
+  case app_iso iso x of
     Left x -> Just x
     Right _ -> Nothing
 def buildWith {a b c} (iso: Iso a (b | c)) (x: b) : a = revIso iso $ Left x
