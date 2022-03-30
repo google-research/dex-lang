@@ -111,11 +111,11 @@ def (<.>) (xs:String) (ys:String) : String = str_cat xs ys
 def quote (s:String) : String = "\"" <.> s <.> "\""
 
 @noinline
-def strSpaceCatUncurried ((s1,s2):(String & String)) : String =
+def str_space_cat_uncurried ((s1,s2):(String & String)) : String =
   s1 <.> " " <.> s2
 
 def (<+>) {a b} [Show a, Show b] (s1:a) (s2:b) : String =
-  strSpaceCatUncurried ((show s1), (show s2))
+  str_space_cat_uncurried ((show s1), (show s2))
 
 def selfClosingBrackets (s:String) : String = "<" <.> s <.> "/>"
 
