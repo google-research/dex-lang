@@ -120,9 +120,9 @@ init_velocity = for i:N j:M k:(Fin 2).
 
 -- Create diagonally-striped color pattern.
 init_color = for i:N j:M.
-  r = BToF $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
-  b = BToF $ (sin $ (i_to_f $ (ordinal j) - (ordinal i)) / 6.0) > 0.0
-  g = BToF $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 4.0) > 0.0
+  r = b_to_f $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
+  b = b_to_f $ (sin $ (i_to_f $ (ordinal j) - (ordinal i)) / 6.0) > 0.0
+  g = b_to_f $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 4.0) > 0.0
   [r, g, b]
 
 -- Run fluid sim and plot it.

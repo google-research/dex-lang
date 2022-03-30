@@ -17,7 +17,7 @@ def estimatePiArea (key:Key) : Float =
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0
-  4.0 * BToF inBounds
+  4.0 * b_to_f inBounds
 
 def estimatePiAvgVal (key:Key) : Float =
   x = rand key

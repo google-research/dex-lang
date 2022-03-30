@@ -12,7 +12,7 @@ def inBounds (z:Complex) : Bool = complex_abs z < tol
 def escapeTime (c:Complex) : Float =
   fst $ fold (0.0, zero) $ \i:(Fin 1000) (n, z).
     z' = update c z
-    (n + BToF (inBounds z'), z')
+    (n + b_to_f (inBounds z'), z')
 
 'Evaluate on a grid and plot the results
 
