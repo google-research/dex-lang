@@ -1,9 +1,9 @@
 def (+^) (x: Int) (y: Int) : Int = min (x + y) 255
 
 def histogram (hist_size: Int) (input : h=>w=>Int) : (Fin hist_size)=>Int =
-  snd $ withAccum \hist.
+  snd $ with_accum \hist.
     for i j.
       pos = input.i.j
       case 0 <= pos && pos < hist_size of
-        True  -> hist!(unsafeFromOrdinal _ pos) += 1
+        True  -> hist!(unsafe_from_ordinal _ pos) += 1
         False -> ()

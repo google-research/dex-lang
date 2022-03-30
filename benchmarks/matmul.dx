@@ -20,7 +20,7 @@ def matmul
   vectorTile = Fin VectorWidth
   colTile = (colVectors & vectorTile)
   (tile2d (\nt:(Tile n rowTile). \mt:(Tile m colTile).
-             ct = snd $ withAccum \acc.
+             ct = snd $ with_accum \acc.
                for l:k.
                  for i:rowTile.
                    ail = broadcastVector a.(nt +> i).l
@@ -35,7 +35,7 @@ def matmul
 --m = 80
 --loops = 1
 
-prng = newKey 0
+prng = new_key 0
 a = for i:(Fin n). for j:(Fin k). rand $ ixkey prng (i, j)
 b = for i:(Fin k). for j:(Fin m). rand $ ixkey prng (i, j)
 

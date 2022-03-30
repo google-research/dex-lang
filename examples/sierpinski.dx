@@ -4,7 +4,7 @@ import diagram
 import plot
 
 def update {n} (points:n=>Point) (key:Key) ((x,y):Point) : Point =
-  (x', y') = points.(randIdx key)
+  (x', y') = points.(rand_idx key)
   (0.5 * (x + x'), 0.5 * (y + y'))
 
 def runChain {a} (n:Int) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
@@ -12,7 +12,7 @@ def runChain {a} (n:Int) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
 
 trianglePoints : (Fin 3)=>Point = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 
-(xs, ys) = unzip $ runChain 3000 (update trianglePoints) (newKey 0) (0.0, 0.0)
+(xs, ys) = unzip $ runChain 3000 (update trianglePoints) (new_key 0) (0.0, 0.0)
 
-:html showPlot $ xyPlot xs ys
+:html show_plot $ xy_plot xs ys
 > <html output>

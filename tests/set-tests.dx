@@ -1,81 +1,81 @@
 import set
 
 -- check order invariance.
-:p (toSet ["Bob", "Alice", "Charlie"]) == (toSet ["Charlie", "Bob", "Alice"])
+:p (to_set ["Bob", "Alice", "Charlie"]) == (to_set ["Charlie", "Bob", "Alice"])
 > True
 
 -- check uniqueness.
-:p (toSet ["Bob", "Alice", "Alice", "Charlie"]) == (toSet ["Charlie", "Charlie", "Bob", "Alice"])
+:p (to_set ["Bob", "Alice", "Alice", "Charlie"]) == (to_set ["Charlie", "Charlie", "Bob", "Alice"])
 > True
 
-set1 = toSet ["Xeno", "Alice", "Bob"]
-set2 = toSet ["Bob", "Xeno", "Charlie"]
+set1 = to_set ["Xeno", "Alice", "Bob"]
+set2 = to_set ["Bob", "Xeno", "Charlie"]
 
 :p set1 == set2
 > False
 
-:p setUnion set1 set2
+:p set_union set1 set2
 > (UnsafeAsSet 4 [ (AsList 5 "Alice")
 >                , (AsList 3 "Bob")
 >                , (AsList 7 "Charlie")
 >                , (AsList 4 "Xeno") ])
 
-:p setIntersect set1 set2
+:p set_intersect set1 set2
 > (UnsafeAsSet 2 [(AsList 3 "Bob"), (AsList 4 "Xeno")])
 
-:p removeDuplicatesFromSorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
+:p remove_duplicates_from_sorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
 > (AsList 3 [(AsList 5 "Alice"), (AsList 3 "Bob"), (AsList 7 "Charlie")])
 
-:p set1 == (setUnion set1 set1)
+:p set1 == (set_union set1 set1)
 > True
 
-:p set1 == (setIntersect set1 set1)
+:p set1 == (set_intersect set1 set1)
 > True
 
 '#### Empty set tests
 
-emptyset = toSet ([]:(Fin 0)=>String)
+emptyset = to_set ([]:(Fin 0)=>String)
 
 :p emptyset == emptyset
 > True
 
-:p emptyset == (setUnion emptyset emptyset)
+:p emptyset == (set_union emptyset emptyset)
 > True
 
-:p emptyset == (setIntersect emptyset emptyset)
+:p emptyset == (set_intersect emptyset emptyset)
 > True
 
-:p set1 == (setUnion set1 emptyset)
+:p set1 == (set_union set1 emptyset)
 > True
 
-:p emptyset == (setIntersect set1 emptyset)
+:p emptyset == (set_intersect set1 emptyset)
 > True
 
 '### Set Index Set tests
 
-names2 = toSet ["Bob", "Alice", "Charlie", "Alice"]
+names2 = to_set ["Bob", "Alice", "Charlie", "Alice"]
 
 :p size (StringSetIx names2)
 > 3
 
 -- Check that ordinal and unsafeFromOrdinal are inverses.
 roundTrip = for i:(StringSetIx names2).
-  i == (unsafeFromOrdinal _ (ordinal i))
+  i == (unsafe_from_ordinal _ (ordinal i))
 :p all roundTrip
 > True
 
 -- Check that index to string and string to index are inverses.
 roundTrip2 = for i:(StringSetIx names2).
-  s = setIxToString i
-  ix = stringToSetIx s
-  i == fromJust ix
+  s = set_ix_to_string i
+  ix = string_to_set_ix s
+  i == from_just ix
 :p all roundTrip2
 > True
 
-setix : StringSetIx names2 = fromJust $ stringToSetIx "Bob"
+setix : StringSetIx names2 = from_just $ string_to_set_ix "Bob"
 :p setix
 > (MkSetIx 1)
 
-setix2 : StringSetIx names2 = fromJust $ stringToSetIx "Charlie"
+setix2 : StringSetIx names2 = from_just $ string_to_set_ix "Charlie"
 :p setix2
 > (MkSetIx 2)

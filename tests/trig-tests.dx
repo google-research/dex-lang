@@ -60,5 +60,5 @@ angles = linspace (Fin 11) (-pi + 0.001) (pi)
 :p tanh 1.2 ~~ ((sinh 1.2) / (cosh 1.2))
 > True
 
-:p tanh (FToF64 1.2) ~~ divide (sinh (FToF64 1.2)) (cosh (FToF64 1.2))
+:p tanh (f_to_f64 1.2) ~~ divide (sinh (f_to_f64 1.2)) (cosh (f_to_f64 1.2))
 > True

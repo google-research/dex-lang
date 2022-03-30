@@ -20,7 +20,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 :p catch do checkFloatInUnitInterval 0.2
 > (Just 0.2)
 
-:p yieldState 0 \ref.
+:p yield_state 0 \ref.
      catch do
        ref := 1
        assert False
@@ -42,7 +42,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 > (Just [23, 23, 23])
 
 -- Is this the result we want?
-:p yieldState zero \ref.
+:p yield_state zero \ref.
      catch do
        for i:(Fin 6).
          if (ordinal i `rem` 2) == 0
@@ -52,7 +52,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 > [0, 1, 0, 1, 0, 1]
 
 :p catch do
-     runState 0 \ref.
+     run_state 0 \ref.
        ref := 1
        assert False
        ref := 2
@@ -60,7 +60,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 
 -- https://github.com/google-research/dex-lang/issues/612
 def sashabug (h: Unit) : {Except} List Int =
-  yieldState mempty \results.
+  yield_state mempty \results.
       results := (get results) <> AsList 1 [2]
 
 catch do (catch do sashabug ())

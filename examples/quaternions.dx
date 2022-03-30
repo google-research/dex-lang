@@ -50,7 +50,7 @@ instance Add Quaternion
   zero = from_vec $ zero
 
 instance VSpace Quaternion
-  scaleVec = \ s x. from_vec (s .* as_vec x)
+  scale_vec = \ s x. from_vec (s .* as_vec x)
 
 
 ' ## Identity quaternion

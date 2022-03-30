@@ -373,7 +373,7 @@ def _make_bcast_expr(idx_names, out_shape, in_shape, x):
           for idx_name, out_size, in_size
           in zip(idx_names[-ndim:], out_shape[-ndim:], in_shape)]
   return Idx(x, tuple(idxs))
-unitIdx = App(App(Var('unsafeFromOrdinal'), FinType(Literal(1))), Literal(0))
+unitIdx = App(App(Var('unsafe_from_ordinal'), FinType(Literal(1))), Literal(0))
 
 expr_makers[lax.add_p] = partial(_broadcasting_binop, Var('add'))
 expr_makers[lax.sub_p] = partial(_broadcasting_binop, Var('sub'))
@@ -420,7 +420,7 @@ def _slice_lowering(ctx, x, start_indices, limit_indices, strides):
   idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
                               for sz in out_aval.shape)
   input_ixs = [Var(ix) if in_size == out_size else
-               App(App(Var('unsafeFromOrdinal'), FinType(Literal(in_size))),
+               App(App(Var('unsafe_from_ordinal'), FinType(Literal(in_size))),
                    BinOp(Literal(start), '+', App(Var('ordinal'), Var(ix))))
                for ix, in_size, out_size, start
                in zip(idx_names, in_aval.shape, out_aval.shape, start_indices)]
@@ -456,7 +456,7 @@ def _concatenate_lowering(ctx, *xs, dimension):
     xs_v = ctx.fresh('xs')
     return Block([
         Decl(xs_v, Table(tuple(xs)))
-      ], App(App(Var('unsafeCastTable'), FinType(Literal(dim_size * len(xs)))),
+      ], App(App(Var('unsafe_cast_table'), FinType(Literal(dim_size * len(xs)))),
               For((i,), (PairType(FinType(Literal(len(xs))), FinType(Literal(dim_size))),),
                   TabApp(TabApp(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
   # Irregular concatenation
@@ -464,6 +464,6 @@ def _concatenate_lowering(ctx, *xs, dimension):
   xs_v = ctx.fresh('xs')
   return Block([
         Decl(ConPattern('AsList', (None, xs_v)),
-             App(Var('concat'), Table(tuple(App(Var('toList'), x) for x in xs)))),
-      ], App(App(Var('unsafeCastTable'), FinType(Literal(out_aval.shape[0]))), Var(xs_v)))
+             App(Var('concat'), Table(tuple(App(Var('to_list'), x) for x in xs)))),
+      ], App(App(Var('unsafe_cast_table'), FinType(Literal(out_aval.shape[0]))), Var(xs_v)))
 expr_makers[lax.concatenate_p] = _concatenate_lowering

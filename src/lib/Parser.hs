@@ -246,7 +246,7 @@ uString = do
   (s, pos) <- withPos $ strLit
   let addSrc = WithSrcE (Just pos)
   let cs = map (addSrc . charExpr) s
-  return $ mkApp (addSrc "toList") $ addSrc $ UTabCon cs
+  return $ mkApp (addSrc "to_list") $ addSrc $ UTabCon cs
 
 uLit :: Parser (UExpr VoidS)
 uLit = withSrc $ uLitParser

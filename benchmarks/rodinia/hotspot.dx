@@ -15,14 +15,14 @@ tAmb = 80.0
 def (+|) (i:n) (off:Int) : n =
   newOrd = ordinal i + off
   case newOrd < size n of
-    True  -> unsafeFromOrdinal _ newOrd
+    True  -> unsafe_from_ordinal _ newOrd
     False -> i
 
 -- Assumes that off >= 0
 def (-|) (i:n) (off:Int) : n =
   newOrd = ordinal i - off
   case 0 <= newOrd of
-    True  -> unsafeFromOrdinal _ newOrd
+    True  -> unsafe_from_ordinal _ newOrd
     False -> i
 
 def hotspot
@@ -30,15 +30,15 @@ def hotspot
       (tsInit : r=>c=>Float)
       (p : r=>c=>Float)
       : r=>c=>Float =
-  gridHeight = chipHeight / (IToF $ size r)
-  gridWidth  = chipWidth  / (IToF $ size c)
+  gridHeight = chipHeight / (i_to_f $ size r)
+  gridWidth  = chipWidth  / (i_to_f $ size c)
   cap = factorChip * specHeatSI * tChip * gridWidth * gridHeight
   Rx = gridWidth  / (2.0 * kSI * tChip * gridHeight)
   Ry = gridHeight / (2.0 * kSI * tChip * gridWidth )
   Rz = tChip / (kSI * gridHeight * gridWidth)
   maxSlope = maxPD / (factorChip * tChip * specHeatSI)
   step = precision / maxSlope
-  yieldState tsInit $ \tsRef.
+  yield_state tsInit $ \tsRef.
     for _:(Fin numIterations).
       ts = get tsRef
       tsRef := for r c.

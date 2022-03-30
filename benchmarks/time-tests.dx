@@ -10,7 +10,7 @@ mmp'' m1 m2 =
 n = 1000
 
 mat : (Fin n)=>(Fin n)=>Float
-mat = for i j. rand $ ixkey2 (newKey 0) i j
+mat = for i j. rand $ ixkey2 (new_key 0) i j
 
 :time mmp mat mat
 > 0.804174504s

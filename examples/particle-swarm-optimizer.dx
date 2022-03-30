@@ -9,8 +9,8 @@ rosenbrock : Float -> Float -> Float =
 
 rosenbrock2 : ((Fin 2)=>Float) -> Float =
   \xs.
-    x = xs.(fromOrdinal _ 0)
-    y = xs.(fromOrdinal _ 1)
+    x = xs.(from_ordinal _ 0)
+    y = xs.(from_ordinal _ 1)
     rosenbrock x y
 
 ' Min should be at 1.0, 1.0
@@ -30,9 +30,9 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
 
 ' ## Helper functions
 
-def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = minBy fst
+def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = min_by fst
 
-def minimumbyfst {n a} : (n=>(Float & a)) -> (Float & a) = minimumBy fst
+def minimumbyfst {n a} : (n=>(Float & a)) -> (Float & a) = minimum_by fst
 
 ' ### Rand helpers
 
@@ -42,7 +42,7 @@ def randBounded {d} : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
   \key lb ub.
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
-:p randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
+:p randBounded (new_key 4) [1.0,  -2.0] [-1.0,  2.0]
 > [-0.35101, 1.49355]
 
 ' ## The Optimizer itself.
@@ -72,7 +72,7 @@ def optimize
             minbyfst pbests.p (f newPositions.p, newPositions.p)
         newGbest:(Float & d=>Float) =
             minbyfst gbest (minimumbyfst newPbests)
-        [keyG, keyP, keyNext] = splitKey keyL
+        [keyG, keyP, keyNext] = split_key keyL
         (gscore, gloc) = gbest
         plocs = map snd pbests
         gVel:(np=>d=>Float) = for p i.
@@ -87,7 +87,7 @@ def optimize
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     randInit1 = \keyI1. randBounded keyI1 lb ub
     randInit  = \keyI. for p:np. randInit1 $ ixkey keyI p
-    [keyPos, keyVel, keyLoop] = splitKey key
+    [keyPos, keyVel, keyLoop] = split_key key
     initPositions:(np=>d=>Float) = randInit keyPos
     initVelocities:(np=>d=>Float) = randInit keyVel
     initPs:(np=>(Float & d=>Float)) = for p. (f initPositions.p, initPositions.p)
@@ -102,14 +102,14 @@ Lets see how it goes.
 Run it for more iterations and result should improve.
 Which it indeed does.
 
-:p optimize 50 10 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
+:p optimize 50 10 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [0.076986, 0.232818]
 
-:p optimize 50 20 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
+:p optimize 50 20 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [0.90125, 0.750447]
 
-:p optimize 50 100 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
+:p optimize 50 100 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [0.999069, 0.998192]
 
-:p optimize 50 1000 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
+:p optimize 50 1000 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1., 1.]

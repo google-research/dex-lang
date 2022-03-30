@@ -130,7 +130,7 @@ class JAXTest(unittest.TestCase):
   def test_grad(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float). '
-        'sum $ for i. (IToF $ ordinal i) * x.i * x.i'))
+        'sum $ for i. (i_to_f $ ordinal i) * x.i * x.i'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)
@@ -145,7 +145,7 @@ class JAXTest(unittest.TestCase):
   def test_grad_jit(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float). '
-        'sum $ for i. (IToF $ ordinal i) * x.i * x.i'))
+        'sum $ for i. (i_to_f $ ordinal i) * x.i * x.i'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)

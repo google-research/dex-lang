@@ -31,40 +31,40 @@ Float = Float32
 
 '### Casting
 
-def internalCast {a} (b:Type) (x:a) : b = %cast b x
+def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
-def F64ToF (x : Float64) : Float   = internalCast _ x
-def F32ToF (x : Float32) : Float   = internalCast _ x
-def FToF64 (x : Float)   : Float64 = internalCast _ x
-def FToF32 (x : Float)   : Float32 = internalCast _ x
-def I64ToI (x : Int64)   : Int     = internalCast _ x
-def I32ToI (x : Int32)   : Int     = internalCast _ x
-def W8ToI  (x : Word8)   : Int     = internalCast _ x
-def IToI64 (x : Int)     : Int64   = internalCast _ x
-def IToI32 (x : Int)     : Int32   = internalCast _ x
-def IToW8  (x : Int)     : Word8   = internalCast _ x
-def IToW32 (x : Int)     : Word32  = internalCast _ x
-def IToW64 (x : Int)     : Word64  = internalCast _ x
-def W32ToW64 (x : Word32): Word64  = internalCast _ x
-def IToF (x:Int) : Float = internalCast _ x
-def FToI (x:Float) : Int = internalCast _ x
-def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
-def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
+def f64_to_f (x : Float64) : Float   = internal_cast _ x
+def f32_to_f (x : Float32) : Float   = internal_cast _ x
+def f_to_f64 (x : Float)   : Float64 = internal_cast _ x
+def f_to_f32 (x : Float)   : Float32 = internal_cast _ x
+def i64_to_i (x : Int64)   : Int     = internal_cast _ x
+def i32_to_i (x : Int32)   : Int     = internal_cast _ x
+def w8_to_i  (x : Word8)   : Int     = internal_cast _ x
+def i_to_i64 (x : Int)     : Int64   = internal_cast _ x
+def i_to_i32 (x : Int)     : Int32   = internal_cast _ x
+def i_to_w8  (x : Int)     : Word8   = internal_cast _ x
+def i_to_w32 (x : Int)     : Word32  = internal_cast _ x
+def i_to_w64 (x : Int)     : Word64  = internal_cast _ x
+def w32_to_w64 (x : Word32): Word64  = internal_cast _ x
+def i_to_f (x:Int) : Float = internal_cast _ x
+def FToI (x:Float) : Int = internal_cast _ x
+def i64_to_raw_ptr (x:Int64 ) : RawPtr = internal_cast _ x
+def raw_ptr_to_i64 (x:RawPtr) : Int64  = internal_cast _ x
 
 interface FromInteger a
-  fromInteger : Int64 -> a
+  from_integer : Int64 -> a
 
 instance FromInteger Float32
-  fromInteger = \x. IToF $ I64ToI x
+  from_integer = \x. i_to_f $ i64_to_i x
 
 instance FromInteger Int32
-  fromInteger = \x. I64ToI x
+  from_integer = \x. i64_to_i x
 
 instance FromInteger Float64
-  fromInteger = \x. FToF64 $ IToF $ I64ToI x
+  from_integer = \x. f_to_f64 $ i_to_f $ i64_to_i x
 
 instance FromInteger Int64
-  fromInteger = \x. x
+  from_integer = \x. x
 
 '## Bitwise operations
 
@@ -76,28 +76,28 @@ interface Bits a
   (.^.)   : a -> a -> a
 
 instance Bits Word8
-  (.<<.)  = \x y. %shl x (IToW8 y)
-  (.>>.)  = \x y. %shr x (IToW8 y)
+  (.<<.)  = \x y. %shl x (i_to_w8 y)
+  (.>>.)  = \x y. %shr x (i_to_w8 y)
   (.|.)   = \x y. %or x y
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
 instance Bits Word32
-  (.<<.)  = \x y. %shl x (IToW32 y)
-  (.>>.)  = \x y. %shr x (IToW32 y)
+  (.<<.)  = \x y. %shl x (i_to_w32 y)
+  (.>>.)  = \x y. %shr x (i_to_w32 y)
   (.|.)   = \x y. %or x y
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
 instance Bits Word64
-  (.<<.)  = \x y. %shl x (IToW64 y)
-  (.>>.)  = \x y. %shr x (IToW64 y)
+  (.<<.)  = \x y. %shl x (i_to_w64 y)
+  (.>>.)  = \x y. %shr x (i_to_w64 y)
   (.|.)   = \x y. %or x y
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
-def lowWord  (x : Word64) : Word32 = internalCast _ (x .>>. 32)
-def highWord (x : Word64) : Word32 = internalCast _ x
+def low_word  (x : Word64) : Word32 = internal_cast _ (x .>>. 32)
+def high_word (x : Word64) : Word32 = internal_cast _ x
 
 '### Basic Arithmetic
 #### Add
@@ -115,37 +115,37 @@ def (-) {a} [Add a] : a -> a -> a = sub
 instance Add Float64
   add = \x y. %fadd x y
   sub = \x y. %fsub x y
-  zero = FToF64 0.0
+  zero = f_to_f64 0.0
 
 instance Add Float32
   add = \x y. %fadd x y
   sub = \x y. %fsub x y
-  zero = FToF32 0.0
+  zero = f_to_f32 0.0
 
 instance Add Int64
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToI64 0
+  zero = i_to_i64 0
 
 instance Add Int32
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToI32 0
+  zero = i_to_i32 0
 
 instance Add Word8
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToW8 0
+  zero = i_to_w8 0
 
 instance Add Word32
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToW32 0
+  zero = i_to_w32 0
 
 instance Add Word64
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToW64 0
+  zero = i_to_w64 0
 
 instance Add Unit
   add = \x y. ()
@@ -169,23 +169,23 @@ def (*) {a} [Mul a] : a -> a -> a = mul
 
 instance Mul Float64
   mul = \x y. %fmul x y
-  one = FToF64 1.0
+  one = f_to_f64 1.0
 
 instance Mul Float32
   mul = \x y. %fmul x y
-  one = FToF32 1.0
+  one = f_to_f32 1.0
 
 instance Mul Int64
   mul = \x y. %imul x y
-  one = IToI64 1
+  one = i_to_i64 1
 
 instance Mul Int32
   mul = \x y. %imul x y
-  one = IToI32 1
+  one = i_to_i32 1
 
 instance Mul Word8
   mul = \x y. %imul x y
-  one = IToW8 1
+  one = i_to_w8 1
 
 instance Mul Unit
   mul = \x y. ()
@@ -230,71 +230,71 @@ instance Fractional Float32
 '## Index set interface and instances
 
 interface Ix n
-  getSize n : Unit -> Int
+  get_size n : Unit -> Int
   ordinal : n -> Int
-  unsafeFromOrdinal n : Int -> n
+  unsafe_from_ordinal n : Int -> n
 
-def size (n : Type) [Ix n] : Int = getSize n ()
+def size (n : Type) [Ix n] : Int = get_size n ()
 
 def Range (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = Range 0 n
 
 -- A max(a, 0) that is friendly to our algebraic simplifier
-def clampNonnegPrim (a: Int) : Int =
+def clamp_nonneg_prim (a: Int) : Int =
   z : Int = 0
   isNeg = %ilt a z
   %select isNeg z a
 
 -- TODO: Define Range in surface syntax
 instance {l h} Ix (Range l h)
-  getSize = \(). clampNonnegPrim $ h - l
+  get_size = \(). clamp_nonneg_prim $ h - l
   ordinal = \i. %cast Int i
-  unsafeFromOrdinal = \i. %cast (Range l h) i
+  unsafe_from_ordinal = \i. %cast (Range l h) i
 
 instance {q:Type} {i:q} [Ix q] Ix (i..)
-  getSize = \(). size q - ordinal i
+  get_size = \(). size q - ordinal i
   ordinal = \j. %cast Int j
-  unsafeFromOrdinal = \j. %cast (i..) j
+  unsafe_from_ordinal = \j. %cast (i..) j
 
 instance {q:Type} {i:q} [Ix q] Ix (i<..)
-  getSize = \(). size q - ordinal i - 1
+  get_size = \(). size q - ordinal i - 1
   ordinal = \j. %cast Int j
-  unsafeFromOrdinal = \j. %cast (i<..) j
+  unsafe_from_ordinal = \j. %cast (i<..) j
 
 instance {q:Type} {i:q} [Ix q] Ix (..i)
-  getSize = \(). ordinal i + 1
+  get_size = \(). ordinal i + 1
   ordinal = \j. %cast Int j
-  unsafeFromOrdinal = \j. %cast (..i) j
+  unsafe_from_ordinal = \j. %cast (..i) j
 
 instance {q:Type} {i:q} [Ix q] Ix (..<i)
-  getSize = \(). ordinal i
+  get_size = \(). ordinal i
   ordinal = \j. %cast Int j
-  unsafeFromOrdinal = \j. %cast (..<i) j
+  unsafe_from_ordinal = \j. %cast (..<i) j
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..i)
-  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j + 1
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j + 1
   ordinal = \k. %cast Int k
-  unsafeFromOrdinal = \k. %cast (j..i) k
+  unsafe_from_ordinal = \k. %cast (j..i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..<i)
-  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j
   ordinal = \k. %cast Int k
-  unsafeFromOrdinal = \k. %cast (j..<i) k
+  unsafe_from_ordinal = \k. %cast (j..<i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..i)
-  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j
   ordinal = \k. %cast Int k
-  unsafeFromOrdinal = \k. %cast (j<..i) k
+  unsafe_from_ordinal = \k. %cast (j<..i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..<i)
-  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j - 1
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j - 1
   ordinal = \k. %cast Int k
-  unsafeFromOrdinal = \k. %cast (j<..<i) k
+  unsafe_from_ordinal = \k. %cast (j<..<i) k
 
 instance Ix Unit
-  getSize = \(). 1
+  get_size = \(). 1
   ordinal = \_. 0
-  unsafeFromOrdinal = \_. ()
+  unsafe_from_ordinal = \_. ()
 
 def iota (n:Type) [Ix n] : n=>Int = view i. ordinal i
 
@@ -328,11 +328,11 @@ def snd {a b} ((_, y): (a & b)) : b = y
 def swap {a b} ((x, y):(a&b)) : (b&a) = (y, x)
 
 instance {a b} [Ix a, Ix b] Ix (a & b)
-  getSize = \(). size a * size b
+  get_size = \(). size a * size b
   ordinal = \(i, j). (ordinal i * size b) + ordinal j
-  unsafeFromOrdinal = \o.
+  unsafe_from_ordinal = \o.
     bs = size b
-    (unsafeFromOrdinal a (idiv o bs), unsafeFromOrdinal b (rem o bs))
+    (unsafe_from_ordinal a (idiv o bs), unsafe_from_ordinal b (rem o bs))
 
 def (<<<) {a b c} (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
 def (>>>) {a b c} (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
@@ -344,24 +344,24 @@ def const   {a b}   (x: a) (_: b) : a = x
 '## Vector spaces
 
 interface [Add a] VSpace a
-  scaleVec : Float -> a -> a
+  scale_vec : Float -> a -> a
 
-def (.*) {a} [VSpace a] : Float -> a -> a = scaleVec
-def (*.) {a} [VSpace a] : a -> Float -> a = flip scaleVec
+def (.*) {a} [VSpace a] : Float -> a -> a = scale_vec
+def (*.) {a} [VSpace a] : a -> Float -> a = flip scale_vec
 def (/)  {a} [VSpace a] (v:a) (s:Float) : a = divide 1.0 s .* v
 def neg  {a} [VSpace a] (v:a) : a = (-1.0) .* v
 
 instance VSpace Float
-  scaleVec = \x y. x * y
+  scale_vec = \x y. x * y
 
 instance {a n} [VSpace a] VSpace (n=>a)
-  scaleVec = \s xs. for i. s .* xs.i
+  scale_vec = \s xs. for i. s .* xs.i
 
 instance {a n} [VSpace a] VSpace (n->a)
-  scaleVec = \s f. \x. s .* (f x)
+  scale_vec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
-  scaleVec = \_ _. ()
+  scale_vec = \_ _. ()
 
 '## Boolean type
 
@@ -369,23 +369,23 @@ data Bool =
   False
   True
 
-def BToW8 (x : Bool) : Word8 = %dataConTag x
+def b_to_w8 (x : Bool) : Word8 = %dataConTag x
 
-def W8ToB (x : Word8) : Bool = %toEnum Bool x
+def w8_to_b (x : Word8) : Bool = %toEnum Bool x
 
 def (&&) (x:Bool) (y:Bool) : Bool =
-  x' = BToW8 x
-  y' = BToW8 y
-  W8ToB $ %and x' y'
+  x' = b_to_w8 x
+  y' = b_to_w8 y
+  w8_to_b $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
-  x' = BToW8 x
-  y' = BToW8 y
-  W8ToB $ %or x' y'
+  x' = b_to_w8 x
+  y' = b_to_w8 y
+  w8_to_b $ %or x' y'
 
 def not  (x:Bool) : Bool =
-  x' = BToW8 x
-  W8ToB $ %not x'
+  x' = b_to_w8 x
+  w8_to_b $ %not x'
 
 '## More Boolean operations
 TODO: move these with the others?
@@ -394,8 +394,8 @@ def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
-def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
-def BToF (x:Bool) : Float = IToF (BToI x)
+def b_to_i (x:Bool) : Int  = w8_to_i $ b_to_w8 x
+def b_to_f (x:Bool) : Float = i_to_f (b_to_i x)
 
 '## Ordering
 TODO: move this down to with `Ord`?
@@ -405,7 +405,7 @@ data Ordering =
   EQ
   GT
 
-def OToW8 (x : Ordering) : Word8 = %dataConTag x
+def o_to_w8 (x : Ordering) : Word8 = %dataConTag x
 
 '## Sum types
 A [sum type, or tagged union](https://en.wikipedia.org/wiki/Tagged_union) can hold values from a fixed set of types, distinguished by tags.
@@ -416,11 +416,11 @@ data Maybe a =
   Nothing
   Just a
 
-def isNothing {a} (x:Maybe a) : Bool = case x of
+def is_nothing {a} (x:Maybe a) : Bool = case x of
   Nothing -> True
   Just _ -> False
 
-def isJust {a} (x:Maybe a) : Bool = not $ isNothing x
+def is_just {a} (x:Maybe a) : Bool = not $ is_nothing x
 
 def maybe {a b} (d: b) (f : (a -> b)) (x: Maybe a) : b =
   case x of
@@ -432,16 +432,16 @@ data (|) a b =
   Right b
 
 instance {a b} [Ix a, Ix b] Ix (a | b)
-  getSize = \(). size a + size b
+  get_size = \(). size a + size b
   ordinal = \i. case i of
     Left ai  -> ordinal ai
     Right bi -> ordinal bi + size a
-  unsafeFromOrdinal = \o.
+  unsafe_from_ordinal = \o.
     as = size a
     -- TODO: Reshuffle the prelude to be able to use (<) here
-    case W8ToB $ %ilt o as of
-      True  -> Left $ unsafeFromOrdinal a o
-      False -> Right $ unsafeFromOrdinal b (o - as)
+    case w8_to_b $ %ilt o as of
+      True  -> Left $ unsafe_from_ordinal a o
+      False -> Right $ unsafe_from_ordinal b (o - as)
 
 '### Monoid
 A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
@@ -508,10 +508,10 @@ def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
   %mextend ref empty combine x
 
 def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
-def fstRef {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
-def sndRef {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
+def fst_ref {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def snd_ref {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
-def runReader
+def run_reader
       {r a eff}
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
@@ -519,16 +519,16 @@ def runReader
     def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
     %runReader init explicitAction
 
-def withReader
+def with_reader
       {r a eff}
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
-    runReader init action
+    run_reader init action
 
 def MonoidLifter (b:Type) (w:Type) : Type = h:Type ?-> AccumMonoid h b ?=> AccumMonoid h w
 
-def runAccum
+def run_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (bm:Monoid b)
@@ -550,9 +550,9 @@ def yieldAccum
       (m:Monoid b)
       (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} w =
-  snd $ runAccum m action
+  snd $ run_accum m action
 
-def runState
+def run_state
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
@@ -560,22 +560,22 @@ def runState
   def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
   %runState init explicitAction
 
-def withState
+def with_state
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
-      : {|eff} a = fst $ runState init action
+      : {|eff} a = fst $ run_state init action
 
-def yieldState
+def yield_state
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
-      : {|eff} s = snd $ runState init action
+      : {|eff} s = snd $ run_state init action
 
-def unsafeIO {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
+def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
   %runIO f
 
-def unreachable {a} (():Unit) : a = unsafeIO do
+def unreachable {a} (():Unit) : a = unsafe_io do
   %throwError a
 
 '## Type classes
@@ -606,48 +606,48 @@ def (<=) {a} [Ord a] (x:a) (y:a) : Bool = x<y || x==y
 def (>=) {a} [Ord a] (x:a) (y:a) : Bool = x>y || x==y
 
 instance Eq Float64
-  (==) = \x y. W8ToB $ %feq x y
+  (==) = \x y. w8_to_b $ %feq x y
 
 instance Eq Float32
-  (==) = \x y. W8ToB $ %feq x y
+  (==) = \x y. w8_to_b $ %feq x y
 
 instance Eq Int64
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Int32
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Word8
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Bool
-  (==) = \x y. BToW8 x == BToW8 y
+  (==) = \x y. b_to_w8 x == b_to_w8 y
 
 instance Eq Unit
   (==) = \x y. True
 
 instance Eq RawPtr
-  (==) = \x y. RawPtrToI64 x == RawPtrToI64 y
+  (==) = \x y. raw_ptr_to_i64 x == raw_ptr_to_i64 y
 
 instance Ord Float64
-  (>) = \x y. W8ToB $ %fgt x y
-  (<) = \x y. W8ToB $ %flt x y
+  (>) = \x y. w8_to_b $ %fgt x y
+  (<) = \x y. w8_to_b $ %flt x y
 
 instance Ord Float32
-  (>) = \x y. W8ToB $ %fgt x y
-  (<) = \x y. W8ToB $ %flt x y
+  (>) = \x y. w8_to_b $ %fgt x y
+  (<) = \x y. w8_to_b $ %flt x y
 
 instance Ord Int64
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Int32
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Word8
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Unit
   (>) = \x y. False
@@ -661,7 +661,7 @@ instance {a b} [Ord a, Ord b] Ord (a & b)
   (<) = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
 
 instance Eq Ordering
-  (==) = \x y. OToW8 x == OToW8 y
+  (==) = \x y. o_to_w8 x == o_to_w8 y
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
 instance {n} Eq (Fin n)
@@ -672,7 +672,7 @@ instance {n} Ord (Fin n)
   (<) = \x y. ordinal x < ordinal y
 
 def scan {a b n} [Ix n] (init:a) (body:n->a->(a&b)) : (a & n=>b) =
-  swap $ runState init \s. for i.
+  swap $ run_state init \s. for i.
     c = get s
     (c', y) = body i c
     s := c'
@@ -745,10 +745,10 @@ def float32_cosh (x:Float32) : Float32 = %fdiv (%fadd (%exp x) (%exp (%fsub 0.0 
 def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) (%fadd (%exp x) (%exp (%fsub 0.0 x)))
 
 -- Todo: unify this with float32 functions.
-def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
-def float64_cosh (x:Float64) : Float64 = %fdiv (%fadd (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
-def float64_tanh (x:Float64) : Float64 = (%fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x)))
-                                                (%fadd (%exp x) (%exp (%fsub (FToF64 0.0) x))))
+def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (f_to_f64 0.0) x))) (f_to_f64 2.0)
+def float64_cosh (x:Float64) : Float64 = %fdiv (%fadd (%exp x) (%exp (%fsub (f_to_f64 0.0) x))) (f_to_f64 2.0)
+def float64_tanh (x:Float64) : Float64 = (%fdiv (%fsub (%exp x) (%exp (%fsub (f_to_f64 0.0) x)))
+                                                (%fadd (%exp x) (%exp (%fsub (f_to_f64 0.0) x))))
 
 instance Floating Float64
   exp    = \x. %exp x
@@ -794,39 +794,39 @@ instance Floating Float32
 
 data Ptr a = MkPtr RawPtr
 
-def castPtr {a b} (ptr: Ptr a) : Ptr b =
+def cast_ptr {a b} (ptr: Ptr a) : Ptr b =
   (MkPtr rawPtr) = ptr
   MkPtr rawPtr
 
 interface Storable a
   store : Ptr a -> a -> {IO} Unit
   load  : Ptr a ->      {IO} a
-  storageSize a : Int
+  storage_size a : Int
 
 instance Storable Word8
   store = \(MkPtr ptr) x. %ptrStore ptr x
   load  = \(MkPtr ptr)  . %ptrLoad  ptr
-  storageSize = 1
+  storage_size = 1
 
 instance Storable Int32
-  store = \(MkPtr ptr) x. %ptrStore (internalCast %Int32Ptr ptr) x
-  load  = \(MkPtr ptr)  . %ptrLoad  (internalCast %Int32Ptr ptr)
-  storageSize = 4
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Int32Ptr ptr) x
+  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Int32Ptr ptr)
+  storage_size = 4
 
 instance Storable Float32
-  store = \(MkPtr ptr) x. %ptrStore (internalCast %Float32Ptr ptr) x
-  load = \(MkPtr ptr)   . %ptrLoad  (internalCast %Float32Ptr ptr)
-  storageSize = 4
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Float32Ptr ptr) x
+  load = \(MkPtr ptr)   . %ptrLoad  (internal_cast %Float32Ptr ptr)
+  storage_size = 4
 
 instance {a} Storable (Ptr a)
-  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internalCast %PtrPtr ptr) x
-  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internalCast %PtrPtr ptr)
-  storageSize = 8  -- TODO: something more portable?
+  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast %PtrPtr ptr) x
+  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast %PtrPtr ptr)
+  storage_size = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
 
 def malloc {a} [Storable a] (n:Int) : {IO} (Ptr a) =
-  numBytes = storageSize a * n
+  numBytes = storage_size a * n
   MkPtr $ %alloc numBytes
 
 def free {a} (ptr:Ptr a) : {IO} Unit =
@@ -835,11 +835,11 @@ def free {a} (ptr:Ptr a) : {IO} Unit =
 
 def (+>>) {a} [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   (MkPtr ptr') = ptr
-  i' = i * storageSize a
+  i' = i * storage_size a
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: consider making a Storable instance for tables instead
-def storeTab {a n} [Storable a] (ptr: Ptr a) (tab:n=>a) : {IO} Unit =
+def store_table {a n} [Storable a] (ptr: Ptr a) (tab:n=>a) : {IO} Unit =
   for_ i. store (ptr +>> ordinal i) tab.i
 
 def memcpy {a} [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {IO} Unit =
@@ -849,18 +849,18 @@ def memcpy {a} [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {IO} Unit =
 
 -- TODO: generalize these brackets to allow other effects
 -- TODO: make sure that freeing happens even if there are run-time errors
-def withAlloc {a b} [Storable a] (n:Int) (action: Ptr a -> {IO} b) : {IO} b =
+def with_alloc {a b} [Storable a] (n:Int) (action: Ptr a -> {IO} b) : {IO} b =
   ptr = malloc n
   result = action ptr
   free ptr
   result
 
-def withTabPtr {a b n} [Storable a] (xs:n=>a) (action : Ptr a -> {IO} b) : {IO} b =
-  withAlloc (size n) \ptr.
+def with_table_ptr {a b n} [Storable a] (xs:n=>a) (action : Ptr a -> {IO} b) : {IO} b =
+  with_alloc (size n) \ptr.
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
-def tabFromPtr {a} [Storable a] (n:Type) [Ix n] (ptr:Ptr a) : {IO} n=>a =
+def table_from_ptr {a} [Storable a] (n:Type) [Ix n] (ptr:Ptr a) : {IO} n=>a =
   for i. load $ ptr +>> ordinal i
 
 '## Miscellaneous common utilities
@@ -919,22 +919,22 @@ def scan' {a n} [Ix n] (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. du
 def fsum {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
 def sum  {n v} [Add v] (xs:n=>v) : v = reduce zero (+) xs
 def prod {n v} [Mul v] (xs:n=>v) : v = reduce one  (*) xs
-def mean {n v} [VSpace v] (xs:n=>v) : v = sum xs / IToF (size n)
+def mean {n v} [VSpace v] (xs:n=>v) : v = sum xs / i_to_f (size n)
 def std  {n v} [Mul v, VSpace v, Floating v] (xs:n=>v) : v = sqrt $ mean (map sq xs) - sq (mean xs)
 def any {n} (xs:n=>Bool) : Bool = reduce False (||) xs
 def all {n} (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
-'### ApplyN
+'### apply_n
 
-def applyN {a} (n:Int) (x:a) (f:a -> a) : a =
-  yieldState x \ref. for _:(Fin n).
+def apply_n {a} (n:Int) (x:a) (f:a -> a) : a =
+  yield_state x \ref. for _:(Fin n).
     ref := f (get ref)
 
 '### Linear Algebra
 
 def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
-  dx = (high - low) / IToF (size n)
-  for i:n. low + IToF (ordinal i) * dx
+  dx = (high - low) / i_to_f (size n)
+  for i:n. low + i_to_f (ordinal i) * dx
 
 def transpose {n m a} (x:n=>m=>a) : m=>n=>a = view i j. x.j.i
 def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
@@ -958,8 +958,8 @@ def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
 TODO: Move this to be with reductions?
 It's a kind of `scan`.
 
-def cumSum {n} (xs: n=>Float) : n=>Float =
-  withState 0.0 \total.
+def cumsum {n} (xs: n=>Float) : n=>Float =
+  with_state 0.0 \total.
     for i.
       newTotal = get total + xs.i
       total := newTotal
@@ -982,7 +982,7 @@ def grad {a} (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 
 def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
-def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
+def deriv_rev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
 '### Approximate Equality
 TODO: move this outside the AD section to be with equality?
@@ -1003,12 +1003,12 @@ instance HasAllClose Float64
   allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
 
 instance HasDefaultTolerance Float32
-  atol = FToF32 0.00001
-  rtol = FToF32 0.0001
+  atol = f_to_f32 0.00001
+  rtol = f_to_f32 0.0001
 
 instance HasDefaultTolerance Float64
-  atol = FToF64 0.00000001
-  rtol = FToF64 0.00001
+  atol = f_to_f64 0.00000001
+  rtol = f_to_f64 0.00001
 
 instance {n t} [HasAllClose t] HasAllClose (n=>t)
   allclose = \atol rtol a b.
@@ -1020,15 +1020,15 @@ instance {n t} [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
 
 '### AD Checking tools
 
-def checkDerivBase (f:Float->Float) (x:Float) : Bool =
+def check_deriv_base (f:Float->Float) (x:Float) : Bool =
   eps = 0.01
   ansFwd  = deriv    f x
-  ansRev  = derivRev f x
+  ansRev  = deriv_rev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
   ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
 
-def checkDeriv (f:Float->Float) (x:Float) : Bool =
-  checkDerivBase f x && checkDerivBase (deriv f) x
+def check_deriv (f:Float->Float) (x:Float) : Bool =
+  check_deriv_base f x && check_deriv_base (deriv f) x
 
 '## Vector support
 
@@ -1107,14 +1107,14 @@ instance {a} [Eq a] Eq (List a)
     if nx /= ny
       then False
       else all for i:(Fin nx).
-        xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
+        xs.i == ys.(unsafe_from_ordinal _ (ordinal i))
 
-def unsafeCastTable {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
-  for i. xs.(unsafeFromOrdinal _ (ordinal i))
+def unsafe_cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
+  for i. xs.(unsafe_from_ordinal _ (ordinal i))
 
-def toList {n a} (xs:n=>a) : List a =
+def to_list {n a} (xs:n=>a) : List a =
   n' = size n
-  AsList _ $ unsafeCastTable (Fin n') xs
+  AsList _ $ unsafe_cast_table (Fin n') xs
 
 instance {a} Monoid (List a)
   mempty = AsList _ []
@@ -1125,8 +1125,8 @@ instance {a} Monoid (List a)
     AsList _ $ for i:(Fin nz).
       i' = ordinal i
       case i' < nx of
-        True  -> xs.(unsafeFromOrdinal _ i')
-        False -> ys.(unsafeFromOrdinal _ (i' - nx))
+        True  -> xs.(unsafe_from_ordinal _ i')
+        False -> ys.(unsafe_from_ordinal _ (i' - nx))
 
 def ListMonoid (a:Type) : Monoid (List a) =
   A = a -- XXX: Typing `Monoid a` below would quantify it over a,
@@ -1146,7 +1146,7 @@ def filter {a n} (condition:a->Bool) (xs:n=>a) : List a =
       if condition xs.i
         then append list xs.i
 
-def argFilter {a n} (condition:a->Bool) (xs:n=>a) : List n =
+def arg_filter {a n} (condition:a->Bool) (xs:n=>a) : List n =
   -- Returns all indices where the condition is true.
   yieldAccum (ListMonoid n) \list.
     for i.
@@ -1157,17 +1157,17 @@ def argFilter {a n} (condition:a->Bool) (xs:n=>a) : List n =
 
 data Iso a b = MkIso { fwd: a -> b & bwd: b -> a }
 
-def appIso {a b} (iso: Iso a b) (x:a) : b =
+def app_iso {a b} (iso: Iso a b) (x:a) : b =
   (MkIso {fwd, bwd}) = iso
   fwd x
 
-def flipIso {a b} (iso: Iso a b) : Iso b a =
+def flip_iso {a b} (iso: Iso a b) : Iso b a =
   (MkIso {fwd, bwd}) = iso
   MkIso {fwd=bwd, bwd=fwd}
 
-def revIso {a b} (iso: Iso a b) (x:b) : a = appIso (flipIso iso) x
+def rev_iso {a b} (iso: Iso a b) (x:b) : a = app_iso (flip_iso iso) x
 
-def idIso {a} : Iso a a = MkIso {fwd=id, bwd=id}
+def id_iso {a} : Iso a a = MkIso {fwd=id, bwd=id}
 
 def (&>>) {a b c} (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
   (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
@@ -1179,30 +1179,30 @@ def (<<&) {a b c} (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
 '### Lens-like accessors
 note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
 
-def getAt  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
-def popAt  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
-def pushAt {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
-def setAt  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
-  pushAt iso x $ popAt iso r
+def get_at  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
+def pop_at  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
+def push_at {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
+def set_at  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
+  push_at iso x $ pop_at iso r
 
 '### Prism-like accessors
 note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
 
-def matchWith {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
-  case appIso iso x of
+def match_with {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
+  case app_iso iso x of
     Left x -> Just x
     Right _ -> Nothing
-def buildWith {a b c} (iso: Iso a (b | c)) (x: b) : a = revIso iso $ Left x
+def build_with {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
 
-def swapPairIso {a b} : Iso (a & b) (b & a) =
+def swap_pair_iso {a b} : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
 
 '### Complement lens
 Complement the focus of a lens-like isomorphism
 
-def exceptLens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swapPairIso
+def except_lens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
 
-def swapEitherIso {a b} : Iso (a | b) (b | a) =
+def swap_either_iso {a b} : Iso (a | b) (b | a) =
   fwd = \x. case x of
     Left l -> Right l
     Right r -> Left r
@@ -1214,11 +1214,11 @@ def swapEitherIso {a b} : Iso (a | b) (b | a) =
 '### Complement prism
 Complement the focus of a prism-like isomorphism
 
-def exceptPrism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEitherIso
+def except_prism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swap_either_iso
 
 -- Use a lens-like iso to split a 1d table into a 2d table
-def overLens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
-  for i j. tab.(revIso iso (i, j))
+def over_lens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
+  for i j. tab.(rev_iso iso (i, j))
 
 '### Zipper
 Zipper isomorphisms to easily specify many record/variant fields:
@@ -1230,20 +1230,20 @@ Zipper isomorphisms to easily specify many record/variant fields:
 ' Convert a record zipper isomorphism to a normal lens-like isomorphism
 by using `splitR &>> iso`
 
-def splitR {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
+def split_r {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
-def overFields {a b c v} [Ix b, Ix c]
+def over_fields {a b c v} [Ix b, Ix c]
       (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  overLens (splitR &>> iso) tab
+  over_lens (split_r &>> iso) tab
 
 'Convert a variant zipper isomorphism to a normal prism-like isomorphism
 by using `splitV &>> iso`
 
-def splitV {a} : Iso a ({|} | a) =
+def split_v {a} : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
 
-def sliceFields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (buildWith $ splitV &>> iso) tab
+def slice_fields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
+  reindex (build_with $ split_v &>> iso) tab
 
 '## Dynamic buffer
 
@@ -1254,10 +1254,10 @@ data DynBuffer a =
     & maxSize : Ptr Int
     & buffer  : Ptr (Ptr a) }
 
-def withDynamicBuffer {a b} [Storable a]
+def with_dynamic_buffer {a b} [Storable a]
       (action: DynBuffer a -> {IO} b) : {IO} b =
   initMaxSize = 256
-  withAlloc 1 \sizePtr. withAlloc 1 \maxSizePtr. withAlloc 1 \bufferPtr.
+  with_alloc 1 \sizePtr. with_alloc 1 \maxSizePtr. with_alloc 1 \bufferPtr.
     store sizePtr 0
     store maxSizePtr initMaxSize
     store bufferPtr $ malloc initMaxSize
@@ -1268,54 +1268,54 @@ def withDynamicBuffer {a b} [Storable a]
     free $ load bufferPtr
     result
 
-def maybeIncreaseBufferSize {a} [Storable a]
+def maybe_increase_buffer_size {a} [Storable a]
       ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {IO} Unit =
-  size    = load $ getAt #size    db
-  maxSize = load $ getAt #maxSize db
-  bufPtr  = load $ getAt #buffer  db
+  size    = load $ get_at #size    db
+  maxSize = load $ get_at #maxSize db
+  bufPtr  = load $ get_at #buffer  db
   newSize = sizeDelta + size
   if newSize > maxSize then
     -- TODO: maybe this should use integer arithmetic?
-    newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ IToF newSize)
+    newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ i_to_f newSize)
     newBufPtr = malloc newMaxSize
     memcpy newBufPtr bufPtr size
     free bufPtr
-    store (getAt #maxSize db) newMaxSize
-    store (getAt #buffer  db) newBufPtr
+    store (get_at #maxSize db) newMaxSize
+    store (get_at #buffer  db) newBufPtr
 
-def addAtIntPtr (ptr: Ptr Int) (n:Int) : {IO} Unit =
+def add_at_int_ptr (ptr: Ptr Int) (n:Int) : {IO} Unit =
   store ptr (load ptr + n)
 
-def extendDynBuffer {a} [Storable a]
+def extend_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
-  maybeIncreaseBufferSize buf n
+  maybe_increase_buffer_size buf n
   (MkDynBuffer db) = buf
-  bufPtr = load $ getAt #buffer db
-  size   = load $ getAt #size db
-  storeTab (bufPtr +>> size) xs
-  addAtIntPtr (getAt #size db) n
+  bufPtr = load $ get_at #buffer db
+  size   = load $ get_at #size db
+  store_table (bufPtr +>> size) xs
+  add_at_int_ptr (get_at #size db) n
 
-def loadDynBuffer {a} [Storable a]
+def load_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) : {IO} (List a) =
   (MkDynBuffer db) = buf
-  bufPtr = load $ getAt #buffer db
-  size   = load $ getAt #size db
-  AsList size $ tabFromPtr _ bufPtr
+  bufPtr = load $ get_at #buffer db
+  size   = load $ get_at #size db
+  AsList size $ table_from_ptr _ bufPtr
 
-def pushDynBuffer {a} [Storable a]
+def push_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) (x:a) : {IO} Unit =
-  extendDynBuffer buf $ AsList _ [x]
+  extend_dynamic_buffer buf $ AsList _ [x]
 
 '## Strings and Characters
 
 String : Type = List Char
 
-def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {IO} String =
-  AsList n $ tabFromPtr _ ptr
+def string_from_char_ptr (n:Int) (ptr:Ptr Char) : {IO} String =
+  AsList n $ table_from_ptr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
-def codepoint (c:Char) : Int = W8ToI c
+def codepoint (c:Char) : Int = w8_to_i c
 
 '### Show interface
 For things that can be shown.
@@ -1333,30 +1333,30 @@ instance Show String
 foreign "showInt32" showInt32 : Int32 -> {IO} (Int32 & RawPtr)
 
 instance Show Int32
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showInt32 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 foreign "showInt64" showInt64 : Int64 -> {IO} (Int32 & RawPtr)
 
 instance Show Int64
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showInt64 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 foreign "showFloat32" showFloat32 : Float32 -> {IO} (Int32 & RawPtr)
 
 instance Show Float32
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showFloat32 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 foreign "showFloat64" showFloat64 : Float64 -> {IO} (Int32 & RawPtr)
 
 instance Show Float64
-  show = \x. unsafeIO do
+  show = \x. unsafe_io do
     (n, ptr) = showFloat64 x
-    stringFromCharPtr n $ MkPtr ptr
+    string_from_char_ptr n $ MkPtr ptr
 
 instance {a b} [Show a, Show b] Show (a & b)
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
@@ -1399,16 +1399,16 @@ def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 FilePath : Type = String
 data CString = MkCString RawPtr
 
-def nullRawPtr : RawPtr = I64ToRawPtr $ IToI64 0
+def null_raw_ptr : RawPtr = i64_to_raw_ptr $ i_to_i64 0
 
-def fromNullableRawPtr {a} (ptr:RawPtr) : Maybe (Ptr a) =
-  if ptr == nullRawPtr
+def from_nullable_raw_ptr {a} (ptr:RawPtr) : Maybe (Ptr a) =
+  if ptr == null_raw_ptr
     then Nothing
     else Just $ MkPtr ptr
 
-def cStringPtr (s:CString) : Maybe (Ptr Char) =
+def c_string_ptr (s:CString) : Maybe (Ptr Char) =
   (MkCString ptr) = s
-  fromNullableRawPtr ptr
+  from_nullable_raw_ptr ptr
 
 data StreamMode =
   ReadMode
@@ -1417,9 +1417,9 @@ data StreamMode =
 data Stream mode:StreamMode = MkStream RawPtr
 
 -- TODO: check the string contains no nulls
-def withCString {a} (s:String) (action: CString -> {IO} a) : {IO} a =
+def with_c_string {a} (s:String) (action: CString -> {IO} a) : {IO} a =
   (AsList n s') = s <> "\NUL"
-  withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
+  with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
 
 '### Stream IO
 
@@ -1433,8 +1433,8 @@ def fopen (path:String) (mode:StreamMode) : {IO} (Stream mode) =
   modeStr = case mode of
     ReadMode  -> "r"
     WriteMode -> "w"
-  withCString path \(MkCString pathPtr).
-    withCString modeStr \(MkCString modePtr).
+  with_c_string path \(MkCString pathPtr).
+    with_c_string modeStr \(MkCString modePtr).
       MkStream $ fopenFFI pathPtr modePtr
 
 def fclose {mode} (stream:Stream mode) : {IO} Unit =
@@ -1445,8 +1445,8 @@ def fclose {mode} (stream:Stream mode) : {IO} Unit =
 def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
-  withTabPtr s' \(MkPtr ptr).
-    fwriteFFI ptr (IToI64 1) (IToI64 n) stream'
+  with_table_ptr s' \(MkPtr ptr).
+    fwriteFFI ptr (i_to_i64 1) (i_to_i64 n) stream'
   fflushFFI stream'
   ()
 
@@ -1454,7 +1454,7 @@ def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
 TODO: move this out of the file-system section
 
 def while {eff} (body: Unit -> {|eff} Bool) : {|eff} Unit =
-  body' : Unit -> {|eff} Word8 = \_. BToW8 $ body ()
+  body' : Unit -> {|eff} Word8 = \_. b_to_w8 $ body ()
   %while body'
 
 data IterResult a =
@@ -1462,16 +1462,16 @@ data IterResult a =
   Done a
 
 -- TODO: can we improve effect inference so we don't need this?
-def liftState {a b c h eff} (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
+def lift_state {a b c h eff} (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
   f x
 
 -- A little iteration combinator
 def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
-  result = yieldState Nothing \resultRef. withState 0 \i.
+  result = yield_state Nothing \resultRef. with_state 0 \i.
     while do
-      continue = isNothing $ get resultRef
+      continue = is_nothing $ get resultRef
       if continue then
-        case liftState resultRef (liftState i body) (get i) of
+        case lift_state resultRef (lift_state i body) (get i) of
           Continue -> i := get i + 1
           Done result -> resultRef := Just result
       continue
@@ -1479,7 +1479,7 @@ def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
     Just ans -> ans
     Nothing -> unreachable ()
 
-def boundedIter {a eff}
+def bounded_iter {a eff}
       (maxIters:Int) (fallback:a)
       (body: Int -> {|eff} IterResult a) : {|eff} a  =
   iter \i.
@@ -1489,26 +1489,26 @@ def boundedIter {a eff}
 
 '### Environment Variables
 
-def fromCString (s:CString) : {IO} (Maybe String) =
-  case cStringPtr s of
+def from_c_string (s:CString) : {IO} (Maybe String) =
+  case c_string_ptr s of
     Nothing -> Nothing
     Just ptr ->
-      Just $ withDynamicBuffer \buf. iter \i.
+      Just $ with_dynamic_buffer \buf. iter \i.
         c = load $ ptr +>> i
         if c == '\NUL'
-          then Done $ loadDynBuffer buf
+          then Done $ load_dynamic_buffer buf
           else
-            pushDynBuffer buf c
+            push_dynamic_buffer buf c
             Continue
 
 foreign "getenv" getenvFFI : RawPtr -> {IO} RawPtr
 
-def getEnv (name:String) : {IO} Maybe String =
-  withCString name \(MkCString ptr).
-    fromCString $ MkCString $ getenvFFI ptr
+def get_env (name:String) : {IO} Maybe String =
+  with_c_string name \(MkCString ptr).
+    from_c_string $ MkCString $ getenvFFI ptr
 
-def checkEnv (name:String) : {IO} Bool =
-  isJust $ getEnv name
+def check_env (name:String) : {IO} Bool =
+  is_just $ get_env name
 
 '### More Stream IO
 
@@ -1516,24 +1516,24 @@ def fread (stream:Stream ReadMode) : {IO} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
   n = 4096
-  withAlloc n \ptr:(Ptr Char).
-    withDynamicBuffer \buf.
+  with_alloc n \ptr:(Ptr Char).
+    with_dynamic_buffer \buf.
       iter \_.
         (MkPtr rawPtr) = ptr
-        numRead = I64ToI $ freadFFI rawPtr (IToI64 1) (IToI64 n) stream'
-        extendDynBuffer buf $ stringFromCharPtr numRead ptr
+        numRead = i64_to_i $ freadFFI rawPtr (i_to_i64 1) (i_to_i64 n) stream'
+        extend_dynamic_buffer buf $ string_from_char_ptr numRead ptr
         if numRead == n
           then Continue
           else Done ()
-      loadDynBuffer buf
+      load_dynamic_buffer buf
 
 '### Print
 
-def getOutputStream (_:Unit) : {IO} Stream WriteMode =
+def get_output_stream (_:Unit) : {IO} Stream WriteMode =
   MkStream $ %ptrLoad %outputStreamPtr
 
 def print (s:String) : {IO} Unit =
-  fwrite (getOutputStream ()) (s <> "\n")
+  fwrite (get_output_stream ()) (s <> "\n")
 
 '### Shelling Out
 
@@ -1542,10 +1542,10 @@ foreign "remove" removeFFI : RawPtr -> {IO} Int64
 foreign "mkstemp" mkstempFFI : RawPtr -> {IO} Int32
 foreign "close" closeFFI : Int32 -> {IO} Int32
 
-def shellOut (command:String) : {IO} String =
+def shell_out (command:String) : {IO} String =
   modeStr = "r"
-  withCString command \(MkCString commandPtr).
-    withCString modeStr \(MkCString modePtr).
+  with_c_string command \(MkCString commandPtr).
+    with_c_string modeStr \(MkCString modePtr).
       pipe = MkStream $ popenFFI commandPtr modePtr
       fread pipe
 
@@ -1556,7 +1556,7 @@ Not to be confused with a partially applied function
 
 '### Error throwing
 
-def error {a} (s:String) : a = unsafeIO do
+def error {a} (s:String) : a = unsafe_io do
   print s
   %throwError a
 
@@ -1564,18 +1564,18 @@ def todo {a} : a = error "TODO: implement it!"
 
 '### File Operations
 
-def deleteFile (f:FilePath) : {IO} Unit =
-  withCString f \(MkCString ptr).
+def delete_file (f:FilePath) : {IO} Unit =
+  with_c_string f \(MkCString ptr).
     removeFFI ptr
   ()
 
-def withFile {a}
+def with_file {a}
       (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
       : {IO} a =
   stream = fopen f mode
   (MkStream stream') = stream
-  if stream' == nullRawPtr
+  if stream' == null_raw_ptr
     then
       error $ "Unable to open file: " <> f
     else
@@ -1583,66 +1583,66 @@ def withFile {a}
       fclose stream
       result
 
-def writeFile (f:FilePath) (s:String) : {IO} Unit =
-  withFile f WriteMode \stream. fwrite stream s
+def write_file (f:FilePath) (s:String) : {IO} Unit =
+  with_file f WriteMode \stream. fwrite stream s
 
-def readFile (f:FilePath) : {IO} String =
-  withFile f ReadMode \stream. fread stream
+def read_file (f:FilePath) : {IO} String =
+  with_file f ReadMode \stream. fread stream
 
-def hasFile (f:FilePath) : {IO} Bool =
+def has_file (f:FilePath) : {IO} Bool =
   stream = fopen f ReadMode
   (MkStream stream') = stream
-  result = stream' /= nullRawPtr
+  result = stream' /= null_raw_ptr
   if result then fclose stream
   result
 
 '### Temporary Files
 
-def newTempFile (_:Unit) : {IO} FilePath =
-  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
+def new_temp_file (_:Unit) : {IO} FilePath =
+  with_c_string "/tmp/dex-XXXXXX" \(MkCString ptr).
     fd = mkstempFFI ptr
     closeFFI fd
-    stringFromCharPtr 15 (MkPtr ptr)
+    string_from_char_ptr 15 (MkPtr ptr)
 
-def withTempFile {a} (action: FilePath -> {IO} a) : {IO} a =
-  tmpFile = newTempFile ()
+def with_temp_file {a} (action: FilePath -> {IO} a) : {IO} a =
+  tmpFile = new_temp_file ()
   result = action tmpFile
-  deleteFile tmpFile
+  delete_file tmpFile
   result
 
-def withTempFiles {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
-  tmpFiles = for i. newTempFile ()
+def with_temp_files {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
+  tmpFiles = for i. new_temp_file ()
   result = action tmpFiles
-  for i. deleteFile tmpFiles.i
+  for i. delete_file tmpFiles.i
   result
 
 '### Table operations
 
-def fromOrdinal (n:Type) [Ix n] (i:Int) : n =
+def from_ordinal (n:Type) [Ix n] (i:Int) : n =
   case (0 <= i) && (i < size n) of
-    True  -> unsafeFromOrdinal _ i
+    True  -> unsafe_from_ordinal _ i
     False -> error $
       "Ordinal index out of range:" <> show i <> " >= " <> show (size n)
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
-def castTable {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
+def cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
   case size m == size n of
-     True  -> unsafeCastTable _ xs
+     True  -> unsafe_cast_table _ xs
      False -> error $
        "Table size mismatch in cast: " <> show (size m) <> " vs " <> show (size n)
 
-def asidx {n} [Ix n] (i:Int) : n = fromOrdinal n i
-def (@) (i:Int) (n:Type) [Ix n] : n = fromOrdinal n i
+def asidx {n} [Ix n] (i:Int) : n = from_ordinal n i
+def (@) (i:Int) (n:Type) [Ix n] : n = from_ordinal n i
 
 def slice {n a} (xs:n=>a) (start:Int) (m:Type) [Ix m] : m=>a =
-  for i. xs.(fromOrdinal _ (ordinal i + start))
+  for i. xs.(from_ordinal _ (ordinal i + start))
 
 def head {n a} (xs:n=>a) : a = xs.(0@_)
 
 def tail {n a} (xs:n=>a) (start:Int) : List a =
   numElts = size n - start
-  toList $ slice xs start (Fin numElts)
+  to_list $ slice xs start (Fin numElts)
 
 
 '## Pseudorandom number generator utilities
@@ -1655,47 +1655,47 @@ Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/j
 -- TODO: newtype
 Key = Word64
 
-def threeFry2x32 (k:Word64) (count:Word64) : Word64 =
+def threefry_2x32 (k:Word64) (count:Word64) : Word64 =
   -- Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
   rotations1 = [13, 15, 26, 6]
   rotations2 = [17, 29, 16, 24]
 
-  k0 = lowWord k
-  k1 = highWord k
+  k0 = low_word k
+  k1 = high_word k
   -- TODO: add a fromHex
-  k2 = k0 .^. k1 .^. (IToW32 466688986) -- 0x1BD11BDA
+  k2 = k0 .^. k1 .^. (i_to_w32 466688986) -- 0x1BD11BDA
 
-  x = lowWord count
-  y = highWord count
+  x = low_word count
+  y = high_word count
   x = x + k0
   y = y + k1
 
   rotations = [rotations1, rotations2]
   ks = [k1, k2, k0]
-  (x, y) = yieldState (x, y) \ref. for i:(Fin 5).
+  (x, y) = yield_state (x, y) \ref. for i:(Fin 5).
     for j.
       (x, y) = get ref
-      rotationIndex = unsafeFromOrdinal _ (mod (ordinal i) 2)
+      rotationIndex = unsafe_from_ordinal _ (mod (ordinal i) 2)
       rot = rotations.rotationIndex.j
       x = x + y
       y = (y .<<. rot) .|. (y .>>. (32 - rot))
       y = x .^. y
       ref := (x, y)
     (x, y) = get ref
-    x = x + ks.(unsafeFromOrdinal _ (mod (ordinal i) 3))
-    y = y + ks.(unsafeFromOrdinal _ (mod ((ordinal i)+1) 3)) + IToW32 ((ordinal i)+1)
+    x = x + ks.(unsafe_from_ordinal _ (mod (ordinal i) 3))
+    y = y + ks.(unsafe_from_ordinal _ (mod ((ordinal i)+1) 3)) + i_to_w32 ((ordinal i)+1)
     ref := (x, y)
 
-  (W32ToW64 x .<<. 32) .|. (W32ToW64 y)
+  (w32_to_w64 x .<<. 32) .|. (w32_to_w64 y)
 
 def hash (x:Key) (y:Int32) : Key =
-  y64 = IToW64 y
-  threeFry2x32 x y64
-def newKey (x:Int) : Key = hash (IToW64 0) x
+  y64 = i_to_w64 y
+  threefry_2x32 x y64
+def new_key (x:Int) : Key = hash (i_to_w64 0) x
 def many {a n} [Ix n] (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey {n} (k:Key) (i:n) [Ix n] : Key = hash k (ordinal i)
 def ixkey2 {n m} (k:Key) (i:n) (j:m) [Ix n, Ix m] : Key = hash (hash k (ordinal i)) (ordinal j)
-def splitKey {n} (k:Key) : Fin n => Key = for i. ixkey k i
+def split_key {n} (k:Key) : Fin n => Key = for i. ixkey k i
 
 '### Sample Generators
 These functions generate samples taken from, different distributions.
@@ -1703,30 +1703,30 @@ Such as `randMat` with samples from the distribution of floating point matrices 
 
 foreign "randunif" randunifFFI : Word64 -> {IO} Float64
 
-def rand (k:Key) : Float =  unsafeIO do F64ToF $ randunifFFI k
-def randVec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
+def rand (k:Key) : Float =  unsafe_io do f64_to_f $ randunifFFI k
+def rand_vec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
-def randMat {a} (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
+def rand_mat {a} (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
   for i j. f (ixkey2 k i j)
 
 def randn (k:Key) : Float =
-  [k1, k2] = splitKey k
+  [k1, k2] = split_key k
   u1 = rand k1
   u2 = rand k2
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
 -- TODO: Make this better...
-def randInt (k:Key) : Int = (internalCast Int k) `mod` 2147483647
+def rand_int (k:Key) : Int = (internal_cast Int k) `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 
-def randnVec {n} [Ix n] (k:Key) : n=>Float =
+def randn_vec {n} [Ix n] (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
-def randIdx {n} [Ix n] (k:Key) : n =
+def rand_idx {n} [Ix n] (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
+  from_ordinal n $ FToI $ floor $ unif * i_to_f (size n)
 
 '## Arbitrary
 Type class for generating example values
@@ -1748,11 +1748,11 @@ instance {n a} [Arbitrary a] Arbitrary (n=>a)
 
 instance {a b} [Arbitrary a, Arbitrary b] Arbitrary (a & b)
   arb = \key.
-    [k1, k2] = splitKey key
+    [k1, k2] = split_key key
     (arb k1, arb k2)
 
 instance {n} Arbitrary (Fin n)
-  arb = randIdx
+  arb = rand_idx
 
 '## Ord on Arrays
 
@@ -1760,37 +1760,37 @@ instance {n} Arbitrary (Fin n)
 
 'returns the highest index `i` such that `xs.i <= x`
 
-def searchSorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
+def search_sorted {n a} [Ord a] (xs:n=>a) (x:a) : Maybe n =
   if size n == 0
     then Nothing
-    else if x < xs.(fromOrdinal _ 0)
+    else if x < xs.(from_ordinal _ 0)
       then Nothing
-      else withState 0 \low. withState (size n) \high. iter \_.
+      else with_state 0 \low. with_state (size n) \high. iter \_.
         numLeft = get high - get low
         if numLeft == 1
-          then Done $ Just $ fromOrdinal _ $ get low
+          then Done $ Just $ from_ordinal _ $ get low
           else
             centerIx = get low + idiv numLeft 2
-            if x < xs.(fromOrdinal _ centerIx)
+            if x < xs.(from_ordinal _ centerIx)
               then high := centerIx
               else low  := centerIx
             Continue
 
 '### min / max etc
 
-def minBy {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
-def maxBy {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
+def min_by {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def max_by {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
 
-def min {o} [Ord o] (x1: o) (x2: o) : o = minBy id x1 x2
-def max {o} [Ord o] (x1: o) (x2: o) : o = maxBy id x1 x2
+def min {o} [Ord o] (x1: o) (x2: o) : o = min_by id x1 x2
+def max {o} [Ord o] (x1: o) (x2: o) : o = max_by id x1 x2
 
-def minimumBy {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (minBy f) xs
-def maximumBy {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (maxBy f) xs
+def minimum_by {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (min_by f) xs
+def maximum_by {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (max_by f) xs
 
-def minimum {n o} [Ord o] (xs:n=>o) : o = minimumBy id xs
-def maximum {n o} [Ord o] (xs:n=>o) : o = maximumBy id xs
+def minimum {n o} [Ord o] (xs:n=>o) : o = minimum_by id xs
+def maximum {n o} [Ord o] (xs:n=>o) : o = maximum_by id xs
 
 '### argmin/argmax
 TODO: put in same section as `searchsorted`
@@ -1805,7 +1805,7 @@ def argscan {n o} (comp:o->o->Bool) (xs:n=>o) : n =
 def argmin {n o} [Ord o] (xs:n=>o) : n = argscan (<) xs
 def argmax {n o} [Ord o] (xs:n=>o) : n = argscan (>) xs
 
-def lexicalOrder {n} [Ord n]
+def lexical_order {n} [Ord n]
       (compareElements:n->n->Bool)
       (compareLengths:Int->Int->Bool)
       ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
@@ -1825,8 +1825,8 @@ def lexicalOrder {n} [Ord n]
     case i == min nx ny of
       True -> Done $ compareLengths nx ny
       False ->
-        xi = xs.(unsafeFromOrdinal _ i)
-        yi = ys.(unsafeFromOrdinal _ i)
+        xi = xs.(unsafe_from_ordinal _ i)
+        yi = ys.(unsafe_from_ordinal _ i)
         case compareElements xi yi of
           True -> Done True
           False -> case xi == yi of
@@ -1834,8 +1834,8 @@ def lexicalOrder {n} [Ord n]
             False -> Done False
 
 instance {n} [Ord n] Ord (List n)
-  (>) = lexicalOrder (>) (>)
-  (<) = lexicalOrder (<) (<)
+  (>) = lexical_order (>) (>)
+  (<) = lexical_order (<) (<)
 
 '### clip
 
@@ -1911,7 +1911,7 @@ instance Mul Complex
   one = MkComplex 1.0 0.0
 
 instance VSpace Complex
-  scaleVec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+  scale_vec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
 
 -- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
 def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
@@ -2008,12 +2008,12 @@ instance Floating Complex
 TODO: all of these should be in some other section
 
 def reflect {n} [Ix n] (i:n) : n =
-  unsafeFromOrdinal n ((size n) - 1 - ordinal i)
+  unsafe_from_ordinal n ((size n) - 1 - ordinal i)
 
 def reverse {n a} (x:n=>a) : n=>a =
   for i. x.(reflect i)
 
-def padTo {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
+def pad_to {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
   n' = size n
   for i.
     i' = ordinal i
@@ -2021,13 +2021,13 @@ def padTo {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
       True  -> xs.(i'@_)
       False -> x
 
-def idivCeil (x:Int) (y:Int) : Int = idiv x y + BToI (rem x y /= 0)
+def idiv_ceil (x:Int) (y:Int) : Int = idiv x y + b_to_i (rem x y /= 0)
 def intdiv2 (x:Int) : Int = %shr x (1 : Int)
 def intpow2 (power:Int) : Int = %shl (1 : Int) power
-def isOdd  (x:Int) : Bool = rem x 2 == 1
-def isEven (x:Int) : Bool = rem x 2 == 0
+def is_odd  (x:Int) : Bool = rem x 2 == 1
+def is_even (x:Int) : Bool = rem x 2 == 0
 
-def isPowerOf2 (x:Int) : Bool =
+def is_power_of_2 (x:Int) : Bool =
   -- A fast trick based on bitwise AND.
   -- This works on integer types larger than 8 bits.
   -- Note: The bitwise and operator (.&.)
@@ -2038,8 +2038,8 @@ def isPowerOf2 (x:Int) : Bool =
     else 0 == %and x (x - 1)
 
 def intlog2 (x:Int) : Int =
-  yieldState (-1) \ansRef.
-    runState 1 \cmpRef.
+  yield_state (-1) \ansRef.
+    run_state 1 \cmpRef.
       while do
         if x >= (get cmpRef)
           then
@@ -2049,21 +2049,21 @@ def intlog2 (x:Int) : Int =
           else
             False
 
-def nextpow2 (x:Int) : Int = case isPowerOf2 x of
+def nextpow2 (x:Int) : Int = case is_power_of_2 x of
   True -> x
   False -> intpow2 (1 + intlog2 x)
 
-def generalIntegerPower {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
+def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
   -- Implements exponentiation by squaring.
   -- Todo: Make power a Nat when it's available.
   -- This could be nicer if there were a way to explicitly
   -- specify which typelcass instance to use for Mul.
-  yieldState one \ans.
-    withState power \pow. withState base \z.
+  yield_state one \ans.
+    with_state power \pow. with_state base \z.
       while do
         if get pow > 0
           then
-            if isOdd (get pow)
+            if is_odd (get pow)
               then ans := times (get ans) (get z)
             z := times (get z) (get z)
             pow := intdiv2 (get pow)
@@ -2072,36 +2072,36 @@ def generalIntegerPower {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
             False
 
 def intpow {a} [Mul a] (base:a) (power:Int) : a =
-  generalIntegerPower (*) one base power
+  general_integer_power (*) one base power
 
-def fromJust {a} (x:Maybe a) : a = case x of Just x' -> x'
+def from_just {a} (x:Maybe a) : a = case x of Just x' -> x'
 
-def anySat {a n} (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
+def any_sat {a n} (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 
-def seqMaybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
+def seq_maybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
-  case anySat isNothing xs of
+  case any_sat is_nothing xs of
     True  -> Nothing
-    False -> Just $ map fromJust xs
+    False -> Just $ map from_just xs
 
-def linearSearch {n a} [Eq a] (xs:n=>a) (query:a) : Maybe n =
-  yieldState Nothing \ref. for i.
+def linear_search {n a} [Eq a] (xs:n=>a) (query:a) : Maybe n =
+  yield_state Nothing \ref. for i.
     case xs.i == query of
       True  -> ref := Just i
       False -> ()
 
-def listLength {a} ((AsList n _):List a) : Int = n
+def list_length {a} ((AsList n _):List a) : Int = n
 
 -- This is for efficiency (rather than using `<>` repeatedly)
 -- TODO: we want this for any monoid but this implementation won't work.
 def concat {n a} (lists:n=>(List a)) : List a =
-  totalSize = sum for i. listLength lists.i
-  AsList _ $ withState 0 \listIdx.
-    withState 0 \eltIdx.
+  totalSize = sum for i. list_length lists.i
+  AsList _ $ with_state 0 \listIdx.
+    with_state 0 \eltIdx.
       for i:(Fin totalSize).
         while do
-          continue = get eltIdx >= listLength (lists.((get listIdx)@_))
+          continue = get eltIdx >= list_length (lists.((get listIdx)@_))
           if continue
             then
               eltIdx := 0
@@ -2115,33 +2115,33 @@ def concat {n a} (lists:n=>(List a)) : List a =
 
 '## Probability
 
-def cumSumLow {n} (xs: n=>Float) : n=>Float =
-  withState 0.0 \total.
+def cumsum_low {n} (xs: n=>Float) : n=>Float =
+  with_state 0.0 \total.
     for i.
       oldTotal = get total
       total := oldTotal + xs.i
       oldTotal
 
 -- cdf should include 0.0 but not 1.0
-def categoricalFromCDF {n} (cdf: n=>Float) (key: Key) : n =
+def categorical_from_cdf {n} (cdf: n=>Float) (key: Key) : n =
   r = rand key
-  case searchSorted cdf r of
+  case search_sorted cdf r of
     Just i -> i
 
-def normalizePdf {d} (xs: d=>Float) : d=>Float = xs / sum xs
+def normalize_pdf {d} (xs: d=>Float) : d=>Float = xs / sum xs
 
-def cdfForCategorical {n} (logprobs: n=>Float) : n=>Float =
+def cdf_for_categorical {n} (logprobs: n=>Float) : n=>Float =
   maxLogProb = maximum logprobs
-  cumSumLow $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
+  cumsum_low $ normalize_pdf $ map exp $ for i. logprobs.i - maxLogProb
 
 def categorical {n} (logprobs: n=>Float) (key: Key) : n =
-  categoricalFromCDF (cdfForCategorical logprobs) key
+  categorical_from_cdf (cdf_for_categorical logprobs) key
 
 -- batch variant to share the work of forming the cumsum
 -- (alternatively we could rely on hoisting of loop constants)
-def categoricalBatch {n m} [Ix m] (logprobs: n=>Float) (key: Key) : m=>n =
-  cdf = cdfForCategorical logprobs
-  for i. categoricalFromCDF cdf $ ixkey key i
+def categorical_batch {n m} [Ix m] (logprobs: n=>Float) (key: Key) : m=>n =
+  cdf = cdf_for_categorical logprobs
+  for i. categorical_from_cdf cdf $ ixkey key i
 
 def logsumexp {n} (x: n=>Float) : Float =
   m = maximum x
@@ -2167,7 +2167,7 @@ def evalpoly {n v} [VSpace v] (coefficients:n=>v) (x:Float) : v =
 '## TestMode
 TODO: move this to be in Testing Helpers
 
-def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
+def dex_test_mode (():Unit) : Bool = unsafe_io do check_env "DEX_TEST_MODE"
 
 '## Exception effect
 TODO: move `error` and `todo` to here.

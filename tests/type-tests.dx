@@ -63,7 +63,7 @@ help make the errors more local.
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   IToF (sum for i. x.i) + IToF (sum for j. y.j)
+   i_to_f (sum for i. x.i) + i_to_f (sum for j. y.j)
 > Float32
 
 :t
@@ -81,7 +81,7 @@ Narr = Fin 10
 
 arr  = iota Narr
 
-xr = map IToF arr
+xr = map i_to_f arr
 
 :t arr
 > ((Fin 10) => Int32)
@@ -322,19 +322,19 @@ bad_range : Int = (1@Fin 3)..(2@_)
 >                ^^^
 
 def getFst1 {n:Type} {b} (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+  xs.(from_ordinal n 0)
 
 :p getFst1 [1,2,3]
 > 1
 
 def getFst2 {n b} (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+  xs.(from_ordinal n 0)
 
 :p getFst2 [1,2,3]
 > 1
 
 def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+  xs.(from_ordinal n 0)
 
 :p getFst3 [1,2,3]
 > 1
@@ -443,6 +443,6 @@ q 5
 :p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
 > True
 
-xbool : Bool = arb $ newKey 0
+xbool : Bool = arb $ new_key 0
 :p xbool
 > True

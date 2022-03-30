@@ -23,14 +23,14 @@
    vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
-   y = map IToF x
+   y = map i_to_f x
    vdot' y y
 > 10.
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. IToF x.i * IToF y.j
+   z = for i j. i_to_f x.i * i_to_f y.j
    sum (for i. sum z.i)
 > 18.
 
@@ -48,7 +48,7 @@ arr = iota NArr
 :p sum for i:NArr. 1
 > 7
 
-fun = \y. sum (map IToF arr) + y
+fun = \y. sum (map i_to_f arr) + y
 
 :p fun 3.0
 > 24.
@@ -161,7 +161,7 @@ def cumsumplus {n} : n=>Float -> n=>Float =
 :p 1.0 < 2.0
 > True
 
-:p BToI (1.0 < 2.0)
+:p b_to_i (1.0 < 2.0)
 > 1
 
 :p [ 1 < 2, 1.0 < 2.0,  2 < 2, 2.0 < 2.0, 2 < 1, 2.0 < 1.0]
@@ -211,27 +211,27 @@ litArr = [10, 5, 3]
 > [3, 4, 5, 6, 7, 8]
 
 :p
-   k = newKey 0
+   k = new_key 0
    mean for i:(Fin 100). randn (ixkey k i)
 > -0.1158
 
-:p hash (IToW64 0) 0
+:p hash (i_to_w64 0) 0
 > 0x6b20015999ba4efe
 
-:p hash (IToW64 123) 456
+:p hash (i_to_w64 123) 456
 > 0x500945c565c98701
 
-key = (W32ToW64 (IToW32 320440878) .<<. 32) .|. (W32ToW64 (IToW32 57701188)) -- 0x13198a2e03707344
-count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355)) -- 0x243f6a8885a308d3
-:p threeFry2x32 key count
+key = (w32_to_w64 (i_to_w32 320440878) .<<. 32) .|. (w32_to_w64 (i_to_w32 57701188)) -- 0x13198a2e03707344
+count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242054355)) -- 0x243f6a8885a308d3
+:p threefry_2x32 key count
 > 0xc4923a9c483df7a0
 
 :p
-   k = newKey 0
+   k = new_key 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
 > 1.25819
 
-:p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (newKey 11) i j
+:p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (new_key 11) i j
 > [[0.474153, 0.914516], [0.79446, 0.276799], [0.589586, 0.711625]]
 
 :p
@@ -244,7 +244,7 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + IToF (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + i_to_f (ordinal j))
 > [0., 2., 4.]
 
 :p
@@ -270,7 +270,7 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 :p for i:(Fin 3). i
 > [(0@Fin 3), (1@Fin 3), (2@Fin 3)]
 
-:p fromOrdinal (Fin 1) 0
+:p from_ordinal (Fin 1) 0
 > (0@Fin 1)
 
 :p 0@(Fin 1)
@@ -317,7 +317,7 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 :p select False [1,2,3] [10,20,30]
 > [10, 20, 30]
 
-:p [(1, (for i:(Fin 2) . 3))].(fromOrdinal _ 0)
+:p [(1, (for i:(Fin 2) . 3))].(from_ordinal _ 0)
 > (1, [3, 3])
 
 :p (False && False, False && True, True && False, True && True)
@@ -354,7 +354,7 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 :p select False () ()
 > ()
 
-:p [1,2,3].(fromOrdinal (Fin 3) 1 )
+:p [1,2,3].(from_ordinal (Fin 3) 1 )
 > 2
 
 :p fold (1.0, 2.0) \i:(Fin 2) (x, y). (y, x)
@@ -368,25 +368,25 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 :p min 2.0 3.0
 > 2.
 
-:p minBy sq 0.5 (-2.0)
+:p min_by sq 0.5 (-2.0)
 > 0.5
 
 :p minimum [2.0, 3.0, 4.0, 1.5, 7.0]
 > 1.5
 
-:p minimumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p minimum_by fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (1.5, 15)
 
 :p max 2.0 3.0
 > 3.
 
-:p maxBy sq 0.5 (-2.0)
+:p max_by sq 0.5 (-2.0)
 > -2.
 
 :p maximum [2.0, 4.0, 1.5, 7.0]
 > 7.
 
-:p maximumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p maximum_by fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (10., 100)
 
 :p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
@@ -395,7 +395,7 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 :p (1. == 2., (-1.) == (-1.), 1. < 2., (-1.) < 2., 2. < (-1.))
 > (False, (True, (True, (True, False))))
 
-:p for i:(Fin 7). select (i < (fromOrdinal _ 3)) 1 2
+:p for i:(Fin 7). select (i < (from_ordinal _ 3)) 1 2
 > [1, 1, 1, 2, 2, 2, 2]
 
 σ = 1.0 + 2.0
@@ -447,27 +447,27 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 > 4.
 
 :p
-  one = fromOrdinal (Fin 4) 1
+  one = from_ordinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one..i). 1.0
 > [0., 1., 2., 3.]
 
 :p
-  one = fromOrdinal (Fin 4) 1
+  one = from_ordinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one<..i). 1.0
 > [0., 0., 1., 2.]
 
 :p
-  one = fromOrdinal (Fin 4) 1
+  one = from_ordinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one<..i). 1.0
 > [0., 0., 1., 2.]
 
 :p
-  one = fromOrdinal (Fin 4) 1
+  one = from_ordinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one..<i). 1.0
 > [0., 0., 1., 2.]
 
 :p
-  one = fromOrdinal (Fin 4) 1
+  one = from_ordinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one<..<i). 1.0
 > [0., 0., 0., 1.]
 
@@ -518,7 +518,7 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 :p argmin [1.0, 2.0, 0.4, 5.0]
 > (2@Fin 4)
 
-:p select True (fromOrdinal (Fin 2) 0) (fromOrdinal (Fin 2) 1)
+:p select True (from_ordinal (Fin 2) 0) (from_ordinal (Fin 2) 1)
 > (0@Fin 2)
 
 -- TODO: printing (also parsing) tables with alternative index sets
@@ -536,14 +536,14 @@ count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355))
 -- > [2.0, 2.0, 2.0]
 
 :p
-  runState 0.0 \ref. for i:(Fin 4).
+  run_state 0.0 \ref. for i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
 > ([0., 1., 2., 3.], 4.)
 
 :p
-  runState 0.0 \ref. rof i:(Fin 4).
+  run_state 0.0 \ref. rof i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
@@ -571,17 +571,17 @@ def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
   MkIso {fwd, bwd}
 
 instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
-  getSize = \(). size n + size m
-  ordinal = ordinal <<< appIso wbToEither
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso wbToEither
+  get_size = \(). size n + size m
+  ordinal = ordinal <<< app_iso wbToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso wbToEither
 
 -- Sum types as flattened index sets!
 def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
 def Biases  (n:Type)          [Ix n]       : Type = n=>Float
 def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
 
-w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
-b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
+w = for i:(Fin 2). for j:(Fin 3). (i_to_f (ordinal i)) * 3.0 + (i_to_f (ordinal j))
+b = for j:(Fin 2). neg (i_to_f (ordinal j) + 1.0)
 
 def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
@@ -663,8 +663,8 @@ for i:(Fin 2 & Fin 2). 1.0
 > ((0@Fin 2), (1@Fin 2))
 
 for i:(Fin 5). for j:(..i).
-  ir = IToF $ ordinal i
-  jr = IToF $ ordinal j
+  ir = i_to_f $ ordinal i
+  jr = i_to_f $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
 > [ [0.]@(..(0@Fin 5))
 > , [1., 2.]@(..(1@Fin 5))
@@ -694,7 +694,7 @@ def newtonIter (f: Float -> Float) (x:Float) : Float =
   x - (f x / deriv f x)
 
 def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
-  yieldState x0 \x.
+  yield_state x0 \x.
     iter \i.
       if abs (f $ get x) <= tol
         then Done ()
@@ -737,7 +737,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > [0, 2, 4, 6]
 
 :p
-  f = withState 1 \ref.
+  f = with_state 1 \ref.
     x = get ref
     ref := 3 + x
     y = get ref
@@ -746,7 +746,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > 415
 
 :p
-  (f, w) = runAccum (AddMonoid Float) \ref.
+  (f, w) = run_accum (AddMonoid Float) \ref.
     ref += 2.0
     w = 2
     \z. z + w
@@ -908,7 +908,7 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
 -- Integer utility tests
 
-:p map isPowerOf2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
+:p map is_power_of_2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
 > [False, True, True, False, True, True, True, False]
 
 :p map intlog2 [-1, 0, 1, 2, 3, 4, 5, 1023, 1024, 1025]

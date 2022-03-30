@@ -14,7 +14,7 @@ instance [Add a, Add b] Add (a & b)
   zero = (zero, zero)
 
 instance [VSpace a, VSpace b] VSpace (a & b)
-  scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
+  scale_vec = \ s (a, b) . (scale_vec s a, scale_vec s b)
 
 data Layer inp:Type out:Type params:Type =
   AsLayer {forward:(params -> inp -> out) & init:(Key -> params)}
@@ -22,11 +22,11 @@ data Layer inp:Type out:Type params:Type =
 
 def forward (l:Layer i o p) (p : p) (x : i): o =
   (AsLayer l' ) = l
-  (getAt #forward l') p x
+  (get_at #forward l') p x
 
 def init (l:Layer i o p) (k:Key)  : p  =
   (AsLayer l') = l
-  (getAt #init l') k
+  (get_at #init l') k
 
 
 ' ## Layers 
@@ -59,8 +59,8 @@ def conv2d
     case (i' + kh) <= h && (j' + kw) <= w of
       True ->
         sum for (ki, kj, inp).
-          (di, dj) = (fromOrdinal (Fin h) (i' + (ordinal ki)),
-                      fromOrdinal (Fin w) (j' + (ordinal kj)))
+          (di, dj) = (from_ordinal (Fin h) (i' + (ordinal ki)),
+                      from_ordinal (Fin w) (j' + (ordinal kj)))
           x.inp.di.dj * kernel.o.inp.ki.kj
       False -> zero
 
@@ -87,7 +87,7 @@ def meanpool (kh: Type) (kw: Type) (x : m=>n=> Float) : ( h=>w=> Float) =
 
 ' ## Simple point classifier
 
-[k1, k2] = splitKey $ newKey 1
+[k1, k2] = split_key $ new_key 1
 x1 : Fin 100 => Float = arb k1
 x2 : Fin 100 => Float = arb k2
 y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0)) of
@@ -96,7 +96,7 @@ y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0))
 xs = for i. [x1.i, x2.i]
 
 
-:html showPlot $ xycPlot x1 x2 $ for i. IToF y.i
+:html show_plot $ xyc_plot x1 x2 $ for i. i_to_f y.i
 
 simple = \h1.
   ndense1 = dense (Fin 2) h1
@@ -107,7 +107,7 @@ simple = \h1.
          x1 = for i. relu x1'.i
          logsoftmax $ forward ndense2 dense2 x1),
     init = (\key.
-         [k1, k2] = splitKey key
+         [k1, k2] = split_key key
          (init ndense1 k1, init ndense2 k2))
   }
 
@@ -126,7 +126,7 @@ def trainClass [VSpace p]
       : (epochs => p & epochs => Float ) =
   xs : minibatches => minibatch => a = split x
   ys : minibatches => minibatch => b = split y
-  unzip $ withState (init model $ newKey 0) $ \params .
+  unzip $ with_state (init model $ new_key 0) $ \params .
      for _ : epochs.
        loss = sum $ for b : minibatches. 
               (loss, gradfn) =  vjp (\ params.
@@ -134,7 +134,7 @@ def trainClass [VSpace p]
                                        result = forward model params xs.b.j
                                        result.(ys.b.j)) (get params)
               gparams = gradfn 1.0
-              params := (get params) - scaleVec (0.05 / (IToF 100)) gparams
+              params := (get params) - scale_vec (0.05 / (i_to_f 100)) gparams
               loss
        (get params, loss)
 
@@ -175,7 +175,7 @@ lenet = \h1 h2 h3 .
          x4 = for i. relu x4'.i
          logsoftmax $ forward ndense2 dense2 x4),
     init = (\key.
-         [k1, k2, k3, k4] = splitKey key
+         [k1, k2, k3, k4] = split_key key
          (init ncnn1 k1, init ncnn2 k2,
          init ndense1 k3, init ndense2 k4))
   }
@@ -190,21 +190,21 @@ Batch = Fin 5000
 Full = Fin ((size Batch) * H * W)
 
 def pixel (x:Char) : Float32 =
-     r = W8ToI x
-     IToF case r < 0 of
-             True -> (abs r) + 128
-             False -> r
+     r = w8_to_i x
+     i_to_f case r < 0 of
+               True -> (abs r) + 128
+               False -> r
 
 def getIm : Batch => Image = 
-    (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
-    raw = unsafeCastTable Full im
+    (AsList _ im) = unsafe_io do read_file "examples/mnist.bin"
+    raw = unsafe_cast_table Full im
     for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
         pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
-    (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
-    r = unsafeCastTable Batch im2
-    for i. (W8ToI r.i @ Class)
+    (AsList _ im2) = unsafe_io do read_file "examples/labels.bin"
+    r = unsafe_cast_table Batch im2
+    for i. (w8_to_i r.i @ Class)
 
 
 ' ## Training loop
@@ -233,7 +233,7 @@ Minibatch = (Fin 10)
 :t ims.(2@_)
 
 model = lenet (Fin 1) (Fin 1) (Fin 20) 
-init_param = (init model  $ newKey 0)
+init_param = (init model  $ new_key 0)
 :p forward model init_param (ims.(2@Batch))
 
 ' Sanity check

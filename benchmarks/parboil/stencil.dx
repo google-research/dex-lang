@@ -2,14 +2,14 @@
 def (+|) (i:n) (off:Int) : n =
   newOrd = ordinal i + off
   case newOrd < size n of
-    True  -> unsafeFromOrdinal _ newOrd
+    True  -> unsafe_from_ordinal _ newOrd
     False -> i
 
 -- Assumes that off >= 0
 def (-|) (i:n) (off:Int) : n =
   newOrd = ordinal i - off
   case 0 <= newOrd of
-    True  -> unsafeFromOrdinal _ newOrd
+    True  -> unsafe_from_ordinal _ newOrd
     False -> i
 
 def stencil (input : nx=>ny=>nz=>Float) : nx=>ny=>nz=>Float =

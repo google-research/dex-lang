@@ -5,7 +5,7 @@ UnitInterval = Float
 
 def bmIter ((key, y, sigma, t):(Key & Float & Float & UnitInterval)) :
                                (Key & Float & Float & UnitInterval) =
-  [kDraw, kL, kR] = splitKey key
+  [kDraw, kL, kR] = split_key key
   t' = abs (t - 0.5)
   y' = sigma * randn kDraw * (0.5 - t')
   key' = select (t > 0.5) kL kR
@@ -16,7 +16,7 @@ def sampleBM (key:Key) (t:UnitInterval) : Float =
   y
 
 xs = linspace (Fin 1000) 0.0 1.0
-ys = map (sampleBM (newKey 0)) xs
+ys = map (sampleBM (new_key 0)) xs
 
-:html showPlot $ xyPlot xs ys
+:html show_plot $ xy_plot xs ys
 > <html output>
