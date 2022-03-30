@@ -908,7 +908,7 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
 -- Integer utility tests
 
-:p map isPowerOf2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
+:p map is_power_of_2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
 > [False, True, True, False, True, True, True, False]
 
 :p map intlog2 [-1, 0, 1, 2, 3, 4, 5, 1023, 1024, 1025]

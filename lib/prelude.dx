@@ -2027,7 +2027,7 @@ def intpow2 (power:Int) : Int = %shl (1 : Int) power
 def is_odd  (x:Int) : Bool = rem x 2 == 1
 def is_even (x:Int) : Bool = rem x 2 == 0
 
-def isPowerOf2 (x:Int) : Bool =
+def is_power_of_2 (x:Int) : Bool =
   -- A fast trick based on bitwise AND.
   -- This works on integer types larger than 8 bits.
   -- Note: The bitwise and operator (.&.)
@@ -2049,7 +2049,7 @@ def intlog2 (x:Int) : Int =
           else
             False
 
-def nextpow2 (x:Int) : Int = case isPowerOf2 x of
+def nextpow2 (x:Int) : Int = case is_power_of_2 x of
   True -> x
   False -> intpow2 (1 + intlog2 x)
 

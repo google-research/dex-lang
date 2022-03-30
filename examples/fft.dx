@@ -95,7 +95,7 @@ def convolve {n m} (u:n=>Float) (v:m=>Float) : ((n|m)=>Float) =
 '## FFT Interface
 
 def fft {n} (x: n=>Complex): n=>Complex =
-  if isPowerOf2 (size n)
+  if is_power_of_2 (size n)
     then power_of_2_fft ForwardFT x
     else
       -- Bluestein's algorithm.
@@ -115,7 +115,7 @@ def fft {n} (x: n=>Complex): n=>Complex =
       for i. wks.i * convslice.i
 
 def ifft {n} (xs: n=>Complex): n=>Complex =
-  if isPowerOf2 (size n)
+  if is_power_of_2 (size n)
     then power_of_2_fft InverseFT xs
     else
       unscaled_fft = fft (for i. complex_conj xs.i)
