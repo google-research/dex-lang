@@ -1401,14 +1401,14 @@ data CString = MkCString RawPtr
 
 def null_raw_ptr : RawPtr = i64_to_raw_ptr $ i_to_i64 0
 
-def fromNullableRawPtr {a} (ptr:RawPtr) : Maybe (Ptr a) =
+def from_nullable_raw_ptr {a} (ptr:RawPtr) : Maybe (Ptr a) =
   if ptr == null_raw_ptr
     then Nothing
     else Just $ MkPtr ptr
 
 def cStringPtr (s:CString) : Maybe (Ptr Char) =
   (MkCString ptr) = s
-  fromNullableRawPtr ptr
+  from_nullable_raw_ptr ptr
 
 data StreamMode =
   ReadMode
