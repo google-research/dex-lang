@@ -56,7 +56,7 @@ unsafeIO \().
 > 999000
 
 :p unsafeIO \().
-  s = for i:(Fin 10000). IToW8 $ FToI $ 128.0 * rand (ixkey (newKey 0) i)
+  s = for i:(Fin 10000). i_to_w8 $ FToI $ 128.0 * rand (ixkey (newKey 0) i)
   withTempFile \fname.
     withFile fname WriteMode \stream.
       fwrite stream $ AsList _ s

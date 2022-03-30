@@ -19,11 +19,11 @@ def showHex (x:Word8) : String = unsafeIO \().
   (n, ptr) = showHexFFI x
   stringFromCharPtr n (MkPtr ptr)
 
-black : HtmlColor = [IToW8   0, IToW8   0, IToW8   0]
-white : HtmlColor = [IToW8 255, IToW8 255, IToW8 255]
-red   : HtmlColor = [IToW8 255, IToW8   0, IToW8   0]
-green : HtmlColor = [IToW8   0, IToW8 255, IToW8   0]
-blue  : HtmlColor = [IToW8   0, IToW8   0, IToW8 255]
+black : HtmlColor = [i_to_w8   0, i_to_w8   0, i_to_w8   0]
+white : HtmlColor = [i_to_w8 255, i_to_w8 255, i_to_w8 255]
+red   : HtmlColor = [i_to_w8 255, i_to_w8   0, i_to_w8   0]
+green : HtmlColor = [i_to_w8   0, i_to_w8 255, i_to_w8   0]
+blue  : HtmlColor = [i_to_w8   0, i_to_w8   0, i_to_w8 255]
 
 GeomStyle : Type = {
     fillColor   : Maybe HtmlColor

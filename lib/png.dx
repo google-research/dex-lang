@@ -13,10 +13,10 @@ encodingTable =
 -- TODO: make `Word8` an index set instead of using `Fin 256`
 decodingTable : Fin 256 => Maybe Char =
   for i:(Fin 256).
-    idx = linearSearch encodingTable (IToW8 (ordinal i))
+    idx = linearSearch encodingTable (i_to_w8 (ordinal i))
     case idx of
       Nothing -> Nothing
-      Just x  -> Just $ IToW8 $ ordinal x
+      Just x  -> Just $ i_to_w8 $ ordinal x
 
 Base64 = Byte -- first two bits should be zero
 
@@ -121,7 +121,7 @@ def imgToHtml (png:String) : Html =
    <> "\">")
 
 def floatTo8Bit (x:Float) : Word8 =
-  IToW8 $ FToI $ 255.0 * clip (0.0, 1.0) x
+  i_to_w8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
 def imgToPng {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
   makePNG for i j k. floatTo8Bit img.i.j.k

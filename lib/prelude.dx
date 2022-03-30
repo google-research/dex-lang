@@ -42,7 +42,7 @@ def i32_to_i (x : Int32)   : Int     = internal_cast _ x
 def w8_to_i  (x : Word8)   : Int     = internal_cast _ x
 def i_to_i64 (x : Int)     : Int64   = internal_cast _ x
 def i_to_i32 (x : Int)     : Int32   = internal_cast _ x
-def IToW8  (x : Int)     : Word8   = internal_cast _ x
+def i_to_w8  (x : Int)     : Word8   = internal_cast _ x
 def IToW32 (x : Int)     : Word32  = internal_cast _ x
 def IToW64 (x : Int)     : Word64  = internal_cast _ x
 def W32ToW64 (x : Word32): Word64  = internal_cast _ x
@@ -76,8 +76,8 @@ interface Bits a
   (.^.)   : a -> a -> a
 
 instance Bits Word8
-  (.<<.)  = \x y. %shl x (IToW8 y)
-  (.>>.)  = \x y. %shr x (IToW8 y)
+  (.<<.)  = \x y. %shl x (i_to_w8 y)
+  (.>>.)  = \x y. %shr x (i_to_w8 y)
   (.|.)   = \x y. %or x y
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
@@ -135,7 +135,7 @@ instance Add Int32
 instance Add Word8
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToW8 0
+  zero = i_to_w8 0
 
 instance Add Word32
   add = \x y. %iadd x y
@@ -185,7 +185,7 @@ instance Mul Int32
 
 instance Mul Word8
   mul = \x y. %imul x y
-  one = IToW8 1
+  one = i_to_w8 1
 
 instance Mul Unit
   mul = \x y. ()
