@@ -228,7 +228,7 @@ render_scaled_svg = \d. render_svg d (compute_bounds d)
 '## Derived convenience methods and combinators
 
 move_x : Float -> Diagram -> Diagram = \x. move_xy (x, 0.0)
-moveY : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
+move_y : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
 
 ' A Demo showing all kind of features
 ```
