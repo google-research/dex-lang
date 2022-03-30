@@ -1217,7 +1217,7 @@ Complement the focus of a prism-like isomorphism
 def except_prism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swap_either_iso
 
 -- Use a lens-like iso to split a 1d table into a 2d table
-def overLens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
+def over_lens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
   for i j. tab.(rev_iso iso (i, j))
 
 '### Zipper
@@ -1234,7 +1234,7 @@ def splitR {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
 def overFields {a b c v} [Ix b, Ix c]
       (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  overLens (splitR &>> iso) tab
+  over_lens (splitR &>> iso) tab
 
 'Convert a variant zipper isomorphism to a normal prism-like isomorphism
 by using `splitV &>> iso`

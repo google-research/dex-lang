@@ -179,7 +179,7 @@ when using a record type as an index set:
 :t splitR
 > ((a:Type) ?-> Iso a ({&} & a))
 
-:t overLens
+:t over_lens
 > ((a:Type)
 >  ?-> (b:Type)
 >  ?-> (c:Type)
@@ -211,7 +211,7 @@ instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
     ordinal a * 100 + ordinal b * 10 + ordinal c
-  overLens #a x
+  over_lens #a x
 > [ [0, 10, 1, 11]@{b: Fin 2 & c: Fin 2}
 > , [100, 110, 101, 111]@{b: Fin 2 & c: Fin 2} ]
 
