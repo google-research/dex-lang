@@ -126,7 +126,7 @@ def tag_brackets (tag:String) (s:String) : String =
 def tag_brackets_attr_uncurried ((tag, attr, s):(String & String & String)) : String =
   "<" <.> tag <+> attr <.> ">" <.> s <.> "</" <.> tag <.> ">"
 
-def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
+def tag_brackets_attr (tag:String) (attr:String) (s:String) : String =
   tag_brackets_attr_uncurried (tag, attr, s)
 
 def (<=>) {b} [Show b] (attr:String) (val:b) : String =
@@ -151,7 +151,7 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
   solidAttr = set_at #fillColor (get_at #strokeColor attr) attr
 
-  groupEle = \attr. tagBracketsAttr "g" (attrString attr)
+  groupEle = \attr. tag_brackets_attr "g" (attrString attr)
   case geom of
     PointGeom ->
       pointAttr = set_at #fillColor (get_at #strokeColor attr) attr
@@ -174,7 +174,7 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
          "x"      <=> (x - (w/2.0)) <.>
          "y"      <=> (y - (h/2.0)))
     Text content ->
-      textEle = tagBracketsAttr "text" $
+      textEle = tag_brackets_attr "text" $
         ("x" <=> x <.>
          "y" <=> y <.>
          "text-anchor" <=> "middle" <.>    -- horizontal center
@@ -218,7 +218,7 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   svgAttrStr = (    "width"   <=> imgWidth
                 <+> "height"  <=> imgHeight
                 <+> "viewBox" <=> (imgXMin <+> imgYMin <+> imgWidth <+> imgHeight))
-  tagBracketsAttr "svg" svgAttrStr $
+  tag_brackets_attr "svg" svgAttrStr $
     concat for i.
       (attr, pos, geom) = objs.i
       renderGeom attr pos geom
