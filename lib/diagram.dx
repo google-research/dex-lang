@@ -50,7 +50,7 @@ def concat_diagrams {n} (diagrams:n=>Diagram) : Diagram =
 -- TODO: arbitrary affine transformations. Our current representation of
 -- rectangles and circles means we can only do scale/flip/rotate90.
 -- Should we use lenses/isomorphisms for these instead?
-def applyTransformation
+def apply_transformation
       (transformPoint: Point -> Point)
       (transformGeom:  Geom -> Geom)
       (d:Diagram) : Diagram =
@@ -60,7 +60,7 @@ def applyTransformation
     (attr, transformPoint p, transformGeom geom)
 
 flipY : Diagram -> Diagram =
-  applyTransformation (\(x,y). (x, -y)) \geom. case geom of
+  apply_transformation (\(x,y). (x, -y)) \geom. case geom of
     PointGeom     -> PointGeom
     Circle r      -> Circle r
     Rectangle w h -> Rectangle w h
@@ -68,7 +68,7 @@ flipY : Diagram -> Diagram =
     Text x        -> Text x
 
 def scale (s:Float) : (Diagram -> Diagram) =
-  applyTransformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
+  apply_transformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
     PointGeom     -> PointGeom
     Circle r      -> Circle (s * r)
     Rectangle w h -> Rectangle (s * w) (s * h)
@@ -76,7 +76,7 @@ def scale (s:Float) : (Diagram -> Diagram) =
     Text x        -> Text x
 
 def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
-  applyTransformation (\(x,y). (x + offX, y + offY) ) id
+  apply_transformation (\(x,y). (x + offX, y + offY) ) id
 
 def singletonDefault (geom:Geom) : Diagram =
   MkDiagram $ to_list [(default_geom_style, (0.0, 0.0), geom)]
