@@ -59,7 +59,7 @@ def apply_transformation
     (attr, p, geom) = objs.i
     (attr, transformPoint p, transformGeom geom)
 
-flipY : Diagram -> Diagram =
+flip_y : Diagram -> Diagram =
   apply_transformation (\(x,y). (x, -y)) \geom. case geom of
     PointGeom     -> PointGeom
     Circle r      -> Circle r
@@ -214,7 +214,7 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   imgHeight = (ymax - ymin) * scaleFactor
   imgXMin   =  xmin * scaleFactor
   imgYMin   = -ymax * scaleFactor
-  (MkDiagram (AsList _ objs)) = d |> flipY |> scale scaleFactor
+  (MkDiagram (AsList _ objs)) = d |> flip_y |> scale scaleFactor
   svgAttrStr = (    "width"   <=> imgWidth
                 <+> "height"  <=> imgHeight
                 <+> "viewBox" <=> (imgXMin <+> imgYMin <+> imgWidth <+> imgHeight))
