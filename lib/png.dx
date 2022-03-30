@@ -11,7 +11,7 @@ encoding_table =
    '4', '5', '6', '7', '8', '9', '+', '/']
 
 -- TODO: make `Word8` an index set instead of using `Fin 256`
-decodingTable : Fin 256 => Maybe Char =
+decoding_table : Fin 256 => Maybe Char =
   for i:(Fin 256).
     idx = linear_search encoding_table (i_to_w8 (ordinal i))
     case idx of
@@ -65,7 +65,7 @@ def base64Encode (s:String) : String =
     False -> '='
 
 def asciiToBase64 (c:Char) : Maybe Base64 =
-  decodingTable.(from_ordinal _ (w8_to_i c))
+  decoding_table.(from_ordinal _ (w8_to_i c))
 
 def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
   case seq_maybes $ map asciiToBase64 chunk of
