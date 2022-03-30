@@ -1503,12 +1503,12 @@ def from_c_string (s:CString) : {IO} (Maybe String) =
 
 foreign "getenv" getenvFFI : RawPtr -> {IO} RawPtr
 
-def getEnv (name:String) : {IO} Maybe String =
+def get_env (name:String) : {IO} Maybe String =
   with_c_string name \(MkCString ptr).
     from_c_string $ MkCString $ getenvFFI ptr
 
 def checkEnv (name:String) : {IO} Bool =
-  is_just $ getEnv name
+  is_just $ get_env name
 
 '### More Stream IO
 
