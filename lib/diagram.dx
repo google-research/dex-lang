@@ -207,7 +207,7 @@ def compute_bounds (d:Diagram) : BoundingBox =
   )
 
 @noinline
-def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
+def render_svg (d:Diagram) (bounds:BoundingBox) : String =
   ((xmin, ymin), (xmax, ymax)) = bounds
   imgWidth = 400.0
   scaleFactor = imgWidth / (xmax - xmin)
@@ -223,7 +223,7 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
       (attr, pos, geom) = objs.i
       render_geom attr pos geom
 
-renderScaledSVG = \d. renderSVG d (compute_bounds d)
+renderScaledSVG = \d. render_svg d (compute_bounds d)
 
 '## Derived convenience methods and combinators
 

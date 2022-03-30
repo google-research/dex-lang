@@ -78,7 +78,7 @@ def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   boundingBox <> points
 
 def showPlot {a b c n} (plot:Plot n a b c) : String =
-  renderSVG (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
+  render_svg (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
 
 def blankData {n} [Ix n] : ScaledData n Unit =
   {scale = unitTypeScale, dat = for i. ()}
