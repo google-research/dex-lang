@@ -139,7 +139,7 @@ def ifft2_real {n m} (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex 
 
 a = for i. MkComplex [10.1, -2.2, 8.3, 4.5, 9.3].i 0.0
 b = for i:(Fin 20) j:(Fin 70).
-  MkComplex (randn $ ixkey2 (newKey 0) i j) 0.0
+  MkComplex (randn $ ixkey2 (new_key 0) i j) 0.0
 
 :p a ~~ (ifft $ fft a)
 > True

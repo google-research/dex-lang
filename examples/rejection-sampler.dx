@@ -37,7 +37,7 @@ def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
 n = 10
 p = 0.4
 numSamples = 5000
-k0 = newKey 0
+k0 = new_key 0
 
 rejectionSamples = randVec numSamples (rejectionSample $ trySampleBinomial n p) k0
 

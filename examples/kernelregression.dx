@@ -35,7 +35,7 @@ where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda>0$ and $y = (y_1,\dots,
 -- Synthetic data
 Nx = Fin 100
 noise = 0.1
-[k1, k2] = splitKey (newKey 0)
+[k1, k2] = splitKey (new_key 0)
 
 def trueFun (x:Float) : Float =
   x + sin (20.0 * x)

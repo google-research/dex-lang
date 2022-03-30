@@ -269,7 +269,7 @@ def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
 def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
   n = get_at #numPix camera
   rays = cameraRays n camera
-  rootKey = newKey 0
+  rootKey = new_key 0
   image = for i j.
     pixKey = if get_at #shareSeed params
       then rootKey

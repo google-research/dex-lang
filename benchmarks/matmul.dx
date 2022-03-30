@@ -35,7 +35,7 @@ def matmul
 --m = 80
 --loops = 1
 
-prng = newKey 0
+prng = new_key 0
 a = for i:(Fin n). for j:(Fin k). rand $ ixkey prng (i, j)
 b = for i:(Fin k). for j:(Fin m). rand $ ixkey prng (i, j)
 

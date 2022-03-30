@@ -116,7 +116,7 @@ M = Fin 50
 def ixkey3 {n m o} [Ix n, Ix m, Ix o] (k:Key) (i:n) (j:m) (k2:o) : Key =
   hash (hash (hash k (ordinal i)) (ordinal j)) (ordinal k2)
 init_velocity = for i:N j:M k:(Fin 2).
-  3.0 * (randn $ ixkey3 (newKey 0) i j k)
+  3.0 * (randn $ ixkey3 (new_key 0) i j k)
 
 -- Create diagonally-striped color pattern.
 init_color = for i:N j:M.

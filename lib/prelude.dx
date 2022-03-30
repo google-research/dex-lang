@@ -1691,7 +1691,7 @@ def threefry_2x32 (k:Word64) (count:Word64) : Word64 =
 def hash (x:Key) (y:Int32) : Key =
   y64 = i_to_w64 y
   threefry_2x32 x y64
-def newKey (x:Int) : Key = hash (i_to_w64 0) x
+def new_key (x:Int) : Key = hash (i_to_w64 0) x
 def many {a n} [Ix n] (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey {n} (k:Key) (i:n) [Ix n] : Key = hash k (ordinal i)
 def ixkey2 {n m} (k:Key) (i:n) (j:m) [Ix n, Ix m] : Key = hash (hash k (ordinal i)) (ordinal j)

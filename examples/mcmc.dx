@@ -91,7 +91,7 @@ numSamples =
   if dex_test_mode ()
     then 1000
     else 10000
-k0 = newKey 1
+k0 = new_key 1
 
 mhParams = 0.1
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0

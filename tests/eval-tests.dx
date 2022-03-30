@@ -211,7 +211,7 @@ litArr = [10, 5, 3]
 > [3, 4, 5, 6, 7, 8]
 
 :p
-   k = newKey 0
+   k = new_key 0
    mean for i:(Fin 100). randn (ixkey k i)
 > -0.1158
 
@@ -227,11 +227,11 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 > 0xc4923a9c483df7a0
 
 :p
-   k = newKey 0
+   k = new_key 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
 > 1.25819
 
-:p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (newKey 11) i j
+:p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (new_key 11) i j
 > [[0.474153, 0.914516], [0.79446, 0.276799], [0.589586, 0.711625]]
 
 :p

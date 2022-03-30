@@ -297,7 +297,7 @@ instance ToJSON Class
 
 ' Then we will generate some random data.
 
-key : Key = newKey 1
+key : Key = new_key 1
 
 
 df2 :(Fin 100) => {x1:Float & x2:Float & weight:Float & label:Class}  =  for i: (Fin 100).
@@ -328,7 +328,7 @@ chart2 = (AsVLDescriptor (pure Point) [("title", "Scatter")]
   VL can auto-facet the chart based on Nominal variables.
 
 
-y1 :  (Fin 3) => (Fin 10) => Float = arb $ newKey 0
+y1 :  (Fin 3) => (Fin 10) => Float = arb $ new_key 0
 df3 = for i. cumsum . for j. select (y1.i.j > 0.0) (-1.0) 1.0
 
 :t df3
@@ -347,7 +347,7 @@ chart3 = (AsVLDescriptor (pure Area) [("title", "Area"), ("height", "75")]
 ' ## Example: Heatmap
 
 words = ["the", "dog", "walked", "to", "the", "store"]
-z :  (Fin 6) => (Fin 6) => Float = arb $ newKey 0
+z :  (Fin 6) => (Fin 6) => Float = arb $ new_key 0
 
 def showChart4 [ToJSON o] (opts:o) : Value  = toJSON (AsVLDescriptor (pure Rect) opts
      [{title="match", encodings=pureLs Color, encType=Quantitative, rows=for (i,j). toJSON z.i.j},

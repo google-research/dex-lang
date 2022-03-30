@@ -443,6 +443,6 @@ q 5
 :p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
 > True
 
-xbool : Bool = arb $ newKey 0
+xbool : Bool = arb $ new_key 0
 :p xbool
 > True
