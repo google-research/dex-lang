@@ -248,12 +248,12 @@ zipper isomorphisms:
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:
 
-:t splitV
+:t split_v
 > ((a:Type) ?-> Iso a ({ |} | a))
 
 :p
   vals : (Fin 3)=>{a:_ | b:_ | c:_ } = [{|a = 1|}, {|b = 2|}, {|c = 3|}]
-  for i. match_with (splitV &>> #|a &>> #|b) vals.i
+  for i. match_with (split_v &>> #|a &>> #|b) vals.i
 > [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
 
 '`sliceFields` uses this to specific named variants from a variant-indexed

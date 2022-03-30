@@ -1239,11 +1239,11 @@ def over_fields {a b c v} [Ix b, Ix c]
 'Convert a variant zipper isomorphism to a normal prism-like isomorphism
 by using `splitV &>> iso`
 
-def splitV {a} : Iso a ({|} | a) =
+def split_v {a} : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
 
 def sliceFields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (build_with $ splitV &>> iso) tab
+  reindex (build_with $ split_v &>> iso) tab
 
 '## Dynamic buffer
 
