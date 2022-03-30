@@ -746,7 +746,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > 415
 
 :p
-  (f, w) = runAccum (AddMonoid Float) \ref.
+  (f, w) = run_accum (AddMonoid Float) \ref.
     ref += 2.0
     w = 2
     \z. z + w

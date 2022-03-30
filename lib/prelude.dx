@@ -528,7 +528,7 @@ def with_reader
 
 def MonoidLifter (b:Type) (w:Type) : Type = h:Type ?-> AccumMonoid h b ?=> AccumMonoid h w
 
-def runAccum
+def run_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (bm:Monoid b)
@@ -550,7 +550,7 @@ def yieldAccum
       (m:Monoid b)
       (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} w =
-  snd $ runAccum m action
+  snd $ run_accum m action
 
 def runState
       {a s eff}

@@ -39,7 +39,7 @@
 
   with_reader 2 \r.
     runState True \s.
-      runAccum (AddMonoid Float) \w.
+      run_accum (AddMonoid Float) \w.
         rwsAction r w s
 > ((4, 6.), False)
 
@@ -62,7 +62,7 @@
         : {Accum wh, State sh} Unit =
     x = get s
     w += x
-  runState 1.0 \s. runAccum (AddMonoid Float) \w . m w s
+  runState 1.0 \s. run_accum (AddMonoid Float) \w . m w s
 > (((), 1.), 1.)
 
 def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
@@ -70,7 +70,7 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
   w += x
   w += 2.0
 
-:p with_reader 1.5 \r. runAccum (AddMonoid Float) \w. myAction w r
+:p with_reader 1.5 \r. run_accum (AddMonoid Float) \w. myAction w r
 > ((), 3.5)
 
 :p
@@ -81,7 +81,7 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
     w1 += 1.0
     w2 += 3.0
     w1 += 1.0
-  runAccum (AddMonoid Float) \w1. runAccum (AddMonoid Float) \w2. m w1 w2
+  run_accum (AddMonoid Float) \w1. run_accum (AddMonoid Float) \w2. m w1 w2
 > (((), 3.), 2.)
 
 def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
@@ -128,8 +128,8 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 --       (maybe just explicit implicit args)
 :p
   with_reader 2.0 \r.
-    runAccum (AddMonoid Float) \w.
-      runAccum (AddMonoid Float) \w'.
+    run_accum (AddMonoid Float) \w.
+      run_accum (AddMonoid Float) \w'.
         runState 3 \s.
           x = ask r
           y = get s
