@@ -100,14 +100,14 @@ def parse_many {a} (parser:Parser a) : Parser (List a) = MkParser \h.
           push results x
           Continue
 
-def parseUnsignedInt : Parser Int = MkParser \h.
+def parse_unsigned_int : Parser Int = MkParser \h.
   (AsList _ digits) = parse h $ parse_many parse_digit
   yield_state 0 \ref.
     for i. ref := 10 * get ref + digits.i
 
 def parseInt : Parser Int = MkParser \h.
   negSign = parse h $ optional $ p_char '-'
-  x       = parse h $ parseUnsignedInt
+  x       = parse h $ parse_unsigned_int
   case negSign of
     Nothing -> x
     Just () -> (-1) * x
