@@ -37,12 +37,12 @@ unit_interval_scale : Scale Float =
   { mapping = project_unit_interval
   , range   = AsList _ [Interval 0.0 1.0] }
 
-def mapScale {a b} (s:Scale a) (f: b -> a) : Scale b =
+def map_scale {a b} (s:Scale a) (f: b -> a) : Scale b =
   { mapping = \x. get_at #mapping s (f x)
   , range = get_at #range s }
 
 def floatScale (xmin:Float) (xmax:Float) : Scale Float =
-  mapScale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
+  map_scale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
 
 def getScaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
   apply_scale (get_at #scale sd) (get_at #dat sd).i
