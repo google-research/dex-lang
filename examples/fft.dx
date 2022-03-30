@@ -32,11 +32,11 @@ def butterfly_ixs {halfn n} [Ix halfn, Ix n] (j':halfn) (pow2:Int)
   -- Note: with fancier index sets, this might be replacable by reshapes.
   j = ordinal j'
   k = ((idiv j pow2) * pow2 * 2) + mod j pow2
-  left_write_ix  = unsafeFromOrdinal n k
-  right_write_ix = unsafeFromOrdinal n (k + pow2)
+  left_write_ix  = unsafe_from_ordinal n k
+  right_write_ix = unsafe_from_ordinal n (k + pow2)
 
-  left_read_ix  = unsafeFromOrdinal n j
-  right_read_ix = unsafeFromOrdinal n (j + size halfn)
+  left_read_ix  = unsafe_from_ordinal n j
+  right_read_ix = unsafe_from_ordinal n (j + size halfn)
   (left_read_ix, right_read_ix, left_write_ix, right_write_ix)
 
 def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =

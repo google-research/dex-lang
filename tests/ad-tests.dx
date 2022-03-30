@@ -307,7 +307,7 @@ vec = [1.]
 -- Test reference indexing
 :p
   f = \x.
-    i = unsafeFromOrdinal (Fin 3) 0
+    i = unsafe_from_ordinal (Fin 3) 0
     mat = yieldState zero \m. m!i!i := x
     mat.i.i
 

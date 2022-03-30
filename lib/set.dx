@@ -7,17 +7,17 @@ def last {n a} (xs:n=>a) : Maybe a =
   s = size n
   case s == 0 of
     True -> Nothing
-    False -> Just xs.(unsafeFromOrdinal n (s - 1))
+    False -> Just xs.(unsafe_from_ordinal n (s - 1))
 
 def first {n a} (xs:n=>a) : Maybe a =
   s = size n
   case s == 0 of
     True -> Nothing
-    False -> Just xs.(unsafeFromOrdinal n 0)
+    False -> Just xs.(unsafe_from_ordinal n 0)
 
 def allExceptLast {n a} (xs:n=>a) : List a =
   shortSize = Fin (max 0 ((size n) - 1))
-  allButLast = view i:shortSize. xs.(unsafeFromOrdinal _ (ordinal i))
+  allButLast = view i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
   (AsList _ allButLast)
 
 def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
@@ -89,7 +89,7 @@ data StringSetIx l:(Set String) =
 instance {set} Ix (StringSetIx set)
   get_size = \(). setSize set
   ordinal = \(MkSetIx i). i
-  unsafeFromOrdinal = \k. MkSetIx k
+  unsafe_from_ordinal = \k. MkSetIx k
 
 instance {set} Eq (StringSetIx set)
   (==) = \ix1 ix2. ordinal ix1 == ordinal ix2
@@ -110,5 +110,5 @@ def stringToSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
 
 def setIxToString {set:Set String} (ix:StringSetIx set) : String =
   (UnsafeAsSet n elements) = set
-  elements.(unsafeFromOrdinal _ (ordinal ix))
+  elements.(unsafe_from_ordinal _ (ordinal ix))
 

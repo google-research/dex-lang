@@ -27,17 +27,17 @@ def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
         if cur_y >= size n  -- no ys left
           then
             countrefs := (cur_x + 1, cur_y)
-            buf!i := xs.(unsafeFromOrdinal _ cur_x)
+            buf!i := xs.(unsafe_from_ordinal _ cur_x)
           else
             if cur_x < size m -- still xs left
               then 
-                if xs.(unsafeFromOrdinal _ cur_x) <= ys.(unsafeFromOrdinal _ cur_y)
+                if xs.(unsafe_from_ordinal _ cur_x) <= ys.(unsafe_from_ordinal _ cur_y)
                   then
                     countrefs := (cur_x + 1, cur_y)
-                    buf!i := xs.(unsafeFromOrdinal _ cur_x)
+                    buf!i := xs.(unsafe_from_ordinal _ cur_x)
                   else
                     countrefs := (cur_x, cur_y + 1)
-                    buf!i := ys.(unsafeFromOrdinal _ cur_y)
+                    buf!i := ys.(unsafe_from_ordinal _ cur_y)
 
 def mergeSortedLists {a} [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
   -- Need this wrapper because Dex can't automatically weaken

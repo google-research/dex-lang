@@ -60,7 +60,7 @@ names2 = toSet ["Bob", "Alice", "Charlie", "Alice"]
 
 -- Check that ordinal and unsafeFromOrdinal are inverses.
 roundTrip = for i:(StringSetIx names2).
-  i == (unsafeFromOrdinal _ (ordinal i))
+  i == (unsafe_from_ordinal _ (ordinal i))
 :p all roundTrip
 > True
 

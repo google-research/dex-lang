@@ -54,7 +54,7 @@ def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
 -- Useful for cutting out animation frames for a faster GIF.
 def cut {n m a} [Ix m] (x:n=>a) : m=>a =
   s = idiv (size n) (size m)
-  for i:m. x.(unsafeFromOrdinal _ $ s * ordinal i)
+  for i:m. x.(unsafe_from_ordinal _ $ s * ordinal i)
 
 -- Converts a given 2D matrix to a greyscale image.
 def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
@@ -72,7 +72,7 @@ def atBounds {n m} [Ix n, Ix m] (i:n) (j:m) : Bool =
    || ordinal j == (gridSize - 1))
 
 -- Operators for performing unsafe ordinal arithmetic
-def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
+def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafe_from_ordinal _ ((ordinal i) + off)
 def (-!) {n} [Ix n] (i:n) (off:Int) : n = i +! (-1 * off)
 
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.

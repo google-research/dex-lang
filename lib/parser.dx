@@ -4,7 +4,7 @@
 
 def fromOrdinalExc (n:Type) [Ix n] (i:Int) : {Except} n =
   if (0 <= i) && (i < size n)
-    then unsafeFromOrdinal _ i
+    then unsafe_from_ordinal _ i
     else throw ()
 
 -- TODO: allow this to happen in-place

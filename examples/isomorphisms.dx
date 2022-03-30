@@ -197,7 +197,7 @@ def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
   get_size = \(). size n * size m * size q
   ordinal = ordinal <<< appIso abcToTuple
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToTuple
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abcToTuple
 
 def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
   fwd = \{b, c}. (c, b)
@@ -206,7 +206,7 @@ def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
 instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
   get_size = \(). size n * size m
   ordinal = ordinal <<< appIso bcToPair
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso bcToPair
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso bcToPair
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -273,7 +273,7 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
   get_size = \(). size n + size m + size q
   ordinal = ordinal <<< appIso abcToEither
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abcToEither
 
 def abToEither {a b} : Iso {a:a | b:b} (a|b) =
   fwd = \v.  case v of
@@ -286,7 +286,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
   get_size = \(). size n + size m
   ordinal = ordinal <<< appIso abToEither
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso abToEither
 
 def acToEither {a c} : Iso {a:a | c:c} (a|c) =
   fwd = \v.  case v of
@@ -299,7 +299,7 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
 instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
   get_size = \(). size n + size m
   ordinal = ordinal <<< appIso acToEither
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso acToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso acToEither
 
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}

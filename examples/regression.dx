@@ -75,7 +75,7 @@ def lrToEither {a b} : Iso {left:a | right:b} (a|b) =
 instance {n m} [Ix n, Ix m] Ix {left:n | right:m}
   get_size = \(). size n + size m
   ordinal = ordinal <<< appIso lrToEither
-  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso lrToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> revIso lrToEither
 
 def tabCat {n m a} (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
   for i. case i of
