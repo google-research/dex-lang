@@ -103,7 +103,7 @@ def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
   with_table_ptr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
     (n, ptr') = encodePNG rawPtr (size m) (size n)
-    toList $ tabFromPtr (Fin n) $ MkPtr ptr'
+    toList $ table_from_ptr (Fin n) $ MkPtr ptr'
 
 def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
   withTempFiles \pngFiles.

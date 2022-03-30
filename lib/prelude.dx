@@ -860,7 +860,7 @@ def with_table_ptr {a b n} [Storable a] (xs:n=>a) (action : Ptr a -> {IO} b) : {
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
-def tabFromPtr {a} [Storable a] (n:Type) [Ix n] (ptr:Ptr a) : {IO} n=>a =
+def table_from_ptr {a} [Storable a] (n:Type) [Ix n] (ptr:Ptr a) : {IO} n=>a =
   for i. load $ ptr +>> ordinal i
 
 '## Miscellaneous common utilities
@@ -1301,7 +1301,7 @@ def loadDynBuffer {a} [Storable a]
   (MkDynBuffer db) = buf
   bufPtr = load $ getAt #buffer db
   size   = load $ getAt #size db
-  AsList size $ tabFromPtr _ bufPtr
+  AsList size $ table_from_ptr _ bufPtr
 
 def pushDynBuffer {a} [Storable a]
       (buf: DynBuffer a) (x:a) : {IO} Unit =
@@ -1312,7 +1312,7 @@ def pushDynBuffer {a} [Storable a]
 String : Type = List Char
 
 def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {IO} String =
-  AsList n $ tabFromPtr _ ptr
+  AsList n $ table_from_ptr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = w8_to_i c
