@@ -244,10 +244,10 @@ mydiagram : Diagram =
 
 ' Another demo that shows things are all center aligned:
 ```
-concentricDiagram : Diagram = (
+concentric_diagram : Diagram = (
      (rect 2.0 2.0 |> setFillColor red)
   <> (circle 1.0 |> setFillColor blue)
   <> (text "DexLang" |> setStrokeColor white)
 ) |> moveXY (5.0, 5.0)
-:html renderScaledSVG concentricDiagram
+:html renderScaledSVG concentric_diagram
 ```
