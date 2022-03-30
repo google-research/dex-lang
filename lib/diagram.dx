@@ -135,15 +135,15 @@ def (<=>) {b} [Show b] (attr:String) (val:b) : String =
 def html_color(cs:HtmlColor) : String =
   "#" <> (concat $ for i. showHex cs.i)
 
-def optionalHtmlColor(c: Maybe HtmlColor) : String =
+def optional_html_color(c: Maybe HtmlColor) : String =
   case c of
     Nothing -> "none"
     Just c' -> html_color c'
 
 @noinline
 def attrString (attr:GeomStyle) : String =
-  (   ("stroke"       <=> (optionalHtmlColor $ get_at #strokeColor attr))
-  <+> ("fill"         <=> (optionalHtmlColor $ get_at #fillColor   attr))
+  (   ("stroke"       <=> (optional_html_color $ get_at #strokeColor attr))
+  <+> ("fill"         <=> (optional_html_color $ get_at #fillColor   attr))
   <+> ("stroke-width" <=> (get_at #strokeWidth attr)))
 
 @noinline
