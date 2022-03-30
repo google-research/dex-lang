@@ -2128,11 +2128,11 @@ def categorical_from_cdf {n} (cdf: n=>Float) (key: Key) : n =
   case search_sorted cdf r of
     Just i -> i
 
-def normalizePdf {d} (xs: d=>Float) : d=>Float = xs / sum xs
+def normalize_pdf {d} (xs: d=>Float) : d=>Float = xs / sum xs
 
 def cdfForCategorical {n} (logprobs: n=>Float) : n=>Float =
   maxLogProb = maximum logprobs
-  cumsum_low $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
+  cumsum_low $ normalize_pdf $ map exp $ for i. logprobs.i - maxLogProb
 
 def categorical {n} (logprobs: n=>Float) (key: Key) : n =
   categorical_from_cdf (cdfForCategorical logprobs) key
