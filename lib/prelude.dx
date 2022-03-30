@@ -982,7 +982,7 @@ def grad {a} (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 
 def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
-def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
+def deriv_rev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
 '### Approximate Equality
 TODO: move this outside the AD section to be with equality?
@@ -1023,7 +1023,7 @@ instance {n t} [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
   eps = 0.01
   ansFwd  = deriv    f x
-  ansRev  = derivRev f x
+  ansRev  = deriv_rev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
   ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
 
