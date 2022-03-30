@@ -1146,7 +1146,7 @@ def filter {a n} (condition:a->Bool) (xs:n=>a) : List a =
       if condition xs.i
         then append list xs.i
 
-def argFilter {a n} (condition:a->Bool) (xs:n=>a) : List n =
+def arg_filter {a n} (condition:a->Bool) (xs:n=>a) : List n =
   -- Returns all indices where the condition is true.
   yieldAccum (ListMonoid n) \list.
     for i.
