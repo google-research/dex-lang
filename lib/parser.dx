@@ -62,7 +62,7 @@ def run_parser {a} (s:String) (parser:Parser a) : Maybe a =
     _   = parse h p_eof
     ans
 
-def parseAny : Parser Char = MkParser \h.
+def parse_any : Parser Char = MkParser \h.
   (s, posRef) = h
   i = get posRef
   c' = index_list s i
@@ -82,7 +82,7 @@ def try {a} (parser:Parser a) : Parser a = MkParser \h.
 'Derived combinators
 
 def parseDigit : Parser Int = try $ MkParser \h.
-  c = parse h $ parseAny
+  c = parse h $ parse_any
   i = w8_to_i c - 48
   assert $ 0 <= i && i < 10
   i
