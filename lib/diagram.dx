@@ -94,7 +94,7 @@ def update_geom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
     (update attr, geoms)
 
 def setFillColor   (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #fillColor   (Just c)
-def setStrokeColor (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #strokeColor (Just c)
+def set_stroke_color (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #strokeColor (Just c)
 def setStrokeWidth (w:Int)       : Diagram -> Diagram = update_geom $ set_at #strokeWidth w
 def removeStroke                 : Diagram -> Diagram = update_geom $ set_at #strokeColor Nothing
 def removeFill                   : Diagram -> Diagram = update_geom $ set_at #fillColor   Nothing
