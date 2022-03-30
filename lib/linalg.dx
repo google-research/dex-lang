@@ -39,7 +39,7 @@ def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v
 def lower_tri_mat {a b h} (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
   d = %indexRef ref i
   d!j
-def upperTriMat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
+def upper_tri_mat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
   d = %indexRef ref i
   d!j
 
@@ -130,7 +130,7 @@ def lu {n} (a: n=>n=>Float) :
   --    for i:n. ()
 
     lmat = lower_tri_mat lRef
-    umat = upperTriMat uRef
+    umat = upper_tri_mat uRef
     for j:n.
       for i:(..j).
         i' = %inject i
