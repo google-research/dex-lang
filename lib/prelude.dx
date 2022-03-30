@@ -1805,7 +1805,7 @@ def argscan {n o} (comp:o->o->Bool) (xs:n=>o) : n =
 def argmin {n o} [Ord o] (xs:n=>o) : n = argscan (<) xs
 def argmax {n o} [Ord o] (xs:n=>o) : n = argscan (>) xs
 
-def lexicalOrder {n} [Ord n]
+def lexical_order {n} [Ord n]
       (compareElements:n->n->Bool)
       (compareLengths:Int->Int->Bool)
       ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
@@ -1834,8 +1834,8 @@ def lexicalOrder {n} [Ord n]
             False -> Done False
 
 instance {n} [Ord n] Ord (List n)
-  (>) = lexicalOrder (>) (>)
-  (<) = lexicalOrder (<) (<)
+  (>) = lexical_order (>) (>)
+  (<) = lexical_order (<) (<)
 
 '### clip
 
