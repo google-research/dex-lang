@@ -177,7 +177,7 @@ def raymarch {n} (scene:Scene n) (ray:Ray) : RayMarchResult =
   startLength = 10.0 * tol  -- trying to escape the current surface
   (rayOrigin, rayDir) = ray
   withState (10.0 * tol) \rayLength.
-    boundedIter maxIters HitNothing \_.
+    bounded_iter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
       (obj, d) = sdScene scene $ rayPos
       -- 0.9 ensures we come close to the surface but don't touch it
@@ -232,7 +232,7 @@ def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   yieldAccum (AddMonoid Float) \radiance.
     run_state  noFilter \filter.
      run_state initRay  \ray.
-      boundedIter (get_at #maxBounces params) () \i.
+      bounded_iter (get_at #maxBounces params) () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->

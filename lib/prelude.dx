@@ -1479,7 +1479,7 @@ def iter {a eff} (body: Int -> {|eff} IterResult a) : {|eff} a  =
     Just ans -> ans
     Nothing -> unreachable ()
 
-def boundedIter {a eff}
+def bounded_iter {a eff}
       (maxIters:Int) (fallback:a)
       (body: Int -> {|eff} IterResult a) : {|eff} a  =
   iter \i.
