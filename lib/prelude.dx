@@ -2115,7 +2115,7 @@ def concat {n a} (lists:n=>(List a)) : List a =
 
 '## Probability
 
-def cumSumLow {n} (xs: n=>Float) : n=>Float =
+def cumsum_low {n} (xs: n=>Float) : n=>Float =
   withState 0.0 \total.
     for i.
       oldTotal = get total
@@ -2132,7 +2132,7 @@ def normalizePdf {d} (xs: d=>Float) : d=>Float = xs / sum xs
 
 def cdfForCategorical {n} (logprobs: n=>Float) : n=>Float =
   maxLogProb = maximum logprobs
-  cumSumLow $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
+  cumsum_low $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
 
 def categorical {n} (logprobs: n=>Float) (key: Key) : n =
   categoricalFromCDF (cdfForCategorical logprobs) key
