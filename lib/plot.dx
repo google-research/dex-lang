@@ -54,11 +54,11 @@ def interpolate {a} [VSpace a] (low:a) (high:a) (x:Float) : a =
   x' = clip (0.0, 1.0) x
   (x' .* low) + ((1.0 - x') .* high)
 
-def makeRGBColor (c : Color) : HtmlColor =
+def make_rgb_color (c : Color) : HtmlColor =
   for i. i_to_w8 $ FToI $ floor (255.0 * c.i)
 
 def colorScale (x:Float) : HtmlColor =
-  makeRGBColor $ interpolate low_color high_color x
+  make_rgb_color $ interpolate low_color high_color x
 
 def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   points = concat_diagrams for i.
