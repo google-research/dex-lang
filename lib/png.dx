@@ -64,11 +64,11 @@ def base64_encode (s:String) : String =
     True  -> flattened.i
     False -> '='
 
-def asciiToBase64 (c:Char) : Maybe Base64 =
+def ascii_to_base64 (c:Char) : Maybe Base64 =
   decoding_table.(from_ordinal _ (w8_to_i c))
 
 def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
-  case seq_maybes $ map asciiToBase64 chunk of
+  case seq_maybes $ map ascii_to_base64 chunk of
     Nothing -> Nothing
     Just base64s -> Just $ base64s_to_bytes base64s
 
