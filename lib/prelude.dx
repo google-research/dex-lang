@@ -1786,11 +1786,11 @@ def max {o} [Ord o] (x1: o) (x2: o) : o = max_by id x1 x2
 
 def minimum_by {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (min_by f) xs
-def maximumBy {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
+def maximum_by {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (max_by f) xs
 
 def minimum {n o} [Ord o] (xs:n=>o) : o = minimum_by id xs
-def maximum {n o} [Ord o] (xs:n=>o) : o = maximumBy id xs
+def maximum {n o} [Ord o] (xs:n=>o) : o = maximum_by id xs
 
 '### argmin/argmax
 TODO: put in same section as `searchsorted`
