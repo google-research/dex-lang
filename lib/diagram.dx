@@ -132,13 +132,13 @@ def tag_brackets_attr (tag:String) (attr:String) (s:String) : String =
 def (<=>) {b} [Show b] (attr:String) (val:b) : String =
   attr <.> "=" <.> quote (show val)
 
-def htmlColor(cs:HtmlColor) : String =
+def html_color(cs:HtmlColor) : String =
   "#" <> (concat $ for i. showHex cs.i)
 
 def optionalHtmlColor(c: Maybe HtmlColor) : String =
   case c of
     Nothing -> "none"
-    Just c' -> htmlColor c'
+    Just c' -> html_color c'
 
 @noinline
 def attrString (attr:GeomStyle) : String =
