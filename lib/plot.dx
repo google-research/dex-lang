@@ -114,7 +114,7 @@ def xyc_plot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float 
     set_y_data (auto_scale ys) |>
     set_c_data (auto_scale cs)
 
-def yPlot {n} (ys:n=>Float) : Plot n Float Float Unit =
+def y_plot {n} (ys:n=>Float) : Plot n Float Float Unit =
   xs = for i. i_to_f $ ordinal i
   xy_plot xs ys
 
