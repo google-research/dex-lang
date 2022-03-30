@@ -39,7 +39,7 @@ p = 0.4
 numSamples = 5000
 k0 = new_key 0
 
-rejectionSamples = randVec numSamples (rejectionSample $ trySampleBinomial n p) k0
+rejectionSamples = rand_vec numSamples (rejectionSample $ trySampleBinomial n p) k0
 
 :p slice rejectionSamples 0 $ Fin 10
 > [4, 2, 5, 4, 6, 7, 3, 6, 4, 3]
@@ -60,7 +60,7 @@ def binomialSample (n:Int) (p:Prob) (k:Key) : Int =
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   ordinal $ categorical logprobs k
 
-inversionSamples = randVec numSamples (binomialSample n p) k0
+inversionSamples = rand_vec numSamples (binomialSample n p) k0
 
 :p slice inversionSamples 0 $ Fin 10
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]

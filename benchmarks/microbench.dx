@@ -3,14 +3,14 @@
 warmup = for i:(Fin 100). ordinal i + ordinal i
 
 def sum_bench (n:Int) (k:Int) : Fin n => Float =
-  xs = randVec n randn (new_key k)
+  xs = rand_vec n randn (new_key k)
   for i. snd $ withState  0.0 \ref. for j. ref := get ref + xs.i + xs.j
 
 %bench "sum"
 ans1 = sum_bench 10000 0
 
 def gaussian_bench (n:Int) (k:Int) : Fin n => Float =
-  randVec n randn (new_key 0)
+  rand_vec n randn (new_key 0)
 
 %bench "gaussian"
 ans2 = gaussian_bench 100000000 0

@@ -1704,7 +1704,7 @@ Such as `randMat` with samples from the distribution of floating point matrices 
 foreign "randunif" randunifFFI : Word64 -> {IO} Float64
 
 def rand (k:Key) : Float =  unsafe_io do f64_to_f $ randunifFFI k
-def randVec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
+def rand_vec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
 def randMat {a} (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
