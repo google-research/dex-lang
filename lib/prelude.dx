@@ -1589,7 +1589,7 @@ def write_file (f:FilePath) (s:String) : {IO} Unit =
 def read_file (f:FilePath) : {IO} String =
   with_file f ReadMode \stream. fread stream
 
-def hasFile (f:FilePath) : {IO} Bool =
+def has_file (f:FilePath) : {IO} Bool =
   stream = fopen f ReadMode
   (MkStream stream') = stream
   result = stream' /= null_raw_ptr
