@@ -1626,7 +1626,7 @@ def from_ordinal (n:Type) [Ix n] (i:Int) : n =
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
-def castTable {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
+def cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
   case size m == size n of
      True  -> unsafe_cast_table _ xs
      False -> error $

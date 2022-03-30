@@ -73,7 +73,7 @@ instance ToJSON Value
 instance [ToJSON v] ToJSON (n => v)
   toJSON = \x .
     sizen = (size n)
-    tab = castTable (Fin sizen) $ for i. serialize x.i
+    tab = cast_table (Fin sizen) $ for i. serialize x.i
     AsArray $ AsList sizen tab
 
 instance [ToJSON v] ToJSON (List v)
@@ -83,7 +83,7 @@ instance [ToJSON v] ToJSON (n => (String & v))
 
   toJSON = \x .
      sizen = (size n)
-     tab = castTable (Fin sizen) $ for i. (fst x.i, serialize $ snd x.i)
+     tab = cast_table (Fin sizen) $ for i. (fst x.i, serialize $ snd x.i)
      AsObject $ AsList _ tab
 
 instance [ToJSON v] ToJSON (List (String & v))
