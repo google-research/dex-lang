@@ -519,7 +519,7 @@ def run_reader
     def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
     %runReader init explicitAction
 
-def withReader
+def with_reader
       {r a eff}
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))

@@ -11,7 +11,7 @@
 
 :p
    def m {h:Type} (ref:Ref h Int) : {Read h} Int = ask ref
-   withReader 5 m
+   with_reader 5 m
 > 5
 
 :p
@@ -37,7 +37,7 @@
     w += 4.0
     r + 2
 
-  withReader 2 \r.
+  with_reader 2 \r.
     runState True \s.
       runAccum (AddMonoid Float) \w.
         rwsAction r w s
@@ -52,7 +52,7 @@
    runState [0,0,0] m
 > ((), [10, 10, 20])
 
-:p withReader [1,2,3] \r . ask r!(fromOrdinal _ 1)
+:p with_reader [1,2,3] \r . ask r!(fromOrdinal _ 1)
 > 2
 
 :p
@@ -70,7 +70,7 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
   w += x
   w += 2.0
 
-:p withReader 1.5 \r. runAccum (AddMonoid Float) \w. myAction w r
+:p with_reader 1.5 \r. runAccum (AddMonoid Float) \w. myAction w r
 > ((), 3.5)
 
 :p
@@ -127,7 +127,7 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 -- TODO: some way to explicitly give type to `runAccum`
 --       (maybe just explicit implicit args)
 :p
-  withReader 2.0 \r.
+  with_reader 2.0 \r.
     runAccum (AddMonoid Float) \w.
       runAccum (AddMonoid Float) \w'.
         runState 3 \s.
@@ -151,7 +151,7 @@ def symmetrizeInPlace {n} (mat:n=>n=>Float) : n=>n=>Float =
 symmetrizeInPlace [[1.,2.],[3.,4.]]
 > [[1., 2.5], [2.5, 4.]]
 
-:p withReader 5 \r. ()
+:p with_reader 5 \r. ()
 > ()
 
 :p yieldAccum (AddMonoid Float) \w.

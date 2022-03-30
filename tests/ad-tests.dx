@@ -234,8 +234,8 @@ vec = [1.]
 :p
   f : Float -> Float = \x.
     x2 = x * x
-    withReader x \xr.
-      withReader x2 \x2r.
+    with_reader x \xr.
+      with_reader x2 \x2r.
         5.0 * (ask x2r) + 4.0 * (ask xr) + 2.0
   checkDeriv f 2.0
 > True
