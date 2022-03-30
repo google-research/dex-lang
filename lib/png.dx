@@ -31,7 +31,7 @@ def get_chunks {n a}
   to_list for i:(Fin numChunks).
     slice xsPadded (ordinal i * chunkSize) (Fin chunkSize)
 
-def base64sToBytes (chunk : Fin 4 => Base64) : Fin 3 => Byte =
+def base64s_to_bytes (chunk : Fin 4 => Base64) : Fin 3 => Byte =
   [a, b, c, d] = chunk
   [ (a .<<. 2) .|. (b .>>. 4)
   , (b .<<. 4) .|. (c .>>. 2)
@@ -70,7 +70,7 @@ def asciiToBase64 (c:Char) : Maybe Base64 =
 def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
   case seq_maybes $ map asciiToBase64 chunk of
     Nothing -> Nothing
-    Just base64s -> Just $ base64sToBytes base64s
+    Just base64s -> Just $ base64s_to_bytes base64s
 
 -- TODO: put this in prelude?
 def replace {a} [Eq a] ((old,new):(a&a)) (x:a) : a =
