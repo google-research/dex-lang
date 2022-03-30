@@ -1721,7 +1721,7 @@ def rand_int (k:Key) : Int = (internal_cast Int k) `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 
-def randnVec {n} [Ix n] (k:Key) : n=>Float =
+def randn_vec {n} [Ix n] (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
 def randIdx {n} [Ix n] (k:Key) : n =
