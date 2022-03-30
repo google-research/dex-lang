@@ -47,7 +47,7 @@ def float_scale (xmin:Float) (xmax:Float) : Scale Float =
 def get_scaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
   apply_scale (get_at #scale sd) (get_at #dat sd).i
 
-lowColor  = [1.0, 0.5, 0.0]
+low_color  = [1.0, 0.5, 0.0]
 highColor = [0.0, 0.5, 1.0]
 
 def interpolate {a} [VSpace a] (low:a) (high:a) (x:Float) : a =
@@ -58,7 +58,7 @@ def makeRGBColor (c : Color) : HtmlColor =
   for i. i_to_w8 $ FToI $ floor (255.0 * c.i)
 
 def colorScale (x:Float) : HtmlColor =
-  makeRGBColor $ interpolate lowColor highColor x
+  makeRGBColor $ interpolate low_color highColor x
 
 def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   points = concat_diagrams for i.
