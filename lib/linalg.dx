@@ -11,7 +11,7 @@ def cast {a m} [Ix a, Ix m] (d:a) : m = (ordinal d)@m
 def LowerTriMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(..i)=>v
 def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(i..)=>v
 
-def upperTriDiag {n v} (u:UpperTriMat n v) : n=>v = for i. u.i.(0@_)
+def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = for i. u.i.(0@_)
 def lowerTriDiag {n v} (l:LowerTriMat n v) : n=>v = for i. l.i.(cast i)
 
 def transposeLowerToUpper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
@@ -177,11 +177,11 @@ def invert {n} (a:n=>n=>Float) : n=>n=>Float =
 
 def determinant {n} (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
-  prod (for i. (upperTriDiag u).i * (lowerTriDiag l).i) * permSign perm
+  prod (for i. (upper_tri_diag u).i * (lowerTriDiag l).i) * permSign perm
 
 def sign_and_log_determinant {n} (a:n=>n=>Float) : (Float & Float) =
   (l, u, perm) = lu a
-  diags = for i. (upperTriDiag u).i * (lowerTriDiag l).i
+  diags = for i. (upper_tri_diag u).i * (lowerTriDiag l).i
   sign = (permSign perm) * prod for i. sign diags.i
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
