@@ -1406,7 +1406,7 @@ def from_nullable_raw_ptr {a} (ptr:RawPtr) : Maybe (Ptr a) =
     then Nothing
     else Just $ MkPtr ptr
 
-def cStringPtr (s:CString) : Maybe (Ptr Char) =
+def c_string_ptr (s:CString) : Maybe (Ptr Char) =
   (MkCString ptr) = s
   from_nullable_raw_ptr ptr
 
@@ -1490,7 +1490,7 @@ def boundedIter {a eff}
 '### Environment Variables
 
 def fromCString (s:CString) : {IO} (Maybe String) =
-  case cStringPtr s of
+  case c_string_ptr s of
     Nothing -> Nothing
     Just ptr ->
       Just $ with_dynamic_buffer \buf. iter \i.
