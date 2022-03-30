@@ -24,7 +24,7 @@ def Color : Type = Fin 3 => Float
 
 def apply_scale {a} (s:Scale a) (x:a) : Maybe Float = get_at #mapping s x
 
-unitTypeScale : Scale Unit =
+unit_type_scale : Scale Unit =
   { mapping = \(). Just 0.0
   , range   = AsList _ [Singleton 0.0] }
 
@@ -81,7 +81,7 @@ def showPlot {a b c n} (plot:Plot n a b c) : String =
   render_svg (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
 
 def blankData {n} [Ix n] : ScaledData n Unit =
-  {scale = unitTypeScale, dat = for i. ()}
+  {scale = unit_type_scale, dat = for i. ()}
 
 def blankPlot {n} [Ix n] : Plot n Unit Unit Unit =
   {xs = blankData, ys = blankData, cs = blankData}
