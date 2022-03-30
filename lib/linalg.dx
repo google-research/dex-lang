@@ -73,7 +73,7 @@ def apply_permutation {n t} ((perm, _):Permutation n) (xs: n=>t) : n=>t =
 def identity_permutation {n} [Ix n] : Permutation n =
   (for i. i, 1.0)
 
-def swapInPlace {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
+def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
   (permRef, signRef) = (fst_ref pRef, snd_ref pRef)
   tempj = get permRef!j
   permRef!j := get permRef!i
@@ -94,7 +94,7 @@ def pivotize {n} (a:n=>n=>Float) : Permutation n =
       row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j))
       case ordinal j == ordinal row_with_largest of
         True -> ()
-        False -> swapInPlace permRef j (%inject row_with_largest)
+        False -> swap_in_place permRef j (%inject row_with_largest)
 
 def lu {n} (a: n=>n=>Float) :
        (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
