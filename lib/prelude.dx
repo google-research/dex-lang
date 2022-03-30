@@ -1564,7 +1564,7 @@ def todo {a} : a = error "TODO: implement it!"
 
 '### File Operations
 
-def deleteFile (f:FilePath) : {IO} Unit =
+def delete_file (f:FilePath) : {IO} Unit =
   with_c_string f \(MkCString ptr).
     removeFFI ptr
   ()
@@ -1607,13 +1607,13 @@ def newTempFile (_:Unit) : {IO} FilePath =
 def withTempFile {a} (action: FilePath -> {IO} a) : {IO} a =
   tmpFile = newTempFile ()
   result = action tmpFile
-  deleteFile tmpFile
+  delete_file tmpFile
   result
 
 def withTempFiles {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
   tmpFiles = for i. newTempFile ()
   result = action tmpFiles
-  for i. deleteFile tmpFiles.i
+  for i. delete_file tmpFiles.i
   result
 
 '### Table operations
