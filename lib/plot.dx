@@ -95,7 +95,7 @@ def auto_scale {n} (xs:n=>Float) : ScaledData n Float =
   padding = maximum [space, max * 0.001, 0.000001]
   {scale = float_scale (min - padding) (max + padding), dat = xs}
 
-def setXData {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c =
+def set_x_data {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c =
   -- We can't use `setAt` here because we're changing the type
   {xs = xs, ys = get_at #ys plot, cs = get_at #cs plot}
 
@@ -106,11 +106,11 @@ def setCData {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a 
   {xs = get_at #xs plot, ys = get_at #ys plot, cs = cs}
 
 def xyPlot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
-  blank_plot |> setXData (auto_scale xs) |> setYData (auto_scale ys)
+  blank_plot |> set_x_data (auto_scale xs) |> setYData (auto_scale ys)
 
 def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
   blank_plot |>
-    setXData (auto_scale xs) |>
+    set_x_data (auto_scale xs) |>
     setYData (auto_scale ys) |>
     setCData (auto_scale cs)
 
