@@ -1,12 +1,12 @@
 
 :p
    def m {h:Type} (ref:Ref h Int) : {State h} Int = get ref
-   runState 2 m
+   run_state 2 m
 > (2, 2)
 
 :p
    def m {h:Type} (ref:Ref h Int) : {State h} Unit = ref := 3
-   runState 0 m
+   run_state 0 m
 > ((), 3)
 
 :p
@@ -21,7 +21,7 @@
      z = get ref
      ref := (z * 3.0)
 
-  runState 1.0 stateAction
+  run_state 1.0 stateAction
 > ((), 9.)
 
 :p
@@ -38,7 +38,7 @@
     r + 2
 
   with_reader 2 \r.
-    runState True \s.
+    run_state True \s.
       run_accum (AddMonoid Float) \w.
         rwsAction r w s
 > ((4, 6.), False)
@@ -49,7 +49,7 @@
      s!(fromOrdinal _ 2) := 20
      x = get (s!(fromOrdinal _ 0))
      s!(fromOrdinal _ 1) := x
-   runState [0,0,0] m
+   run_state [0,0,0] m
 > ((), [10, 10, 20])
 
 :p with_reader [1,2,3] \r . ask r!(fromOrdinal _ 1)
@@ -62,7 +62,7 @@
         : {Accum wh, State sh} Unit =
     x = get s
     w += x
-  runState 1.0 \s. run_accum (AddMonoid Float) \w . m w s
+  run_state 1.0 \s. run_accum (AddMonoid Float) \w . m w s
 > (((), 1.), 1.)
 
 def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
@@ -88,7 +88,7 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
   s!(fromOrdinal _ 0) := 1
   s!(fromOrdinal _ 2) := 2
 
-:p runState [0,0,0] foom
+:p run_state [0,0,0] foom
 > ((), [1, 0, 2])
 
 -- TODO: handle effects returning functions
@@ -130,7 +130,7 @@ def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
   with_reader 2.0 \r.
     run_accum (AddMonoid Float) \w.
       run_accum (AddMonoid Float) \w'.
-        runState 3 \s.
+        run_state 3 \s.
           x = ask r
           y = get s
           w += x
@@ -175,7 +175,7 @@ def effectsAtZero {eff:Effects} (f: Int ->{|eff} Unit) : {|eff} Unit =
   f 0
   ()
 
-:p runState 0 \ref. effectsAtZero \_. ref := 1
+:p run_state 0 \ref. effectsAtZero \_. ref := 1
 > ((), 1)
 
 :p filter (\x. x > 5) [0, 7, -1, 6]

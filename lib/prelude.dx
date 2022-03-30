@@ -552,7 +552,7 @@ def yieldAccum
       : {|eff} w =
   snd $ run_accum m action
 
-def runState
+def run_state
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
@@ -564,13 +564,13 @@ def withState
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
-      : {|eff} a = fst $ runState init action
+      : {|eff} a = fst $ run_state init action
 
 def yieldState
       {a s eff}
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
-      : {|eff} s = snd $ runState init action
+      : {|eff} s = snd $ run_state init action
 
 def unsafeIO {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
   %runIO f
@@ -672,7 +672,7 @@ instance {n} Ord (Fin n)
   (<) = \x y. ordinal x < ordinal y
 
 def scan {a b n} [Ix n] (init:a) (body:n->a->(a&b)) : (a & n=>b) =
-  swap $ runState init \s. for i.
+  swap $ run_state init \s. for i.
     c = get s
     (c', y) = body i c
     s := c'
@@ -2039,7 +2039,7 @@ def isPowerOf2 (x:Int) : Bool =
 
 def intlog2 (x:Int) : Int =
   yieldState (-1) \ansRef.
-    runState 1 \cmpRef.
+    run_state 1 \cmpRef.
       while do
         if x >= (get cmpRef)
           then

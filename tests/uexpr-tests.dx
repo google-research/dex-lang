@@ -183,8 +183,8 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 > 10
 
 :p
-  runState 0 \r1.
-    runState 0 \r2.
+  run_state 0 \r1.
+    run_state 0 \r2.
       r1 := 1
       r2 := 2
 > (((), 2), 1)

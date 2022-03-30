@@ -52,7 +52,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 > [0, 1, 0, 1, 0, 1]
 
 :p catch do
-     runState 0 \ref.
+     run_state 0 \ref.
        ref := 1
        assert False
        ref := 2

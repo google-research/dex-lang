@@ -230,8 +230,8 @@ def sampleLightRadiance {n}
 def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
   yieldAccum (AddMonoid Float) \radiance.
-    runState  noFilter \filter.
-     runState initRay  \ray.
+    run_state  noFilter \filter.
+     run_state initRay  \ray.
       boundedIter (getAt #maxBounces params) () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()
