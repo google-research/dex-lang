@@ -1202,7 +1202,7 @@ Complement the focus of a lens-like isomorphism
 
 def except_lens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
 
-def swapEitherIso {a b} : Iso (a | b) (b | a) =
+def swap_either_iso {a b} : Iso (a | b) (b | a) =
   fwd = \x. case x of
     Left l -> Right l
     Right r -> Left r
@@ -1214,7 +1214,7 @@ def swapEitherIso {a b} : Iso (a | b) (b | a) =
 '### Complement prism
 Complement the focus of a prism-like isomorphism
 
-def exceptPrism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEitherIso
+def exceptPrism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swap_either_iso
 
 -- Use a lens-like iso to split a 1d table into a 2d table
 def overLens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
