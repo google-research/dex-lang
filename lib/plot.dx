@@ -70,11 +70,11 @@ def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
       Just x' -> case y of
         Just y' -> case c of
           Just c' ->
-            pointDiagram |> moveXY (x', y') |> setStrokeColor (colorScale c' )
+            pointDiagram |> move_xy (x', y') |> setStrokeColor (colorScale c' )
           Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty
-  boundingBox = moveXY (0.5, 0.5) $ rect 1.0 1.0
+  boundingBox = move_xy (0.5, 0.5) $ rect 1.0 1.0
   boundingBox <> points
 
 def showPlot {a b c n} (plot:Plot n a b c) : String =

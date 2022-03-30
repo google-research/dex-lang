@@ -75,7 +75,7 @@ def scale (s:Float) : (Diagram -> Diagram) =
     Line (x, y)   -> Line (s * x, s * y)
     Text x        -> Text x
 
-def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
+def move_xy ((offX, offY) : Point) : (Diagram -> Diagram) =
   apply_transformation (\(x,y). (x + offX, y + offY) ) id
 
 def singletonDefault (geom:Geom) : Diagram =
@@ -227,8 +227,8 @@ renderScaledSVG = \d. renderSVG d (computeBounds d)
 
 '## Derived convenience methods and combinators
 
-moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
-moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
+moveX : Float -> Diagram -> Diagram = \x. move_xy (x, 0.0)
+moveY : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
 
 ' A Demo showing all kind of features
 ```
