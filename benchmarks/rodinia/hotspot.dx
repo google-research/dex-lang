@@ -30,8 +30,8 @@ def hotspot
       (tsInit : r=>c=>Float)
       (p : r=>c=>Float)
       : r=>c=>Float =
-  gridHeight = chipHeight / (IToF $ size r)
-  gridWidth  = chipWidth  / (IToF $ size c)
+  gridHeight = chipHeight / (i_to_f $ size r)
+  gridWidth  = chipWidth  / (i_to_f $ size c)
   cap = factorChip * specHeatSI * tChip * gridWidth * gridHeight
   Rx = gridWidth  / (2.0 * kSI * tChip * gridHeight)
   Ry = gridHeight / (2.0 * kSI * tChip * gridWidth )

@@ -46,7 +46,7 @@ def i_to_w8  (x : Int)     : Word8   = internal_cast _ x
 def i_to_w32 (x : Int)     : Word32  = internal_cast _ x
 def i_to_w64 (x : Int)     : Word64  = internal_cast _ x
 def w32_to_w64 (x : Word32): Word64  = internal_cast _ x
-def IToF (x:Int) : Float = internal_cast _ x
+def i_to_f (x:Int) : Float = internal_cast _ x
 def FToI (x:Float) : Int = internal_cast _ x
 def I64ToRawPtr (x:Int64 ) : RawPtr = internal_cast _ x
 def RawPtrToI64 (x:RawPtr) : Int64  = internal_cast _ x
@@ -55,13 +55,13 @@ interface FromInteger a
   fromInteger : Int64 -> a
 
 instance FromInteger Float32
-  fromInteger = \x. IToF $ i64_to_i x
+  fromInteger = \x. i_to_f $ i64_to_i x
 
 instance FromInteger Int32
   fromInteger = \x. i64_to_i x
 
 instance FromInteger Float64
-  fromInteger = \x. f_to_f64 $ IToF $ i64_to_i x
+  fromInteger = \x. f_to_f64 $ i_to_f $ i64_to_i x
 
 instance FromInteger Int64
   fromInteger = \x. x
@@ -395,7 +395,7 @@ def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   False -> y
 
 def BToI (x:Bool) : Int  = w8_to_i $ BToW8 x
-def BToF (x:Bool) : Float = IToF (BToI x)
+def BToF (x:Bool) : Float = i_to_f (BToI x)
 
 '## Ordering
 TODO: move this down to with `Ord`?
@@ -919,7 +919,7 @@ def scan' {a n} [Ix n] (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. du
 def fsum {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
 def sum  {n v} [Add v] (xs:n=>v) : v = reduce zero (+) xs
 def prod {n v} [Mul v] (xs:n=>v) : v = reduce one  (*) xs
-def mean {n v} [VSpace v] (xs:n=>v) : v = sum xs / IToF (size n)
+def mean {n v} [VSpace v] (xs:n=>v) : v = sum xs / i_to_f (size n)
 def std  {n v} [Mul v, VSpace v, Floating v] (xs:n=>v) : v = sqrt $ mean (map sq xs) - sq (mean xs)
 def any {n} (xs:n=>Bool) : Bool = reduce False (||) xs
 def all {n} (xs:n=>Bool) : Bool = reduce True  (&&) xs
@@ -933,8 +933,8 @@ def applyN {a} (n:Int) (x:a) (f:a -> a) : a =
 '### Linear Algebra
 
 def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
-  dx = (high - low) / IToF (size n)
-  for i:n. low + IToF (ordinal i) * dx
+  dx = (high - low) / i_to_f (size n)
+  for i:n. low + i_to_f (ordinal i) * dx
 
 def transpose {n m a} (x:n=>m=>a) : m=>n=>a = view i j. x.j.i
 def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
@@ -1276,7 +1276,7 @@ def maybeIncreaseBufferSize {a} [Storable a]
   newSize = sizeDelta + size
   if newSize > maxSize then
     -- TODO: maybe this should use integer arithmetic?
-    newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ IToF newSize)
+    newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ i_to_f newSize)
     newBufPtr = malloc newMaxSize
     memcpy newBufPtr bufPtr size
     free bufPtr
@@ -1726,7 +1726,7 @@ def randnVec {n} [Ix n] (k:Key) : n=>Float =
 
 def randIdx {n} [Ix n] (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
+  fromOrdinal n $ FToI $ floor $ unif * i_to_f (size n)
 
 '## Arbitrary
 Type class for generating example values

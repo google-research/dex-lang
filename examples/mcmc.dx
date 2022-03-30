@@ -29,10 +29,10 @@ def propose {a}
   select accept proposal cur
 
 def meanAndCovariance {n d} (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
-   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / IToF (size n)
+   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / i_to_f (size n)
    xsCov  : d=>d=>Float = (for i i'. sum for j.
                            (xs.j.i' - xsMean.i') *
-                           (xs.j.i  - xsMean.i )   ) / IToF (size n - 1)
+                           (xs.j.i  - xsMean.i )   ) / i_to_f (size n - 1)
    (xsMean, xsCov)
 
 '## Metropolis-Hastings implementation

@@ -23,14 +23,14 @@
    vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
-   y = map IToF x
+   y = map i_to_f x
    vdot' y y
 > 10.
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. IToF x.i * IToF y.j
+   z = for i j. i_to_f x.i * i_to_f y.j
    sum (for i. sum z.i)
 > 18.
 
@@ -48,7 +48,7 @@ arr = iota NArr
 :p sum for i:NArr. 1
 > 7
 
-fun = \y. sum (map IToF arr) + y
+fun = \y. sum (map i_to_f arr) + y
 
 :p fun 3.0
 > 24.
@@ -244,7 +244,7 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + IToF (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + i_to_f (ordinal j))
 > [0., 2., 4.]
 
 :p
@@ -580,8 +580,8 @@ def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
 def Biases  (n:Type)          [Ix n]       : Type = n=>Float
 def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
 
-w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
-b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
+w = for i:(Fin 2). for j:(Fin 3). (i_to_f (ordinal i)) * 3.0 + (i_to_f (ordinal j))
+b = for j:(Fin 2). neg (i_to_f (ordinal j) + 1.0)
 
 def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
@@ -663,8 +663,8 @@ for i:(Fin 2 & Fin 2). 1.0
 > ((0@Fin 2), (1@Fin 2))
 
 for i:(Fin 5). for j:(..i).
-  ir = IToF $ ordinal i
-  jr = IToF $ ordinal j
+  ir = i_to_f $ ordinal i
+  jr = i_to_f $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
 > [ [0.]@(..(0@Fin 5))
 > , [1., 2.]@(..(1@Fin 5))

@@ -60,7 +60,7 @@ timesteps = 10
 num_particles = 10000
 
 truth = for i:(Fin timesteps).
-  s = IToF (ordinal i)
+  s = i_to_f (ordinal i)
   (s, sample (normalDistn s 1.0) $ ixkey (newKey 0) i)
 
 filtered = particleFilter num_particles _ gaussModel mean (map snd truth) (newKey 0)

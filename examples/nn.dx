@@ -96,7 +96,7 @@ y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0))
 xs = for i. [x1.i, x2.i]
 
 
-:html showPlot $ xycPlot x1 x2 $ for i. IToF y.i
+:html showPlot $ xycPlot x1 x2 $ for i. i_to_f y.i
 
 simple = \h1.
   ndense1 = dense (Fin 2) h1
@@ -134,7 +134,7 @@ def trainClass [VSpace p]
                                        result = forward model params xs.b.j
                                        result.(ys.b.j)) (get params)
               gparams = gradfn 1.0
-              params := (get params) - scaleVec (0.05 / (IToF 100)) gparams
+              params := (get params) - scaleVec (0.05 / (i_to_f 100)) gparams
               loss
        (get params, loss)
 
@@ -191,9 +191,9 @@ Full = Fin ((size Batch) * H * W)
 
 def pixel (x:Char) : Float32 =
      r = w8_to_i x
-     IToF case r < 0 of
-             True -> (abs r) + 128
-             False -> r
+     i_to_f case r < 0 of
+               True -> (abs r) + 128
+               False -> r
 
 def getIm : Batch => Image = 
     (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"

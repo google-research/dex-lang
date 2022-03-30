@@ -181,7 +181,7 @@ myOtherSquare : Float -> Float =
 
 :p
   f : Float -> Float = \x.
-    x * IToF (1 + 1)
+    x * i_to_f (1 + 1)
 
   jvp f 1.0 2.0
 > 4.
@@ -251,7 +251,7 @@ vec = [1.]
 :p
   f = \rec.
     ({x=x, y=y, z=z}) = rec
-    x * y * IToF z
+    x * y * i_to_f z
   (checkDeriv (\x. f {x=x, y=4.0, z=5}) 2.0, checkDeriv (\y. f {x=2.0, y=y, z=5}) 4.0)
 > (True, True)
 
@@ -267,7 +267,7 @@ vec = [1.]
 -- > True
 
 :p
-  f = \x. for i:(Fin 4). { x=x * x * (IToF $ ordinal i) }
+  f = \x. for i:(Fin 4). { x=x * x * (i_to_f $ ordinal i) }
   jvp f 2.0 1.0
 > [{x = 0.}, {x = 4.}, {x = 8.}, {x = 12.}]
 

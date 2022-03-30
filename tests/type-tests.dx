@@ -63,7 +63,7 @@ help make the errors more local.
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   IToF (sum for i. x.i) + IToF (sum for j. y.j)
+   i_to_f (sum for i. x.i) + i_to_f (sum for j. y.j)
 > Float32
 
 :t
@@ -81,7 +81,7 @@ Narr = Fin 10
 
 arr  = iota Narr
 
-xr = map IToF arr
+xr = map i_to_f arr
 
 :t arr
 > ((Fin 10) => Int32)

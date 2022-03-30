@@ -49,7 +49,7 @@ def initial_step_size {d}
   f1 = fun z1 (t0 + h0)
   d2 = (length ((f1 - f0) ./ scale)) / h0
   left = max 1.0e-6 (h0 * 1.0e-3)
-  right = pow (0.01 / (d1 + d2)) (1. / ((IToF order) + 1.))
+  right = pow (0.01 / (d1 + d2)) (1. / ((i_to_f order) + 1.))
   h1 = select ((d1 <= 1.0e-15) && (d2 <= 1.0e-15)) left right
   min (100. * h0) h1
 

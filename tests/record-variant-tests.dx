@@ -209,9 +209,9 @@ x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 :p
   x : {a:Int | a:Float | b:Int} = {| a | a = 3.0 |}
   case x of
-    {| a = x |} -> IToF x
+    {| a = x |} -> i_to_f x
     {| a | a = x |} -> x
-    {| b = x |} -> IToF x
+    {| b = x |} -> i_to_f x
 > 3.
 
 'Table values and imp lowering

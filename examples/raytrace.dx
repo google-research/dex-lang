@@ -28,7 +28,7 @@ def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
 def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
   yieldState zero \total.
     for i:(Fin n).
-      total := get total + sample (ixkey k i) / IToF n
+      total := get total + sample (ixkey k i) / i_to_f n
 
 def positiveProjection {n} (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
@@ -257,7 +257,7 @@ Camera = {
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
   halfWidth = getAt #halfWidth camera
-  pixHalfWidth = halfWidth / IToF n
+  pixHalfWidth = halfWidth / i_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.

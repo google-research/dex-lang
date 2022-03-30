@@ -43,7 +43,7 @@ def regress {d n} (featurize: Float -> d=>Float) (xRaw:n=>Float) (y:n=>Float) : 
 'Fit a third-order polynomial
 
 def poly {d} [Ix d] (x:Float) : d=>Float =
-  for i. pow x (IToF (ordinal i))
+  for i. pow x (i_to_f (ordinal i))
 
 params : (Fin 4)=>Float = regress poly xs ys
 

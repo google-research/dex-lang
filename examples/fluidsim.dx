@@ -44,7 +44,7 @@ def add_neighbours_2d {n m a} [Add a] (x:n=>m=>a) : (n=>m=>a) =
 def project {n m a} [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
   -- Project the velocity field to be approximately mass-conserving,
   -- using a few iterations of Gauss-Seidel.
-  h = 1.0 / IToF (size n)
+  h = 1.0 / i_to_f (size n)
 
   -- unpack into two scalar fields
   vx = for i j. v.i.j.(fromOrdinal _ 0)
@@ -71,8 +71,8 @@ def advect {n m a} [VSpace a] (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   -- Move field f according to x and y velocities (u and v)
   -- using an implicit Euler integrator.
 
-  cell_xs = linspace n 0.0 $ IToF (size n)
-  cell_ys = linspace m 0.0 $ IToF (size m)
+  cell_xs = linspace n 0.0 $ i_to_f (size n)
+  cell_ys = linspace m 0.0 $ i_to_f (size m)
 
   for i j.
     -- Location of source of flow for this cell.  No meshgrid!
@@ -120,9 +120,9 @@ init_velocity = for i:N j:M k:(Fin 2).
 
 -- Create diagonally-striped color pattern.
 init_color = for i:N j:M.
-  r = BToF $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
-  b = BToF $ (sin $ (IToF $ (ordinal j) - (ordinal i)) / 6.0) > 0.0
-  g = BToF $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 4.0) > 0.0
+  r = BToF $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
+  b = BToF $ (sin $ (i_to_f $ (ordinal j) - (ordinal i)) / 6.0) > 0.0
+  g = BToF $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 4.0) > 0.0
   [r, g, b]
 
 -- Run fluid sim and plot it.

@@ -23,7 +23,7 @@ gridSize = 41
 D = Fin gridSize
 
 -- Space discretization
-dx = 1. / IToF gridSize
+dx = 1. / i_to_f gridSize
 
 -- Time discretization (solution unstable if much higher)
 dt = 0.000001
@@ -44,7 +44,7 @@ def fToC (x:Float) : Complex = MkComplex x 0.
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension
-def ixToF {n} [Ix n] (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
+def ixToF {n} [Ix n] (i:n) : Float = (i_to_f (ordinal i)) / (i_to_f gridSize - 1.)
 
 -- Helper to generate zero-delay GIF animations
 def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
@@ -134,7 +134,7 @@ def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
 
 :html (run
         ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
-        (for i j. IToF $ ordinal i + ordinal j))
+        (for i j. i_to_f $ ordinal i + ordinal j))
 > <html output>
 
 ' Square wavefunction

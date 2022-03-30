@@ -131,8 +131,8 @@ threeCaseTab : (Fin 4)=>ThreeCases =
   yieldAccum (AddMonoid Float) \ref.
     for i. case threeCaseTab.i of
       TheEmptyCase    -> ref += 1000.0
-      ThePairCase x y -> ref +=  100.0 + y + IToF x
-      TheIntCase x    -> ref +=   10.0 + IToF (x * 2)
+      ThePairCase x y -> ref +=  100.0 + y + i_to_f x
+      TheIntCase x    -> ref +=   10.0 + i_to_f (x * 2)
 > 2118.1
 
 data MyIntish = MkIntish Int

@@ -59,7 +59,7 @@ def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =
            left_write_ix, right_write_ix) = butterfly_ixs j ipow2
 
           -- Read one element from the last buffer, scaled.
-          angle = dir_const * (IToF $ mod (ordinal j) ipow2) / IToF ipow2
+          angle = dir_const * (i_to_f $ mod (ordinal j) ipow2) / i_to_f ipow2
           v = (get xRef!right_read_ix) * (MkComplex (cos angle) (sin angle))
 
           -- Add and subtract it to the relevant places in the new buffer.
@@ -68,7 +68,7 @@ def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =
 
   case direction of
     ForwardFT -> ans
-    InverseFT -> ans / (IToF (size n))
+    InverseFT -> ans / (i_to_f (size n))
 
 def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) :
   ((n|m)=>Complex) =  -- Alphabetical order matters here.
@@ -103,8 +103,8 @@ def fft {n} (x: n=>Complex): n=>Complex =
       -- which is then solved with calls to a power-of-2 FFT.
       im = MkComplex 0.0 1.0
       wks = for i.
-        i_squared = IToF $ sq $ ordinal i
-        exp $ (-im) * (MkComplex (pi * i_squared / (IToF (size n))) 0.0)
+        i_squared = i_to_f $ sq $ ordinal i
+        exp $ (-im) * (MkComplex (pi * i_squared / (i_to_f (size n))) 0.0)
 
       (AsList _ tailTable) = tail wks 1
       back_and_forth = odd_sized_palindrome (head wks) tailTable
@@ -119,7 +119,7 @@ def ifft {n} (xs: n=>Complex): n=>Complex =
     then power_of_2_fft InverseFT xs
     else
       unscaled_fft = fft (for i. complex_conj xs.i)
-      for i. (complex_conj unscaled_fft.i) / (IToF (size n))
+      for i. (complex_conj unscaled_fft.i) / (i_to_f (size n))
 
 def  fft_real {n} (x: n=>Float): n=>Complex =  fft for i. MkComplex x.i 0.0
 def ifft_real {n} (x: n=>Float): n=>Complex = ifft for i. MkComplex x.i 0.0

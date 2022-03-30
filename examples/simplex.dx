@@ -604,13 +604,13 @@ redundant_constraints =
 '### Plotting routines
 
 def float2pix (v:Fin 2=>Float) : (n & m) =
-  x = (FToI ((v.(0@_) * (IToF (size n)))))@n
-  y = (FToI ((v.(1@_) * (IToF (size m)))))@m
+  x = (FToI ((v.(0@_) * (i_to_f (size n)))))@n
+  y = (FToI ((v.(1@_) * (i_to_f (size m)))))@m
   (x, y)
 
 def pixToReal (px:n) (py:m): (Fin 2)=>Float =
-  x = ((IToF ((ordinal px)))) / (IToF (size n))
-  y = ((IToF ((ordinal py)))) / (IToF (size m))
+  x = ((i_to_f ((ordinal px)))) / (i_to_f (size n))
+  y = ((i_to_f ((ordinal py)))) / (i_to_f (size m))
   [x, y]
 
 def draw_point [Eq n, Eq m]
