@@ -1399,10 +1399,10 @@ def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 FilePath : Type = String
 data CString = MkCString RawPtr
 
-def nullRawPtr : RawPtr = i64_to_raw_ptr $ i_to_i64 0
+def null_raw_ptr : RawPtr = i64_to_raw_ptr $ i_to_i64 0
 
 def fromNullableRawPtr {a} (ptr:RawPtr) : Maybe (Ptr a) =
-  if ptr == nullRawPtr
+  if ptr == null_raw_ptr
     then Nothing
     else Just $ MkPtr ptr
 
@@ -1575,7 +1575,7 @@ def withFile {a}
       : {IO} a =
   stream = fopen f mode
   (MkStream stream') = stream
-  if stream' == nullRawPtr
+  if stream' == null_raw_ptr
     then
       error $ "Unable to open file: " <> f
     else
@@ -1592,7 +1592,7 @@ def readFile (f:FilePath) : {IO} String =
 def hasFile (f:FilePath) : {IO} Bool =
   stream = fopen f ReadMode
   (MkStream stream') = stream
-  result = stream' /= nullRawPtr
+  result = stream' /= null_raw_ptr
   if result then fclose stream
   result
 
