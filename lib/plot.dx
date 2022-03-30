@@ -22,7 +22,7 @@ def Plot (n:Type) [Ix n] (a:Type) (b:Type) (c:Type) : Type =
 
 def Color : Type = Fin 3 => Float
 
-def applyScale {a} (s:Scale a) (x:a) : Maybe Float = get_at #mapping s x
+def apply_scale {a} (s:Scale a) (x:a) : Maybe Float = get_at #mapping s x
 
 unitTypeScale : Scale Unit =
   { mapping = \(). Just 0.0
@@ -45,7 +45,7 @@ def floatScale (xmin:Float) (xmax:Float) : Scale Float =
   mapScale unitIntervalScale (\x. (x - xmin) / (xmax - xmin))
 
 def getScaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
-  applyScale (get_at #scale sd) (get_at #dat sd).i
+  apply_scale (get_at #scale sd) (get_at #dat sd).i
 
 lowColor  = [1.0, 0.5, 0.0]
 highColor = [0.0, 0.5, 1.0]
