@@ -42,7 +42,7 @@ def p_char (c:Char) : Parser Unit = MkParser \(s, posRef).
   assert (c == c')
   posRef := i + 1
 
-def pEOF : Parser Unit = MkParser \(s, posRef).
+def p_eof : Parser Unit = MkParser \(s, posRef).
   assert $ get posRef >= list_length s
 
 def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
@@ -59,7 +59,7 @@ def return {a} (x:a) : Parser a = MkParser \_. x
 def runParser {a} (s:String) (parser:Parser a) : Maybe a =
   run_parser_partial s $ MkParser \h.
     ans = parse h parser
-    _   = parse h pEOF
+    _   = parse h p_eof
     ans
 
 def parseAny : Parser Char = MkParser \h.
