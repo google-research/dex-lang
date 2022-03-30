@@ -1188,7 +1188,7 @@ def set_at  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
 '### Prism-like accessors
 note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
 
-def matchWith {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
+def match_with {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
   case app_iso iso x of
     Left x -> Just x
     Right _ -> Nothing

@@ -328,7 +328,7 @@ def pivot [Eq cons, Eq extra, Eq vars]
       True  -> for col. table.row.col / table.row.pivotcol
       False -> for col. table.row.col - table.row.pivotcol * table.pivotrow.col / table.pivotrow.pivotcol
 
-  i' = fromJust $ (matchWith #?constraints) pivotrow
+  i' = fromJust $ (match_with #?constraints) pivotrow
 
   -- Swap in new basic variable.
   newBasics = yield_state basics \ref.
