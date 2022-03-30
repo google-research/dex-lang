@@ -33,7 +33,7 @@ Float = Float32
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
-def F64ToF (x : Float64) : Float   = internal_cast _ x
+def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def F32ToF (x : Float32) : Float   = internal_cast _ x
 def FToF64 (x : Float)   : Float64 = internal_cast _ x
 def FToF32 (x : Float)   : Float32 = internal_cast _ x
@@ -1703,7 +1703,7 @@ Such as `randMat` with samples from the distribution of floating point matrices 
 
 foreign "randunif" randunifFFI : Word64 -> {IO} Float64
 
-def rand (k:Key) : Float =  unsafeIO do F64ToF $ randunifFFI k
+def rand (k:Key) : Float =  unsafeIO do f64_to_f $ randunifFFI k
 def randVec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
