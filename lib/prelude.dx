@@ -1194,13 +1194,13 @@ def match_with {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
     Right _ -> Nothing
 def build_with {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
 
-def swapPairIso {a b} : Iso (a & b) (b & a) =
+def swap_pair_iso {a b} : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
 
 '### Complement lens
 Complement the focus of a lens-like isomorphism
 
-def exceptLens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swapPairIso
+def exceptLens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
 
 def swapEitherIso {a b} : Iso (a | b) (b | a) =
   fwd = \x. case x of
