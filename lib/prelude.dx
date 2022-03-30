@@ -2091,17 +2091,17 @@ def linear_search {n a} [Eq a] (xs:n=>a) (query:a) : Maybe n =
       True  -> ref := Just i
       False -> ()
 
-def listLength {a} ((AsList n _):List a) : Int = n
+def list_length {a} ((AsList n _):List a) : Int = n
 
 -- This is for efficiency (rather than using `<>` repeatedly)
 -- TODO: we want this for any monoid but this implementation won't work.
 def concat {n a} (lists:n=>(List a)) : List a =
-  totalSize = sum for i. listLength lists.i
+  totalSize = sum for i. list_length lists.i
   AsList _ $ withState 0 \listIdx.
     withState 0 \eltIdx.
       for i:(Fin totalSize).
         while do
-          continue = get eltIdx >= listLength (lists.((get listIdx)@_))
+          continue = get eltIdx >= list_length (lists.((get listIdx)@_))
           if continue
             then
               eltIdx := 0

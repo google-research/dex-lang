@@ -223,7 +223,7 @@ def listToTable {a} ((AsList n xs): List a) : (Fin n)=>a = xs
   sum $ listToTable l
 > 6
 
-def listToTable2 {a} (l: List a) : (Fin (listLength l))=>a =
+def listToTable2 {a} (l: List a) : (Fin (list_length l))=>a =
   (AsList _ xs) = l
   xs
 
@@ -239,8 +239,8 @@ l2 = AsList _ [1, 2, 3]
 :p sum $ listToTable2 l2
 > 6
 
-def zerosLikeList {a} (l : List a) : (Fin (listLength l))=>Float =
-  for i:(Fin $ listLength l). 0.0
+def zerosLikeList {a} (l : List a) : (Fin (list_length l))=>Float =
+  for i:(Fin $ list_length l). 0.0
 
 :p zerosLikeList l2
 > [0., 0., 0.]

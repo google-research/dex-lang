@@ -43,7 +43,7 @@ def pChar (c:Char) : Parser Unit = MkParser \(s, posRef).
   posRef := i + 1
 
 def pEOF : Parser Unit = MkParser \(s, posRef).
-  assert $ get posRef >= listLength s
+  assert $ get posRef >= list_length s
 
 def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
   (s, posRef) = h
