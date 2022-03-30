@@ -924,9 +924,9 @@ def std  {n v} [Mul v, VSpace v, Floating v] (xs:n=>v) : v = sqrt $ mean (map sq
 def any {n} (xs:n=>Bool) : Bool = reduce False (||) xs
 def all {n} (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
-'### ApplyN
+'### apply_n
 
-def applyN {a} (n:Int) (x:a) (f:a -> a) : a =
+def apply_n {a} (n:Int) (x:a) (f:a -> a) : a =
   yield_state x \ref. for _:(Fin n).
     ref := f (get ref)
 

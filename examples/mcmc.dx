@@ -60,7 +60,7 @@ def leapfrogIntegrate {a}
       ((x, p): (a & a))
       : (a & a) =
   x = x + (0.5 * dt) .* p
-  (x, p) = applyN nsteps (x, p) \(xOld, pOld).
+  (x, p) = apply_n nsteps (x, p) \(xOld, pOld).
     pNew = pOld + dt .* grad logProb xOld
     xNew = xOld + dt .* pNew
     (xNew, pNew)
