@@ -44,7 +44,7 @@ def i_to_i64 (x : Int)     : Int64   = internal_cast _ x
 def i_to_i32 (x : Int)     : Int32   = internal_cast _ x
 def i_to_w8  (x : Int)     : Word8   = internal_cast _ x
 def i_to_w32 (x : Int)     : Word32  = internal_cast _ x
-def IToW64 (x : Int)     : Word64  = internal_cast _ x
+def i_to_w64 (x : Int)     : Word64  = internal_cast _ x
 def W32ToW64 (x : Word32): Word64  = internal_cast _ x
 def IToF (x:Int) : Float = internal_cast _ x
 def FToI (x:Float) : Int = internal_cast _ x
@@ -90,8 +90,8 @@ instance Bits Word32
   (.^.)   = \x y. %xor x y
 
 instance Bits Word64
-  (.<<.)  = \x y. %shl x (IToW64 y)
-  (.>>.)  = \x y. %shr x (IToW64 y)
+  (.<<.)  = \x y. %shl x (i_to_w64 y)
+  (.>>.)  = \x y. %shr x (i_to_w64 y)
   (.|.)   = \x y. %or x y
   (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
@@ -145,7 +145,7 @@ instance Add Word32
 instance Add Word64
   add = \x y. %iadd x y
   sub = \x y. %isub x y
-  zero = IToW64 0
+  zero = i_to_w64 0
 
 instance Add Unit
   add = \x y. ()
@@ -1689,9 +1689,9 @@ def threeFry2x32 (k:Word64) (count:Word64) : Word64 =
   (W32ToW64 x .<<. 32) .|. (W32ToW64 y)
 
 def hash (x:Key) (y:Int32) : Key =
-  y64 = IToW64 y
+  y64 = i_to_w64 y
   threeFry2x32 x y64
-def newKey (x:Int) : Key = hash (IToW64 0) x
+def newKey (x:Int) : Key = hash (i_to_w64 0) x
 def many {a n} [Ix n] (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey {n} (k:Key) (i:n) [Ix n] : Key = hash k (ordinal i)
 def ixkey2 {n m} (k:Key) (i:n) (j:m) [Ix n, Ix m] : Key = hash (hash k (ordinal i)) (ordinal j)

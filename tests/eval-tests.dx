@@ -215,10 +215,10 @@ litArr = [10, 5, 3]
    mean for i:(Fin 100). randn (ixkey k i)
 > -0.1158
 
-:p hash (IToW64 0) 0
+:p hash (i_to_w64 0) 0
 > 0x6b20015999ba4efe
 
-:p hash (IToW64 123) 456
+:p hash (i_to_w64 123) 456
 > 0x500945c565c98701
 
 key = (W32ToW64 (i_to_w32 320440878) .<<. 32) .|. (W32ToW64 (i_to_w32 57701188)) -- 0x13198a2e03707344
