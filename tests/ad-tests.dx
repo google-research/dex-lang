@@ -280,12 +280,12 @@ vec = [1.]
       {| a=a |} -> 2.0 * (a + x)
       {| b=b |} -> b * x
   (y, df) = linearize f 2.0
-  checkDerivBase f 2.0
+  check_deriv_base f 2.0
 > True
 
 :p
   f = max 0.0
-  (checkDerivBase f 1.0, checkDerivBase f (-1.0))
+  (check_deriv_base f 1.0, check_deriv_base f (-1.0))
 > (True, True)
 
 :p

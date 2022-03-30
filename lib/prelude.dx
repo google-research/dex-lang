@@ -1020,7 +1020,7 @@ instance {n t} [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
 
 '### AD Checking tools
 
-def checkDerivBase (f:Float->Float) (x:Float) : Bool =
+def check_deriv_base (f:Float->Float) (x:Float) : Bool =
   eps = 0.01
   ansFwd  = deriv    f x
   ansRev  = deriv_rev f x
@@ -1028,7 +1028,7 @@ def checkDerivBase (f:Float->Float) (x:Float) : Bool =
   ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
 
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
-  checkDerivBase f x && checkDerivBase (deriv f) x
+  check_deriv_base f x && check_deriv_base (deriv f) x
 
 '## Vector support
 
