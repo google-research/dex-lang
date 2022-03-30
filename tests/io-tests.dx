@@ -51,7 +51,7 @@ unsafe_io \().
   with_dynamic_buffer \buf.
     extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
     extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
-    (AsList _ xs) = loadDynBuffer buf
+    (AsList _ xs) = load_dynamic_buffer buf
     sum xs
 > 999000
 

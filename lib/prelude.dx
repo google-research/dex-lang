@@ -1296,7 +1296,7 @@ def extend_dynamic_buffer {a} [Storable a]
   store_table (bufPtr +>> size) xs
   add_at_int_ptr (get_at #size db) n
 
-def loadDynBuffer {a} [Storable a]
+def load_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) : {IO} (List a) =
   (MkDynBuffer db) = buf
   bufPtr = load $ get_at #buffer db
@@ -1496,7 +1496,7 @@ def fromCString (s:CString) : {IO} (Maybe String) =
       Just $ with_dynamic_buffer \buf. iter \i.
         c = load $ ptr +>> i
         if c == '\NUL'
-          then Done $ loadDynBuffer buf
+          then Done $ load_dynamic_buffer buf
           else
             pushDynBuffer buf c
             Continue
@@ -1525,7 +1525,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
         if numRead == n
           then Continue
           else Done ()
-      loadDynBuffer buf
+      load_dynamic_buffer buf
 
 '### Print
 
