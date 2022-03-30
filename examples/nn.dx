@@ -96,7 +96,7 @@ y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0))
 xs = for i. [x1.i, x2.i]
 
 
-:html show_plot $ xycPlot x1 x2 $ for i. i_to_f y.i
+:html show_plot $ xyc_plot x1 x2 $ for i. i_to_f y.i
 
 simple = \h1.
   ndense1 = dense (Fin 2) h1

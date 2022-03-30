@@ -92,7 +92,7 @@ gp_predict = gp_regress (rbf 0.2) xs ys
 
 (gp_preds, vars) = unzip (map gp_predict xtest)
 
-:html show_plot $ xycPlot xtest gp_preds (map sqrt vars)
+:html show_plot $ xyc_plot xtest gp_preds (map sqrt vars)
 > <html output>
 
 :html show_plot $ xy_plot xtest vars

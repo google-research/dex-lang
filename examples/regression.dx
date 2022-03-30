@@ -85,7 +85,7 @@ def tabCat {n m a} (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
 xsPlot = tabCat xs xsTest
 ysPlot = tabCat ys $ map predict xsTest
 
-:html show_plot $ xycPlot xsPlot ysPlot $
+:html show_plot $ xyc_plot xsPlot ysPlot $
         for i. case i of
                  {| left  = _ |} -> 0.0
                  {| right = _ |} -> 1.0

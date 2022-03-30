@@ -108,7 +108,7 @@ def set_c_data {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n 
 def xy_plot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
   blank_plot |> set_x_data (auto_scale xs) |> set_y_data (auto_scale ys)
 
-def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
+def xyc_plot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
   blank_plot |>
     set_x_data (auto_scale xs) |>
     set_y_data (auto_scale ys) |>
