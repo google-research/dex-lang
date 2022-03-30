@@ -74,7 +74,7 @@ def identity_permutation {n} [Ix n] : Permutation n =
   (for i. i, 1.0)
 
 def swapInPlace {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
-  (permRef, signRef) = (fstRef pRef, sndRef pRef)
+  (permRef, signRef) = (fst_ref pRef, sndRef pRef)
   tempj = get permRef!j
   permRef!j := get permRef!i
   permRef!i := tempj
@@ -108,7 +108,7 @@ def lu {n} (a: n=>n=>Float) :
   init_upper = zero
 
   (lower, upper) = yieldState (init_lower, init_upper) \stateRef.
-    lRef = fstRef stateRef
+    lRef = fst_ref stateRef
     uRef = sndRef stateRef
 
   -- For reference, here's code to computed the LU decomposition

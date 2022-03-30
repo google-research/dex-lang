@@ -508,7 +508,7 @@ def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
   %mextend ref empty combine x
 
 def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
-def fstRef {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def fst_ref {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
 def sndRef {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
 def runReader
