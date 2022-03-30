@@ -2074,7 +2074,7 @@ def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
 def intpow {a} [Mul a] (base:a) (power:Int) : a =
   general_integer_power (*) one base power
 
-def fromJust {a} (x:Maybe a) : a = case x of Just x' -> x'
+def from_just {a} (x:Maybe a) : a = case x of Just x' -> x'
 
 def anySat {a n} (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 
@@ -2083,7 +2083,7 @@ def seqMaybes {n a} (xs : n=>Maybe a) : Maybe (n => a) =
   -- functions)
   case anySat is_nothing xs of
     True  -> Nothing
-    False -> Just $ map fromJust xs
+    False -> Just $ map from_just xs
 
 def linearSearch {n a} [Eq a] (xs:n=>a) (query:a) : Maybe n =
   yield_state Nothing \ref. for i.

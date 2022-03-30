@@ -68,14 +68,14 @@ roundTrip = for i:(StringSetIx names2).
 roundTrip2 = for i:(StringSetIx names2).
   s = setIxToString i
   ix = stringToSetIx s
-  i == fromJust ix
+  i == from_just ix
 :p all roundTrip2
 > True
 
-setix : StringSetIx names2 = fromJust $ stringToSetIx "Bob"
+setix : StringSetIx names2 = from_just $ stringToSetIx "Bob"
 :p setix
 > (MkSetIx 1)
 
-setix2 : StringSetIx names2 = fromJust $ stringToSetIx "Charlie"
+setix2 : StringSetIx names2 = from_just $ stringToSetIx "Charlie"
 :p setix2
 > (MkSetIx 2)
