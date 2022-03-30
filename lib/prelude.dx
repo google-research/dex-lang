@@ -1192,7 +1192,7 @@ def match_with {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
   case app_iso iso x of
     Left x -> Just x
     Right _ -> Nothing
-def buildWith {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
+def build_with {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
 
 def swapPairIso {a b} : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
@@ -1243,7 +1243,7 @@ def splitV {a} : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
 
 def sliceFields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (buildWith $ splitV &>> iso) tab
+  reindex (build_with $ splitV &>> iso) tab
 
 '## Dynamic buffer
 

@@ -109,7 +109,7 @@ Similarly, there are prism-like helpers
 :t match_with
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b | c)) -> a -> Maybe b)
 
-:t buildWith
+:t build_with
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b | c)) -> b -> a)
 
 'which can be used with variant accessors or any other prism-like isomorphism:
@@ -120,7 +120,7 @@ Similarly, there are prism-like helpers
 :p match_with #?foo $ {|bar = 1.0|}:{foo:Int | bar:Float}
 > Nothing
 
-:p buildWith #?foo 3 : {foo:Int | bar:Float}
+:p build_with #?foo 3 : {foo:Int | bar:Float}
 > {| foo = 3 |}
 
 :p match_with (exceptPrism #?foo) $  {|bar = 1.0|}:{foo:Int | bar:Float}
