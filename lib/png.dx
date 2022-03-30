@@ -123,13 +123,13 @@ def img_to_html (png:String) : Html =
 def float_to_8bit (x:Float) : Word8 =
   i_to_w8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
-def imgToPng {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
+def img_to_png {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
   make_png for i j k. float_to_8bit img.i.j.k
 
 '## API entry point
 
 def imshow {n m} (img:n=>m=>(Fin 3)=>Float) : Html =
-  img_to_html $ imgToPng img
+  img_to_html $ img_to_png img
 
 def imseqshow {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
-  img_to_html $ pngs_to_gif 50 $ map imgToPng imgs
+  img_to_html $ pngs_to_gif 50 $ map img_to_png imgs
