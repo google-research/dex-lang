@@ -240,14 +240,14 @@ def Range (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = Range 0 n
 
 -- A max(a, 0) that is friendly to our algebraic simplifier
-def clampNonnegPrim (a: Int) : Int =
+def clamp_nonneg_prim (a: Int) : Int =
   z : Int = 0
   isNeg = %ilt a z
   %select isNeg z a
 
 -- TODO: Define Range in surface syntax
 instance {l h} Ix (Range l h)
-  get_size = \(). clampNonnegPrim $ h - l
+  get_size = \(). clamp_nonneg_prim $ h - l
   ordinal = \i. %cast Int i
   unsafe_from_ordinal = \i. %cast (Range l h) i
 
@@ -272,22 +272,22 @@ instance {q:Type} {i:q} [Ix q] Ix (..<i)
   unsafe_from_ordinal = \j. %cast (..<i) j
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..i)
-  get_size = \(). clampNonnegPrim $ ordinal i - ordinal j + 1
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j + 1
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j..i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..<i)
-  get_size = \(). clampNonnegPrim $ ordinal i - ordinal j
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j..<i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..i)
-  get_size = \(). clampNonnegPrim $ ordinal i - ordinal j
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j<..i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..<i)
-  get_size = \(). clampNonnegPrim $ ordinal i - ordinal j - 1
+  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j - 1
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j<..<i) k
 
