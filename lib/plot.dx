@@ -130,6 +130,6 @@ def matshow {n m} (img:n=>m=>Float) : Html =
   range = high - low
   img_to_html $ make_png for i j.
     x = if range == 0.0
-      then floatTo8Bit $ 0.5
-      else floatTo8Bit $ (img.i.j - low) / range
+      then float_to_8bit $ 0.5
+      else float_to_8bit $ (img.i.j - low) / range
     [x, x, x]

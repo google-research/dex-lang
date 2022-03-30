@@ -120,11 +120,11 @@ def img_to_html (png:String) : Html =
    <> base64_encode png
    <> "\">")
 
-def floatTo8Bit (x:Float) : Word8 =
+def float_to_8bit (x:Float) : Word8 =
   i_to_w8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
 def imgToPng {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
-  make_png for i j k. floatTo8Bit img.i.j.k
+  make_png for i j k. float_to_8bit img.i.j.k
 
 '## API entry point
 
