@@ -223,7 +223,7 @@ def render_svg (d:Diagram) (bounds:BoundingBox) : String =
       (attr, pos, geom) = objs.i
       render_geom attr pos geom
 
-renderScaledSVG = \d. render_svg d (compute_bounds d)
+render_scaled_svg = \d. render_svg d (compute_bounds d)
 
 '## Derived convenience methods and combinators
 
