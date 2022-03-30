@@ -314,7 +314,7 @@ defaultCamera = {
 -- We change to a small num pix here to reduce the compute needed for tests
 params = defaultParams
 camera = if dex_test_mode ()
-  then defaultCamera |> setAt #numPix 10
+  then defaultCamera |> set_at #numPix 10
   else defaultCamera
 
 -- %time
@@ -325,7 +325,7 @@ camera = if dex_test_mode ()
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
-params2 = defaultParams |> setAt #numSamples 1
+params2 = defaultParams |> set_at #numSamples 1
 (MkImage _ _ image2) = takePicture params2 theScene camera
 
 :html imshow image2

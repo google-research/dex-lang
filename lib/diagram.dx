@@ -93,11 +93,11 @@ def updateGeom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
     (attr       , geoms) = objs.i
     (update attr, geoms)
 
-def setFillColor   (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #fillColor   (Just c)
-def setStrokeColor (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #strokeColor (Just c)
-def setStrokeWidth (w:Int)       : Diagram -> Diagram = updateGeom $ setAt #strokeWidth w
-def removeStroke                 : Diagram -> Diagram = updateGeom $ setAt #strokeColor Nothing
-def removeFill                   : Diagram -> Diagram = updateGeom $ setAt #fillColor   Nothing
+def setFillColor   (c:HtmlColor) : Diagram -> Diagram = updateGeom $ set_at #fillColor   (Just c)
+def setStrokeColor (c:HtmlColor) : Diagram -> Diagram = updateGeom $ set_at #strokeColor (Just c)
+def setStrokeWidth (w:Int)       : Diagram -> Diagram = updateGeom $ set_at #strokeWidth w
+def removeStroke                 : Diagram -> Diagram = updateGeom $ set_at #strokeColor Nothing
+def removeFill                   : Diagram -> Diagram = updateGeom $ set_at #fillColor   Nothing
 
 '## Serialization to SVG string
 
@@ -149,12 +149,12 @@ def attrString (attr:GeomStyle) : String =
 @noinline
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
-  solidAttr = setAt #fillColor (get_at #strokeColor attr) attr
+  solidAttr = set_at #fillColor (get_at #strokeColor attr) attr
 
   groupEle = \attr. tagBracketsAttr "g" (attrString attr)
   case geom of
     PointGeom ->
-      pointAttr = setAt #fillColor (get_at #strokeColor attr) attr
+      pointAttr = set_at #fillColor (get_at #strokeColor attr) attr
       groupEle solidAttr $ selfClosingBrackets $
         ("circle" <+>
          "cx" <=> x <.>

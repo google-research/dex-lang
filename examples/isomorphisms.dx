@@ -90,7 +90,7 @@ Record accessor isomorphisms can be passed into the helper function `getAt`:
 :p push_at #foo 3.0 {foo=1, bar=2.0}
 > {bar = 2., foo = 3., foo = 1}
 
-:p setAt #foo 2 {foo=1, bar=2.0}
+:p set_at #foo 2 {foo=1, bar=2.0}
 > {bar = 2., foo = 2}
 
 'These helper functions work with any "lens-like" isomorphism. For instance,
