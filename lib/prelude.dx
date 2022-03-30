@@ -2013,7 +2013,7 @@ def reflect {n} [Ix n] (i:n) : n =
 def reverse {n a} (x:n=>a) : n=>a =
   for i. x.(reflect i)
 
-def padTo {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
+def pad_to {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
   n' = size n
   for i.
     i' = ordinal i

@@ -27,7 +27,7 @@ def getChunks {n a}
       : List (Fin chunkSize => a) =
   numChunks = idivCeil (size n) chunkSize
   paddedSize = numChunks * chunkSize
-  xsPadded = padTo (Fin paddedSize) padVal xs
+  xsPadded = pad_to (Fin paddedSize) padVal xs
   to_list for i:(Fin numChunks).
     slice xsPadded (ordinal i * chunkSize) (Fin chunkSize)
 
