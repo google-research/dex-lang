@@ -41,7 +41,7 @@ def parserTFTriple : Parser (Fin 3=>Bool) = MkParser \h.
 :p run_parser "TTFFTT" $ parseMany parseTF
 > (Just (AsList 6 [True, True, False, False, True, True]))
 
-:p run_parser "1021389" $ parseMany parseDigit
+:p run_parser "1021389" $ parseMany parse_digit
 > (Just (AsList 7 [1, 0, 2, 1, 3, 8, 9]))
 
 :p run_parser "1389" $ parseInt

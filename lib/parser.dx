@@ -81,7 +81,7 @@ def try {a} (parser:Parser a) : Parser a = MkParser \h.
 
 'Derived combinators
 
-def parseDigit : Parser Int = try $ MkParser \h.
+def parse_digit : Parser Int = try $ MkParser \h.
   c = parse h $ parse_any
   i = w8_to_i c - 48
   assert $ 0 <= i && i < 10
@@ -101,7 +101,7 @@ def parseMany {a} (parser:Parser a) : Parser (List a) = MkParser \h.
           Continue
 
 def parseUnsignedInt : Parser Int = MkParser \h.
-  (AsList _ digits) = parse h $ parseMany parseDigit
+  (AsList _ digits) = parse h $ parseMany parse_digit
   yield_state 0 \ref.
     for i. ref := 10 * get ref + digits.i
 
