@@ -1598,20 +1598,20 @@ def has_file (f:FilePath) : {IO} Bool =
 
 '### Temporary Files
 
-def newTempFile (_:Unit) : {IO} FilePath =
+def new_temp_file (_:Unit) : {IO} FilePath =
   with_c_string "/tmp/dex-XXXXXX" \(MkCString ptr).
     fd = mkstempFFI ptr
     closeFFI fd
     string_from_char_ptr 15 (MkPtr ptr)
 
 def withTempFile {a} (action: FilePath -> {IO} a) : {IO} a =
-  tmpFile = newTempFile ()
+  tmpFile = new_temp_file ()
   result = action tmpFile
   delete_file tmpFile
   result
 
 def withTempFiles {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
-  tmpFiles = for i. newTempFile ()
+  tmpFiles = for i. new_temp_file ()
   result = action tmpFiles
   for i. delete_file tmpFiles.i
   result
