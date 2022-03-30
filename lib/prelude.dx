@@ -37,7 +37,7 @@ def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
 def f_to_f64 (x : Float)   : Float64 = internal_cast _ x
 def f_to_f32 (x : Float)   : Float32 = internal_cast _ x
-def I64ToI (x : Int64)   : Int     = internal_cast _ x
+def i64_to_i (x : Int64)   : Int     = internal_cast _ x
 def I32ToI (x : Int32)   : Int     = internal_cast _ x
 def W8ToI  (x : Word8)   : Int     = internal_cast _ x
 def IToI64 (x : Int)     : Int64   = internal_cast _ x
@@ -55,13 +55,13 @@ interface FromInteger a
   fromInteger : Int64 -> a
 
 instance FromInteger Float32
-  fromInteger = \x. IToF $ I64ToI x
+  fromInteger = \x. IToF $ i64_to_i x
 
 instance FromInteger Int32
-  fromInteger = \x. I64ToI x
+  fromInteger = \x. i64_to_i x
 
 instance FromInteger Float64
-  fromInteger = \x. f_to_f64 $ IToF $ I64ToI x
+  fromInteger = \x. f_to_f64 $ IToF $ i64_to_i x
 
 instance FromInteger Int64
   fromInteger = \x. x
@@ -1520,7 +1520,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
     withDynamicBuffer \buf.
       iter \_.
         (MkPtr rawPtr) = ptr
-        numRead = I64ToI $ freadFFI rawPtr (IToI64 1) (IToI64 n) stream'
+        numRead = i64_to_i $ freadFFI rawPtr (IToI64 1) (IToI64 n) stream'
         extendDynBuffer buf $ stringFromCharPtr numRead ptr
         if numRead == n
           then Continue
