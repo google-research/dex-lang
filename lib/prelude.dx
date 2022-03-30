@@ -405,7 +405,7 @@ data Ordering =
   EQ
   GT
 
-def OToW8 (x : Ordering) : Word8 = %dataConTag x
+def o_to_w8 (x : Ordering) : Word8 = %dataConTag x
 
 '## Sum types
 A [sum type, or tagged union](https://en.wikipedia.org/wiki/Tagged_union) can hold values from a fixed set of types, distinguished by tags.
@@ -661,7 +661,7 @@ instance {a b} [Ord a, Ord b] Ord (a & b)
   (<) = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
 
 instance Eq Ordering
-  (==) = \x y. OToW8 x == OToW8 y
+  (==) = \x y. o_to_w8 x == o_to_w8 y
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
 instance {n} Eq (Fin n)
