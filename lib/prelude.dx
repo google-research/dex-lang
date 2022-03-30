@@ -1254,7 +1254,7 @@ data DynBuffer a =
     & maxSize : Ptr Int
     & buffer  : Ptr (Ptr a) }
 
-def withDynamicBuffer {a b} [Storable a]
+def with_dynamic_buffer {a b} [Storable a]
       (action: DynBuffer a -> {IO} b) : {IO} b =
   initMaxSize = 256
   with_alloc 1 \sizePtr. with_alloc 1 \maxSizePtr. with_alloc 1 \bufferPtr.
@@ -1493,7 +1493,7 @@ def fromCString (s:CString) : {IO} (Maybe String) =
   case cStringPtr s of
     Nothing -> Nothing
     Just ptr ->
-      Just $ withDynamicBuffer \buf. iter \i.
+      Just $ with_dynamic_buffer \buf. iter \i.
         c = load $ ptr +>> i
         if c == '\NUL'
           then Done $ loadDynBuffer buf
@@ -1517,7 +1517,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
   -- TODO: allow reading longer files!
   n = 4096
   with_alloc n \ptr:(Ptr Char).
-    withDynamicBuffer \buf.
+    with_dynamic_buffer \buf.
       iter \_.
         (MkPtr rawPtr) = ptr
         numRead = i64_to_i $ freadFFI rawPtr (i_to_i64 1) (i_to_i64 n) stream'

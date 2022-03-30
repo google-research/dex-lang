@@ -48,7 +48,7 @@ unsafe_io \().
 > 3
 
 :p unsafe_io \().
-  withDynamicBuffer \buf.
+  with_dynamic_buffer \buf.
     extendDynBuffer buf $ to_list for i:(Fin 1000). ordinal i
     extendDynBuffer buf $ to_list for i:(Fin 1000). ordinal i
     (AsList _ xs) = loadDynBuffer buf
