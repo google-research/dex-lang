@@ -60,7 +60,7 @@ def make_rgb_color (c : Color) : HtmlColor =
 def color_scale (x:Float) : HtmlColor =
   make_rgb_color $ interpolate low_color high_color x
 
-def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
+def plot_to_diagram {a b c n} (plot:Plot n a b c) : Diagram =
   points = concat_diagrams for i.
     x = get_scaled (get_at #xs plot) i
     y = get_scaled (get_at #ys plot) i
@@ -78,7 +78,7 @@ def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   boundingBox <> points
 
 def showPlot {a b c n} (plot:Plot n a b c) : String =
-  render_svg (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
+  render_svg (plot_to_diagram plot) ((0.0, 0.0), (1.0, 1.0))
 
 def blankData {n} [Ix n] : ScaledData n Unit =
   {scale = unit_type_scale, dat = for i. ()}
