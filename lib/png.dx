@@ -37,7 +37,7 @@ def base64s_to_bytes (chunk : Fin 4 => Base64) : Fin 3 => Byte =
   , (b .<<. 4) .|. (c .>>. 2)
   , (c .<<. 6) .|.  d       ]
 
-def bytesToBase64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
+def bytes_to_base64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
   [a, b, c] = chunk
   -- '?' is 00111111
   map ((.&.) '?') $
@@ -50,7 +50,7 @@ def base64ToAscii (x:Base64) : Char =
   encoding_table.(from_ordinal _ (w8_to_i x))
 
 def encodeChunk (chunk : Fin 3 => Char) : Fin 4 => Char =
-  map base64ToAscii $ bytesToBase64s chunk
+  map base64ToAscii $ bytes_to_base64s chunk
 
 -- TODO: the `AsList` unpacking is very tedious. Daniel's change will help
 def base64Encode (s:String) : String =
