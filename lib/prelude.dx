@@ -2053,7 +2053,7 @@ def nextpow2 (x:Int) : Int = case is_power_of_2 x of
   True -> x
   False -> intpow2 (1 + intlog2 x)
 
-def generalIntegerPower {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
+def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
   -- Implements exponentiation by squaring.
   -- Todo: Make power a Nat when it's available.
   -- This could be nicer if there were a way to explicitly
@@ -2072,7 +2072,7 @@ def generalIntegerPower {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
             False
 
 def intpow {a} [Mul a] (base:a) (power:Int) : a =
-  generalIntegerPower (*) one base power
+  general_integer_power (*) one base power
 
 def fromJust {a} (x:Maybe a) : a = case x of Just x' -> x'
 
