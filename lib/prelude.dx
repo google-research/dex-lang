@@ -49,7 +49,7 @@ def w32_to_w64 (x : Word32): Word64  = internal_cast _ x
 def i_to_f (x:Int) : Float = internal_cast _ x
 def FToI (x:Float) : Int = internal_cast _ x
 def i64_to_raw_ptr (x:Int64 ) : RawPtr = internal_cast _ x
-def RawPtrToI64 (x:RawPtr) : Int64  = internal_cast _ x
+def raw_ptr_to_i64 (x:RawPtr) : Int64  = internal_cast _ x
 
 interface FromInteger a
   fromInteger : Int64 -> a
@@ -627,7 +627,7 @@ instance Eq Unit
   (==) = \x y. True
 
 instance Eq RawPtr
-  (==) = \x y. RawPtrToI64 x == RawPtrToI64 y
+  (==) = \x y. raw_ptr_to_i64 x == raw_ptr_to_i64 y
 
 instance Ord Float64
   (>) = \x y. W8ToB $ %fgt x y
