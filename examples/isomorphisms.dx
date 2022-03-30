@@ -84,7 +84,7 @@ Record accessor isomorphisms can be passed into the helper function `getAt`:
 
 'We can also do other types of things:
 
-:p popAt #foo {foo=1, bar=2.0}
+:p pop_at #foo {foo=1, bar=2.0}
 > {bar = 2.}
 
 :p pushAt #foo 3.0 {foo=1, bar=2.0}
