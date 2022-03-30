@@ -420,7 +420,7 @@ def is_nothing {a} (x:Maybe a) : Bool = case x of
   Nothing -> True
   Just _ -> False
 
-def isJust {a} (x:Maybe a) : Bool = not $ is_nothing x
+def is_just {a} (x:Maybe a) : Bool = not $ is_nothing x
 
 def maybe {a b} (d: b) (f : (a -> b)) (x: Maybe a) : b =
   case x of
@@ -1508,7 +1508,7 @@ def getEnv (name:String) : {IO} Maybe String =
     fromCString $ MkCString $ getenvFFI ptr
 
 def checkEnv (name:String) : {IO} Bool =
-  isJust $ getEnv name
+  is_just $ getEnv name
 
 '### More Stream IO
 
