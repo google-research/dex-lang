@@ -60,7 +60,7 @@ instance {a} [Eq a] Eq (Set a)
   (==) = \(UnsafeAsSet _ xs) (UnsafeAsSet _ ys).
     (AsList _ xs) == (AsList _ ys)
 
-def setUnion {a}
+def set_union {a}
       ((UnsafeAsSet nx xs):Set a)
       ((UnsafeAsSet ny ys):Set a) : Set a =
   combined = mergeSortedTables xs ys

@@ -14,7 +14,7 @@ set2 = to_set ["Bob", "Xeno", "Charlie"]
 :p set1 == set2
 > False
 
-:p setUnion set1 set2
+:p set_union set1 set2
 > (UnsafeAsSet 4 [ (AsList 5 "Alice")
 >                , (AsList 3 "Bob")
 >                , (AsList 7 "Charlie")
@@ -26,7 +26,7 @@ set2 = to_set ["Bob", "Xeno", "Charlie"]
 :p remove_duplicates_from_sorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
 > (AsList 3 [(AsList 5 "Alice"), (AsList 3 "Bob"), (AsList 7 "Charlie")])
 
-:p set1 == (setUnion set1 set1)
+:p set1 == (set_union set1 set1)
 > True
 
 :p set1 == (setIntersect set1 set1)
@@ -39,13 +39,13 @@ emptyset = to_set ([]:(Fin 0)=>String)
 :p emptyset == emptyset
 > True
 
-:p emptyset == (setUnion emptyset emptyset)
+:p emptyset == (set_union emptyset emptyset)
 > True
 
 :p emptyset == (setIntersect emptyset emptyset)
 > True
 
-:p set1 == (setUnion set1 emptyset)
+:p set1 == (set_union set1 emptyset)
 > True
 
 :p emptyset == (setIntersect set1 emptyset)
