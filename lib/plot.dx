@@ -87,7 +87,7 @@ def blank_plot {n} [Ix n] : Plot n Unit Unit Unit =
   {xs = blank_data, ys = blank_data, cs = blank_data}
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
-def autoScale {n} (xs:n=>Float) : ScaledData n Float =
+def auto_scale {n} (xs:n=>Float) : ScaledData n Float =
   max = maximum xs
   min = minimum xs
   -- Add 10% padding away from the plot area
@@ -106,13 +106,13 @@ def setCData {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a 
   {xs = get_at #xs plot, ys = get_at #ys plot, cs = cs}
 
 def xyPlot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
-  blank_plot |> setXData (autoScale xs) |> setYData (autoScale ys)
+  blank_plot |> setXData (auto_scale xs) |> setYData (auto_scale ys)
 
 def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
   blank_plot |>
-    setXData (autoScale xs) |>
-    setYData (autoScale ys) |>
-    setCData (autoScale cs)
+    setXData (auto_scale xs) |>
+    setYData (auto_scale ys) |>
+    setCData (auto_scale cs)
 
 def yPlot {n} (ys:n=>Float) : Plot n Float Float Unit =
   xs = for i. i_to_f $ ordinal i
