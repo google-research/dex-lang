@@ -18,5 +18,5 @@ def sampleBM (key:Key) (t:UnitInterval) : Float =
 xs = linspace (Fin 1000) 0.0 1.0
 ys = map (sampleBM (new_key 0)) xs
 
-:html show_plot $ xyPlot xs ys
+:html show_plot $ xy_plot xs ys
 > <html output>

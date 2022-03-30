@@ -30,7 +30,7 @@ def trueFun (x:Float) : Float =
 xs : Nx=>Float = for i. rand (ixkey k1 i)
 ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
 
-:html show_plot $ xyPlot xs ys
+:html show_plot $ xy_plot xs ys
 > <html output>
 
 'Implement basis function regression
@@ -53,7 +53,7 @@ def predict (x:Float) : Float =
 
 xsTest = linspace (Fin 200) 0.0 1.0
 
-:html show_plot $ xyPlot xsTest (map predict xsTest)
+:html show_plot $ xy_plot xsTest (map predict xsTest)
 > <html output>
 
 'RMS error

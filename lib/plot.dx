@@ -105,7 +105,7 @@ def set_y_data {n a b c new} (ys:ScaledData n new) (plot:Plot n a b c) : Plot n 
 def set_c_data {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
   {xs = get_at #xs plot, ys = get_at #ys plot, cs = cs}
 
-def xyPlot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
+def xy_plot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
   blank_plot |> set_x_data (auto_scale xs) |> set_y_data (auto_scale ys)
 
 def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
@@ -116,7 +116,7 @@ def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float F
 
 def yPlot {n} (ys:n=>Float) : Plot n Float Float Unit =
   xs = for i. i_to_f $ ordinal i
-  xyPlot xs ys
+  xy_plot xs ys
 
 -- xs = linspace (Fin 100) 0. 1.0
 -- :html showPlot $ xycPlot xs xs xs
