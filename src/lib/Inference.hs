@@ -2525,7 +2525,9 @@ instance (Monad m, ExtOutMap InfOutMap decls)
   refreshAbs ab cont = UnsafeMakeInplaceT \env ->
     refreshAbsPure (toScope env) ab \_ b e -> do
       let env' = extendOutMap env $ toEnvFrag b
-      unsafeRunInplaceT (cont b e) env'
+      (ans, decls, _) <- unsafeRunInplaceT (cont b e) env'
+      case fabricateDistinctEvidence @UnsafeS of
+        Distinct -> return (ans, decls, extendOutMap (unsafeCoerceE env) decls)
 
 instance BindsEnv InfOutFrag where
   toEnvFrag (InfOutFrag frag _ _) = toEnvFrag frag

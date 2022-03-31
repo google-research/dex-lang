@@ -14,7 +14,7 @@ module Name (
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
-  SubstV, InplaceT (..), unsafeRunInplaceT, extendInplaceT, extendInplaceTLocal,
+  SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag,
@@ -1445,12 +1445,9 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
 
 -- === in-place scope updating monad -- immutable fragment ===
 
+-- The bindings returned by the action should be an extension of the input bindings by the emitted decls.
 newtype InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
-  { unsafeRunInplaceT' :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS) }
-
-unsafeRunInplaceT :: InplaceT b d m n a -> (Distinct n => b n -> m (a, d UnsafeS UnsafeS))
-unsafeRunInplaceT (UnsafeMakeInplaceT m) = m
-{-# INLINE unsafeRunInplaceT #-}
+  { unsafeRunInplaceT :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS, bindings UnsafeS) }
 
 runInplaceT
   :: (ExtOutMap b d, Monad m)
@@ -1459,7 +1456,7 @@ runInplaceT
   -> InplaceT b d m n a
   -> m (d n n, a)
 runInplaceT bindings (UnsafeMakeInplaceT f) = do
-  (result, d) <- f bindings
+  (result, d, _) <- f bindings
   return (unsafeCoerceB d, result)
 {-# INLINE runInplaceT #-}
 
@@ -1470,13 +1467,14 @@ extendTrivialInplaceT
   => d n n
   -> InplaceT b d m n ()
 extendTrivialInplaceT d =
-  UnsafeMakeInplaceT \_ -> return ((), unsafeCoerceB d)
+  UnsafeMakeInplaceT \env -> return ((), unsafeCoerceB d, unsafeCoerceE $ extendOutMap env d)
 {-# INLINE extendTrivialInplaceT #-}
 
+-- TODO: This should be declared unsafe!
 getOutMapInplaceT
   :: (ExtOutMap b d, Monad m)
   => InplaceT b d m n (b n)
-getOutMapInplaceT = UnsafeMakeInplaceT \bindings -> return (bindings, emptyOutFrag)
+getOutMapInplaceT = UnsafeMakeInplaceT \bindings -> return (bindings, emptyOutFrag, unsafeCoerceE bindings)
 {-# INLINE getOutMapInplaceT #-}
 
 -- === in-place scope updating monad -- mutable stuff ===
@@ -1501,7 +1499,7 @@ extendInplaceT
 extendInplaceT ab = do
   UnsafeMakeInplaceT \env ->
     refreshAbsPure (toScope env) ab \_ decls result ->
-      return (unsafeCoerceE result, unsafeCoerceB decls)
+      return (unsafeCoerceE result, unsafeCoerceB decls, unsafeCoerceE $ extendOutMap env decls)
 {-# INLINE extendInplaceT #-}
 
 locallyMutableInplaceT
@@ -1511,13 +1509,13 @@ locallyMutableInplaceT
   -> InplaceT b d m n (Abs d e n)
 locallyMutableInplaceT cont = do
   UnsafeMakeInplaceT \bindings -> do
-    (e, decls) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
+    (e, decls, _) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
                     unsafeRunInplaceT cont bindings
-    return (Abs (unsafeCoerceB decls) e, emptyOutFrag)
+    return (Abs (unsafeCoerceB decls) e, emptyOutFrag, unsafeCoerceE bindings)
 {-# INLINE locallyMutableInplaceT #-}
 
 liftBetweenInplaceTs
-  :: Monad m
+  :: (Monad m, ExtOutMap bs ds)
   => (forall a'. m' a' -> m a')
   -> (bs n -> bs' n)
   -> (forall l l' . Distinct l' => ds' l l' -> ds  l l')
@@ -1525,9 +1523,10 @@ liftBetweenInplaceTs
   -> InplaceT bs  ds  m  n a
 liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
   UnsafeMakeInplaceT \bindingsOuter -> do
-    (result, declsInner) <- liftInner $ f $ lowerBindings bindingsOuter
-    withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
-      return (result, liftDecls declsInner)
+    (result, declsInner, _) <- liftInner $ f $ lowerBindings bindingsOuter
+    withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) do
+      let declsOuter = liftDecls declsInner
+      return (result, declsOuter, extendOutMap (unsafeCoerceE bindingsOuter) declsOuter)
 {-# INLINE liftBetweenInplaceTs #-}
 
 -- === predicates for mutable and immutable scope parameters ===
@@ -1569,21 +1568,20 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where
-  return x = UnsafeMakeInplaceT \_ -> do
+  return x = UnsafeMakeInplaceT \env -> do
     Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence UnsafeS)
-    return (x, emptyOutFrag)
+    return (x, emptyOutFrag, unsafeCoerceE env)
   {-# INLINE return #-}
   m >>= f = UnsafeMakeInplaceT \outMap -> do
-    (x, b1) <- unsafeRunInplaceT m outMap
-    let outMap' = outMap `extendOutMap` unsafeCoerceB b1
-    (y, b2) <- unsafeRunInplaceT (f x) outMap'
+    (x, b1, outMap1) <- unsafeRunInplaceT m outMap
+    (y, b2, outMap2) <- unsafeRunInplaceT (f x) (unsafeCoerceE outMap1)
     Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence UnsafeS)
-    return (y, catOutFrags (unsafeCoerceE (toScope outMap')) b1 b2)
+    return (y, catOutFrags (unsafeCoerceE (toScope outMap2)) b1 b2, outMap2)
   {-# INLINE (>>=) #-}
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
-  getDistinct = UnsafeMakeInplaceT \_ -> return (Distinct, emptyOutFrag)
+  getDistinct = UnsafeMakeInplaceT \env -> return (Distinct, emptyOutFrag, unsafeCoerceE env)
   {-# INLINE getDistinct #-}
   unsafeGetScope = toScope <$> getOutMapInplaceT
   {-# INLINE unsafeGetScope #-}
@@ -1643,7 +1641,7 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls)
          => MonadTrans1 (InplaceT bindings decls) where
-  lift1 m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
+  lift1 m = UnsafeMakeInplaceT \env -> (,emptyOutFrag, unsafeCoerceE env) <$> m
   {-# INLINE lift1 #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls

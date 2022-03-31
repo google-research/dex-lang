@@ -555,7 +555,19 @@ instance GenericB DestEmissions where
   toB   (LiftB (ListE ps) `PairB` bs `PairB` ds) = DestEmissions ps bs ds
 
 instance BindsEnv DestEmissions where
-  toEnvFrag = undefined -- TODO: might need to add pointer types to pointer binders?
+  toEnvFrag (DestEmissions ptrInfo ptrs decls) =
+    withSubscopeDistinct decls $
+      ptrBindersToEnvFrag ptrInfo ptrs `catEnvFrags` toEnvFrag decls
+   where
+     ptrBindersToEnvFrag :: Distinct l => [DestPtrInfo n] -> Nest AtomNameBinder n l -> EnvFrag n l
+     ptrBindersToEnvFrag [] Empty = emptyOutFrag
+     ptrBindersToEnvFrag (DestPtrInfo ty _ : rest) (Nest b restBs) =
+       withSubscopeDistinct restBs do
+         let frag1 = toEnvFrag $ b :> PtrTy ty
+         let frag2 = withExtEvidence (toExtEvidence b) $
+                        ptrBindersToEnvFrag (map sink rest) restBs
+         frag1 `catEnvFrags` frag2
+     ptrBindersToEnvFrag _ _ = error "mismatched indices"
 
 instance ProvesExt   DestEmissions
 instance BindsNames  DestEmissions
@@ -723,21 +735,7 @@ instance Builder DestM where
     DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emissions v
 
 instance ExtOutMap Env DestEmissions where
-  extendOutMap bindings (DestEmissions ptrInfo ptrs decls) =
-    withSubscopeDistinct decls $
-      (bindings `extendOutMap` ptrBindersToEnvFrag ptrInfo ptrs)
-                `extendOutMap` decls
-   where
-     ptrBindersToEnvFrag :: Distinct l => [DestPtrInfo n] -> Nest AtomNameBinder n l -> EnvFrag n l
-     ptrBindersToEnvFrag [] Empty = emptyOutFrag
-     ptrBindersToEnvFrag (DestPtrInfo ty _ : rest) (Nest b restBs) =
-       withSubscopeDistinct restBs do
-         let frag1 = toEnvFrag $ b :> PtrTy ty
-         let frag2 = withExtEvidence (toExtEvidence b) $
-                        ptrBindersToEnvFrag (map sink rest) restBs
-         frag1 `catEnvFrags` frag2
-     ptrBindersToEnvFrag _ _ = error "mismatched indices"
-
+  extendOutMap bindings emissions = bindings `extendOutMap` toEnvFrag emissions
 
 instance GenericE DestPtrInfo where
   type RepE DestPtrInfo = PairE (LiftE PtrType) Block

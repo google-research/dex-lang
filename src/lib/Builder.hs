@@ -307,6 +307,7 @@ liftBuilder :: EnvReader m => BuilderM n a -> m n a
 liftBuilder cont = liftM runHardFail $ liftBuilderT cont
 {-# INLINE liftBuilder #-}
 
+-- TODO: This should not fabricate Emits evidence!!
 -- XXX: this uses unsafe functions in its implementations. It should be safe to
 -- use, but be careful changing it.
 liftEmitBuilder :: (Builder m, SinkableE e, SubstE Name e)
@@ -314,7 +315,7 @@ liftEmitBuilder :: (Builder m, SinkableE e, SubstE Name e)
 liftEmitBuilder cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  let (result, decls) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
+  let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
   Emits <- fabricateEmitsEvidenceM
   emitDecls (unsafeCoerceB decls) result
 

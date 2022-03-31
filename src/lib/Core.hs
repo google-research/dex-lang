@@ -242,7 +242,9 @@ instance (Monad m, ExtOutMap Env decls)
   refreshAbs ab cont = UnsafeMakeInplaceT \env ->
     refreshAbsPure (toScope env) ab \_ b e -> do
       let env' = extendOutMap env $ toEnvFrag b
-      unsafeRunInplaceT (cont b e) env'
+      (ans, decls, _) <- unsafeRunInplaceT (cont b e) env'
+      case fabricateDistinctEvidence @UnsafeS of
+        Distinct -> return (ans, decls, extendOutMap (unsafeCoerceE env) decls)
   {-# INLINE refreshAbs #-}
 
 -- === Typeclasses for syntax ===
