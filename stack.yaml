@@ -24,3 +24,15 @@ extra-deps:
 nix:
   enable: false
   packages: [ libpng llvm_12 pkg-config zlib ]
+
+ghc-options:
+  containers: -fno-prof-auto -O2
+  hashable: -fno-prof-auto -O2
+  llvm-hs-pure: -fno-prof-auto -O2
+  llvm-hs: -fno-prof-auto -O2
+  megaparsec: -fno-prof-auto -O2
+  parser-combinators: -fno-prof-auto -O2
+  prettyprinter: -fno-prof-auto -O2
+  store-core: -fno-prof-auto -O2
+  store: -fno-prof-auto -O2
+  unordered-containers: -fno-prof-auto -O2
