@@ -767,14 +767,18 @@ splitNestAt n (Nest b rest) =
     PairB xs ys -> PairB (Nest b xs) ys
 
 joinNest :: Nest b n m -> Nest b m l -> Nest b n l
-joinNest l r = case l of
-  Empty     -> r
-  Nest b lt -> Nest b $ joinNest lt r
+joinNest l Empty = l
+joinNest l r     = doJoinNest l r
 {-# NOINLINE [1] joinNest #-}
 {-# RULES
       "joinNest Empty *"    forall n. joinNest Empty n = n;
       "joinNest * Empty"    forall n. joinNest n Empty = n;
   #-}
+
+doJoinNest :: Nest b n m -> Nest b m l -> Nest b n l
+doJoinNest l r = case l of
+  Empty     -> r
+  Nest b lt -> Nest b $ doJoinNest lt r
 
 binderAnn :: BinderP c ann n l -> ann n
 binderAnn (_:>ann) = ann
