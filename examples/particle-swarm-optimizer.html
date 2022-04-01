@@ -308,8 +308,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><p>We write one that uses vector for input</p>
 </div></div><div class="cell"><div class="code-block">rosenbrock2 <span class="symbol">:</span> ((<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="symbol">\</span>xs<span class="symbol">.</span>
-    x <span class="symbol">=</span> xs<span class="symbol">.</span>(fromOrdinal _ 0)
-    y <span class="symbol">=</span> xs<span class="symbol">.</span>(fromOrdinal _ 1)
+    x <span class="symbol">=</span> xs<span class="symbol">.</span>(from_ordinal _ 0)
+    y <span class="symbol">=</span> xs<span class="symbol">.</span>(from_ordinal _ 1)
     rosenbrock x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Min should be at 1.0, 1.0</p>
@@ -323,9 +323,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div><div class="result-block">0.032</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Helper functions</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minbyfst {a} <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">=</span> minBy fst
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minbyfst {a} <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">=</span> min_by fst
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimumbyfst {n a} <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>(<span class="type-name">Float</span> <span class="symbol">&amp;</span> a)) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">=</span> minimumBy fst
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimumbyfst {n a} <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>(<span class="type-name">Float</span> <span class="symbol">&amp;</span> a)) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">=</span> minimum_by fst
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Rand helpers</h3>
 </div></div><div class="cell"><div class="prose-block"><p>make a random vector uniformly distributed between <code>lb</code> and <code>ub</code></p>
@@ -333,7 +333,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="symbol">\</span>key lb ub<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> lb<span class="symbol">.</span>i <span class="symbol">+</span> ((rand <span class="symbol">$</span> ixkey key i) <span class="symbol">*</span> (ub<span class="symbol">.</span>i <span class="symbol">-</span> lb<span class="symbol">.</span>i))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> randBounded (newKey 4) [1<span class="symbol">.</span>0<span class="symbol">,</span>  <span class="symbol">-</span>2<span class="symbol">.</span>0] [<span class="symbol">-</span>1<span class="symbol">.</span>0<span class="symbol">,</span>  2<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> randBounded (new_key 4) [1<span class="symbol">.</span>0<span class="symbol">,</span>  <span class="symbol">-</span>2<span class="symbol">.</span>0] [<span class="symbol">-</span>1<span class="symbol">.</span>0<span class="symbol">,</span>  2<span class="symbol">.</span>0]
 </div><div class="result-block">[-0.35101, 1.49355]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>The Optimizer itself.</h2>
 <p>We have <strong>arguments</strong>:</p>
@@ -362,7 +362,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
             minbyfst pbests<span class="symbol">.</span>p (f newPositions<span class="symbol">.</span>p<span class="symbol">,</span> newPositions<span class="symbol">.</span>p)
         newGbest<span class="symbol">:</span>(<span class="type-name">Float</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
             minbyfst gbest (minimumbyfst newPbests)
-        [keyG<span class="symbol">,</span> keyP<span class="symbol">,</span> keyNext] <span class="symbol">=</span> splitKey keyL
+        [keyG<span class="symbol">,</span> keyP<span class="symbol">,</span> keyNext] <span class="symbol">=</span> split_key keyL
         (gscore<span class="symbol">,</span> gloc) <span class="symbol">=</span> gbest
         plocs <span class="symbol">=</span> map snd pbests
         gVel<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> p i<span class="symbol">.</span>
@@ -377,7 +377,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
         (keyNext<span class="symbol">,</span>newGbest<span class="symbol">,</span>newPbests<span class="symbol">,</span>newPositions<span class="symbol">,</span>newVelocities)
     randInit1 <span class="symbol">=</span> <span class="symbol">\</span>keyI1<span class="symbol">.</span> randBounded keyI1 lb ub
     randInit  <span class="symbol">=</span> <span class="symbol">\</span>keyI<span class="symbol">.</span> <span class="keyword">for</span> p<span class="command">:np</span><span class="symbol">.</span> randInit1 <span class="symbol">$</span> ixkey keyI p
-    [keyPos<span class="symbol">,</span> keyVel<span class="symbol">,</span> keyLoop] <span class="symbol">=</span> splitKey key
+    [keyPos<span class="symbol">,</span> keyVel<span class="symbol">,</span> keyLoop] <span class="symbol">=</span> split_key key
     initPositions<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> randInit keyPos
     initVelocities<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> randInit keyVel
     initPs<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>(<span class="type-name">Float</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>)) <span class="symbol">=</span> <span class="keyword">for</span> p<span class="symbol">.</span> (f initPositions<span class="symbol">.</span>p<span class="symbol">,</span> initPositions<span class="symbol">.</span>p)
@@ -391,11 +391,11 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 <p>Lets see how it goes.
 Run it for more iterations and result should improve.
 Which it indeed does.</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 10 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 10 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[0.076987, 0.232818]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 20 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 20 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[0.901251, 0.750449]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 100 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 100 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[0.999069, 0.998198]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 1000 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 1000 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[1., 1.]</div></div></div></body></html>

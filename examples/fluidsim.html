@@ -345,15 +345,15 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> project {n m a} [<span class="type-name">VSpace</span> a] (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="comment">-- Project the velocity field to be approximately mass-conserving,
 </span>  <span class="comment">-- using a few iterations of Gauss-Seidel.
-</span>  h <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> <span class="type-name">IToF</span> (size n)
+</span>  h <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> i_to_f (size n)
 
   <span class="comment">-- unpack into two scalar fields
-</span>  vx <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(fromOrdinal _ 0)
-  vy <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(fromOrdinal _ 1)
+</span>  vx <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(from_ordinal _ 0)
+  vy <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(from_ordinal _ 1)
 
   div <span class="symbol">=</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">.*</span> h <span class="symbol">.*</span> (divergence vx vy)
 
-  p <span class="symbol">=</span> yieldState zero <span class="symbol">\</span>state<span class="symbol">.</span>
+  p <span class="symbol">=</span> yield_state zero <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span>
       state <span class="symbol">:=</span> (1<span class="symbol">.</span>0 <span class="symbol">/</span> 4<span class="symbol">.</span>0) <span class="symbol">.*</span> (div <span class="symbol">+</span> add_neighbours_2d (get state))
 
@@ -372,13 +372,13 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="comment">-- Move field f according to x and y velocities (u and v)
 </span>  <span class="comment">-- using an implicit Euler integrator.
 </span>
-  cell_xs <span class="symbol">=</span> linspace n 0<span class="symbol">.</span>0 <span class="symbol">$</span> <span class="type-name">IToF</span> (size n)
-  cell_ys <span class="symbol">=</span> linspace m 0<span class="symbol">.</span>0 <span class="symbol">$</span> <span class="type-name">IToF</span> (size m)
+  cell_xs <span class="symbol">=</span> linspace n 0<span class="symbol">.</span>0 <span class="symbol">$</span> i_to_f (size n)
+  cell_ys <span class="symbol">=</span> linspace m 0<span class="symbol">.</span>0 <span class="symbol">$</span> i_to_f (size m)
 
   <span class="keyword">for</span> i j<span class="symbol">.</span>
     <span class="comment">-- Location of source of flow for this cell.  No meshgrid!
-</span>    center_xs <span class="symbol">=</span> cell_xs<span class="symbol">.</span>i <span class="symbol">-</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(fromOrdinal _ 0)
-    center_ys <span class="symbol">=</span> cell_ys<span class="symbol">.</span>j <span class="symbol">-</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(fromOrdinal _ 1)
+</span>    center_xs <span class="symbol">=</span> cell_xs<span class="symbol">.</span>i <span class="symbol">-</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(from_ordinal _ 0)
+    center_ys <span class="symbol">=</span> cell_ys<span class="symbol">.</span>j <span class="symbol">-</span> v<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>(from_ordinal _ 1)
 
     <span class="comment">-- Index of source cell.
 </span>    source_col <span class="symbol">=</span> floor center_xs
@@ -399,7 +399,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fluidsim {n m a} [<span class="type-name">VSpace</span> a] (num_steps<span class="symbol">:</span> <span class="type-name">Int</span>) (color_init<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a)
   (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Fin</span> num_steps)<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  withState (color_init<span class="symbol">,</span> v) <span class="symbol">\</span>state<span class="symbol">.</span>
+  with_state (color_init<span class="symbol">,</span> v) <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_steps)<span class="symbol">.</span>
       (color<span class="symbol">,</span> v) <span class="symbol">=</span> get state
       v <span class="symbol">=</span> advect v v          <span class="comment">-- Move velocities
@@ -416,13 +416,13 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixkey3 {n m o} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> o] (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) (j<span class="command">:m</span>) (k2<span class="command">:o</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span>
   hash (hash (hash k (ordinal i)) (ordinal j)) (ordinal k2)
 </div></div><div class="cell"><div class="code-block">init_velocity <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">N</span> j<span class="symbol">:</span><span class="type-name">M</span> k<span class="symbol">:</span>(<span class="type-name">Fin</span> 2)<span class="symbol">.</span>
-  3<span class="symbol">.</span>0 <span class="symbol">*</span> (randn <span class="symbol">$</span> ixkey3 (newKey 0) i j k)
+  3<span class="symbol">.</span>0 <span class="symbol">*</span> (randn <span class="symbol">$</span> ixkey3 (new_key 0) i j k)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Create diagonally-striped color pattern.
 </span></div></div><div class="cell"><div class="code-block">init_color <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">N</span> j<span class="symbol">:</span><span class="type-name">M</span><span class="symbol">.</span>
-  r <span class="symbol">=</span> <span class="type-name">BToF</span> <span class="symbol">$</span> (sin <span class="symbol">$</span> (<span class="type-name">IToF</span> <span class="symbol">$</span> (ordinal j) <span class="symbol">+</span> (ordinal i)) <span class="symbol">/</span> 8<span class="symbol">.</span>0) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
-  b <span class="symbol">=</span> <span class="type-name">BToF</span> <span class="symbol">$</span> (sin <span class="symbol">$</span> (<span class="type-name">IToF</span> <span class="symbol">$</span> (ordinal j) <span class="symbol">-</span> (ordinal i)) <span class="symbol">/</span> 6<span class="symbol">.</span>0) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
-  g <span class="symbol">=</span> <span class="type-name">BToF</span> <span class="symbol">$</span> (sin <span class="symbol">$</span> (<span class="type-name">IToF</span> <span class="symbol">$</span> (ordinal j) <span class="symbol">+</span> (ordinal i)) <span class="symbol">/</span> 4<span class="symbol">.</span>0) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
+  r <span class="symbol">=</span> b_to_f <span class="symbol">$</span> (sin <span class="symbol">$</span> (i_to_f <span class="symbol">$</span> (ordinal j) <span class="symbol">+</span> (ordinal i)) <span class="symbol">/</span> 8<span class="symbol">.</span>0) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
+  b <span class="symbol">=</span> b_to_f <span class="symbol">$</span> (sin <span class="symbol">$</span> (i_to_f <span class="symbol">$</span> (ordinal j) <span class="symbol">-</span> (ordinal i)) <span class="symbol">/</span> 6<span class="symbol">.</span>0) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
+  g <span class="symbol">=</span> b_to_f <span class="symbol">$</span> (sin <span class="symbol">$</span> (i_to_f <span class="symbol">$</span> (ordinal j) <span class="symbol">+</span> (ordinal i)) <span class="symbol">/</span> 4<span class="symbol">.</span>0) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
   [r<span class="symbol">,</span> g<span class="symbol">,</span> b]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Run fluid sim and plot it.

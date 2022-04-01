@@ -315,11 +315,11 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simulate {s v} (model<span class="symbol">:</span> <span class="type-name">Model</span> s v) (t<span class="symbol">:</span> <span class="type-name">Int</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> t<span class="symbol">=&gt;</span>(s <span class="symbol">&amp;</span> v) <span class="symbol">=</span>
   (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
-  [key<span class="symbol">,</span> subkey] <span class="symbol">=</span> splitKey key
+  [key<span class="symbol">,</span> subkey] <span class="symbol">=</span> split_key key
   s0 <span class="symbol">=</span> sample init subkey
-  withState s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
+  with_state s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
-      [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey (ixkey key i)
+      [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key (ixkey key i)
       s <span class="symbol">=</span> get s_ref
       s_next <span class="symbol">=</span> sample (dynamics s) k1
       v <span class="symbol">=</span> sample (observe s) k2
@@ -334,14 +334,14 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     (key<span class="symbol">:</span> <span class="type-name">Key</span>)
     <span class="symbol">:</span> <span class="type-name">Fin</span> num_timesteps <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
   (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
-  [key<span class="symbol">,</span> init_key] <span class="symbol">=</span> splitKey key
+  [key<span class="symbol">,</span> init_key] <span class="symbol">=</span> split_key key
   init_particles <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles)<span class="symbol">.</span> sample init (ixkey init_key i)
-  withState init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
+  with_state init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
     <span class="keyword">for</span> t<span class="symbol">:</span> (<span class="type-name">Fin</span> num_timesteps)<span class="symbol">.</span>
       p_prev <span class="symbol">=</span> get p_ref
       logLikelihoods <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> snd (observe p_prev<span class="symbol">.</span>i) obs<span class="symbol">.</span>t
-      [resample_key<span class="symbol">,</span> dynamics_key] <span class="symbol">=</span> splitKey (ixkey key t)
-      resampled_idxs <span class="symbol">=</span> categoricalBatch logLikelihoods resample_key
+      [resample_key<span class="symbol">,</span> dynamics_key] <span class="symbol">=</span> split_key (ixkey key t)
+      resampled_idxs <span class="symbol">=</span> categorical_batch logLikelihoods resample_key
       p_resampled <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> p_prev<span class="symbol">.</span>(resampled_idxs<span class="symbol">.</span>i)
       p_next <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> fst (dynamics p_resampled<span class="symbol">.</span>i) (ixkey dynamics_key i)
       p_ref <span class="symbol">:=</span> p_next
@@ -362,10 +362,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">num_particles <span class="symbol">=</span> 10000
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">truth <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> timesteps)<span class="symbol">.</span>
-  s <span class="symbol">=</span> <span class="type-name">IToF</span> (ordinal i)
-  (s<span class="symbol">,</span> sample (normalDistn s 1<span class="symbol">.</span>0) <span class="symbol">$</span> ixkey (newKey 0) i)
+  s <span class="symbol">=</span> i_to_f (ordinal i)
+  (s<span class="symbol">,</span> sample (normalDistn s 1<span class="symbol">.</span>0) <span class="symbol">$</span> ixkey (new_key 0) i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">filtered <span class="symbol">=</span> particleFilter num_particles _ gaussModel mean (map snd truth) (newKey 0)
+</div></div><div class="cell"><div class="code-block">filtered <span class="symbol">=</span> particleFilter num_particles _ gaussModel mean (map snd truth) (new_key 0)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- :p for i. (truth.i, filtered.i)
 </span></div></div></div></body></html>

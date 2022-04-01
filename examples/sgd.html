@@ -311,7 +311,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- In-place optimization loop.
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sgd {a} [<span class="type-name">VSpace</span> a] (step_size<span class="symbol">:</span><span class="type-name">Float</span>) (decay<span class="symbol">:</span><span class="type-name">Float</span>) (num_steps<span class="symbol">:</span><span class="type-name">Int</span>) (gradient<span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> a) (x0<span class="symbol">:</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
   m0 <span class="symbol">=</span> zero
-  (x_final<span class="symbol">,</span> m_final) <span class="symbol">=</span> yieldState (x0<span class="symbol">,</span> m0) <span class="symbol">\</span>state<span class="symbol">.</span>
+  (x_final<span class="symbol">,</span> m_final) <span class="symbol">=</span> yield_state (x0<span class="symbol">,</span> m0) <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_steps)<span class="symbol">.</span>
       (x<span class="symbol">,</span> m) <span class="symbol">=</span> get state
       state <span class="symbol">:=</span> sgd_step step_size decay gradient x m (ordinal i)

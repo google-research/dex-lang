@@ -313,16 +313,16 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Isomorphisms can be applied with <code>appIso</code>, applied in reverse with <code>revIso</code>,
 and flipped with <code>flipIso</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso cycleThree (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> app_iso cycleThree (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
 </div><div class="result-block">(2., (3, 1))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> revIso cycleThree (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> rev_iso cycleThree (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
 </div><div class="result-block">(3, (1, 2.))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso (flipIso cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> app_iso (flip_iso cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
 </div><div class="result-block">(3, (1, 2.))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>They can also be composed with <code>&amp;&gt;&gt;</code>:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso (cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> app_iso (cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
 </div><div class="result-block">(3, (1, 2.))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso (cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> app_iso (cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
 </div><div class="result-block">(1, (2., 3))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Note that we assume but do not check that the isomorphism is lawful (i.e.
 <code>appIso iso $ revIso iso x == x</code> for all <code>x</code>, or equivalently
@@ -363,38 +363,38 @@ that produce isos. We will start with the first two:</p>
 </ul>
 </div></div><div class="cell"><div class="prose-block"><h2>Record accessors and lens-like helpers</h2>
 <p>Record accessor isomorphisms can be passed into the helper function <code>getAt</code>:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> getAt
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> get_at
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; (c:Type) ?-&gt; (Iso a (b &amp; c)) -&gt; a -&gt; b)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> getAt <span class="iso-sugar">#foo</span> {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> get_at <span class="iso-sugar">#foo</span> {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
 </div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>We can also do other types of things:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> popAt <span class="iso-sugar">#foo</span> {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> pop_at <span class="iso-sugar">#foo</span> {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
 </div><div class="result-block">{bar = 2.}</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> pushAt <span class="iso-sugar">#foo</span> 3<span class="symbol">.</span>0 {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> push_at <span class="iso-sugar">#foo</span> 3<span class="symbol">.</span>0 {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
 </div><div class="result-block">{bar = 2., foo = 3., foo = 1}</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> setAt <span class="iso-sugar">#foo</span> 2 {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> set_at <span class="iso-sugar">#foo</span> 2 {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
 </div><div class="result-block">{bar = 2., foo = 2}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>These helper functions work with any &quot;lens-like&quot; isomorphism. For instance,
 we can select everything except for a particular field:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> exceptLens
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> except_lens
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; (c:Type) ?-&gt; (Iso a (b &amp; c)) -&gt; Iso a (c &amp; b))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> getAt (exceptLens <span class="iso-sugar">#foo</span>) {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0<span class="symbol">,</span> baz<span class="symbol">=</span>3}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> get_at (except_lens <span class="iso-sugar">#foo</span>) {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0<span class="symbol">,</span> baz<span class="symbol">=</span>3}
 </div><div class="result-block">{bar = 2., baz = 3}</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Variant accessors and prism-like helpers</h2>
 <p>Similarly, there are prism-like helpers</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> matchWith
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> match_with
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; (c:Type) ?-&gt; (Iso a (b | c)) -&gt; a -&gt; Maybe b)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> buildWith
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> build_with
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; (c:Type) ?-&gt; (Iso a (b | c)) -&gt; b -&gt; a)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>which can be used with variant accessors or any other prism-like isomorphism:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> matchWith <span class="iso-sugar">#?foo</span> <span class="symbol">$</span> {<span class="symbol">|</span>foo <span class="symbol">=</span> 1<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> match_with <span class="iso-sugar">#?foo</span> <span class="symbol">$</span> {<span class="symbol">|</span>foo <span class="symbol">=</span> 1<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
 </div><div class="result-block">(Just 1)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> matchWith <span class="iso-sugar">#?foo</span> <span class="symbol">$</span> {<span class="symbol">|</span>bar <span class="symbol">=</span> 1<span class="symbol">.</span>0<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> match_with <span class="iso-sugar">#?foo</span> <span class="symbol">$</span> {<span class="symbol">|</span>bar <span class="symbol">=</span> 1<span class="symbol">.</span>0<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
 </div><div class="result-block">Nothing</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> buildWith <span class="iso-sugar">#?foo</span> 3 <span class="symbol">:</span> {foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> build_with <span class="iso-sugar">#?foo</span> 3 <span class="symbol">:</span> {foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
 </div><div class="result-block">{| foo = 3 |}</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> matchWith (exceptPrism <span class="iso-sugar">#?foo</span>) <span class="symbol">$</span>  {<span class="symbol">|</span>bar <span class="symbol">=</span> 1<span class="symbol">.</span>0<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> match_with (except_prism <span class="iso-sugar">#?foo</span>) <span class="symbol">$</span>  {<span class="symbol">|</span>bar <span class="symbol">=</span> 1<span class="symbol">.</span>0<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
 </div><div class="result-block">(Just {| bar = 1. |})</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Record zipper isomorphisms</h2>
 <p>The isomorphisms shown above are specialized for removing a single field from
@@ -418,7 +418,7 @@ another. For instance:</p>
 right to the record on the left; when composed, they move both fields.</p>
 </div></div><div class="cell"><div class="prose-block"><p>The main use for record zipper isomorphisms is to specify multiple named axes
 when using a record type as an index set:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> overFields
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> over_fields
 </div><div class="result-block">((a:Type)
  ?-&gt; (b:Type)
  ?-&gt; (c:Type)
@@ -438,9 +438,9 @@ when using a record type as an index set:</p>
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Note that <code>overFields</code> is just a simple wrapper combining <code>splitR</code> and
 <code>overLens</code>:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> splitR
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> split_r
 </div><div class="result-block">((a:Type) ?-&gt; Iso a ({&amp;} &amp; a))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> overLens
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> over_lens
 </div><div class="result-block">((a:Type)
  ?-&gt; (b:Type)
  ?-&gt; (c:Type)
@@ -454,27 +454,27 @@ ordinary record accessor lens.</p>
   bwd <span class="symbol">=</span> <span class="symbol">\</span>(c<span class="symbol">,</span> b<span class="symbol">,</span> a)<span class="symbol">.</span> {a<span class="symbol">,</span> b<span class="symbol">,</span> c}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">&amp;</span> b<span class="command">:m</span> <span class="symbol">&amp;</span> c<span class="command">:q</span>}
-  getSize <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">*</span> size m <span class="symbol">*</span> size q
-  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> appIso abcToTuple
-  unsafeFromOrdinal <span class="symbol">=</span> unsafeFromOrdinal _ <span class="symbol">&gt;&gt;&gt;</span> revIso abcToTuple
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">*</span> size m <span class="symbol">*</span> size q
+  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso abcToTuple
+  unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abcToTuple
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bcToPair {b c} <span class="symbol">:</span> <span class="type-name">Iso</span> {b<span class="command">:b</span> <span class="symbol">&amp;</span> c<span class="command">:c</span>} (c<span class="symbol">&amp;</span>b) <span class="symbol">=</span>
   fwd <span class="symbol">=</span> <span class="symbol">\</span>{b<span class="symbol">,</span> c}<span class="symbol">.</span> (c<span class="symbol">,</span> b)
   bwd <span class="symbol">=</span> <span class="symbol">\</span>(c<span class="symbol">,</span> b)<span class="symbol">.</span> {b<span class="symbol">,</span> c}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {b<span class="command">:n</span> <span class="symbol">&amp;</span> c<span class="command">:m</span>}
-  getSize <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">*</span> size m
-  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> appIso bcToPair
-  unsafeFromOrdinal <span class="symbol">=</span> unsafeFromOrdinal _ <span class="symbol">&gt;&gt;&gt;</span> revIso bcToPair
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">*</span> size m
+  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso bcToPair
+  unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso bcToPair
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
   x <span class="symbol">=</span> <span class="keyword">for</span> {a<span class="symbol">,</span> b<span class="symbol">,</span> c}<span class="symbol">:</span>{a<span class="symbol">:</span><span class="type-name">Fin</span> 2 <span class="symbol">&amp;</span> b<span class="symbol">:</span><span class="type-name">Fin</span> 2 <span class="symbol">&amp;</span> c<span class="symbol">:</span><span class="type-name">Fin</span> 2}<span class="symbol">.</span>
     ordinal a <span class="symbol">*</span> 100 <span class="symbol">+</span> ordinal b <span class="symbol">*</span> 10 <span class="symbol">+</span> ordinal c
-  overLens <span class="iso-sugar">#a</span> x
+  over_lens <span class="iso-sugar">#a</span> x
 </div><div class="result-block">[ [0, 10, 1, 11]@{b: Fin 2 &amp; c: Fin 2}
 , [100, 110, 101, 111]@{b: Fin 2 &amp; c: Fin 2} ]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p><code>splitR</code> can be used if you want to process multiple fields at once:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> pushAt (splitR <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#&amp;a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#&amp;b</span>) {a<span class="symbol">=</span>1<span class="symbol">,</span> b<span class="symbol">=</span>2<span class="symbol">.</span>0} {c<span class="symbol">=</span>3<span class="symbol">,</span> d<span class="symbol">=</span>4<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> push_at (split_r <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#&amp;a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#&amp;b</span>) {a<span class="symbol">=</span>1<span class="symbol">,</span> b<span class="symbol">=</span>2<span class="symbol">.</span>0} {c<span class="symbol">=</span>3<span class="symbol">,</span> d<span class="symbol">=</span>4<span class="symbol">.</span>0}
 </div><div class="result-block">{a = 1, b = 2., c = 3, d = 4.}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Variant zipper isomorphisms</h2>
 <p>Just as there are record zipper isomorphisms, there are also variant
@@ -500,11 +500,11 @@ zipper isomorphisms:</p>
               )}
  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p><code>splitV</code> makes a prism zipper into an ordinary prism isomorphism:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> splitV
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> split_v
 </div><div class="result-block">((a:Type) ?-&gt; Iso a ({ |} | a))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
   vals <span class="symbol">:</span> (<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span>{a<span class="symbol">:</span>_ <span class="symbol">|</span> b<span class="symbol">:</span>_ <span class="symbol">|</span> c<span class="symbol">:</span>_ } <span class="symbol">=</span> [{<span class="symbol">|</span>a <span class="symbol">=</span> 1<span class="symbol">|</span>}<span class="symbol">,</span> {<span class="symbol">|</span>b <span class="symbol">=</span> 2<span class="symbol">|</span>}<span class="symbol">,</span> {<span class="symbol">|</span>c <span class="symbol">=</span> 3<span class="symbol">|</span>}]
-  <span class="keyword">for</span> i<span class="symbol">.</span> matchWith (splitV <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|b</span>) vals<span class="symbol">.</span>i
+  <span class="keyword">for</span> i<span class="symbol">.</span> match_with (split_v <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|b</span>) vals<span class="symbol">.</span>i
 </div><div class="result-block">[(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p><code>sliceFields</code> uses this to specific named variants from a variant-indexed
 table:</p>
@@ -520,9 +520,9 @@ table:</p>
       <span class="type-name">Right</span> y <span class="symbol">-&gt;</span> {<span class="symbol">|</span>c<span class="symbol">=</span>y<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> b<span class="command">:m</span> <span class="symbol">|</span> c<span class="command">:q</span>}
-  getSize <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">+</span> size m <span class="symbol">+</span> size q
-  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> appIso abcToEither
-  unsafeFromOrdinal <span class="symbol">=</span> unsafeFromOrdinal _ <span class="symbol">&gt;&gt;&gt;</span> revIso abcToEither
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">+</span> size m <span class="symbol">+</span> size q
+  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso abcToEither
+  unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abcToEither
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> abToEither {a b} <span class="symbol">:</span> <span class="type-name">Iso</span> {a<span class="command">:a</span> <span class="symbol">|</span> b<span class="command">:b</span>} (a<span class="symbol">|</span>b) <span class="symbol">=</span>
   fwd <span class="symbol">=</span> <span class="symbol">\</span>v<span class="symbol">.</span>  <span class="keyword">case</span> v <span class="keyword">of</span>
@@ -533,9 +533,9 @@ table:</p>
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> {<span class="symbol">|</span>b<span class="symbol">=</span>x<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> b<span class="command">:m</span>}
-  getSize <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">+</span> size m
-  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> appIso abToEither
-  unsafeFromOrdinal <span class="symbol">=</span> unsafeFromOrdinal _ <span class="symbol">&gt;&gt;&gt;</span> revIso abToEither
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">+</span> size m
+  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso abToEither
+  unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abToEither
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> acToEither {a c} <span class="symbol">:</span> <span class="type-name">Iso</span> {a<span class="command">:a</span> <span class="symbol">|</span> c<span class="command">:c</span>} (a<span class="symbol">|</span>c) <span class="symbol">=</span>
   fwd <span class="symbol">=</span> <span class="symbol">\</span>v<span class="symbol">.</span>  <span class="keyword">case</span> v <span class="keyword">of</span>
@@ -546,16 +546,16 @@ table:</p>
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> {<span class="symbol">|</span>c<span class="symbol">=</span>x<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> c<span class="command">:m</span>}
-  getSize <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">+</span> size m
-  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> appIso acToEither
-  unsafeFromOrdinal <span class="symbol">=</span> unsafeFromOrdinal _ <span class="symbol">&gt;&gt;&gt;</span> revIso acToEither
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size n <span class="symbol">+</span> size m
+  ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso acToEither
+  unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso acToEither
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
   x <span class="symbol">=</span> iota {a<span class="symbol">:</span><span class="type-name">Fin</span> 2 <span class="symbol">|</span> b<span class="symbol">:</span><span class="type-name">Fin</span> 2 <span class="symbol">|</span> c<span class="symbol">:</span><span class="type-name">Fin</span> 2}
   v1 <span class="symbol">=</span> x
-  v2 <span class="symbol">=</span> sliceFields (<span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|b</span>) x
-  v3 <span class="symbol">=</span> sliceFields (<span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|c</span>) x
-  v4 <span class="symbol">=</span> sliceFields (<span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|b</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|c</span>) x
+  v2 <span class="symbol">=</span> slice_fields (<span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|b</span>) x
+  v3 <span class="symbol">=</span> slice_fields (<span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|c</span>) x
+  v4 <span class="symbol">=</span> slice_fields (<span class="iso-sugar">#|a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|b</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#|c</span>) x
   (v1<span class="symbol">,</span> v2<span class="symbol">,</span> v3<span class="symbol">,</span> v4)
 </div><div class="result-block">( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
 , ( [0, 1, 2, 3]@{a: Fin 2 | b: Fin 2}

@@ -323,101 +323,101 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Color</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> applyScale {a} (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span> getAt <span class="iso-sugar">#mapping</span> s x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_scale {a} (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span> get_at <span class="iso-sugar">#mapping</span> s x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">unitTypeScale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block">unit_type_scale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
   { mapping <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> <span class="type-name">Just</span> 0<span class="symbol">.</span>0
   <span class="symbol">,</span> range   <span class="symbol">=</span> <span class="type-name">AsList</span> _ [<span class="type-name">Singleton</span> 0<span class="symbol">.</span>0] }
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> projectUnitInterval (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> project_unit_interval (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="keyword">case</span> x <span class="symbol">&gt;=</span> 0<span class="symbol">.</span>0 <span class="symbol">&amp;&amp;</span> x <span class="symbol">&lt;=</span> 1<span class="symbol">.</span>0 <span class="keyword">of</span>
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Just</span> x
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">unitIntervalScale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  { mapping <span class="symbol">=</span> projectUnitInterval
+</div></div><div class="cell"><div class="code-block">unit_interval_scale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  { mapping <span class="symbol">=</span> project_unit_interval
   <span class="symbol">,</span> range   <span class="symbol">=</span> <span class="type-name">AsList</span> _ [<span class="type-name">Interval</span> 0<span class="symbol">.</span>0 1<span class="symbol">.</span>0] }
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mapScale {a b} (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (f<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a) <span class="symbol">:</span> <span class="type-name">Scale</span> b <span class="symbol">=</span>
-  { mapping <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> getAt <span class="iso-sugar">#mapping</span> s (f x)
-  <span class="symbol">,</span> range <span class="symbol">=</span> getAt <span class="iso-sugar">#range</span> s }
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> map_scale {a b} (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (f<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a) <span class="symbol">:</span> <span class="type-name">Scale</span> b <span class="symbol">=</span>
+  { mapping <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> get_at <span class="iso-sugar">#mapping</span> s (f x)
+  <span class="symbol">,</span> range <span class="symbol">=</span> get_at <span class="iso-sugar">#range</span> s }
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> floatScale (xmin<span class="symbol">:</span><span class="type-name">Float</span>) (xmax<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  mapScale unitIntervalScale (<span class="symbol">\</span>x<span class="symbol">.</span> (x <span class="symbol">-</span> xmin) <span class="symbol">/</span> (xmax <span class="symbol">-</span> xmin))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> float_scale (xmin<span class="symbol">:</span><span class="type-name">Float</span>) (xmax<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  map_scale unit_interval_scale (<span class="symbol">\</span>x<span class="symbol">.</span> (x <span class="symbol">-</span> xmin) <span class="symbol">/</span> (xmax <span class="symbol">-</span> xmin))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getScaled {a n} (sd<span class="symbol">:</span><span class="type-name">ScaledData</span> n a) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  applyScale (getAt <span class="iso-sugar">#scale</span> sd) (getAt <span class="iso-sugar">#dat</span> sd)<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_scaled {a n} (sd<span class="symbol">:</span><span class="type-name">ScaledData</span> n a) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  apply_scale (get_at <span class="iso-sugar">#scale</span> sd) (get_at <span class="iso-sugar">#dat</span> sd)<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">lowColor  <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>0]
-</div></div><div class="cell"><div class="code-block">highColor <span class="symbol">=</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 1<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">low_color  <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">high_color <span class="symbol">=</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 1<span class="symbol">.</span>0]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> interpolate {a} [<span class="type-name">VSpace</span> a] (low<span class="command">:a</span>) (high<span class="command">:a</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   x&#39; <span class="symbol">=</span> clip (0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0) x
   (x&#39; <span class="symbol">.*</span> low) <span class="symbol">+</span> ((1<span class="symbol">.</span>0 <span class="symbol">-</span> x&#39;) <span class="symbol">.*</span> high)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> makeRGBColor (c <span class="symbol">:</span> <span class="type-name">Color</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">IToW8</span> <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> make_rgb_color (c <span class="symbol">:</span> <span class="type-name">Color</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> i_to_w8 <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> colorScale (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
-  makeRGBColor <span class="symbol">$</span> interpolate lowColor highColor x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> color_scale (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
+  make_rgb_color <span class="symbol">$</span> interpolate low_color high_color x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> plotToDiagram {a b c n} (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  points <span class="symbol">=</span> concatDiagrams <span class="keyword">for</span> i<span class="symbol">.</span>
-    x <span class="symbol">=</span> getScaled (getAt <span class="iso-sugar">#xs</span> plot) i
-    y <span class="symbol">=</span> getScaled (getAt <span class="iso-sugar">#ys</span> plot) i
-    c <span class="symbol">=</span> getScaled (getAt <span class="iso-sugar">#cs</span> plot) i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> plot_to_diagram {a b c n} (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  points <span class="symbol">=</span> concat_diagrams <span class="keyword">for</span> i<span class="symbol">.</span>
+    x <span class="symbol">=</span> get_scaled (get_at <span class="iso-sugar">#xs</span> plot) i
+    y <span class="symbol">=</span> get_scaled (get_at <span class="iso-sugar">#ys</span> plot) i
+    c <span class="symbol">=</span> get_scaled (get_at <span class="iso-sugar">#cs</span> plot) i
     <span class="comment">-- TODO: nested may-fail patterns would make this much better
 </span>    <span class="keyword">case</span> x <span class="keyword">of</span>
       <span class="type-name">Just</span> x&#39; <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
         <span class="type-name">Just</span> y&#39; <span class="symbol">-&gt;</span> <span class="keyword">case</span> c <span class="keyword">of</span>
           <span class="type-name">Just</span> c&#39; <span class="symbol">-&gt;</span>
-            pointDiagram <span class="symbol">|&gt;</span> moveXY (x&#39;<span class="symbol">,</span> y&#39;) <span class="symbol">|&gt;</span> setStrokeColor (colorScale c&#39; )
+            point_diagram <span class="symbol">|&gt;</span> move_xy (x&#39;<span class="symbol">,</span> y&#39;) <span class="symbol">|&gt;</span> set_stroke_color (color_scale c&#39; )
           <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> mempty
         <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> mempty
       <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> mempty
-  boundingBox <span class="symbol">=</span> moveXY (0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>5) <span class="symbol">$</span> rect 1<span class="symbol">.</span>0 1<span class="symbol">.</span>0
+  boundingBox <span class="symbol">=</span> move_xy (0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>5) <span class="symbol">$</span> rect 1<span class="symbol">.</span>0 1<span class="symbol">.</span>0
   boundingBox <span class="symbol">&lt;&gt;</span> points
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showPlot {a b c n} (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  renderSVG (plotToDiagram plot) ((0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> (1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> show_plot {a b c n} (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  render_svg (plot_to_diagram plot) ((0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> (1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> blankData {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Unit</span> <span class="symbol">=</span>
-  {scale <span class="symbol">=</span> unitTypeScale<span class="symbol">,</span> dat <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ()}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> blank_<span class="keyword">data</span> {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Unit</span> <span class="symbol">=</span>
+  {scale <span class="symbol">=</span> unit_type_scale<span class="symbol">,</span> dat <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ()}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> blankPlot {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
-  {xs <span class="symbol">=</span> blankData<span class="symbol">,</span> ys <span class="symbol">=</span> blankData<span class="symbol">,</span> cs <span class="symbol">=</span> blankData}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> blank_plot {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+  {xs <span class="symbol">=</span> blank_<span class="keyword">data</span><span class="symbol">,</span> ys <span class="symbol">=</span> blank_<span class="keyword">data</span><span class="symbol">,</span> cs <span class="symbol">=</span> blank_<span class="keyword">data</span>}
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- -- TODO: generalize beyond Float with a type class for auto scaling
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> autoScale {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Float</span> <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> auto_scale {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Float</span> <span class="symbol">=</span>
   max <span class="symbol">=</span> maximum xs
   min <span class="symbol">=</span> minimum xs
   <span class="comment">-- Add 10% padding away from the plot area
 </span>  space <span class="symbol">=</span> (max <span class="symbol">-</span> min) <span class="symbol">*</span> 0<span class="symbol">.</span>05
   padding <span class="symbol">=</span> maximum [space<span class="symbol">,</span> max <span class="symbol">*</span> 0<span class="symbol">.</span>001<span class="symbol">,</span> 0<span class="symbol">.</span>000001]
-  {scale <span class="symbol">=</span> floatScale (min <span class="symbol">-</span> padding) (max <span class="symbol">+</span> padding)<span class="symbol">,</span> dat <span class="symbol">=</span> xs}
+  {scale <span class="symbol">=</span> float_scale (min <span class="symbol">-</span> padding) (max <span class="symbol">+</span> padding)<span class="symbol">,</span> dat <span class="symbol">=</span> xs}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setXData {n a b c new} (xs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n new b c <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_x_<span class="keyword">data</span> {n a b c new} (xs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n new b c <span class="symbol">=</span>
   <span class="comment">-- We can&#39;t use `setAt` here because we&#39;re changing the type
-</span>  {xs <span class="symbol">=</span> xs<span class="symbol">,</span> ys <span class="symbol">=</span> getAt <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> getAt <span class="iso-sugar">#cs</span> plot}
+</span>  {xs <span class="symbol">=</span> xs<span class="symbol">,</span> ys <span class="symbol">=</span> get_at <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> get_at <span class="iso-sugar">#cs</span> plot}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setYData {n a b c new} (ys<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n a new c <span class="symbol">=</span>
-  {xs <span class="symbol">=</span> getAt <span class="iso-sugar">#xs</span> plot<span class="symbol">,</span> ys <span class="symbol">=</span> ys<span class="symbol">,</span> cs <span class="symbol">=</span> getAt <span class="iso-sugar">#cs</span> plot}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_y_<span class="keyword">data</span> {n a b c new} (ys<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n a new c <span class="symbol">=</span>
+  {xs <span class="symbol">=</span> get_at <span class="iso-sugar">#xs</span> plot<span class="symbol">,</span> ys <span class="symbol">=</span> ys<span class="symbol">,</span> cs <span class="symbol">=</span> get_at <span class="iso-sugar">#cs</span> plot}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setCData {n a b c new} (cs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n a b new <span class="symbol">=</span>
-  {xs <span class="symbol">=</span> getAt <span class="iso-sugar">#xs</span> plot<span class="symbol">,</span> ys <span class="symbol">=</span> getAt <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> cs}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_c_<span class="keyword">data</span> {n a b c new} (cs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n a b new <span class="symbol">=</span>
+  {xs <span class="symbol">=</span> get_at <span class="iso-sugar">#xs</span> plot<span class="symbol">,</span> ys <span class="symbol">=</span> get_at <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> cs}
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xyPlot {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
-  blankPlot <span class="symbol">|&gt;</span> setXData (autoScale xs) <span class="symbol">|&gt;</span> setYData (autoScale ys)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xy_plot {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+  blank_plot <span class="symbol">|&gt;</span> set_x_<span class="keyword">data</span> (auto_scale xs) <span class="symbol">|&gt;</span> set_y_<span class="keyword">data</span> (auto_scale ys)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xycPlot {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (cs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  blankPlot <span class="symbol">|&gt;</span>
-    setXData (autoScale xs) <span class="symbol">|&gt;</span>
-    setYData (autoScale ys) <span class="symbol">|&gt;</span>
-    setCData (autoScale cs)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xyc_plot {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (cs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  blank_plot <span class="symbol">|&gt;</span>
+    set_x_<span class="keyword">data</span> (auto_scale xs) <span class="symbol">|&gt;</span>
+    set_y_<span class="keyword">data</span> (auto_scale ys) <span class="symbol">|&gt;</span>
+    set_c_<span class="keyword">data</span> (auto_scale cs)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yPlot {n} (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
-  xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">IToF</span> <span class="symbol">$</span> ordinal i
-  xyPlot xs ys
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> y_plot {n} (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+  xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> i_to_f <span class="symbol">$</span> ordinal i
+  xy_plot xs ys
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- xs = linspace (Fin 100) 0. 1.0
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :html showPlot $ xycPlot xs xs xs
@@ -428,9 +428,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   low  <span class="symbol">=</span> minimum  <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j
   high <span class="symbol">=</span> maximum <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j
   range <span class="symbol">=</span> high <span class="symbol">-</span> low
-  imgToHtml <span class="symbol">$</span> makePNG <span class="keyword">for</span> i j<span class="symbol">.</span>
+  img_to_html <span class="symbol">$</span> make_png <span class="keyword">for</span> i j<span class="symbol">.</span>
     x <span class="symbol">=</span> <span class="keyword">if</span> range <span class="symbol">==</span> 0<span class="symbol">.</span>0
-      <span class="keyword">then</span> floatTo8Bit <span class="symbol">$</span> 0<span class="symbol">.</span>5
-      <span class="keyword">else</span> floatTo8Bit <span class="symbol">$</span> (img<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> low) <span class="symbol">/</span> range
+      <span class="keyword">then</span> float_to_8bit <span class="symbol">$</span> 0<span class="symbol">.</span>5
+      <span class="keyword">else</span> float_to_8bit <span class="symbol">$</span> (img<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> low) <span class="symbol">/</span> range
     [x<span class="symbol">,</span> x<span class="symbol">,</span> x]
 </div></div></div></body></html>

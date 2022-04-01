@@ -339,7 +339,7 @@ most implementations.</p>
   <span class="comment">-- Returns element at 0 if less than zero.
 </span>  <span class="comment">-- Ideally we could have an alternative
 </span>  <span class="comment">-- to Fin that just clips the index at its bounds.
-</span>  fromOrdinal n (select (i <span class="symbol">&lt;</span> 0) 0 i)
+</span>  from_ordinal n (select (i <span class="symbol">&lt;</span> 0) 0 i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logaddexp (x<span class="symbol">:</span><span class="type-name">Float</span>) (y<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   m <span class="symbol">=</span> max x y
@@ -400,7 +400,7 @@ most implementations.</p>
 </div></div><div class="cell"><div class="prose-block"><h3>Demo</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randIdxNoZero (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
   unif <span class="symbol">=</span> rand k
-  fromOrdinal n <span class="symbol">$</span> (1 <span class="symbol">+</span> (<span class="type-name">FToI</span> (floor ( unif <span class="symbol">*</span> <span class="type-name">IToF</span> ((size n) <span class="symbol">-</span> 1)))))
+  from_ordinal n <span class="symbol">$</span> (1 <span class="symbol">+</span> (<span class="type-name">FToI</span> (floor ( unif <span class="symbol">*</span> i_to_f ((size n) <span class="symbol">-</span> 1)))))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Vocab</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 6
 </div></div><div class="cell"><div class="code-block">position <span class="symbol">=</span> <span class="type-name">Fin</span> 3
@@ -408,10 +408,10 @@ most implementations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Create random logits
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Time</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 4
-</div></div><div class="cell"><div class="code-block">logits <span class="symbol">:</span> <span class="type-name">Time</span> <span class="symbol">=&gt;</span> <span class="type-name">Vocab</span> <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb <span class="symbol">$</span> newKey 0
+</div></div><div class="cell"><div class="code-block">logits <span class="symbol">:</span> <span class="type-name">Time</span> <span class="symbol">=&gt;</span> <span class="type-name">Vocab</span> <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Create random labels
-</span></div></div><div class="cell"><div class="code-block">labels <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:position</span><span class="symbol">.</span> randIdxNoZero <span class="type-name">Vocab</span> (newKey (ordinal i))
+</span></div></div><div class="cell"><div class="code-block">labels <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:position</span><span class="symbol">.</span> randIdxNoZero <span class="type-name">Vocab</span> (new_key (ordinal i))
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> labels
 </div><div class="result-block">[(1@Fin 6), (5@Fin 6), (5@Fin 6)]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Evaluate marginal probability of labels given logits
