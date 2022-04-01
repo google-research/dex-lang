@@ -44,6 +44,7 @@ import Interpreter
 import LabeledItems
 import Err
 import Util
+import Core
 
 -- === Top-level interface ===
 
@@ -376,7 +377,7 @@ initInfOutMap bindings =
 
 emitInfererM :: Mut o => NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = do
-  Abs b v <- newNameM hint
+  Abs b v <- freshNameM hint
   let frag = InfOutFrag (Nest (b :> emission) Empty) mempty emptySolverSubst
   InfererM $ SubstReaderT $ lift $ lift11 $ extendInplaceT $ Abs frag v
 
@@ -1830,7 +1831,7 @@ instance Solver SolverM where
     return $ zonkWithOutMap solverOutMap $ sink e
 
   emitSolver binding = do
-    Abs b v <- newNameM "?"
+    Abs b v <- freshNameM "?"
     let frag = SolverOutFrag (Nest (b:>binding) Empty) mempty emptySolverSubst
     SolverM $ extendInplaceT $ Abs frag v
 

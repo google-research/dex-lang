@@ -395,7 +395,7 @@ withFreshBinder
   -> (forall l. DExt n l => NameBinder c n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
-  Abs b v <- newNameM hint
+  Abs b v <- freshNameM hint
   refreshAbs (Abs (b:>binding) v) \(b':>_) _ -> cont b'
 
 withFreshBinders
@@ -670,3 +670,11 @@ trySelectBranch e = case e of
 
 freeAtomVarsList :: HoistableE e => e n -> [AtomName n]
 freeAtomVarsList = freeVarsList
+
+freshNameM :: (Color c, EnvReader m)
+           => NameHint -> m n (Abs (NameBinder c) (Name c) n)
+freshNameM hint = do
+  scope    <- toScope <$> unsafeGetEnv
+  Distinct <- getDistinct
+  return $ withFresh hint scope \b -> Abs b (binderName b)
+{-# INLINE freshNameM #-}
