@@ -249,6 +249,7 @@ executable dex
   hs-source-dirs:      src
   ghc-options:         -threaded
                        -optP-Wno-nonportable-include-path
+                       -rtsopts
   default-extensions:  CPP
                      , DeriveGeneric
                      , LambdaCase
