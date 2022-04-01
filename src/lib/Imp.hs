@@ -32,6 +32,7 @@ import Simplify
 import LabeledItems
 import qualified Algebra as A
 import Util (enumerate)
+import Core
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -625,7 +626,7 @@ getAllocInfo = DestM $ lift11 $ lift1 ask
 
 introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
 introduceNewPtr hint ptrTy numel = do
-  Abs b v <- newNameM hint
+  Abs b v <- freshNameM hint
   let ptrInfo = DestPtrInfo ptrTy numel
   let emission = DestEmissions [ptrInfo] (Nest b Empty) Empty
   DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emission v
@@ -729,7 +730,7 @@ instance EnvReader DestM where
 instance Builder DestM where
   emitDecl hint ann expr = do
     ty <- getType expr
-    Abs b v <- newNameM hint
+    Abs b v <- freshNameM hint
     let decl = Let b $ DeclBinding ann ty expr
     let emissions = DestEmissions [] Empty $ Nest decl Empty
     DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emissions v

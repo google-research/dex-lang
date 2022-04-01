@@ -75,6 +75,7 @@ import {-# SOURCE #-} Interpreter
 import LabeledItems
 import Util (enumerate, restructure, transitiveClosureM, bindM2)
 import Err
+import Core
 
 -- === Ordinary (local) builder class ===
 
@@ -225,7 +226,7 @@ instance Fallible m => EnvReader (TopBuilderT m) where
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
   emitBinding hint binding = do
-    Abs b v <- newNameM hint
+    Abs b v <- freshNameM hint
     let ab = Abs (b:>binding) v
     ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
       let envFrag = toEnvFrag b'
@@ -331,7 +332,7 @@ instance Fallible m => ScopableBuilder (BuilderT m) where
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
-    Abs b v <- newNameM hint
+    Abs b v <- freshNameM hint
     let decl = Let b $ DeclBinding ann ty expr
     BuilderT $ extendInplaceT $ Abs (Nest decl Empty) v
   {-# INLINE emitDecl #-}
