@@ -314,7 +314,7 @@ isInferenceVar v = lookupEnv v >>= \case
   _                               -> return False
 
 instance ExtOutMap InfOutMap InfOutFrag where
-  extendOutMap infOutMap (InfOutFrag em ds solverSubst) = do
+  extendOutMap infOutMap (InfOutFrag em ds solverSubst) =
     extendDefaults ds $
       flip extendInfOutMapSolver solverSubst $
         flip extendOutMap (toEnvFrag em) $
@@ -350,7 +350,7 @@ liftInfererMSubst cont = do
   env <- unsafeGetEnv
   subst <- getSubst
   Distinct <- getDistinct
-  (InfOutFrag Empty _ _, (result, _)) <- do
+  (InfOutFrag Empty _ _, (result, _)) <-
     liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
       runStateT1 (runSubstReaderT subst $ runInfererM' $ cont) FailIfRequired
   return result
@@ -2048,11 +2048,21 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
          let diffDrop xs ys = NE.nonEmpty $ NE.drop (length ys) xs
          let extras1 = M.differenceWith diffDrop items1 items2
          let extras2 = M.differenceWith diffDrop items2 items1
-         newTail <- freshInferenceName LabeledRowKind
-         unify (ExtLabeledItemsE (Ext NoLabeledItems t1))
-               (ExtLabeledItemsE (Ext (LabeledItems extras2) (Just newTail)))
-         unify (ExtLabeledItemsE (Ext NoLabeledItems t2))
-               (ExtLabeledItemsE (Ext (LabeledItems extras1) (Just newTail)))
+         if t1 /= t2 then do
+           newTail <- freshInferenceName LabeledRowKind
+           unify (ExtLabeledItemsE (Ext NoLabeledItems t1))
+                 (ExtLabeledItemsE (Ext (LabeledItems extras2) (Just newTail)))
+           unify (ExtLabeledItemsE (Ext NoLabeledItems t2))
+                 (ExtLabeledItemsE (Ext (LabeledItems extras1) (Just newTail)))
+         else if M.null extras1 && M.null extras2 then
+           -- Redundant equation t1 == t1
+           return ()
+         else
+           -- There is no substituion that equates two records with
+           -- different fields but the same tail.
+           -- Catching this fixes the infinite loop described in
+           -- Issue #818.
+           empty
 
 unifyFoldable
   :: (Eq (f ()), Functor f, Foldable f, Unifiable e, Unifier m, EmitsInf n)
