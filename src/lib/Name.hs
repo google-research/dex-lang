@@ -29,7 +29,7 @@ module Name (
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowB,
-  runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst, liftSubstReaderT,
+  runScopeReaderT, runScopeReaderM, runSubstReaderT, liftSubstReaderT,
   liftScopeReaderT, liftScopeReaderM,
   ScopeReaderT (..), SubstReaderT (..),
   lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM, traverseNames,
@@ -115,8 +115,17 @@ import Err
 
 data Subst v i o where
   Subst :: (forall c. Color c => Name c hidden -> v c o)
-      -> SubstFrag v hidden i o
-      -> Subst v i o
+        -> SubstFrag v hidden i o
+        -> Subst v i o
+  -- This is a compact, but unsafe representation of a substitution
+  -- that maps every input name `n` to `fromName n` (though realization
+  -- of this often requires sticking `unsafeCoerceE` to cast from i to o).
+  UnsafeMakeIdentitySubst :: FromName v => Subst v i o
+
+tryApplyIdentitySubst :: Subst v i o -> e i -> Maybe (e o)
+tryApplyIdentitySubst s e = case s of
+  Subst _ _ -> Nothing
+  UnsafeMakeIdentitySubst -> Just $ unsafeCoerceE e
 
 newSubst :: (forall c. Color c => Name c i -> v c o) -> Subst v i o
 newSubst f = Subst f emptyInFrag
@@ -124,12 +133,8 @@ newSubst f = Subst f emptyInFrag
 envFromFrag :: SubstFrag v VoidS i o -> Subst v i o
 envFromFrag frag = Subst absurdNameFunction frag
 
-idSubst :: FromName v => Subst v n n
-idSubst = newSubst fromName
-
--- common instantiation (useful where `v` would be ambiguous)
-idNameSubst :: Subst Name n n
-idNameSubst = idSubst
+idSubst :: forall v n. FromName v => Subst v n n
+idSubst = UnsafeMakeIdentitySubst
 
 idSubstFrag :: (BindsNames b, FromName v) => b n l -> SubstFrag v n l l
 idSubstFrag b =
@@ -141,6 +146,7 @@ infixl 9 !
   case lookupSubstFragProjected env name of
     Left name' -> f name'
     Right val -> val
+(!) UnsafeMakeIdentitySubst name = fromName $ unsafeCoerceE name
 
 infixl 1 <.>
 (<.>) :: InFrag envFrag => envFrag i1 i2 o -> envFrag i2 i3 o -> envFrag i1 i3 o
@@ -180,6 +186,10 @@ todoSinkableProof =
 instance InMap (Subst v) (SubstFrag v) where
   emptyInMap = newSubst absurdNameFunction
   {-# INLINE emptyInMap #-}
+  extendInMap UnsafeMakeIdentitySubst frag'@(UnsafeMakeSubst fragMap) =
+    case M.null fragMap of
+      True  -> UnsafeMakeIdentitySubst
+      False -> Subst (fromName . unsafeCoerceE) frag'
   extendInMap (Subst f frag) frag' = Subst f $ frag <.> frag'
   {-# INLINE extendInMap #-}
 
@@ -481,15 +491,22 @@ instance (Color c, SinkableV v, FromName v) => SubstB v (NameBinder c) where
   substB (scope, env) b cont = do
     withFresh (getNameHint b) scope \b' -> do
       let scope' = scope `extendOutMap` toScopeFrag b'
-      let env' = sink env <>> b @> (fromName $ binderName b')
+      let UnsafeMakeName bn  = binderName b
+      let UnsafeMakeName bn' = binderName b'
+      let env' = case env of
+                   UnsafeMakeIdentitySubst | bn == bn' -> UnsafeMakeIdentitySubst
+                   _ -> sink env <>> b @> (fromName $ binderName b')
       cont (scope', env') b'
 
 substM :: (SubstReader v m, ScopeReader2 m, SinkableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
 substM e = do
   env <- getSubst
-  WithScope scope env' <- addScope env
-  sinkM $ fmapNames scope (env'!) e
+  case tryApplyIdentitySubst env e of
+    Just e' -> return $ e'
+    Nothing -> do
+      WithScope scope env' <- addScope env
+      sinkM $ fmapNames scope (env'!) e
 {-# INLINE substM #-}
 
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
@@ -684,8 +701,11 @@ applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
 applySubst substFrag x = do
   Distinct <- getDistinct
   let fullSubst = sink idSubst <>> substFrag
-  WithScope scope fullSubst' <- addScope fullSubst
-  sinkM $ fmapNames scope (fullSubst' !) x
+  case tryApplyIdentitySubst fullSubst x of
+    Just x' -> return x'
+    Nothing -> do
+      WithScope scope fullSubst' <- addScope fullSubst
+      sinkM $ fmapNames scope (fullSubst' !) x
 {-# INLINE applySubst #-}
 
 applyAbs :: ( SinkableV v, SinkableE e
@@ -804,7 +824,9 @@ refreshAbsPure scope (Abs b e) cont =
       withExtEvidence b $ cont scope' b e
     Nothing ->
       substB (scope, idSubst :: Subst Name n n) b \(scope', subst') b' -> do
-        let e' = substE (scope', subst') e
+        let e' = case tryApplyIdentitySubst subst' e of
+                   Just e'' -> e''
+                   Nothing  -> substE (scope', subst') e
         withExtEvidence b' $ cont scope' b' e'
 
 extendIfDistinct :: Scope n -> ScopeFrag n l
@@ -1745,6 +1767,8 @@ instance SinkableV v => SinkableE (Subst v i) where
   sinkingProofE fresh (Subst f m) =
     Subst (\name -> sinkingProofE fresh $ f name)
           (sinkingProofE fresh m)
+  sinkingProofE fresh UnsafeMakeIdentitySubst =
+    sinkingProofE fresh $ Subst (fromName . unsafeCoerceE) emptyInFrag
 
 instance SinkableE atom => SinkableV (SubstVal (cMatch::C) (atom::E))
 instance SinkableE atom => SinkableE (SubstVal (cMatch::C) (atom::E) (c::C)) where
