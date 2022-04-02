@@ -1,3 +1,52 @@
+# Main targets of interest for development
+#
+#   make tests             Run the full test suite in a clean build
+#   make run-tests/<file>  Run one test file from tests/
+#   make build             Build Dex (fastest complete compile time)
+#   make watch             Build Dex continuously as source is edited
+#   make check-watch       Just typecheck Dex continuously (fastest feedback)
+#   make build-opt         Slower, but gives faster Dex compiles
+#   make build-dbg         Slower, but better Haskell errors
+#   make build-prof        Optimized for profiling the speed of the Dex compiler
+#
+# We suggest adding the following or equivalent aliases:
+#
+#   alias dex="stack exec dex -- --lib-path lib"
+#   alias dexopt="stack exec --work-dir .stack-work-opt dex -- --lib-path lib"
+#   alias dexdbg="stack exec --work-dir .stack-work-dbg --trace dex -- --lib-path lib"
+#   alias dexprof="stack exec --work-dir .stack-work-prof --trace dex -- --lib-path lib"
+
+# In more detail:
+#
+# - The default build is for quickly getting feedback on development
+#   changes: get Haskell type errors and run small Dex test scripts as
+#   fast as possible.
+#
+# - The opt build is for developing a Dex program or example (possibly
+#   against a patched Dex): pay a slow optimizing compile once but have
+#   the fastest possible Dex development loop.
+#
+# - The bdg build is for hunting (crash) bugs in Dex: pay slow GHC
+#   compilation and slow Dex compilation, but get (relatively) detailed
+#   stack traces from `error` and `C-c`, and extra internal debug checks.
+#
+# - The prof build is for profiling the Dex compiler: pay very slow GHC
+#   compilation, but get relatively high signal-to-noise profiling
+#   information on the Dex compiler's performance.
+#
+# The prof and bdg builds are different in two ways: prof turns on
+# GHC's -O, but turns off Dex's self-checks and GHC's automatic cost
+# center insertion.  This way (i) you're profiling optimized rather
+# than unoptimized Dex, and (ii) the profile data is restricted to our
+# {-# SCC #-} annotations, and thus not as overwhelming.
+#
+# We keep the builds in separate .stack-work directories so they don't
+# step on each other's GHC-level compilation caches.
+#
+# The tests are run in the default `build` configuration, namely no
+# optimization and no debug aids.
+
+
 # Set shell to bash to resolve symbolic links when looking up
 # executables, to support user-account installation of stack.
 SHELL=/usr/bin/env bash
@@ -6,10 +55,9 @@ STACK=$(shell command -v stack 2>/dev/null)
 ifeq (, $(STACK))
 	STACK=cabal
 
-	PROF := --enable-library-profiling --enable-executable-profiling
+	DBG := --enable-library-profiling --enable-executable-profiling
 
-	dex     := cabal exec dex --
-	dexprof := cabal exec $(PROF) dex -- +RTS -p -RTS
+	dex := cabal exec dex --
 else
 	STACK=stack
 
@@ -21,10 +69,17 @@ else
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-	PROF := --trace --work-dir .stack-work-prof
+	OPT  := --work-dir .stack-work-opt
+	DBG  := --work-dir .stack-work-dbg --trace
+	PROF := --work-dir .stack-work-prof --trace \
+	  --ghc-options="-fno-prof-auto" \
+          --ghc-options="-ddump-simpl" \
+          --ghc-options="-ddump-stg" \
+	  --ghc-options="-dsuppress-all" \
+          --ghc-options="-dno-suppress-type-signatures" \
+          --ghc-options="-ddump-to-file"
 
-	dex     := $(STACK) exec         dex --
-	dexprof := $(STACK) exec $(PROF) dex --
+	dex := $(STACK) exec dex --
 endif
 
 
@@ -38,10 +93,6 @@ STACK_FLAGS := --ghc-options="-j +RTS -A256m -n2m -RTS"
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
 STACK_FLAGS = $(STACK_FLAGS) --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
-endif
-
-ifeq (1,$(DEX_DUMP_GHC))
-STACK_FLAGS := $(STACK_FLAGS) --flag dex:optimized --ghc-options="-fno-prof-auto -ddump-simpl -ddump-stg -ddump-to-file -dsuppress-all -dno-suppress-type-signatures"
 endif
 
 # libpng
@@ -91,18 +142,27 @@ just-build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
 
 build: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS)
+	$(STACK) build $(STACK_FLAGS) --fast
 	$(dex) clean             # clear cache
 	$(dex) script /dev/null  # precompile the prelude
 
 watch: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --file-watch
+	$(STACK) build $(STACK_FLAGS) --fast --file-watch
+
+check-watch: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --fast --file-watch --ghc-options="-fno-code"
 
 install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
+build-opt: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) $(OPT) --flag dex:optimized
+
+build-dbg: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) $(DBG) --flag dex:debug
+
 build-prof: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:debug
+	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:optimized
 
 # For some reason stack fails to detect modifications to foreign library files
 build-ffis: dexrt-llvm
@@ -165,10 +225,6 @@ run-tests/%: tests/%.dx just-build
 	misc/check-quine $< $(dex) script --allow-errors
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) script --allow-errors
-
-# Run these with profiling on while they're catching lots of crashes
-prop-tests: cbits/libdex.so
-	$(STACK) test $(PROF)
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: export DEX_TEST_MODE=t
