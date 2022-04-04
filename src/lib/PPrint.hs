@@ -665,8 +665,7 @@ instance Pretty (Cache n) where
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
-       "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
-    <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
+       "lambda dicts:"   <+> p (lambdaDicts scs) <> hardline
     <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
 
 instance Pretty (LoadedModules n) where

@@ -291,7 +291,6 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
 data SynthCandidates n = SynthCandidates
   { lambdaDicts       :: [Atom n]
-  , superclassGetters :: [Atom n]
   , instanceDicts     :: M.Map (DataDefName n) [Atom n] }
   deriving (Show, Generic)
 
@@ -455,13 +454,11 @@ bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
            AtomNameBinding (LetBound (DeclBinding InstanceLet ty _)) -> do
              let dataDefName = getInstanceLetDataDefName ty
              let m = M.singleton dataDefName [sink $ Var $ binderName b]
-             tell $ (SynthCandidates [] [] m)
+             tell $ (SynthCandidates [] m)
            AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [Var $ binderName b] [] mempty)
+             tell $ sink (SynthCandidates [Var $ binderName b] mempty)
            AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [Var $ binderName b] [] mempty)
-           SuperclassBinding _ _ getter ->
-             tell $ sink (SynthCandidates [] [getter] mempty)
+             tell $ sink (SynthCandidates [Var $ binderName b] mempty)
            _ -> return ()
         go rest
 
@@ -1280,11 +1277,11 @@ deriving via WrapE DepPairType n instance Generic (DepPairType n)
 
 instance GenericE SynthCandidates where
   type RepE SynthCandidates =
-    ListE Atom `PairE` ListE Atom `PairE` ListE (PairE DataDefName (ListE Atom))
-  fromE (SynthCandidates xs ys zs) = ListE xs `PairE` ListE ys `PairE` ListE zs'
-    where zs' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList zs)
-  toE (ListE xs `PairE` ListE ys `PairE` ListE zs) = SynthCandidates xs ys zs'
-    where zs' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) zs
+    ListE Atom `PairE` ListE (PairE DataDefName (ListE Atom))
+  fromE (SynthCandidates xs ys) = ListE xs `PairE` ListE ys'
+    where ys' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList ys)
+  toE (ListE xs `PairE` ListE ys) = SynthCandidates xs ys'
+    where ys' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) ys
 
 instance SinkableE      SynthCandidates
 instance HoistableE     SynthCandidates
@@ -1436,11 +1433,11 @@ instance ProvesExt  Decl
 instance BindsNames Decl
 
 instance Semigroup (SynthCandidates n) where
-  SynthCandidates xs ys zs <> SynthCandidates xs' ys' zs' =
-    SynthCandidates (xs<>xs') (ys<>ys') (M.unionWith (<>) zs zs')
+  SynthCandidates xs ys <> SynthCandidates xs' ys' =
+    SynthCandidates (xs<>xs') (M.unionWith (<>) ys ys')
 
 instance Monoid (SynthCandidates n) where
-  mempty = SynthCandidates mempty mempty mempty
+  mempty = SynthCandidates mempty mempty
 
 
 instance GenericB EnvFrag where

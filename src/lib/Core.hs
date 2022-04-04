@@ -455,11 +455,6 @@ getLambdaDicts = do
   env <- withEnv moduleEnv
   return $ lambdaDicts $ envSynthCandidates env
 
-getSuperclassProjs :: EnvReader m => m n [Atom n]
-getSuperclassProjs = do
-  env <- withEnv moduleEnv
-  return $ superclassGetters $ envSynthCandidates env
-
 getInstanceDicts :: EnvReader m => DataDefName n -> m n [Atom n]
 getInstanceDicts name = do
   env <- withEnv moduleEnv

@@ -79,7 +79,7 @@ module Syntax (
     atomBindingType, getProjection,
     HasArgType (..), extendEffRow,
     bindingsFragToSynthCandidates,
-    getLambdaDicts, getSuperclassProjs, getInstanceDicts,
+    getLambdaDicts, getInstanceDicts,
     getAllowedEffects, withAllowedEffects, todoSinkableProof,
     freeAtomVarsList,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),

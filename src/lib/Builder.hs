@@ -12,9 +12,7 @@ module Builder (
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
-  fpow, flog, fLitLike, buildPureNaryLam,
-  emitMethodType, emitSuperclass,
-  makeSuperclassGetter, makeMethodGetter,
+  fpow, flog, fLitLike, buildPureNaryLam, emitMethodType, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
@@ -910,14 +908,6 @@ emitDataConName dataDefName conIdx conAtom = do
   let (DataConDef name _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
 
-emitSuperclass :: (Mut n ,TopBuilder m)
-               => ClassName n -> Int -> m n (Name SuperclassNameC n)
-emitSuperclass dataDef idx = do
-  getter <- makeSuperclassGetter dataDef idx
-  emitSynthCandidates $ SynthCandidates [] [getter] mempty
-  emitBinding hint $ SuperclassBinding dataDef idx getter
-  where hint = getNameHint $ "Proj" <> show idx <> pprint dataDef
-
 zipNest :: (forall ii ii'. a -> b ii ii' -> b' ii ii')
         -> [a]
         -> Nest b  i i'
@@ -928,17 +918,6 @@ zipNest _ _ _ = error "List too short!"
 
 zipPiBinders :: [Arrow] -> Nest Binder i i' -> Nest PiBinder i i'
 zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
-
-makeSuperclassGetter :: EnvReader m => Name ClassNameC n -> Int -> m n (Atom n)
-makeSuperclassGetter classDefName methodIdx = liftBuilder do
-  classDefName' <- sinkM classDefName
-  ClassDef _ _ defName <- getClassDef classDefName'
-  DataDef sourceName paramBs _ <- lookupDataDef defName
-  buildPureNaryLam (EmptyAbs $ zipPiBinders (repeat ImplicitArrow) paramBs) \params -> do
-    defName' <- sinkM defName
-    let tc = TypeCon sourceName defName' (map Var params)
-    buildPureLam "subclassDict" PlainArrow tc \dict ->
-      return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
 emitMethodType :: (Mut n, TopBuilder m)
                => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
