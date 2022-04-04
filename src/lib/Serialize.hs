@@ -9,6 +9,7 @@ module Serialize (pprintVal, getDexString,
 
 import Prelude hiding (pi, abs)
 import Control.Monad
+import Control.Monad.IO.Class
 import qualified Data.ByteString as BS
 import Data.Functor ((<&>))
 import Data.ByteString.Internal (memcpy)
@@ -18,7 +19,9 @@ import qualified Data.Map.Strict as M
 import Data.Int
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
+import System.IO (stderr, hPutStrLn)
 import Foreign.Ptr
+import Foreign.C.String
 import Foreign.Marshal.Array
 import GHC.Generics (Generic)
 import Numeric (showHex)
@@ -43,9 +46,33 @@ pprintVal val = docAsStr <$> prettyVal val
 
 -- TODO: get the pointer rather than reading char by char
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
-getDexString (DataCon _ _ _ 0 [_, xs]) = do
-  xs' <- getTableElements xs
-  forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
+getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
+  Just (ptrAtom, n) -> do
+    lookupAtomName ptrAtom >>= \case
+      PtrLitBound _ ptrName -> lookupEnv ptrName >>= \case
+        PtrBinding (PtrLitVal (Heap CPU, Scalar Word8Type) ptr) -> do
+          liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
+        _ -> error "Expected a CPU pointer binding!"
+      _ -> error "Expected a pointer binding!"
+  Nothing -> do
+    liftIO $ hPutStrLn stderr $ "Falling back to a slow path in Dex string retrieval!"
+    xs' <- getTableElements xs
+    forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
+  where
+    tryParseStringContent :: Atom n -> Maybe (AtomName n, Int32)
+    tryParseStringContent tabAtom  = do
+      TabLam (TabLamExpr i body) <- return tabAtom
+      Fin (IdxRepVal n) <- return $ binderType i
+      Block _ (Nest castDecl (Nest offDecl Empty)) loadExpr <- return body
+      Let v (DeclBinding _ _ (Op (CastOp IdxRepTy (Var i')))) <- return castDecl
+      guard $ binderName i == i'
+      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (Var v')))) <- return offDecl
+      guard $ binderName v == v'
+      Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
+      HoistSuccess (Block _ Empty (Op (PtrLoad (Var v1')))) <- return $ hoist iob iobody
+      guard $ binderName v1 == v1'
+      HoistSuccess ptrAtomTop <- return $ hoist (PairB i v) ptrName
+      return (ptrAtomTop, n)
 getDexString x = error $ "Not a string: " ++ pprint x
 {-# SCC getDexString #-}
 
