@@ -261,10 +261,9 @@ instance CheckableE SourceMap where
   checkE sourceMap = substM sourceMap
 
 instance CheckableE SynthCandidates where
-  checkE (SynthCandidates xs ys zs) =
+  checkE (SynthCandidates xs ys) =
     SynthCandidates <$> mapM checkE xs
-                    <*> mapM checkE ys
-                    <*> (M.fromList <$> forM (M.toList zs) \(k, vs) ->
+                    <*> (M.fromList <$> forM (M.toList ys) \(k, vs) ->
                           (,) <$> substM k <*> mapM checkE vs)
 
 instance CheckableB (RecSubstFrag Binding) where

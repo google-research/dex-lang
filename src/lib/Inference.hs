@@ -86,7 +86,6 @@ inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) 
   dictDefName <- emitDataDef dictDef
   let classDef = ClassDef classSourceName methodSourceNames dictDefName
   className' <- emitClassDef classDef =<< tyConDefAsAtom dictDefName Nothing
-  mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <-
     forM (enumerate $ zip methodSourceNames methodTys) \(i, (prettyName, ty)) -> do
       let UMethodType (Right explicits) _ = ty
@@ -2213,31 +2212,20 @@ liftSyntherM cont =
 givensFromEnv :: EnvReader m => m n (Givens n)
 givensFromEnv = do
   givens <- getLambdaDicts
-  projs <- getSuperclassProjs
   let givensBlocks = map AtomicBlock givens
-  getSuperclassClosure projs (Givens HM.empty) givensBlocks
+  getSuperclassClosure (Givens HM.empty) givensBlocks
 {-# SCC givensFromEnv #-}
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
   prevGivens <- getGivens
-  projs <- getSuperclassProjs
-  finalGivens <- getSuperclassClosureM projs prevGivens newGivens
+  finalGivens <- getSuperclassClosure prevGivens newGivens
   withGivens finalGivens cont
-
-getSuperclassClosureM
-  :: EnvReader m
-  => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
-getSuperclassClosureM projs givens newGivens = do
-  givens' <- sinkM givens
-  ListE projs'     <- sinkM $ ListE projs
-  ListE newGivens' <- sinkM $ ListE newGivens
-  getSuperclassClosure projs' givens' newGivens'
 
 getSuperclassClosure
   :: forall m n.
-     EnvReader m => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
-getSuperclassClosure projs givens newGivens = do
+     EnvReader m => Givens n -> [Given n] -> m n (Givens n)
+getSuperclassClosure givens newGivens = do
   liftM snd $ runStateT1 (mapM_ visitGiven newGivens) givens
   where
     visitGiven :: EnvReader m => Given n -> StateT1 Givens m n ()
@@ -2245,10 +2233,8 @@ getSuperclassClosure projs givens newGivens = do
       True -> return ()
       False -> do
         markAsVisited x
-        forM_ projs \proj ->
-          liftBuilderT (tryApplyM proj x) >>= \case
-            Just parent -> visitGiven parent
-            Nothing -> return ()
+        parents <- getDirectSuperclasses x
+        mapM_ visitGiven parents
 
     alreadyVisited :: EnvReader m => Given n -> StateT1 Givens m n Bool
     alreadyVisited x = do
@@ -2261,41 +2247,31 @@ getSuperclassClosure projs givens newGivens = do
       ty <- getType x
       modify \(Givens m) -> Givens $ HM.insert (EKey ty) x m
 
-tryApplyM :: (MonadFail1 m, Builder m) => Atom n -> Given n -> m n (Given n)
-tryApplyM proj dict = do
-  dictTy <- getType dict
-  projTy <- getType proj
-  instantiateProjParams projTy dictTy >>= \case
-    NothingE -> fail "couldn't instantiate params"
-    JustE (ListE params) -> liftBuilder $ buildBlock do
-      Distinct <- getDistinct
-      instantiated <- naryApp (sink proj) (map sink params)
+getDirectSuperclasses :: EnvReader m => Given n -> m n [Given n]
+getDirectSuperclasses dict = do
+  numSuperclasses <- getNumSuperclasses dict
+  forM [0..numSuperclasses-1] \i -> do
+    liftBuilder $ buildBlock do
       dictAtom <- emitBlock $ sink dict
-      app instantiated dictAtom
-    _ -> error "impossible"
+      return $ getProjection [i] $ getProjection [0, 0] dictAtom
 
-instantiateProjParams :: EnvReader m => Type n -> Type n
-                      -> m n (MaybeE (ListE Atom) n)
-instantiateProjParams projTy dictTy = do
-  PairE projTy' dictTy' <- sinkM $ PairE projTy dictTy
-  result <- liftSolverM $ solveLocal do
-    params <- instantiateProjParamsM (sink projTy') (sink dictTy')
-    zonk $ ListE params
-  case result of
-    Success params -> return $ JustE $ params
-    Failure _ -> return NothingE
-
-instantiateProjParamsM :: (EmitsInf n, Unifier m) => Type n -> Type n -> m n [Atom n]
-instantiateProjParamsM projTy dictTy = case projTy of
-  Pi (PiType (PiBinder b argTy ImplicitArrow) _ resultTy) -> do
-    param <- freshInferenceName argTy
-    resultTy' <- applyAbs (Abs b resultTy) param
-    params <- instantiateProjParamsM resultTy' dictTy
-    return $ Var param : params
-  Pi (PiType (PiBinder _ argTy PlainArrow) _ _) -> do
-    unify dictTy argTy
-    return []
-  _ -> error $ "unexpected projection type: " ++ pprint projTy
+getNumSuperclasses :: EnvReader m => Given n -> m n Int
+getNumSuperclasses dict = liftM runHardFail $ liftEnvReaderT do
+  getType dict >>= \case
+    TypeCon sourceName dataDefName _ ->
+     -- AccumMonoid is defined in the prelude using the old `@instance` syntax so
+     -- its dictionary representation doesn't follow the same pattern as all the
+     -- other instances. TODO: either handle AccumMonoid interally or translate it
+     -- to the new syntax and properly deprecate the old one.
+     if sourceName == "AccumMonoid"
+       then return 0
+       else do
+         DataDef _ _ [DataConDef _ (Abs (Nest (_:>dictTy) Empty) UnitE)] <-
+           lookupDataDef dataDefName
+         PairTy (ProdTy superclassTupleTy) _ <- return dictTy
+         return $ length superclassTupleTy
+    Pi _ -> return 0
+    ty -> error $ "unexpected dict type: " ++ pprint ty
 
 getGiven :: (Synther m, Emits n) => m n (Atom n)
 getGiven = do
