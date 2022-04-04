@@ -789,7 +789,7 @@ splitNestAt n (Nest b rest) =
 joinNest :: Nest b n m -> Nest b m l -> Nest b n l
 joinNest l Empty = l
 joinNest l r     = doJoinNest l r
-{-# NOINLINE [1] joinNest #-}
+{-# NOINLINE joinNest #-}
 {-# RULES
       "joinNest Empty *"    forall n. joinNest Empty n = n;
       "joinNest * Empty"    forall n. joinNest n Empty = n;
