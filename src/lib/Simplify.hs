@@ -19,6 +19,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
+import GHC.Exts (inline)
 
 import Err
 
@@ -33,6 +34,7 @@ import Linearize
 import Transpose
 import LabeledItems
 import Util (restructure)
+import Types.Primitives
 
 -- === simplification monad ===
 
@@ -124,7 +126,7 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     xs' <- mapM simplifyAtom xs
     simplifyTabApp f xs'
   Atom x -> simplifyAtom x
-  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Op  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
   Case e alts resultTy eff -> do
     e' <- simplifyAtom e
@@ -253,7 +255,6 @@ simplifyApp f xs =
                 _     -> dropSubst $ Right <$> simplifyAtom x
               _ -> return $ Right $ Var v'
       _ -> Right <$> simplifyAtom func
-{-# SCC simplifyApp #-}
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
@@ -309,7 +310,6 @@ simplifyTabApp f xs =
                 _        -> dropSubst $ Right <$> simplifyAtom x
               _ -> return $ Right $ Var v'
       _ -> Right <$> simplifyAtom func
-{-# SCC simplifyTabApp #-}
 
 simplifyAtom :: Atom i -> SimplifyM i o (Atom o)
 simplifyAtom atom = confuseGHC >>= \_ -> case atom of
@@ -329,8 +329,8 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   TabPi _ -> substM atom
   DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
-  Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM simplifyAtom tc
+  Con con -> Con <$> (inline traversePrimCon) simplifyAtom con
+  TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
   TypeCon name def params ->
     TypeCon name <$> substM def <*> mapM simplifyAtom params
