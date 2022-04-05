@@ -62,6 +62,7 @@ import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
+import qualified RawName as R
 import Name
 import Syntax
 import Type
@@ -91,7 +92,7 @@ type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
 type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
 
 emit :: (Builder m, Emits n) => Expr n -> m n (AtomName n)
-emit expr = emitDecl NoHint PlainLet expr
+emit expr = emitDecl noHint PlainLet expr
 {-# INLINE emit #-}
 
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
@@ -580,7 +581,7 @@ typesAsBinderNest types = liftEnvReaderM $ go types
     go :: forall n. [Type n] -> EnvReaderM n (EmptyAbs (Nest Binder) n)
     go tys = case tys of
       [] -> return $ Abs Empty UnitE
-      ty:rest -> withFreshBinder NoHint ty \b -> do
+      ty:rest -> withFreshBinder noHint ty \b -> do
         Abs bs UnitE <- go $ map sink rest
         return $ Abs (Nest (b:>ty) bs) UnitE
 
@@ -667,7 +668,7 @@ buildUnaryAlt
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
 buildUnaryAlt ty body = do
-  bs <- singletonBinderNest NoHint ty
+  bs <- singletonBinderNest noHint ty
   buildAlt bs \[v] -> body v
 
 buildUnaryAtomAlt
@@ -676,7 +677,7 @@ buildUnaryAtomAlt
   -> (forall l. (Distinct l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (AltP Atom n)
 buildUnaryAtomAlt ty body = do
-  bs <- singletonBinderNest NoHint ty
+  bs <- singletonBinderNest noHint ty
   buildNaryAbs bs \[v] -> do
     Distinct <- getDistinct
     body v
@@ -689,7 +690,7 @@ buildNewtype :: ScopableBuilder m
 buildNewtype name paramBs body = do
   Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
     ty <- body params
-    singletonBinderNest NoHint ty
+    singletonBinderNest noHint ty
   return $ DataDef name paramBs' [DataConDef ("mk" <> name) argBs]
 
 fromNewtype :: [DataConDef n]
@@ -1400,7 +1401,7 @@ localVarsAndTypeVars b e =
 localVars :: (Color c, BindsNames b, HoistableE e)
           => b n l -> e l -> [Name c l]
 localVars b e = nameSetToList $
-  M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+  R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 instance GenericE ReconstructAtom where
   type RepE ReconstructAtom = EitherE UnitE (NaryAbs AtomNameC Atom)

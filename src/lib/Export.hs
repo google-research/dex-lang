@@ -83,7 +83,7 @@ prepareFunctionForExport f = do
             goResult lty \lres ->
               goResult (sink rty) \rres ->
                 cont $ joinNest lres rres
-          _ -> withFreshBinder NoHint ty \b -> do
+          _ -> withFreshBinder noHint ty \b -> do
             ety <- toExportType ty
             cont $ Nest (ExportResult (b:>ety)) Empty
 
@@ -110,7 +110,7 @@ prepareFunctionForExport f = do
             where
               tableAtom :: Emits n => Atom n -> ListE (EitherE AtomName (LiftE Int)) n -> [Atom n] -> [Atom n] -> BuilderM n (Atom n)
               tableAtom basePtr (ListE shapeTail) is sizes = case shapeTail of
-                (h:t) -> buildTabLam NoHint (Fin $ dimSize h) \i ->
+                (h:t) -> buildTabLam noHint (Fin $ dimSize h) \i ->
                   tableAtom (sink basePtr) (sink $ ListE t)
                             (sinkList is ++ [Var i]) (sinkList $ sizes ++ [dimSize h])
                 [] -> do

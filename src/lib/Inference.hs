@@ -99,7 +99,7 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     -- pattern-matching code at the top level
     _ <- buildBlockInf do
       val' <- sinkM val
-      v <- emitDecl NoHint PlainLet $ Atom val'
+      v <- emitDecl noHint PlainLet $ Atom val'
       bindLamPat p v $ return UnitVal
     applyDefaults
     return val
@@ -2432,7 +2432,7 @@ buildUnaryAltInf
   -> (forall l. (EmitsBoth l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
 buildUnaryAltInf ty body = do
-  bs <- liftBuilder $ singletonBinderNest NoHint ty
+  bs <- liftBuilder $ singletonBinderNest noHint ty
   buildAltInf bs \[v] -> body v
 
 buildAltInf

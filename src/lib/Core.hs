@@ -407,7 +407,7 @@ withFreshBinders [] cont = do
   Distinct <- getDistinct
   cont Empty []
 withFreshBinders (binding:rest) cont = do
-  withFreshBinder NoHint binding \b -> do
+  withFreshBinder noHint binding \b -> do
     ListE rest' <- sinkM $ ListE rest
     withFreshBinders rest' \bs vs ->
       cont (Nest (b :> binding) bs)

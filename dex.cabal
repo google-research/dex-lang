@@ -81,6 +81,7 @@ library
                      , Name
                      , PPrint
                      , Parser
+                     , RawName
                      , Serialize
                      , Simplify
                      , SourceRename
