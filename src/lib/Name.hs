@@ -413,19 +413,24 @@ traverseNames
   -> e i -> m o (e o)
 traverseNames f e = do
   let vs = freeVarsE e
-  m <- M.fromList <$> forM (M.toList vs)
-         \(rawName, WithColor (_ :: GHC.Exts.Any c UnsafeS)) -> do
-            x <- f (UnsafeMakeName rawName :: Name c i)
-            return (rawName, WithColor x)
-  fmapNamesM (\((UnsafeMakeName v) :: Name c i) -> case M.lookup v m of
+  m <- flip M.traverseWithKey vs
+         \rawName (WithColor (_ :: GHC.Exts.Any c UnsafeS)) ->
+            WithColor <$> f (UnsafeMakeName rawName :: Name c i)
+  fmapNamesM (applyTraversed m) e
+{-# INLINE traverseNames #-}
+
+applyTraversed :: (FromName v, Color c)
+               => M.Map RawName (WithColor v n) -> Name c i -> v c n
+applyTraversed m = \((UnsafeMakeName v) :: Name c i) -> case M.lookup v m of
     Just (WithColor val) -> case tryAsColor val of
       Just val' -> val'
       Nothing -> error "shouldn't happen"
-    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)) e
+    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)
 
 fmapNames :: (SubstE v e, Distinct o)
           => Scope o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
 fmapNames scope f e = substE (scope, newSubst f) e
+{-# INLINE fmapNames #-}
 
 fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
           => (forall c. Color c => Name c i -> v c o)
@@ -434,6 +439,7 @@ fmapNamesM f e = do
   scope <- unsafeGetScope
   Distinct <- getDistinct
   return $ substE (scope, newSubst f) e
+{-# INLINE fmapNamesM #-}
 
 toConstAbs :: (SinkableE e, ScopeReader m, Color c)
            => e n -> m n (Abs (NameBinder c) e n)

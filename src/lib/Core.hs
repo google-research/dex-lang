@@ -399,6 +399,7 @@ withFreshBinder
 withFreshBinder hint binding cont = do
   Abs b v <- freshNameM hint
   refreshAbs (Abs (b:>binding) v) \(b':>_) _ -> cont b'
+{-# INLINE withFreshBinder #-}
 
 withFreshBinders
   :: (Color c, EnvExtender m, ToBinding binding c)
