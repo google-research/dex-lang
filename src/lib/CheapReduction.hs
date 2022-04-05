@@ -88,7 +88,7 @@ class ( Alternative2 m, SubstReader AtomSubstVal m
 
 instance CheapReducer CheapReducerM where
   reportSynthesisFail ty = CheapReducerM $ SubstReaderT $ lift $ lift11 $
-    WriterT1 $ tell $ FailedDictTypes $ JustE $ eSetSingleton ty
+    tell $ FailedDictTypes $ JustE $ eSetSingleton ty
   updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
     modify (MapE . M.insert v (toMaybeE u) . fromMapE)
   lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
