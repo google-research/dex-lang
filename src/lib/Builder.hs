@@ -314,7 +314,7 @@ liftEmitBuilder :: (Builder m, SinkableE e, SubstE Name e)
 liftEmitBuilder cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
+  let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env emptyOutFrag
   Emits <- fabricateEmitsEvidenceM
   emitDecls (unsafeCoerceB decls) result
 

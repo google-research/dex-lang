@@ -2499,12 +2499,14 @@ instance (Monad m, ExtOutMap InfOutMap decls)
 
 instance (Monad m, ExtOutMap InfOutMap decls)
          => EnvExtender (InplaceT InfOutMap decls m) where
-  refreshAbs ab cont = UnsafeMakeInplaceT \env ->
+  refreshAbs ab cont = UnsafeMakeInplaceT \env decls ->
     refreshAbsPure (toScope env) ab \_ b e -> do
-      let env' = extendOutMap env $ toEnvFrag b
-      (ans, decls, _) <- unsafeRunInplaceT (cont b e) env'
+      let subenv = extendOutMap env $ toEnvFrag b
+      (ans, d, _) <- unsafeRunInplaceT (cont b e) subenv emptyOutFrag
       case fabricateDistinctEvidence @UnsafeS of
-        Distinct -> return (ans, decls, extendOutMap (unsafeCoerceE env) decls)
+        Distinct -> do
+          let env' = extendOutMap (unsafeCoerceE env) d
+          return (ans, catOutFrags (toScope env') decls d, env')
 
 instance BindsEnv InfOutFrag where
   toEnvFrag (InfOutFrag frag _ _) = toEnvFrag frag
