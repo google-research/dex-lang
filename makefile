@@ -66,18 +66,17 @@ else
 		STACK=stack --stack-yaml=stack-macos.yaml
 	endif
 
+	DUMP_FLAGS = --ghc-options="-ddump-simpl" \
+	             --ghc-options="-ddump-stg" \
+	             --ghc-options="-dsuppress-all" \
+	             --ghc-options="-dno-suppress-type-signatures" \
+	             --ghc-options="-ddump-to-file"
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-	OPT  := --work-dir .stack-work-opt
+	OPT  := --work-dir .stack-work-opt $(DUMP_FLAGS)
 	DBG  := --work-dir .stack-work-dbg --trace
-	PROF := --work-dir .stack-work-prof --trace \
-	  --ghc-options="-fno-prof-auto" \
-          --ghc-options="-ddump-simpl" \
-          --ghc-options="-ddump-stg" \
-	  --ghc-options="-dsuppress-all" \
-          --ghc-options="-dno-suppress-type-signatures" \
-          --ghc-options="-ddump-to-file"
+	PROF := --work-dir .stack-work-prof --trace --ghc-options="-fno-prof-auto" $(DUMP_FLAGS)
 
 	dex := $(STACK) exec dex --
 endif
