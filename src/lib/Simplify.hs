@@ -238,22 +238,9 @@ simplifyApp f xs =
         dropSubst $ simplifyExpr $ Case e alts' resultTy eff
       _ -> naryApp atom $ toList xs
 
-    -- TODO: This function could just become a special case for an app of a lambda.
-    -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       Lam lam -> return $ Left lam
-      Var v -> do
-        env <- getSubst
-        case env ! v of
-          SubstVal x -> return $ Right x
-          Rename v' -> do
-            AtomNameBinding bindingInfo <- lookupEnv v'
-            case bindingInfo of
-              LetBound (DeclBinding _ _ (Atom x)) -> case x of
-                Lam _ -> return $ Right x
-                _     -> dropSubst $ Right <$> simplifyAtom x
-              _ -> return $ Right $ Var v'
       _ -> Right <$> simplifyAtom func
 
 -- TODO: de-dup this and simplifyApp?
@@ -293,22 +280,9 @@ simplifyTabApp f xs =
         dropSubst $ simplifyExpr $ Case e alts' resultTy eff
       _ -> naryTabApp atom $ toList xs
 
-    -- TODO: This function could just become a special case for an app of a lambda.
-    -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (TabLamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       TabLam lam -> return $ Left lam
-      Var v -> do
-        env <- getSubst
-        case env ! v of
-          SubstVal x -> return $ Right x
-          Rename v' -> do
-            AtomNameBinding bindingInfo <- lookupEnv v'
-            case bindingInfo of
-              LetBound (DeclBinding _ _ (Atom x)) -> case x of
-                TabLam _ -> return $ Right x
-                _        -> dropSubst $ Right <$> simplifyAtom x
-              _ -> return $ Right $ Var v'
       _ -> Right <$> simplifyAtom func
 
 simplifyAtom :: Atom i -> SimplifyM i o (Atom o)
