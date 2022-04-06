@@ -62,7 +62,7 @@ module Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toSubstPairs, fromSubstPairs, SubstPair (..),
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
+  HoistExcept (..), liftHoistExcept', liftHoistExcept, abstractFreeVars, abstractFreeVar,
   abstractFreeVarsNoAnn,
   WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV, withScopeFromFreeVars, canonicalizeForPrinting,
@@ -2536,6 +2536,11 @@ canonicalizeForPrinting e cont =
 liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
+
+liftHoistExcept' :: Fallible m => String -> HoistExcept a -> m a
+liftHoistExcept' _ (HoistSuccess x) = return x
+liftHoistExcept' msg (HoistFailure vs) =
+  throw EscapedNameErr $ (pprint vs) ++ "\n" ++ msg
 
 ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x
