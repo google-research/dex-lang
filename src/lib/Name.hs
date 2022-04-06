@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Name (
-  Name (..), RawName (..), freshRawName,
+  Name (..), RawName, freshRawName,
   S (..), C (..), (<.>), SubstFrag (..), NameBinder (..),
   SubstReader (..), FromName (..), Distinct, DExt,
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
@@ -50,7 +50,7 @@ module Name (
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
-  HasNameHint (..), NameHint (..), noHint, Color (..),
+  HasNameHint (..), NameHint, noHint, Color (..),
   GenericE (..), GenericB (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5, EitherE6,
     pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4, pattern Case5,
@@ -69,7 +69,7 @@ module Name (
   ClosedWithScope (..),
   WrapE (..), WrapB (..), WithColor (..), fromWithColor,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
-  newName, newNameM, newNames, newNamesM,
+  newName, newNameM, newNames,
   unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
@@ -89,17 +89,14 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
-import qualified Data.Set        as S
 import Data.Functor ((<&>))
 import Data.Foldable (fold, toList)
 import Data.Maybe (catMaybes)
 import Data.Hashable
 import Data.Kind (Type)
-import Data.String
 import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text.Prettyprint.Doc  hiding (nest)
-import qualified Data.Text as T
 import GHC.Stack
 import GHC.Exts (Constraint)
 import qualified GHC.Exts as GHC.Exts
@@ -109,7 +106,7 @@ import Data.Store.Internal
 import qualified Unsafe.Coerce as TrulyUnsafe
 
 import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
-               , freshRawName, rawNameFromHint, rawNamesFromHints, noHint)
+               , freshRawName, rawNameFromHint, rawNames, noHint)
 import qualified RawName as R
 import Util (zipErr, onFst, onSnd, transitiveClosure)
 import Err
@@ -442,7 +439,7 @@ toConstAbs :: (SinkableE e, ScopeReader m, Color c)
            => e n -> m n (Abs (NameBinder c) e n)
 toConstAbs body = do
   WithScope scope body' <- addScope body
-  withFresh "ignore" scope \b -> do
+  withFresh noHint scope \b -> do
     sinkM $ Abs b $ sink body'
 
 toConstAbsPure :: (HoistableE e, SinkableE e, Color c)
@@ -1082,7 +1079,6 @@ data NamePreHash (c::C) (n::S) =
  | HashBoundName Int
  deriving (Eq, Generic)
 
-instance Hashable RawName
 instance Hashable (NamePreHash c n)
 
 data HashEnv n =
@@ -1686,10 +1682,6 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
 
 -- === name hints ===
 
-instance HasNameHint a => HasNameHint (Maybe a) where
-  getNameHint (Just x) = getNameHint x
-  getNameHint (Nothing) = noHint
-
 instance Color c => HasNameHint (BinderP c ann n l) where
   getNameHint (b:>_) = getNameHint b
 
@@ -2285,16 +2277,12 @@ newName hint = sinkFromTop $ newBinder hint \b -> Abs b $ binderName b
 newNameM :: Monad1 m => Color c => NameHint -> m n (Abs (NameBinder c) (Name c) n)
 newNameM hint = return $ newName hint
 
-newNames :: Color c => [NameHint] -> Abs (Nest (NameBinder c)) (ListE (Name c)) n
-newNames hints = do
-  let rawNames =  rawNamesFromHints hints
-  let vs = map UnsafeMakeName rawNames
-  let bs = unsafeListToNest $ map UnsafeMakeBinder rawNames
+newNames :: Color c => Int -> Abs (Nest (NameBinder c)) (ListE (Name c)) n
+newNames n = do
+  let ns = rawNames n
+  let vs = map UnsafeMakeName ns
+  let bs = unsafeListToNest $ map UnsafeMakeBinder ns
   unsafeCoerceE $ Abs bs $ ListE vs
-
-newNamesM :: Monad1 m => Color c => [NameHint]
-          -> m n (Abs (Nest (NameBinder c)) (ListE (Name c)) n)
-newNamesM hints = return $ newNames hints
 
 withFresh :: forall n c a. (Distinct n, Color c)
           => NameHint -> Scope n

@@ -31,7 +31,6 @@ import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import qualified Data.Map.Strict as M
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.String
@@ -39,7 +38,6 @@ import Data.Foldable
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import qualified Data.Set as S
--- import qualified Data.Map.Strict as M
 
 import CUDA (getCudaArchitecture)
 
@@ -1003,7 +1001,7 @@ freshName :: LLVMBuilder m => NameHint -> m L.Name
 freshName hint = do
   used <- gets usedNames
   let v = R.freshRawName hint used
-  modify \s -> s { usedNames = used <> R.singleton v () }
+  modify \s -> s { usedNames = R.insert v () used }
   return $ nameToLName v
   where
     nameToLName :: RawName -> L.Name

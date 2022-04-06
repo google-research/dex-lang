@@ -307,7 +307,7 @@ def bug (n : Type) : Unit =
     w : n = todo
     for i:(w..). ()
   ()
-> Leaked local variables:[v]
+> Leaked local variables:[v#0]
 >
 >   for w':n.
 >   ^^^^

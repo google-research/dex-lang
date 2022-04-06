@@ -163,7 +163,7 @@ instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = confuseGHC >>= \_ -> do
     tys <- impInstrTypes instr
     ListE vs <- ImpM $ ScopedT1 \s -> lift11 do
-      Abs bs vs <- return $ newNames $ map (const "v") tys
+      Abs bs vs <- return $ newNames $ length tys
       let impBs = makeImpBinders bs tys
       let decl = ImpLet impBs instr
       liftM (,s) $ extendInplaceT $ Abs (Nest decl Empty) vs
