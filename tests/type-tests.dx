@@ -366,6 +366,15 @@ def weakerInferenceReduction {n} (l : i:n=>(..i)=>Float) (j:n): Unit =
     ()
   ()
 
+-- Regression test for
+-- https://github.com/google-research/dex-lang/issues/833,
+-- simplification of a table of functions whose type mentions
+-- the table index.
+val = for i:(Fin 2). \(x:Float). for j:(..i). 1
+
+:t val
+> ((i:(Fin 2)) => Float32 -> (..i) => Int32)
+
 -- Tests for table
 
 a = [0, 1]
