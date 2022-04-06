@@ -17,10 +17,7 @@ data-files:          lib/*.dx
                    , static/*.css
                    , static/*.html
                    , static/*.js
-extra-source-files:  lib/*.dx
                    , src/lib/dexrt.bc
-                   , static/index.js
-                   , static/style.css
 
 flag cuda
   description:         Enables building with CUDA support
@@ -45,16 +42,6 @@ flag foreign
 flag debug
   description:         Enable extra checks and stack trace printing (useful for developers)
   default:             False
-
-library dex-resources
-  if os(darwin)
-    exposed-modules:   Resources
-  build-depends:       base
-                     , bytestring
-                     , file-embed
-  hs-source-dirs:      src/resources
-  default-language:    Haskell2010
-  default-extensions:  CPP
 
 library
   exposed-modules:     Algebra
@@ -140,12 +127,6 @@ library
     cxx-options:       -DDEX_LIVE
   if flag(debug)
     cpp-options:       -DDEX_DEBUG
-  if !os(darwin)
-    exposed-modules:   Resources
-    hs-source-dirs:    src/resources
-    build-depends:     file-embed
-  else
-    build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
   ghc-options:         -Wall
@@ -243,8 +224,6 @@ executable dex
                      , prettyprinter
                      , store
                      , unix
-  if os(darwin)
-    build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src
   ghc-options:         -threaded
@@ -281,8 +260,6 @@ foreign-library Dex
                      , llvm-hs
                      , mtl
                      , random
-  if os(darwin)
-    build-depends:     dex-resources
   hs-source-dirs:      src/
   c-sources:           src/Dex/Foreign/rts.c
   cc-options:          -std=c11 -fPIC

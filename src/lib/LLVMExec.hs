@@ -55,10 +55,10 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Control.Exception as E
 
+import Paths_dex  (getDataFileName)
 import Err
 import Logging
 import Syntax
-import Resources
 import CUDA (synchronizeCUDA)
 import LLVM.JIT
 import Util (measureSeconds)
@@ -342,6 +342,7 @@ allocaCells n cont = liftIO $ allocaBytes (n * cellSize) cont
 {-# NOINLINE dexrtAST #-}
 dexrtAST :: L.Module
 dexrtAST = unsafePerformIO $ do
+  dexrtBC <- B.readFile =<< getDataFileName "src/lib/dexrt.bc"
   withContext \ctx -> do
     Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) \m ->
       stripFunctionAnnotations <$> Mod.moduleAST m
