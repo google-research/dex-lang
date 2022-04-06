@@ -812,6 +812,22 @@ typeCheckPrimOp op = case op of
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   SynthesizeDict _ ty -> checkTypeE TyKind ty
+  ProjMethod dict methodName -> do
+    Con (LabelCon methodName') <- return methodName
+    TypeCon _ dataDefName params <- getTypeE dict
+    lookupSourceMap methodName' >>= \case
+      Just (UMethodVar  v') -> lookupEnv v' >>= \case
+        MethodBinding _ i _ -> do
+          def <- lookupDataDef dataDefName
+          [DataConDef _ (Abs (Nest (_:>dictTy) Empty) UnitE)] <-
+            checkedApplyDataDefParams def params
+          PairTy _ (ProdTy methodTys) <- return dictTy
+          return $ methodTys !! i
+      _ -> throw TypeErr "Not a method name"
+  ExplicitDict dictTy _  -> do
+    -- TODO: check method
+    checkTypeE TyKind dictTy
+  ExplicitApply _ _ -> error "shouldn't appear after inference"
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

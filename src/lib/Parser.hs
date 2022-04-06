@@ -1434,6 +1434,9 @@ builtinNames = M.fromList
   , ("dataConTag", OpExpr $ DataConTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
   , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
+  , ("projMethod", OpExpr $ ProjMethod () ())
+  , ("explicitDict", OpExpr $ ExplicitDict () ())
+  , ("explicitApply", OpExpr $ ExplicitApply () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()

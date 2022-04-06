@@ -230,6 +230,9 @@ transposeOp op ct = case op of
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
   SynthesizeDict _ _    -> notLinear
+  ProjMethod _ _        -> notLinear
+  ExplicitDict _ _      -> notLinear
+  ExplicitApply _ _     -> notLinear
   where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
 transposeAtom :: HasCallStack => Emits o => Atom i -> Atom o -> TransposeM i o ()

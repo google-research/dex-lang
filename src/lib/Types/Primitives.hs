@@ -140,6 +140,10 @@ data PrimOp e =
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
       | SynthesizeDict SrcPosCtx e  -- Only used during type inference
+      | ProjMethod e e  -- project a method, by source name, from the dict
+      -- Used in prelude for `run_accum`. Only works for single-method classes.
+      | ExplicitDict e e  -- dict type, dict method
+      | ExplicitApply e e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')

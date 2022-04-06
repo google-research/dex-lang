@@ -521,6 +521,16 @@ simplifyOp op = case op of
   ScalarBinOp (ICmp Less ) x y -> ilt x y
   ScalarBinOp (ICmp Equal) x y -> ieq x y
   Select c x y -> select c x y
+  ProjMethod dict methodName -> do
+    Con (LabelCon methodName') <- return methodName
+    lookupSourceMap methodName' >>= \case
+      Just (UMethodVar  v') -> lookupEnv v' >>= \case
+        MethodBinding _ i _ -> do
+          return $ getProjection [i,1,0] dict
+      _ -> throw TypeErr "Not a method name"
+  ExplicitDict dictTy method -> do
+    TypeCon sourceName name params <- return dictTy
+    return $ DataCon sourceName name params 0 [PairVal (ProdVal []) (ProdVal [method])]
   _ -> emitOp op
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)

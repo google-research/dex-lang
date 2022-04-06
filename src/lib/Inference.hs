@@ -780,6 +780,10 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     ty' <- zonk =<< checkUType ty
     val' <- checkSigma val ty'
     matchRequirement val'
+  UPrimExpr (OpExpr (ExplicitApply f x)) -> do
+    f' <- inferFunNoInstantiation f
+    x' <- inferRho x
+    (liftM Var $ emit $ App f' (x':|[])) >>= matchRequirement
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
       xBlock <- buildBlockInf $ inferRho x
@@ -2258,18 +2262,11 @@ getDirectSuperclasses dict = do
 getNumSuperclasses :: EnvReader m => Given n -> m n Int
 getNumSuperclasses dict = liftM runHardFail $ liftEnvReaderT do
   getType dict >>= \case
-    TypeCon sourceName dataDefName _ ->
-     -- AccumMonoid is defined in the prelude using the old `@instance` syntax so
-     -- its dictionary representation doesn't follow the same pattern as all the
-     -- other instances. TODO: either handle AccumMonoid interally or translate it
-     -- to the new syntax and properly deprecate the old one.
-     if sourceName == "AccumMonoid"
-       then return 0
-       else do
-         DataDef _ _ [DataConDef _ (Abs (Nest (_:>dictTy) Empty) UnitE)] <-
-           lookupDataDef dataDefName
-         PairTy (ProdTy superclassTupleTy) _ <- return dictTy
-         return $ length superclassTupleTy
+    TypeCon _ dataDefName _ -> do
+      DataDef _ _ [DataConDef _ (Abs (Nest (_:>dictTy) Empty) UnitE)] <-
+        lookupDataDef dataDefName
+      PairTy (ProdTy superclassTupleTy) _ <- return dictTy
+      return $ length superclassTupleTy
     Pi _ -> return 0
     ty -> error $ "unexpected dict type: " ++ pprint ty
 
