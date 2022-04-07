@@ -27,3 +27,8 @@ v = [1., 2., 3., 4.]
 
 :p trace mat == (11. + 5. + 18. + 1.)
 > True
+
+-- Check that we can differentiate through LU decomposition
+-- This is a regression test for Issue #842.
+snd (linearize (\x. snd $ sign_and_log_determinant [[x]]) 1.0) 2.0
+> 2.
