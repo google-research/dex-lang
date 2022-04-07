@@ -313,3 +313,12 @@ vec = [1.]
 
   check_deriv f 1.0
 > True
+
+-- Regression test for bug #841, linearization through triangular table
+func = \x:Float.
+  table = for i:(Fin 2). for j:(..i). x
+  tmp = (0 @ (Fin 2))
+  sum table.tmp
+
+snd (linearize func 1.0) 2.0
+> 2.

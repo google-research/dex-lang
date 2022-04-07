@@ -1398,7 +1398,7 @@ localVarsAndTypeVars b e =
     varsViaType :: AtomName l -> m l [AtomName l]
     varsViaType v = do
       ty <- getType $ Var v
-      return $ nameSetToList $ freeVarsE ty
+      return $ localVars b ty
 
 localVars :: (Color c, BindsNames b, HoistableE e)
           => b n l -> e l -> [Name c l]
