@@ -52,10 +52,7 @@ module Name (
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), NameHint (..), Color (..),
   GenericE (..), GenericB (..),
-  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5, EitherE6,
-    pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4, pattern Case5,
-  EitherB1, EitherB2, EitherB3, EitherB4, EitherB5,
-    pattern CaseB0, pattern CaseB1, pattern CaseB2, pattern CaseB3, pattern CaseB4,
+  EitherE2, EitherE3, EitherE4, EitherE5, EitherE6 (..),
   splitNestAt, joinNest, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT,
   ExtWitness (..),
@@ -2121,55 +2118,90 @@ instance Store (Scope n)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
 
 
-type EE = EitherE
+-- We often have high-degree sum types that need GenericE instances, and
+-- EitherE seems like a natural choice for those. However, if you have 20
+-- constructors, injecting the last one into the generic representation
+-- requires an unnecessary allocation of 19 RightE constructors! This is
+-- why here we define an n-way sum type, so that the different cases can be
+-- encoded compactly just by changing the constructor tag.
+--
+-- There's nothing special about the number 6. We can always change the width
+-- as we see fit. But it did seem to balance the amount of boilerplate well.
+data EitherE6 (e0::E) (e1::E) (e2::E) (e3::E) (e4::E) (e5::E) (n::S)
+  = Case0 (e0 n)
+  | Case1 (e1 n)
+  | Case2 (e2 n)
+  | Case3 (e3 n)
+  | Case4 (e4 n)
+  | Case5 (e5 n)
+  deriving (Generic)
 
-type EitherE1 e0                = EE e0 VoidE
-type EitherE2 e0 e1             = EE e0 (EE e1 VoidE)
-type EitherE3 e0 e1 e2          = EE e0 (EE e1 (EE e2 VoidE))
-type EitherE4 e0 e1 e2 e3       = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
-type EitherE5 e0 e1 e2 e3 e4    = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
-type EitherE6 e0 e1 e2 e3 e4 e5 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 (EE e5 VoidE)))))
+type EitherE2 e0 e1          = EitherE6 e0 e1 VoidE VoidE VoidE VoidE
+type EitherE3 e0 e1 e2       = EitherE6 e0 e1 e2    VoidE VoidE VoidE
+type EitherE4 e0 e1 e2 e3    = EitherE6 e0 e1 e2    e3    VoidE VoidE
+type EitherE5 e0 e1 e2 e3 e4 = EitherE6 e0 e1 e2    e3    e4    VoidE
 
-pattern Case0 :: e0 n -> EE e0 rest n
-pattern Case0 e = LeftE e
+instance (AlphaHashableE e0, AlphaHashableE e1, AlphaHashableE e2,
+          AlphaHashableE e3, AlphaHashableE e4, AlphaHashableE e5)
+            => AlphaHashableE (EitherE6 e0 e1 e2 e3 e4 e5) where
+  hashWithSaltE env salt = \case
+    Case0 e -> hashWithSaltE env (hashWithSalt salt (0::Int)) e
+    Case1 e -> hashWithSaltE env (hashWithSalt salt (1::Int)) e
+    Case2 e -> hashWithSaltE env (hashWithSalt salt (2::Int)) e
+    Case3 e -> hashWithSaltE env (hashWithSalt salt (3::Int)) e
+    Case4 e -> hashWithSaltE env (hashWithSalt salt (4::Int)) e
+    Case5 e -> hashWithSaltE env (hashWithSalt salt (5::Int)) e
+  {-# INLINE hashWithSaltE #-}
 
-pattern Case1 :: e1 n -> EE e0 (EE e1 rest) n
-pattern Case1 e = RightE (LeftE e)
+instance (SinkableE e0, SinkableE e1, SinkableE e2,
+          SinkableE e3, SinkableE e4, SinkableE e5)
+            => SinkableE (EitherE6 e0 e1 e2 e3 e4 e5) where
+  sinkingProofE fresh = \case
+    Case0 e -> Case0 $ sinkingProofE fresh e
+    Case1 e -> Case1 $ sinkingProofE fresh e
+    Case2 e -> Case2 $ sinkingProofE fresh e
+    Case3 e -> Case3 $ sinkingProofE fresh e
+    Case4 e -> Case4 $ sinkingProofE fresh e
+    Case5 e -> Case5 $ sinkingProofE fresh e
 
-pattern Case2 :: e2 n -> EE e0 (EE e1 (EE e2 rest)) n
-pattern Case2 e = RightE (RightE (LeftE e))
+instance (HoistableE e0, HoistableE e1, HoistableE e2,
+          HoistableE e3, HoistableE e4, HoistableE e5)
+            => HoistableE (EitherE6 e0 e1 e2 e3 e4 e5) where
+  freeVarsE = \case
+    Case0 e -> freeVarsE e
+    Case1 e -> freeVarsE e
+    Case2 e -> freeVarsE e
+    Case3 e -> freeVarsE e
+    Case4 e -> freeVarsE e
+    Case5 e -> freeVarsE e
+  {-# INLINE freeVarsE #-}
 
-pattern Case3 :: e3 n -> EE e0 (EE e1 (EE e2 (EE e3 rest))) n
-pattern Case3 e = RightE (RightE (RightE (LeftE e)))
+instance (SubstE v e0, SubstE v e1, SubstE v e2,
+          SubstE v e3, SubstE v e4, SubstE v e5)
+            => SubstE v (EitherE6 e0 e1 e2 e3 e4 e5) where
+  substE env = \case
+    Case0 e -> Case0 $ substE env e
+    Case1 e -> Case1 $ substE env e
+    Case2 e -> Case2 $ substE env e
+    Case3 e -> Case3 $ substE env e
+    Case4 e -> Case4 $ substE env e
+    Case5 e -> Case5 $ substE env e
+  {-# INLINE substE #-}
 
-pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
-pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
+instance (AlphaEqE e0, AlphaEqE e1, AlphaEqE e2,
+          AlphaEqE e3, AlphaEqE e4, AlphaEqE e5)
+            => AlphaEqE (EitherE6 e0 e1 e2 e3 e4 e5) where
+  alphaEqE (Case0 e1) (Case0 e2) = alphaEqE e1 e2
+  alphaEqE (Case1 e1) (Case1 e2) = alphaEqE e1 e2
+  alphaEqE (Case2 e1) (Case2 e2) = alphaEqE e1 e2
+  alphaEqE (Case3 e1) (Case3 e2) = alphaEqE e1 e2
+  alphaEqE (Case4 e1) (Case4 e2) = alphaEqE e1 e2
+  alphaEqE (Case5 e1) (Case5 e2) = alphaEqE e1 e2
+  alphaEqE _          _          = zipErr
 
-pattern Case5 :: e5 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 (EE e5 rest))))) n
-pattern Case5 e = RightE (RightE (RightE (RightE (RightE (LeftE e)))))
-
-type EB = EitherB
-
-type EitherB1 e0             = EB e0 VoidB
-type EitherB2 e0 e1          = EB e0 (EB e1 VoidB)
-type EitherB3 e0 e1 e2       = EB e0 (EB e1 (EB e2 VoidB))
-type EitherB4 e0 e1 e2 e3    = EB e0 (EB e1 (EB e2 (EB e3 VoidB)))
-type EitherB5 e0 e1 e2 e3 e4 = EB e0 (EB e1 (EB e2 (EB e3 (EB e4 VoidB))))
-
-pattern CaseB0 :: e0 n l -> EB e0 rest n l
-pattern CaseB0 e = LeftB e
-
-pattern CaseB1 :: e1 n l -> EB e0 (EB e1 rest) n l
-pattern CaseB1 e = RightB (LeftB e)
-
-pattern CaseB2 :: e2 n l -> EB e0 (EB e1 (EB e2 rest)) n l
-pattern CaseB2 e = RightB (RightB (LeftB e))
-
-pattern CaseB3 :: e3 n l -> EB e0 (EB e1 (EB e2 (EB e3 rest))) n l
-pattern CaseB3 e = RightB (RightB (RightB (LeftB e)))
-
-pattern CaseB4 :: e4 n l ->  EB e0 (EB e1 (EB e2 (EB e3 (EB e4 rest)))) n l
-pattern CaseB4 e = RightB (RightB (RightB (RightB (LeftB e))))
+instance (Store (e0 n), Store (e1 n), Store (e2 n),
+          Store (e3 n), Store (e4 n), Store (e5 n))
+            => Store (EitherE6 e0 e1 e2 e3 e4 e5 n)
 
 -- ============================================================================
 -- ==============================  UNSAFE CORE  ===============================

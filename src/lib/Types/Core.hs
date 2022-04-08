@@ -933,7 +933,6 @@ instance GenericE Atom where
       Case3 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
       Case4 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
-    _ -> error "impossible"
 
 instance SinkableE   Atom
 instance HoistableE  Atom
@@ -944,7 +943,7 @@ instance SubstE Name Atom
 -- TODO: special handling of ACase too
 instance SubstE AtomSubstVal Atom where
   substE (scope, env) atom = case fromE atom of
-    LeftE specialCase -> case specialCase of
+    Case0 specialCase -> case specialCase of
       -- Var
       Case0 v -> do
         case env ! v of
@@ -957,7 +956,11 @@ instance SubstE AtomSubstVal Atom where
                    Rename v''  -> Var v''
         getProjection (NE.toList idxs) v'
       _ -> error "impossible"
-    RightE rest -> (toE . RightE) $ substE (scope, env) rest
+    Case1 rest -> (toE . Case1) $ substE (scope, env) rest
+    Case2 rest -> (toE . Case2) $ substE (scope, env) rest
+    Case3 rest -> (toE . Case3) $ substE (scope, env) rest
+    Case4 rest -> (toE . Case4) $ substE (scope, env) rest
+    Case5 rest -> (toE . Case5) $ substE (scope, env) rest
 
 getProjection :: HasCallStack => [Int] -> Atom n -> Atom n
 getProjection [] a = a
@@ -1004,7 +1007,6 @@ instance GenericE Expr where
     Case3 (x)                               -> Atom x
     Case4 (ComposeE op)                     -> Op op
     Case5 (ComposeE hof)                    -> Hof hof
-    _ -> error "impossible"
 
 instance SinkableE Expr
 instance HoistableE  Expr
