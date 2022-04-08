@@ -26,7 +26,7 @@
 #   against a patched Dex): pay a slow optimizing compile once but have
 #   the fastest possible Dex development loop.
 #
-# - The bdg build is for hunting (crash) bugs in Dex: pay slow GHC
+# - The dbg build is for hunting (crash) bugs in Dex: pay slow GHC
 #   compilation and slow Dex compilation, but get (relatively) detailed
 #   stack traces from `error` and `C-c`, and extra internal debug checks.
 #
@@ -34,7 +34,7 @@
 #   compilation, but get relatively high signal-to-noise profiling
 #   information on the Dex compiler's performance.
 #
-# The prof and bdg builds are different in two ways: prof turns on
+# The prof and dbg builds are different in two ways: prof turns on
 # GHC's -O, but turns off Dex's self-checks and GHC's automatic cost
 # center insertion.  This way (i) you're profiling optimized rather
 # than unoptimized Dex, and (ii) the profile data is restricted to our
