@@ -62,7 +62,7 @@ module Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toSubstPairs, fromSubstPairs, SubstPair (..),
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
+  HoistExcept (..), liftHoistExcept', liftHoistExcept, abstractFreeVars, abstractFreeVar,
   abstractFreeVarsNoAnn,
   WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV, withScopeFromFreeVars, canonicalizeForPrinting,
@@ -413,19 +413,24 @@ traverseNames
   -> e i -> m o (e o)
 traverseNames f e = do
   let vs = freeVarsE e
-  m <- R.fromList <$> forM (R.toList vs)
-         \(rawName, WithColor (_ :: GHC.Exts.Any c UnsafeS)) -> do
-            x <- f (UnsafeMakeName rawName :: Name c i)
-            return (rawName, WithColor x)
-  fmapNamesM (\((UnsafeMakeName v) :: Name c i) -> case R.lookup v m of
+  m <- flip R.traverseWithKey vs
+         \rawName (WithColor (_ :: GHC.Exts.Any c UnsafeS)) ->
+            WithColor <$> f (UnsafeMakeName rawName :: Name c i)
+  fmapNamesM (applyTraversed m) e
+{-# INLINE traverseNames #-}
+
+applyTraversed :: (FromName v, Color c)
+               => RawNameMap (WithColor v n) -> Name c i -> v c n
+applyTraversed m = \((UnsafeMakeName v) :: Name c i) -> case R.lookup v m of
     Just (WithColor val) -> case tryAsColor val of
       Just val' -> val'
       Nothing -> error "shouldn't happen"
-    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)) e
+    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)
 
 fmapNames :: (SubstE v e, Distinct o)
           => Scope o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
 fmapNames scope f e = substE (scope, newSubst f) e
+{-# INLINE fmapNames #-}
 
 fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
           => (forall c. Color c => Name c i -> v c o)
@@ -434,6 +439,7 @@ fmapNamesM f e = do
   scope <- unsafeGetScope
   Distinct <- getDistinct
   return $ substE (scope, newSubst f) e
+{-# INLINE fmapNamesM #-}
 
 toConstAbs :: (SinkableE e, ScopeReader m, Color c)
            => e n -> m n (Abs (NameBinder c) e n)
@@ -789,7 +795,7 @@ splitNestAt n (Nest b rest) =
 joinNest :: Nest b n m -> Nest b m l -> Nest b n l
 joinNest l Empty = l
 joinNest l r     = doJoinNest l r
-{-# NOINLINE [1] joinNest #-}
+{-# NOINLINE joinNest #-}
 {-# RULES
       "joinNest Empty *"    forall n. joinNest Empty n = n;
       "joinNest * Empty"    forall n. joinNest n Empty = n;
@@ -1468,7 +1474,7 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
 
 -- The bindings returned by the action should be an extension of the input bindings by the emitted decls.
 newtype InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
-  { unsafeRunInplaceT :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS, bindings UnsafeS) }
+  { unsafeRunInplaceT :: Distinct n => bindings n -> decls UnsafeS UnsafeS -> m (a, decls UnsafeS UnsafeS, bindings UnsafeS) }
 
 runInplaceT
   :: (ExtOutMap b d, Monad m)
@@ -1477,7 +1483,7 @@ runInplaceT
   -> InplaceT b d m n a
   -> m (d n n, a)
 runInplaceT bindings (UnsafeMakeInplaceT f) = do
-  (result, d, _) <- f bindings
+  (result, d, _) <- f bindings emptyOutFrag
   return (unsafeCoerceB d, result)
 {-# INLINE runInplaceT #-}
 
@@ -1488,14 +1494,18 @@ extendTrivialInplaceT
   => d n n
   -> InplaceT b d m n ()
 extendTrivialInplaceT d =
-  UnsafeMakeInplaceT \env -> return ((), unsafeCoerceB d, unsafeCoerceE $ extendOutMap env d)
+  UnsafeMakeInplaceT \env decls -> do
+    let env' = unsafeCoerceE $ extendOutMap env d
+    withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+      return ((), catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
 {-# INLINE extendTrivialInplaceT #-}
 
 -- TODO: This should be declared unsafe!
 getOutMapInplaceT
   :: (ExtOutMap b d, Monad m)
   => InplaceT b d m n (b n)
-getOutMapInplaceT = UnsafeMakeInplaceT \bindings -> return (bindings, emptyOutFrag, unsafeCoerceE bindings)
+getOutMapInplaceT = UnsafeMakeInplaceT \env decls ->
+  return (env, decls, unsafeCoerceE env)
 {-# INLINE getOutMapInplaceT #-}
 
 -- === in-place scope updating monad -- mutable stuff ===
@@ -1509,8 +1519,8 @@ extendInplaceTLocal
   -> InplaceT b d m l a
   -> InplaceT b d m n a
 extendInplaceTLocal f cont =
-  UnsafeMakeInplaceT \bindings ->
-    unsafeRunInplaceT cont (f bindings)
+  UnsafeMakeInplaceT \env decls ->
+    unsafeRunInplaceT cont (f env) decls
 {-# INLINE extendInplaceTLocal #-}
 
 extendInplaceT
@@ -1518,9 +1528,12 @@ extendInplaceT
      (ExtOutMap b d, Monad m, SubstB Name d, SubstE Name e)
   => Mut n => Abs d e n -> InplaceT b d m n (e n)
 extendInplaceT ab = do
-  UnsafeMakeInplaceT \env ->
-    refreshAbsPure (toScope env) ab \_ decls result ->
-      return (unsafeCoerceE result, unsafeCoerceB decls, unsafeCoerceE $ extendOutMap env decls)
+  UnsafeMakeInplaceT \env decls ->
+    refreshAbsPure (toScope env) ab \_ d result -> do
+      let env' = unsafeCoerceE $ extendOutMap env d
+      withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+        return (unsafeCoerceE result, catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
+
 {-# INLINE extendInplaceT #-}
 
 locallyMutableInplaceT
@@ -1529,25 +1542,26 @@ locallyMutableInplaceT
   => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
   -> InplaceT b d m n (Abs d e n)
 locallyMutableInplaceT cont = do
-  UnsafeMakeInplaceT \bindings -> do
-    (e, decls, _) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
-                    unsafeRunInplaceT cont bindings
-    return (Abs (unsafeCoerceB decls) e, emptyOutFrag, unsafeCoerceE bindings)
+  UnsafeMakeInplaceT \env decls -> do
+    (e, d, _) <- withMutEvidence (fabricateMutEvidence @n) $
+      unsafeRunInplaceT cont env emptyOutFrag
+    return (Abs (unsafeCoerceB d) e, decls, unsafeCoerceE env)
 {-# INLINE locallyMutableInplaceT #-}
 
 liftBetweenInplaceTs
-  :: (Monad m, ExtOutMap bs ds)
+  :: (Monad m, ExtOutMap bs ds, OutFrag ds')
   => (forall a'. m' a' -> m a')
   -> (bs n -> bs' n)
   -> (forall l l' . Distinct l' => ds' l l' -> ds  l l')
   -> InplaceT bs' ds' m' n a
   -> InplaceT bs  ds  m  n a
 liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
-  UnsafeMakeInplaceT \bindingsOuter -> do
-    (result, declsInner, _) <- liftInner $ f $ lowerBindings bindingsOuter
+  UnsafeMakeInplaceT \envOuter declsOuter -> do
+    (result, dInner, _) <- liftInner $ f (lowerBindings envOuter) emptyOutFrag
     withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) do
-      let declsOuter = liftDecls declsInner
-      return (result, declsOuter, extendOutMap (unsafeCoerceE bindingsOuter) declsOuter)
+      let dOuter = liftDecls dInner
+      let envOuter' = extendOutMap (unsafeCoerceE envOuter) dOuter
+      return (result, catOutFrags (toScope envOuter') declsOuter dOuter, envOuter')
 {-# INLINE liftBetweenInplaceTs #-}
 
 -- === predicates for mutable and immutable scope parameters ===
@@ -1589,20 +1603,17 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where
-  return x = UnsafeMakeInplaceT \env -> do
-    Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence UnsafeS)
-    return (x, emptyOutFrag, unsafeCoerceE env)
+  return x = UnsafeMakeInplaceT \env decls -> do
+    return (x, decls, unsafeCoerceE env)
   {-# INLINE return #-}
-  m >>= f = UnsafeMakeInplaceT \outMap -> do
-    (x, b1, outMap1) <- unsafeRunInplaceT m outMap
-    (y, b2, outMap2) <- unsafeRunInplaceT (f x) (unsafeCoerceE outMap1)
-    Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence UnsafeS)
-    return (y, catOutFrags (unsafeCoerceE (toScope outMap2)) b1 b2, outMap2)
+  m >>= f = UnsafeMakeInplaceT \outMap decls -> do
+    (x, decls1, outMap1) <- unsafeRunInplaceT m outMap decls
+    unsafeRunInplaceT (f x) (unsafeCoerceE outMap1) decls1
   {-# INLINE (>>=) #-}
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
-  getDistinct = UnsafeMakeInplaceT \env -> return (Distinct, emptyOutFrag, unsafeCoerceE env)
+  getDistinct = UnsafeMakeInplaceT \env decls -> return (Distinct, decls, unsafeCoerceE env)
   {-# INLINE getDistinct #-}
   unsafeGetScope = toScope <$> getOutMapInplaceT
   {-# INLINE unsafeGetScope #-}
@@ -1614,9 +1625,9 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, 
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
-  throwErrs errs = UnsafeMakeInplaceT \_ -> throwErrs errs
-  addErrCtx ctx cont = UnsafeMakeInplaceT \bindings ->
-    addErrCtx ctx $ unsafeRunInplaceT cont bindings
+  throwErrs errs = UnsafeMakeInplaceT \_ _ -> throwErrs errs
+  addErrCtx ctx cont = UnsafeMakeInplaceT \env decls ->
+    addErrCtx ctx $ unsafeRunInplaceT cont env decls
   {-# INLINE addErrCtx #-}
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, CtxReader m)
@@ -1628,23 +1639,23 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m
          => Alternative (InplaceT bindings decls m n) where
   empty = lift1 empty
   {-# INLINE empty #-}
-  UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
-    f1 bindings <|> f2 bindings
+  UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \env decls ->
+    f1 env decls <|> f2 env decls
   {-# INLINE (<|>) #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls,
            Monad m, Alternative m, Searcher m)
          => Searcher (InplaceT bindings decls m n) where
-  UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
-    f1 bindings <!> f2 bindings
+  UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \env decls ->
+    f1 env decls <!> f2 env decls
   {-# INLINE (<!>) #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls,
            Catchable m)
          => Catchable (InplaceT bindings decls m n) where
-  catchErr (UnsafeMakeInplaceT f1) handler = UnsafeMakeInplaceT \bindings ->
-    f1 bindings `catchErr` \err -> case handler err of
-      UnsafeMakeInplaceT f2 -> f2 bindings
+  catchErr (UnsafeMakeInplaceT f1) handler = UnsafeMakeInplaceT \env decls ->
+    f1 env decls `catchErr` \err -> case handler err of
+      UnsafeMakeInplaceT f2 -> f2 env decls
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
          , MonadWriter w m)
@@ -1662,7 +1673,7 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls)
          => MonadTrans1 (InplaceT bindings decls) where
-  lift1 m = UnsafeMakeInplaceT \env -> (,emptyOutFrag, unsafeCoerceE env) <$> m
+  lift1 m = UnsafeMakeInplaceT \env decls -> (, decls, unsafeCoerceE env) <$> m
   {-# INLINE lift1 #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
@@ -1671,7 +1682,7 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
   ask = lift1 $ ask
   {-# INLINE ask #-}
   local f (UnsafeMakeInplaceT cont) =
-    UnsafeMakeInplaceT \bindings -> local f (cont bindings)
+    UnsafeMakeInplaceT \env decls -> local f (cont env decls)
   {-# INLINE local #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
@@ -2491,6 +2502,11 @@ canonicalizeForPrinting e cont =
 liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
+
+liftHoistExcept' :: Fallible m => String -> HoistExcept a -> m a
+liftHoistExcept' _ (HoistSuccess x) = return x
+liftHoistExcept' msg (HoistFailure vs) =
+  throw EscapedNameErr $ (pprint vs) ++ "\n" ++ msg
 
 ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x

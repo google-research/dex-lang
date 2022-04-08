@@ -29,6 +29,7 @@ import Data.Store (Store (..))
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
+import GHC.Exts (inline)
 
 import GHC.Generics (Generic (..))
 
@@ -58,6 +59,10 @@ data PrimTC e =
       | LabelType
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
+traversePrimTC :: Applicative f => (e -> f e') -> PrimTC e -> f (PrimTC e')
+traversePrimTC = inline traverse
+{-# INLINABLE traversePrimTC #-}
+
 data PrimCon e =
         Lit LitVal
       | ProdCon [e]
@@ -75,6 +80,10 @@ data PrimCon e =
       | ParIndexCon e e        -- Type, value
       | LabelCon String
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+traversePrimCon :: Applicative f => (e -> f e') -> PrimCon e -> f (PrimCon e')
+traversePrimCon = inline traverse
+{-# INLINABLE traversePrimCon #-}
 
 data PrimOp e =
         TabCon e [e]                 -- table type elements
@@ -132,6 +141,10 @@ data PrimOp e =
       | OutputStreamPtr
       | SynthesizeDict SrcPosCtx e  -- Only used during type inference
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')
+traversePrimOp = inline traverse
+{-# INLINABLE traversePrimOp #-}
 
 data PrimHof e =
         For ForAnn e

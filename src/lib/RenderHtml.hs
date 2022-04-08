@@ -11,20 +11,31 @@ module RenderHtml (pprintHtml, progHtml, ToMarkup) where
 import Text.Blaze.Html5 as H  hiding (map)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
-import Data.Text (pack)
+import Data.Text    qualified as T
+import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
-import GHC.Exts (IsString (..))
+import System.IO.Unsafe
 
 import Control.Monad
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
-import Resources (cssSource, javascriptSource)
+import Paths_dex  (getDataFileName)
 import Syntax
 import PPrint
 import Parser
 import Serialize ()
 import Err
+
+cssSource :: T.Text
+cssSource = unsafePerformIO $
+  T.readFile =<< getDataFileName "static/style.css"
+{-# NOINLINE cssSource #-}
+
+javascriptSource :: T.Text
+javascriptSource = unsafePerformIO $
+  T.readFile =<< getDataFileName "static/index.js"
+{-# NOINLINE javascriptSource #-}
 
 pprintHtml :: ToMarkup a => a -> String
 pprintHtml x = renderHtml $ toMarkup x
@@ -47,7 +58,7 @@ wrapBody blocks = docTypeHtml $ do
   H.body $ H.div inner ! At.id "main-output"
   where
     inner = foldMap (cdiv "cell") blocks
-    jsSource = fromString (javascriptSource ++ "render(RENDER_MODE.STATIC);")
+    jsSource = textValue $ javascriptSource <> "render(RENDER_MODE.STATIC);"
 
 instance ToMarkup Result where
   toMarkup (Result outs err) = foldMap toMarkup outs <> err'
@@ -66,7 +77,7 @@ instance ToMarkup SourceBlock where
     _ -> cdiv "code-block" $ highlightSyntax (pprint block)
 
 mdToHtml :: String -> Html
-mdToHtml s = preEscapedText $ commonmarkToHtml [] $ pack s
+mdToHtml s = preEscapedText $ commonmarkToHtml [] $ T.pack s
 
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)

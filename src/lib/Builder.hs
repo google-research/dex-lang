@@ -57,7 +57,7 @@ import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.Text.Prettyprint.Doc (Pretty (..), line, (<+>))
 import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -315,7 +315,7 @@ liftEmitBuilder :: (Builder m, SinkableE e, SubstE Name e)
 liftEmitBuilder cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
+  let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env emptyOutFrag
   Emits <- fabricateEmitsEvidenceM
   emitDecls (unsafeCoerceB decls) result
 
@@ -427,7 +427,10 @@ buildBlock cont = do
     ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType result
     return $ result `PairE` ty
   let (result `PairE` ty) = results
-  ty' <- liftHoistExcept $ hoist decls ty
+  let msg = "Decls:" <+> line <> pretty decls <> line
+            <> "Result:" <+> line <> pretty result <> line
+            <> "Of type:" <+> line <> pretty ty
+  ty' <- liftHoistExcept' (docAsStr msg) $ hoist decls ty
   Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
   return $ Block (BlockAnn ty') decls' result'
 
@@ -1396,7 +1399,7 @@ localVarsAndTypeVars b e =
     varsViaType :: AtomName l -> m l [AtomName l]
     varsViaType v = do
       ty <- getType $ Var v
-      return $ nameSetToList $ freeVarsE ty
+      return $ localVars b ty
 
 localVars :: (Color c, BindsNames b, HoistableE e)
           => b n l -> e l -> [Name c l]
@@ -1405,8 +1408,10 @@ localVars b e = nameSetToList $
 
 instance GenericE ReconstructAtom where
   type RepE ReconstructAtom = EitherE UnitE (NaryAbs AtomNameC Atom)
-  toE = undefined
-  fromE = undefined
+  fromE IdentityRecon = LeftE UnitE
+  fromE (LamRecon recon) = RightE recon
+  toE (LeftE _) = IdentityRecon
+  toE (RightE recon) = LamRecon recon
 
 instance SinkableE   ReconstructAtom
 instance HoistableE  ReconstructAtom

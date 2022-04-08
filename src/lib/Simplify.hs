@@ -19,6 +19,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
+import GHC.Exts (inline)
 
 import Err
 
@@ -33,6 +34,7 @@ import Linearize
 import Transpose
 import LabeledItems
 import Util (restructure)
+import Types.Primitives
 
 -- === simplification monad ===
 
@@ -73,7 +75,7 @@ data SimplifiedBlock n = SimplifiedBlock (Block n) (ReconstructAtom n)
 -- accessible as nullary functions)
 simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
 simplifyTopBlock block = liftSimplifyM do
-  (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
+  (Abs UnitB block', Abs UnitB recon) <- simplifyAbs $ Abs UnitB block
   return $ SimplifiedBlock block' recon
 {-# SCC simplifyTopBlock #-}
 
@@ -124,7 +126,7 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     xs' <- mapM simplifyAtom xs
     simplifyTabApp f xs'
   Atom x -> simplifyAtom x
-  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Op  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
   Case e alts resultTy eff -> do
     e' <- simplifyAtom e
@@ -236,24 +238,10 @@ simplifyApp f xs =
         dropSubst $ simplifyExpr $ Case e alts' resultTy eff
       _ -> naryApp atom $ toList xs
 
-    -- TODO: This function could just become a special case for an app of a lambda.
-    -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       Lam lam -> return $ Left lam
-      Var v -> do
-        env <- getSubst
-        case env ! v of
-          SubstVal x -> return $ Right x
-          Rename v' -> do
-            AtomNameBinding bindingInfo <- lookupEnv v'
-            case bindingInfo of
-              LetBound (DeclBinding _ _ (Atom x)) -> case x of
-                Lam _ -> return $ Right x
-                _     -> dropSubst $ Right <$> simplifyAtom x
-              _ -> return $ Right $ Var v'
       _ -> Right <$> simplifyAtom func
-{-# SCC simplifyApp #-}
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
@@ -292,24 +280,10 @@ simplifyTabApp f xs =
         dropSubst $ simplifyExpr $ Case e alts' resultTy eff
       _ -> naryTabApp atom $ toList xs
 
-    -- TODO: This function could just become a special case for an app of a lambda.
-    -- The Var case is an ad-hoc optimization that avoids applying an empty substitution.
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (TabLamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       TabLam lam -> return $ Left lam
-      Var v -> do
-        env <- getSubst
-        case env ! v of
-          SubstVal x -> return $ Right x
-          Rename v' -> do
-            AtomNameBinding bindingInfo <- lookupEnv v'
-            case bindingInfo of
-              LetBound (DeclBinding _ _ (Atom x)) -> case x of
-                TabLam _ -> return $ Right x
-                _        -> dropSubst $ Right <$> simplifyAtom x
-              _ -> return $ Right $ Var v'
       _ -> Right <$> simplifyAtom func
-{-# SCC simplifyTabApp #-}
 
 simplifyAtom :: Atom i -> SimplifyM i o (Atom o)
 simplifyAtom atom = confuseGHC >>= \_ -> case atom of
@@ -320,7 +294,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
     -- TODO(subst): Use EnvReaderI to getType before subst
     substM atom >>= getType >>= isData >>= \case
       True -> do
-        (Abs b' body', IdentityRecon) <- simplifyAbs $ Abs b body
+        (Abs b' body', IdentityReconAbs) <- simplifyAbs $ Abs b body
         return $ TabLam $ TabLamExpr b' body'
       False -> substM atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
@@ -329,8 +303,8 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   TabPi _ -> substM atom
   DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
-  Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM simplifyAtom tc
+  Con con -> Con <$> (inline traversePrimCon) simplifyAtom con
+  TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
   TypeCon name def params ->
     TypeCon name <$> substM def <*> mapM simplifyAtom params
@@ -385,26 +359,31 @@ simplifyVar v = do
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
 
-simplifyLam :: Atom i -> SimplifyM i o (Atom o, ReconstructAtom o)
+simplifyLam :: Atom i -> SimplifyM i o (Atom o, Abs LamBinder ReconstructAtom o)
 simplifyLam atom = case atom of
   Lam (LamExpr b body) -> doSimpLam b body
   _ -> substM atom >>= \case
     Lam (LamExpr b body) -> dropSubst $ doSimpLam b body
     _ -> error "Not a lambda expression"
   where
-    doSimpLam :: LamBinder i i' -> Block i' -> SimplifyM i o (Atom o, ReconstructAtom o)
+    doSimpLam :: LamBinder i i' -> Block i'
+      -> SimplifyM i o (Atom o, Abs LamBinder ReconstructAtom o)
     doSimpLam b body = do
       (Abs b' body', recon) <- simplifyAbs $ Abs b body
       return $! (Lam $ LamExpr b' body', recon)
 
-simplifyBinaryLam :: Emits o => Atom i -> SimplifyM i o (Atom o, ReconstructAtom o)
+type BinaryLamBinder = (PairB LamBinder LamBinder)
+
+simplifyBinaryLam :: Emits o => Atom i
+  -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
 simplifyBinaryLam atom = case atom of
   Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> doSimpBinaryLam b1 b2 body
   _ -> substM atom >>= \case
     Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> dropSubst $ doSimpBinaryLam b1 b2 body
     _ -> error "Not a binary lambda expression"
   where
-    doSimpBinaryLam :: LamBinder i i' -> LamBinder i' i'' -> Block i'' -> SimplifyM i o (Atom o, ReconstructAtom o)
+    doSimpBinaryLam :: LamBinder i i' -> LamBinder i' i'' -> Block i''
+      -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
     doSimpBinaryLam b1 b2 body = do
       (Abs (b1' `PairB` b2') body', recon) <- simplifyAbs $ Abs (b1 `PairB` b2) body
       let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
@@ -448,7 +427,7 @@ splitDataComponents = \case
 
 simplifyAbs
   :: (BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
-  => Abs b Block i -> SimplifyM i o (Abs b Block o, ReconstructAtom o)
+  => Abs b Block i -> SimplifyM i o (Abs b Block o, Abs b ReconstructAtom o)
 simplifyAbs (Abs bs body) = fromPairE <$> do
   substBinders bs \bs' -> do
     ab <- buildScoped $ simplifyBlock body
@@ -456,15 +435,12 @@ simplifyAbs (Abs bs body) = fromPairE <$> do
       getType result >>= isData >>= \case
         True -> do
           block <- makeBlock decls $ Atom result
-          return $ PairE (Abs bs' block) IdentityRecon
+          return $ PairE (Abs bs' block) (Abs bs' IdentityRecon)
         False -> do
-          let locals = toScopeFrag bs' >>> toScopeFrag decls
-          -- TODO: this might be too cautious. The type only needs to be hoistable
-          -- above the delcs. In principle it can still mention vars from the lambda
-          -- binders.
+          let locals = toScopeFrag decls
           (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
           let block = Block (BlockAnn $ sink newResultTy) decls (Atom newResult)
-          return $ PairE (Abs bs' block) (LamRecon reconAbs)
+          return $ PairE (Abs bs' block) (Abs bs' (LamRecon reconAbs))
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Emits o => Op o -> SimplifyM i o (Atom o)
@@ -549,53 +525,64 @@ simplifyOp op = case op of
   Select c x y -> select c x y
   _ -> emitOp op
 
+pattern IdentityReconAbs :: Abs binder ReconstructAtom n
+pattern IdentityReconAbs <- Abs _ IdentityRecon
+
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
   For d lam@(Lam lamExpr) -> do
     ixTy <- substM $ argType lamExpr
-    (lam', recon) <- simplifyLam lam
+    (lam', Abs b recon) <- simplifyLam lam
     ans <- liftM Var $ emit $ Hof $ For d lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
         buildTabLam "i" ixTy \i' -> do
           elt <- tabApp (sink ans) $ Var i'
-          applyReconAbs (sink reconAbs) elt
+          -- TODO Avoid substituting the body of `recon` twice (once
+          -- for `applySubst` and once for `applyReconAbs`).  Maybe
+          -- by making `applyReconAbs` run in a `SubstReader`?
+          reconAbs' <- applySubst (b @> i') reconAbs
+          applyReconAbs reconAbs' elt
   While body -> do
-    (lam', IdentityRecon) <- simplifyLam body
+    (lam', IdentityReconAbs) <- simplifyLam body
     liftM Var $ emit $ Hof $ While lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
-    (lam', recon) <- simplifyBinaryLam lam
+    (lam', Abs b recon) <- simplifyBinaryLam lam
     ans <- emit $ Hof $ RunReader r' lam'
-    applyRecon recon $ Var ans
+    let recon' = ignoreHoistFailure $ hoist b recon
+    applyRecon recon' $ Var ans
   RunWriter (BaseMonoid e combine) lam -> do
     e' <- simplifyAtom e
-    (combine', IdentityRecon) <- simplifyBinaryLam combine
-    (lam', recon) <- simplifyBinaryLam lam
+    (combine', IdentityReconAbs) <- simplifyBinaryLam combine
+    (lam', Abs b recon) <- simplifyBinaryLam lam
     let hof' = Hof $ RunWriter (BaseMonoid e' combine') lam'
     (ans, w) <- fromPair =<< liftM Var (emit hof')
-    ans' <- applyRecon recon ans
+    let recon' = ignoreHoistFailure $ hoist b recon
+    ans' <- applyRecon recon' ans
     return $ PairVal ans' w
   RunState s lam -> do
     s' <- simplifyAtom s
-    (lam', recon) <- simplifyBinaryLam lam
+    (lam', Abs b recon) <- simplifyBinaryLam lam
     resultPair <- emit $ Hof $ RunState s' lam'
     (ans, sOut) <- fromPair $ Var resultPair
-    ans' <- applyRecon recon ans
+    let recon' = ignoreHoistFailure $ hoist b recon
+    ans' <- applyRecon recon' ans
     return $ PairVal ans' sOut
   RunIO lam -> do
-    (lam', recon) <- simplifyLam lam
+    (lam', Abs b recon) <- simplifyLam lam
     ans <- emit $ Hof $ RunIO lam'
-    applyRecon recon $ Var ans
+    let recon' = ignoreHoistFailure $ hoist b recon
+    applyRecon recon' $ Var ans
   Linearize lam -> do
-    (lam', IdentityRecon) <- simplifyLam lam
+    (lam', IdentityReconAbs) <- simplifyLam lam
     linearize lam'
   Transpose lam -> do
-    (lam', IdentityRecon) <- simplifyLam lam
+    (lam', IdentityReconAbs) <- simplifyLam lam
     transpose lam'
   CatchException lam -> do
-    (Lam (LamExpr b body), IdentityRecon) <- simplifyLam lam
+    (Lam (LamExpr b body), IdentityReconAbs) <- simplifyLam lam
     dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
   _ -> error $ "not implemented: " ++ pprint hof
 
@@ -731,9 +718,9 @@ simplifiedIxInstance ty = do
     simplifyInstance = liftSimplifyM do
       Abs decls inst <- liftBuilder $ buildScoped $ getIxImpl $ sink ty
       simpAbs <- buildScoped $ simplifyDecls decls do
-        (s , IdentityRecon) <- simplifyLam $ ixSize inst
-        (to, IdentityRecon) <- simplifyLam $ toOrdinal inst
-        (fo, IdentityRecon) <- simplifyLam $ unsafeFromOrdinal inst
+        (s , IdentityReconAbs) <- simplifyLam $ ixSize inst
+        (to, IdentityReconAbs) <- simplifyLam $ toOrdinal inst
+        (fo, IdentityReconAbs) <- simplifyLam $ unsafeFromOrdinal inst
         return $! IxImpl{ ixSize = s, toOrdinal = to, unsafeFromOrdinal = fo }
       return $! case simpAbs of
         Abs simpDecls IxImpl{..} ->

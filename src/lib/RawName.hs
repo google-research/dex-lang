@@ -12,7 +12,7 @@ module RawName
   ( RawName, NameHint, HasNameHint (..), RawNameMap, noHint
   , rawNameFromHint, rawNames, freshRawName, lookup, singleton, restrictKeys
   , keys, elems, mapWithKey, unionWith, difference, intersection
-  , fromList, toList, RawName.null, insert
+  , fromList, toList, RawName.null, insert, traverseWithKey
   , member, disjoint, adjust) where
 
 import Prelude hiding (lookup)
@@ -247,3 +247,6 @@ adjust f i m = M.adjust f (coerce i) m
 
 null :: RawNameMap a -> Bool
 null = M.null
+
+traverseWithKey :: Applicative t => (RawName -> a -> t b) -> RawNameMap a -> t (RawNameMap b)
+traverseWithKey f m = M.traverseWithKey (coerce f) m

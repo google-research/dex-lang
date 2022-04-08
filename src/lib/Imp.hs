@@ -174,8 +174,8 @@ instance ImpBuilder ImpM where
      makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
      makeImpBinders _ _ = error "zip error"
 
-  buildScopedImp cont = ImpM $ ScopedT1 \s -> WriterT1 $ WriterT $
-    liftM (, ListE []) $ liftM (,s) $ locallyMutableInplaceT do
+  buildScopedImp cont = ImpM $ ScopedT1 \s -> WriterT1 \w ->
+    liftM (, w) $ liftM (,s) $ locallyMutableInplaceT do
       Emits <- fabricateEmitsEvidenceM
       (result, (ListE ptrs)) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
          Distinct <- getDistinct

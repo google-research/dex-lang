@@ -8,7 +8,7 @@
 
 module MTL1 (
     MonadTrans11 (..), HoistableState (..),
-    FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
+    FallibleMonoid1 (..), WriterT1, pattern WriterT1, runWriterT1, runWriterT1From,
     StateT1, pattern StateT1, runStateT1, evalStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
     ScopedT1, pattern ScopedT1, runScopedT1,
@@ -16,7 +16,7 @@ module MTL1 (
   ) where
 
 import Control.Monad.Reader
-import Control.Monad.Writer.Strict
+import Control.Monad.Writer.Class
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Control.Monad.Trans.Except as MTE
@@ -39,16 +39,46 @@ class Monoid1 w => FallibleMonoid1 w where
   mfail :: w n
 
 newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
-  WriterT1 { runWriterT1' :: (WriterT (w n) (m n) a) }
-  deriving ( Functor, Applicative, Monad, MonadWriter (w n), MonadFail
+  WrapWriterT1 { runWriterT1' :: (StateT (w n) (m n) a) }
+  deriving ( Functor, Applicative, Monad, MonadFail
            , Fallible, MonadIO)
 
-runWriterT1 :: WriterT1 w m n a -> m n (a, w n)
-runWriterT1 = runWriterT . runWriterT1'
+pattern WriterT1 :: ((w n) -> m n (a, w n)) -> WriterT1 w m n a
+pattern WriterT1 f = WrapWriterT1 (StateT f)
+{-# COMPLETE WriterT1 #-}
+
+runWriterT1 :: Monoid1 w => WriterT1 w m n a -> m n (a, w n)
+runWriterT1 = runWriterT1From mempty
 {-# INLINE runWriterT1 #-}
 
+runWriterT1From :: Monoid1 w => w n -> WriterT1 w m n a -> m n (a, w n)
+runWriterT1From w m = runStateT (runWriterT1' m) w
+{-# INLINE runWriterT1From #-}
+
+instance (Monad1 m, Monoid1 w) => MonadWriter (w n) (WriterT1 w m n) where
+  writer (a, w) = WrapWriterT1 $ a <$ modify (<> w)
+  {-# INLINE writer #-}
+  tell w = WrapWriterT1 $ modify (<> w)
+  {-# INLINE tell #-}
+  listen (WrapWriterT1 m) = WrapWriterT1 $ do
+    cur <- get
+    put mempty
+    ans <- m
+    ext <- get
+    put $ cur <> ext
+    return (ans, ext)
+  {-# INLINE listen #-}
+  pass (WrapWriterT1 m) = WrapWriterT1 $ do
+    cur <- get
+    put mempty
+    (ans, f) <- m
+    ext <- get
+    put $ cur <> f ext
+    return ans
+  {-# INLINE pass #-}
+
 instance Monoid1 w => MonadTrans11 (WriterT1 w) where
-  lift11 = WriterT1 . lift
+  lift11 = WrapWriterT1 . lift
   {-# INLINE lift11 #-}
 
 instance (SinkableE w, Monoid1 w, EnvReader m) => EnvReader (WriterT1 w m) where
@@ -63,13 +93,14 @@ instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) w
 
 instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
-  refreshAbs ab cont = WriterT1 $ WriterT $ do
-    (ans, Abs b update) <- refreshAbs ab \b e -> do
-      (ans, update) <- runWriterT $ runWriterT1' $ cont b e
-      return (ans, Abs b update)
-    case hoist b update of
-      HoistSuccess topUpdate -> return (ans, topUpdate)
-      HoistFailure _ -> return (ans, mfail)
+  refreshAbs ab cont = WriterT1 \s -> do
+    (ans, Abs b updated) <- refreshAbs ab \b e -> do
+      (ans, updated) <- runWriterT1From (sink s) $ cont b e
+      return (ans, Abs b updated)
+    return $ case hoist b updated of
+      HoistSuccess topUpdate -> (ans, topUpdate)
+      HoistFailure _         -> (ans, mfail)
+  {-# INLINE refreshAbs #-}
 
 -------------------- ReaderT1 --------------------
 

@@ -21,7 +21,6 @@ import qualified Data.Map.Strict as M
 
 import PPrint (toJSONStr, printLitBlock)
 import Serialize
-import Resources
 import TopLevel
 import Err
 import Syntax
