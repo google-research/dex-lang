@@ -5,7 +5,7 @@
 ;; https://developers.google.com/open-source/licenses/bsd
 
 (setq dex-highlights
-  '(("^--.*$"                . font-lock-comment-face)
+  '(("--\\([^o].*$\\|$\\)"   . font-lock-comment-face)
     ("^> .*$"                . font-lock-comment-face)
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
     ("\\w+:"                 . font-lock-comment-face)
