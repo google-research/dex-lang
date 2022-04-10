@@ -24,6 +24,19 @@ jobs:
     - name: Checkout the repository
       uses: actions/checkout@v2
 
+    - name: Retrieve core count
+      id: cpuinfo
+      run: |
+        if [[ "$OSTYPE" == "linux"* ]]; then
+          cpu_count=`lscpu | grep "^CPU(s):" | grep -o "[0-9]*$"`
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+          cpu_count=`system_profiler SPHardwareDataType | grep "Cores" | grep -o "[0-9]*$"`
+        else
+          cpu_count=1
+        fi
+        echo "Detected ${cpu_count} (logical) cores."
+        echo "::set-output name=cpu_count::$cpu_count"
+
     - name: Setup Haskell Stack
       uses: actions/setup-haskell@v1
       with:
@@ -69,4 +82,4 @@ jobs:
       run: make build
 
     - name: Run tests
-      run: make tests
+      run: make tests -j${{ steps.cpuinfo.outputs.cpu_count }}
