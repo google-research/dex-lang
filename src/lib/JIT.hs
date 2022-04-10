@@ -31,7 +31,6 @@ import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import qualified Data.Map.Strict as M
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.String
@@ -39,12 +38,12 @@ import Data.Foldable
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import qualified Data.Set as S
--- import qualified Data.Map.Strict as M
 
 import CUDA (getCudaArchitecture)
 
 import Err
 import Syntax
+import qualified RawName as R
 import Name
 import Imp
 import PPrint
@@ -69,7 +68,7 @@ data CompileState = CompileState
   , curInstrs   :: [Named Instruction]
   , scalarDecls :: [Named Instruction]
   , blockName   :: L.Name
-  , usedNames   :: M.Map RawName ()
+  , usedNames   :: R.RawNameMap ()
   , funSpecs    :: S.Set ExternFunSpec
   , globalDefs  :: [L.Definition]
   , curDevice   :: Device
@@ -1001,15 +1000,15 @@ finishBlock term name = do
 freshName :: LLVMBuilder m => NameHint -> m L.Name
 freshName hint = do
   used <- gets usedNames
-  let v = freshRawName hint used
-  modify \s -> s { usedNames = used <> M.singleton v () }
+  let v = R.freshRawName hint used
+  modify \s -> s { usedNames = R.insert v () used }
   return $ nameToLName v
   where
     nameToLName :: RawName -> L.Name
     nameToLName name = L.Name $ toShort $ B.pack $ showName name
 
     showName :: RawName -> String
-    showName (RawName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
+    showName name = show name
 
 -- TODO: consider getting type from instruction rather than passing it explicitly
 emitInstr :: LLVMBuilder m => L.Type -> Instruction -> m Operand

@@ -184,7 +184,7 @@ envQuery = string ":debug" >> sc >> (
        <* eol
   where
     rawName :: Parser RawName
-    rawName = RawName <$> (fromString <$> anyName) <*> intLit
+    rawName = undefined -- RawName <$> (fromString <$> anyName) <*> intLit
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do

@@ -213,7 +213,10 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-tests: quine-tests repl-test module-tests
+tests: unit-tests quine-tests repl-test module-tests
+
+unit-tests:
+	$(STACK) test $(STACK_FLAGS)
 
 quine-tests: $(quine-test-targets)
 

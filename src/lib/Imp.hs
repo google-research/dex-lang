@@ -30,9 +30,10 @@ import Syntax
 import Type
 import Simplify
 import LabeledItems
-import qualified Algebra as A
 import Util (enumerate)
 import Core
+import Algebra qualified as A
+import RawName qualified as R
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -81,7 +82,7 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs base
     AbsPtrs (Abs ptrBs' resDest') ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
     let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> ("res"::NameHint, PtrType bt)
     return (Abs tbs' (Abs ptrBs' resDest'), ptrFormals)
-  let argFormals = nestToList ((NoHint,) . iBinderType) baseArgBs
+  let argFormals = nestToList ((noHint,) . iBinderType) baseArgBs
   dropSubst $ buildImpFunction CEntryFun (argFormals ++ ptrFormals) \argsAndPtrs -> do
     let (args, ptrs) = splitAt (length argFormals) argsAndPtrs
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
@@ -162,7 +163,7 @@ instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = confuseGHC >>= \_ -> do
     tys <- impInstrTypes instr
     ListE vs <- ImpM $ ScopedT1 \s -> lift11 do
-      Abs bs vs <- return $ newNames $ map (const "v") tys
+      Abs bs vs <- return $ newNames $ length tys
       let impBs = makeImpBinders bs tys
       let decl = ImpLet impBs instr
       liftM (,s) $ extendInplaceT $ Abs (Nest decl Empty) vs
@@ -791,7 +792,7 @@ extendIdxsTy (idxsTy, idxs) new = do
   let newAbs = abstractFreeVarsNoAnn idxs new
   Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs idxsTy \idxs' -> do
     ty' <- applyNaryAbs (sink newAbs) idxs'
-    singletonBinderNest NoHint ty'
+    singletonBinderNest noHint ty'
   return $ Abs (bs >>> b) UnitE
 
 type Idxs n = [AtomName n]
@@ -1303,7 +1304,7 @@ elemCountCPoly (Abs bs UnitE) = case bs of
         rhsElemCounts <- refreshBinders b \(b':>_) s -> do
           rest' <- applySubst s $ Abs rest UnitE
           Abs b' <$> elemCountCPoly rest'
-        withFreshBinder NoHint IdxRepTy \b' -> do
+        withFreshBinder noHint IdxRepTy \b' -> do
           let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
           return $ A.psubst (Abs b' sumPoly) size
       _ -> throw NotImplementedErr $
@@ -1556,7 +1557,7 @@ captureClosure decls result = do
 capturedVars :: (Color c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
 capturedVars b e = nameSetToList nameSet
-  where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+  where nameSet = R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

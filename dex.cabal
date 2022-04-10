@@ -68,6 +68,7 @@ library
                      , Name
                      , PPrint
                      , Parser
+                     , RawName
                      , Serialize
                      , Simplify
                      , SourceRename
@@ -280,3 +281,79 @@ foreign-library Dex
     ghc-options:       -O3
   else
     ghc-options:       -O0
+
+test-suite spec
+  type:                exitcode-stdio-1.0
+  main-is:             Spec.hs
+  hs-source-dirs:      tests/unit
+  ghc-options:         -Wall
+  build-depends:       base
+                     , hspec
+                     , QuickCheck
+                     , dex
+  other-modules:       RawNameSpec
+  default-language:    Haskell2010
+  build-tool-depends:  hspec-discover:hspec-discover
+                       -- Mimicking -XGHC2021 in GHC 8.10.1
+  default-extensions:  BangPatterns
+                     , BinaryLiterals
+                     , ConstrainedClassMethods
+                     , ConstraintKinds
+                     , DeriveDataTypeable
+                     , DeriveFoldable
+                     , DeriveFunctor
+                     , DeriveGeneric
+                     , DeriveLift
+                     , DeriveTraversable
+                     , DoAndIfThenElse
+                     , EmptyCase
+                     , EmptyDataDecls
+                     , EmptyDataDeriving
+                     , ExistentialQuantification
+                     , ExplicitForAll
+                     -- FieldSelectors was introduced in GHC 9.2
+                     , FlexibleContexts
+                     , FlexibleInstances
+                     , ForeignFunctionInterface
+                     , GADTSyntax
+                     , GeneralisedNewtypeDeriving
+                     , HexFloatLiterals
+                     , ImplicitPrelude
+                     , ImportQualifiedPost
+                     , InstanceSigs
+                     , KindSignatures
+                     , MonomorphismRestriction
+                     , MultiParamTypeClasses
+                     , NamedFieldPuns
+                     , NamedWildCards
+                     , NumericUnderscores
+                     , PatternGuards
+                     , PolyKinds
+                     , PostfixOperators
+                     , RankNTypes
+                     , RelaxedPolyRec
+                     , ScopedTypeVariables
+                     , StandaloneDeriving
+                     , StandaloneKindSignatures
+                     , StarIsType
+                     , TraditionalRecordSyntax
+                     , TupleSections
+                     , TypeApplications
+                     , TypeOperators
+                     , TypeSynonymInstances
+                     -- Other extensions
+                     , BlockArguments
+                     , CPP
+                     , DataKinds
+                     , DefaultSignatures
+                     , DerivingVia
+                     , FunctionalDependencies
+                     , GADTs
+                     , LambdaCase
+                     , OverloadedStrings
+                     , PatternSynonyms
+                     , QuantifiedConstraints
+                     , RecordWildCards
+                     , TypeFamilies
+                     , ViewPatterns
+
