@@ -148,6 +148,7 @@ instance GenericE ImpInstr where
 
     ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
     IPrimOp op     -> Case3 $ Case1 $ ComposeE op
+  {-# INLINE fromE #-}
 
   toE instr = case instr of
     Case0 instr' -> case instr' of
@@ -177,6 +178,7 @@ instance GenericE ImpInstr where
       _ -> error "impossible"
 
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance SinkableE ImpInstr
 instance HoistableE  ImpInstr
@@ -187,7 +189,9 @@ instance SubstE Name ImpInstr
 instance GenericE ImpBlock where
   type RepE ImpBlock = Abs (Nest ImpDecl) (ListE IExpr)
   fromE (ImpBlock decls results) = Abs decls (ListE results)
+  {-# INLINE fromE #-}
   toE   (Abs decls (ListE results)) = ImpBlock decls results
+  {-# INLINE toE #-}
 
 instance SinkableE ImpBlock
 instance HoistableE  ImpBlock
@@ -202,11 +206,13 @@ instance GenericE IExpr where
   fromE iexpr = case iexpr of
     ILit x -> Case0 (LiftE x)
     IVar v ty -> Case1 (v `PairE` LiftE ty)
+  {-# INLINE fromE #-}
 
   toE rep = case rep of
     Case0 (LiftE x) -> ILit x
     Case1 (v `PairE` LiftE ty) -> IVar v ty
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance SinkableE IExpr
 instance HoistableE  IExpr
@@ -257,11 +263,13 @@ instance GenericE ImpFunction where
   fromE f = case f of
     ImpFunction ty ab   -> Case0 $ LiftE ty `PairE` ab
     FFIFunction ty name -> Case1 $ LiftE (ty, name)
+  {-# INLINE fromE #-}
 
   toE f = case f of
     Case0 (LiftE ty `PairE` ab) -> ImpFunction ty ab
     Case1 (LiftE (ty, name))    -> FFIFunction ty name
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance SinkableE ImpFunction
 instance HoistableE  ImpFunction

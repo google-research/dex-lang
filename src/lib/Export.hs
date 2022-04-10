@@ -170,9 +170,11 @@ instance GenericE ExportType where
   fromE = \case
     ScalarType sbt   -> LeftE $ LiftE sbt
     RectContArrayPtr sbt shape -> RightE $ LiftE sbt `PairE` shapeToE shape
+  {-# INLINE fromE #-}
   toE = \case
     LeftE (LiftE sbt) -> ScalarType sbt
     RightE (LiftE sbt `PairE` shape) -> RectContArrayPtr sbt (shapeFromE shape)
+  {-# INLINE toE #-}
 instance SubstE    Name ExportType
 instance SinkableE      ExportType
 

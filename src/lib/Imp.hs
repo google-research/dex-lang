@@ -115,7 +115,9 @@ data ImpFunctionWithRecon n = ImpFunctionWithRecon (ImpFunction n) (AtomRecon n)
 instance GenericE ImpFunctionWithRecon where
   type RepE ImpFunctionWithRecon = PairE ImpFunction AtomRecon
   fromE (ImpFunctionWithRecon fun recon) = PairE fun recon
+  {-# INLINE fromE #-}
   toE   (PairE fun recon) = ImpFunctionWithRecon fun recon
+  {-# INLINE toE #-}
 
 instance SinkableE ImpFunctionWithRecon
 instance SubstE Name ImpFunctionWithRecon

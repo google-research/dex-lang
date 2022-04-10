@@ -88,7 +88,9 @@ simplifyTopFunction ty f = liftSimplifyM $
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
   fromE (SimplifiedBlock block recon) = PairE block recon
+  {-# INLINE fromE #-}
   toE   (PairE block recon) = SimplifiedBlock block recon
+  {-# INLINE toE #-}
 
 instance SinkableE SimplifiedBlock
 instance SubstE Name SimplifiedBlock
@@ -685,7 +687,9 @@ instance GenericE SimpleIxInstance where
                                  (PairE (Abs (Nest Decl) LamExpr)
                                         (Abs (Nest Decl) LamExpr)))
   fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
+  {-# INLINE fromE #-}
   toE (PairE a (PairE b c)) = SimpleIxInstance a b c
+  {-# INLINE toE #-}
 
 instance SubstE Name SimpleIxInstance
 instance SinkableE SimpleIxInstance

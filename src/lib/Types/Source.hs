@@ -327,8 +327,10 @@ instance GenericE SourceNameDef where
   type RepE SourceNameDef = EitherE UVar (LiftE ModuleSourceName `PairE` MaybeE UVar)
   fromE (LocalVar v) = LeftE v
   fromE (ModuleVar name maybeUVar) = RightE (PairE (LiftE name) (toMaybeE maybeUVar))
+  {-# INLINE fromE #-}
   toE (LeftE v) = LocalVar v
   toE (RightE (PairE (LiftE name) maybeUVar)) = ModuleVar name (fromMaybeE maybeUVar)
+  {-# INLINE toE #-}
 
 instance SinkableE      SourceNameDef
 instance HoistableE     SourceNameDef
@@ -339,7 +341,9 @@ instance SubstE Name    SourceNameDef
 instance GenericE SourceMap where
   type RepE SourceMap = ListE (PairE (LiftE SourceName) (ListE SourceNameDef))
   fromE (SourceMap m) = ListE [PairE (LiftE v) (ListE defs) | (v, defs) <- M.toList m]
+  {-# INLINE fromE #-}
   toE   (ListE pairs) = SourceMap $ M.fromList [(v, defs) | (PairE (LiftE v) (ListE defs)) <- pairs]
+  {-# INLINE toE #-}
 
 deriving via WrapE SourceMap n instance Generic (SourceMap n)
 
@@ -374,6 +378,7 @@ instance GenericE UVar where
     UDataConVar v -> Case2 v
     UClassVar   v -> Case3 v
     UMethodVar  v -> Case4 v
+  {-# INLINE fromE #-}
 
   toE name = case name of
     Case0 v -> UAtomVar    v
@@ -382,6 +387,7 @@ instance GenericE UVar where
     Case3 v -> UClassVar   v
     Case4 v -> UMethodVar  v
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
   pretty name = case name of
