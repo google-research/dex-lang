@@ -409,17 +409,17 @@ instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
 
 instance HasNameHint (UPat' n l) where
   getNameHint (UPatBinder b) = getNameHint b
-  getNameHint _ = "pat"
+  getNameHint _ = noHint
 
 instance HasNameHint ModuleSourceName where
   getNameHint (OrdinaryModule name) = getNameHint name
-  getNameHint Prelude = "prelude"
-  getNameHint Main = "main"
+  getNameHint Prelude = getNameHint @String "prelude"
+  getNameHint Main = getNameHint @String "main"
 
 instance Color c => HasNameHint (UBinder c n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
-    UIgnore       -> fromString "_ign"
+    UIgnore       -> noHint
     UBind v _     -> getNameHint v
 
 instance Color c => BindsNames (UBinder c) where

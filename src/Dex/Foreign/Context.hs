@@ -70,7 +70,7 @@ dexInsert ctxPtr namePtr atomPtr = do
   AtomEx atom <- fromStablePtr atomPtr
   (_, finalEnv) <- runTopperM evalConfig initEnv do
     -- TODO: Check if atom is compatible with context! Use module name?
-    name <- emitTopLet (fromString sourceName) PlainLet $ Atom $ unsafeCoerceE atom
+    name <- emitTopLet (getNameHint @String sourceName) PlainLet $ Atom $ unsafeCoerceE atom
     emitSourceMap $ SourceMap $ M.singleton sourceName [ModuleVar Main $ Just $ UAtomVar name]
   toStablePtr $ Context evalConfig finalEnv
 

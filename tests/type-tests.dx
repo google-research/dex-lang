@@ -373,7 +373,7 @@ def weakerInferenceReduction {n} (l : i:n=>(..i)=>Float) (j:n): Unit =
 val = for i:(Fin 2). \(x:Float). for j:(..i). 1
 
 :t val
-> ((i:(Fin 2)) => Float32 -> (..i) => Int32)
+> ((v#0:(Fin 2)) => Float32 -> (..v#0) => Int32)
 
 -- Tests for table
 
@@ -409,9 +409,9 @@ def mkEmpty (a:Type) : (Fin 0)=>a = []
 > ((Fin 1 & Fin 2) => Float32)
 
 :t [[0.0], [1.0, 2.0]] : i:(Fin 2)=>(..i)=>Float
-> ((i:(Fin 2)) => (..i) => Float32)
+> ((v#0:(Fin 2)) => (..v#0) => Float32)
 :t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] : i:(Fin 2)=>(..i)=>(Fin 2)=>Float
-> ((i:(Fin 2)) => (..i) => (Fin 2) => Float32)
+> ((v#0:(Fin 2)) => (..v#0) => (Fin 2) => Float32)
 
 def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
   for i j. x.(i, j)

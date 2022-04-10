@@ -56,7 +56,7 @@ toImpStandaloneFunction' :: NaryLamExpr o -> SubstImpM i o (ImpFunction o)
 toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
   ty <- naryLamExprType lam
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty
-  let ptrHintTys = [("ptr"::NameHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
+  let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
   dropSubst $ buildImpFunction CInternalFun ptrHintTys \vs -> do
     argResultDest' <- applySubst (ptrBinders@@>vs) argResultDest
     (args, resultDest) <- loadArgDests argResultDest'
@@ -80,7 +80,7 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs base
     -- In particular, every array has to be backend by a single pointer and pairs
     -- should be traversed left-to-right.
     AbsPtrs (Abs ptrBs' resDest') ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
-    let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> ("res"::NameHint, PtrType bt)
+    let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
     return (Abs tbs' (Abs ptrBs' resDest'), ptrFormals)
   let argFormals = nestToList ((noHint,) . iBinderType) baseArgBs
   dropSubst $ buildImpFunction CEntryFun (argFormals ++ ptrFormals) \argsAndPtrs -> do
@@ -873,7 +873,7 @@ makeDestRec idxs depVars ty = case ty of
       else do
         Distinct <- getDistinct
         idxsTy <- extendIdxsTy idxs iTy
-        Con <$> TabRef <$> buildTabLamDest "i" iTy \v -> do
+        Con <$> TabRef <$> buildTabLamDest noHint iTy \v -> do
           let newIdxVals = map sink (snd idxs) <> [v]
           bodyTy' <- applyAbs (sink $ Abs b bodyTy) v
           makeDestRec (sink idxsTy, newIdxVals) (map sink depVars) bodyTy'
@@ -943,7 +943,7 @@ makeBaseTypePtr (idxsTy, idxs) ty = do
   allocInfo <- getAllocInfo
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrTy = (addrSpace, ty)
-  ptr <- Var <$> introduceNewPtr "ptr" ptrTy numel
+  ptr <- Var <$> introduceNewPtr (getNameHint @String "ptr") ptrTy numel
   ptrOffset ptr offset
 
 copyAtom :: Emits n => Dest n -> Atom n -> SubstImpM i n ()
@@ -1015,7 +1015,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
       checkAlphaEq (binderType b) (binderType b')
       let idxTy = binderType b
       n <- indexSetSizeImp idxTy
-      emitLoop "i" Fwd n \i -> do
+      emitLoop noHint Fwd n \i -> do
         idx <- intToIndexImp (sink idxTy) i
         destIndexed <- destGet (sink dest) idx
         srcIndexed  <- dropSubst $ translateExpr Nothing (TabApp (sink src) (idx:|[]))

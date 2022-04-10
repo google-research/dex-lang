@@ -23,7 +23,6 @@ import Data.Char
 import Data.Bits
 import Data.Coerce
 import Data.Store
-import Data.String
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Generics (Generic)
 
@@ -149,23 +148,23 @@ instance HasNameHint RawName where
   getNameHint (RawName name) = NameHint name
 
 instance HasNameHint String where
-  getNameHint = fromString
+  getNameHint = hintFromString
 
-instance IsString NameHint where
-  fromString s = NameHint $ goFromString (nameRepBits - 8) zeroBits s'
-    where
-      s' = case s of [] -> "v"; _ -> s
+hintFromString :: String -> NameHint
+hintFromString s = NameHint $ goFromString (nameRepBits - 8) zeroBits s'
+  where
+    s' = case s of [] -> "v"; _ -> s
 
-      goFromString :: Int -> NameRep -> String -> NameRep
-      goFromString !shft !hint str = case shft > 0 of
-        False -> hint
-        True  -> goFromString (shft - 8) hint' str'
-          where
-            (hBits, str') = case str of
-              []    -> (zeroBits, str)
-              (h:t) -> (fromEnum (if isNiceAscii h then h else '_') .|. 0x80, t)
-            hint' = hint .|. (hBits `shiftL` shft)
-            isNiceAscii h = isAsciiLower h || isAsciiUpper h || isDigit h
+    goFromString :: Int -> NameRep -> String -> NameRep
+    goFromString !shft !hint str = case shft > 0 of
+      False -> hint
+      True  -> goFromString (shft - 8) hint' str'
+        where
+          (hBits, str') = case str of
+            []    -> (zeroBits, str)
+            (h:t) -> (fromEnum (if isNiceAscii h then h else '_') .|. 0x80, t)
+          hint' = hint .|. (hBits `shiftL` shft)
+          isNiceAscii h = isAsciiLower h || isAsciiUpper h || isDigit h
 
 instance HasNameHint a => HasNameHint (Maybe a) where
   getNameHint (Just x) = getNameHint x

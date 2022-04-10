@@ -544,7 +544,7 @@ linearizeHof hof = case hof of
   RunIO (Lam (LamExpr b@(LamBinder _ _ _ effs) body)) -> do
     effs' <- substM $ ignoreHoistFailure $ hoist b effs
     -- TODO: consider the possibility of other effects here besides IO
-    ioLam <- buildLam "_" PlainArrow UnitTy effs' \v -> do
+    ioLam <- buildLam noHint PlainArrow UnitTy effs' \v -> do
       WithTangent primalResult tangentFun <- extendSubst (b@>v) $ linearizeBlock body
       lam <- tangentFunAsLambda tangentFun
       return $ PairVal primalResult lam

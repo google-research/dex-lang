@@ -476,14 +476,14 @@ buildNullaryLam :: ScopableBuilder m
                 => EffectRow n
                 -> (forall l. (Emits l, DExt n l) => m l (Atom l))
                 -> m n (Atom n)
-buildNullaryLam effs cont = buildLam "ignore" PlainArrow UnitTy effs \_ -> cont
+buildNullaryLam effs cont = buildLam noHint PlainArrow UnitTy effs \_ -> cont
 
 buildNullaryPi :: Builder m
                => EffectRow n
                -> (forall l. DExt n l => m l (Type l))
                -> m n (Type n)
 buildNullaryPi effs cont =
-  Pi <$> buildPi "ignore" PlainArrow UnitTy \_ -> do
+  Pi <$> buildPi noHint PlainArrow UnitTy \_ -> do
     resultTy <- cont
     return (sink effs, resultTy)
 
@@ -734,7 +734,7 @@ buildEffLam
   -> m n (Atom n)
 buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
-  buildLam "h" PlainArrow TyKind Pure \h -> do
+  buildLam noHint PlainArrow TyKind Pure \h -> do
     let eff' = extendEffect (RWSEffect rws (Just h)) (sink eff)
     buildLam hint PlainArrow (RefTy (Var h) (sink ty)) eff' \ref ->
       body (sink h) ref
@@ -759,9 +759,9 @@ buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
 unzipTab :: (Emits n, Builder m) => Atom n -> m n (Atom n, Atom n)
 unzipTab tab = do
   TabTy b _ <- getType tab
-  fsts <- liftEmitBuilder $ buildTabLam "i" (binderType b) \i ->
+  fsts <- liftEmitBuilder $ buildTabLam noHint (binderType b) \i ->
             liftM fst $ tabApp (sink tab) (Var i) >>= fromPair
-  snds <- liftEmitBuilder $ buildTabLam "i" (binderType b) \i ->
+  snds <- liftEmitBuilder $ buildTabLam noHint (binderType b) \i ->
             liftM snd $ tabApp (sink tab) (Var i) >>= fromPair
   return (fsts, snds)
 
@@ -852,7 +852,7 @@ maybeTangentType ty = case ty of
 tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
 tangentBaseMonoidFor ty = do
   zero <- zeroAt ty
-  adder <- liftEmitBuilder $ buildLam "t" PlainArrow ty Pure \v -> updateAddAt $ Var v
+  adder <- liftEmitBuilder $ buildLam noHint PlainArrow ty Pure \v -> updateAddAt $ Var v
   return $ BaseMonoid zero adder
 
 addTangent :: (Emits n, Builder m) => Atom n -> Atom n -> m n (Atom n)
@@ -877,13 +877,13 @@ addTangent x y = do
 updateAddAt :: (Emits n, Builder m) => Atom n -> m n (Atom n)
 updateAddAt x = liftEmitBuilder do
   ty <- getType x
-  buildLam "t" PlainArrow ty Pure \v -> addTangent (sink x) (Var v)
+  buildLam noHint PlainArrow ty Pure \v -> addTangent (sink x) (Var v)
 
 -- === builder versions of common top-level emissions ===
 
 litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom n)
 litValToPointerlessAtom litval = case litval of
-  PtrLit val -> Var <$> emitPtrLit "ptr" val
+  PtrLit val -> Var <$> emitPtrLit (getNameHint @String "ptr") val
   VecLit _ -> error "not implemented"
   _ -> return $ Con $ Lit litval
 
@@ -933,7 +933,7 @@ makeMethodGetter classDefName explicit methodIdx = liftBuilder do
   let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
   buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
     defName' <- sinkM defName
-    buildPureLam "dict" ClassArrow (TypeCon sourceName defName' (map Var params)) \dict ->
+    buildPureLam noHint ClassArrow (TypeCon sourceName defName' (map Var params)) \dict ->
       return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
 
 emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> Atom n -> m n (Name TyConNameC n)
@@ -1087,7 +1087,7 @@ ptrOffset x i = emitOp $ PtrOffset x i
 
 unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 unsafePtrLoad x = do
-  lam <- liftEmitBuilder $ buildLam "_ign" PlainArrow UnitTy (oneEffect IOEffect) \_ ->
+  lam <- liftEmitBuilder $ buildLam noHint PlainArrow UnitTy (oneEffect IOEffect) \_ ->
     ptrLoad =<< sinkM x
   liftM Var $ emit $ Hof $ RunIO $ lam
 
@@ -1102,7 +1102,7 @@ liftMonoidEmpty accTy x = do
     True -> return x
     False -> case accTy of
       TabTy b eltTy -> do
-        liftEmitBuilder $ buildTabLam "i" (binderType b) \i -> do
+        liftEmitBuilder $ buildTabLam noHint (binderType b) \i -> do
           x' <- sinkM x
           ab <- sinkM $ Abs b eltTy
           eltTy' <- applyAbs ab i
@@ -1120,7 +1120,7 @@ liftMonoidCombine accTy bc x y = do
     True -> naryApp bc [x, y]
     False -> case accTy of
       TabTy b eltTy -> do
-        liftEmitBuilder $ buildFor "i" Fwd (binderType b) \i -> do
+        liftEmitBuilder $ buildFor noHint Fwd (binderType b) \i -> do
           xElt <- tabApp (sink x) (Var i)
           yElt <- tabApp (sink y) (Var i)
           eltTy' <- applySubst (b@>i) eltTy
@@ -1218,16 +1218,16 @@ reduceE :: (Emits n, Builder m) => BaseMonoid n -> Atom n -> m n (Atom n)
 reduceE monoid xs = liftEmitBuilder do
   TabTy n a <- getType xs
   a' <- return $ ignoreHoistFailure $ hoist n a
-  getSnd =<< emitRunWriter "ref" a' monoid \_ ref ->
-    buildFor "i" Fwd (sink $ binderType n) \i -> do
+  getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
+    buildFor noHint Fwd (sink $ binderType n) \i -> do
       x <- tabApp (sink xs) (Var i)
       emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid n)
 andMonoid =  liftM (BaseMonoid TrueAtom) do
   liftBuilder $
-    buildLam "_" PlainArrow BoolTy Pure \x ->
-      buildLam "_" PlainArrow BoolTy Pure \y -> do
+    buildLam noHint PlainArrow BoolTy Pure \x ->
+      buildLam noHint PlainArrow BoolTy Pure \y -> do
         emitOp $ ScalarBinOp BAnd (sink $ Var x) (Var y)
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
@@ -1277,7 +1277,7 @@ runMaybeWhile :: (Emits n, ScopableBuilder m)
               => (forall l. (Emits l, DExt n l) => m l (Atom l))
               -> m n (Atom n)
 runMaybeWhile body = do
-  hadError <- getSnd =<< emitRunState "ref" FalseAtom \_ ref -> do
+  hadError <- getSnd =<< emitRunState noHint FalseAtom \_ ref -> do
     emitWhile do
       ans <- body
       emitMaybeCase ans Word8Ty
