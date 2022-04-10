@@ -537,7 +537,7 @@ simplifyHof hof = case hof of
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
-        buildTabLam "i" ixTy \i' -> do
+        buildTabLam noHint ixTy \i' -> do
           elt <- tabApp (sink ans) $ Var i'
           -- TODO Avoid substituting the body of `recon` twice (once
           -- for `applySubst` and once for `applyReconAbs`).  Maybe
@@ -632,7 +632,7 @@ exceptToMaybeExpr expr = case expr of
   Hof (RunState s lam) -> do
     s' <- substM s
     Lam (BinaryLamExpr h ref body) <- return lam
-    result  <- emitRunState "ref" s' \h' ref' ->
+    result  <- emitRunState noHint s' \h' ref' ->
       extendSubst (h @> Rename h' <.> ref @> Rename ref') do
         exceptToMaybeBlock body
     (maybeAns, newState) <- fromPair result
@@ -645,7 +645,7 @@ exceptToMaybeExpr expr = case expr of
   Hof (RunWriter monoid (Lam (BinaryLamExpr h ref body))) -> do
     monoid' <- mapM substM monoid
     accumTy <- substM =<< (getReferentTy $ EmptyAbs $ PairB h ref)
-    result <- emitRunWriter "ref" accumTy monoid' \h' ref' ->
+    result <- emitRunWriter noHint accumTy monoid' \h' ref' ->
       extendSubst (h @> Rename h' <.> ref @> Rename ref') $
         exceptToMaybeBlock body
     (maybeAns, accumResult) <- fromPair result

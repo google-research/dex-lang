@@ -23,7 +23,6 @@ import Data.Function ((&))
 import Data.Functor ((<&>), ($>))
 import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
-import Data.String (fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
@@ -133,7 +132,7 @@ applyUDeclAbs (Abs decl result) x = case decl of
   UInstance _ _ _ _ maybeName -> do
     case maybeName of
       RightB UnitB  -> do
-        void $ emitTopLet "instance" InstanceLet $ Atom x
+        void $ emitTopLet (getNameHint @String "instance") InstanceLet $ Atom x
         return result
       JustB instanceName -> do
         instanceVal <- emitTopLet (getNameHint instanceName) PlainLet (Atom x)
@@ -390,7 +389,7 @@ instance Solver (InfererM i) where
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap e
 
-  emitSolver binding = emitInfererM "?" $ RightE binding
+  emitSolver binding = emitInfererM (getNameHint @String "?") $ RightE binding
 
   addDefault t1 t2 = InfererM $ SubstReaderT $ lift $ lift11 $
     extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
@@ -726,7 +725,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         ann' <- getAnnType
         addSrcContext pos' case pat of
           UPatBinder UIgnore ->
-            buildPiInf "_ign" arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
+            buildPiInf noHint arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
           _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
             Abs decls piResult <- buildDeclsInf do
               v' <- sinkM v
@@ -744,7 +743,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     ann' <- checkAnn ann
     piTy <- addSrcContext pos' case pat of
       UPatBinder UIgnore ->
-        buildTabPiInf "_ign" ann' \_ -> checkUType ty
+        buildTabPiInf noHint ann' \_ -> checkUType ty
       _ -> buildTabPiInf (getNameHint pat) ann' \v -> do
         Abs decls piResult <- buildDeclsInf do
           v' <- sinkM v
@@ -1143,7 +1142,7 @@ inferUDeclLocal (UInstance ~(InternalName _ className) argBinders params methods
                       checkInstanceBody className'' params' methods
   case maybeName of
     RightB UnitB  -> do
-      void $ emitDecl "instance" InstanceLet $ Atom instanceDict
+      void $ emitDecl (getNameHint @String "instance") InstanceLet $ Atom instanceDict
       cont
     JustB instanceName -> do
       instanceVal <- emitDecl (getNameHint instanceName) PlainLet (Atom instanceDict)
@@ -1341,7 +1340,7 @@ introDicts :: forall m o. (EmitsBoth o, Solver m, InfBuilder m)
            -> (forall l. (EmitsBoth l, Ext o l) => m l (Atom l))
            -> m o (Atom o)
 introDicts []    m = m
-introDicts (h:t) m = buildLamInf "_autoq" ClassArrow h (const $ return Pure) \_ -> do
+introDicts (h:t) m = buildLamInf (getNameHint @String "_autoq") ClassArrow h (const $ return Pure) \_ -> do
   ListE t' <- sinkM $ ListE t
   introDicts t' m
 
@@ -1350,7 +1349,7 @@ introDictTys :: forall m o. (EmitsInf o, Solver m, InfBuilder m)
              -> (forall l. (EmitsInf l, Ext o l) => m l (PiType l))
              -> m o (PiType o)
 introDictTys []    m = m
-introDictTys (h:t) m = buildPiInf "_autoq" ClassArrow h \_ -> do
+introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
   ListE t' <- sinkM $ ListE t
   (Pure,) . Pi <$> (introDictTys t' m)
 
@@ -1830,7 +1829,7 @@ instance Solver SolverM where
     return $ zonkWithOutMap solverOutMap $ sink e
 
   emitSolver binding = do
-    Abs b v <- freshNameM "?"
+    Abs b v <- freshNameM $ getNameHint @String "?"
     let frag = SolverOutFrag (Nest (b:>binding) Empty) mempty emptySolverSubst
     SolverM $ extendInplaceT $ Abs frag v
 
@@ -2130,7 +2129,7 @@ renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, SubstE Name e)
 renameForPrinting e = do
   infVars <- filterM isInferenceVar $ freeAtomVarsList e
   let ab = abstractFreeVarsNoAnn infVars e
-  let hints = take (length infVars) $ map fromString $
+  let hints = take (length infVars) $ map getNameHint $
                 map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
   Distinct <- getDistinct
   scope <- toScope <$> unsafeGetEnv  -- TODO: figure out how to do it safely

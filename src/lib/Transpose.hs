@@ -27,7 +27,7 @@ transpose lam = liftBuilder do
   let argTy = binderType b
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   runReaderT1 (ListE []) $ runSubstReaderT idSubst $
-    buildLam "ct" LinArrow resultTy' Pure \ct ->
+    buildLam noHint LinArrow resultTy' Pure \ct ->
       withAccumulator (sink argTy) \ref ->
         extendSubst (b @> LinRef ref) $
           transposeBlock body (sink $ Var ct)
@@ -74,7 +74,7 @@ withAccumulator
   -> TransposeM i o (Atom o)
 withAccumulator ty cont = do
   baseMonoid <- getBaseMonoidType ty >>= tangentBaseMonoidFor
-  getSnd =<< emitRunWriter "ref" ty baseMonoid \_ ref ->
+  getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
                cont (Var ref) >> return UnitVal
 
 emitCTToRef :: (Emits n, Builder m) => Atom n -> Atom n -> m n ()
@@ -248,7 +248,7 @@ transposeAtom atom ct = case atom of
   Variant _ _ _ _ -> notImplemented
   TabVal b body   -> do
     ty <- substNonlin $ binderType b
-    void $ buildFor "i" Fwd ty \i -> do
+    void $ buildFor noHint Fwd ty \i -> do
       ct' <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
       return UnitVal
@@ -286,7 +286,7 @@ transposeHof hof ct = case hof of
       return UnitVal
   RunState s (Lam (BinaryLamExpr hB refB body)) -> do
     (ctBody, ctState) <- fromPair ct
-    (_, cts) <- (fromPair =<<) $ emitRunState "s" ctState \h ref -> do
+    (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
           transposeBlock body (sink ctBody)
@@ -295,7 +295,7 @@ transposeHof hof ct = case hof of
   RunReader r (Lam (BinaryLamExpr hB refB body)) -> do
     accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
     baseMonoid <- getBaseMonoidType accumTy >>= tangentBaseMonoidFor
-    (_, ct') <- (fromPair =<<) $ emitRunWriter "w" accumTy baseMonoid \h ref -> do
+    (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
           transposeBlock body (sink ct)
@@ -304,7 +304,7 @@ transposeHof hof ct = case hof of
   RunWriter _ (Lam (BinaryLamExpr hB refB body))-> do
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
-    void $ emitRunReader "r" ctEff \h ref -> do
+    void $ emitRunReader noHint ctEff \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
           transposeBlock body (sink ctBody)

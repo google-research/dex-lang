@@ -414,8 +414,8 @@ makeFunSpec _ (IFunType _ _ _) = error "not implemented"
 compileLoop :: Compiler m => Direction -> IBinder i i' -> Operand -> m i' o () -> m i o ()
 compileLoop d iBinder n compileBody = do
   let loopName = "loop_" ++ (fromString $ pprint $ binderName iBinder)
-  loopBlock <- freshName $ fromString $ loopName
-  nextBlock <- freshName $ fromString $ "cont_" ++ loopName
+  loopBlock <- freshName $ getNameHint $ loopName
+  nextBlock <- freshName $ getNameHint $ "cont_" ++ loopName
   i <- alloca 1 $ scalarTy $ iBinderType iBinder
   i0 <- case d of Fwd -> return $ (0 `withWidthOf` n)
                   Rev -> n `sub` (1 `withWidthOf` n)
@@ -433,9 +433,9 @@ compileLoop d iBinder n compileBody = do
 
 compileIf :: LLVMBuilder m => Operand -> m () -> m () -> m ()
 compileIf cond tb fb = do
-  tbName   <- freshName "if_true"
-  fbName   <- freshName "if_false"
-  contName <- freshName "if_cont"
+  tbName   <- freshName $ getNameHint @String "if_t"
+  fbName   <- freshName $ getNameHint @String "if_f"
+  contName <- freshName $ getNameHint @String "if_c"
   finishBlock (L.CondBr cond tbName fbName []) tbName
   tb
   finishBlock (L.Br contName []) fbName
@@ -444,8 +444,8 @@ compileIf cond tb fb = do
 
 compileWhile :: LLVMBuilder m => m Operand -> m ()
 compileWhile compileBody = do
-  loopBlock <- freshName "whileLoop"
-  nextBlock <- freshName "whileCont"
+  loopBlock <- freshName $ getNameHint @String "loop"
+  nextBlock <- freshName $ getNameHint @String "cont"
   entryCond <- compileBody >>= (`asIntWidth` i1)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   loopCond <- compileBody >>= (`asIntWidth` i1)
@@ -453,7 +453,7 @@ compileWhile compileBody = do
 
 throwRuntimeError :: LLVMBuilder m => m ()
 throwRuntimeError = do
-  deadBlock <- freshName "deadBlock"
+  deadBlock <- freshName $ getNameHint @String "dead"
   finishBlock (L.Ret (Just $ i64Lit 1) []) deadBlock
 
 compilePrimOp :: LLVMBuilder m => PrimOp Operand -> m Operand
@@ -803,7 +803,7 @@ sizeof t = L.ConstantOperand $ C.sizeof 64 t
 
 alloca :: LLVMBuilder m => Int -> L.Type -> m Operand
 alloca elems ty = do
-  v <- freshName "v"
+  v <- freshName noHint
   modify $ setScalarDecls ((v L.:= instr):)
   return $ L.LocalReference (hostPtrTy ty) v
   where instr = L.Alloca ty (Just $ i32Lit elems) 0 []
@@ -888,7 +888,7 @@ asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
 
 freshParamOpPair :: LLVMBuilder m => [L.ParameterAttribute] -> L.Type -> m (Parameter, Operand)
 freshParamOpPair ptrAttrs ty = do
-  v <- freshName "arg"
+  v <- freshName noHint
   let attrs = case ty of
                 L.PointerType _ _ -> ptrAttrs
                 _ -> []
@@ -1013,7 +1013,7 @@ freshName hint = do
 -- TODO: consider getting type from instruction rather than passing it explicitly
 emitInstr :: LLVMBuilder m => L.Type -> Instruction -> m Operand
 emitInstr ty instr = do
-  v <- freshName "v"
+  v <- freshName noHint
   addInstr $ v L.:= instr
   return $ L.LocalReference ty v
 

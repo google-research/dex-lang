@@ -216,7 +216,7 @@ def catLists {a} (xs:List a) (ys:List a) : List a =
 def listToTable {a} ((AsList n xs): List a) : (Fin n)=>a = xs
 
 :t listToTable
-> ((a:Type) ?-> (pat:(List a)) -> (Fin (ProjectElt [0] pat)) => a)
+> ((a:Type) ?-> (v#0:(List a)) -> (Fin (ProjectElt [0] v#0)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
