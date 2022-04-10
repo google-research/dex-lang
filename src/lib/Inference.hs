@@ -219,7 +219,9 @@ newtype Defaults (n::S) = Defaults [(Atom n, Atom VoidS)]
 instance GenericE Defaults where
   type RepE Defaults = ListE (PairE Atom (LiftE (Atom VoidS)))
   fromE (Defaults xys) = ListE [PairE x (LiftE y) | (x, y) <- xys]
+  {-# INLINE fromE #-}
   toE (ListE xys) = Defaults [(x, y) | PairE x (LiftE y) <- xys]
+  {-# INLINE toE #-}
 
 instance SinkableE         Defaults
 instance SubstE Name         Defaults
@@ -331,10 +333,12 @@ instance GenericE RequiredIfaces where
   fromE = \case
     FailIfRequired    -> NothingE
     GatherRequired ds -> JustE ds
+  {-# INLINE fromE #-}
   toE = \case
     NothingE  -> FailIfRequired
     JustE ds  -> GatherRequired ds
     _ -> error "unreachable"
+  {-# INLINE toE #-}
 instance SinkableE RequiredIfaces
 instance SubstE Name RequiredIfaces
 instance HoistableE  RequiredIfaces
@@ -1914,7 +1918,9 @@ instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...
   type RepE SolverSubst = ListE (PairE AtomName Type)
   fromE (SolverSubst m) = ListE $ map (uncurry PairE) $ M.toList m
+  {-# INLINE fromE #-}
   toE (ListE pairs) = SolverSubst $ M.fromList $ map fromPairE pairs
+  {-# INLINE toE #-}
 
 instance SinkableE SolverSubst where
 instance SubstE Name SolverSubst where
@@ -2333,9 +2339,11 @@ instantiateDictParamsRec monoTy polyTy = case polyTy of
     return ([], [])
 
 instance GenericE Givens where
-  type RepE Givens = ListE (PairE (EKey Type) Given)
-  fromE (Givens m) = ListE $ map (uncurry PairE) $ HM.toList m
-  toE   (ListE pairs) = Givens $ HM.fromList $ map fromPairE pairs
+  type RepE Givens = HashMapE (EKey Type) Given
+  fromE (Givens m) = HashMapE m
+  {-# INLINE fromE #-}
+  toE (HashMapE m) = Givens m
+  {-# INLINE toE #-}
 
 instance SinkableE Givens where
 

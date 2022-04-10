@@ -715,7 +715,9 @@ instance SubstB Name EffectBinder
 instance GenericE DataDef where
   type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest Binder) (ListE DataConDef))
   fromE (DataDef name bs cons) = PairE (LiftE name) (Abs bs (ListE cons))
+  {-# INLINE fromE #-}
   toE   (PairE (LiftE name) (Abs bs (ListE cons))) = DataDef name bs cons
+  {-# INLINE toE #-}
 deriving instance Show (DataDef n)
 deriving via WrapE DataDef n instance Generic (DataDef n)
 instance SinkableE DataDef
@@ -728,7 +730,9 @@ instance AlphaHashableE DataDef
 instance GenericE DataConDef where
   type RepE DataConDef = PairE (LiftE SourceName) (Abs (Nest Binder) UnitE)
   fromE (DataConDef name ab) = PairE (LiftE name) ab
+  {-# INLINE fromE #-}
   toE   (PairE (LiftE name) ab) = DataConDef name ab
+  {-# INLINE toE #-}
 instance SinkableE DataConDef
 instance HoistableE  DataConDef
 instance SubstE Name DataConDef
@@ -742,11 +746,13 @@ instance GenericE FieldRowElem where
     StaticFields items         -> Case0 $ ExtLabeledItemsE $ NoExt items
     DynField  labVarName labTy -> Case1 $ labVarName `PairE` labTy
     DynFields fieldVarName     -> Case2 $ fieldVarName
+  {-# INLINE fromE #-}
   toE = \case
     Case0 (ExtLabeledItemsE (Ext items _)) -> StaticFields items
     Case1 (n `PairE` t) -> DynField n t
     Case2 n             -> DynFields n
     _ -> error "unreachable"
+  {-# INLINE toE #-}
 instance SinkableE      FieldRowElem
 instance HoistableE     FieldRowElem
 instance SubstE Name    FieldRowElem
@@ -756,7 +762,9 @@ instance AlphaHashableE FieldRowElem
 instance GenericE FieldRowElems where
   type RepE FieldRowElems = ListE FieldRowElem
   fromE = ListE . fromFieldRowElems
+  {-# INLINE fromE #-}
   toE = fieldRowElemsFromList . fromListE
+  {-# INLINE toE #-}
 instance SinkableE FieldRowElems
 instance HoistableE FieldRowElems
 instance SubstE Name FieldRowElems
@@ -787,8 +795,11 @@ instance GenericE ClassDef where
                              (Name DataDefNameC)
   fromE (ClassDef className methodNames dataDefName) =
           PairE (LiftE (className, methodNames)) dataDefName
+  {-# INLINE fromE #-}
   toE (PairE (LiftE (className, methodNames)) dataDefName) =
         ClassDef className methodNames dataDefName
+  {-# INLINE toE #-}
+
 instance SinkableE         ClassDef
 instance HoistableE        ClassDef
 instance SubstE Name         ClassDef
@@ -816,6 +827,10 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
    deriving Show
 
 instance GenericE Atom where
+  -- As tempting as it might be to reorder cases here, the current permutation
+  -- was chosen as to make GHC inliner confident enough to simplify through
+  -- toE/fromE entirely. If you wish to modify the order, please consuly the
+  -- GHC Core dump to make sure you haven't regressed this optimization.
   type RepE Atom =
       EitherE6
               (EitherE2
@@ -845,16 +860,16 @@ instance GenericE Atom where
   {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
                      LiftE (Label, Int) `PairE` Atom )
   {- VariantTy -}  ( ExtLabeledItemsE Type AtomName )
-            ) (EitherE2
+            ) (EitherE4
   {- Con -}        (ComposeE PrimCon Atom)
   {- TC -}         (ComposeE PrimTC  Atom)
-            ) (EitherE5
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
+            ) (EitherE3
+  {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
   {- DataConRef -} ( DataDefName                    `PairE`
                      ListE Atom                     `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
-  {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
   {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
 
   fromE atom = case atom of
@@ -881,14 +896,15 @@ instance GenericE Atom where
     VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
-    Eff effs -> Case5 $ Case0 $ effs
-    ACase scrut alts ty -> Case5 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
-    DataConRef defName params bs ->
-      Case5 $ Case2 $ defName `PairE` ListE params `PairE` bs
+    Eff effs -> Case4 $ Case2 $ effs
+    ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
     BoxedRef ptrsAndSizes ab ->
-      Case5 $ Case3 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
+      Case5 $ Case0 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
+    DataConRef defName params bs ->
+      Case5 $ Case1 $ defName `PairE` ListE params `PairE` bs
     DepPairRef lhs rhs ty ->
-      Case5 $ Case4 $ lhs `PairE` rhs `PairE` ty
+      Case5 $ Case2 $ lhs `PairE` rhs `PairE` ty
+  {-# INLINE fromE #-}
 
   toE atom = case atom of
     Case0 val -> case val of
@@ -924,15 +940,16 @@ instance GenericE Atom where
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
       Case1 (ComposeE con) -> TC con
+      Case2 effs -> Eff effs
+      Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       _ -> error "impossible"
     Case5 val -> case val of
-      Case0 effs -> Eff effs
-      Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
-      Case2 (defName `PairE` ListE params `PairE` bs) ->
+      Case0 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
+      Case1 (defName `PairE` ListE params `PairE` bs) ->
         DataConRef defName params bs
-      Case3 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
-      Case4 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
+      Case2 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance SinkableE   Atom
 instance HoistableE  Atom
@@ -999,7 +1016,7 @@ instance GenericE Expr where
     Atom x         -> Case3 (x)
     Op op          -> Case4 (ComposeE op)
     Hof hof        -> Case5 (ComposeE hof)
-
+  {-# INLINE fromE #-}
   toE = \case
     Case0 (f `PairE` x `PairE` ListE xs)    -> App    f (x:|xs)
     Case1 (f `PairE` x `PairE` ListE xs)    -> TabApp f (x:|xs)
@@ -1007,6 +1024,7 @@ instance GenericE Expr where
     Case3 (x)                               -> Atom x
     Case4 (ComposeE op)                     -> Op op
     Case5 (ComposeE hof)                    -> Hof hof
+  {-# INLINE toE #-}
 
 instance SinkableE Expr
 instance HoistableE  Expr
@@ -1020,9 +1038,10 @@ instance GenericE (ExtLabeledItemsE e1 e2) where
                                                (ComposeE LabeledItems e1 `PairE` e2)
   fromE (ExtLabeledItemsE (Ext items Nothing))  = LeftE  (ComposeE items)
   fromE (ExtLabeledItemsE (Ext items (Just t))) = RightE (ComposeE items `PairE` t)
-
+  {-# INLINE fromE #-}
   toE (LeftE  (ComposeE items          )) = ExtLabeledItemsE (Ext items Nothing)
   toE (RightE (ComposeE items `PairE` t)) = ExtLabeledItemsE (Ext items (Just t))
+  {-# INLINE toE #-}
 
 instance (SinkableE e1, SinkableE e2) => SinkableE (ExtLabeledItemsE e1 e2)
 instance (HoistableE  e1, HoistableE  e2) => HoistableE  (ExtLabeledItemsE e1 e2)
@@ -1049,9 +1068,11 @@ instance GenericE Block where
   fromE (Block (BlockAnn ty) decls result) = PairE (JustE ty) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
   fromE _ = error "impossible"
+  {-# INLINE fromE #-}
   toE   (PairE (JustE ty) (Abs decls result)) = Block (BlockAnn ty) decls result
   toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
   toE   _ = error "impossible"
+  {-# INLINE toE #-}
 
 deriving instance Show (BlockAnn n l)
 
@@ -1078,12 +1099,14 @@ instance GenericE Cache where
     x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE`
       ListE [LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
              | (sourceName, ((hashVal, deps), result)) <- M.toList evalCache ]
+  {-# INLINE fromE #-}
   toE   (x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE` ListE evalCache) =
     Cache x y z parseCache
       (M.fromList
        [(sourceName, ((hashVal, deps), result))
        | LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
           <- evalCache])
+  {-# INLINE toE #-}
 
 instance SinkableE  Cache
 instance HoistableE Cache
@@ -1132,7 +1155,9 @@ instance AlphaHashableB LamBinder
 instance GenericE LamBinding where
   type RepE LamBinding = PairE (LiftE Arrow) Type
   fromE (LamBinding arr ty) = PairE (LiftE arr) ty
+  {-# INLINE fromE #-}
   toE   (PairE (LiftE arr) ty) = LamBinding arr ty
+  {-# INLINE toE #-}
 
 instance SinkableE LamBinding
 instance HoistableE  LamBinding
@@ -1144,7 +1169,9 @@ instance AlphaHashableE LamBinding
 instance GenericE LamExpr where
   type RepE LamExpr = Abs LamBinder Block
   fromE (LamExpr b block) = Abs b block
+  {-# INLINE fromE #-}
   toE   (Abs b block) = LamExpr b block
+  {-# INLINE toE #-}
 
 instance SinkableE LamExpr
 instance HoistableE  LamExpr
@@ -1158,7 +1185,9 @@ deriving via WrapE LamExpr n instance Generic (LamExpr n)
 instance GenericE TabLamExpr where
   type RepE TabLamExpr = Abs Binder Block
   fromE (TabLamExpr b block) = Abs b block
+  {-# INLINE fromE #-}
   toE   (Abs b block) = TabLamExpr b block
+  {-# INLINE toE #-}
 
 instance SinkableE TabLamExpr
 instance HoistableE  TabLamExpr
@@ -1173,7 +1202,9 @@ deriving via WrapE TabLamExpr n instance Generic (TabLamExpr n)
 instance GenericE PiBinding where
   type RepE PiBinding = PairE (LiftE Arrow) Type
   fromE (PiBinding arr ty) = PairE (LiftE arr) ty
+  {-# INLINE fromE #-}
   toE   (PairE (LiftE arr) ty) = PiBinding arr ty
+  {-# INLINE toE #-}
 
 instance SinkableE PiBinding
 instance HoistableE  PiBinding
@@ -1208,7 +1239,9 @@ instance AlphaHashableB PiBinder
 instance GenericE PiType where
   type RepE PiType = Abs PiBinder (PairE EffectRow Type)
   fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
+  {-# INLINE fromE #-}
   toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
+  {-# INLINE toE #-}
 
 instance SinkableE PiType
 instance HoistableE  PiType
@@ -1222,7 +1255,9 @@ deriving via WrapE PiType n instance Generic (PiType n)
 instance GenericE TabPiType where
   type RepE TabPiType = Abs Binder Type
   fromE (TabPiType b resultTy) = Abs b resultTy
+  {-# INLINE fromE #-}
   toE   (Abs b resultTy) = TabPiType b resultTy
+  {-# INLINE toE #-}
 
 instance SinkableE TabPiType
 instance HoistableE  TabPiType
@@ -1236,7 +1271,9 @@ deriving via WrapE TabPiType n instance Generic (TabPiType n)
 instance GenericE NaryPiType where
   type RepE NaryPiType = Abs (PairB PiBinder (Nest PiBinder)) (PairE EffectRow Type)
   fromE (NaryPiType (NonEmptyNest b bs) eff resultTy) = Abs (PairB b bs) (PairE eff resultTy)
+  {-# INLINE fromE #-}
   toE   (Abs (PairB b bs) (PairE eff resultTy)) = NaryPiType (NonEmptyNest b bs) eff resultTy
+  {-# INLINE toE #-}
 
 instance SinkableE NaryPiType
 instance HoistableE  NaryPiType
@@ -1251,7 +1288,9 @@ instance Store (NaryPiType n)
 instance GenericE NaryLamExpr where
   type RepE NaryLamExpr = Abs (PairB Binder (Nest Binder)) (PairE EffectRow Block)
   fromE (NaryLamExpr (NonEmptyNest b bs) eff body) = Abs (PairB b bs) (PairE eff body)
+  {-# INLINE fromE #-}
   toE   (Abs (PairB b bs) (PairE eff body)) = NaryLamExpr (NonEmptyNest b bs) eff body
+  {-# INLINE toE #-}
 
 instance SinkableE NaryLamExpr
 instance HoistableE  NaryLamExpr
@@ -1266,7 +1305,9 @@ instance Store (NaryLamExpr n)
 instance GenericE DepPairType where
   type RepE DepPairType = Abs Binder Type
   fromE (DepPairType b resultTy) = Abs b resultTy
+  {-# INLINE fromE #-}
   toE   (Abs b resultTy) = DepPairType b resultTy
+  {-# INLINE toE #-}
 
 instance SinkableE   DepPairType
 instance HoistableE  DepPairType
@@ -1282,8 +1323,10 @@ instance GenericE SynthCandidates where
     ListE Atom `PairE` ListE (PairE DataDefName (ListE Atom))
   fromE (SynthCandidates xs ys) = ListE xs `PairE` ListE ys'
     where ys' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList ys)
+  {-# INLINE fromE #-}
   toE (ListE xs `PairE` ListE ys) = SynthCandidates xs ys'
     where ys' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) ys
+  {-# INLINE toE #-}
 
 instance SinkableE      SynthCandidates
 instance HoistableE     SynthCandidates
@@ -1314,6 +1357,7 @@ instance GenericE AtomBinding where
     PtrLitBound x y -> Case1 (Case0 (LiftE x `PairE` y))
     SimpLamBound x y  -> Case1 (Case1 (PairE x y))
     FFIFunBound x y   -> Case1 (Case2 (PairE x y))
+  {-# INLINE fromE #-}
 
   toE = \case
     Case0 x' -> case x' of
@@ -1329,6 +1373,7 @@ instance GenericE AtomBinding where
       Case2 (PairE x y) -> FFIFunBound x y
       _ -> error "impossible"
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance SinkableE AtomBinding
 instance HoistableE  AtomBinding
@@ -1344,11 +1389,13 @@ instance GenericE SolverBinding where
   fromE = \case
     InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
     SkolemBound  ty     -> Case1 ty
+  {-# INLINE fromE #-}
 
   toE = \case
     Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
     Case1 ty                    -> SkolemBound  ty
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance SinkableE SolverBinding
 instance HoistableE  SolverBinding
@@ -1385,6 +1432,7 @@ instance Color c => GenericE (Binding c) where
     ObjectFileBinding objfile           -> Case1 $ Case3 $ objfile
     ModuleBinding m                     -> Case1 $ Case4 $ m
     PtrBinding p                        -> Case1 $ Case5 $ LiftE p
+  {-# INLINE fromE #-}
 
   toE rep = case rep of
     Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
@@ -1399,6 +1447,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
     Case1 (Case5 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
     _ -> error "impossible"
+  {-# INLINE toE #-}
 
 deriving via WrapE (Binding c) n instance Color c => Generic (Binding c n)
 instance SinkableV         Binding
@@ -1411,7 +1460,9 @@ instance Color c => SubstE Name (Binding c)
 instance GenericE DeclBinding where
   type RepE DeclBinding = LiftE LetAnn `PairE` Type `PairE` Expr
   fromE (DeclBinding ann ty expr) = LiftE ann `PairE` ty `PairE` expr
+  {-# INLINE fromE #-}
   toE   (LiftE ann `PairE` ty `PairE` expr) = DeclBinding ann ty expr
+  {-# INLINE toE #-}
 
 instance SinkableE DeclBinding
 instance HoistableE  DeclBinding
@@ -1461,7 +1512,9 @@ instance GenericE PartialTopEnvFrag where
                               `PairE` LoadedModules
                               `PairE` ModuleEnv
   fromE (PartialTopEnvFrag cache loaded env) = cache `PairE` loaded `PairE` env
+  {-# INLINE fromE #-}
   toE (cache `PairE` loaded `PairE` env) = PartialTopEnvFrag cache loaded env
+  {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
 instance HoistableE     PartialTopEnvFrag
@@ -1545,10 +1598,12 @@ instance GenericE Module where
   fromE (Module name deps transDeps sm sc objs) =
     LiftE name `PairE` ListE (S.toList deps) `PairE` ListE (S.toList transDeps)
       `PairE` sm `PairE` sc `PairE` objs
+  {-# INLINE fromE #-}
 
   toE (LiftE name `PairE` ListE deps `PairE` ListE transDeps
          `PairE` sm `PairE` sc `PairE` objs) =
     Module name (S.fromList deps) (S.fromList transDeps) sm sc objs
+  {-# INLINE toE #-}
 
 instance SinkableE      Module
 instance HoistableE     Module
@@ -1560,8 +1615,10 @@ instance GenericE ImportStatus where
   type RepE ImportStatus = ListE ModuleName `PairE` ListE ModuleName
   fromE (ImportStatus direct trans) = ListE (S.toList direct)
                               `PairE` ListE (S.toList trans)
+  {-# INLINE fromE #-}
   toE (ListE direct `PairE` ListE trans) =
     ImportStatus (S.fromList direct) (S.fromList trans)
+  {-# INLINE toE #-}
 
 instance SinkableE      ImportStatus
 instance HoistableE     ImportStatus
@@ -1581,8 +1638,10 @@ instance GenericE LoadedModules where
   type RepE LoadedModules = ListE (PairE (LiftE ModuleSourceName) ModuleName)
   fromE (LoadedModules m) =
     ListE $ M.toList m <&> \(v,md) -> PairE (LiftE v) md
+  {-# INLINE fromE #-}
   toE (ListE pairs) =
     LoadedModules $ M.fromList $ pairs <&> \(PairE (LiftE v) md) -> (v, md)
+  {-# INLINE toE #-}
 
 instance SinkableE      LoadedModules
 instance HoistableE     LoadedModules
@@ -1593,7 +1652,9 @@ instance SubstE Name    LoadedModules
 instance GenericE ObjectFile where
   type RepE ObjectFile = LiftE (BS.ByteString, [CFunName]) `PairE` ListE ObjectFileName
   fromE (ObjectFile contents fs deps) = LiftE (contents, fs) `PairE` ListE deps
+  {-# INLINE fromE #-}
   toE   (LiftE (contents, fs) `PairE` ListE deps) = ObjectFile contents fs deps
+  {-# INLINE toE #-}
 
 instance Store (ObjectFile n)
 instance SubstE Name ObjectFile
@@ -1603,7 +1664,9 @@ instance HoistableE ObjectFile
 instance GenericE CFun where
   type RepE CFun = LiftE CFunName `PairE` ObjectFileName
   fromE (CFun name obj) = LiftE name `PairE` obj
+  {-# INLINE fromE #-}
   toE   (LiftE name `PairE` obj) = CFun name obj
+  {-# INLINE toE #-}
 
 instance Store (CFun n)
 instance SubstE Name CFun
@@ -1614,7 +1677,9 @@ instance HoistableE CFun
 instance GenericE ObjectFiles where
   type RepE ObjectFiles = ListE ObjectFileName
   fromE (ObjectFiles xs) = ListE $ S.toList xs
+  {-# INLINE fromE #-}
   toE   (ListE xs) = ObjectFiles $ S.fromList xs
+  {-# INLINE toE #-}
 
 instance SinkableE      ObjectFiles
 instance HoistableE     ObjectFiles
@@ -1630,8 +1695,10 @@ instance GenericE ModuleEnv where
                 `PairE` EffectRow
   fromE (ModuleEnv imports sm sc obj eff) =
     imports `PairE` sm `PairE` sc `PairE` obj `PairE` eff
+  {-# INLINE fromE #-}
   toE (imports `PairE` sm `PairE` sc `PairE` obj `PairE` eff) =
     ModuleEnv imports sm sc obj eff
+  {-# INLINE toE #-}
 
 instance SinkableE      ModuleEnv
 instance HoistableE     ModuleEnv

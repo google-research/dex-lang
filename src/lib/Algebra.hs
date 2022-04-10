@@ -320,7 +320,9 @@ emitPolyName v = do
 instance GenericE Monomial where
   type RepE Monomial = ListE (PairE PolyName (LiftE Int))
   fromE (Monomial m) = ListE $ toList m <&> \(v, n) -> PairE v (LiftE n)
+  {-# INLINE fromE #-}
   toE (ListE pairs) = Monomial $ fromList $ pairs <&> \(PairE v (LiftE n)) -> (v, n)
+  {-# INLINE toE #-}
 
 instance SinkableE  Monomial
 instance HoistableE Monomial
@@ -329,7 +331,9 @@ instance AlphaEqE   Monomial
 instance GenericE ClampMonomial where
   type RepE ClampMonomial = PairE (ListE Clamp) Monomial
   fromE (ClampMonomial clamps m) = PairE (ListE clamps) m
+  {-# INLINE fromE #-}
   toE   (PairE (ListE clamps) m) = ClampMonomial clamps m
+  {-# INLINE toE #-}
 
 instance SinkableE  ClampMonomial
 instance HoistableE ClampMonomial
@@ -338,7 +342,9 @@ instance AlphaEqE   ClampMonomial
 instance OrdE mono => GenericE (PolynomialP mono) where
   type RepE (PolynomialP mono) = ListE (PairE mono (LiftE Constant))
   fromE (Polynomial m) = ListE $ toList m <&> \(x, n) -> PairE x (LiftE n)
+  {-# INLINE fromE #-}
   toE (ListE pairs) = Polynomial $ fromList $ pairs <&> \(PairE x (LiftE n)) -> (x, n)
+  {-# INLINE toE #-}
 
 instance (OrdE mono, SinkableE  mono) => SinkableE  (PolynomialP mono)
 instance (OrdE mono, HoistableE mono) => HoistableE (PolynomialP mono)

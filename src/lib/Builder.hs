@@ -1136,10 +1136,14 @@ clampPositive x = do
   select isNegative (IdxRepVal 0) x
 
 data IxImpl n = IxImpl { ixSize :: Atom n, toOrdinal :: Atom n, unsafeFromOrdinal :: Atom n }
+
 instance GenericE IxImpl where
   type RepE IxImpl = Atom `PairE` Atom `PairE` Atom
   fromE IxImpl{..} = ixSize `PairE` toOrdinal `PairE` unsafeFromOrdinal
+  {-# INLINE fromE #-}
   toE (ixSize `PairE` toOrdinal `PairE` unsafeFromOrdinal) = IxImpl{..}
+  {-# INLINE toE #-}
+
 instance SinkableE IxImpl
 
 getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)

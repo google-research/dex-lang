@@ -334,10 +334,12 @@ instance GenericE (EffectP name) where
     RWSEffect rws name -> LeftE  (PairE (LiftE rws) $ toMaybeE name)
     ExceptionEffect -> RightE (LiftE (Left  ()))
     IOEffect        -> RightE (LiftE (Right ()))
+  {-# INLINE fromE #-}
   toE = \case
     LeftE  (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
     RightE (LiftE (Left  ())) -> ExceptionEffect
     RightE (LiftE (Right ())) -> IOEffect
+  {-# INLINE toE #-}
 
 instance Color c => SinkableE      (EffectP (Name c))
 instance Color c => HoistableE     (EffectP (Name c))
@@ -350,10 +352,12 @@ instance OrdE name => GenericE (EffectRowP name) where
   fromE (EffectRow effs ext) = ListE (S.toList effs) `PairE` ext'
     where ext' = case ext of Just v  -> JustE v
                              Nothing -> NothingE
+  {-# INLINE fromE #-}
   toE (ListE effs `PairE` ext) = EffectRow (S.fromList effs) ext'
     where ext' = case ext of JustE v  -> Just v
                              NothingE -> Nothing
                              _ -> error "impossible"
+  {-# INLINE toE #-}
 
 instance Color c => SinkableE         (EffectRowP (Name c))
 instance Color c => HoistableE        (EffectRowP (Name c))

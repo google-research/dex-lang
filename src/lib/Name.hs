@@ -1212,7 +1212,9 @@ newtype EKey (e::E) (n::S) = EKey { fromEKey :: e n }
 instance GenericE (EKey e) where
   type RepE (EKey e) = e
   fromE (EKey e) = e
+  {-# INLINE fromE #-}
   toE e = EKey e
+  {-# INLINE toE #-}
 
 -- We can do alpha-invariant equality checking without a scope at hand. It's
 -- slower (because we have to query the free vars of both expressions) and its
@@ -1272,7 +1274,9 @@ instance (AlphaEqE k, AlphaHashableE k, HoistableE k)
          => GenericE (EMap k v) where
   type RepE (EMap k v) = ListE (PairE k v)
   fromE m = ListE $ map (uncurry PairE) $ eMapToList m
+  {-# INLINE fromE #-}
   toE (ListE pairs) = eMapFromList $ map fromPairE pairs
+  {-# INLINE toE #-}
 
 instance (AlphaEqE   k, AlphaHashableE k, HoistableE k, SubstE sv k, SubstE sv v) => SubstE sv (EMap k v)
 instance (AlphaEqE   k, AlphaHashableE k, HoistableE k, SinkableE  k, SinkableE  v) => SinkableE  (EMap k v)
@@ -2022,7 +2026,9 @@ instance Semigroup (ListE e n) where
 instance (EqE k, HashableE k) => GenericE (HashMapE k v) where
   type RepE (HashMapE k v) = ListE (PairE k v)
   fromE (HashMapE m) = ListE $ map (uncurry PairE) $ HM.toList m
+  {-# INLINE fromE #-}
   toE   (ListE pairs) = HashMapE $ HM.fromList $ map fromPairE pairs
+  {-# INLINE toE #-}
 instance (EqE k, HashableE k, SinkableE k  , SinkableE   v) => SinkableE   (HashMapE k v)
 instance (EqE k, HashableE k, HoistableE k , HoistableE  v) => HoistableE  (HashMapE k v)
 instance (EqE k, HashableE k, SubstE Name k, SubstE Name v) => SubstE Name (HashMapE k v)

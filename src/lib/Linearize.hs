@@ -592,7 +592,9 @@ notImplemented = error "Not implemented"
 instance GenericE ActivePrimals where
   type RepE ActivePrimals = PairE (ListE AtomName) EffectRow
   fromE (ActivePrimals vs effs) = ListE vs `PairE` effs
+  {-# INLINE fromE #-}
   toE   (ListE vs `PairE` effs) = ActivePrimals vs effs
+  {-# INLINE toE #-}
 
 instance SinkableE   ActivePrimals
 instance HoistableE  ActivePrimals
@@ -602,7 +604,9 @@ instance SubstE Name ActivePrimals
 instance GenericE TangentArgs where
   type RepE TangentArgs = ListE AtomName
   fromE (TangentArgs vs) = ListE vs
+  {-# INLINE fromE #-}
   toE   (ListE vs) = TangentArgs vs
+  {-# INLINE toE #-}
 
 instance SinkableE   TangentArgs
 instance HoistableE  TangentArgs
