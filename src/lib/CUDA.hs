@@ -30,9 +30,11 @@ cuMemcpyDToH = error "Dex built without CUDA support"
 
 synchronizeCUDA :: IO ()
 synchronizeCUDA = return ()
+{-# SCC synchronizeCUDA #-}
 
 ensureHasCUDAContext :: IO ()
 ensureHasCUDAContext = return ()
+{-# SCC ensureHasCUDAContext #-}
 
 getCudaArchitecture :: Int -> IO String
 getCudaArchitecture _ = error "Dex built without CUDA support"
@@ -42,7 +44,4 @@ loadCUDAArray :: Ptr () -> Ptr () -> Int -> IO ()
 loadCUDAArray hostPtr devicePtr bytes = do
   ensureHasCUDAContext
   cuMemcpyDToH (fromIntegral bytes) devicePtr hostPtr
-
-{-# SCC synchronizeCUDA #-}
-{-# SCC ensureHasCUDAContext #-}
 {-# SCC loadCUDAArray #-}
