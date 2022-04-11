@@ -30,14 +30,22 @@
 
 '## No LaTeX rendering in non-prose-blocks
 
-'LaTeX rendering should not occur in code blocks, not in error output cells.
+'LaTeX rendering should not occur in code blocks, nor in error output cells.
 
-def arraySum (x:a=>Int32) : Int32 =
-  initAcc = 0
+def array_sum {a} (x:a=>Int32) : Int32 =
   -- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
-  snd $ with_state initAcc $ \acc.
+  -- Note: the incorrect usage of `with_state` below is intentional to verify
+  --       that `$ ... $` is not rendered as LaTeX in error output cells.
+  snd $ with_state 0 $ \acc.
     for i.
       acc := (get acc) + x.i
+> Type error:
+> Expected: (a.1 & b)
+>   Actual: (a => Unit)
+> (Solving for: [a.1, b])
+>
+>   snd $ with_state 0 $ \acc.
+>         ^^^^^^^^^^^^^^^^^^^^^
 
 '## [Layout annotation](https://katex.org/docs/supported.html#annotation)
 
