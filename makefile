@@ -190,7 +190,8 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
                 sgd psd kernelregression \
-                quaternions manifold-gradients schrodinger tutorial
+                quaternions manifold-gradients schrodinger tutorial \
+                latex
 # TODO: re-enable
 # fft vega-plotting
 
