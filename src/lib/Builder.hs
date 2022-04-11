@@ -1144,7 +1144,8 @@ instance SinkableE IxImpl
 
 getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
 getIxImpl ty = do
-  [ixSize, toOrdinal, unsafeFromOrdinal] <- getUnpacked =<< getProj 1 =<< getProj 0 =<< emitBlock =<< synthIx ty
+  dict <- emitBlock =<< synthIx ty
+  let [ixSize, toOrdinal, unsafeFromOrdinal] = map (\i -> getProjection [i,1,0] dict) [0..2]
   return $ IxImpl{..}
 
 intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
