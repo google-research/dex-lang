@@ -202,15 +202,12 @@ exportObjectFile modules exportFn = do
 runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
 runDefaultPasses t m = do
   P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
-  -- We are highly dependent on LLVM when it comes to some optimizations such as
-  -- turning a sequence of scalar stores into a vector store, so we execute some
-  -- extra passes to make sure they get simplified correctly.
-  runPasses extraPasses (Just t) m
-  P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
+  case extraPasses of
+    [] -> return ()
+    _  -> runPasses extraPasses (Just t) m
   where
-    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
-    extraPasses = [ P.SuperwordLevelParallelismVectorize
-                  , P.FunctionInlining 0 ]
+    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 1}
+    extraPasses = []
 
 runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
 runPasses passes mt m = do
