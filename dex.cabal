@@ -230,6 +230,7 @@ executable dex
   ghc-options:         -threaded
                        -optP-Wno-nonportable-include-path
                        -rtsopts
+                       "-with-rtsopts=-I0 -A16m"
   default-extensions:  CPP
                      , DeriveGeneric
                      , LambdaCase
