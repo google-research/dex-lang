@@ -412,7 +412,7 @@ instance Pretty (ClassDef n) where
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance Pretty (TopEnv n) where
-  pretty (TopEnv _ defs cache ms) =
+  pretty (TopEnv defs cache ms) =
     prettyRecord [ ("Defs"          , p defs)
                  , ("Cache"         , p cache)
                  , ("Loaded modules", p ms)]

@@ -594,10 +594,9 @@ clearCache = liftIO do
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
 stripEnvForSerialization :: TopStateEx -> TopStateEx
-stripEnvForSerialization (TopStateEx (Env (TopEnv _ (RecSubst defs) cache _) _)) =
-  collectGarbage (RecSubstFrag defs) cache \d@(RecSubstFrag defs') cache' -> do
-    let scope = Scope $ toScopeFrag d
-    TopStateEx $ Env (TopEnv scope (RecSubst defs') cache' mempty) emptyModuleEnv
+stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) cache _) _)) =
+  collectGarbage (RecSubstFrag defs) cache \(RecSubstFrag defs') cache' -> do
+    TopStateEx $ Env (TopEnv (RecSubst defs') cache' mempty) emptyModuleEnv
 
 snapshotPtrs :: MonadIO m => TopStateEx -> m TopStateEx
 snapshotPtrs s = traverseBindingsTopStateEx s \case
