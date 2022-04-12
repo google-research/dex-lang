@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main, safe-names-dev ]
+    branches: [ main ]
 
 jobs:
   build:
@@ -23,13 +23,6 @@ jobs:
     steps:
     - name: Checkout the repository
       uses: actions/checkout@v2
-
-    - name: Setup Haskell Stack
-      uses: actions/setup-haskell@v1
-      with:
-        enable-stack: true
-        stack-no-global: true
-        stack-version: 'latest'
 
     - name: Install system dependencies
       run: |
