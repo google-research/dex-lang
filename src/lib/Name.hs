@@ -70,7 +70,7 @@ module Name (
   newName, newNameM, newNames,
   unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
-  freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
+  freeVarsList, isFreeIn, anyFreeIn, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence,
@@ -2594,10 +2594,12 @@ ignoreHoistFailure (HoistFailure _) = error "hoist failure"
 
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
-  case nameSetRawNames $ R.intersection (freeVarsE e) frag of
-    []          -> HoistSuccess $ unsafeCoerceE e
-    leakedNames -> HoistFailure leakedNames
-  where UnsafeMakeScopeFrag frag = toScopeFrag b
+  case R.disjoint fvs frag of
+    True  -> HoistSuccess $ unsafeCoerceE e
+    False -> HoistFailure $ nameSetRawNames $ R.intersection fvs frag
+  where
+    UnsafeMakeScopeFrag frag = toScopeFrag b
+    fvs = freeVarsE e
 
 hoistToTop :: HoistableE e => e n -> HoistExcept (e VoidS)
 hoistToTop e =
@@ -2628,19 +2630,21 @@ nameSetRawNames m = R.keys m
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
 isFreeIn v e = getRawName v `R.member` freeVarsE e
 
-areFreeIn :: HoistableE e => [Name c n] -> e n -> Bool
-areFreeIn vs e =
-  not $ null $ R.intersection (R.fromList $ map (\v -> (getRawName v, ())) vs)
-                              (freeVarsE e)
+anyFreeIn :: HoistableE e => [Name c n] -> e n -> Bool
+anyFreeIn vs e =
+  not $ R.disjoint (R.fromList $ map (\v -> (getRawName v, ())) vs)
+                   (freeVarsE e)
 
 exchangeBs :: (Distinct l, BindsNames b1, SinkableB b1, HoistableB b2)
               => PairB b1 b2 n l
               -> HoistExcept (PairB b2 b1 n l)
 exchangeBs (PairB b1 b2) =
-  case nameSetRawNames $ R.intersection (freeVarsB b2) frag  of
-    []          -> HoistSuccess $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
-    leakedNames -> HoistFailure leakedNames
-  where UnsafeMakeScopeFrag frag = toScopeFrag b1
+  case R.disjoint fvs2 frag of
+    True  -> HoistSuccess $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
+    False -> HoistFailure $ nameSetRawNames $ R.intersection fvs2 frag
+  where
+    UnsafeMakeScopeFrag frag = toScopeFrag b1
+    fvs2 = freeVarsB b2
 
 hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistNameSet b nameSet =
