@@ -2086,9 +2086,14 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
          , Generic (b1 UnsafeS UnsafeS), Generic (b2 UnsafeS UnsafeS) )
          => Store (PairB b1 b2 n l)
 
+instance HasScope (RecSubst v) where
+  toScope = Scope . toScopeFrag . RecSubstFrag . fromRecSubst
+  {-# INLINE toScope #-}
+
 instance ProvesExt  (RecSubstFrag v) where
 instance BindsNames (RecSubstFrag v) where
   toScopeFrag env = substFragAsScope $ fromRecSubstFrag env
+  {-# INLINE toScopeFrag #-}
 instance HoistableV v => HoistableB (RecSubstFrag v) where
   freeVarsB (RecSubstFrag env) = freeVarsE (Abs (substFragAsScope env) env)
 

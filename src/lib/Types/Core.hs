@@ -223,13 +223,12 @@ instance GenericB EffectBinder where
 -- a particular module. `TopEnv` contains everything that makes sense "between"
 -- evaluating modules.
 data Env n = Env
-  { topEnv    :: TopEnv n
-  , moduleEnv :: ModuleEnv n }
+  { topEnv    :: {-# UNPACK #-} TopEnv n
+  , moduleEnv :: {-# UNPACK #-} ModuleEnv n }
   deriving (Generic)
 
 data TopEnv (n::S) = TopEnv
-  { envScope :: Scope n
-  , envDefs  :: RecSubst Binding n
+  { envDefs  :: RecSubst Binding n
   , envCache :: Cache n
   , envLoadedModules :: LoadedModules n }
   deriving (Generic)
@@ -383,7 +382,7 @@ data EnvFrag (n::S) (l::S) =
   EnvFrag (RecSubstFrag Binding n l) (Maybe (EffectRow l))
 
 instance HasScope Env where
-  toScope = envScope . topEnv
+  toScope = toScope . envDefs . topEnv
 
 catEnvFrags :: Distinct n3
                  => EnvFrag n1 n2 -> EnvFrag n2 n3 -> EnvFrag n1 n3
@@ -404,18 +403,17 @@ instance OutFrag EnvFrag where
 
 instance OutMap Env where
   emptyOutMap =
-    Env (TopEnv emptyOutMap (RecSubst emptyInFrag) mempty emptyLoadedModules)
+    Env (TopEnv (RecSubst emptyInFrag) mempty emptyLoadedModules)
         emptyModuleEnv
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv scope defs cache loaded)
+  extendOutMap (Env (TopEnv defs cache loaded)
                     (ModuleEnv imports sm scs objs effs)) frag =
     withExtEvidence frag $ Env
       (TopEnv
-        (scope `extendOutMap` toScopeFrag frag)
         (defs  `extendRecSubst` frag)
         (sink cache)
         (sink loaded))
@@ -1557,11 +1555,10 @@ instance OutFrag TopEnvFrag where
 instance ExtOutMap Env TopEnvFrag where
   extendOutMap env (TopEnvFrag (EnvFrag frag _) (PartialTopEnvFrag cache' loaded' mEnv')) = result
     where
-      Env (TopEnv scope defs cache loaded) mEnv = env
+      Env (TopEnv defs cache loaded) mEnv = env
       result = Env newTopEnv newModuleEnv
 
       newTopEnv = withExtEvidence frag $ TopEnv
-        (scope `extendOutMap` toScopeFrag frag)
         (defs `extendRecSubst` frag)
         (sink cache <> cache')
         (sink loaded <> loaded')
