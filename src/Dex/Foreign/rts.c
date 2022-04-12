@@ -4,8 +4,8 @@
 #include "HsFFI.h"
 
 void dexInit() {
-  int argc = 0;
-  char *argv[] = { NULL };
+  int argc = 4;
+  char *argv[] = { "+RTS", "-I0", "-A16m", "-RTS", NULL };
   char **pargv = argv;
 
   hs_init(&argc, &pargv);
