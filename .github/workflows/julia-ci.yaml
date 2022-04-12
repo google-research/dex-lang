@@ -23,13 +23,6 @@ jobs:
     - name: Checkout the repository
       uses: actions/checkout@v2
 
-    - name: Setup Haskell Stack
-      uses: actions/setup-haskell@v1
-      with:
-        enable-stack: true
-        stack-no-global: true
-        stack-version: 'latest'
-
     - name: Setup Julia
       uses: julia-actions/setup-julia@ee66464cb7897ffcc5322800f4b18d449794af30  # v1.6.1
       with:
