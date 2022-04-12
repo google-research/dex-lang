@@ -863,7 +863,7 @@ buildDepDest idxs depVars hint ty cont =
 makeDestRec :: forall n. Emits n => DestIdxs n -> DepVars n -> Type n -> DestM n (Dest n)
 makeDestRec idxs depVars ty = case ty of
   TabTy (b:>iTy) bodyTy -> do
-    if depVars `areFreeIn` iTy
+    if depVars `anyFreeIn` iTy
       then do
         AbsPtrs absDest ptrsInfo <- buildLocalDest $ makeSingleDest [] $ sink ty
         ptrs <- forM ptrsInfo \(DestPtrInfo ptrTy size) -> do
