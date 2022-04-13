@@ -777,19 +777,21 @@ Monoids support <code>fold</code> operations, and similar.</li>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ask  {h r} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h r)       <span class="symbol">:</span> {<span class="type-name">Read</span>  h} r    <span class="symbol">=</span> %ask  ref
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">AccumMonoid</span> h w <span class="symbol">=</span>
-  <span class="type-name">UnsafeMkAccumMonoid</span> b<span class="symbol">:</span><span class="type-name">Type</span> (<span class="type-name">Monoid</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">AccumMonoidData</span> h w <span class="symbol">=</span>
+  <span class="type-name">UnsafeMkAccumMonoidData</span> b<span class="symbol">:</span><span class="type-name">Type</span> (<span class="type-name">Monoid</span> b)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span>
-<span class="keyword">def</span> tableAccumMonoid {n h w} [<span class="type-name">Ix</span> n] [am <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w] <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h (n<span class="symbol">=&gt;</span>w) <span class="symbol">=</span>
-  (<span class="type-name">UnsafeMkAccumMonoid</span> b bm) <span class="symbol">=</span> am
-  <span class="type-name">UnsafeMkAccumMonoid</span> b bm
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">AccumMonoid</span> h w
+  getAccumMonoidData <span class="symbol">:</span> <span class="type-name">AccumMonoidData</span> h w
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n h w} [<span class="type-name">Ix</span> n] [am <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w] <span class="type-name">AccumMonoid</span> h (n<span class="symbol">=&gt;</span>w)
+  getAccumMonoidData <span class="symbol">=</span>
+    (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod am #<span class="iso-sugar">#getAccumMonoidData</span>
+    <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+=</span>) {h w} [am<span class="symbol">:</span><span class="type-name">AccumMonoid</span> h w] (ref<span class="symbol">:</span><span class="type-name">Ref</span> h w) (x<span class="command">:w</span>) <span class="symbol">:</span> {<span class="type-name">Accum</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
-  (<span class="type-name">UnsafeMkAccumMonoid</span> b bm) <span class="symbol">=</span> am
-  %<span class="keyword">instance</span> bmHint <span class="symbol">=</span> bm
-  empty <span class="symbol">:</span> b <span class="symbol">=</span> mempty
-  combine <span class="symbol">:</span> b <span class="symbol">-&gt;</span> b <span class="symbol">-&gt;</span> b <span class="symbol">=</span> mcombine
+  (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod am #<span class="iso-sugar">#getAccumMonoidData</span>
+  empty <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mempty</span>
+  combine <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mcombine</span>
   %mextend ref empty combine x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">!</span>) {h n a} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %indexRef ref i
@@ -819,15 +821,15 @@ Monoids support <code>fold</code> operations, and similar.</li>
       (bm<span class="symbol">:</span><span class="type-name">Monoid</span> b)
       (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> w) <span class="symbol">=</span>
-    <span class="comment">-- Normally, only the ?=&gt; lambda binders participate in dictionary synthesis,
-</span>    <span class="comment">-- so we need to explicitly declare `m` as a hint.
-</span>    %<span class="keyword">instance</span> bmHint <span class="symbol">=</span> bm
-    empty <span class="symbol">:</span> b <span class="symbol">=</span> mempty
-    combine <span class="symbol">:</span> b <span class="symbol">-&gt;</span> b <span class="symbol">-&gt;</span> b <span class="symbol">=</span> mcombine
-    <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span>
-      %<span class="keyword">instance</span> accumBaseMonoidHint <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h&#39; b <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoid</span> b bm
-      action ref
-    %runWriter empty combine explicitAction
+  empty <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mempty</span>
+  combine <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mcombine</span>
+  <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span>
+    accumMonoidData <span class="symbol">:</span> (<span class="type-name">AccumMonoidData</span> h&#39; w) <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
+    accumBaseMonoid <span class="symbol">=</span> %explicitDict (<span class="type-name">AccumMonoid</span> h&#39; b) accumMonoidData
+    accumBaseMonoidLifted <span class="symbol">=</span> %explicitApply (%explicitApply mlift h&#39;) accumBaseMonoid
+    action&#39; <span class="symbol">=</span> %explicitApply (%explicitApply action h&#39;) accumBaseMonoidLifted
+    action&#39; ref
+  %runWriter empty combine explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yieldAccum
       {a b w eff}
