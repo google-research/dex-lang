@@ -277,14 +277,19 @@ data ImportStatus (n::S) = ImportStatus
   , transImports           :: S.Set (ModuleName n) }
   deriving (Show, Generic)
 
-data TopEnvFrag n l = TopEnvFrag (EnvFrag n l) (PartialTopEnvFrag l)
+data TopEnvFrag n l = TopEnvFrag {-# UNPACK #-} (TopEnvEmissions n l)
+                                 {-# UNPACK #-} (ModuleEmissions l)
 
--- This is really the type of updates to `Env`. We should probably change the
--- names to reflect that.
-data PartialTopEnvFrag n = PartialTopEnvFrag
-  { fragCache           :: Cache n
-  , fragLoadedModules   :: LoadedModules n
-  , fragLocalModuleEnv  :: ModuleEnv n }
+data TopEnvEmissions n l = TopEnvEmissions (RecSubstFrag Binding n l) (Cache l) (LoadedModules l)
+
+data ModuleEmissions n where
+  ModuleEmissions ::
+    { newImports         :: ImportStatus n
+    -- Those never include imported values, only those emitted in the current module!
+    , newSourceBindings  :: SourceMap n
+    , newSynthCandidates :: SynthCandidates n
+    , newObjectFiles     :: ObjectFiles n
+    } -> ModuleEmissions n
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
@@ -1505,81 +1510,137 @@ instance ProvesExt   EnvFrag
 instance BindsNames  EnvFrag
 instance SubstB Name EnvFrag
 
-instance GenericE PartialTopEnvFrag where
-  type RepE PartialTopEnvFrag = Cache
-                              `PairE` LoadedModules
-                              `PairE` ModuleEnv
-  fromE (PartialTopEnvFrag cache loaded env) = cache `PairE` loaded `PairE` env
-  {-# INLINE fromE #-}
-  toE (cache `PairE` loaded `PairE` env) = PartialTopEnvFrag cache loaded env
-  {-# INLINE toE #-}
+instance GenericB TopEnvEmissions where
+  type RepB TopEnvEmissions = (RecSubstFrag Binding) `PairB` (LiftB (Cache `PairE` LoadedModules))
+  fromB (TopEnvEmissions bs c lm) = bs `PairB` (LiftB (c `PairE` lm))
+  toB   (bs `PairB` (LiftB (c `PairE` lm))) = TopEnvEmissions bs c lm
+instance SubstB Name TopEnvEmissions
+instance HoistableB  TopEnvEmissions
+instance SinkableB   TopEnvEmissions
+instance ProvesExt   TopEnvEmissions
+instance BindsNames  TopEnvEmissions
 
-instance SinkableE      PartialTopEnvFrag
-instance HoistableE     PartialTopEnvFrag
-instance AlphaEqE       PartialTopEnvFrag
-instance SubstE Name    PartialTopEnvFrag
+instance OutFrag TopEnvEmissions where
+  emptyOutFrag = TopEnvEmissions emptyOutFrag mempty mempty
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags scope (TopEnvEmissions frag1 c lm) (TopEnvEmissions frag2 c' lm') =
+    withExtEvidence frag2 $
+      TopEnvEmissions (catOutFrags scope frag1 frag2) (sink c <> c') (sink lm <> lm')
+  {-# INLINE catOutFrags #-}
 
-instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 <> PartialTopEnvFrag y1 y2 y3 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3)
+instance GenericE ModuleEmissions where
+  type RepE ModuleEmissions = ImportStatus
+                      `PairE` SourceMap
+                      `PairE` SynthCandidates
+                      `PairE` ObjectFiles
+  fromE (ModuleEmissions imports sm sc obj) = imports `PairE` sm `PairE` sc `PairE` obj
+  toE (imports `PairE` sm `PairE` sc `PairE` obj) = ModuleEmissions imports sm sc obj
+instance SinkableE   ModuleEmissions
+instance HoistableE  ModuleEmissions
+instance SubstE Name ModuleEmissions
 
-instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty
-  mappend = (<>)
+instance Semigroup (ModuleEmissions n) where
+  (ModuleEmissions i sm scs obj) <> (ModuleEmissions i' sm' scs' obj') =
+    ModuleEmissions (i<>i') (sm<>sm') (scs<>scs') (obj<>obj')
+instance Monoid (ModuleEmissions n) where
+  mempty = ModuleEmissions mempty mempty mempty mempty
 
 instance GenericB TopEnvFrag where
-  type RepB TopEnvFrag = PairB EnvFrag (LiftB PartialTopEnvFrag)
-  fromB (TopEnvFrag frag1 frag2) = PairB frag1 (LiftB frag2)
-  toB   (PairB frag1 (LiftB frag2)) = TopEnvFrag frag1 frag2
-
+  type RepB TopEnvFrag = TopEnvEmissions `PairB` (LiftB ModuleEmissions)
+  fromB (TopEnvFrag te me) = te `PairB` (LiftB me)
+  toB   (te `PairB` (LiftB me)) = TopEnvFrag te me
 instance SubstB Name TopEnvFrag
 instance HoistableB  TopEnvFrag
-instance SinkableB TopEnvFrag
+instance SinkableB   TopEnvFrag
 instance ProvesExt   TopEnvFrag
 instance BindsNames  TopEnvFrag
 
 instance OutFrag TopEnvFrag where
   emptyOutFrag = TopEnvFrag emptyOutFrag mempty
   {-# INLINE emptyOutFrag #-}
-  catOutFrags scope (TopEnvFrag frag1 partial1)
-                    (TopEnvFrag frag2 partial2) =
-    withExtEvidence frag2 $
-      TopEnvFrag
-        (catOutFrags scope frag1 frag2)
-        (sink partial1 <> partial2)
+  catOutFrags scope (TopEnvFrag te me) (TopEnvFrag te' me') =
+    withExtEvidence te' $ TopEnvFrag (catOutFrags scope te te') (sink me <> me')
   {-# INLINE catOutFrags #-}
+
+
+--data CacheFrag (n::S) (l::S) where
+  --CacheFrag :: Cache n -> CacheFrag n n
+
+--instance GenericB CacheFrag where
+  --type RepB CacheFrag = LiftB Cache
+  --fromB (CacheFrag c) = LiftB c
+  --toB   (LiftB c) = CacheFrag c
+--instance SinkableB CacheFrag
+--instance ProvesExt CacheFrag
+--instance BindsNames CacheFrag
+
+--instance OutFrag CacheFrag where
+  --emptyOutFrag = CacheFrag mempty
+  --catOutFrags _ (CacheFrag a) (CacheFrag b) = CacheFrag $ a <> b
+
+--instance ExtOutFrag any TopEnvFrag CacheFrag where
+  --extendOutFrag _ (TopEnvFrag f cache loaded mfrag) (CacheFrag cache') =
+    --TopEnvFrag f (cache <> cache') loaded mfrag
+
+--instance ExtOutMap Env CacheFrag where
+  --extendOutMap env (CacheFrag cache') = Env (TopEnv defs (cache <> cache') loaded) moduleEnv
+    --where Env (TopEnv defs cache loaded) moduleEnv = env
+
+--data ImportFrag (n::S) (l::S) where
+  --ImportFrag :: [ModuleName n] -> ImportFrag n n
+
+--instance GenericB ImportFrag where
+  --type RepB ImportFrag = LiftB (ListE ModuleName)
+  --fromB (ImportFrag l) = LiftB (ListE l)
+  --toB   (LiftB (ListE l)) = ImportFrag l
+--instance SinkableB  ImportFrag
+--instance ProvesExt  ImportFrag
+--instance BindsNames ImportFrag
+
+--instance OutFrag ImportFrag where
+  --emptyOutFrag = ImportFrag mempty
+  --catOutFrags _ (ImportFrag a) (ImportFrag b) = ImportFrag $ a <> b
+
+--instance ExtOutFrag Env TopEnvFrag ImportFrag where
+  --extendOutFrag (TopEnvFrag bs cache loaded me) (ImportFrag importedNames) =
+    --TopEnvFrag bs cache loaded $ me { newImports = foldl' S.insert (newImports me) importedNames }
+
+--instance ExtOutMap Env ImportFrag where
+  --extendOutMap (Env topEnv mEnv) (ImportFrag importedNames) =
+    --Env topEnv $ foldl' (importIntoModule topEnv) mEnv importedNames
+
+--instance ExtOutFrag any TopEnvFrag TopEnvFrag where
+  --extendOutFrag _ = catOutFrags (error "shouldn't need scope")
 
 -- XXX: unlike `ExtOutMap Env EnvFrag` instance, this once doesn't
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap env (TopEnvFrag (EnvFrag frag _) (PartialTopEnvFrag cache' loaded' mEnv')) = result
+  extendOutMap env (TopEnvFrag (TopEnvEmissions frag cache' loaded') mEnv') = Env newTopEnv newModuleEnv
     where
       Env (TopEnv defs cache loaded) mEnv = env
-      result = Env newTopEnv newModuleEnv
+      newTopEnv = withExtEvidence frag $ TopEnv (defs `extendRecSubst` frag) (sink cache <> cache') (sink loaded <> loaded')
 
-      newTopEnv = withExtEvidence frag $ TopEnv
-        (defs `extendRecSubst` frag)
-        (sink cache <> cache')
-        (sink loaded <> loaded')
+      ModuleEmissions imports' sm' scs' objs'       = mEnv'
+      ModuleEnv       imports  sm  scs  objs  effs  = withExtEvidence frag $
+        foldl' (importIntoModule newTopEnv) (sink mEnv) $ directImports imports'
+      newModuleEnv = ModuleEnv imports (sm <> sm') (scs <> scs') (objs <> objs') effs
 
-      newModuleEnv =
-        ModuleEnv
-          (imports <> imports')
-          (sm   <> sm'   <> newImportedSM)
-          (scs  <> scs'  <> newImportedSC)
-          (objs <> objs' <> newImportedObj)
-          (effs <> effs')
-        where
-          ModuleEnv imports sm scs objs effs = withExtEvidence frag $ sink mEnv
-          ModuleEnv imports' sm' scs' objs' effs' = mEnv'
-          newDirectImports = S.difference (directImports imports') (directImports imports)
-          newTransImports  = S.difference (transImports  imports') (transImports  imports)
-          newImportedSM  = flip foldMap newDirectImports $ moduleExports         . lookupModulePure
-          newImportedSC  = flip foldMap newTransImports  $ moduleSynthCandidates . lookupModulePure
-          newImportedObj = flip foldMap newTransImports  $ moduleObjectFiles     . lookupModulePure
+importIntoModule :: TopEnv n -> ModuleEnv n -> ModuleName n -> ModuleEnv n
+importIntoModule topEnv menv@(ModuleEnv imports sm scs objs effs) importName =
+  case importName `S.member` (directImports imports) of
+    True  -> menv
+    False -> ModuleEnv (imports <> imports') (sm <> newImportedSM) (scs <> newImportedSCS) (objs <> newImportedObj) effs
+  where
+    Module _ _ importTransImports _ _ _ = lookupModulePure importName
+    imports' = ImportStatus (S.singleton importName) (S.singleton importName <> importTransImports)
+    newDirectImports = S.difference (directImports imports') (directImports imports)
+    newTransImports  = S.difference (transImports  imports') (transImports  imports)
+    newImportedSM  = flip foldMap newDirectImports $ moduleExports         . lookupModulePure
+    newImportedSCS = flip foldMap newTransImports  $ moduleSynthCandidates . lookupModulePure
+    newImportedObj = flip foldMap newTransImports  $ moduleObjectFiles     . lookupModulePure
 
-      lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
+    lookupModulePure v = case lookupEnvPure (Env topEnv mempty) v of ModuleBinding m -> m
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ topEnv env) v
