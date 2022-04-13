@@ -744,10 +744,12 @@ applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 
 lookupSubstFragProjected :: Color c => SubstFrag v i i' o -> Name c i'
                          -> Either (Name c i) (v c o)
-lookupSubstFragProjected m name =
-  case projectName (substFragAsScope m) name of
-    Left  name' -> Left name'
-    Right name' -> Right $ lookupSubstFrag m name'
+lookupSubstFragProjected (UnsafeMakeSubst s) (UnsafeMakeName rawName) =
+  case R.lookup rawName s of
+    Just (d:_) -> case fromWithColor d of
+      Nothing -> error "Wrong name color (should never happen)"
+      Just x -> Right $ x
+    _ -> Left $ UnsafeMakeName rawName
 
 fromSubstPairs :: Nest (SubstPair v o) i i' -> SubstFrag v i i' o
 fromSubstPairs Empty = emptyInFrag
@@ -2386,11 +2388,6 @@ withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
       cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder c n UnsafeS)
 {-# INLINE withFresh #-}
-
-projectName :: ScopeFrag n l -> Name s l -> Either (Name s n) (Name s (n:=>:l))
-projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rawName)
-  | R.member rawName scope = Right $ UnsafeMakeName rawName
-  | otherwise              = Left  $ UnsafeMakeName rawName
 
 -- proves that the names in n are distinct
 class Distinct (n::S)
