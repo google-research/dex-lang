@@ -239,12 +239,12 @@ instance (SinkableV v, ScopeReader m, EnvExtender m)
       cont' subst'
   {-# INLINE refreshAbs #-}
 
-instance (Monad m, ExtOutMap Env decls)
-         => EnvReader   (InplaceT Env decls m) where
+instance (Monad m, ExtOutMap Env decls, OutFrag decls)
+         => EnvReader (InplaceT Env decls m) where
   unsafeGetEnv = getOutMapInplaceT
   {-# INLINE unsafeGetEnv #-}
 
-instance (Monad m, ExtOutMap Env decls)
+instance (Monad m, ExtOutMap Env decls, OutFrag decls)
          => EnvExtender (InplaceT Env decls m) where
   refreshAbs ab cont = UnsafeMakeInplaceT \env decls ->
     refreshAbsPure (toScope env) ab \_ b e -> do
