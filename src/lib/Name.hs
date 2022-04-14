@@ -17,7 +17,7 @@ module Name (
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
-  extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
+  freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
@@ -1599,6 +1599,18 @@ extendSubInplaceT ab = do
       withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
         return (unsafeCoerceE result, extendOutFrag decls $ unsafeCoerceB d, env')
 {-# INLINE extendSubInplaceT #-}
+
+freshExtendSubInplaceT
+  :: (ExtOutMap b d, ExtOutFrag ds d, Monad m, Color c)
+  => Mut n => NameHint -> (forall l. NameBinder c n l -> (d n l, e l)) -> InplaceT b ds m n (e n)
+freshExtendSubInplaceT hint build =
+   UnsafeMakeInplaceT \env decls ->
+     withFresh hint (toScope env) \b -> do
+       let (d, result) = build b
+       let env' = unsafeCoerceE $ extendOutMap env d
+       withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+         return (unsafeCoerceE result, extendOutFrag decls $ unsafeCoerceB d, env')
+{-# INLINE freshExtendSubInplaceT #-}
 
 locallyMutableInplaceT
   :: forall m b d n e.
