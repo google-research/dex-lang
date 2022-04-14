@@ -1108,8 +1108,8 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
 type HashVal = Int
 data NamePreHash (c::C) (n::S) =
    HashFreeName RawName
-    -- XXX: convention is the opposite of de Bruijn order, `0` means the
-    -- *outermost* binder
+    -- XXX: convention is the opposite of de Bruijn order, `0` means
+    -- the *outermost* binder
  | HashBoundName Int
  deriving (Eq, Generic)
 
