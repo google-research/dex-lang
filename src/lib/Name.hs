@@ -1880,12 +1880,17 @@ instance SinkableE e => SinkableB (LiftB e) where
 instance ProvesExt (LiftB e) where
 instance BindsNames (LiftB e) where
   toScopeFrag (LiftB _) = id
+  {-# INLINE toScopeFrag #-}
 
 instance HoistableE e => HoistableB (LiftB e) where
   freeVarsB (LiftB e) = freeVarsE e
+  {-# INLINE freeVarsB #-}
 
 instance (SinkableE e, SubstE v e) => SubstB v (LiftB e) where
-  substB env (LiftB e) cont = cont env $ LiftB $ substE env e
+  substB env@(_, subst) (LiftB e) cont = case tryApplyIdentitySubst subst e of
+    Just e' -> cont env $ LiftB e'
+    Nothing -> cont env $ LiftB $ substE env e
+  {-# INLINE substB #-}
 
 instance (BindsNames b1, BindsNames b2) => ProvesExt  (EitherB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (EitherB b1 b2) where
