@@ -132,8 +132,17 @@ instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
 
 newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WrapStateT1 { runStateT1' :: (StateT (s n) (m n) a) }
-  deriving ( Functor, Applicative, Monad, MonadState (s n)
+  deriving ( Functor, Monad, MonadState (s n)
            , MonadFail, MonadIO)
+
+-- This is entirely standard, but we implement it explicitly to encourage GHC to inline.
+instance (Monad (m n), Applicative (m n)) => Applicative (StateT1 s m n) where
+  pure = WrapStateT1 . pure
+  {-# INLINE pure #-}
+  (WrapStateT1 f) <*> (WrapStateT1 x) = WrapStateT1 $ f <*> x
+  {-# INLINE (<*>) #-}
+  liftA2 f (WrapStateT1 x) (WrapStateT1 y) = WrapStateT1 $ liftA2 f x y
+  {-# INLINE liftA2 #-}
 
 pattern StateT1 :: ((s n) -> m n (a, s n)) -> StateT1 s m n a
 pattern StateT1 f = WrapStateT1 (StateT f)
@@ -193,8 +202,17 @@ instance Monad1 m => HoistableState (LiftE a) m where
 
 newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WrapScopedT1 { runScopedT1' :: StateT1 s m n a }
-  deriving ( Functor, Applicative, Monad, MonadState (s n), MonadFail
+  deriving ( Functor, Monad, MonadState (s n), MonadFail
            , MonadTrans11, EnvReader, ScopeReader )
+
+-- This is entirely standard, but we implement it explicitly to encourage GHC to inline.
+instance (Monad (m n), Applicative (m n)) => Applicative (ScopedT1 s m n) where
+  pure = WrapScopedT1 . pure
+  {-# INLINE pure #-}
+  (WrapScopedT1 f) <*> (WrapScopedT1 x) = WrapScopedT1 $ f <*> x
+  {-# INLINE (<*>) #-}
+  liftA2 f (WrapScopedT1 x) (WrapScopedT1 y) = WrapScopedT1 $ liftA2 f x y
+  {-# INLINE liftA2 #-}
 
 pattern ScopedT1 :: ((s n) -> m n (a, s n)) -> ScopedT1 s m n a
 pattern ScopedT1 f = WrapScopedT1 (StateT1 f)

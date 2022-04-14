@@ -22,6 +22,7 @@ import Control.Monad.State.Class
 import Control.Monad.Writer.Strict
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import GHC.Exts (inline)
 
 import Err
 import MTL1
@@ -32,6 +33,7 @@ import Type
 import Simplify
 import LabeledItems
 import Util (enumerate)
+import Types.Primitives
 import Algebra qualified as A
 import RawName qualified as R
 
@@ -134,6 +136,14 @@ instance Pretty (ImpFunctionWithRecon n) where
 
 type ImpBuilderEmissions = RNest ImpDecl
 
+newtype ImpDeclEmission (n::S) (l::S) = ImpDeclEmission (ImpDecl n l)
+instance ExtOutMap Env ImpDeclEmission where
+  extendOutMap env (ImpDeclEmission d) = env `extendOutMap` toEnvFrag d
+  {-# INLINE extendOutMap #-}
+instance ExtOutFrag ImpBuilderEmissions ImpDeclEmission where
+  extendOutFrag ems (ImpDeclEmission d) = RNest ems d
+  {-# INLINE extendOutFrag #-}
+
 newtype ImpM (n::S) (a:: *) =
   ImpM { runImpM' :: ScopedT1 IxCache
                        (WriterT1 (ListE IExpr)
@@ -162,14 +172,25 @@ instance EnvExtender ImpM where
         _ -> error "shouldn't be able to emit pointers without `Mut`"
 
 instance ImpBuilder ImpM where
-  emitMultiReturnInstr instr = confuseGHC >>= \_ -> do
+  emitMultiReturnInstr instr = do
+    Distinct <- getDistinct
     tys <- impInstrTypes instr
-    ListE vs <- ImpM $ ScopedT1 \s -> lift11 do
-      Abs bs vs <- return $ newNames $ length tys
-      let impBs = makeImpBinders bs tys
-      let decl = ImpLet impBs instr
-      liftM (,s) $ extendInplaceT $ Abs (RNest REmpty decl) vs
-    return $ zipWith IVar vs tys
+    -- The three cases below are all equivalent, but 0- and 1-return instructions
+    -- are so common that it's worth spelling their cases out explicitly to enable
+    -- more GHC optimizations.
+    ImpM $ ScopedT1 \s -> lift11 $ liftM (,s) $ case tys of
+      []   -> do
+        extendTrivialSubInplaceT $ ImpDeclEmission $ ImpLet Empty instr
+        return NoResults
+      [ty] -> do
+        OneResult <$> freshExtendSubInplaceT noHint \b ->
+          (ImpDeclEmission $ ImpLet (Nest (IBinder b ty) Empty) instr, IVar (binderName b) ty)
+      _ -> do
+        Abs bs vs <- return $ newNames $ length tys
+        let impBs = makeImpBinders bs tys
+        let decl = ImpLet impBs instr
+        ListE vs' <- extendInplaceT $ Abs (RNest REmpty decl) vs
+        return $ MultiResult $ zipWith IVar vs' tys
     where
      makeImpBinders :: Nest (NameBinder AtomNameC) n l -> [IType] -> Nest IBinder n l
      makeImpBinders Empty [] = Empty
@@ -274,7 +295,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         FFIFunBound _ v' -> do
           resultTy <- getType $ App f xs
           scalarArgs <- liftM toList $ mapM fromScalarAtom xs
-          results <- emitMultiReturnInstr $ ICall v' scalarArgs
+          results <- impCall v' scalarArgs
           restructureScalarOrPairType resultTy results
         SimpLamBound piTy _ -> do
           if length (toList xs') /= numNaryPiArgs piTy
@@ -295,7 +316,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         dropSubst $ translateBlock maybeDest body'
       _ -> notASimpExpr
   Atom x -> substM x >>= returnVal
-  Op op -> mapM substM op >>= toImpOp maybeDest
+  -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
+  Op op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
@@ -431,22 +453,7 @@ toImpOp maybeDest op = case op of
         y' <- fromScalarAtom y
         ans <- emitInstr $ IPrimOp $ Select p' x' y'
         returnVal =<< toScalarAtom ans
-      _ -> do
-        resultTy <- resultTyM
-        dest <- allocDest maybeDest resultTy
-        p' <- fromScalarAtom p
-        p'' <- cast p' tagBT
-        -- XXX: this is `[y, x]` and not `[x, y]`! `Select` gives the first
-        -- element if the predicate is `1` ("true") and the second if it's `0`
-        -- ("false") but the binary case of the n-ary `switch` does the
-        -- opposite.
-        emitSwitch p'' [y, x] (\arg -> copyAtom (sink dest) (sink arg))
-        destToAtom dest
-        where (BaseTy tagBT) = TagRepTy
-  RecordCons   _ _ -> error "Unreachable: should have simplified away"
-  RecordSplit  _ _ -> error "Unreachable: should have simplified away"
-  VariantLift  _ _ -> error "Unreachable: should have simplified away"
-  VariantSplit _ _ -> error "Unreachable: should have simplified away"
+      _ -> unsupported
   DataConTag con -> case con of
     Con (SumAsProd _ tag _) -> returnVal tag
     DataCon _ _ _ i _ -> returnVal $ TagRepVal $ fromIntegral i
@@ -466,10 +473,21 @@ toImpOp maybeDest op = case op of
       SumCon    _ tag payload -> Variant labs "c" tag payload
       SumAsProd _ tag payload -> Con $ SumAsProd resultTy tag payload
       _ -> error $ "Not a sum type: " ++ pprint (Con c)
+  -- Listing branches that should be dead helps GHC cut down on code size.
+  ThrowException _        -> unsupported
+  RecordCons _ _          -> unsupported
+  RecordSplit _ _         -> unsupported
+  RecordConsDynamic _ _ _ -> unsupported
+  RecordSplitDynamic _ _  -> unsupported
+  VariantLift _ _         -> unsupported
+  VariantSplit _ _        -> unsupported
+  ProjMethod _ _          -> unsupported
+  ExplicitApply _ _       -> unsupported
   _ -> do
-    instr <- IPrimOp <$> mapM fromScalarAtom op
+    instr <- IPrimOp <$> (inline traversePrimOp) fromScalarAtom op
     emitInstr instr >>= toScalarAtom >>= returnVal
   where
+    unsupported = error "Unsupported PrimOp encountered in Imp"
     resultTyM :: SubstImpM i o (Type o)
     resultTyM = getType $ Op op
     returnVal atom = case maybeDest of
@@ -545,15 +563,16 @@ toImpHof maybeDest hof = do
 --   emitPointer :: Block n -> DestM n l (AtomName n)
 
 data DestPtrInfo n = DestPtrInfo PtrType (Block n)
-type PtrBinders = Nest AtomNameBinder
+type PtrBinders  = Nest  AtomNameBinder
+type RPtrBinders = RNest AtomNameBinder
 data DestEmissions n l where
   DestEmissions
-    :: {-# UNPACK #-} !(DestPtrEmissions n h)
-    ->   Nest Decl h l   -- decls to compute indexing offsets
+    :: {-# UNPACK #-} !(DestPtrEmissions n h)  -- pointers to allocate
+    ->                !(RNest Decl h l)        -- decls to compute indexing offsets
     -> DestEmissions n l
 
 instance GenericB DestEmissions where
-  type RepB DestEmissions = DestPtrEmissions `PairB` Nest Decl
+  type RepB DestEmissions = DestPtrEmissions `PairB` RNest Decl
   fromB (DestEmissions bs ds) = bs `PairB` ds
   {-# INLINE fromB #-}
   toB   (bs `PairB` ds) = DestEmissions bs ds
@@ -579,7 +598,7 @@ instance OutFrag DestEmissions where
   {-# INLINE catOutFrags #-}
 
 emptyDestEmissions :: DestEmissions n n
-emptyDestEmissions = DestEmissions emptyOutFrag Empty
+emptyDestEmissions = DestEmissions emptyOutFrag REmpty
 {-# NOINLINE [1] emptyDestEmissions #-}
 
 catDestEmissions :: Distinct l => DestEmissions n h -> DestEmissions h l -> DestEmissions n l
@@ -599,18 +618,25 @@ newtype DestDeclEmissions (n::S) (l::S)
 instance ExtOutMap Env DestDeclEmissions where
   extendOutMap env (DestDeclEmissions decl) = env `extendOutMap` toEnvFrag decl
 instance ExtOutFrag DestEmissions DestDeclEmissions where
-  -- TODO: Use an RNest
-  extendOutFrag (DestEmissions p d) (DestDeclEmissions d') = DestEmissions p (joinNest d $ Nest d' Empty)
+  extendOutFrag (DestEmissions p d) (DestDeclEmissions d') = DestEmissions p $ RNest d d'
   {-# INLINE extendOutFrag #-}
 
+newtype SnocList a = ReversedList { fromReversedList :: [a] }
+instance Semigroup (SnocList a) where
+  (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
+instance Monoid (SnocList a) where
+  mempty = ReversedList []
+unsnoc :: SnocList a -> [a]
+unsnoc (ReversedList x) = reverse x
+
 data DestPtrEmissions (n::S) (l::S)
-  = DestPtrEmissions [DestPtrInfo n]   -- pointer types and allocation sizes
-                     (PtrBinders n l)  -- pointer binders for allocations we require
+  = DestPtrEmissions (SnocList (DestPtrInfo n))  -- pointer types and allocation sizes
+                     (RPtrBinders n l)           -- pointer binders for allocations we require
 
 instance GenericB DestPtrEmissions where
-  type RepB DestPtrEmissions = LiftB (ListE DestPtrInfo) `PairB` PtrBinders
-  fromB (DestPtrEmissions i b) = (LiftB (ListE i)) `PairB` b
-  toB   ((LiftB (ListE i)) `PairB` b) = DestPtrEmissions i b
+  type RepB DestPtrEmissions = LiftB (ListE DestPtrInfo) `PairB` RPtrBinders
+  fromB (DestPtrEmissions (ReversedList i) b) = (LiftB (ListE i)) `PairB` b
+  toB   ((LiftB (ListE i)) `PairB` b) = DestPtrEmissions (ReversedList i) b
 instance ProvesExt   DestPtrEmissions
 instance BindsNames  DestPtrEmissions
 instance SinkableB   DestPtrEmissions
@@ -618,10 +644,10 @@ instance HoistableB  DestPtrEmissions
 instance SubstB Name DestPtrEmissions
 
 instance Category DestPtrEmissions where
-  id = DestPtrEmissions [] emptyOutFrag
+  id = DestPtrEmissions mempty emptyOutFrag
   (DestPtrEmissions i2 b2) . (DestPtrEmissions i1 b1) = DestPtrEmissions i' b'
     where
-      i' = i1 <> (fromListE $ ignoreHoistFailure $ hoist b1 $ ListE i2)
+      i' = i1 <> (ReversedList $ fromListE $ ignoreHoistFailure $ hoist b1 $ ListE $ fromReversedList i2)
       b' = b1 >>> b2
   {-# INLINE (.) #-}
 instance OutFrag DestPtrEmissions where
@@ -633,14 +659,14 @@ instance OutFrag DestPtrEmissions where
 instance BindsEnv DestPtrEmissions where
   toEnvFrag (DestPtrEmissions ptrInfo ptrs) = ptrBindersToEnvFrag ptrInfo ptrs
     where
-      ptrBindersToEnvFrag :: Distinct l => [DestPtrInfo n] -> Nest AtomNameBinder n l -> EnvFrag n l
-      ptrBindersToEnvFrag [] Empty = emptyOutFrag
-      ptrBindersToEnvFrag (DestPtrInfo ty _ : rest) (Nest b restBs) =
-        withSubscopeDistinct restBs do
+      ptrBindersToEnvFrag :: Distinct l => SnocList (DestPtrInfo n) -> RNest AtomNameBinder n l -> EnvFrag n l
+      ptrBindersToEnvFrag (ReversedList []) REmpty = emptyOutFrag
+      ptrBindersToEnvFrag (ReversedList (DestPtrInfo ty _ : rest)) (RNest restBs b) =
+        withSubscopeDistinct b do
           let frag1 = toEnvFrag $ b :> PtrTy ty
           let frag2 = withExtEvidence (toExtEvidence b) $
-                         ptrBindersToEnvFrag (map sink rest) restBs
-          frag1 `catEnvFrags` frag2
+                         ptrBindersToEnvFrag (ReversedList rest) restBs
+          frag2 `catEnvFrags` frag1
       ptrBindersToEnvFrag _ _ = error "mismatched indices"
 
 instance ExtOutFrag DestEmissions DestPtrEmissions where
@@ -670,7 +696,7 @@ liftDestM allocInfo cache m = do
   let result = runHardFail $ flip runReaderT allocInfo $
                  runInplaceT env $ flip runStateT1 cache $ runDestM' m
   case result of
-    (DestEmissions (DestPtrEmissions [] Empty) Empty, result') -> return result'
+    (DestEmissions (DestPtrEmissions (ReversedList []) REmpty) REmpty, result') -> return result'
     _ -> error "not implemented"
 {-# INLINE liftDestM #-}
 
@@ -681,7 +707,7 @@ getAllocInfo = DestM $ lift11 $ lift1 ask
 introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
 introduceNewPtr hint ptrTy numel =
   DestM $ StateT1 \s -> fmap (,s) $ freshExtendSubInplaceT hint \b ->
-    (DestPtrEmissions [DestPtrInfo ptrTy numel] $ Nest b Empty, binderName b)
+    (DestPtrEmissions (ReversedList [DestPtrInfo ptrTy numel]) $ RNest REmpty b, binderName b)
 
 buildLocalDest
   :: (SinkableE e)
@@ -694,7 +720,7 @@ buildLocalDest cont = do
       s'' <- hoistState s bs s'
       return $ (Abs bs e, s'')
   case decls of
-    Empty -> return $ AbsPtrs (Abs ptrBs e) ptrInfo
+    REmpty -> return $ AbsPtrs (Abs (unRNest ptrBs) e) $ unsnoc ptrInfo
     _ -> error "shouldn't have decls without `Emits`"
 
 -- TODO: this is mostly copy-paste from Inference
@@ -710,7 +736,7 @@ buildDeclsDest cont = do
     Abs decls' (PairE e s') <-
       extendSubInplaceT $ Abs ptrs $ Abs decls result
     s'' <- hoistState s decls' s'
-    return (Abs decls' e, s'')
+    return (Abs (unRNest decls') e, s'')
 {-# INLINE buildDeclsDest #-}
 
 buildBlockDest
@@ -823,6 +849,7 @@ makeDest allocInfo ty = do
                          buildLocalDest $ makeSingleDest [] $ sink ty
    put cache'
    return result
+{-# SCC makeDest #-}
 
 makeSingleDest :: Mut n => [AtomName n] -> Type n -> DestM n (Dest n)
 makeSingleDest depVars ty = do
@@ -906,7 +933,7 @@ buildDepDest idxs depVars hint ty cont =
 -- resulting `Dest n` may mention these variables, but the pointer allocation
 -- sizes can't.
 makeDestRec :: forall n. Emits n => DestIdxs n -> DepVars n -> Type n -> DestM n (Dest n)
-makeDestRec idxs depVars ty = case ty of
+makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
   TabTy (b:>iTy) bodyTy -> do
     if depVars `anyFreeIn` iTy
       then do
@@ -990,12 +1017,13 @@ makeBaseTypePtr (idxsTy, idxs) ty = do
   let ptrTy = (addrSpace, ty)
   ptr <- Var <$> introduceNewPtr (getNameHint @String "ptr") ptrTy numel
   ptrOffset ptr offset
+{-# SCC makeBaseTypePtr #-}
 
 copyAtom :: Emits n => Dest n -> Atom n -> SubstImpM i n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
   where
     copyRec :: Emits n => Dest n -> Atom n -> SubstImpM i n ()
-    copyRec dest src = case (dest, src) of
+    copyRec dest src = confuseGHC >>= \_ -> case (dest, src) of
       (BoxedRef ptrsSizes absDest, _) -> do
         -- TODO: load old ptr and free (recursively)
         ptrs <- forM ptrsSizes \(ptrPtr, sizeBlock) -> do
@@ -1075,6 +1103,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
       copyDataConArgs rest' xs
     copyDataConArgs bindings args =
       error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
+{-# SCC copyAtom #-}
 
 loadAnywhere :: Emits n => IExpr n -> SubstImpM i n (IExpr n)
 loadAnywhere ptr = load ptr -- TODO: generalize to GPU backend
@@ -1251,31 +1280,21 @@ data AllocType = Managed | Unmanaged  deriving (Show, Eq)
 chooseAddrSpace :: AllocInfo -> Block n -> AddressSpace
 chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
   Unmanaged -> Heap mainDev
-  Managed | curDev == mainDev -> if isSmall numel then Stack
-                                                  else Heap mainDev
+  Managed | curDev == mainDev -> if isSmall then Stack else Heap mainDev
           | otherwise -> Heap mainDev
-  where mainDev = case backend of
-          LLVM      -> CPU
-          LLVMMC    -> CPU
-          LLVMCUDA  -> GPU
-          MLIR      -> error "Shouldn't be compiling to Imp with MLIR backend"
-          Interpreter -> error "Shouldn't be compiling to Imp with interpreter backend"
+  where
+    mainDev = case backend of
+      LLVM        -> CPU
+      LLVMMC      -> CPU
+      LLVMCUDA    -> GPU
+      MLIR        -> error "Shouldn't be compiling to Imp with MLIR backend"
+      Interpreter -> error "Shouldn't be compiling to Imp with interpreter backend"
 
-isSmall :: Block n -> Bool
-isSmall numel = case numel of
-  Block _ Empty (Atom (Con (Lit l))) | getIntLit l <= 256 -> True
-  _ -> False
-
--- TODO: separate these concepts in IFunType?
-_deviceFromCallingConvention :: CallingConvention -> Device
-_deviceFromCallingConvention cc = case cc of
-  CEntryFun         -> CPU
-  CInternalFun      -> CPU
-  EntryFun _        -> CPU
-  FFIFun            -> CPU
-  FFIMultiResultFun -> CPU
-  MCThreadLaunch    -> CPU
-  CUDAKernelLaunch  -> GPU
+    isSmall :: Bool
+    isSmall = case numel of
+      Block _ Empty (Atom (Con (Lit l))) | getIntLit l <= 256 -> True
+      _ -> False
+{-# NOINLINE chooseAddrSpace #-}
 
 -- === Determining buffer sizes and offsets using polynomials ===
 
@@ -1361,9 +1380,11 @@ elemCountCPoly (Abs bs UnitE) = case bs of
 
 -- === Imp IR builder ===
 
+data ImpInstrResult (n::S) = NoResults | OneResult !(IExpr n) | MultiResult !([IExpr n])
+
 class (EnvReader m, EnvExtender m, Fallible1 m, MonadIxCache1 m)
        => ImpBuilder (m::MonadKind1) where
-  emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
+  emitMultiReturnInstr :: Emits n => ImpInstr n -> m n (ImpInstrResult n)
   buildScopedImp
     :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
@@ -1393,7 +1414,7 @@ emitCall piTy f xs = do
   ptrAtoms <- mapM toScalarAtom ptrs
   dest <- applyNaryAbs absDest $ map SubstVal ptrAtoms
   resultDest <- storeArgDests dest xs
-  _ <- emitMultiReturnInstr $ ICall f ptrs
+  _ <- impCall f ptrs
   destToAtom resultDest
 
 buildImpFunction
@@ -1428,7 +1449,7 @@ emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do
   xs <- emitMultiReturnInstr instr
   case xs of
-    [x] -> return x
+    OneResult x -> return x
     _   -> error "unexpected numer of return values"
 {-# INLINE emitInstr #-}
 
@@ -1436,9 +1457,15 @@ emitStatement :: (ImpBuilder m, Emits n) => ImpInstr n -> m n ()
 emitStatement instr = do
   xs <- emitMultiReturnInstr instr
   case xs of
-    [] -> return ()
-    _   -> error "unexpected numer of return values"
+    NoResults -> return ()
+    _         -> error "unexpected numer of return values"
 {-# INLINE emitStatement #-}
+
+impCall :: (ImpBuilder m, Emits n) => ImpFunName n -> [IExpr n] -> m n [IExpr n]
+impCall f args = emitMultiReturnInstr (ICall f args) <&> \case
+  NoResults      -> []
+  OneResult x    -> [x]
+  MultiResult xs -> xs
 
 emitAlloc :: (ImpBuilder m, Emits n) => PtrType -> IExpr n -> m n (IExpr n)
 emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
@@ -1490,6 +1517,7 @@ liftBuilderImp :: (Emits n, SubstE AtomSubstVal e, SinkableE e)
 liftBuilderImp cont = do
   Abs decls result <- liftBuilder $ buildScoped cont
   dropSubst $ translateDeclNest decls $ substM result
+{-# INLINE liftBuilderImp #-}
 
 -- TODO: should we merge this with `liftBuilderImp`? Not much harm in
 -- simplifying even if it's not needed.
@@ -1500,12 +1528,14 @@ liftBuilderImpSimplify
 liftBuilderImpSimplify cont = do
   block <- dceApproxBlock <$> buildBlockSimplified cont
   dropSubst $ translateBlock Nothing block
+{-# INLINE liftBuilderImpSimplify #-}
 
 emitSimplified
   :: (Emits n, Builder m)
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Atom n)
 emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
+{-# INLINE emitSimplified #-}
 
 appSimplifiedIxMethodImp
   :: Emits n
@@ -1583,8 +1613,7 @@ instance CheckableE ImpFunction where
 
 -- TODO: Don't use Core Envs for Imp!
 instance BindsEnv ImpDecl where
-  toEnvFrag (ImpLet bs _) =
-    toEnvFrag bs
+  toEnvFrag (ImpLet bs _) = toEnvFrag bs
 
 instance BindsEnv IBinder where
   toEnvFrag (IBinder b ty) = toEnvFrag $ b :> BaseTy ty

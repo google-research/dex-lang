@@ -1096,6 +1096,7 @@ naryIndexRef ref is = foldM indexRef ref is
 ptrOffset :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 ptrOffset x (IdxRepVal 0) = return x
 ptrOffset x i = emitOp $ PtrOffset x i
+{-# INLINE ptrOffset #-}
 
 unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 unsafePtrLoad x = do

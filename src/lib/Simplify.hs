@@ -4,6 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE UndecidableInstances #-}
+
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
                 , liftSimplifyM, buildBlockSimplified
                 , IxCache, MonadIxCache1, SimpleIxInstance (..)
@@ -724,7 +726,25 @@ instance SubstE Name SimpleIxInstance
 instance SinkableE SimpleIxInstance
 instance HoistableE SimpleIxInstance
 
-type IxCache = HashMapE (EKey Type) SimpleIxInstance
+data IxCache (n::S) = IxCache
+  { ixCacheFreeVars :: NameSet n
+  , ixCacheMap      :: HM.HashMap (EKey Type n) (SimpleIxInstance n)
+  }
+instance HoistableE IxCache where
+  freeVarsE = ixCacheFreeVars
+instance SinkableE IxCache where
+  sinkingProofE _ _ = todoSinkableProof -- sinkingProofE fresh $ HashMapE $ ixCacheMap c
+instance Semigroup (IxCache n) where
+  (IxCache fv m) <> (IxCache fv' m') = IxCache (fv <> fv') (m <> m')
+instance Monoid (IxCache n) where
+  mempty = IxCache mempty mempty
+instance SubstE Name IxCache where
+  -- This is needed, because IxCache is sometimes below decls that are emitted in-place.
+  -- But all those decls should hopefully already be fresh, since we try to be good about
+  -- generating fresh names before emitting them, so the slow branch of refreshAbs should
+  -- not be taken. If it is, don't implement this method, but better treat this as a
+  -- performance bug instead!
+  substE _ _ = error "needed for static constraints, hopefully dynamically unreachable!"
 
 type MonadIxCache1 (m::MonadKind1) = forall n. MonadState (IxCache n) (m n)
 
@@ -741,11 +761,11 @@ simplifiedIxInstance
   => Type n -> m n (SimpleIxInstance n)
 simplifiedIxInstance ty = do
   let key = EKey ty
-  gets (HM.lookup key . fromHashMapE) >>= \case
+  gets (HM.lookup key . ixCacheMap) >>= \case
     Just a  -> return a
     Nothing -> {-# SCC simplifyInstance #-} do
       a <- liftSimplifyM simplifyInstance
-      modify (<> (HashMapE $ HM.singleton key a))
+      modify (<> IxCache (freeVarsE key <> freeVarsE a) (HM.singleton key a))
       return a
   where
     simplifyInstance = liftSimplifyM do
