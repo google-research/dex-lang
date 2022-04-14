@@ -134,12 +134,13 @@ data Result = Result
               deriving (Show, Eq)
 
 type BenchStats = (Int, Double) -- number of runs, total benchmarking time
-data Output = TextOut String
-            | HtmlOut String
-            | PassInfo PassName String
-            | EvalTime  Double (Maybe BenchStats)
-            | TotalTime Double
-            | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
-            | MiscLog String
-            -- | ExportedFun String Atom
-              deriving (Show, Eq, Generic)
+data Output =
+    TextOut String
+  | HtmlOut String
+  | PassInfo PassName String
+  | EvalTime  Double (Maybe BenchStats)
+  | TotalTime Double
+  | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
+  | MiscLog String
+  -- Used to have | ExportedFun String Atom
+    deriving (Show, Eq, Generic)
