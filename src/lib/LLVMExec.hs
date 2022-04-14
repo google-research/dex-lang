@@ -13,7 +13,9 @@ module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal) where
 
+#ifdef DEX_DEBUG
 import qualified LLVM.Analysis as L
+#endif
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.AddrSpace as L
@@ -149,7 +151,9 @@ standardCompilationPipeline logger exports tm m = do
   linkDexrt m
   internalize exports m
   {-# SCC showLLVM   #-} logPass JitPass $ showModule m
+#ifdef DEX_DEBUG
   {-# SCC verifyLLVM #-} L.verify m
+#endif
   {-# SCC runPasses  #-} runDefaultPasses tm m
   {-# SCC showOptimizedLLVM #-} logPass LLVMOpt $ showModule m
   {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
