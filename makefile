@@ -103,6 +103,11 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
+# Make sure we always use a debug build in CI --- it enables extra checks!
+ifneq (,$(DEX_CI))
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:debug
+endif
+
 possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++
 
 CLANG := clang++
