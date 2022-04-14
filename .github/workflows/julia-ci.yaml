@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ ]
 
+env:
+  DEX_CI: 1
+
 jobs:
   build:
     if: false  # TODO: Fix Julia bindings!
