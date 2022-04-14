@@ -32,7 +32,6 @@ import Type
 import Simplify
 import LabeledItems
 import Util (enumerate)
-import Core
 import Algebra qualified as A
 import RawName qualified as R
 
@@ -680,11 +679,9 @@ getAllocInfo = DestM $ lift11 $ lift1 ask
 {-# INLINE getAllocInfo #-}
 
 introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
-introduceNewPtr hint ptrTy numel = do
-  Abs b v <- freshNameM hint
-  let ptrInfo = DestPtrInfo ptrTy numel
-  let emission = DestPtrEmissions [ptrInfo] (Nest b Empty)
-  DestM $ StateT1 \s -> fmap (,s) $ extendSubInplaceT $ Abs emission v
+introduceNewPtr hint ptrTy numel =
+  DestM $ StateT1 \s -> fmap (,s) $ freshExtendSubInplaceT hint \b ->
+    (DestPtrEmissions [DestPtrInfo ptrTy numel] $ Nest b Empty, binderName b)
 
 buildLocalDest
   :: (SinkableE e)
@@ -787,10 +784,8 @@ instance EnvReader DestM where
 instance Builder DestM where
   emitDecl hint ann expr = do
     ty <- getType expr
-    Abs b v <- freshNameM hint
-    let decl = Let b $ DeclBinding ann ty expr
-    let emissions = DestDeclEmissions decl
-    DestM $ StateT1 \s -> fmap (,s) $ extendSubInplaceT $ Abs emissions v
+    DestM $ StateT1 \s -> fmap (,s) $ freshExtendSubInplaceT hint \b ->
+      (DestDeclEmissions $ Let b $ DeclBinding ann ty expr, binderName b)
   {-# INLINE emitDecl #-}
 
 instance GenericE DestPtrInfo where
