@@ -2576,13 +2576,13 @@ instance (SubstE Name e, CheckableE e) => CheckableE (UDeclInferenceResult e) wh
     return $ UDeclResultWorkRemaining block'
                 (error "TODO: implement substitution for UDecl")
 
-instance (Monad m, ExtOutMap InfOutMap decls)
+instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)
         => EnvReader (InplaceT InfOutMap decls m) where
   unsafeGetEnv = do
     InfOutMap env _ _ _ <- getOutMapInplaceT
     return env
 
-instance (Monad m, ExtOutMap InfOutMap decls)
+instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)
          => EnvExtender (InplaceT InfOutMap decls m) where
   refreshAbs ab cont = UnsafeMakeInplaceT \env decls ->
     refreshAbsPure (toScope env) ab \_ b e -> do

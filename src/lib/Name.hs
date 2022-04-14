@@ -16,8 +16,8 @@ module Name (
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
-  SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
-  extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
+  SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
+  extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
@@ -60,7 +60,7 @@ module Name (
   OutReaderT (..), OutReader (..), runOutReaderT,
   ExtWitness (..),
   toSubstPairs, fromSubstPairs, SubstPair (..),
-  InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
+  InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..), ExtOutFrag (..),
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
   HoistExcept (..), liftHoistExcept', liftHoistExcept, abstractFreeVars, abstractFreeVar,
   abstractFreeVarsNoAnn,
@@ -74,7 +74,7 @@ module Name (
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
-  updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
+  updateSubstFrag, nameSetToList, toNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence,
   MonadTrans1 (..), collectGarbage,
   ) where
@@ -176,9 +176,11 @@ class (SinkableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -> 
 class HasScope scope => OutMap scope where
   emptyOutMap :: scope VoidS
 
-class (OutFrag scopeFrag, OutMap scope)
-      => ExtOutMap (scope :: S -> *) (scopeFrag :: S -> S -> *) where
-  extendOutMap :: Distinct l => scope n -> scopeFrag n l -> scope l
+class OutMap env => ExtOutMap (env :: S -> *) (frag :: S -> S -> *) where
+  extendOutMap :: Distinct l => env n -> frag n l -> env l
+
+class ExtOutFrag (frag :: B) (subfrag :: B) where
+  extendOutFrag :: Distinct m => frag n l -> subfrag l m -> frag n m
 
 todoSinkableProof :: a
 todoSinkableProof =
@@ -1518,7 +1520,7 @@ newtype InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = Unsaf
   { unsafeRunInplaceT :: Distinct n => bindings n -> decls UnsafeS UnsafeS -> m (a, decls UnsafeS UnsafeS, bindings UnsafeS) }
 
 runInplaceT
-  :: (ExtOutMap b d, Monad m)
+  :: (ExtOutMap b d, OutFrag d, Monad m)
   => Distinct n
   => b n
   -> InplaceT b d m n a
@@ -1531,7 +1533,7 @@ runInplaceT bindings (UnsafeMakeInplaceT f) = do
 -- Special case of extending without introducing new names
 -- (doesn't require `Mut n`)
 extendTrivialInplaceT
-  :: (ExtOutMap b d, Monad m)
+  :: (ExtOutMap b d, OutFrag d, Monad m)
   => d n n
   -> InplaceT b d m n ()
 extendTrivialInplaceT d =
@@ -1540,6 +1542,17 @@ extendTrivialInplaceT d =
     withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
       return ((), catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
 {-# INLINE extendTrivialInplaceT #-}
+
+extendTrivialSubInplaceT
+  :: (ExtOutMap b d, ExtOutFrag ds d, Monad m)
+  => d n n
+  -> InplaceT b ds m n ()
+extendTrivialSubInplaceT d =
+  UnsafeMakeInplaceT \env decls -> do
+    let env' = extendOutMap env d
+    withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+      return ((), extendOutFrag decls $ unsafeCoerceB d, unsafeCoerceE env')
+{-# INLINE extendTrivialSubInplaceT #-}
 
 -- TODO: This should be declared unsafe!
 getOutMapInplaceT
@@ -1566,7 +1579,7 @@ extendInplaceTLocal f cont =
 
 extendInplaceT
   :: forall m b d e n.
-     (ExtOutMap b d, Monad m, SubstB Name d, SubstE Name e)
+     (ExtOutMap b d, OutFrag d, Monad m, SubstB Name d, SubstE Name e)
   => Mut n => Abs d e n -> InplaceT b d m n (e n)
 extendInplaceT ab = do
   UnsafeMakeInplaceT \env decls ->
@@ -1574,12 +1587,22 @@ extendInplaceT ab = do
       let env' = unsafeCoerceE $ extendOutMap env d
       withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
         return (unsafeCoerceE result, catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
-
 {-# INLINE extendInplaceT #-}
+
+extendSubInplaceT
+  :: (ExtOutMap b d, ExtOutFrag ds d, BindsNames d, Monad m, SubstB Name d, SubstE Name e)
+  => Mut n => Abs d e n -> InplaceT b ds m n (e n)
+extendSubInplaceT ab = do
+  UnsafeMakeInplaceT \env decls ->
+    refreshAbsPure (toScope env) ab \_ d result -> do
+      let env' = unsafeCoerceE $ extendOutMap env d
+      withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+        return (unsafeCoerceE result, extendOutFrag decls $ unsafeCoerceB d, env')
+{-# INLINE extendSubInplaceT #-}
 
 locallyMutableInplaceT
   :: forall m b d n e.
-     (ExtOutMap b d, Monad m, SinkableE e)
+     (ExtOutMap b d, OutFrag d, Monad m, SinkableE e)
   => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
   -> InplaceT b d m n (Abs d e n)
 locallyMutableInplaceT cont = do
@@ -1590,7 +1613,7 @@ locallyMutableInplaceT cont = do
 {-# INLINE locallyMutableInplaceT #-}
 
 liftBetweenInplaceTs
-  :: (Monad m, ExtOutMap bs ds, OutFrag ds')
+  :: (Monad m, ExtOutMap bs ds, OutFrag ds, OutFrag ds')
   => (forall a'. m' a' -> m a')
   -> (bs n -> bs' n)
   -> (forall l l' . Distinct l' => ds' l l' -> ds  l l')

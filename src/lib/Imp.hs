@@ -11,10 +11,11 @@ module Imp
   , toImpStandaloneFunction, toImpExportedFunction
   , PtrBinder, impFunType, getIType) where
 
+import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
-import Control.Category ((>>>))
+import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Class
@@ -548,38 +549,29 @@ data DestPtrInfo n = DestPtrInfo PtrType (Block n)
 type PtrBinders = Nest AtomNameBinder
 data DestEmissions n l where
   DestEmissions
-    :: [DestPtrInfo n]   -- pointer types and allocation sizes
-    -> PtrBinders n h    -- pointer binders for allocations we require
+    :: {-# UNPACK #-} !(DestPtrEmissions n h)
     ->   Nest Decl h l   -- decls to compute indexing offsets
     -> DestEmissions n l
 
 instance GenericB DestEmissions where
-  type RepB DestEmissions =         LiftB (ListE DestPtrInfo)
-                            `PairB` Nest AtomNameBinder
-                            `PairB` Nest Decl
-  fromB (DestEmissions ps bs ds) = LiftB (ListE ps) `PairB` bs `PairB` ds
-  toB   (LiftB (ListE ps) `PairB` bs `PairB` ds) = DestEmissions ps bs ds
-
-instance BindsEnv DestEmissions where
-  toEnvFrag (DestEmissions ptrInfo ptrs decls) =
-    withSubscopeDistinct decls $
-      ptrBindersToEnvFrag ptrInfo ptrs `catEnvFrags` toEnvFrag decls
-   where
-     ptrBindersToEnvFrag :: Distinct l => [DestPtrInfo n] -> Nest AtomNameBinder n l -> EnvFrag n l
-     ptrBindersToEnvFrag [] Empty = emptyOutFrag
-     ptrBindersToEnvFrag (DestPtrInfo ty _ : rest) (Nest b restBs) =
-       withSubscopeDistinct restBs do
-         let frag1 = toEnvFrag $ b :> PtrTy ty
-         let frag2 = withExtEvidence (toExtEvidence b) $
-                        ptrBindersToEnvFrag (map sink rest) restBs
-         frag1 `catEnvFrags` frag2
-     ptrBindersToEnvFrag _ _ = error "mismatched indices"
-
+  type RepB DestEmissions = DestPtrEmissions `PairB` Nest Decl
+  fromB (DestEmissions bs ds) = bs `PairB` ds
+  {-# INLINE fromB #-}
+  toB   (bs `PairB` ds) = DestEmissions bs ds
+  {-# INLINE toB #-}
 instance ProvesExt   DestEmissions
 instance BindsNames  DestEmissions
 instance SinkableB DestEmissions
 instance SubstB Name DestEmissions
 instance HoistableB  DestEmissions
+
+instance BindsEnv DestEmissions where
+  toEnvFrag (DestEmissions ptrs decls) =
+    withSubscopeDistinct decls $
+      toEnvFrag ptrs `catEnvFrags` toEnvFrag decls
+
+instance ExtOutMap Env DestEmissions where
+  extendOutMap bindings emissions = bindings `extendOutMap` toEnvFrag emissions
 
 instance OutFrag DestEmissions where
   emptyOutFrag = emptyDestEmissions
@@ -588,21 +580,79 @@ instance OutFrag DestEmissions where
   {-# INLINE catOutFrags #-}
 
 emptyDestEmissions :: DestEmissions n n
-emptyDestEmissions = DestEmissions [] Empty Empty
+emptyDestEmissions = DestEmissions emptyOutFrag Empty
 {-# NOINLINE [1] emptyDestEmissions #-}
 
 catDestEmissions :: Distinct l => DestEmissions n h -> DestEmissions h l -> DestEmissions n l
-catDestEmissions (DestEmissions p1 b1 d1) (DestEmissions p2 b2 d2) =
-  ignoreHoistFailure do
-    ListE p2' <- hoist (PairB b1 d1) (ListE p2)
-    PairB b2' d1' <- withSubscopeDistinct d2 $exchangeBs $ PairB d1 b2
-    return $ DestEmissions (p1 <> p2') (b1 >>> b2') (d1' >>> d2)
+catDestEmissions (DestEmissions ptrs1 d1) (DestEmissions ptrs2 d2) =
+  case withSubscopeDistinct d2 $ ignoreHoistFailure $ exchangeBs $ PairB d1 ptrs2 of
+    PairB ptrs2' d1' -> DestEmissions (ptrs1 >>> ptrs2') (d1' >>> d2)
 {-# NOINLINE [1] catDestEmissions #-}
 {-# RULES
       "catDestEmissions Empty *"  forall e. catDestEmissions emptyDestEmissions e = e;
       "catDestEmissions * Empty"  forall e. catDestEmissions e emptyDestEmissions = e;
       "catDestEmissions reassoc"  forall e1 e2 e3. catDestEmissions e1 (catDestEmissions e2 e3) = withSubscopeDistinct e3 (catDestEmissions (catDestEmissions e1 e2) e3)
   #-}
+
+newtype DestDeclEmissions (n::S) (l::S)
+  = DestDeclEmissions (Decl n l)
+  deriving (ProvesExt, BindsNames, SinkableB, SubstB Name)
+instance ExtOutMap Env DestDeclEmissions where
+  extendOutMap env (DestDeclEmissions decl) = env `extendOutMap` toEnvFrag decl
+instance ExtOutFrag DestEmissions DestDeclEmissions where
+  -- TODO: Use an RNest
+  extendOutFrag (DestEmissions p d) (DestDeclEmissions d') = DestEmissions p (joinNest d $ Nest d' Empty)
+  {-# INLINE extendOutFrag #-}
+
+data DestPtrEmissions (n::S) (l::S)
+  = DestPtrEmissions [DestPtrInfo n]   -- pointer types and allocation sizes
+                     (PtrBinders n l)  -- pointer binders for allocations we require
+
+instance GenericB DestPtrEmissions where
+  type RepB DestPtrEmissions = LiftB (ListE DestPtrInfo) `PairB` PtrBinders
+  fromB (DestPtrEmissions i b) = (LiftB (ListE i)) `PairB` b
+  toB   ((LiftB (ListE i)) `PairB` b) = DestPtrEmissions i b
+instance ProvesExt   DestPtrEmissions
+instance BindsNames  DestPtrEmissions
+instance SinkableB   DestPtrEmissions
+instance HoistableB  DestPtrEmissions
+instance SubstB Name DestPtrEmissions
+
+instance Category DestPtrEmissions where
+  id = DestPtrEmissions [] emptyOutFrag
+  (DestPtrEmissions i2 b2) . (DestPtrEmissions i1 b1) = DestPtrEmissions i' b'
+    where
+      i' = i1 <> (fromListE $ ignoreHoistFailure $ hoist b1 $ ListE i2)
+      b' = b1 >>> b2
+  {-# INLINE (.) #-}
+instance OutFrag DestPtrEmissions where
+  emptyOutFrag = id
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags _ = (>>>)
+  {-# INLINE catOutFrags #-}
+
+instance BindsEnv DestPtrEmissions where
+  toEnvFrag (DestPtrEmissions ptrInfo ptrs) = ptrBindersToEnvFrag ptrInfo ptrs
+    where
+      ptrBindersToEnvFrag :: Distinct l => [DestPtrInfo n] -> Nest AtomNameBinder n l -> EnvFrag n l
+      ptrBindersToEnvFrag [] Empty = emptyOutFrag
+      ptrBindersToEnvFrag (DestPtrInfo ty _ : rest) (Nest b restBs) =
+        withSubscopeDistinct restBs do
+          let frag1 = toEnvFrag $ b :> PtrTy ty
+          let frag2 = withExtEvidence (toExtEvidence b) $
+                         ptrBindersToEnvFrag (map sink rest) restBs
+          frag1 `catEnvFrags` frag2
+      ptrBindersToEnvFrag _ _ = error "mismatched indices"
+
+instance ExtOutFrag DestEmissions DestPtrEmissions where
+  extendOutFrag (DestEmissions ptrs d) emissions =
+    case ignoreHoistFailure $ exchangeBs $ PairB d emissions of
+      PairB emissions' d' -> DestEmissions (ptrs >>> emissions') d'
+  {-# INLINE extendOutFrag #-}
+
+instance ExtOutMap Env DestPtrEmissions where
+  extendOutMap bindings emissions = bindings `extendOutMap` toEnvFrag emissions
+
 
 newtype DestM (n::S) (a:: *) =
   DestM { runDestM' :: StateT1 IxCache
@@ -621,7 +671,7 @@ liftDestM allocInfo cache m = do
   let result = runHardFail $ flip runReaderT allocInfo $
                  runInplaceT env $ flip runStateT1 cache $ runDestM' m
   case result of
-    (DestEmissions _ Empty Empty, result') -> return result'
+    (DestEmissions (DestPtrEmissions [] Empty) Empty, result') -> return result'
     _ -> error "not implemented"
 {-# INLINE liftDestM #-}
 
@@ -633,15 +683,15 @@ introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName 
 introduceNewPtr hint ptrTy numel = do
   Abs b v <- freshNameM hint
   let ptrInfo = DestPtrInfo ptrTy numel
-  let emission = DestEmissions [ptrInfo] (Nest b Empty) Empty
-  DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emission v
+  let emission = DestPtrEmissions [ptrInfo] (Nest b Empty)
+  DestM $ StateT1 \s -> fmap (,s) $ extendSubInplaceT $ Abs emission v
 
 buildLocalDest
   :: (SinkableE e)
   => (forall l. (Mut l, DExt n l) => DestM l (e l))
   -> DestM n (AbsPtrs e n)
 buildLocalDest cont = do
-  Abs (DestEmissions ptrInfo ptrBs decls) e <-
+  Abs (DestEmissions (DestPtrEmissions ptrInfo ptrBs) decls) e <-
     DestM $ StateT1 \s -> do
       Abs bs (PairE e s') <- locallyMutableInplaceT $ fmap toPairE $ flip runStateT1 (sink s) $ runDestM' cont
       s'' <- hoistState s bs s'
@@ -657,13 +707,14 @@ buildDeclsDest
   -> DestM n (Abs (Nest Decl) e n)
 buildDeclsDest cont = do
   DestM $ StateT1 \s -> do
-    Abs (DestEmissions ptrInfo ptrBs decls) result <- locallyMutableInplaceT do
+    Abs (DestEmissions ptrs decls) result <- locallyMutableInplaceT do
       Emits <- fabricateEmitsEvidenceM
       toPairE <$> flip runStateT1 (sink s) (runDestM' cont)
-    Abs decls' (PairE e s') <- extendInplaceT $
-                                 Abs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
+    Abs decls' (PairE e s') <-
+      extendSubInplaceT $ Abs ptrs $ Abs decls result
     s'' <- hoistState s decls' s'
     return (Abs decls' e, s'')
+{-# INLINE buildDeclsDest #-}
 
 buildBlockDest
   :: Mut n
@@ -676,6 +727,7 @@ buildBlockDest cont = do
     return $ result `PairE` ty
   ty' <- liftHoistExcept $ hoist decls ty
   return $ Block (BlockAnn ty') decls $ Atom result
+{-# INLINE buildBlockDest #-}
 
 -- TODO: this is mostly copy-paste from Inference
 buildAbsDest
@@ -737,11 +789,9 @@ instance Builder DestM where
     ty <- getType expr
     Abs b v <- freshNameM hint
     let decl = Let b $ DeclBinding ann ty expr
-    let emissions = DestEmissions [] Empty $ Nest decl Empty
-    DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emissions v
-
-instance ExtOutMap Env DestEmissions where
-  extendOutMap bindings emissions = bindings `extendOutMap` toEnvFrag emissions
+    let emissions = DestDeclEmissions decl
+    DestM $ StateT1 \s -> fmap (,s) $ extendSubInplaceT $ Abs emissions v
+  {-# INLINE emitDecl #-}
 
 instance GenericE DestPtrInfo where
   type RepE DestPtrInfo = PairE (LiftE PtrType) Block
