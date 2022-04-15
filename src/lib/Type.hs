@@ -600,7 +600,6 @@ typeCheckPrimCon con = case con of
     payload |: (caseTys !! tag)
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
-  ClassDictHole _ ty  -> ty |:TyKind   >> substM ty
   IntRangeVal     l h i -> i|:IdxRepTy >> substM (TC $ IntRange     l h)
   IndexRangeVal t l h i -> i|:IdxRepTy >> substM (TC $ IndexRange t l h)
   IndexSliceVal _ _ _ -> error "not implemented"
@@ -632,6 +631,7 @@ typeCheckPrimCon con = case con of
   ExplicitDict dictTy _  -> do
     -- TODO: check method
     checkTypeE TyKind dictTy
+  SynthesizeDict _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
@@ -836,7 +836,6 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  SynthesizeDict _ ty -> checkTypeE TyKind ty
   ProjMethod dict i -> do
     DictTy (DictType _ className params) <- getTypeE dict
     methodTy <- getMethodType className i

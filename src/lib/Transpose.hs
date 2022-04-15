@@ -229,7 +229,6 @@ transposeOp op ct = case op of
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
-  SynthesizeDict _ _    -> notLinear
   ProjMethod _ _        -> notLinear
   ExplicitApply _ _     -> notLinear
   where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
@@ -324,7 +323,6 @@ transposeCon con ct = case con of
       getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent
   IndexSliceVal _ _ _   -> notTangent
@@ -335,6 +333,7 @@ transposeCon con ct = case con of
   ConRef _       -> notTangent
   RecordRef _    -> notTangent
   ExplicitDict _ _ -> notTangent
+  SynthesizeDict _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a
