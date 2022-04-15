@@ -228,9 +228,8 @@ runEnvQuery query = do
     DumpSubst -> logTop $ TextOut $ pprint $ env
     InternalNameInfo name ->
       case lookupSubstFragRaw (fromRecSubst $ envDefs $ topEnv env) name of
-        Nothing -> throw UnboundVarErr $ pprint name
-        Just (WithColor binding) ->
-          logTop $ TextOut $ pprint binding
+        Nothing      -> throw UnboundVarErr $ pprint name
+        Just binding -> logTop $ TextOut $ pprint binding
     SourceNameInfo name -> do
       lookupSourceMap name >>= \case
         Nothing -> throw UnboundVarErr $ pprint name
