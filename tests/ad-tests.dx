@@ -322,3 +322,37 @@ func = \x:Float.
 
 snd (linearize func 1.0) 2.0
 > 2.
+
+-- Nested AD, examples from #713
+def func2 {m} (x:m=>Float) : Float =
+    exp (0.5 * sum for i. sq x.i)
+
+def hvpf {m} (x:m=>Float) (v:m=>Float) : m=>Float =
+    (dot x v) .* (grad func2 x) + func2(x) .* v
+
+x = [0.1, 0.2, 0.3]
+v = [0.2, 0.3, 0.4]
+func2 x ~~ 1.072508
+> True
+
+-- analytic
+result = hvpf x v
+result ~~ [0.235952, 0.364653, 0.493354]
+> True
+
+-- finite diff over reverse
+eps = 0.0001
+(grad func2 (x + eps .* v) - grad func2 x) / eps ~~ [0.235885, 0.364631, 0.493228]
+> True
+
+-- reverse over forward
+grad (\x. jvp func2 x v) x ~~ result
+> True
+
+-- reverse over reverse
+grad (\x. dot (grad func2 x) v) x ~~ result
+> True
+
+-- forward over reverse
+jvp (grad func2) x v ~~ result
+> True
