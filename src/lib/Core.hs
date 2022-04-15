@@ -51,6 +51,13 @@ withEnv :: (SinkableE e, EnvReader m) => (Env n -> e n) -> m n (e n)
 withEnv f = f <$> unsafeGetEnv
 {-# INLINE withEnv #-}
 
+-- Allows going under the binder with a guarantee that said binder is
+-- distinct from everything else in scope, renaming if necessary.  To
+-- wit, the binder in an (Abs b e n) may shadow names from the scope n
+-- -- Abs makes no guarantees.  If we want to go under the binder to
+-- operate on the `e`, we want to make sure it's fresh with respect to
+-- the enclosing scope, which is what refreshAbs does for its
+-- continuation (with DExt n l serving as proof thereof).
 class (EnvReader m, Monad1 m) => EnvExtender (m::MonadKind1) where
   refreshAbs
     :: (BindsEnv b, SubstB Name b, SubstE Name e)
