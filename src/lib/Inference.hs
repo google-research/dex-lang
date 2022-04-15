@@ -8,7 +8,7 @@
 
 module Inference
   ( inferTopUDecl, checkTopUType, inferTopUExpr, applyUDeclAbs
-  , trySynthDictBlock
+  , trySynthTerm
   , synthTopBlock, UDeclInferenceResult (..), synthIx ) where
 
 import Prelude hiding ((.), id)
@@ -18,9 +18,9 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
-import Data.Foldable (toList, asum)
+import Data.Foldable (toList)
 import Data.Function ((&))
-import Data.Functor ((<&>), ($>))
+import Data.Functor (($>))
 import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc (Pretty (..))
@@ -29,6 +29,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Unsafe.Coerce as TrulyUnsafe
+import GHC.Generics (Generic (..))
 
 import Name
 import Builder
@@ -48,24 +49,17 @@ import Core
 -- === Top-level interface ===
 
 checkTopUType :: (Fallible1 m, EnvReader m) => UType n -> m n (Type n)
-checkTopUType ty = liftInfererM do
-  solveLocal do
-    ty' <- checkUType ty
-    applyDefaults
-    return ty'
+checkTopUType ty = liftInfererM $ solveLocal $ withApplyDefaults $ checkUType ty
 {-# SCC checkTopUType #-}
 
 inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (Block n)
 inferTopUExpr e = liftInfererM do
-  solveLocal $ buildBlockInf do
-    e' <- inferSigma e
-    applyDefaults
-    return e'
+  solveLocal $ buildBlockInf $ withApplyDefaults $ inferSigma e
 {-# SCC inferTopUExpr #-}
 
 data UDeclInferenceResult e n =
-   UDeclResultDone (e n)  -- used for UDataDefDecl and UInterface
- | UDeclResultWorkRemaining (Block n) (Abs UDecl e n) -- used for ULet and UInstance
+   UDeclResultDone (e n)  -- used for UDataDefDecl, UInterface and UInstance
+ | UDeclResultWorkRemaining (Block n) (Abs UDecl e n) -- used for ULet
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
@@ -80,21 +74,45 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
   let classSourceName = uBinderSourceName className
   let methodSourceNames = nestToList uBinderSourceName methodNames
-  dictDef <- liftInfererM $
-               inferInterfaceDataDef classSourceName paramBs superclasses methodTys
-  dictDefName <- emitDataDef dictDef
-  let classDef = ClassDef classSourceName methodSourceNames dictDefName
-  className' <- emitClassDef classDef =<< tyConDefAsAtom dictDefName Nothing
+  classDef <- liftInfererM $ inferClassDef classSourceName methodSourceNames
+                                           paramBs superclasses methodTys
+  className' <- emitClassDef classDef
   methodNames' <-
     forM (enumerate $ zip methodSourceNames methodTys) \(i, (prettyName, ty)) -> do
       let UMethodType (Right explicits) _ = ty
-      emitMethodType (getNameHint prettyName) className' explicits i
+      emitMethod (getNameHint prettyName) className' explicits i
   let subst = className @> className' <.> methodNames @@> methodNames'
   UDeclResultDone <$> applySubst subst result
+inferTopUDecl (UInstance className bs params methods maybeName) result = do
+  let (InternalName _ className') = className
+  -- XXX: we use `buildDeclsInf` even though we don't actually emit any decls
+  -- here. The reason is that it does some DCE of inference vars for us. If we
+  -- don't use it, we get spurious "Ambiguous type variable" errors. TODO: Fix
+  -- this.
+  Abs Empty ab <- liftInfererM $ solveLocal $ buildDeclsInf do
+    checkInstanceArgs bs do
+      checkInstanceParams params \params' -> do
+        className'' <- sinkM className'
+        body <- checkInstanceBody className'' params' methods
+        return (ListE params' `PairE` body)
+  Abs bs' (Abs dictBinders (ListE params' `PairE` body)) <- return ab
+  let def = InstanceDef className' (bs' >>> dictBinders) params' body
+  def' <- synthInstanceDef def
+  instanceName <- emitInstanceDef def'
+  UDeclResultDone <$> case maybeName of
+    RightB UnitB  -> do
+      -- only nameless instances become synthesis candidates
+      addInstanceSynthCandidate className' instanceName
+      return result
+    JustB instanceName' -> do
+      lam <- instanceFun instanceName
+      instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
+      applySubst (instanceName' @> instanceAtomName) result
+    _ -> error "impossible"
 inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
   block <- liftInfererM $ solveLocal $ buildBlockInf do
     val <- checkMaybeAnnExpr ann rhs
-    -- This is just for typ checking. We don't actually generate
+    -- This is just for type checking. We don't actually generate
     -- pattern-matching code at the top level
     _ <- buildBlockInf do
       val' <- sinkM val
@@ -102,15 +120,6 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
       bindLamPat p v $ return UnitVal
     applyDefaults
     return val
-  return $ UDeclResultWorkRemaining block $ Abs decl result
-inferTopUDecl decl@(UInstance ~(InternalName _ className) argBinders params methods _) result = do
-  block <- liftInfererM $ solveLocal $ buildBlockInf do
-    instanceDict <- checkInstanceArgs argBinders do
-                      checkInstanceParams params \params' -> do
-                        className' <- sinkM className
-                        checkInstanceBody className' params' methods
-    applyDefaults
-    return instanceDict
   return $ UDeclResultWorkRemaining block $ Abs decl result
 {-# SCC inferTopUDecl #-}
 
@@ -129,15 +138,6 @@ applyUDeclAbs (Abs decl result) x = case decl of
           matchUPat pat x'
         nameSubst <- emitAtomSubstFrag atomSubst
         applySubst nameSubst result
-  UInstance _ _ _ _ maybeName -> do
-    case maybeName of
-      RightB UnitB  -> do
-        void $ emitTopLet (getNameHint @String "instance") InstanceLet $ Atom x
-        return result
-      JustB instanceName -> do
-        instanceVal <- emitTopLet (getNameHint instanceName) PlainLet (Atom x)
-        applySubst (instanceName @> instanceVal) result
-      _ -> error "impossible"
   _ -> error "other top-level decls don't require any computation so we shouldn't get here"
 
 
@@ -199,6 +199,10 @@ applyDefaults = do
   Defaults defaults <- getDefaults
   forM_ defaults \(ty, ty') ->
     tryConstrainEq ty (sinkFromTop ty')
+
+withApplyDefaults :: (EmitsInf o, Inferer m) => m i o a -> m i o a
+withApplyDefaults cont = cont <* applyDefaults
+{-# INLINE withApplyDefaults #-}
 
 -- === Concrete Inferer monad ===
 
@@ -384,7 +388,8 @@ emitInfererM hint emission = do
   InfererM $ SubstReaderT $ lift $ lift11 $ extendInplaceT $ Abs frag v
 
 instance Solver (InfererM i) where
-  extendSolverSubst v ty = InfererM $ SubstReaderT $ lift $ lift11 $
+  extendSolverSubst v ty = do
+   InfererM $ SubstReaderT $ lift $ lift11 $
     void $ extendTrivialInplaceT $
       InfOutFrag Empty mempty (singletonSolverSubst v ty)
 
@@ -407,7 +412,7 @@ instance Solver (InfererM i) where
     Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
       Empty -> return result
-      Nest (_:>RightE (InfVarBound _ ctx)) _ ->
+      Nest (_:>RightE (InfVarBound _ ctx)) _ -> do
         addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
       _ -> error "not possible?"
 
@@ -1112,7 +1117,7 @@ isVariantTailAlt _ = False
 
 -- ===
 
-inferUVar :: Inferer m => UVar o -> m i o (Atom o)
+inferUVar :: (EmitsBoth o, Inferer m) => UVar o -> m i o (Atom o)
 inferUVar = \case
   UAtomVar v ->
     return $ Var v
@@ -1122,12 +1127,10 @@ inferUVar = \case
   UDataConVar v -> do
     DataConBinding _ _ conAtom <- lookupEnv v
     return conAtom
-  UClassVar v -> do
-    ClassBinding _ dictTyAtom <- lookupEnv v
-    return dictTyAtom
+  UClassVar v -> dictTypeFun v
   UMethodVar v -> do
-    MethodBinding _ _ getter <- lookupEnv v
-    return getter
+    MethodBinding _ _ f <- lookupEnv v
+    return f
 
 buildForTypeFromTabType :: (Fallible1 m, Builder m)
                         => EffectRow n -> TabPiType n -> m n (PiType n)
@@ -1142,20 +1145,6 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   val <- checkMaybeAnnExpr ann rhs
   var <- emitDecl (getNameHint p) letAnn $ Atom val
   bindLamPat p var cont
-inferUDeclLocal (UInstance ~(InternalName _ className) argBinders params methods maybeName) cont = do
-  className' <- substM className
-  instanceDict <- checkInstanceArgs argBinders do
-                    checkInstanceParams params \params' -> do
-                      className'' <- sinkM className'
-                      checkInstanceBody className'' params' methods
-  case maybeName of
-    RightB UnitB  -> do
-      void $ emitDecl (getNameHint @String "instance") InstanceLet $ Atom instanceDict
-      cont
-    JustB instanceName -> do
-      instanceVal <- emitDecl (getNameHint instanceName) PlainLet (Atom instanceDict)
-      extendSubst (instanceName @> instanceVal) cont
-    _ -> error "impossible"
 inferUDeclLocal _ _ = error "not a local decl"
 
 checkMaybeAnnExpr :: (EmitsBoth o, Inferer m) => Maybe (UType i) -> UExpr i -> m i o (Atom o)
@@ -1175,6 +1164,37 @@ tyConDefAsAtom defName maybeIfaceReq = liftBuilder do
       ListE params'' <- sinkM $ ListE params'
       defName'' <- sinkM defName
       return $ TypeCon sourceName defName'' $ Var <$> params''
+
+dictTypeFun :: EnvReader m => ClassName n -> m n (Atom n)
+dictTypeFun v = do
+  -- TODO: we should cache this in the ClassDef
+  ClassDef classSourceName _ paramBinders _ _ <- lookupClassDef v
+  liftEnvReaderM $ refreshAbs (Abs paramBinders UnitE) \bs' UnitE -> do
+    v' <- sinkM v
+    return $ go classSourceName bs' v' $ nestToNames bs'
+  where
+    go :: SourceName -> Nest Binder n l -> ClassName l -> [AtomName l] -> Atom n
+    go classSourceName bs className params = case bs of
+      Empty -> DictTy $ DictType classSourceName className $ map Var params
+      Nest (b:>ty) rest ->
+        Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
+          AtomicBlock $ go classSourceName rest className params
+
+-- TODO: cache this with the instance def (requires a recursive binding)
+instanceFun :: EnvReader m => InstanceName n -> m n (Atom n)
+instanceFun instanceName = do
+  InstanceDef _ bs _ _ <- lookupInstanceDef instanceName
+  liftEnvReaderM $ refreshAbs (Abs bs UnitE) \bs' UnitE -> do
+    let args = map Var $ nestToNames bs'
+    instanceName' <- sinkM instanceName
+    return $ go bs' instanceName' args
+  where
+    go :: Nest PiBinder n l -> InstanceName l -> [Atom l] -> Atom n
+    go bs name args = case bs of
+      Empty -> DictCon $ InstanceDict name args
+      Nest (PiBinder b ty arr) rest -> do
+        let restAtom = go rest name args
+        Lam $ LamExpr (LamBinder b ty arr Pure) (AtomicBlock restAtom)
 
 dataConDefAsAtom :: EnvReader m => DataDefName n -> DataIfaceReq n -> Int -> m n (Atom n)
 dataConDefAsAtom defName ifaceReq conIx = liftBuilder do
@@ -1222,19 +1242,20 @@ inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
   return $ DataConDef sourceName argBs'
 
-inferInterfaceDataDef :: Inferer m
-                      => SourceName
-                      -> Nest (UAnnBinder AtomNameC) i i'
-                      -> [UType i'] -> [UMethodType i']
-                      -> m i o (DataDef o)
-inferInterfaceDataDef className paramBs superclasses methods = do
-  paramBs' <- solveLocal $ checkUBinders $ EmptyAbs paramBs
-  buildNewtype className paramBs' \params -> solveLocal do
-    params' <- mapM sinkM params
-    extendSubst (paramBs @@> params') do
-      superclasses' <- mapM checkUType superclasses
-      methodsTys'   <- mapM checkUType $ methods <&> \(UMethodType _ ty) -> ty
-      return $ PairTy (ProdTy superclasses') (ProdTy methodsTys')
+inferClassDef
+  :: Inferer m
+  => SourceName -> [SourceName] -> Nest (UAnnBinder AtomNameC) i i'
+  -> [UType i'] -> [UMethodType i']
+  -> m i o (ClassDef o)
+inferClassDef className methodNames paramBs superclasses methods = solveLocal do
+  ab <- withNestedUBinders paramBs id \_ -> do
+    superclasses' <- mapM checkUType superclasses
+    methodsTys'   <- forM methods \(UMethodType (Right explicits) ty) -> do
+      ty' <- checkUType ty
+      return $ MethodType explicits ty'
+    return $ PairE (ListE superclasses') (ListE methodsTys')
+  Abs bs (PairE (ListE scs) (ListE mtys)) <- return ab
+  return $ ClassDef className methodNames bs scs mtys
 
 withNestedUBinders
   :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
@@ -1290,67 +1311,78 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ _ arr) _ _)
         checkSigma body resultTy
 
 checkInstanceArgs
-  :: (EmitsBoth o, Inferer m)
+  :: (EmitsInf o, Inferer m, SinkableE e, SubstE Name e, HoistableE e)
   => Nest UPatAnnArrow i i'
-  -> (forall o'. (EmitsBoth o', Ext o o') =>  m i' o' (Atom o'))
-  -> m i o (Atom o)
-checkInstanceArgs Empty cont = cont
+  -> (forall o'. (EmitsInf o', Ext o o') =>  m i' o' (e o'))
+  -> m i o (Abs (Nest PiBinder) e o)
+checkInstanceArgs Empty cont = Abs Empty <$> cont
 checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
   case arrow of
     ImplicitArrow -> return ()
     ClassArrow    -> return ()
+    PlainArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
-  checkAnnWithMissingDicts ann \ds getArgTy -> do
+  ab <- checkAnnWithMissingDicts ann \ds getArgTy -> do
     introDicts (eSetToList ds) $ do
       argTy <- getArgTy
-      buildLamInf (getNameHint p) arrow argTy (const $ return Pure) \v -> do
-        bindLamPat p v $
+      buildPiAbsInf (getNameHint p) arrow argTy \v -> do
+        WithSrcB pos (UPatBinder b) <- return p  -- TODO: enforce this syntactically
+        addSrcContext pos $ extendSubst (b@>v) $
           checkInstanceArgs rest do
             cont
+  Abs bs (Abs b (Abs bs' e)) <- return ab
+  return $ Abs (bs >>> Nest b Empty >>> bs') e
 
-checkInstanceParams :: forall m i o. (EmitsBoth o, Inferer m)
-                    => [UType i]
-                    -> (forall o'. (EmitsBoth o', Ext o o') => [Type o'] -> m i o' (Atom o'))
-                    -> m i o (Atom o)
+checkInstanceParams
+  :: forall m i o e.
+     (EmitsInf o, Inferer m, SinkableE e, HoistableE e, SubstE Name e)
+  => [UType i]
+  -> (forall o'. (EmitsInf o', Ext o o') => [Type o'] -> m i o' (e o'))
+  -> m i o (Abs (Nest PiBinder) e o)
 checkInstanceParams params cont = go params []
   where
-    go :: forall o'. (EmitsBoth o', Inferer m, Ext o o') => [UType i] -> [Type o'] -> m i o' (Atom o')
-    go []    ptys = cont $ reverse ptys
+    go :: forall o'. (EmitsInf o', Inferer m, Ext o o') => [UType i] -> [Type o']
+       -> m i o' (Abs (Nest PiBinder) e o')
+    go []    ptys = Abs Empty <$> cont (reverse ptys)
     go (p:t) ptys = checkUTypeWithMissingDicts p \ds getParamType -> do
-      introDicts (eSetToList ds) do
+      mergeAbs <$> introDicts (eSetToList ds) do
         pty <- getParamType
         ListE ptys' <- sinkM $ ListE ptys
         go t (pty:ptys')
 
-checkInstanceBody :: (EmitsBoth o, Inferer m)
+mergeAbs :: Abs (Nest b) (Abs (Nest b) e) n -> Abs (Nest b) e n
+mergeAbs (Abs bs (Abs bs' e)) = Abs (bs >>> bs') e
+
+checkInstanceBody :: (EmitsInf o, Inferer m)
                   => ClassName o
                   -> [Type o]
                   -> [UMethodDef i]
-                  -> m i o (Atom o)
+                  -> m i o (InstanceBody o)
 checkInstanceBody className params methods = do
-  ClassDef _ methodNames defName <- getClassDef className
-  def@(DataDef tcNameHint _ _) <- lookupDataDef defName
-  Just dictTy <- fromNewtype <$> checkedApplyDataDefParams def params
-  PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
-  superclassDicts <- mapM trySynthDict superclassTys
+  def@(ClassDef _ methodNames _ _ _ ) <- getClassDef className
+  (superclassTys, methodTys) <- checkedApplyClassParams def params
+  superclassDicts <- mapM trySynthTerm superclassTys
   methodsChecked <- mapM (checkMethodDef className methodTys) methods
   let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
   forM_ (repeated idxs) \i ->
     throw TypeErr $ "Duplicate method: " ++ pprint (methodNames!!i)
   forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
-  let dataConNameHint = "Mk" <> tcNameHint
-  return $ DataCon dataConNameHint defName params 0 [PairVal (ProdVal superclassDicts)
-                                                          (ProdVal methods')]
+  return $ InstanceBody superclassDicts methods'
 
-introDicts :: forall m o. (EmitsBoth o, Solver m, InfBuilder m)
-           => [Type o]
-           -> (forall l. (EmitsBoth l, Ext o l) => m l (Atom l))
-           -> m o (Atom o)
-introDicts []    m = m
-introDicts (h:t) m = buildLamInf (getNameHint @String "_autoq") ClassArrow h (const $ return Pure) \_ -> do
-  ListE t' <- sinkM $ ListE t
-  introDicts t' m
+introDicts
+  :: forall m o e.
+     (EmitsInf o, Solver m, InfBuilder m, SinkableE e, HoistableE e, SubstE Name e)
+  => [Type o]
+  -> (forall l. (EmitsInf l, Ext o l) => m l (e l))
+  -> m o (Abs (Nest PiBinder) e o)
+introDicts []    m = Abs Empty <$> m
+introDicts (h:t) m = do
+  ab <- buildPiAbsInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
+    ListE t' <- sinkM $ ListE t
+    introDicts t' m
+  Abs b (Abs bs e) <- return ab
+  return $ Abs (Nest b bs) e
 
 introDictTys :: forall m o. (EmitsInf o, Solver m, InfBuilder m)
              => [Type o]
@@ -1361,16 +1393,18 @@ introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_
   ListE t' <- sinkM $ ListE t
   (Pure,) . Pi <$> (introDictTys t' m)
 
-checkMethodDef :: (EmitsBoth o, Inferer m)
-               => ClassName o -> [Type o] -> UMethodDef i -> m i o (Int, Atom o)
+checkMethodDef :: (EmitsInf o, Inferer m)
+               => ClassName o -> [MethodType o] -> UMethodDef i -> m i o (Int, Block o)
 checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs) = do
   MethodBinding className' i _ <- substM v >>= lookupEnv
   when (className /= className') do
-    ClassBinding (ClassDef classSourceName _ _) _ <- lookupEnv className
+    ClassBinding (ClassDef classSourceName _ _ _ _) <- lookupEnv className
     throw TypeErr $ pprint sourceName ++ " is not a method of "
                  ++ pprint classSourceName
-  let methodTy = methodTys !! i
-  rhs' <- checkSigma rhs methodTy
+  let MethodType _ methodTy = methodTys !! i
+  rhs' <- buildBlockInf do
+    methodTy' <- sinkM methodTy
+    checkSigma rhs methodTy'
   return (i, rhs')
 
 checkUEffRow :: (EmitsInf o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
@@ -1595,7 +1629,8 @@ checkAnnWithMissingDicts :: (EmitsInf o, Inferer m)
                          -> m i o a
 checkAnnWithMissingDicts ann cont = case ann of
   Just ty -> checkUTypeWithMissingDicts ty cont
-  Nothing -> cont mempty (freshType TyKind)  -- Unannotated binders are never auto-quantified
+  Nothing ->
+    cont mempty (freshType TyKind)  -- Unannotated binders are never auto-quantified
 
 checkUTypeWithMissingDicts :: (EmitsInf o, Inferer m)
                            => UType i
@@ -1740,23 +1775,25 @@ openEffectRow :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o (EffectRow o)
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
-getIxClassDef :: (Fallible1 m, EnvReader m) => m n (ClassDef n)
-getIxClassDef = lookupSourceMap "Ix" >>= \case
+getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
+getIxClassName = lookupSourceMap "Ix" >>= \case
   Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
-  Just (UClassVar v) -> do
-    ClassBinding def _ <- lookupEnv v
-    return def
+  Just (UClassVar v) -> return v
   Just _ -> error "not a class var"
+
+ixDictType :: (Fallible1 m, EnvReader m) => Type n -> m n (Type n)
+ixDictType ty = do
+  ixClassName <- getIxClassName
+  return $ DictTy $ DictType "Ix" ixClassName [ty]
 
 checkIx :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Type o -> m i o ()
 checkIx ctx ty = do
-  ClassDef _ _ dictDataDefName <- getIxClassDef
-  void $ emitOp $ SynthesizeDict ctx $ TypeCon "Ix" dictDataDefName [ty]
+  dictTy <- ixDictType ty
+  void $ emitOp $ SynthesizeDict ctx dictTy
+{-# SCC checkIx #-}
 
-synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
-synthIx ty = do
-  ClassDef _ _ dictDataDefName <- getIxClassDef
-  trySynthDictBlock $ TypeCon "Ix" dictDataDefName [ty]
+synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
+synthIx ty = ixDictType ty >>= trySynthTerm
 {-# SCC synthIx #-}
 
 -- === Solver ===
@@ -1857,7 +1894,8 @@ instance Solver SolverM where
     Abs (SolverOutFrag unsolvedInfNames _ _) result <- return results
     case hoist unsolvedInfNames result of
       HoistSuccess result' -> return result'
-      HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+      HoistFailure vs -> do
+        throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
 
 instance Unifier SolverM
 
@@ -1982,7 +2020,13 @@ instance Unifiable Atom where
          unless (c == c') empty >> unifyFoldable xs xs'
        (TC con, TC con') -> unifyFoldable con con'
        (Eff eff, Eff eff') -> unify eff eff'
+       (DictTy d, DictTy d') -> unify d d'
        _ -> empty
+
+instance Unifiable DictType where
+  unifyZonked (DictType _ c params) (DictType _ c' params')
+    | c == c'   = unifyFoldable params params'
+    | otherwise = empty
 
 instance Unifiable (EffectRowP AtomName) where
   unifyZonked x1 x2 =
@@ -2146,7 +2190,7 @@ renameForPrinting e = do
   return $ withManyFresh hints scope \bs' ->
     runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
       ab' <- sinkM ab
-      e' <- applyNaryAbs ab' $ nestToList (sink . binderName) bs'
+      e' <- applyNaryAbs ab' $ nestToNames bs'
       return $ Abs bs' e'
 
 -- === dictionary synthesis ===
@@ -2156,30 +2200,42 @@ synthTopBlock block = do
   (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
 {-# SCC synthTopBlock #-}
 
--- main entrypoint to dictionary synthesizer
-trySynthDict :: (Emits n, Builder m, Fallible1 m, EnvExtender m, EnvReader m)
-             => Type n -> m n (Atom n)
-trySynthDict ty = trySynthDictBlock ty >>= emitBlock
+synthInstanceDef
+  :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
+synthInstanceDef (InstanceDef className bs params body) = do
+  liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
+    \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
+      methods' <- mapM synthTopBlock methods
+      return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
 
-trySynthDictBlock :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
-trySynthDictBlock ty = do
+-- main entrypoint to dictionary synthesizer
+trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
+trySynthTerm ty = do
   hasInferenceVars ty >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
     False -> do
-      solutions <- liftSyntherM $ buildBlock do
-                     ty' <- sinkM ty
-                     synthDict ty'
+      synthTy <- typeAsSynthType ty
+      solutions <- liftSyntherM $ synthTerm synthTy
       let solutionsInstance = filter ((== UsedInstance) . snd) solutions
       unless (length solutionsInstance <= 1) $
         throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
       case solutions of
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-        (d, _):_ -> return d
-{-# SCC trySynthDictBlock #-}
+        (d, _):_ -> cheapNormalize d
+{-# SCC trySynthTerm #-}
 
-data Givens n = Givens { fromGivens :: HM.HashMap (EKey Type n) (Given n) }
+-- The type of a `SynthExpr` atom must be `DictTy _` or `Pi _`. If it's `Pi _`,
+-- then the atom itself is either a variable or a trivial lambda whose body
+-- is also a `SynthExpr`.
+type SynthExpr = Atom
 
-type Given = Block
+data SynthType n =
+   SynthDictType (DictType n)
+ | SynthPiType (Abs PiBinder SynthType n)
+   deriving (Show, Generic)
+
+data Givens n = Givens { fromGivens :: HM.HashMap (EKey SynthType n) (SynthExpr n) }
+type Given = SynthExpr
 
 data DerivationKind = OnlyGivens | UsedInstance deriving Eq
 
@@ -2189,16 +2245,16 @@ instance Semigroup DerivationKind where
 instance Monoid DerivationKind where
   mempty = OnlyGivens
 
-class (Alternative1 m, Searcher1 m, ScopableBuilder m)
-      => Synther m where
+class (Alternative1 m, Searcher1 m, Fallible1 m, EnvReader m, EnvExtender m)
+    => Synther m where
   getGivens :: m n (Givens n)
   withGivens :: Givens n -> m n a -> m n a
   declareUsedInstance :: m n ()
 
 newtype SyntherM (n::S) (a:: *) = SyntherM
-  { runSyntherM' :: OutReaderT Givens (BuilderT (WriterT DerivationKind [])) n a }
+  { runSyntherM' :: OutReaderT Givens (EnvReaderT (WriterT DerivationKind [])) n a }
   deriving ( Functor, Applicative, Monad, EnvReader, EnvExtender
-           , ScopeReader, MonadFail, Fallible, Builder
+           , ScopeReader, MonadFail, Fallible
            , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
@@ -2209,20 +2265,17 @@ instance Synther SyntherM where
   withGivens givens cont = do
     localOutReader givens cont
 
-instance ScopableBuilder SyntherM where
-  buildScoped cont = SyntherM $ buildScoped $ runSyntherM' cont
-
 liftSyntherM :: EnvReader m => SyntherM n a -> m n [(a, DerivationKind)]
 liftSyntherM cont =
-  liftM runWriterT $ liftBuilderT do
+  liftM runWriterT $ liftEnvReaderT do
     initGivens <- givensFromEnv
     runOutReaderT initGivens $ runSyntherM' cont
 
 givensFromEnv :: EnvReader m => m n (Givens n)
 givensFromEnv = do
   givens <- getLambdaDicts
-  let givensBlocks = map AtomicBlock givens
-  getSuperclassClosure (Givens HM.empty) givensBlocks
+  let givens' = map Var givens
+  getSuperclassClosure (Givens HM.empty) givens'
 {-# SCC givensFromEnv #-}
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
@@ -2231,9 +2284,21 @@ extendGivens newGivens cont = do
   finalGivens <- getSuperclassClosure prevGivens newGivens
   withGivens finalGivens cont
 
+getSynthType :: EnvReader m => SynthExpr n -> m n (SynthType n)
+getSynthType x = do
+  ty <- getType x
+  return $ runHardFail $ typeAsSynthType ty
+
+typeAsSynthType :: Fallible m => Type n -> m (SynthType n)
+typeAsSynthType (DictTy dictTy) = return $ SynthDictType dictTy
+typeAsSynthType (Pi (PiType b@(PiBinder _ _ arrow) Pure resultTy))
+  | arrow == ImplicitArrow || arrow == ClassArrow = do
+     resultTy' <- typeAsSynthType resultTy
+     return $ SynthPiType $ Abs b resultTy'
+typeAsSynthType ty = throw TypeErr $ "Can't synthesize terms of type: " ++ pprint ty
+
 getSuperclassClosure
-  :: forall m n.
-     EnvReader m => Givens n -> [Given n] -> m n (Givens n)
+  :: forall m n. EnvReader m => Givens n -> [Given n] -> m n (Givens n)
 getSuperclassClosure givens newGivens = do
   liftM snd $ runStateT1 (mapM_ visitGiven newGivens) givens
   where
@@ -2248,101 +2313,108 @@ getSuperclassClosure givens newGivens = do
     alreadyVisited :: EnvReader m => Given n -> StateT1 Givens m n Bool
     alreadyVisited x = do
       Givens m <- get
-      ty <- getType x
+      ty <- getSynthType x
       return $ EKey ty `HM.member` m
 
     markAsVisited :: EnvReader m => Given n -> StateT1 Givens m n ()
     markAsVisited x = do
-      ty <- getType x
+      ty <- getSynthType x
       modify \(Givens m) -> Givens $ HM.insert (EKey ty) x m
 
 getDirectSuperclasses :: EnvReader m => Given n -> m n [Given n]
-getDirectSuperclasses dict = do
-  numSuperclasses <- getNumSuperclasses dict
+getDirectSuperclasses synthExpr = do
+  synthTy <- getSynthType synthExpr
+  numSuperclasses <- getNumSuperclasses synthTy
   forM [0..numSuperclasses-1] \i -> do
-    liftBuilder $ buildBlock do
-      dictAtom <- emitBlock $ sink dict
-      return $ getProjection [i] $ getProjection [0, 0] dictAtom
+    return $ DictCon $ SuperclassProj synthExpr i
 
-getNumSuperclasses :: EnvReader m => Given n -> m n Int
-getNumSuperclasses dict = liftM runHardFail $ liftEnvReaderT do
-  getType dict >>= \case
-    TypeCon _ dataDefName _ -> do
-      DataDef _ _ [DataConDef _ (Abs (Nest (_:>dictTy) Empty) UnitE)] <-
-        lookupDataDef dataDefName
-      PairTy (ProdTy superclassTupleTy) _ <- return dictTy
-      return $ length superclassTupleTy
-    Pi _ -> return 0
-    ty -> error $ "unexpected dict type: " ++ pprint ty
+getNumSuperclasses :: EnvReader m => SynthType n -> m n Int
+getNumSuperclasses (SynthPiType _) = return 0
+getNumSuperclasses (SynthDictType (DictType _ className _)) = do
+  ClassDef _ _ _ superclasses _ <- lookupClassDef className
+  return $ length superclasses
 
-getGiven :: (Synther m, Emits n) => m n (Atom n)
-getGiven = do
-  givens <- (HM.elems . fromGivens) <$> getGivens
-  asum $ map emitBlock givens
-
-getInstance :: DataDefName n -> Synther m => m n (Atom n)
-getInstance target = do
-  instances <- getInstanceDicts target
-  declareUsedInstance
-  asum $ map pure instances
-
-synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
-synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =
-  buildPureLam (getNameHint b) arr argTy \v -> do
-    piTy' <- sinkM piTy
-    (_, resultTy) <- instantiatePi piTy' $ Var v
+synthTerm :: Synther m => SynthType n -> m n (SynthExpr n)
+synthTerm (SynthPiType (Abs (PiBinder b argTy arr) resultTy)) =
+  withFreshBinder (getNameHint b) argTy \b' -> do
+    let v = binderName b'
+    resultTy' <- applySubst (b@>v) resultTy
     newGivens <- case arr of
-      ClassArrow -> return [AtomicBlock $ Var v]
+      ClassArrow -> return [Var v]
       _ -> return []
-    extendGivens newGivens $ synthDict resultTy
-synthDict ty@(TypeCon _ dataDef _) = do
-  polyDict <- getGiven <|> getInstance dataDef
-  ty' <- sinkM ty
-  polyTy <- getType polyDict
-  PairE (ListE params) (ListE reqDictTys) <- instantiateDictParams ty' polyTy
-  reqDicts <- mapM synthDict reqDictTys
-  naryApp polyDict $ params ++ reqDicts
-synthDict ty = error $ "Not a valid dictionary type: " ++ pprint ty
-{-# SCC synthDict #-}
+    synthExpr <- extendGivens newGivens $ synthTerm resultTy'
+    return $ Lam $ LamExpr (LamBinder b' argTy arr Pure) (AtomicBlock synthExpr)
+synthTerm (SynthDictType dictTy) = do
+  synthDictFromGiven dictTy <|> synthDictFromInstance dictTy
+{-# SCC synthTerm #-}
 
-instantiateDictParams :: (Fallible1 m, EnvReader m)
-                      => Type n -> Type n -> m n (PairE (ListE Atom) (ListE Type) n)
-instantiateDictParams monoTy polyTy = do
-  (liftExcept =<<) $ liftSolverM $ solveLocal do
-    monoTy' <- sinkM monoTy
-    polyTy' <- sinkM polyTy
-    (params, tys) <- instantiateDictParamsRec monoTy' polyTy'
-    zonk $ PairE (ListE params) (ListE tys)
+synthDictFromGiven :: Synther m => DictType n -> m n (SynthExpr n)
+synthDictFromGiven dictTy = do
+  given <- getAlternative =<< ((HM.elems . fromGivens) <$> getGivens)
+  synthTy <- getSynthType given
+  args <- instantiateSynthArgs dictTy synthTy
+  case nonEmpty args of
+    Nothing -> return given
+    Just args' -> return $ DictCon $ InstantiatedGiven given args'
 
-instantiateDictParamsRec :: (EmitsInf n, Unifier m)
-                         => Type n -> Type n -> m n ([Atom n], [Type n])
-instantiateDictParamsRec monoTy polyTy = case polyTy of
-  Pi (PiType (PiBinder b argTy ImplicitArrow) _ resultTy) -> do
-    param <- freshInferenceName argTy
-    resultTy' <- applyAbs (Abs b resultTy) param
-    (params, dictTys) <- instantiateDictParamsRec monoTy resultTy'
-    return (Var param : params, dictTys)
-  Pi (PiType (PiBinder b dictTy ClassArrow) _ resultTy) -> do
-    case fromConstAbs (Abs b resultTy) of
-      HoistSuccess resultTy' -> do
-        (params, dictTys) <- instantiateDictParamsRec monoTy resultTy'
-        case params of
-          [] -> return ([], dictTy:dictTys)
-          _ -> error "Not implemented: interleaved params and class constraints"
-      HoistFailure _ -> error "shouldn't have dependent class arrow"
-  _ -> do
-    unify monoTy polyTy
-    return ([], [])
+synthDictFromInstance :: Synther m => DictType n -> m n (SynthExpr n)
+synthDictFromInstance dictTy@(DictType _ targetClass _) = do
+  declareUsedInstance
+  candidate <- getAlternative =<< getInstanceDicts targetClass
+  synthTy <- getInstanceType candidate
+  args <- instantiateSynthArgs dictTy synthTy
+  return $ DictCon $ InstanceDict candidate args
+
+getInstanceType :: EnvReader m => InstanceName n -> m n (SynthType n)
+getInstanceType instanceName = do
+  InstanceDef className bs params _ <- lookupInstanceDef instanceName
+  ClassDef classSourceName _ _ _ _ <- lookupClassDef className
+  liftEnvReaderM $ refreshAbs (Abs bs (ListE params)) \bs' (ListE params') -> do
+    className' <- sinkM className
+    return $ go bs' classSourceName className' params'
+  where
+    go :: Nest PiBinder n l -> SourceName -> ClassName l -> [Atom l] -> SynthType n
+    go bs classSourceName className params = case bs of
+      Empty -> SynthDictType $ DictType classSourceName className params
+      Nest b rest ->
+        let restTy = go rest classSourceName className params
+        in SynthPiType $ Abs b restTy
+
+instantiateSynthArgs :: Synther m => DictType n -> SynthType n -> m n [Atom n]
+instantiateSynthArgs target synthTy = do
+  args <- liftM fromListE $ (liftExcept =<<) $ liftSolverM $ solveLocal do
+    target' <- sinkM target
+    synthTy' <- sinkM synthTy
+    args <- instantiateSynthArgsRec target' synthTy'
+    zonk $ ListE args
+  forM args \case
+    Con (ClassDictHole _ argTy) -> typeAsSynthType argTy >>= synthTerm
+    arg -> return arg
+
+instantiateSynthArgsRec
+  :: (EmitsInf n, Unifier m)
+  => DictType n -> SynthType n -> m n [Atom n]
+instantiateSynthArgsRec dictTy synthTy = case synthTy of
+  SynthPiType (Abs (PiBinder b argTy arrow) resultTy) -> do
+    param <- case arrow of
+      ImplicitArrow -> Var <$> freshInferenceName argTy
+      ClassArrow -> return $ Con (ClassDictHole Nothing argTy)
+      _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
+    resultTy' <- applySubst (b@>SubstVal param) resultTy
+    params <- instantiateSynthArgsRec dictTy resultTy'
+    return (param : params)
+  SynthDictType dictTy' -> do
+    unify (DictTy dictTy) (DictTy dictTy')
+    return []
 
 instance GenericE Givens where
-  type RepE Givens = HashMapE (EKey Type) Given
+  type RepE Givens = HashMapE (EKey SynthType) Given
   fromE (Givens m) = HashMapE m
   {-# INLINE fromE #-}
   toE (HashMapE m) = Givens m
   {-# INLINE toE #-}
 
 instance SinkableE Givens where
-
 
 -- === Dictionary synthesis traversal ===
 
@@ -2363,7 +2435,7 @@ newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
 instance GenericTraverser DictSynthTraverserM where
   traverseExpr (Op (SynthesizeDict ctx ty)) = do
     ty' <- cheapNormalize =<< substM ty
-    addSrcContext ctx $ Atom <$> trySynthDict ty'
+    addSrcContext ctx $ Atom <$> trySynthTerm ty'
   traverseExpr expr = traverseExprDefault expr
 
 instance ScopableBuilder (DictSynthTraverserM i) where
@@ -2405,6 +2477,18 @@ buildLamInf hint arr ty fEff fBody = do
       body <- withAllowedEffects effs $ buildBlockInf $ sinkM v >>= fBody
       return $ PairE effs body
   return $ Lam $ LamExpr (LamBinder b ty arr effs) body
+
+buildPiAbsInf
+  :: ( EmitsInf n, Solver m, InfBuilder m
+     , SinkableE e, SubstE Name e, HoistableE e)
+  => NameHint -> Arrow -> Type n
+  -> (forall l. (EmitsInf l, Ext n l) => AtomName l -> m l (e l))
+  -> m n (Abs PiBinder e n)
+buildPiAbsInf hint arr ty body = do
+  Abs (b:>_) resultTy <-
+    buildAbsInf hint (PiBinding arr ty) \v ->
+      withAllowedEffects Pure $ body v
+  return $ Abs (PiBinder b ty arr) resultTy
 
 buildPiInf
   :: (EmitsInf n, Solver m, InfBuilder m)
@@ -2514,3 +2598,18 @@ instance (Monad m, ExtOutMap InfOutMap decls)
 
 instance BindsEnv InfOutFrag where
   toEnvFrag (InfOutFrag frag _ _) = toEnvFrag frag
+
+instance GenericE SynthType where
+  type RepE SynthType = EitherE2 DictType (Abs PiBinder SynthType)
+  fromE (SynthDictType d) = Case0 d
+  fromE (SynthPiType   t) = Case1 t
+  toE (Case0 d) = SynthDictType d
+  toE (Case1 t) = SynthPiType t
+  toE _ = error "impossible"
+
+instance AlphaEqE       SynthType
+instance AlphaHashableE SynthType
+instance SinkableE      SynthType
+instance HoistableE     SynthType
+instance SubstE Name         SynthType
+instance SubstE AtomSubstVal SynthType

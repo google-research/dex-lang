@@ -26,7 +26,7 @@ module Name (
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
-  HashMapE (..), HashableE,
+  HashMapE (..), HashableE, nestToNames,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowB,
@@ -691,11 +691,11 @@ instance Color c => BindsOneName (BinderP c ann) c where
   {-# INLINE binderName #-}
 
 infixr 7 @@>
-(@@>) :: (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
+(@@>) :: HasCallStack => (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
 (@@>) bs xs = bindNameList bs (toList xs)
 
 class BindsNameList (b::B) (c::C) | b -> c where
-  bindNameList :: b i i' -> [v c o] -> SubstFrag v i i' o
+  bindNameList :: HasCallStack => b i i' -> [v c o] -> SubstFrag v i i' o
 
 instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   bindNameList Empty [] = emptyInFrag
@@ -738,7 +738,7 @@ applyAbs (Abs b body) x = applySubst (b@>x) body
 
 applyNaryAbs :: ( SinkableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
                 , SubstB v b, SinkableE e)
-             => Abs b e n -> [v c n] -> m n (e n)
+             => HasCallStack => Abs b e n -> [v c n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 {-# INLINE applyNaryAbs #-}
 
@@ -802,6 +802,10 @@ nestToList f (Nest b rest) = b' : nestToList f rest
   where b' = withExtEvidence (toExtEvidence rest) $
                withExtEvidence (toExtEvidence b) $
                  f b
+
+nestToNames :: (Distinct l, Ext n l, BindsOneName b c, BindsNames b)
+            => Nest b n l -> [Name c l]
+nestToNames bs = nestToList (sink . binderName) bs
 
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs
@@ -958,6 +962,7 @@ instance (SinkableE atom, SubstE Name atom) => SubstV Name (SubstVal cMatch atom
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC InstanceNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
@@ -1755,6 +1760,7 @@ instance Color DataDefNameC    where getColorRep _ = DataDefNameC
 instance Color TyConNameC      where getColorRep _ = TyConNameC
 instance Color DataConNameC    where getColorRep _ = DataConNameC
 instance Color ClassNameC      where getColorRep _ = ClassNameC
+instance Color InstanceNameC   where getColorRep _ = InstanceNameC
 instance Color SuperclassNameC where getColorRep _ = SuperclassNameC
 instance Color MethodNameC     where getColorRep _ = MethodNameC
 instance Color ImpFunNameC     where getColorRep _ = ImpFunNameC
@@ -1769,6 +1775,7 @@ interpretColor c = case c of
   TyConNameC      -> WithColor (UnitV :: UnitV TyConNameC      VoidS)
   DataConNameC    -> WithColor (UnitV :: UnitV DataConNameC    VoidS)
   ClassNameC      -> WithColor (UnitV :: UnitV ClassNameC      VoidS)
+  InstanceNameC   -> WithColor (UnitV :: UnitV InstanceNameC   VoidS)
   SuperclassNameC -> WithColor (UnitV :: UnitV SuperclassNameC VoidS)
   MethodNameC     -> WithColor (UnitV :: UnitV MethodNameC     VoidS)
   ImpFunNameC     -> WithColor (UnitV :: UnitV ImpFunNameC     VoidS)
@@ -2289,6 +2296,7 @@ data C =
   | TyConNameC
   | DataConNameC
   | ClassNameC
+  | InstanceNameC
   | SuperclassNameC
   | MethodNameC
   | ImpFunNameC

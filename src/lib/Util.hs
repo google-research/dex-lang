@@ -11,7 +11,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
              measureSeconds,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
              iota, whenM, unsnoc, anyM,
              File (..), FileHash, FileContents, addHash, readFileWithHash) where
@@ -26,6 +26,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
+import Control.Applicative
 import Control.Monad.State.Strict
 import System.CPUTime
 
@@ -265,6 +266,10 @@ forMZipped xs ys f = zipWithZ f xs ys
 
 forMZipped_ :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m ()
 forMZipped_ xs ys f = void $ forMZipped xs ys f
+
+getAlternative :: Alternative m => [a] -> m a
+getAlternative xs = asum $ map pure xs
+{-# INLINE getAlternative #-}
 
 -- === bytestrings paired with their hash digest ===
 
