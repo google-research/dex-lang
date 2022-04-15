@@ -153,7 +153,6 @@ cheapReduceName v =
     AtomNameBinding (LetBound (DeclBinding _ _ e)) -> case e of
       -- We avoid synthesizing the dictionaries during the traversal
       -- and only do that when cheap reduction is performed on the expr directly.
-      Op (SynthesizeDict _ _) -> stuck
       _ -> do
         cachedVal <- lookupCache v >>= \case
           Nothing -> do
@@ -182,6 +181,13 @@ instance CheaplyReducibleE Atom Atom where
     -- we have a chance to apply tham. Also, recursive traversal of those bodies
     -- means that we will follow the full call chain, so it's really expensive!
     Lam _   -> substM a
+    Con (SynthesizeDict ctx ty') -> do
+      ty <- cheapReduceE ty'
+      runFallibleT1 (trySynthTerm ty) >>= \case
+        Success d -> return d
+        Failure _ -> do
+          reportSynthesisFail ty
+          return $ Con $ SynthesizeDict ctx ty
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
@@ -229,11 +235,6 @@ instance CheaplyReducibleE Expr Atom where
           let subst = bs @@> fmap SubstVal xs
           dropSubst $ extendSubst subst $ cheapReduceE body
         _ -> empty
-    Op (SynthesizeDict _ ty') -> do
-      ty <- cheapReduceE ty'
-      runFallibleT1 (trySynthTerm ty) >>= \case
-        Success d -> return d
-        Failure _ -> reportSynthesisFail ty >> empty
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?
     Op (CastOp ty' val') -> do

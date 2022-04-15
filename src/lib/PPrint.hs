@@ -822,7 +822,6 @@ prettyPrecPrimCon con = case con of
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  ClassDictHole _ _ -> atPrec ArgPrec "_"
   IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
   ParIndexCon ty i ->
@@ -835,6 +834,7 @@ prettyPrecPrimCon con = case con of
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
+  SynthesizeDict _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
@@ -853,7 +853,6 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     VariantSplit types val -> atPrec AppPrec $
       "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
                      <+> pArg val
-    SynthesizeDict _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
     _ -> prettyExprDefault $ OpExpr op
 
 prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
