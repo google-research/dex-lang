@@ -339,6 +339,10 @@ instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
   addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
   {-# INLINE addErrCtx #-}
 
+instance Searcher m => Searcher (ReaderT r m) where
+  ReaderT f1 <!> ReaderT f2 = ReaderT \r -> f1 r <!> f2 r
+  {-# INLINE (<!>) #-}
+
 instance Fallible [] where
   throwErrs _ = []
   {-# INLINE throwErrs #-}

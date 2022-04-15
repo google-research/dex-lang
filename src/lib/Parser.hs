@@ -265,8 +265,7 @@ uHole :: Parser (UExpr VoidS)
 uHole = withSrc $ underscore $> UHole
 
 letAnnStr :: Parser LetAnn
-letAnnStr =   (string "instance"   $> InstanceLet)
-          <|> (string "noinline"   $> NoInlineLet)
+letAnnStr = (string "noinline"   $> NoInlineLet)
 
 topDecl :: Parser (UDecl VoidS VoidS)
 topDecl = dataDef <|> topLet
@@ -367,10 +366,9 @@ instanceMethod = do
 
 simpleLet :: Parser (UExpr VoidS -> UDecl VoidS VoidS)
 simpleLet = label "let binding" $ do
-  letAnn <- (InstanceLet <$ string "%instance" <* sc) <|> (pure PlainLet)
   p <- try $ (letPat <|> leafPat) <* lookAhead (sym "=" <|> sym ":")
   typeAnn <- optional $ annot uType
-  return $ ULet letAnn (UPatAnn p typeAnn)
+  return $ ULet PlainLet (UPatAnn p typeAnn)
 
 letPat :: Parser (UPat VoidS VoidS)
 letPat = withSrcB $ fromString <$> anyName
@@ -1434,8 +1432,10 @@ builtinNames = M.fromList
   , ("dataConTag", OpExpr $ DataConTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
   , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
-  , ("projMethod", OpExpr $ ProjMethod () ())
-  , ("explicitDict", OpExpr $ ExplicitDict () ())
+  , ("projMethod0", OpExpr $ ProjMethod () 0)
+  , ("projMethod1", OpExpr $ ProjMethod () 1)
+  , ("projMethod2", OpExpr $ ProjMethod () 2)
+  , ("explicitDict", ConExpr $ ExplicitDict () ())
   , ("explicitApply", OpExpr $ ExplicitApply () ())
   ]
   where

@@ -59,6 +59,8 @@ data Atom (n::S) =
    -- SourceName is purely for printing
  | DataCon SourceName (DataDefName n) [Atom n] Int [Atom n]
  | TypeCon SourceName (DataDefName n) [Atom n]
+ | DictCon (DictExpr n)
+ | DictTy  (DictType n)
  | LabeledRow (FieldRowElems n)
  | Record (LabeledItems (Atom n))
  | RecordTy  (FieldRowElems n)
@@ -97,11 +99,13 @@ data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
 data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
      deriving (Show, Generic)
 
-type AtomName    = Name AtomNameC
-type DataDefName = Name DataDefNameC
-type ClassName   = Name ClassNameC
-type ModuleName  = Name ModuleNameC
-type PtrName     = Name PtrNameC
+type AtomName     = Name AtomNameC
+type DataDefName  = Name DataDefNameC
+type ClassName    = Name ClassNameC
+type MethodName   = Name MethodNameC
+type InstanceName = Name InstanceNameC
+type ModuleName   = Name ModuleNameC
+type PtrName      = Name PtrNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
@@ -136,10 +140,6 @@ data DataDef n where
 -- As above, the `SourceName` is just for pretty-printing
 data DataConDef n =
   DataConDef SourceName (EmptyAbs (Nest Binder) n)
-  deriving (Show, Generic)
-
-data ClassDef n =
-  ClassDef SourceName [SourceName] (DataDefName n)
   deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
@@ -217,6 +217,46 @@ instance GenericB EffectBinder where
   fromB (EffectBinder effs) = LiftB effs
   toB   (LiftB effs) = EffectBinder effs
 
+-- === type classes ===
+
+data ClassDef (n::S) where
+  ClassDef
+    :: SourceName
+    -> [SourceName]       -- method source names
+    -> Nest Binder n1 n2  -- parameters
+    ->   [Type n2]        -- superclasses
+    ->   [MethodType n2]  -- method types
+    -> ClassDef n1
+
+data InstanceDef (n::S) where
+  InstanceDef
+    :: ClassName n1
+    -> Nest PiBinder n1 n2 -- parameters (types and dictionaries)
+    ->   [Type n2]         -- class parameters
+    ->   InstanceBody n2
+    -> InstanceDef n1
+
+data InstanceBody (n::S) =
+  InstanceBody
+    [Atom n]   -- superclasses dicts
+    [Block n]  -- method definitions
+  deriving (Show, Generic)
+
+data MethodType (n::S) =
+  MethodType
+    [Bool]    -- indicates explicit args
+    (Type n)  -- actual method type
+ deriving (Show, Generic)
+
+data DictType (n::S) = DictType SourceName (ClassName n) [Type n]
+     deriving (Show, Generic)
+
+data DictExpr (n::S) =
+   InstanceDict (InstanceName n) [Atom n]
+ | InstantiatedGiven (Atom n) (NonEmpty (Atom n))
+ | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
+   deriving (Show, Generic)
+
 -- === envs and modules ===
 
 -- `ModuleEnv` contains data that only makes sense in the context of evaluating
@@ -290,8 +330,8 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
 data SynthCandidates n = SynthCandidates
-  { lambdaDicts       :: [Atom n]
-  , instanceDicts     :: M.Map (DataDefName n) [Atom n] }
+  { lambdaDicts       :: [AtomName n]
+  , instanceDicts     :: M.Map (ClassName n) [InstanceName n] }
   deriving (Show, Generic)
 
 emptyImportStatus :: ImportStatus n
@@ -337,17 +377,18 @@ newtype ObjectFiles n = ObjectFiles (S.Set (ObjectFileName n))
 
 -- TODO: consider making this an open union via a typeable-like class
 data Binding (c::C) (n::S) where
-  AtomNameBinding   :: AtomBinding n                      -> Binding AtomNameC       n
-  DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
+  AtomNameBinding   :: AtomBinding n                  -> Binding AtomNameC       n
+  DataDefBinding    :: DataDef n                      -> Binding DataDefNameC    n
   TyConBinding      :: DataDefName n        -> Atom n -> Binding TyConNameC      n
   DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
-  ClassBinding      :: ClassDef n -> Atom n               -> Binding ClassNameC      n
-  SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
+  ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
+  InstanceBinding   :: InstanceDef n                  -> Binding InstanceNameC   n
+  SuperclassBinding :: Name ClassNameC n -> Int       -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
-  ImpFunBinding     :: ImpFunction n                      -> Binding ImpFunNameC     n
-  ObjectFileBinding :: ObjectFile n                       -> Binding ObjectFileNameC n
-  ModuleBinding     :: Module n                           -> Binding ModuleNameC     n
-  PtrBinding        :: PtrLitVal                          -> Binding PtrNameC        n
+  ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
+  ObjectFileBinding :: ObjectFile n                   -> Binding ObjectFileNameC n
+  ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
+  PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
 deriving instance Show (Binding c n)
 
 data AtomBinding (n::S) =
@@ -451,22 +492,12 @@ bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
       Empty -> return ()
       Nest (SubstPair b binding) rest -> withExtEvidence rest do
         case binding of
-           AtomNameBinding (LetBound (DeclBinding InstanceLet ty _)) -> do
-             let dataDefName = getInstanceLetDataDefName ty
-             let m = M.singleton dataDefName [sink $ Var $ binderName b]
-             tell $ (SynthCandidates [] m)
            AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [Var $ binderName b] mempty)
+             tell $ sink (SynthCandidates [binderName b] mempty)
            AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [Var $ binderName b] mempty)
+             tell $ sink (SynthCandidates [binderName b] mempty)
            _ -> return ()
         go rest
-
-    getInstanceLetDataDefName :: Type n -> DataDefName n
-    getInstanceLetDataDefName (Pi (PiType b _ resultTy)) =
-      ignoreHoistFailure $ hoist b $ getInstanceLetDataDefName resultTy
-    getInstanceLetDataDefName (TypeCon _ defName _) = defName
-    getInstanceLetDataDefName _ = error "not a valid instance type"
 
 -- WARNING: This is not exactly faithful, because NaryPiType erases intermediate arrows!
 naryPiTypeAsType :: NaryPiType n -> Type n
@@ -782,18 +813,6 @@ instance SubstE AtomSubstVal FieldRowElems where
           where ExtLabeledItemsE (NoExt items') = substE env
                   (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE Atom AtomName i)
 
-instance GenericE ClassDef where
-  type RepE ClassDef = PairE (LiftE (SourceName, [SourceName]))
-                             (Name DataDefNameC)
-  fromE (ClassDef className methodNames dataDefName) =
-          PairE (LiftE (className, methodNames)) dataDefName
-  toE (PairE (LiftE (className, methodNames)) dataDefName) =
-        ClassDef className methodNames dataDefName
-instance SinkableE         ClassDef
-instance HoistableE        ClassDef
-instance SubstE Name         ClassDef
-instance SubstE AtomSubstVal ClassDef
-
 instance GenericB DataConRefBinding where
   type RepB DataConRefBinding = PairB (LiftB Atom) Binder
   fromB (DataConRefBinding b val) = PairB (LiftB val) b
@@ -830,7 +849,7 @@ instance GenericE Atom where
   {- Pi -}         PiType
   {- TabLam -}     TabLamExpr
   {- TabPi -}      TabPiType
-            ) (EitherE4
+            ) (EitherE6
   {- DepPairTy -}  DepPairType
   {- DepPair -}    ( Atom `PairE` Atom `PairE` DepPairType)
   {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
@@ -838,6 +857,8 @@ instance GenericE Atom where
                      ListE Atom                `PairE`
                      ListE Atom )
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` ListE Atom )
+  {- DictCon -}    DictExpr
+  {- DictTy  -}    DictType
             ) (EitherE5
   {- LabeledRow -} ( FieldRowElems )
   {- Record -}     ( ComposeE LabeledItems Atom )
@@ -873,6 +894,8 @@ instance GenericE Atom where
       ListE args
     TypeCon sourceName defName params -> Case2 $ Case3 $
       LiftE sourceName `PairE` defName `PairE` ListE params
+    DictCon d -> Case2 $ Case4 d
+    DictTy  d -> Case2 $ Case5 d
     LabeledRow elems    -> Case3 $ Case0 $ elems
     Record items        -> Case3 $ Case1 $ ComposeE items
     RecordTy elems -> Case3 $ Case2 elems
@@ -911,6 +934,8 @@ instance GenericE Atom where
         DataCon printName defName params con args
       Case3 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
         TypeCon sourceName defName params
+      Case4 d -> DictCon d
+      Case5 d -> DictTy  d
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
@@ -1061,6 +1086,102 @@ instance SubstE Name Block
 instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
 deriving via WrapE Block n instance Generic (Block n)
+
+instance GenericE ClassDef where
+  type RepE ClassDef =
+    LiftE (SourceName, [SourceName])
+     `PairE` Abs (Nest Binder) (PairE (ListE Type) (ListE MethodType))
+  fromE (ClassDef name names b scs tys) =
+    LiftE (name, names) `PairE` Abs b (PairE (ListE scs) (ListE tys))
+  toE (LiftE (name, names) `PairE` Abs b (PairE (ListE scs) (ListE tys))) =
+    ClassDef name names b scs tys
+
+instance SinkableE ClassDef
+instance HoistableE  ClassDef
+instance AlphaEqE ClassDef
+instance AlphaHashableE ClassDef
+instance SubstE Name ClassDef
+instance SubstE AtomSubstVal ClassDef
+deriving instance Show (ClassDef n)
+deriving via WrapE ClassDef n instance Generic (ClassDef n)
+
+instance GenericE InstanceDef where
+  type RepE InstanceDef =
+    ClassName `PairE` Abs (Nest PiBinder) (ListE Type `PairE` InstanceBody)
+  fromE (InstanceDef name bs params body) =
+    name `PairE` Abs bs (ListE params `PairE` body)
+  toE (name `PairE` Abs bs (ListE params `PairE` body)) =
+    InstanceDef name bs params body
+
+instance SinkableE InstanceDef
+instance HoistableE  InstanceDef
+instance AlphaEqE InstanceDef
+instance AlphaHashableE InstanceDef
+instance SubstE Name InstanceDef
+instance SubstE AtomSubstVal InstanceDef
+deriving instance Show (InstanceDef n)
+deriving via WrapE InstanceDef n instance Generic (InstanceDef n)
+
+instance GenericE InstanceBody where
+  type RepE InstanceBody = ListE Atom `PairE` ListE Block
+  fromE (InstanceBody scs methods) = ListE scs `PairE` ListE methods
+  toE   (ListE scs `PairE` ListE methods) = InstanceBody scs methods
+
+instance SinkableE InstanceBody
+instance HoistableE  InstanceBody
+instance AlphaEqE InstanceBody
+instance AlphaHashableE InstanceBody
+instance SubstE Name InstanceBody
+instance SubstE AtomSubstVal InstanceBody
+
+instance GenericE MethodType where
+  type RepE MethodType = PairE (LiftE [Bool]) Type
+  fromE (MethodType explicit ty) = PairE (LiftE explicit) ty
+  toE   (PairE (LiftE explicit) ty) = MethodType explicit ty
+
+instance SinkableE MethodType
+instance HoistableE  MethodType
+instance AlphaEqE MethodType
+instance AlphaHashableE MethodType
+instance SubstE Name MethodType
+instance SubstE AtomSubstVal MethodType
+
+instance GenericE DictType where
+  type RepE DictType = LiftE SourceName `PairE` ClassName `PairE` ListE Type
+  fromE (DictType sourceName className params) =
+    LiftE sourceName `PairE` className `PairE` ListE params
+  toE (LiftE sourceName `PairE` className `PairE` ListE params) =
+    DictType sourceName className params
+
+instance SinkableE           DictType
+instance HoistableE          DictType
+instance AlphaEqE            DictType
+instance AlphaHashableE      DictType
+instance SubstE Name         DictType
+instance SubstE AtomSubstVal DictType
+
+instance GenericE DictExpr where
+  type RepE DictExpr =
+    EitherE3
+ {- InstanceDict -}      (PairE InstanceName (ListE Atom))
+ {- InstantiatedGiven -} (PairE Atom (ListE Atom))
+ {- SuperclassProj -}    (PairE Atom (LiftE Int))
+  fromE d = case d of
+    InstanceDict v args -> Case0 $ PairE v (ListE args)
+    InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
+    SuperclassProj x i -> Case2 (PairE x (LiftE i))
+  toE d = case d of
+    Case0 (PairE v (ListE args)) -> InstanceDict v args
+    Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
+    Case2 (PairE x (LiftE i)) -> SuperclassProj x i
+    _ -> error "impossible"
+
+instance SinkableE           DictExpr
+instance HoistableE          DictExpr
+instance AlphaEqE            DictExpr
+instance AlphaHashableE      DictExpr
+instance SubstE Name         DictExpr
+instance SubstE AtomSubstVal DictExpr
 
 instance GenericE Cache where
   type RepE Cache =
@@ -1277,7 +1398,7 @@ deriving via WrapE DepPairType n instance Generic (DepPairType n)
 
 instance GenericE SynthCandidates where
   type RepE SynthCandidates =
-    ListE Atom `PairE` ListE (PairE DataDefName (ListE Atom))
+    ListE AtomName `PairE` ListE (PairE ClassName (ListE InstanceName))
   fromE (SynthCandidates xs ys) = ListE xs `PairE` ListE ys'
     where ys' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList ys)
   toE (ListE xs `PairE` ListE ys) = SynthCandidates xs ys'
@@ -1358,14 +1479,15 @@ instance AlphaHashableE SolverBinding
 instance Color c => GenericE (Binding c) where
   type RepE (Binding c) =
     EitherE2
-      (EitherE5
+      (EitherE6
           AtomBinding
           DataDef
           (DataDefName `PairE` Atom)
           (DataDefName `PairE` LiftE Int `PairE` Atom)
-          (ClassDef `PairE` Atom))
+          (ClassDef)
+          (InstanceDef))
       (EitherE6
-          (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
+          (Name ClassNameC `PairE` LiftE Int)
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (ImpFunction)
           (ObjectFile)
@@ -1376,9 +1498,10 @@ instance Color c => GenericE (Binding c) where
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
     TyConBinding      dataDefName     e -> Case0 $ Case2 $ dataDefName `PairE` e
     DataConBinding    dataDefName idx e -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx `PairE` e
-    ClassBinding      classDef        e -> Case0 $ Case4 $ classDef `PairE` e
-    SuperclassBinding className idx e   -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` e
-    MethodBinding     className idx e   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
+    ClassBinding      classDef          -> Case0 $ Case4 $ classDef
+    InstanceBinding   instanceDef       -> Case0 $ Case5 $ instanceDef
+    SuperclassBinding className idx     -> Case1 $ Case0 $ className `PairE` LiftE idx
+    MethodBinding     className idx f   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` f
     ImpFunBinding     fun               -> Case1 $ Case2 $ fun
     ObjectFileBinding objfile           -> Case1 $ Case3 $ objfile
     ModuleBinding m                     -> Case1 $ Case4 $ m
@@ -1389,9 +1512,10 @@ instance Color c => GenericE (Binding c) where
     Case0 (Case1 dataDef)                                   -> fromJust $ tryAsColor $ DataDefBinding    dataDef
     Case0 (Case2 (dataDefName `PairE` e))                   -> fromJust $ tryAsColor $ TyConBinding      dataDefName e
     Case0 (Case3 (dataDefName `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx e
-    Case0 (Case4 (classDef `PairE` e))                      -> fromJust $ tryAsColor $ ClassBinding      classDef e
-    Case1 (Case0 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ SuperclassBinding className idx e
-    Case1 (Case1 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ MethodBinding     className idx e
+    Case0 (Case4 (classDef))                                -> fromJust $ tryAsColor $ ClassBinding      classDef
+    Case0 (Case5 (instanceDef))                             -> fromJust $ tryAsColor $ InstanceBinding   instanceDef
+    Case1 (Case0 (className `PairE` LiftE idx))             -> fromJust $ tryAsColor $ SuperclassBinding className idx
+    Case1 (Case1 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
     Case1 (Case2 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
     Case1 (Case3 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
     Case1 (Case4 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
@@ -1670,7 +1794,12 @@ instance Store (PiBinder n l)
 instance Store (PiType n)
 instance Store (TabPiType n)
 instance Store (DepPairType  n)
-instance Store (ClassDef       n)
+instance Store (ClassDef     n)
+instance Store (InstanceDef  n)
+instance Store (InstanceBody n)
+instance Store (MethodType   n)
+instance Store (DictType n)
+instance Store (DictExpr n)
 instance Store (SynthCandidates n)
 instance Store (DataConRefBinding n l)
 instance Store (ObjectFiles n)

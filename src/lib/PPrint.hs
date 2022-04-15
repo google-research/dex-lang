@@ -181,6 +181,16 @@ instance PrettyPrec (TabLamExpr n) where
   prettyPrec (TabLamExpr b body) =
     atPrec LowestPrec $ "view" <+> p b <+> "." <+> p body
 
+instance Pretty (DictExpr n) where
+  pretty d = case d of
+    InstanceDict name args -> "Instance" <+> p name <+> p args
+    InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
+    SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
+
+instance Pretty (DictType n) where
+  pretty (DictType classSourceName _ params) =
+    p classSourceName <+> spaced params
+
 instance Pretty (DepPairType n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (DepPairType n) where
   prettyPrec (DepPairType b rhs) =
@@ -211,6 +221,8 @@ instance PrettyPrec (Atom n) where
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) params
+    DictCon d -> atPrec LowestPrec $ p d
+    DictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
@@ -375,10 +387,11 @@ instance Pretty (Binding s n) where
     DataConBinding    dataDefName idx e ->
       "Data constructor:" <+> pretty dataDefName <+>
       "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
-    ClassBinding      classDef e -> pretty classDef <+> (parens $ "atom:" <+> p e)
-    SuperclassBinding className idx _ ->
+    ClassBinding    classDef    -> pretty classDef
+    InstanceBinding instanceDef -> pretty instanceDef
+    SuperclassBinding className idx ->
       "Superclass" <+> pretty idx <+> "of" <+> pretty className
-    MethodBinding     className idx _ ->
+    MethodBinding className idx _ ->
       "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
     ObjectFileBinding _ -> "<object file>"
@@ -406,8 +419,19 @@ instance Pretty (DataConDef n) where
     p name <+> ":" <+> p bs
 
 instance Pretty (ClassDef n) where
-  pretty (ClassDef classSourceName methodNames _) =
+  pretty (ClassDef classSourceName methodNames params superclasses methodTys) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
+    <> indented (
+         line <> "parameter biners:" <+> pretty params <>
+         line <> "superclasses:" <+> pretty superclasses <>
+         line <> "methods:" <+> pretty methodTys)
+
+instance Pretty (InstanceDef n) where
+  pretty (InstanceDef className bs params _) =
+    "Instance" <+> p className <+> p bs <+> p params
+
+instance Pretty (MethodType n) where
+  pretty (MethodType _ ty) = pretty ty
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
@@ -810,7 +834,7 @@ prettyPrecPrimCon con = case con of
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
-
+  ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
@@ -872,7 +896,6 @@ instance Pretty CallingConvention where
 instance Pretty LetAnn where
   pretty ann = case ann of
     PlainLet      -> ""
-    InstanceLet   -> "%instance"
     NoInlineLet   -> "%noinline"
 
 instance PrettyPrec () where prettyPrec = atPrec ArgPrec . pretty

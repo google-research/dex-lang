@@ -470,19 +470,13 @@ named-instance OrMonoid : Monoid Bool
   mempty = False
   mcombine = (||)
 
-def AddMonoid (a:Type) [Add a] : Monoid a =
-  A = a -- XXX: Typing `Monoid a` below would quantify it over a, which we don't want
-  named-instance result : Monoid A
-    mempty = zero
-    mcombine = add
-  result
+named-instance AddMonoid : (a:Type) [Add a] Monoid a
+  mempty = zero
+  mcombine = add
 
-def MulMonoid (a:Type) [Mul a] : Monoid a =
-  A = a -- XXX: Typing `Monoid a` below would quantify it over a, which we don't want
-  named-instance result : Monoid A
-    mempty = one
-    mcombine = mul
-  result
+named-instance MulMonoid : (a:Type) [Mul a] Monoid a
+  mempty = one
+  mcombine = mul
 
 '## Effects
 
@@ -500,13 +494,13 @@ interface AccumMonoid h w
 
 instance {n h w} [Ix n] [am : AccumMonoid h w] AccumMonoid h (n=>w)
   getAccumMonoidData =
-    (UnsafeMkAccumMonoidData b bm) = %projMethod am ##getAccumMonoidData
+    (UnsafeMkAccumMonoidData b bm) = %projMethod0 am
     UnsafeMkAccumMonoidData b bm
 
 def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
-  (UnsafeMkAccumMonoidData b bm) = %projMethod am ##getAccumMonoidData
-  empty = %projMethod bm ##mempty
-  combine = %projMethod bm ##mcombine
+  (UnsafeMkAccumMonoidData b bm) = %projMethod0 am
+  empty = %projMethod0 bm
+  combine = %projMethod1 bm
   %mextend ref empty combine x
 
 def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
@@ -536,8 +530,8 @@ def run_accum
       (bm:Monoid b)
       (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} (a & w) =
-  empty = %projMethod bm ##mempty
-  combine = %projMethod bm ##mcombine
+  empty = %projMethod0 bm
+  combine = %projMethod1 bm
   def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a =
     accumMonoidData : (AccumMonoidData h' w) = UnsafeMkAccumMonoidData b bm
     accumBaseMonoid = %explicitDict (AccumMonoid h' b) accumMonoidData
@@ -1130,13 +1124,9 @@ instance {a} Monoid (List a)
         True  -> xs.(unsafe_from_ordinal _ i')
         False -> ys.(unsafe_from_ordinal _ (i' - nx))
 
-def ListMonoid (a:Type) : Monoid (List a) =
-  A = a -- XXX: Typing `Monoid a` below would quantify it over a,
-        --      which we don't want.
-  named-instance result : Monoid (List A)
-    mempty = mempty
-    mcombine = mcombine
-  result
+named-instance ListMonoid : (a:Type) Monoid (List a)
+  mempty = mempty
+  mcombine = mcombine
 
 def append {a h} [AccumMonoid h (List a)]
   (list: Ref h (List a)) (x:a) : {Accum h} Unit =

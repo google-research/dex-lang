@@ -24,6 +24,7 @@ import Control.Applicative
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
@@ -68,7 +69,8 @@ type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
 
 newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
   EnvReaderT {runEnvReaderT' :: ReaderT (DistinctEvidence n, Env n) m a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible, Alternative)
+  deriving ( Functor, Applicative, Monad, MonadFail
+           , MonadWriter w, Fallible, Searcher, Alternative)
 
 type EnvReaderM = EnvReaderT Identity
 
@@ -84,6 +86,10 @@ runEnvReaderT bindings cont =
 liftEnvReaderM :: EnvReader m => EnvReaderM n a -> m n a
 liftEnvReaderM cont = liftM runIdentity $ liftEnvReaderT cont
 {-# INLINE liftEnvReaderM #-}
+
+liftExceptEnvReaderM :: (EnvReader m, Fallible1 m) => EnvReaderT Except n a -> m n a
+liftExceptEnvReaderM cont = liftEnvReaderT cont >>= liftExcept
+{-# INLINE liftExceptEnvReaderM #-}
 
 liftEnvReaderT :: EnvReader m' => EnvReaderT m n a -> m' n (m a)
 liftEnvReaderT cont = do
@@ -352,6 +358,14 @@ lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
 lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
 {-# INLINE lookupDataDef #-}
 
+lookupClassDef :: EnvReader m => ClassName n -> m n (ClassDef n)
+lookupClassDef name = lookupEnv name >>= \case ClassBinding x -> return x
+{-# INLINE lookupClassDef #-}
+
+lookupInstanceDef :: EnvReader m => InstanceName n -> m n (InstanceDef n)
+lookupInstanceDef name = lookupEnv name >>= \case InstanceBinding x -> return x
+{-# INLINE lookupInstanceDef #-}
+
 lookupSourceMapPure :: SourceMap n -> SourceName -> [SourceNameDef n]
 lookupSourceMapPure (SourceMap m) v = M.findWithDefault [] v m
 {-# INLINE lookupSourceMapPure #-}
@@ -450,12 +464,12 @@ withAllowedEffects effs cont =
   refreshAbs (Abs (EffectBinder effs) UnitE) \(EffectBinder _) UnitE ->
     cont
 
-getLambdaDicts :: EnvReader m => m n [Atom n]
+getLambdaDicts :: EnvReader m => m n [AtomName n]
 getLambdaDicts = do
   env <- withEnv moduleEnv
   return $ lambdaDicts $ envSynthCandidates env
 
-getInstanceDicts :: EnvReader m => DataDefName n -> m n [Atom n]
+getInstanceDicts :: EnvReader m => ClassName n -> m n [InstanceName n]
 getInstanceDicts name = do
   env <- withEnv moduleEnv
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env

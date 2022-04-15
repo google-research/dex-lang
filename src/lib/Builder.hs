@@ -12,7 +12,7 @@ module Builder (
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
-  fpow, flog, fLitLike, buildPureNaryLam, emitMethodType, makeMethodGetter,
+  fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
@@ -24,11 +24,12 @@ module Builder (
   buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr,
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype, fromNewtype,
-  emitDataDef, emitClassDef, emitDataConName, emitTyConName,
+  emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
-  emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
+  emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
+  emitTopLet, emitImpFunBinding,
   lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
@@ -149,6 +150,10 @@ emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
 
 emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
 emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
+
+addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
+addInstanceSynthCandidate className instanceName =
+  emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do
@@ -776,10 +781,8 @@ emitRunWriter hint accTy bm body = do
 
 mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
 mCombine monoidDict x y = do
-  ty <- getType x
-  Just (UMethodVar method) <- lookupSourceMap "mcombine"
-  MethodBinding _ _ projection <- lookupEnv method
-  naryApp projection [ty, monoidDict, x, y]
+  method <- projMethod "mcombine" monoidDict
+  naryApp method [x, y]
 
 emitRunState
   :: (Emits n, ScopableBuilder m)
@@ -898,9 +901,13 @@ emitDataDef dataDef@(DataDef sourceName _ _) =
   emitBinding hint $ DataDefBinding dataDef
   where hint = getNameHint sourceName
 
-emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> Atom n -> m n (Name ClassNameC n)
-emitClassDef classDef@(ClassDef name _ _) dictTyAtom =
-  emitBinding (getNameHint name) $ ClassBinding classDef dictTyAtom
+emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> m n (Name ClassNameC n)
+emitClassDef classDef@(ClassDef name _ _ _ _) =
+  emitBinding (getNameHint name) $ ClassBinding classDef
+
+emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
+emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
+  emitBinding (getNameHint className) $ InstanceBinding instanceDef
 
 emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> Atom n -> m n (Name DataConNameC n)
 emitDataConName dataDefName conIdx conAtom = do
@@ -919,22 +926,23 @@ zipNest _ _ _ = error "List too short!"
 zipPiBinders :: [Arrow] -> Nest Binder i i' -> Nest PiBinder i i'
 zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
 
-emitMethodType :: (Mut n, TopBuilder m)
-               => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
-emitMethodType hint classDef explicit idx = do
+emitMethod
+  :: (Mut n, TopBuilder m)
+  => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
+emitMethod hint classDef explicit idx = do
   getter <- makeMethodGetter classDef explicit idx
-  emitBinding hint $ MethodBinding classDef idx getter
+  f <- Var <$> emitTopLet hint PlainLet (Atom getter)
+  emitBinding hint $ MethodBinding classDef idx f
 
 makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom n)
-makeMethodGetter classDefName explicit methodIdx = liftBuilder do
-  classDefName' <- sinkM classDefName
-  ClassDef _ _ defName <- getClassDef classDefName'
-  DataDef sourceName paramBs _ <- lookupDataDef defName
+makeMethodGetter className explicit methodIdx = liftBuilder do
+  className' <- sinkM className
+  ClassDef sourceName _ paramBs _ _ <- getClassDef className'
   let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
   buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
-    defName' <- sinkM defName
-    buildPureLam "dict" ClassArrow (TypeCon sourceName defName' (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
+    let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
+    buildPureLam "dict" ClassArrow dictTy \dict ->
+      emitOp $ ProjMethod (Var dict) methodIdx
 
 emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> Atom n -> m n (Name TyConNameC n)
 emitTyConName dataDefName tyConAtom = do
@@ -947,7 +955,7 @@ getDataCon v = do
 
 getClassDef :: EnvReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
-  ~(ClassBinding classDef _) <- lookupEnv classDefName
+  ~(ClassBinding classDef) <- lookupEnv classDefName
   return classDef
 
 -- === builder versions of common local ops ===
@@ -1144,22 +1152,31 @@ instance SinkableE IxImpl
 
 getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
 getIxImpl ty = do
-  [ixSize, toOrdinal, unsafeFromOrdinal] <- getUnpacked =<< getProj 1 =<< getProj 0 =<< emitBlock =<< synthIx ty
+  dict <- synthIx ty
+  ixSize            <- projMethod "get_size"            dict
+  toOrdinal         <- projMethod "ordinal"             dict
+  unsafeFromOrdinal <- projMethod "unsafe_from_ordinal" dict
   return $ IxImpl{..}
+
+projMethod :: (Builder m, Emits n) => String -> Atom n -> m n (Atom n)
+projMethod methodName dict = do
+  DictTy (DictType _ className _) <- getType dict
+  methodIdx <- getMethodIndex className methodName
+  emitOp $ ProjMethod dict methodIdx
 
 intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
 intToIndex ty i = do
-  f <- unsafeFromOrdinal <$> getIxImpl ty
+  f <- synthIx ty >>= projMethod "unsafe_from_ordinal"
   app f i
 
 indexToInt :: forall m n. (Builder m, Emits n) => Atom n -> m n (Atom n)
 indexToInt idx = do
-  f <- toOrdinal <$> (getIxImpl =<< getType idx)
+  f <- getType idx >>= synthIx >>= projMethod "ordinal"
   app f idx
 
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
 indexSetSize ty = do
-  f <- ixSize <$> getIxImpl ty
+  f <- synthIx ty >>= projMethod "get_size"
   app f UnitVal
 
 -- === pseudo-prelude ===

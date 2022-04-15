@@ -311,6 +311,8 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   DataCon name def params con args ->
     DataCon name <$> substM def <*> mapM simplifyAtom params
                  <*> pure con <*> mapM simplifyAtom args
+  DictCon d -> DictCon <$> substM d
+  DictTy  t -> DictTy  <$> substM t
   Record items -> Record <$> mapM simplifyAtom items
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
@@ -521,17 +523,24 @@ simplifyOp op = case op of
   ScalarBinOp (ICmp Less ) x y -> ilt x y
   ScalarBinOp (ICmp Equal) x y -> ieq x y
   Select c x y -> select c x y
-  ProjMethod dict methodName -> do
-    Con (LabelCon methodName') <- return methodName
-    lookupSourceMap methodName' >>= \case
-      Just (UMethodVar  v') -> lookupEnv v' >>= \case
-        MethodBinding _ i _ -> do
-          return $ getProjection [i,1,0] dict
-      _ -> throw TypeErr "Not a method name"
-  ExplicitDict dictTy method -> do
-    TypeCon sourceName name params <- return dictTy
-    return $ DataCon sourceName name params 0 [PairVal (ProdVal []) (ProdVal [method])]
+  ProjMethod dict i -> projectDictMethod dict i
   _ -> emitOp op
+
+projectDictMethod :: Emits o => Atom o -> Int -> SimplifyM i o (Atom o)
+projectDictMethod d i = do
+  cheapNormalize d >>= \case
+    DictCon (InstanceDict instanceName args) -> dropSubst do
+      args' <- mapM simplifyAtom args
+      InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+      let InstanceBody _ methods = body
+      let method = methods !! i
+      extendSubst (bs@@>(SubstVal <$> args')) $
+        simplifyBlock method
+    Con (ExplicitDict _ method) -> do
+      case i of
+        0 -> return method
+        _ -> error "ExplicitDict only supports single-method classes"
+    d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of

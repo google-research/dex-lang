@@ -4,10 +4,10 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Inference (trySynthDictBlock, synthIx) where
+module Inference (trySynthTerm, synthIx) where
 
 import Name
 import Syntax
 
-trySynthDictBlock :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
-synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
+trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
+synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)

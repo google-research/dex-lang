@@ -155,7 +155,7 @@ data UDecl (n::S) (l::S) where
     -> UDecl n l
   UInstance
     :: SourceNameOr (Name ClassNameC) n  -- class name
-    -> Nest UPatAnnArrow n l'            -- dictionary args (i.e. conditions)
+    -> Nest UPatAnnArrow n l'            -- type args and dictionary args
     ->   [UExpr l']                      -- class parameters
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
