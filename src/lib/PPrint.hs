@@ -39,21 +39,48 @@ import Name
 import Syntax
 import Parser (showPrimName)
 
--- Specifies what kinds of operations are allowed to be printed at this point.
--- Printing at AppPrec level means that applications can be printed
--- with no parentheses, but binops must be parenthesized.
-data PrecedenceLevel  = LowestPrec
-                      | AppPrec
-                      | ArgPrec  -- Only single symbols and parens allowed
-                      deriving (Eq, Ord)
-
+-- A DocPrec is a slightly context-aware Doc, specifically one that
+-- knows the precedence level of the immediately enclosing operation,
+-- and can decide to parenthesize itself accordingly.
+-- For example, when printing `x = f (g 1)`, we know that
+-- - We need parens around `(g 1)` because applying `f` binds
+--   tighter than applying `g` (because application is left-associative)
+-- - We do not need parens around `g` or 1, because there is nothing
+--   there that may bind less tightly than the function applications.
+-- - We also do not need parens around the whole RHS `f (g 1)`, because
+--   the `=` binds less tightly than applying `f`.
+--
+-- This is accomplished in the `Expr` instance of `PrettyPrec` by
+-- coding function application to require `ArgPrec` from the arguments
+-- (via the default behavior of `prettyFromPrettyPrec`), but to
+-- provide only `AppPrec` for the application expression itself.  The
+-- outer application is not wrapped in parens because the let binding
+-- prints its RHS at `LowestPrec`.
 type DocPrec ann = PrecedenceLevel -> Doc ann
+
+-- Specifies what kinds of operations are allowed to be printed at
+-- this point without wrapping in parens.
+data PrecedenceLevel =
+    -- Any subexpression is allowed without parens
+    LowestPrec
+    -- Function application is allowed without parens, but nothing
+    -- that binds less tightly
+  | AppPrec
+    -- Only single symbols and parens allowed
+  | ArgPrec
+  deriving (Eq, Ord)
 
 class PrettyPrec a where
   prettyPrec :: a -> DocPrec ann
 
 -- `atPrec prec doc` will ensure that the precedence level is at most
 -- `prec` when running `doc`, wrapping with parentheses if needed.
+-- To wit,
+-- - `atPrec LowestPrec` means "wrap unless the context permits all
+--   subexpressions unwrapped"
+-- - `atPrec AppPrec` means "wrap iff the context requires ArgPrec"
+-- - `atPrec ArgPrec` means "never wrap" (unless the
+--   `PrecedenceLevel` ADT is extended later).
 atPrec :: PrecedenceLevel -> Doc ann -> DocPrec ann
 atPrec prec doc requestedPrec =
   if requestedPrec > prec then parens (align doc) else doc
@@ -129,11 +156,16 @@ instance PrettyPrec (Expr n) where
   prettyPrec (Hof (For ann (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
-  prettyPrec (Case e alts _ _) = prettyPrecCase "case" e alts
+  prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
 
-prettyPrecCase :: PrettyE e => Doc ann -> Atom n -> [AltP e n] -> DocPrec ann
-prettyPrecCase name e alts = atPrec LowestPrec $ name <+> p e <+> "of" <>
-  nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
+prettyPrecCase :: PrettyE e => Doc ann -> Atom n -> [AltP e n] -> EffectRow n -> DocPrec ann
+prettyPrecCase name e alts effs = atPrec LowestPrec $
+  name <+> pApp e <+> "of" <>
+  nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
+          <> effectLine effs)
+  where
+    effectLine Pure = ""
+    effectLine row = hardline <> "case annotated with effects" <+> p row
 
 prettyAlt :: PrettyE e => AltP e n -> Doc ann
 prettyAlt (Abs bs body) = hsep (map prettyBinderNoAnn  bs') <+> "->" <> nest 2 (p body)
@@ -234,7 +266,7 @@ instance PrettyPrec (Atom n) where
             _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
-    ACase e alts _ -> prettyPrecCase "acase" e alts
+    ACase e alts _ -> prettyPrecCase "acase" e alts Pure
     DataConRef _ params args -> atPrec LowestPrec $
       "DataConRef" <+> p params <+> p args
     BoxedRef ptrsSizes (Abs b body) -> atPrec LowestPrec $
