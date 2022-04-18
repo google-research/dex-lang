@@ -329,12 +329,19 @@ instance Fallible m => ScopableBuilder (BuilderT m) where
     return $ Abs (unRNest rdecls) e
   {-# INLINE buildScoped #-}
 
+newtype BuilderDeclEmission (n::S) (l::S) = BuilderDeclEmission (Decl n l)
+instance ExtOutMap Env BuilderDeclEmission where
+  extendOutMap env (BuilderDeclEmission d) = env `extendOutMap` toEnvFrag d
+  {-# INLINE extendOutMap #-}
+instance ExtOutFrag BuilderEmissions BuilderDeclEmission where
+  extendOutFrag rn (BuilderDeclEmission d) = RNest rn d
+  {-# INLINE extendOutFrag #-}
+
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
-    Abs b v <- freshNameM hint
-    let decl = Let b $ DeclBinding ann ty expr
-    BuilderT $ extendInplaceT $ Abs (RNest REmpty decl) v
+    BuilderT $ freshExtendSubInplaceT hint \b ->
+      (BuilderDeclEmission $ Let b $ DeclBinding ann ty expr, binderName b)
   {-# INLINE emitDecl #-}
 
 instance Fallible m => EnvReader (BuilderT m) where
