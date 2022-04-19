@@ -153,7 +153,7 @@ ensureModuleLoaded moduleSourceName = do
   depsRequired <- findDepsTransitively moduleSourceName
   forM_ depsRequired \md -> do
     evaluated <- evalPartiallyParsedUModuleCached md
-    bindModule (umppName md) evaluated
+    registerLoadedModule (umppName md) evaluated
 {-# SCC ensureModuleLoaded #-}
 
 evalSourceBlock :: (Topper m, Mut n)
@@ -333,21 +333,11 @@ evalPartiallyParsedUModule partiallyParsed = do
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
-  TopEnvFrag envFrag (PartialTopEnvFrag cache loadedModules moduleEnv) <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs objs _ <- return moduleEnv
-  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache loadedModules mempty
+  TopEnvFrag topEmissions moduleEmissions <- return topFrag
+  let ModuleEmissions (ImportStatus directDeps transDeps) sm scs objs = moduleEmissions
+  let fragToReEmit = TopEnvFrag topEmissions mempty
   let evaluatedModule = Module name directDeps transDeps sm scs objs
   emitEnv $ Abs fragToReEmit evaluatedModule
-
-importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
-importModule name = do
-  lookupLoadedModule name >>= \case
-    Nothing -> throw ModuleImportErr $ "Couldn't import " ++ pprint name
-    Just name' -> do
-      Module _ _ transImports' _ _ _ <- lookupModule name'
-      let importStatus = ImportStatus (S.singleton name') (S.singleton name' <> transImports')
-      emitLocalModuleEnv $ mempty { envImportStatus = importStatus }
-{-# SCC importModule #-}
 
 evalFile :: (Topper m, Mut n) => FilePath -> m n [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
