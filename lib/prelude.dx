@@ -1535,7 +1535,9 @@ def get_output_stream (_:Unit) : {IO} Stream WriteMode =
   MkStream $ %ptrLoad %outputStreamPtr
 
 def print (s:String) : {IO} Unit =
-  fwrite (get_output_stream ()) (s <> "\n")
+  stream = get_output_stream ()
+  fwrite stream s
+  fwrite stream "\n"
 
 '### Shelling Out
 
@@ -1620,11 +1622,14 @@ def with_temp_files {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
 
 '### Table operations
 
+@noinline
+def from_ordinal_error (i:Int) (upper:Int) : String =
+  "Ordinal index out of range:" <> show i <> " >= " <> show upper
+
 def from_ordinal (n:Type) [Ix n] (i:Int) : n =
   case (0 <= i) && (i < size n) of
     True  -> unsafe_from_ordinal _ i
-    False -> error $
-      "Ordinal index out of range:" <> show i <> " >= " <> show (size n)
+    False -> error $ from_ordinal_error i $ size n
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
