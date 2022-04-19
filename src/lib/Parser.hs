@@ -12,11 +12,13 @@ module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
 import Control.Monad
 import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
+import Data.Char
 import Data.Text (Text)
 import Data.Text          qualified as T
 import Data.Text.Encoding qualified as T
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
+import Data.HashSet qualified as HS
 import qualified Text.Megaparsec.Char as MC
 import qualified Data.Map.Strict       as M
 import Data.Tuple
@@ -92,7 +94,7 @@ mustParseit s p  = case parseit s p of
 importModule :: Parser SourceBlock'
 importModule = ImportModule . OrdinaryModule <$> do
   keyWord ImportKW
-  s <- lowerName <|> upperName
+  s <- anyCaseName
   eol
   return s
 
@@ -209,25 +211,29 @@ expr = mayNotPair $ makeExprParser leafExpr ops
 
 -- expression without exposed infix operators
 leafExpr :: Parser (UExpr VoidS)
-leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
-         <|> uTabCon
-         <|> uVarOcc
-         <|> uHole
-         <|> uString
-         <|> uLit
-         <|> uPiType
-         <|> uLamExpr
-         <|> uViewExpr
-         <|> uForExpr
-         <|> caseExpr
-         <|> ifExpr
-         <|> uPrim
-         <|> unitCon
-         <|> (uLabeledExprs `fallBackTo` uVariantExpr)
-         <|> uLabel
-         <|> uIsoSugar
-         <|> uDoSugar
-         <?> "expression"
+leafExpr = uVarOcc <|> lookaheadExprs <?> "expression"
+  where
+    lookaheadExprs = do
+      next <- nextChar
+      case next of
+        '_'  -> uHole
+        '('  -> unitCon <|> parens (mayPair $ makeExprParser leafExpr ops)
+        '['  -> uTabCon
+        '\"' -> uString
+        '\'' -> withSrc $ charExpr <$> charLit
+        '\\' -> uLamExpr
+        '%'  -> uPrim
+        '#'  -> uLabel <|> uIsoSugar
+        '{'  -> (uLabeledExprs `fallBackTo` uVariantExpr)
+        _ | isDigit next -> withSrc (UIntLit <$> intLit <|> UFloatLit <$> doubleLit)
+        -- Here we can't commit to a single option yet
+        'v'  -> uViewExpr <|> uPiType
+        'f'  -> uForExpr  <|> uPiType
+        'r'  -> uForExpr  <|> uPiType  -- uForExpr also supports rof
+        'c'  -> caseExpr  <|> uPiType
+        'i'  -> ifExpr    <|> uPiType
+        'd'  -> uDoSugar  <|> uPiType
+        _    -> uPiType
 
 containedExpr :: Parser (UExpr VoidS)
 containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
@@ -249,13 +255,6 @@ uString = do
   let addSrc = WithSrcE (Just pos)
   let cs = map (addSrc . charExpr) s
   return $ mkApp (addSrc "to_list") $ addSrc $ UTabCon cs
-
-uLit :: Parser (UExpr VoidS)
-uLit = withSrc $ uLitParser
-  where uLitParser = charExpr <$> charLit
-                 <|> UIntLit  <$> intLit
-                 <|> UFloatLit <$> doubleLit
-                 <?> "literal"
 
 charExpr :: Char -> (UExpr' VoidS)
 charExpr c = UPrimExpr $ ConExpr $ Lit $ Word8Lit $ fromIntegral $ fromEnum c
@@ -557,7 +556,7 @@ uPiType :: Parser (UExpr VoidS)
 uPiType = withSrc do
   p <- piBinderPat
   (     (sym "=>" >> (UTabPi <$> UTabPiExpr p <$> uType))
-    <|> (upi p <$> arrow effects <*> uType))
+    <|> (upi p <$> arrow <*> uType))
   where
     upi binder (arr, eff) ty = UPi $ UPiExpr arr binder (fromMaybe Pure eff) ty
 
@@ -583,12 +582,12 @@ anonBinder =
   label "anonymous annoted binder" $ UAnnBinder UIgnore <$>
     (underscore >> sym ":" >> containedExpr)
 
-arrow :: Parser eff -> Parser (Arrow, Maybe eff)
-arrow p =   (sym "->"  >> liftM ((PlainArrow,) . Just) p)
-        <|> (sym "--o" $> (LinArrow, Nothing))
-        <|> (sym "?->" $> (ImplicitArrow, Nothing))
-        <|> (sym "?=>" $> (ClassArrow, Nothing))
-        <?> "arrow"
+arrow :: Parser (Arrow, Maybe (UEffectRow VoidS))
+arrow =   (sym "->"  >> liftM ((PlainArrow,) . Just) effects)
+      <|> (sym "--o" $> (LinArrow, Nothing))
+      <|> (sym "?->" $> (ImplicitArrow, Nothing))
+      <|> (sym "?=>" $> (ClassArrow, Nothing))
+      <?> "arrow"
 
 caseExpr :: Parser (UExpr VoidS)
 caseExpr = withSrc $ do
@@ -631,6 +630,7 @@ blockThenElse = withIndent $ mayNotBreak $ do
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
              <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
+{-# INLINE onePerLine #-}
 
 uBinder :: Parser (UBinder AtomNameC VoidS VoidS)
 uBinder = (fromString <$> lowerName) <|> (underscore $> UIgnore)
@@ -639,15 +639,12 @@ pat :: Parser (UPat VoidS VoidS)
 pat = mayNotPair $ makeExprParser leafPat patOps
 
 leafPat :: Parser (UPat VoidS VoidS)
-leafPat =
-      (withSrcB (symbol "()" $> (UPatUnit UnitB)))
-  <|> parens (mayPair $ makeExprParser leafPat patOps)
-  <|> (withSrcB $
-          (UPatBinder <$> uBinder)
-      <|> (UPatCon    <$> (fromString <$> upperName) <*> manyNested pat)
-      <|> (variantPat `fallBackTo` recordPat)
-      <|> brackets (UPatTable <$> toNestParsed <$> leafPat `sepBy` sym ",")
-  )
+leafPat = nextChar >>= \case
+  '(' -> (withSrcB (symbol "()" $> (UPatUnit UnitB))) <|> parens (mayPair $ makeExprParser leafPat patOps)
+  '{' -> withSrcB $ variantPat `fallBackTo` recordPat
+  '[' -> withSrcB $ brackets $ UPatTable <$> toNestParsed <$> leafPat `sepBy` sym ","
+  _ -> withSrcB $ (UPatBinder <$> uBinder)
+              <|> (UPatCon    <$> (fromString <$> upperName) <*> manyNested pat)
   where pun pos l = WithSrcB (Just pos) $ fromString l
         variantPat = parseVariant leafPat UPatVariant UPatVariantLift
         recordPat = (UPatRecord UEmptyRowPat <$ braces (return ())) `fallBackTo`
@@ -666,6 +663,7 @@ patPairOp = do
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
+{-# INLINE annot #-}
 
 patAnn :: Parser (UPatAnn VoidS VoidS)
 patAnn = label "pattern" $ UPatAnn <$> pat <*> optional (annot containedExpr)
@@ -981,6 +979,7 @@ opWithSrc :: Parser (SrcPos -> a -> a -> a)
 opWithSrc p = do
   (f, pos) <- withPos p
   return $ f pos
+{-# INLINE opWithSrc #-}
 
 anySymOp :: Operator Parser (UExpr VoidS)
 anySymOp = InfixL $ opWithSrc $ do
@@ -1030,7 +1029,7 @@ mkTabApp f x = joinSrc f x $ UTabApp f x
 infixArrow :: Parser (UType VoidS -> UType VoidS -> UType VoidS)
 infixArrow = do
   notFollowedBy (sym "=>")  -- table arrows have special fixity
-  ((arr, eff), pos) <- withPos $ arrow effects
+  ((arr, eff), pos) <- withPos arrow
   return \a b -> WithSrcE (Just pos) $ UPi $ UPiExpr arr (UPatAnn (nsB UPatIgnore) (Just a)) (fromMaybe Pure eff) b
 
 mkTabType :: UExpr VoidS -> UExpr VoidS -> UExpr VoidS
@@ -1097,6 +1096,13 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
 
+nextChar :: Lexer Char
+nextChar = do
+  i <- getInput
+  guard $ not $ T.null i
+  return $ T.head i
+{-# INLINE nextChar #-}
+
 upperName :: Lexer SourceName
 upperName = label "upper-case name" $ lexeme $
   checkNotKeyword $ (:) <$> upperChar <*> many nameTailChar
@@ -1106,16 +1112,19 @@ lowerName = label "lower-case name" $ lexeme $
   checkNotKeyword $ (:) <$> lowerChar <*> many nameTailChar
 
 anyCaseName  :: Lexer SourceName
-anyCaseName = lowerName <|> upperName
+anyCaseName = label "name" $ lexeme $
+  checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>
+    (T.unpack <$> takeWhileP Nothing (\c -> isAlphaNum c || c == '\'' || c == '_'))
 
-anyName  :: Lexer SourceName
-anyName = lowerName <|> upperName <|> symName
+anyName :: Lexer SourceName
+anyName = anyCaseName <|> symName
 
 checkNotKeyword :: Parser String -> Parser String
 checkNotKeyword p = try $ do
   s <- p
-  failIf (s `elem` keyWordStrs) $ show s ++ " is a reserved word"
+  failIf (s `HS.member` keyWordSet) $ show s ++ " is a reserved word"
   return s
+{-# INLINE checkNotKeyword #-}
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
@@ -1145,6 +1154,9 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ViewKW -> "view"
       ImportKW -> "import"
       ForeignKW -> "foreign"
+
+keyWordSet :: HS.HashSet String
+keyWordSet = HS.fromList keyWordStrs
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
@@ -1178,10 +1190,11 @@ doubleLit = lexeme $
       Right f -> return f
       Left  _ -> fail "Non-representable floating point literal"
 
-knownSymStrs :: [String]
-knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":=",
-                "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>",
-                "..", "<..", "..<", "..<", "<..<", "?"]
+knownSymStrs :: HS.HashSet String
+knownSymStrs = HS.fromList
+  [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":="
+  , "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>"
+  , "..", "<..", "..<", "..<", "<..<", "?"]
 
 -- string must be in `knownSymStrs`
 sym :: Text -> Lexer ()
@@ -1190,8 +1203,7 @@ sym s = lexeme $ try $ string s >> notFollowedBy symChar
 anySym :: Lexer String
 anySym = lexeme $ try $ do
   s <- some symChar
-  -- TODO: consider something faster than linear search here
-  failIf (s `elem` knownSymStrs) ""
+  failIf (s `HS.member` knownSymStrs) ""
   return $ "(" <> s <> ")"
 
 symName :: Lexer SourceName
@@ -1201,13 +1213,13 @@ symName = label "symbol name" $ lexeme $ try $ do
 
 backquoteName :: Lexer SourceName
 backquoteName = label "backquoted name" $
-  lexeme $ try $ between (char '`') (char '`') (upperName <|> lowerName)
+  lexeme $ try $ between (char '`') (char '`') anyCaseName
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
 lParen, rParen, lBracket, rBracket, lBrace, rBrace, semicolon, underscore :: Lexer ()
 
-lParen    = notFollowedBy symName >> notFollowedBy unitCon >> charLexeme '('
+lParen    = charLexeme '('
 rParen    = charLexeme ')'
 lBracket  = charLexeme '['
 rBracket  = charLexeme ']'
@@ -1223,15 +1235,15 @@ nameTailChar :: Parser Char
 nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
 
 symChar :: Parser Char
-symChar = choice $ map char symChars
+symChar = token (\c -> if HS.member c symChars then Just c else Nothing) mempty
 
-symChars :: [Char]
-symChars = ".,!$^&*:-~+/=<>|?\\@"
+symChars :: HS.HashSet Char
+symChars = HS.fromList ".,!$^&*:-~+/=<>|?\\@"
 
 -- === Util ===
 
 sc :: Parser ()
-sc = L.space space lineComment empty
+sc = skipMany $ hidden space <|> hidden lineComment
 
 lineComment :: Parser ()
 lineComment = do
@@ -1253,18 +1265,23 @@ space = do
 
 mayBreak :: Parser a -> Parser a
 mayBreak p = local (\ctx -> ctx { canBreak = True }) p
+{-# INLINE mayBreak #-}
 
 mayNotBreak :: Parser a -> Parser a
 mayNotBreak p = local (\ctx -> ctx { canBreak = False }) p
+{-# INLINE mayNotBreak #-}
 
 mayPair :: Parser a -> Parser a
 mayPair p = local (\ctx -> ctx { canPair = True }) p
+{-# INLINE mayPair #-}
 
 mayNotPair :: Parser a -> Parser a
 mayNotPair p = local (\ctx -> ctx { canPair = False }) p
+{-# INLINE mayNotPair #-}
 
 optionalMonoid :: Monoid a => Parser a -> Parser a
 optionalMonoid p = p <|> return mempty
+{-# INLINE optionalMonoid #-}
 
 nameString :: Parser String
 nameString = lexeme . try $ (:) <$> lowerChar <*> many alphaNumChar
@@ -1274,6 +1291,7 @@ thisNameString s = lexeme $ try $ string s >> notFollowedBy alphaNumChar
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
+{-# INLINE lexeme #-}
 
 symbol :: Text -> Parser ()
 symbol s = void $ L.symbol sc s
@@ -1283,18 +1301,23 @@ argTerm = mayNotBreak $ sym "."
 
 bracketed :: Parser () -> Parser () -> Parser a -> Parser a
 bracketed left right p = between left right $ mayBreak $ sc >> p
+{-# INLINE bracketed #-}
 
 parens :: Parser a -> Parser a
 parens p = bracketed lParen rParen p
+{-# INLINE parens #-}
 
 brackets :: Parser a -> Parser a
 brackets p = bracketed lBracket rBracket p
+{-# INLINE brackets #-}
 
 braces :: Parser a -> Parser a
 braces p = bracketed lBrace rBrace p
+{-# INLINE braces #-}
 
 manyNested :: Parser (a VoidS VoidS) -> Parser (Nest a VoidS VoidS)
 manyNested p = toNestParsed <$> many p
+{-# INLINE manyNested #-}
 
 withPos :: Parser a -> Parser (a, SrcPos)
 withPos p = do
@@ -1302,6 +1325,7 @@ withPos p = do
   x <- p
   n' <- getOffset
   return $ (x, (n, n'))
+{-# INLINE withPos #-}
 
 nextLine :: Parser ()
 nextLine = do
@@ -1320,8 +1344,9 @@ withSource p = do
 withIndent :: Parser a -> Parser a
 withIndent p = do
   nextLine
-  indent <- liftM length $ some (char ' ')
+  indent <- T.length <$> takeWhileP (Just "space") (==' ')
   local (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ p
+{-# INLINE withIndent #-}
 
 eol :: Parser ()
 eol = void MC.eol
@@ -1350,6 +1375,7 @@ primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 
 showPrimName :: PrimExpr e -> String
 showPrimName prim = primNameToStr $ fmap (const ()) prim
+{-# NOINLINE showPrimName #-}
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)
