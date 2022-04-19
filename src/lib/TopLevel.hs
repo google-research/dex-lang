@@ -9,7 +9,7 @@
 module TopLevel (
   EvalConfig (..), Topper, runTopperM,
   evalSourceBlock, evalSourceBlockRepl,
-  evalFile, evalSourceText, initTopState, TopStateEx (..),
+  evalSourceText, initTopState, TopStateEx (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
 import Data.Maybe
@@ -119,12 +119,20 @@ evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, TopS
 evalSourceBlockIO opts env block = runTopperM opts env $ evalSourceBlockRepl block
 
 -- Used for the top-level source file (rather than imported modules)
-evalSourceText :: (Topper m, Mut n) => String -> m n [(SourceBlock, Result)]
-evalSourceText source = do
+evalSourceText :: (Topper m, Mut n) => String -> (SourceBlock -> IO ()) -> (Result -> IO Bool) -> m n [(SourceBlock, Result)]
+evalSourceText source beginCallback endCallback = do
   let (UModule mname deps sourceBlocks) = parseUModule Main source
   mapM_ ensureModuleLoaded deps
-  results <- mapM (evalSourceBlock mname) sourceBlocks
-  return $ zip sourceBlocks results
+  evalSourceBlocks mname sourceBlocks
+  where
+    evalSourceBlocks mname = \case
+      [] -> return []
+      (sb:rest) -> do
+        liftIO $ beginCallback sb
+        result <- evalSourceBlock mname sb
+        liftIO (endCallback result) >>= \case
+          False -> return [(sb, result)]
+          True  -> ((sb, result):) <$> evalSourceBlocks mname rest
 
 catchLogsAndErrs :: (Topper m, Mut n) => m n a -> m n (Except a, [Output])
 catchLogsAndErrs m = do
@@ -347,9 +355,6 @@ importModule name = do
       let importStatus = ImportStatus (S.singleton name') (S.singleton name' <> transImports')
       emitLocalModuleEnv $ mempty { envImportStatus = importStatus }
 {-# SCC importModule #-}
-
-evalFile :: (Topper m, Mut n) => FilePath -> m n [(SourceBlock, Result)]
-evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
 
 passLogFilter :: LogLevel -> PassName -> Bool
 passLogFilter = \case

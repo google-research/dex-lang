@@ -19,7 +19,7 @@ import System.Directory
 import Data.List
 import qualified Data.Map.Strict as M
 
-import PPrint (toJSONStr, printLitBlock)
+import PPrint (toJSONStr, printResult)
 import Serialize
 import TopLevel
 import Err
@@ -52,11 +52,14 @@ data CmdOpts = CmdOpts EvalMode EvalConfig
 
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = case evalMode of
-  ScriptMode fname fmt _ -> do
+  ScriptMode fname fmt onErr -> do
     env <- loadCache
-    ((), finalEnv) <- runTopperM opts env do
-      results <- evalFile fname
-      liftIO $ printLitProg fmt results
+    (litProg, finalEnv) <- runTopperM opts env do
+      source <- liftIO $ readFile fname
+      evalSourceText source (printIncrementalSource fmt) \result@(Result _ errs) -> do
+        printIncrementalResult fmt result
+        return case (onErr, errs) of (HaltOnErr, Failure _) -> False; _ -> True
+    printFinal fmt litProg
     storeCache finalEnv
   ReplMode prompt -> do
     env <- loadCache
@@ -65,17 +68,13 @@ runMode evalMode opts = case evalMode of
       forever do
          block <- readSourceBlock prompt
          evalBlockRepl block
-  -- ExportMode dexPath objPath -> do
-  --   results <- evalInterblockM opts env $ map snd <$> evalfile dexPath
-  --   let outputs = foldMap (\(Result outs _) -> outs) results
-  --   let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
-  --   putStr $ foldMap (nonEmptyNewline . pprint) errors
-  --   let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-  --   unless (backendName opts == LLVM) $
-  --     throw CompilerErr "Export only supported with the LLVM CPU backend"
-  --   TopStateEx env' <- return env
-  --   -- exportFunctions objPath exportedFuns $ getNameBindings env'
-  --   error "not implemented"
+    where
+      evalBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
+      evalBlockRepl block = do
+        result <- evalSourceBlockRepl block
+        case result of
+          Result [] (Success ()) -> return ()
+          _ -> liftIO $ putStrLn $ pprint result
   ClearCache -> clearCache
 #ifdef DEX_LIVE
   -- These are broken if the prelude produces any arrays because the blockId
@@ -88,16 +87,34 @@ runMode evalMode opts = case evalMode of
     runTerminal fname opts env
 #endif
 
-evalBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
-evalBlockRepl block = do
-  result <- evalSourceBlockRepl block
-  case result of
-    Result [] (Success ()) -> return ()
-    _ -> liftIO $ putStrLn $ pprint result
+printIncrementalSource :: DocFmt -> SourceBlock -> IO ()
+printIncrementalSource fmt sb = case fmt of
+  ResultOnly -> return ()
+  JSONDoc    -> return ()
+  TextDoc    -> putStr $ pprint sb
+#ifdef DEX_LIVE
+  HTMLDoc -> return ()
+#endif
 
-liftErrIO :: MonadIO m => Except a -> m a
-liftErrIO (Failure err) = liftIO $ putStrLn (pprint err) >> exitFailure
-liftErrIO (Success ans) = return ans
+printIncrementalResult :: DocFmt -> Result -> IO ()
+printIncrementalResult fmt result = case fmt of
+  ResultOnly -> case pprint result of [] -> return (); msg -> putStrLn msg
+  JSONDoc    -> case toJSONStr result of "{}" -> return (); s -> putStrLn s
+  TextDoc    -> do
+    isatty <- queryTerminal stdOutput
+    putStr $ printResult isatty result
+#ifdef DEX_LIVE
+  HTMLDoc -> return ()
+#endif
+
+printFinal :: DocFmt -> [(SourceBlock, Result)] -> IO ()
+printFinal fmt prog = case fmt of
+  ResultOnly -> return ()
+  TextDoc    -> return ()
+  JSONDoc    -> return ()
+#ifdef DEX_LIVE
+  HTMLDoc    -> putStr $ progHtml prog
+#endif
 
 readSourceBlock :: (MonadIO (m n), EnvReader m) => String -> m n SourceBlock
 readSourceBlock prompt = do
@@ -134,23 +151,6 @@ readMultiline prompt parse = loop prompt ""
 simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
-printLitProg :: DocFmt -> LitProg -> IO ()
-printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
-#ifdef DEX_LIVE
-printLitProg HTMLDoc prog = putStr $ progHtml prog
-#endif
-printLitProg TextDoc prog = do
-  isatty <- queryTerminal stdOutput
-  putStr $ foldMap (uncurry (printLitBlock isatty)) prog
-printLitProg JSONDoc prog =
-  forM_ prog \(_, result) -> case toJSONStr result of
-    "{}" -> return ()
-    s -> putStrLn s
-
-nonEmptyNewline :: String -> String
-nonEmptyNewline [] = []
-nonEmptyNewline l  = l ++ ['\n']
-
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
 
@@ -179,9 +179,9 @@ parseMode = subparser $
                     , ("json"       , JSONDoc)])
         (long "outfmt" <> value TextDoc <>
          helpOption "Output format" "literate (default) | result-only | html | json")
-  <*> flag HaltOnErr ContinueOnErr (
-                long "allow-errors"
-             <> help "Evaluate programs containing non-fatal type errors")))
+  <*> flag ContinueOnErr HaltOnErr (
+                long "stop-on-error"
+             <> help "Stop program evaluation when an error occurs (type or runtime)")))
   where
     sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
     objectFileInfo = argument str (metavar "OBJFILE" <> help "Output path (.o file)")

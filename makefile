@@ -225,9 +225,9 @@ run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t
 
 run-tests/%: tests/%.dx just-build
-	misc/check-quine $< $(dex) script --allow-errors
+	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
-	misc/check-quine $< $(dex) script --allow-errors
+	misc/check-quine $< $(dex) script
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: export DEX_TEST_MODE=t
@@ -235,20 +235,20 @@ update-%: export DEX_TEST_MODE=t
 update-all: $(update-test-targets) $(update-example-targets)
 
 update-tests/%: tests/%.dx just-build
-	$(dex) script --allow-errors $< > $<.tmp
+	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
 update-examples/%: examples/%.dx just-build
-	$(dex) script --allow-errors $< > $<.tmp
+	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
 run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
 run-gpu-tests: tests/gpu-tests.dx just-build
-	misc/check-quine $< $(dex) --backend llvm-cuda script --allow-errors
+	misc/check-quine $< $(dex) --backend llvm-cuda script
 
 update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
 update-gpu-tests: tests/gpu-tests.dx just-build
-	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
+	$(dex) --backend llvm-cuda script $< > $<.tmp
 	mv $<.tmp $<
 
 repl-test: just-build
@@ -258,7 +258,7 @@ repl-test: just-build
 
 module-tests: just-build
 	misc/check-quine tests/module-tests.dx \
-    $(dex) --prelude lib/prelude.dx --lib-path tests script --allow-errors
+    $(dex) --prelude lib/prelude.dx --lib-path tests script
 
 # --- running and querying benchmarks ---
 

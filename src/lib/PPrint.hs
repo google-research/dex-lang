@@ -10,7 +10,7 @@
 
 module PPrint (
   pprint, pprintCanonicalized, pprintList, asStr , atPrec, toJSONStr,
-  PrettyPrec(..), PrecedenceLevel (..), printLitBlock) where
+  PrettyPrec(..), PrecedenceLevel (..), printLitBlock, printResult) where
 
 import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Exts (Constraint)
@@ -885,15 +885,16 @@ instance Pretty RWS where
     State  -> "State"
 
 printLitBlock :: Pretty block => Bool -> block -> Result -> String
-printLitBlock isatty block (Result outs result) =
-  pprint block ++ concat (map (printOutput isatty) outs) ++ printResult isatty result
+printLitBlock isatty block result = pprint block ++ printResult isatty result
 
-printOutput :: Bool -> Output -> String
-printOutput isatty out = addPrefix (addColor isatty Cyan ">") $ pprint $ out
-
-printResult :: Bool -> Except () -> String
-printResult _ (Success ()) = ""
-printResult isatty (Failure err) = addColor isatty Red $ addPrefix ">" $ pprint err
+printResult :: Bool -> Result -> String
+printResult isatty (Result outs errs) =
+  concat (map printOutput outs) ++ case errs of
+    Success ()  -> ""
+    Failure err -> addColor isatty Red $ addPrefix ">" $ pprint err
+  where
+    printOutput :: Output -> String
+    printOutput out = addPrefix (addColor isatty Cyan ">") $ pprint $ out
 
 addPrefix :: String -> String -> String
 addPrefix prefix str = unlines $ map prefixLine $ lines str
