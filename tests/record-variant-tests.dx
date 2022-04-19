@@ -107,7 +107,7 @@ Syntax for records, variants, and their types.
 > 103 | :p {a:Int,}
 >     |          ^
 > unexpected ','
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '?', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', ':', '?', '|', '}', arrow, backquoted name, expression, or infix operator
 
 :p {|3}
 
