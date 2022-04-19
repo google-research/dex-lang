@@ -205,3 +205,21 @@ data MyData a5       = MkMyData (MyPairOfXs a5)
 >                                  ^^^^^^^^^^^^^
 
 data MyDataBetter a [X a] = MkMyDataBetter (MyPairOfXs a)
+
+-------------------- User-defined Ix --------------------
+
+data TwoPoints =
+  FirstPoint
+  SecondPoint
+
+instance Ix TwoPoints
+  get_size = \(). 2
+  ordinal = \b. case b of
+    FirstPoint  -> 0
+    SecondPoint -> 1
+  unsafe_from_ordinal = \i. case i == 0 of
+    True  -> FirstPoint
+    False -> SecondPoint
+
+:p for i:TwoPoints. i
+> [FirstPoint, SecondPoint]@TwoPoints

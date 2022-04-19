@@ -364,7 +364,7 @@ simplifyVar v = do
 simplifyLam :: Atom i -> SimplifyM i o (Atom o, Abs LamBinder ReconstructAtom o)
 simplifyLam atom = case atom of
   Lam (LamExpr b body) -> doSimpLam b body
-  _ -> substM atom >>= \case
+  _ -> simplifyAtom atom >>= \case
     Lam (LamExpr b body) -> dropSubst $ doSimpLam b body
     _ -> error "Not a lambda expression"
   where
@@ -380,7 +380,7 @@ simplifyBinaryLam :: Emits o => Atom i
   -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
 simplifyBinaryLam atom = case atom of
   Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> doSimpBinaryLam b1 b2 body
-  _ -> substM atom >>= \case
+  _ -> simplifyAtom atom >>= \case
     Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> dropSubst $ doSimpBinaryLam b1 b2 body
     _ -> error "Not a binary lambda expression"
   where
