@@ -57,7 +57,7 @@ dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
   Context evalConfig initEnv <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
-  (results, finalEnv) <- runTopperM evalConfig initEnv $ evalSourceText source
+  (results, finalEnv) <- runTopperM evalConfig initEnv $ evalSourceText source (const $ return ()) (const $ return True)
   let anyError = asum $ fmap (\case (_, Result _ (Failure err)) -> Just err; _ -> Nothing) results
   case anyError of
     Nothing  -> toStablePtr $ Context evalConfig finalEnv
