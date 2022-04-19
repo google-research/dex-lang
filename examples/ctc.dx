@@ -131,15 +131,13 @@ labels = for i:position. randIdxNoZero Vocab (new_key (ordinal i))
 -- semantics of the marginal likelihood being computed, and whether
 -- e.g. the summed-over labels should include blanks.
 
+0.141468 ~~ sum for i:Vocab. exp $ ctc blank logits [i]
+> True
 
-:p sum for i:Vocab.
-  exp $ ctc blank logits [i]
-> 0.141468
+-- (Fin N)=>Vocab is all combinations of N tokens.
+0.709123 ~~ sum for i:((Fin 2)=>Vocab). exp $ ctc blank logits i
+> True
 
-:p sum for (i, j):(Vocab & Vocab).
-  exp $ ctc blank logits [i, j]
-> 0.709123
+0.925101 ~~ sum for i:((Fin 3)=>Vocab). exp $ ctc blank logits i
+> True
 
-:p sum for (i, j, k):(Vocab & Vocab & Vocab).
-  exp $ ctc blank logits [i, j, k]
-> 0.925101
