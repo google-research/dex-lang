@@ -160,11 +160,11 @@ instance Pretty (Decl n l) where
 
 instance Pretty (NaryLamExpr n) where
   pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
-    "\\" <> prettyBinderNest (Nest b bs) <+> "." <> nest 2 (p body)
+    "\\" <> (spaced $ fromNest $ Nest b bs) <+> "." <> nest 2 (p body)
 
 instance Pretty (NaryPiType n) where
   pretty (NaryPiType (NonEmptyNest b bs) effs resultTy) =
-    prettyBinderNest (Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
+    (spaced $ fromNest $ Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance Pretty (PiBinder n l) where
   pretty (PiBinder b ty _) = p (b:>ty)
@@ -604,7 +604,7 @@ instance Pretty (UDecl n l) where
         <> hardline <> prettyLines methods
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
-prettyBinderNest bs = spaced $ fromNest bs
+prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
 
 instance Pretty (UDataDefTrail n) where
   pretty (UDataDefTrail bs) = p $ fromNest bs
@@ -815,6 +815,7 @@ prettyPrecPrimCon con = case con of
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
+    TabCon _ es -> atPrec ArgPrec $ list $ pApp <$> es
     PrimEffect ref (MPut    val   ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
     PrimEffect ref (MExtend _   x ) -> atPrec LowestPrec $ "extend" <+> pApp ref <+> pApp x
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
