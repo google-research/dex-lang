@@ -738,7 +738,7 @@ applyAbs (Abs b body) x = applySubst (b@>x) body
 
 applyNaryAbs :: ( SinkableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
                 , SubstB v b, SinkableE e)
-             => HasCallStack => Abs b e n -> [v c n] -> m n (e n)
+             => Abs b e n -> [v c n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 {-# INLINE applyNaryAbs #-}
 

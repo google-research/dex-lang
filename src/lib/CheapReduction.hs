@@ -169,11 +169,6 @@ cheapReduceName v =
 class CheaplyReducibleE (e::E) (e'::E) where
   cheapReduceE :: e i -> CheapReducerM i o (e' o)
 
--- Used to avoid ambiguous vars
-cheapReduceToAtomE :: CheaplyReducibleE e Atom => e i -> CheapReducerM i o (Atom o)
-cheapReduceToAtomE = cheapReduceE
-{-# INLINE cheapReduceToAtomE #-}
-
 instance CheaplyReducibleE Atom Atom where
   cheapReduceE :: forall i o. Atom i -> CheapReducerM i o (Atom o)
   cheapReduceE a = confuseGHC >>=  \_ -> case a of
@@ -208,14 +203,14 @@ instance CheaplyReducibleE DictExpr Atom where
     SuperclassProj child superclassIx -> do
       cheapReduceE child >>= \case
         DictCon (InstanceDict instanceName args) -> dropSubst do
-          args' <- mapM cheapReduceToAtomE args
+          args' <- mapM (cheapReduceE @Atom @Atom) args
           InstanceDef _ bs _ body <- lookupInstanceDef instanceName
           let InstanceBody superclasses _ = body
           applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
         child' -> return $ DictCon $ SuperclassProj child' superclassIx
     InstantiatedGiven f xs -> do
       cheapReduceE (App f xs) <|> justSubst
-    _ -> justSubst
+    InstanceDict _ _ -> justSubst
     where justSubst = DictCon <$> substM d
 
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where

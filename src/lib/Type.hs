@@ -97,7 +97,7 @@ sourceNameType v = do
       UAtomVar    v' -> getType $ Var v'
       UTyConVar   v' -> lookupEnv v' >>= \case TyConBinding _     e -> getType e
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
-      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  _   -> undefined
+      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
 
 getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
@@ -105,6 +105,13 @@ getReferentTy (Abs (PairB hB refB) UnitE) = do
   RefTy _ ty <- return $ binderType refB
   HoistSuccess ty' <- return $ hoist hB ty
   return ty'
+
+getClassTy :: ClassDef n -> Type n
+getClassTy (ClassDef _ _ bs _ _) = go bs
+  where
+    go :: Nest Binder n l -> Type n
+    go Empty = TyKind
+    go (Nest (b:>ty) rest) = Pi $ PiType (PiBinder b ty PlainArrow) Pure $ go rest
 
 -- === querying effects ===
 
@@ -366,7 +373,11 @@ instance HasType Atom where
       void $ checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
       return TyKind
     DictCon dictExpr -> getTypeE dictExpr
-    DictTy _ -> return TyKind  -- TODO: check params
+    DictTy (DictType _ className params) -> do
+      ClassDef _ _ paramBs _ _ <- substM className >>= lookupClassDef
+      params' <- mapM substM params
+      checkArgTys paramBs params'
+      return TyKind
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy elems -> checkFieldRowElems elems $> TyKind
@@ -628,9 +639,12 @@ typeCheckPrimCon con = case con of
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substM t
   RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse typeCheckRef xs
   LabelCon _   -> return $ TC $ LabelType
-  ExplicitDict dictTy _  -> do
-    -- TODO: check method
-    checkTypeE TyKind dictTy
+  ExplicitDict dictTy method  -> do
+    dictTy'@(DictTy (DictType _ className params)) <- checkTypeE TyKind dictTy
+    classDef <- lookupClassDef className
+    ([], [MethodType _ methodTy]) <- checkedApplyClassParams classDef params
+    method |: methodTy
+    return dictTy'
   SynthesizeDict _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
@@ -1079,8 +1093,8 @@ asNaryPiType ty = case ty of
   _ -> Nothing
 
 checkArgTys
-  :: Typer m
-  => Nest PiBinder o o'
+  :: (Typer m, SubstB AtomSubstVal b, BindsNames b, BindsOneAtomName b)
+  => Nest b o o'
   -> [Atom o]
   -> m i o ()
 checkArgTys Empty [] = return ()
@@ -1089,6 +1103,7 @@ checkArgTys (Nest b bs) (x:xs) = do
   Abs bs' UnitE <- applySubst (b@>SubstVal x) (EmptyAbs bs)
   checkArgTys bs' xs
 checkArgTys _ _ = throw TypeErr $ "wrong number of args"
+{-# INLINE checkArgTys #-}
 
 typeCheckRef :: Typer m => HasType e => e i -> m i o (Type o)
 typeCheckRef x = do

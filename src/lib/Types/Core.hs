@@ -253,6 +253,7 @@ data DictType (n::S) = DictType SourceName (ClassName n) [Type n]
 
 data DictExpr (n::S) =
    InstanceDict (InstanceName n) [Atom n]
+   -- We use NonEmpty because givens without args can be represented using `Var`.
  | InstantiatedGiven (Atom n) (NonEmpty (Atom n))
  | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
    deriving (Show, Generic)
