@@ -8,6 +8,7 @@ This demo also uses types to enforce internally that the array sizes are powers 
 which calls the power-of-2 FFT as a subroutine.
 
 
+
 '### Helper functions
 
 def odd_sized_palindrome {a n} (mid:a) (seq:n=>a) : ((n|Unit|n)=>a) =
@@ -19,15 +20,11 @@ def odd_sized_palindrome {a n} (mid:a) (seq:n=>a) : ((n|Unit|n)=>a) =
         Right () -> mid
       Right i -> seq.i
 
---def cast_to_power_of_2 {n a log_m} (xs:n=>a) : Maybe (((log_m)=>2)=>a) =
---  if is_power_of_2 (size n)
---    then Just $ unsafe_cast_table (intlog2 (size n)) xs
---    else Nothing
-
 def nextpow2 (x:Int) : Int =
   case is_power_of_2 x of
-    True -> x
+    True -> intlog2 x
     False -> 1 + intlog2 x
+
 
 '## Inner FFT functions
 
@@ -54,18 +51,19 @@ def power_of_2_fft {log2_n}
   (direction: FTDirection)
   (x: ((Fin log2_n)=>(Fin 2))=>Complex) :
       ((Fin log2_n)=>(Fin 2))=>Complex =
+  -- (Fin log2_n)=>(Fin 2) has 2^n elements.
 
   dir_const = case direction of
     ForwardFT -> -pi
     InverseFT -> pi
   
-  log2_half_n = log2_n - 1
-
   (n, ans) = yield_state (1, x) \combRef.
     for i:(Fin log2_n).
       ipow2Ref = fst_ref combRef
       xRef = snd_ref combRef
       ipow2 = get ipow2Ref
+
+      log2_half_n = log2_n - 1
       xRef := yieldAccum (AddMonoid Complex) \bufRef.
         for j:((Fin log2_half_n)=>(Fin 2)).  -- Executes in parallel.
           (left_read_ix, right_read_ix,
@@ -84,25 +82,23 @@ def power_of_2_fft {log2_n}
     ForwardFT -> ans
     InverseFT -> ans / (i_to_f n)
 
-def pad_to_power_of_2 {log2_m a n}
-    (pad_val:a) (xs:n=>a) :
+def pad_to_power_of_2 {a n} (log2_m:Int) (pad_val:a) (xs:n=>a) :
     ((Fin log2_m)=>(Fin 2))=>a =
   flatsize = intpow2 log2_m
   padded_flat = pad_to (Fin flatsize) pad_val xs
   unsafe_cast_table ((Fin log2_m)=>(Fin 2)) padded_flat
   
-def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) :
-  ((n|m)=>Complex) =  -- Alphabetical order matters here.
+def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) : ((n|m)=>Complex) =
   -- Convolve by pointwise multiplication in the Fourier domain.
   convolved_size = (size n) + (size m) - 1
   log_working_size = nextpow2 convolved_size
-  u_padded : ((Fin log_working_size)=>(Fin 2))=>Complex = pad_to_power_of_2 zero u
-  v_padded : ((Fin log_working_size)=>(Fin 2))=>Complex = pad_to_power_of_2 zero v
+  u_padded = pad_to_power_of_2 log_working_size zero u
+  v_padded = pad_to_power_of_2 log_working_size zero v
   spectral_u = power_of_2_fft ForwardFT u_padded
   spectral_v = power_of_2_fft ForwardFT v_padded
   spectral_conv = for i. spectral_u.i * spectral_v.i
   padded_conv = power_of_2_fft InverseFT spectral_conv
-  slice padded_conv 0 (n | m )
+  slice padded_conv 0 (n | m)
 
 def convolve {n m} (u:n=>Float) (v:m=>Float) : ((n|m)=>Float) =
   u' = for i. MkComplex u.i 0.0
@@ -165,6 +161,10 @@ def  fft2_real {n m} (x: n=>m=>Float): n=>m=>Complex =  fft2 for i j. MkComplex 
 def ifft2_real {n m} (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex x.i.j 0.0
 
 -------- Tests --------
+
+:p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
+> [0, 0, 0, 1, 2, 2, 3, 3, 4, 10, 10, 11]
+
 
 a : (Fin 4)=>Complex = arb $ new_key 0
 :p a ~~ (ifft $ fft a)

@@ -914,10 +914,6 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 :p map intlog2 [-1, 0, 1, 2, 3, 4, 5, 1023, 1024, 1025]
 > [-1, -1, 0, 1, 1, 2, 2, 9, 10, 10]
 
-:p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
-> [1, 1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048]
-
-
 interface AssociatedInt a
   value a : Int
 
@@ -988,3 +984,18 @@ interface AssociatedPermutedParams a c
 
 4.0e4
 > 40000.
+
+'### Misc. index sets
+
+all for x:(Bool & Bool).
+  x == (unsafe_from_ordinal _ (ordinal x))
+> True
+
+all for x:((Bool & Bool)=>(Fin 3)).
+  x == (unsafe_from_ordinal _ (ordinal x))
+> True
+
+all for x:((Bool & Fin 3)=>(Fin 4)).
+  x == (unsafe_from_ordinal _ (ordinal x))
+> True
+

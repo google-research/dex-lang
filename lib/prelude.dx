@@ -397,7 +397,6 @@ def select {a} (p:Bool) (x:a) (y:a) : a = case p of
 def b_to_i (x:Bool) : Int  = w8_to_i $ b_to_w8 x
 def b_to_f (x:Bool) : Float = i_to_f (b_to_i x)
 
-
 '## Ordering
 TODO: move this down to with `Ord`?
 
