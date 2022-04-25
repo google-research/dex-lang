@@ -35,7 +35,7 @@ module Builder (
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  liftBuilder, liftEmitBuilder, makeBlock,
+  liftBuilder, liftEmitBuilder, makeBlock, makeBlockOfType,
   indexToInt, indexSetSize, intToIndex,
   getIxImpl, IxImpl (..),
   litValToPointerlessAtom, emitPtrLit,
@@ -438,8 +438,12 @@ buildBlock cont = do
 makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
   ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType expr
-  let ty' = ignoreHoistFailure $ hoist decls ty
-  return $ Block (BlockAnn ty') decls expr
+  return $ makeBlockOfType decls expr ty
+{-# INLINE makeBlock #-}
+
+makeBlockOfType :: Nest Decl n l -> Expr l -> Type l -> Block n
+makeBlockOfType decls expr ty = Block (BlockAnn ty') decls expr
+  where ty' = ignoreHoistFailure $ hoist decls ty
 
 inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
 inlineLastDecl Empty result = Abs Empty result
