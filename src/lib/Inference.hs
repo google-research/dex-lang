@@ -743,8 +743,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
                 ty'   <- checkUType   ty
                 return $ PairE effs' ty'
             cheapReduceWithDecls decls piResult >>= \case
-              (Just (PairE effs' ty'), Just ds)
-                | null (eSetToList ds)  -> return $ (effs', ty')
+              (Just (PairE effs' ty'), DictTypeHoistSuccess, []) -> return $ (effs', ty')
               _ -> throw TypeErr $ "Can't reduce type expression: " ++
                      pprint (Block (BlockAnn TyKind) decls $ Atom $ snd $ fromPairE piResult)
     matchRequirement $ Pi piTy
@@ -758,8 +757,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           v' <- sinkM v
           bindLamPat (WithSrcB pos' pat) v' $ checkUType ty
         cheapReduceWithDecls decls piResult >>= \case
-          (Just ty', Just ds)
-            | null (eSetToList ds)  -> return ty'
+          (Just ty', DictTypeHoistSuccess, []) -> return ty'
           _ -> throw TypeErr $ "Can't reduce type expression: " ++
                  pprint (Block (BlockAnn TyKind) decls $ Atom piResult)
     checkIx pos' $ argType piTy
@@ -797,7 +795,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       xBlock <- buildBlockInf $ inferRho x
       getType xBlock >>= \case
         TyKind -> cheapReduce xBlock >>= \case
-          (Just reduced, Just ds) | null (eSetToList ds) -> return reduced
+          (Just reduced, DictTypeHoistSuccess, []) -> return reduced
           _ -> throw CompilerErr "Type args to primops must be reducible"
         _ -> emitBlock xBlock
     val <- case prim' of
@@ -1014,7 +1012,8 @@ checkSigmaDependent :: (EmitsBoth o, Inferer m) => UExpr i
 checkSigmaDependent e@(WithSrcE ctx _) ty = do
   Abs decls result <- buildDeclsInf $ checkSigma e (sink ty)
   cheapReduceWithDecls decls result >>= \case
-    (Just x', Just ds) -> forM_ (eSetToList ds) reportUnsolvedInterface >> return x'
+    (Just x', DictTypeHoistSuccess, ds) ->
+      forM_ ds reportUnsolvedInterface >> return x'
     _ -> addSrcContext ctx $ throw TypeErr $ depFunErrMsg
   where
     depFunErrMsg =
@@ -1654,12 +1653,13 @@ checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
       -- unhoistable dicts as an irrecoverable failure. They might be derivable from the
       -- hoistable dicts (e.g. as in i:n=>(..i)=>Float). The failures are only irrecoverable
       -- when we stop doing auto quantification.
-      (_, maybeUnsolved) <- cheapReduceWithDecls @Atom decls result
-      case maybeUnsolved of
-        Nothing       -> addSrcContext pos $ throw NotImplementedErr $
+      (_, hoistErr, unsolved) <- cheapReduceWithDecls @Atom decls result
+      case hoistErr of
+        DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
           "A type expression has interface constraints that depend on values " ++
           "local to the expression"
-        Just unsolved -> return $ unsolvedSubset <> unsolved
+        DictTypeHoistSuccess ->
+          return $ unsolvedSubset <> eSetFromList unsolved
     return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
       GatherRequired unsolvedSubset -> unsolvedSubset
       FailIfRequired                -> error "Unreachable"
@@ -1668,14 +1668,13 @@ checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
 checkUType :: (EmitsInf o, Inferer m) => UType i -> m i o (Type o)
 checkUType uty@(WithSrcE pos _) = do
   Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
-  (ans, unsolved)  <- cheapReduceWithDecls decls result
-  case (ans, unsolved) of
-    (_       , Nothing) -> addSrcContext pos $ throw NotImplementedErr $
+  (ans, hoistStatus, ds) <- cheapReduceWithDecls decls result
+  case hoistStatus of
+    DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
       "A type expression has interface constraints that depend on values local to the expression"
-    (Just ty , Just ds) ->
-      addSrcContext pos (forM_ (eSetToList ds) reportUnsolvedInterface) $> ty
-    (Nothing , Just ds) ->
-      case eSetToList ds of
+    DictTypeHoistSuccess -> case ans of
+      Just ty -> addSrcContext pos (forM_ ds reportUnsolvedInterface) $> ty
+      Nothing -> case ds of
         [] -> addSrcContext pos $ throw TypeErr $
                 "Can't reduce type expression: " ++ pprint uty
         ds' -> throw TypeErr $

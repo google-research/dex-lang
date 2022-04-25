@@ -6,8 +6,10 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module CheapReduction (
-  CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize) where
+module CheapReduction
+  ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
+  , DictTypeHoistStatus (..))
+  where
 
 import qualified Data.Map.Strict as M
 import Data.Maybe
@@ -25,6 +27,7 @@ import PPrint ()
 import {-# SOURCE #-} Inference (trySynthTerm)
 import Err
 import Types.Primitives
+import Util (for)
 
 -- === api ===
 
@@ -32,7 +35,7 @@ type NiceE e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
 
 cheapReduce :: forall e' e m n
              . (EnvReader m, CheaplyReducibleE e e', NiceE e, NiceE e')
-            => e n -> m n (Maybe (e' n), Maybe (ESet Type n))
+            => e n -> m n (Maybe (e' n), DictTypeHoistStatus, [Type n])
 cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
 {-# INLINE cheapReduce #-}
 {-# SCC cheapReduce #-}
@@ -42,7 +45,7 @@ cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
 cheapReduceWithDecls
   :: forall e' e m n l
    . ( CheaplyReducibleE e e', NiceE e', NiceE e, EnvReader m )
-  => Nest Decl n l -> e l -> m n (Maybe (e' n), Maybe (ESet Type n))
+  => Nest Decl n l -> e l -> m n (Maybe (e' n), DictTypeHoistStatus, [Type n])
 cheapReduceWithDecls decls result = do
   Abs decls' result' <- sinkM $ Abs decls result
   liftCheapReducerM idSubst $
@@ -52,7 +55,9 @@ cheapReduceWithDecls decls result = do
 {-# SCC cheapReduceWithDecls #-}
 
 cheapNormalize :: (EnvReader m, CheaplyReducibleE e e, NiceE e) => e n -> m n (e n)
-cheapNormalize a = fromJust . fst <$> cheapReduce a
+cheapNormalize a = cheapReduce a >>= \case
+  (Just ans, _, _) -> return ans
+  _ -> error "couldn't normalize expression"
 {-# INLINE cheapNormalize #-}
 
 -- === internal ===
@@ -68,20 +73,17 @@ newtype CheapReducerM (i :: S) (o :: S) (a :: *) =
            , EnvReader, ScopeReader, EnvExtender
            , SubstReader AtomSubstVal)
 
-newtype FailedDictTypes (n::S) = FailedDictTypes (MaybeE (ESet Type) n)
-                                 deriving (SinkableE, HoistableE)
-
-instance Semigroup (FailedDictTypes n) where
-  FailedDictTypes (JustE l) <> FailedDictTypes (JustE r) =
-    FailedDictTypes $ JustE $ l <> r
-  _ <> _ = FailedDictTypes $ NothingE
-instance Monoid (FailedDictTypes n) where
-  mempty = FailedDictTypes $ JustE mempty
+-- The `NothingE` case indicates dictionaries couldn't be hoisted
+newtype FailedDictTypes (n::S) = FailedDictTypes (ESet (MaybeE Type) n)
+        deriving (SinkableE, HoistableE, Semigroup, Monoid)
+data DictTypeHoistStatus = DictTypeHoistFailure | DictTypeHoistSuccess
 
 instance Monad1 m => HoistableState FailedDictTypes m where
-  hoistState _ b d = case hoist b d of
-    HoistSuccess d' -> return d'
-    HoistFailure _  -> return $ FailedDictTypes NothingE
+  hoistState _ b (FailedDictTypes ds) =
+    return $ FailedDictTypes $ eSetFromList $
+      for (eSetToList ds) \d -> case hoist b d of
+        HoistSuccess d' -> d'
+        HoistFailure _  -> NothingE
 
 class ( Alternative2 m, SubstReader AtomSubstVal m
       , EnvReader2 m, EnvExtender2 m) => CheapReducer m where
@@ -91,7 +93,7 @@ class ( Alternative2 m, SubstReader AtomSubstVal m
 
 instance CheapReducer CheapReducerM where
   reportSynthesisFail ty = CheapReducerM $ SubstReaderT $ lift $ lift11 $
-    tell $ FailedDictTypes $ JustE $ eSetSingleton ty
+    tell $ FailedDictTypes $ eSetSingleton (JustE ty)
   updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
     modify (MapE . M.insert v (toMaybeE u) . fromMapE)
   lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
@@ -99,12 +101,17 @@ instance CheapReducer CheapReducerM where
 
 liftCheapReducerM :: EnvReader m
                   => Subst AtomSubstVal i o -> CheapReducerM i o a
-                  -> m o (Maybe a, Maybe (ESet Type o))
+                  -> m o (Maybe a, DictTypeHoistStatus, [Type o])
 liftCheapReducerM subst (CheapReducerM m) = do
-  (result, FailedDictTypes tys) <-
+  (result, FailedDictTypes tySet) <-
     liftM runIdentity $ liftEnvReaderT $ runScopedT1
       (runWriterT1 $ runMaybeT1 $ runSubstReaderT subst m) mempty
-  return $ (result, fromMaybeE tys)
+  let maybeTys = eSetToList tySet
+  let tys = catMaybes $ map fromMaybeE maybeTys
+  let hoistStatus = if any (\case NothingE -> True; _ -> False) maybeTys
+                      then DictTypeHoistFailure
+                      else DictTypeHoistSuccess
+  return (result, hoistStatus, tys)
 {-# INLINE liftCheapReducerM #-}
 
 cheapReduceFromSubst
