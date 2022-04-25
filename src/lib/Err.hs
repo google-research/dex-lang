@@ -25,7 +25,8 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Coerce
-import Data.Text (unpack)
+import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
@@ -61,7 +62,7 @@ data ErrType = NoErr
                deriving (Show, Eq)
 
 type SrcPosCtx  = Maybe SrcPos
-type SrcTextCtx = Maybe (Int, String) -- Int is the offset in the source file
+type SrcTextCtx = Maybe (Int, Text) -- Int is the offset in the source file
 data ErrCtx = ErrCtx
   { srcTextCtx :: SrcTextCtx
   , srcPosCtx  :: SrcPosCtx
@@ -249,7 +250,7 @@ addSrcContext :: Fallible m => SrcPosCtx -> m a -> m a
 addSrcContext ctx m = addErrCtx (mempty {srcPosCtx = ctx}) m
 {-# INLINE addSrcContext #-}
 
-addSrcTextContext :: Fallible m => Int -> String -> m a -> m a
+addSrcTextContext :: Fallible m => Int -> Text -> m a -> m a
 addSrcTextContext offset text m =
   addErrCtx (mempty {srcTextCtx = Just (offset, text)}) m
 
@@ -363,7 +364,7 @@ pprint x = docAsStr $ pretty x
 {-# SCC pprint #-}
 
 docAsStr :: Doc ann -> String
-docAsStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
+docAsStr doc = T.unpack $ renderStrict $ layoutPretty layout $ doc
 
 layout :: LayoutOptions
 layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
@@ -515,25 +516,24 @@ rightmostJust = flip leftmostJust
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> pretty d <> hardline) xs
 
-highlightRegion :: (Int, Int) -> String -> String
+highlightRegion :: (Int, Int) -> Text -> Text
 highlightRegion pos@(low, high) s
-  | low > high || high > length s = error $ "Bad region: \n"
-                                              ++ show pos ++ "\n" ++ s
+  | low > high || high > T.length s =
+      error $ "Bad region: \n" ++ show pos ++ "\n" ++ T.unpack s
   | otherwise =
     -- TODO: flag to control line numbers
     -- (disabling for now because it makes quine tests tricky)
     -- "Line " ++ show (1 + lineNum) ++ "\n"
-
-    allLines !! lineNum ++ "\n"
-    ++ take start (repeat ' ') ++ take (stop - start) (repeat '^') ++ "\n"
+    allLines !! lineNum <> "\n" <>
+    T.replicate start " " <> T.replicate (stop - start) "^" <> "\n"
   where
-    allLines = lines s
+    allLines = T.lines s
     (lineNum, start, stop) = getPosTriple pos allLines
 
-getPosTriple :: (Int, Int) -> [String] -> (Int, Int, Int)
+getPosTriple :: (Int, Int) -> [Text] -> (Int, Int, Int)
 getPosTriple (start, stop) lines_ = (lineNum, start - offset, stop')
   where
-    lineLengths = map ((+1) . length) lines_
+    lineLengths = map ((+1) . T.length) lines_
     lineOffsets = cumsum lineLengths
     lineNum = maxLT lineOffsets start
     offset = lineOffsets  !! lineNum

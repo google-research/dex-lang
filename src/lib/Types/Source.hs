@@ -24,6 +24,7 @@ import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
 import Data.String (IsString, fromString)
+import Data.Text (Text)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
 
 import GHC.Generics (Generic (..))
@@ -267,7 +268,7 @@ data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
   , sbLogLevel :: LogLevel
-  , sbText     :: String
+  , sbText     :: Text
   , sbContents :: SourceBlock' }
   deriving (Show, Generic)
 
@@ -280,7 +281,7 @@ data SourceBlock' =
  | GetNameType SourceName
  | ImportModule ModuleSourceName
  | QueryEnv EnvQuery
- | ProseBlock String
+ | ProseBlock Text
  | CommentLine
  | EmptyLines
  | UnParseable ReachedEOF String

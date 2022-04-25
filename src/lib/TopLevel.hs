@@ -19,6 +19,7 @@ import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import qualified Data.ByteString as BS
+import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (Store (..), encode, decode)
 import Data.List (partition)
@@ -119,7 +120,7 @@ evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, TopS
 evalSourceBlockIO opts env block = runTopperM opts env $ evalSourceBlockRepl block
 
 -- Used for the top-level source file (rather than imported modules)
-evalSourceText :: (Topper m, Mut n) => String -> (SourceBlock -> IO ()) -> (Result -> IO Bool) -> m n [(SourceBlock, Result)]
+evalSourceText :: (Topper m, Mut n) => Text -> (SourceBlock -> IO ()) -> (Result -> IO Bool) -> m n [(SourceBlock, Result)]
 evalSourceText source beginCallback endCallback = do
   let (UModule mname deps sourceBlocks) = parseUModule Main source
   mapM_ ensureModuleLoaded deps
