@@ -379,17 +379,27 @@ type BinaryLamBinder = (PairB LamBinder LamBinder)
 simplifyBinaryLam :: Emits o => Atom i
   -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
 simplifyBinaryLam atom = case atom of
-  Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> doSimpBinaryLam b1 b2 body
+  Lam (LamExpr b1 (Block _ body1 (Atom (Lam (LamExpr b2 body2))))) -> doSimpBinaryLam b1 body1 b2 body2
   _ -> simplifyAtom atom >>= \case
-    Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) -> dropSubst $ doSimpBinaryLam b1 b2 body
+    Lam (LamExpr b1 (Block _ body1 (Atom (Lam (LamExpr b2 body2))))) -> dropSubst $ doSimpBinaryLam b1 body1 b2 body2
     _ -> error "Not a binary lambda expression"
   where
-    doSimpBinaryLam :: LamBinder i i' -> LamBinder i' i'' -> Block i''
+    doSimpBinaryLam :: LamBinder i i' -> Nest Decl i' i'' -> LamBinder i'' i''' -> Block i'''
       -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
-    doSimpBinaryLam b1 b2 body = do
-      (Abs (b1' `PairB` b2') body', recon) <- simplifyAbs $ Abs (b1 `PairB` b2) body
-      let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
-      return (binaryLam', recon)
+    doSimpBinaryLam b1 body1 b2 body2 =
+      substBinders b1 \b1' -> do
+        Abs decls (lam2 `PairE` lam2Ty `PairE` (Abs b2' recon')) <- buildScoped $
+          simplifyDecls body1 do
+            (Abs b2' body2', recon) <- simplifyAbs $ Abs b2 body2
+            let lam2' = Lam (LamExpr b2' body2')
+            lam2Ty' <- getType lam2'
+            return (lam2' `PairE` lam2Ty' `PairE` recon)
+        return $ case hoist decls $ Abs b2' recon' of
+          HoistSuccess (Abs b2'' recon'') -> do
+            let binBody = makeBlockOfType decls (Atom lam2) lam2Ty
+            let binRecon = Abs (b1' `PairB` b2'') recon''
+            (Lam (LamExpr b1' binBody), binRecon)
+          HoistFailure _ -> error "Binary lambda simplification failed: binder/recon depends on intermediate decls"
 
 data SplitDataNonData n = SplitDataNonData
   { dataTy    :: Type n
