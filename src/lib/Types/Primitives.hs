@@ -80,7 +80,7 @@ data PrimCon e =
       | LabelCon String
       -- Used in prelude for `run_accum`. Only works for single-method classes.
       | ExplicitDict e e  -- dict type, dict method
-      | SynthesizeDict SrcPosCtx e  -- Only used during type inference
+      | DictHole SrcPosCtx e  -- Only used during type inference
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 traversePrimCon :: Applicative f => (e -> f e') -> PrimCon e -> f (PrimCon e')

@@ -503,7 +503,7 @@ linearizePrimCon con = case con of
   RecordRef _    -> error "Unexpected ref"
   ParIndexCon   _ _ -> error "Unexpected ParIndexCon"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
-  SynthesizeDict _ _ -> error "Unexpected SynthesizeDict"
+  DictHole _ _ -> error "Unexpected DictHole"
   where emitZeroT = withZeroT $ substM $ Con con
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom

@@ -668,7 +668,7 @@ getImplicitArg (PiBinder _ argTy arr) = case arr of
   ImplicitArrow -> Just <$> freshType argTy
   ClassArrow -> do
     ctx <- srcPosCtx <$> getErrCtx
-    return $ Just $ Con $ SynthesizeDict ctx argTy
+    return $ Just $ Con $ DictHole ctx argTy
   _ -> return Nothing
 
 checkOrInferRho :: forall m i o.
@@ -1789,7 +1789,7 @@ ixDictType ty = do
 checkIx :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Type o -> m i o ()
 checkIx ctx ty = do
   dictTy <- ixDictType ty
-  void $ emit $ Atom $ Con $ SynthesizeDict ctx dictTy
+  void $ emit $ Atom $ Con $ DictHole ctx dictTy
 {-# SCC checkIx #-}
 
 synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
@@ -2386,7 +2386,7 @@ instantiateSynthArgs target synthTy = do
     args <- instantiateSynthArgsRec target' synthTy'
     zonk $ ListE args
   forM args \case
-    Con (SynthesizeDict _ argTy) -> typeAsSynthType argTy >>= synthTerm
+    Con (DictHole _ argTy) -> typeAsSynthType argTy >>= synthTerm
     arg -> return arg
 
 instantiateSynthArgsRec
@@ -2396,7 +2396,7 @@ instantiateSynthArgsRec dictTy synthTy = case synthTy of
   SynthPiType (Abs (PiBinder b argTy arrow) resultTy) -> do
     param <- case arrow of
       ImplicitArrow -> Var <$> freshInferenceName argTy
-      ClassArrow -> return $ Con (SynthesizeDict Nothing argTy)
+      ClassArrow -> return $ Con (DictHole Nothing argTy)
       _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
     resultTy' <- applySubst (b@>SubstVal param) resultTy
     params <- instantiateSynthArgsRec dictTy resultTy'
@@ -2431,7 +2431,7 @@ newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
              , EnvReader, ScopeReader, EnvExtender, MonadFail, Fallible)
 
 instance GenericTraverser DictSynthTraverserM where
-  traverseAtom (Con (SynthesizeDict ctx ty)) = do
+  traverseAtom (Con (DictHole ctx ty)) = do
     ty' <- cheapNormalize =<< substM ty
     addSrcContext ctx $ trySynthTerm ty'
   traverseAtom atom = traverseAtomDefault atom

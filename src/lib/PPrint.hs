@@ -834,7 +834,7 @@ prettyPrecPrimCon con = case con of
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
-  SynthesizeDict _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
+  DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where

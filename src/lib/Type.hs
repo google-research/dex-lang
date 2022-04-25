@@ -645,7 +645,7 @@ typeCheckPrimCon con = case con of
     ([], [MethodType _ methodTy]) <- checkedApplyClassParams classDef params
     method |: methodTy
     return dictTy'
-  SynthesizeDict _ ty -> checkTypeE TyKind ty
+  DictHole _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
