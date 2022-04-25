@@ -8,7 +8,7 @@
 
 module MTL1 (
     MonadTrans11 (..), HoistableState (..),
-    FallibleMonoid1 (..), WriterT1, pattern WriterT1, runWriterT1, runWriterT1From,
+    WriterT1, pattern WriterT1, runWriterT1, runWriterT1From,
     StateT1, pattern StateT1, runStateT1, evalStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
     ScopedT1, pattern ScopedT1, runScopedT1,
@@ -30,13 +30,6 @@ class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where
   lift11 :: Monad1 m => m n a -> t m n a
 
 -------------------- WriterT1 --------------------
-
--- A monoid with a special "sink" element. We expect that
---   mfail <> _ = mfail
--- as well as
---   _ <> mfail = mfail.
-class Monoid1 w => FallibleMonoid1 w where
-  mfail :: w n
 
 newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WrapWriterT1 { runWriterT1' :: (StateT (w n) (m n) a) }
@@ -91,15 +84,15 @@ instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) w
   getDistinct = lift11 getDistinct
   {-# INLINE getDistinct #-}
 
-instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
+instance ( SinkableE w, HoistableE w, Monoid1 w
+         , HoistableState w m, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
   refreshAbs ab cont = WriterT1 \s -> do
-    (ans, Abs b updated) <- refreshAbs ab \b e -> do
-      (ans, updated) <- runWriterT1From (sink s) $ cont b e
-      return (ans, Abs b updated)
-    return $ case hoist b updated of
-      HoistSuccess topUpdate -> (ans, topUpdate)
-      HoistFailure _         -> (ans, mfail)
+    (ans, Abs b new) <- refreshAbs ab \b e -> do
+      (ans, new) <- runWriterT1From mempty $ cont b e
+      return (ans, Abs b new)
+    new' <- hoistState mempty b new
+    return (ans, s <> new')
   {-# INLINE refreshAbs #-}
 
 -------------------- ReaderT1 --------------------

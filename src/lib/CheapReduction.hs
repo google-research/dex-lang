@@ -77,8 +77,11 @@ instance Semigroup (FailedDictTypes n) where
   _ <> _ = FailedDictTypes $ NothingE
 instance Monoid (FailedDictTypes n) where
   mempty = FailedDictTypes $ JustE mempty
-instance FallibleMonoid1 FailedDictTypes where
-  mfail = FailedDictTypes $ NothingE
+
+instance Monad1 m => HoistableState FailedDictTypes m where
+  hoistState _ b d = case hoist b d of
+    HoistSuccess d' -> return d'
+    HoistFailure _  -> return $ FailedDictTypes NothingE
 
 class ( Alternative2 m, SubstReader AtomSubstVal m
       , EnvReader2 m, EnvExtender2 m) => CheapReducer m where
