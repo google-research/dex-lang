@@ -756,19 +756,13 @@ Monoids support <code>fold</code> operations, and similar.</li>
   mempty <span class="symbol">=</span> <span class="type-name">False</span>
   mcombine <span class="symbol">=</span> (<span class="symbol">||</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">AddMonoid</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Add</span> a] <span class="symbol">:</span> <span class="type-name">Monoid</span> a <span class="symbol">=</span>
-  <span class="type-name">A</span> <span class="symbol">=</span> a <span class="comment">-- XXX: Typing `Monoid a` below would quantify it over a, which we don&#39;t want
-</span>  named<span class="symbol">-</span><span class="keyword">instance</span> result <span class="symbol">:</span> <span class="type-name">Monoid</span> <span class="type-name">A</span>
-    mempty <span class="symbol">=</span> zero
-    mcombine <span class="symbol">=</span> add
-  result
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">AddMonoid</span> <span class="symbol">:</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Add</span> a] <span class="type-name">Monoid</span> a
+  mempty <span class="symbol">=</span> zero
+  mcombine <span class="symbol">=</span> add
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">MulMonoid</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Mul</span> a] <span class="symbol">:</span> <span class="type-name">Monoid</span> a <span class="symbol">=</span>
-  <span class="type-name">A</span> <span class="symbol">=</span> a <span class="comment">-- XXX: Typing `Monoid a` below would quantify it over a, which we don&#39;t want
-</span>  named<span class="symbol">-</span><span class="keyword">instance</span> result <span class="symbol">:</span> <span class="type-name">Monoid</span> <span class="type-name">A</span>
-    mempty <span class="symbol">=</span> one
-    mcombine <span class="symbol">=</span> mul
-  result
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">MulMonoid</span> <span class="symbol">:</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Mul</span> a] <span class="type-name">Monoid</span> a
+  mempty <span class="symbol">=</span> one
+  mcombine <span class="symbol">=</span> mul
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Effects</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
@@ -785,13 +779,13 @@ Monoids support <code>fold</code> operations, and similar.</li>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n h w} [<span class="type-name">Ix</span> n] [am <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w] <span class="type-name">AccumMonoid</span> h (n<span class="symbol">=&gt;</span>w)
   getAccumMonoidData <span class="symbol">=</span>
-    (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod am #<span class="iso-sugar">#getAccumMonoidData</span>
+    (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod0 am
     <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+=</span>) {h w} [am<span class="symbol">:</span><span class="type-name">AccumMonoid</span> h w] (ref<span class="symbol">:</span><span class="type-name">Ref</span> h w) (x<span class="command">:w</span>) <span class="symbol">:</span> {<span class="type-name">Accum</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
-  (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod am #<span class="iso-sugar">#getAccumMonoidData</span>
-  empty <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mempty</span>
-  combine <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mcombine</span>
+  (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod0 am
+  empty <span class="symbol">=</span> %projMethod0 bm
+  combine <span class="symbol">=</span> %projMethod1 bm
   %mextend ref empty combine x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">!</span>) {h n a} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %indexRef ref i
@@ -821,8 +815,8 @@ Monoids support <code>fold</code> operations, and similar.</li>
       (bm<span class="symbol">:</span><span class="type-name">Monoid</span> b)
       (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> w) <span class="symbol">=</span>
-  empty <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mempty</span>
-  combine <span class="symbol">=</span> %projMethod bm #<span class="iso-sugar">#mcombine</span>
+  empty <span class="symbol">=</span> %projMethod0 bm
+  combine <span class="symbol">=</span> %projMethod1 bm
   <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span>
     accumMonoidData <span class="symbol">:</span> (<span class="type-name">AccumMonoidData</span> h&#39; w) <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
     accumBaseMonoid <span class="symbol">=</span> %explicitDict (<span class="type-name">AccumMonoid</span> h&#39; b) accumMonoidData
@@ -1394,13 +1388,9 @@ It's a kind of <code>scan</code>.</p>
         <span class="type-name">True</span>  <span class="symbol">-&gt;</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ i&#39;)
         <span class="type-name">False</span> <span class="symbol">-&gt;</span> ys<span class="symbol">.</span>(unsafe_from_ordinal _ (i&#39; <span class="symbol">-</span> nx))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">ListMonoid</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="symbol">=</span>
-  <span class="type-name">A</span> <span class="symbol">=</span> a <span class="comment">-- XXX: Typing `Monoid a` below would quantify it over a,
-</span>        <span class="comment">--      which we don&#39;t want.
-</span>  named<span class="symbol">-</span><span class="keyword">instance</span> result <span class="symbol">:</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> <span class="type-name">A</span>)
-    mempty <span class="symbol">=</span> mempty
-    mcombine <span class="symbol">=</span> mcombine
-  result
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">ListMonoid</span> <span class="symbol">:</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="type-name">Monoid</span> (<span class="type-name">List</span> a)
+  mempty <span class="symbol">=</span> mempty
+  mcombine <span class="symbol">=</span> mcombine
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> append {a h} [<span class="type-name">AccumMonoid</span> h (<span class="type-name">List</span> a)]
   (list<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">List</span> a)) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">Accum</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
