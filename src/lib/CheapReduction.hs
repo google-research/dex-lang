@@ -22,7 +22,7 @@ import MTL1
 import Name
 import Syntax
 import PPrint ()
-import {-# SOURCE #-} Inference (trySynthDictBlock)
+import {-# SOURCE #-} Inference (trySynthTerm)
 import Err
 import Types.Primitives
 
@@ -153,7 +153,6 @@ cheapReduceName v =
     AtomNameBinding (LetBound (DeclBinding _ _ e)) -> case e of
       -- We avoid synthesizing the dictionaries during the traversal
       -- and only do that when cheap reduction is performed on the expr directly.
-      Op (SynthesizeDict _ _) -> stuck
       _ -> do
         cachedVal <- lookupCache v >>= \case
           Nothing -> do
@@ -177,6 +176,13 @@ instance CheaplyReducibleE Atom Atom where
     -- we have a chance to apply tham. Also, recursive traversal of those bodies
     -- means that we will follow the full call chain, so it's really expensive!
     Lam _   -> substM a
+    Con (DictHole ctx ty') -> do
+      ty <- cheapReduceE ty'
+      runFallibleT1 (trySynthTerm ty) >>= \case
+        Success d -> return d
+        Failure _ -> do
+          reportSynthesisFail ty
+          return $ Con $ DictHole ctx ty
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
@@ -186,10 +192,26 @@ instance CheaplyReducibleE Atom Atom where
     Variant ty l c p -> do
       ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
       Variant ty' l c <$> cheapReduceE p
+    DictCon d -> cheapReduceE d
     -- Do recursive reduction via substitution
     _ -> do
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
+
+instance CheaplyReducibleE DictExpr Atom where
+  cheapReduceE d = case d of
+    SuperclassProj child superclassIx -> do
+      cheapReduceE child >>= \case
+        DictCon (InstanceDict instanceName args) -> dropSubst do
+          args' <- mapM (cheapReduceE @Atom @Atom) args
+          InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+          let InstanceBody superclasses _ = body
+          applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
+        child' -> return $ DictCon $ SuperclassProj child' superclassIx
+    InstantiatedGiven f xs -> do
+      cheapReduceE (App f xs) <|> justSubst
+    InstanceDict _ _ -> justSubst
+    where justSubst = DictCon <$> substM d
 
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
@@ -208,11 +230,6 @@ instance CheaplyReducibleE Expr Atom where
           let subst = bs @@> fmap SubstVal xs
           dropSubst $ extendSubst subst $ cheapReduceE body
         _ -> empty
-    Op (SynthesizeDict _ ty') -> do
-      ty <- cheapReduceE ty'
-      runFallibleT1 (trySynthDictBlock ty) >>= \case
-        Success block -> dropSubst $ cheapReduceE block
-        Failure _     -> reportSynthesisFail ty >> empty
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?
     Op (CastOp ty' val') -> do
@@ -223,6 +240,15 @@ instance CheaplyReducibleE Expr Atom where
           case val of
             Con (Lit (Int64Lit v)) -> return $ Con $ Lit $ Int32Lit $ fromIntegral v
             _ -> empty
+        _ -> empty
+    Op (ProjMethod dict i) -> do
+      cheapReduceE dict >>= \case
+        DictCon (InstanceDict instanceName args) -> dropSubst do
+          args' <- mapM cheapReduceE args
+          InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+          let method = methods !! i
+          extendSubst (bs@@>(SubstVal <$> args')) $
+            cheapReduceE method
         _ -> empty
     _ -> empty
 

@@ -67,7 +67,6 @@ data PrimCon e =
         Lit LitVal
       | ProdCon [e]
       | SumCon e Int e  -- type, tag, payload
-      | ClassDictHole SrcPosCtx e  -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
       -- These are just newtype wrappers. TODO: use ADTs instead
       | IntRangeVal   e e e
@@ -79,6 +78,9 @@ data PrimCon e =
       | RecordRef (LabeledItems e)
       | ParIndexCon e e        -- Type, value
       | LabelCon String
+      -- Used in prelude for `run_accum`. Only works for single-method classes.
+      | ExplicitDict e e  -- dict type, dict method
+      | DictHole SrcPosCtx e  -- Only used during type inference
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 traversePrimCon :: Applicative f => (e -> f e') -> PrimCon e -> f (PrimCon e')
@@ -139,10 +141,7 @@ data PrimOp e =
       | SumToVariant e
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
-      | SynthesizeDict SrcPosCtx e  -- Only used during type inference
-      | ProjMethod e e  -- project a method, by source name, from the dict
-      -- Used in prelude for `run_accum`. Only works for single-method classes.
-      | ExplicitDict e e  -- dict type, dict method
+      | ProjMethod e Int  -- project a method from the dict
       | ExplicitApply e e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -242,7 +241,6 @@ instance Pretty Arrow where
     ClassArrow     -> "?=>"
 
 data LetAnn = PlainLet
-            | InstanceLet
             | NoInlineLet
               deriving (Show, Eq, Generic)
 

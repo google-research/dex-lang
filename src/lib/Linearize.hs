@@ -259,6 +259,8 @@ linearizeAtom atom = case atom of
         rematPrimal (sink subst) (sink wrt) $
           extendSubst (b@>i) $ linearizeBlock body
   DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
+  DictCon _ -> notImplemented
+  DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
   Record elems ->
     fmapLin (Record . fromComposeE) $ seqLin (fmap linearizeAtom elems)
@@ -500,7 +502,8 @@ linearizePrimCon con = case con of
   ConRef _       -> error "Unexpected ref"
   RecordRef _    -> error "Unexpected ref"
   ParIndexCon   _ _ -> error "Unexpected ParIndexCon"
-  ClassDictHole _ _ -> error "Unexpected ClassDictHole"
+  ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
+  DictHole _ _ -> error "Unexpected DictHole"
   where emitZeroT = withZeroT $ substM $ Con con
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom

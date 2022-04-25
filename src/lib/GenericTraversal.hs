@@ -76,6 +76,9 @@ traverseAtomDefault atom = case atom of
       mapM tge params <*> pure con <*> mapM tge args
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> mapM tge params
+  DictCon _ -> error "not implemented"
+  DictTy (DictType sn cn params) ->
+    DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
   LabeledRow elems -> LabeledRow <$> traverseGenericE elems
   Record items -> Record <$> mapM tge items
   RecordTy elems -> RecordTy <$> traverseGenericE elems

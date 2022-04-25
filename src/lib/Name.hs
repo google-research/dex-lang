@@ -28,7 +28,7 @@ module Name (
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
-  HashMapE (..), HashableE,
+  HashMapE (..), HashableE, nestToNames,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowB,
@@ -807,6 +807,10 @@ nestToList f (Nest b rest) = b' : nestToList f rest
                withExtEvidence (toExtEvidence b) $
                  f b
 
+nestToNames :: (Distinct l, Ext n l, BindsOneName b c, BindsNames b)
+            => Nest b n l -> [Name c l]
+nestToNames bs = nestToList (sink . binderName) bs
+
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs
 splitNestAt _  Empty = error "split index too high"
@@ -962,6 +966,7 @@ instance (SinkableE atom, SubstE Name atom) => SubstV Name (SubstVal cMatch atom
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC InstanceNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
@@ -1761,6 +1766,7 @@ instance Color DataDefNameC    where getColorRep = DataDefNameC
 instance Color TyConNameC      where getColorRep = TyConNameC
 instance Color DataConNameC    where getColorRep = DataConNameC
 instance Color ClassNameC      where getColorRep = ClassNameC
+instance Color InstanceNameC   where getColorRep = InstanceNameC
 instance Color SuperclassNameC where getColorRep = SuperclassNameC
 instance Color MethodNameC     where getColorRep = MethodNameC
 instance Color ImpFunNameC     where getColorRep = ImpFunNameC
@@ -1778,6 +1784,7 @@ interpretColor c cont = case c of
   TyConNameC      -> cont $ ColorProxy @TyConNameC
   DataConNameC    -> cont $ ColorProxy @DataConNameC
   ClassNameC      -> cont $ ColorProxy @ClassNameC
+  InstanceNameC   -> cont $ ColorProxy @InstanceNameC
   SuperclassNameC -> cont $ ColorProxy @SuperclassNameC
   MethodNameC     -> cont $ ColorProxy @MethodNameC
   ImpFunNameC     -> cont $ ColorProxy @ImpFunNameC
@@ -2279,6 +2286,7 @@ data C =
   | TyConNameC
   | DataConNameC
   | ClassNameC
+  | InstanceNameC
   | SuperclassNameC
   | MethodNameC
   | ImpFunNameC

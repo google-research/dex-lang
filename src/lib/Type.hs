@@ -9,14 +9,14 @@ module Type (
   checkTypes, checkTypesM,
   getType, getAppType, getTabAppType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, instantiateTabPi, instantiateDepPairTy,
-  checkExtends, checkedApplyDataDefParams,
+  checkExtends, checkedApplyDataDefParams, checkedApplyClassParams,
   instantiateDataDef,
   caseAltsBinderTys, tryGetType, projectLength,
-  sourceNameType,
+  sourceNameType, getMethodType,
   checkUnOp, checkBinOp,
   oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
   isSingletonType, singletonTypeVal, asNaryPiType,
-  numNaryPiArgs, naryLamExprType,
+  numNaryPiArgs, naryLamExprType, getMethodIndex,
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
@@ -26,6 +26,7 @@ import Control.Monad.Reader
 import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
+import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -55,9 +56,7 @@ getType e = liftHardFailTyperT $ getTypeE e
 {-# INLINE getType #-}
 
 getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
-getAppType f xs = case nonEmpty xs of
-  Nothing -> getType f
-  Just xs' -> liftHardFailTyperT $ checkApp f xs'
+getAppType f xs = liftHardFailTyperT $ checkApp f xs
 
 getTabAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getTabAppType f xs = case nonEmpty xs of
@@ -98,14 +97,21 @@ sourceNameType v = do
       UAtomVar    v' -> getType $ Var v'
       UTyConVar   v' -> lookupEnv v' >>= \case TyConBinding _     e -> getType e
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
-      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  _    e -> getType e
-      UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _  e -> getType e
+      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
+      UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
 
 getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
 getReferentTy (Abs (PairB hB refB) UnitE) = do
   RefTy _ ty <- return $ binderType refB
   HoistSuccess ty' <- return $ hoist hB ty
   return ty'
+
+getClassTy :: ClassDef n -> Type n
+getClassTy (ClassDef _ _ bs _ _) = go bs
+  where
+    go :: Nest Binder n l -> Type n
+    go Empty = TyKind
+    go (Nest (b:>ty) rest) = Pi $ PiType (PiBinder b ty PlainArrow) Pure $ go rest
 
 -- === querying effects ===
 
@@ -261,10 +267,7 @@ instance CheckableE SourceMap where
   checkE sourceMap = substM sourceMap
 
 instance CheckableE SynthCandidates where
-  checkE (SynthCandidates xs ys) =
-    SynthCandidates <$> mapM checkE xs
-                    <*> (M.fromList <$> forM (M.toList ys) \(k, vs) ->
-                          (,) <$> substM k <*> mapM checkE vs)
+  checkE scs = substM scs
 
 instance CheckableB (RecSubstFrag Binding) where
   checkB frag cont = do
@@ -284,9 +287,10 @@ instance Color c => CheckableE (Binding c) where
     DataDefBinding    dataDef           -> DataDefBinding  <$> checkE dataDef
     TyConBinding      dataDefName     e -> TyConBinding    <$> substM dataDefName              <*> substM e
     DataConBinding    dataDefName idx e -> DataConBinding  <$> substM dataDefName <*> pure idx <*> substM e
-    ClassBinding      classDef        e -> ClassBinding    <$> substM classDef                 <*> substM e
-    SuperclassBinding className   idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
-    MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
+    ClassBinding      classDef          -> ClassBinding    <$> substM classDef
+    InstanceBinding   instanceDef       -> InstanceBinding <$> substM instanceDef
+    SuperclassBinding className   idx   -> SuperclassBinding <$> substM className <*> pure idx
+    MethodBinding className idx f       -> MethodBinding     <$> substM className <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
     ModuleBinding     md                -> ModuleBinding     <$> substM md
@@ -368,6 +372,12 @@ instance HasType Atom where
       params' <- traverse checkE params
       void $ checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
       return TyKind
+    DictCon dictExpr -> getTypeE dictExpr
+    DictTy (DictType _ className params) -> do
+      ClassDef _ _ paramBs _ _ <- substM className >>= lookupClassDef
+      params' <- mapM substM params
+      checkArgTys paramBs params'
+      return TyKind
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy elems -> checkFieldRowElems elems $> TyKind
@@ -448,7 +458,7 @@ instance HasType Expr where
   getTypeE expr = case expr of
     App f xs -> do
       fTy <- getTypeE f
-      checkApp fTy xs
+      checkApp fTy $ toList xs
     TabApp f xs -> do
       fTy <- getTypeE f
       checkTabApp fTy xs
@@ -510,6 +520,29 @@ instance HasType TabLamExpr where
     checkB b \b' -> do
       bodyTy <- getTypeE body
       return $ TabTy b' bodyTy
+
+dictExprType :: Typer m => DictExpr i -> m i o (DictType o)
+dictExprType e = case e of
+  InstanceDict instanceName args -> do
+    instanceName' <- substM instanceName
+    InstanceDef className bs params _ <- lookupInstanceDef instanceName'
+    ClassDef sourceName _ _ _ _ <- lookupClassDef className
+    args' <- mapM substM args
+    checkArgTys bs args'
+    ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map SubstVal args')
+    return $ DictType sourceName className params'
+  InstantiatedGiven given args -> do
+    givenTy <- getTypeE given
+    DictTy dTy <- checkApp givenTy (toList args)
+    return dTy
+  SuperclassProj d i -> do
+    DictTy (DictType _ className params) <- getTypeE d
+    ClassDef _ _ bs superclasses _ <- lookupClassDef className
+    DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclasses !! i)) params
+    return dTy
+
+instance HasType DictExpr where
+  getTypeE e = DictTy <$> dictExprType e
 
 instance HasType DepPairType where
   getTypeE (DepPairType b ty) = do
@@ -578,7 +611,6 @@ typeCheckPrimCon con = case con of
     payload |: (caseTys !! tag)
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
-  ClassDictHole _ ty  -> ty |:TyKind   >> substM ty
   IntRangeVal     l h i -> i|:IdxRepTy >> substM (TC $ IntRange     l h)
   IndexRangeVal t l h i -> i|:IdxRepTy >> substM (TC $ IndexRange t l h)
   IndexSliceVal _ _ _ -> error "not implemented"
@@ -607,6 +639,13 @@ typeCheckPrimCon con = case con of
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substM t
   RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse typeCheckRef xs
   LabelCon _   -> return $ TC $ LabelType
+  ExplicitDict dictTy method  -> do
+    dictTy'@(DictTy (DictType _ className params)) <- checkTypeE TyKind dictTy
+    classDef <- lookupClassDef className
+    ([], [MethodType _ methodTy]) <- checkedApplyClassParams classDef params
+    method |: methodTy
+    return dictTy'
+  DictHole _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
@@ -811,23 +850,31 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  SynthesizeDict _ ty -> checkTypeE TyKind ty
-  ProjMethod dict methodName -> do
-    Con (LabelCon methodName') <- return methodName
-    TypeCon _ dataDefName params <- getTypeE dict
-    lookupSourceMap methodName' >>= \case
-      Just (UMethodVar  v') -> lookupEnv v' >>= \case
-        MethodBinding _ i _ -> do
-          def <- lookupDataDef dataDefName
-          [DataConDef _ (Abs (Nest (_:>dictTy) Empty) UnitE)] <-
-            checkedApplyDataDefParams def params
-          PairTy _ (ProdTy methodTys) <- return dictTy
-          return $ methodTys !! i
-      _ -> throw TypeErr "Not a method name"
-  ExplicitDict dictTy _  -> do
-    -- TODO: check method
-    checkTypeE TyKind dictTy
+  ProjMethod dict i -> do
+    DictTy (DictType _ className params) <- getTypeE dict
+    methodTy <- getMethodType className i
+    dropSubst $ checkApp methodTy params
   ExplicitApply _ _ -> error "shouldn't appear after inference"
+
+getMethodIndex :: EnvReader m => ClassName n -> SourceName -> m n Int
+getMethodIndex className methodSourceName = do
+  ClassDef _ methodNames _ _ _ <- lookupClassDef className
+  case elemIndex methodSourceName methodNames of
+    Nothing -> error $ methodSourceName ++ " is not a method of " ++ pprint className
+    Just i -> return i
+
+getMethodType :: EnvReader m => ClassName n -> Int -> m n (Type n)
+getMethodType className i = do
+  ClassDef _ _ bs _ methodTys <- lookupClassDef className
+  let MethodType explicits methodTy = methodTys !! i
+  return $ addParamBinders explicits bs methodTy
+  where
+    addParamBinders :: [Bool] -> Nest Binder n l -> Type l -> Type n
+    addParamBinders [] Empty ty = ty
+    addParamBinders (explicit:explicits) (Nest (b:>argTy) bs) ty =
+      Pi $ PiType (PiBinder b argTy arr) Pure $ addParamBinders explicits bs ty
+      where arr = if explicit then PlainArrow else ImplicitArrow
+    addParamBinders _ _ _ = error "arg/binder mismatch"
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
@@ -991,11 +1038,12 @@ checkAlt resultTyReq reqBs (Abs bs body) = do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
-checkApp :: Typer m => Type o -> NonEmpty (Atom i) -> m i o (Type o)
+checkApp :: Typer m => Type o -> [Atom i] -> m i o (Type o)
+checkApp fTy [] = return fTy
 checkApp fTy xs = case fromNaryPiType (length xs) fTy of
   Just (NaryPiType bs effs resultTy) -> do
     xs' <- mapM substM xs
-    checkArgTys (nonEmptyToNest bs) (toList xs')
+    checkArgTys (nonEmptyToNest bs) xs'
     let subst = bs @@> fmap SubstVal xs'
     PairE effs' resultTy' <- applySubst subst $ PairE effs resultTy
     declareEffs effs'
@@ -1045,8 +1093,8 @@ asNaryPiType ty = case ty of
   _ -> Nothing
 
 checkArgTys
-  :: Typer m
-  => Nest PiBinder o o'
+  :: (Typer m, SubstB AtomSubstVal b, BindsNames b, BindsOneAtomName b)
+  => Nest b o o'
   -> [Atom o]
   -> m i o ()
 checkArgTys Empty [] = return ()
@@ -1055,6 +1103,7 @@ checkArgTys (Nest b bs) (x:xs) = do
   Abs bs' UnitE <- applySubst (b@>SubstVal x) (EmptyAbs bs)
   checkArgTys bs' xs
 checkArgTys _ _ = throw TypeErr $ "wrong number of args"
+{-# INLINE checkArgTys #-}
 
 typeCheckRef :: Typer m => HasType e => e i -> m i o (Type o)
 typeCheckRef x = do
@@ -1262,6 +1311,14 @@ instantiateDataDef (DataDef _ bs cons) params =
 checkedApplyDataDefParams :: (EnvReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
 checkedApplyDataDefParams (DataDef _ bs cons) params =
   fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) params
+
+checkedApplyClassParams
+  :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n] -> m n ([Type n], [MethodType n])
+checkedApplyClassParams (ClassDef _ _ bs superclassTys methodTys) params = do
+  let body = PairE (ListE superclassTys) (ListE methodTys)
+  body' <- checkedApplyNaryAbs (Abs bs body) params
+  PairE (ListE superclassTys') (ListE methodTys') <- return body'
+  return (superclassTys', methodTys')
 
 -- TODO: Subst all at once, not one at a time!
 checkedApplyNaryAbs :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)

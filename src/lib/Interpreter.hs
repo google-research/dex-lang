@@ -76,6 +76,8 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   DepPairTy _ -> substM atom
   Con con -> Con <$> mapM rec con
   TC  tc  -> TC  <$> mapM rec tc
+  DictCon _ -> substM atom
+  DictTy  _ -> substM atom
   Eff _ -> substM atom
   TypeCon sn defName params -> do
     defName' <- substM defName
