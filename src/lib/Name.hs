@@ -691,11 +691,11 @@ instance Color c => BindsOneName (BinderP c ann) c where
   {-# INLINE binderName #-}
 
 infixr 7 @@>
-(@@>) :: HasCallStack => (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
+(@@>) :: (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
 (@@>) bs xs = bindNameList bs (toList xs)
 
 class BindsNameList (b::B) (c::C) | b -> c where
-  bindNameList :: HasCallStack => b i i' -> [v c o] -> SubstFrag v i i' o
+  bindNameList :: b i i' -> [v c o] -> SubstFrag v i i' o
 
 instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   bindNameList Empty [] = emptyInFrag
