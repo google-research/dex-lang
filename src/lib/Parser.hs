@@ -12,11 +12,13 @@ module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
 import Control.Monad
 import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
+import Data.Text (Text)
+import Data.Text          qualified as T
+import Data.Text.Encoding qualified as T
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
 import qualified Data.Map.Strict       as M
-import Data.ByteString.UTF8 (toString)
 import Data.Tuple
 import Data.Functor
 import Data.Foldable
@@ -42,20 +44,20 @@ import Types.Primitives
 data ParseCtx = ParseCtx { curIndent :: Int
                          , canPair   :: Bool
                          , canBreak  :: Bool }
-type Parser = ReaderT ParseCtx (Parsec Void String)
+type Parser = ReaderT ParseCtx (Parsec Void Text)
 
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
 parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
 parseUModuleDeps name file = deps
-  where UModule _ deps _ = parseUModule name $ toString $ fContents file
+  where UModule _ deps _ = parseUModule name $ T.decodeUtf8 $ fContents file
 {-# SCC parseUModuleDeps #-}
 
 finishUModuleParse :: UModulePartialParse -> UModule
 finishUModuleParse (UModulePartialParse name _ file) =
-  parseUModule name (toString $ fContents file)
+  parseUModule name (T.decodeUtf8 $ fContents file)
 
-parseUModule :: ModuleSourceName -> String -> UModule
+parseUModule :: ModuleSourceName -> Text -> UModule
 parseUModule name s = do
   let blocks = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
   let blocks' = if name == Prelude
@@ -70,19 +72,19 @@ parseUModule name s = do
 preludeImportBlock :: SourceBlock
 preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule Prelude
 
-parseTopDeclRepl :: String -> Maybe SourceBlock
+parseTopDeclRepl :: Text -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
   _ -> Just b
   where b = mustParseit s sourceBlock
 {-# SCC parseTopDeclRepl #-}
 
-parseit :: String -> Parser a -> Except a
+parseit :: Text -> Parser a -> Except a
 parseit s p = case parse (runReaderT p (ParseCtx 0 False False)) "" s of
   Left e  -> throw ParseErr $ errorBundlePretty e
   Right x -> return x
 
-mustParseit :: String -> Parser a -> a
+mustParseit :: Text -> Parser a -> a
 mustParseit s p  = case parseit s p of
   Success x -> x
   Failure e -> error $ "This shouldn't happen:\n" ++ pprint e
@@ -113,7 +115,7 @@ sourceBlock = do
     return (level, b)
   return $ SourceBlock (unPos (sourceLine pos)) offset level src b
 
-recover :: ParseError String Void -> Parser (LogLevel, SourceBlock')
+recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
 recover e = do
   pos <- liftM statePosState getParserState
   reachedEOF <-  try (mayBreak sc >> eof >> return True)
@@ -150,8 +152,8 @@ logBench = do
 passName :: Parser PassName
 passName = choice [thisNameString s $> x | (s, x) <- passNames]
 
-passNames :: [(String, PassName)]
-passNames = [(show x, x) | x <- [minBound..maxBound]]
+passNames :: [(Text, PassName)]
+passNames = [(T.pack $ show x, x) | x <- [minBound..maxBound]]
 
 sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
@@ -814,7 +816,7 @@ uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPa
     addLabel (l, p) rest = UStaticFieldPat l p rest
 
 parseFieldRowElems
-  :: String -> String
+  :: Text -> Text
   -> Parser (UExpr VoidS) -> Maybe (SrcPos -> Label -> UExpr VoidS)
   -> Parser (UFieldRowElems VoidS)
 parseFieldRowElems sep bindwith itemparser punner =
@@ -848,7 +850,7 @@ parseFieldRowElems sep bindwith itemparser punner =
       return $ UStaticField l rhs
 
 parseFieldRowPat
-  :: String -> String
+  :: Text -> Text
   -> Maybe (SrcPos -> Label -> UPat VoidS VoidS)
   -> Parser (UFieldRowPat VoidS VoidS)
 parseFieldRowPat sep bindwith punner =
@@ -892,7 +894,7 @@ parseFieldRowPat sep bindwith punner =
       return $ UStaticFieldPat l rhs
 
 parseLabeledItems
-  :: String -> String -> Parser b -> Parser a
+  :: Text -> Text -> Parser b -> Parser a
   -> Maybe (SrcPos -> Label -> a) -> Maybe (SrcPos -> a)
   -> Parser (Maybe b, ExtLabeledItems a a)
 parseLabeledItems sep bindwith prefixparser itemparser punner tailDefault =
@@ -986,7 +988,7 @@ anySymOp = InfixL $ opWithSrc $ do
   return $ binApp s
 
 infixSym :: SourceName -> Parser ()
-infixSym s = mayBreak $ sym s
+infixSym s = mayBreak $ sym $ T.pack s
 
 symOp :: SourceName -> Operator Parser (UExpr VoidS)
 symOp s = InfixL $ symOpP s
@@ -1182,7 +1184,7 @@ knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+
                 "..", "<..", "..<", "..<", "<..<", "?"]
 
 -- string must be in `knownSymStrs`
-sym :: String -> Lexer ()
+sym :: Text -> Lexer ()
 sym s = lexeme $ try $ string s >> notFollowedBy symChar
 
 anySym :: Lexer String
@@ -1267,13 +1269,13 @@ optionalMonoid p = p <|> return mempty
 nameString :: Parser String
 nameString = lexeme . try $ (:) <$> lowerChar <*> many alphaNumChar
 
-thisNameString :: String -> Parser ()
+thisNameString :: Text -> Parser ()
 thisNameString s = lexeme $ try $ string s >> notFollowedBy alphaNumChar
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
-symbol :: String -> Parser ()
+symbol :: Text -> Parser ()
 symbol s = void $ L.symbol sc s
 
 argTerm :: Parser ()
@@ -1308,11 +1310,12 @@ nextLine = do
   void $ mayNotBreak $ many $ try (sc >> eol)
   void $ replicateM n (char ' ')
 
-withSource :: Parser a -> Parser (String, a)
+withSource :: Parser a -> Parser (Text, a)
 withSource p = do
   s <- getInput
   (x, (start, end)) <- withPos p
-  return (take (end - start) s, x)
+  return (T.take (end - start) s, x)
+{-# INLINE withSource #-}
 
 withIndent :: Parser a -> Parser a
 withIndent p = do

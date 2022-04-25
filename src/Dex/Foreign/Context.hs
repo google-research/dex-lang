@@ -18,10 +18,11 @@ import Foreign.C.String
 import System.Random
 
 import Control.Monad.IO.Class
-import Data.String
 import Data.Functor
 import Data.Foldable
-import qualified Data.Map.Strict as M
+import Data.Map.Strict    qualified as M
+import Data.ByteString    qualified as BS
+import Data.Text.Encoding qualified as T
 
 import Syntax  hiding (sizeOf)
 import TopLevel
@@ -43,7 +44,7 @@ dexCreateContext = do
   let evalConfig = EvalConfig LLVM Nothing Nothing Nothing
   cachedEnv <- loadCache
   runTopperM evalConfig cachedEnv (evalSourceBlockRepl preludeImportBlock) >>= \case
-    (Result [] (Success  ()), preludeEnv) -> toStablePtr $ Context evalConfig preludeEnv
+    (Result _  (Success  ()), preludeEnv) -> toStablePtr $ Context evalConfig preludeEnv
     (Result _  (Failure err), _         ) -> nullPtr <$
       setError ("Failed to initialize standard library: " ++ pprint err)
 
@@ -56,7 +57,7 @@ dexForkContext ctxPtr = toStablePtr =<< fromStablePtr ctxPtr
 dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
   Context evalConfig initEnv <- fromStablePtr ctxPtr
-  source <- peekCString sourcePtr
+  source <- T.decodeUtf8 <$> BS.packCString sourcePtr
   (results, finalEnv) <- runTopperM evalConfig initEnv $ evalSourceText source (const $ return ()) (const $ return True)
   let anyError = asum $ fmap (\case (_, Result _ (Failure err)) -> Just err; _ -> Nothing) results
   case anyError of

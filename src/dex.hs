@@ -17,6 +17,8 @@ import System.IO (stderr, hPutStrLn)
 
 import System.Directory
 import Data.List
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 
 import PPrint (toJSONStr, printResult)
@@ -55,7 +57,7 @@ runMode evalMode opts = case evalMode of
   ScriptMode fname fmt onErr -> do
     env <- loadCache
     (litProg, finalEnv) <- runTopperM opts env do
-      source <- liftIO $ readFile fname
+      source <- liftIO $ T.readFile fname
       evalSourceText source (printIncrementalSource fmt) \result@(Result _ errs) -> do
         printIncrementalResult fmt result
         return case (onErr, errs) of (HaltOnErr, Failure _) -> False; _ -> True
@@ -122,7 +124,7 @@ readSourceBlock prompt = do
   let filenameAndDexCompletions =
         completeQuotedWord (Just '\\') "\"'" listFiles (dexCompletions sourceMap)
   let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-  liftIO $ runInputT hasklineSettings $ readMultiline prompt parseTopDeclRepl
+  liftIO $ runInputT hasklineSettings $ readMultiline prompt (parseTopDeclRepl . T.pack)
 
 dexCompletions :: Monad m => SourceMap n -> CompletionFunc m
 dexCompletions sourceMap (line, _) = do

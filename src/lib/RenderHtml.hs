@@ -74,21 +74,21 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
     ProseBlock s -> cdiv "prose-block" $ mdToHtml s
-    _ -> cdiv "code-block" $ highlightSyntax (pprint block)
+    _ -> cdiv "code-block" $ highlightSyntax (sbText block)
 
-mdToHtml :: String -> Html
-mdToHtml s = preEscapedText $ commonmarkToHtml [] $ T.pack s
+mdToHtml :: T.Text -> Html
+mdToHtml s = preEscapedText $ commonmarkToHtml [] s
 
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
 
 -- === syntax highlighting ===
 
-highlightSyntax :: String -> Html
+highlightSyntax :: T.Text -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
   where classified = ignoreExcept $ parseit s (many (withSource classify) <* eof)
 
-syntaxSpan :: String -> StrClass -> Html
+syntaxSpan :: T.Text -> StrClass -> Html
 syntaxSpan s NormalStr = toHtml s
 syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
   where

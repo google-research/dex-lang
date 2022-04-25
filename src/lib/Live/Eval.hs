@@ -9,6 +9,8 @@ module Live.Eval (RFragment (..), SetVal(..), watchAndEvalFile) where
 import Control.Concurrent (forkIO, killThread, readChan, threadDelay, ThreadId)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Data.Text (Text)
+import Data.Text.IO qualified as T
 import qualified Data.Map.Strict as M
 
 import Data.Aeson (ToJSON, toJSON, (.=))
@@ -60,7 +62,7 @@ watchAndEvalFile fname opts env = do
 
 -- === executing blocks concurrently ===
 
-type SourceContents = String
+type SourceContents = Text
 
 type DriverCfg = (EvalConfig, PChan RFragment)
 
@@ -309,13 +311,13 @@ oneSourceBlock k b = RFragment mempty (M.singleton k b) mempty
 
 -- A non-Actor source.  Sends file contents to channel whenever file
 -- is modified.
-forkWatchFile :: FilePath -> PChan String -> IO ()
+forkWatchFile :: FilePath -> PChan Text -> IO ()
 forkWatchFile fname chan = onmod fname $ sendFileContents fname chan
 
-sendFileContents :: String -> PChan String -> IO ()
+sendFileContents :: String -> PChan Text -> IO ()
 sendFileContents fname chan = do
   putStrLn $ fname ++ " updated"
-  s <- readFile fname
+  s <- T.readFile fname
   sendPChan chan s
 
 onmod :: FilePath -> IO () -> IO ()
