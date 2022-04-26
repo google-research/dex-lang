@@ -2214,6 +2214,8 @@ def reversed_digits_to_int {a b} [Ix a, Ix b] (digits: a=>b) : Int =
     (next_k, next_base)
 
 instance {a b} [Ix a, Ix b] Ix (a=>b)
+  -- 0@a is the least significant digit,
+  -- while (size a - 1)@a is the most significant digit.
   get_size = \(). intpow (size b) (size a)
   ordinal             = reversed_digits_to_int
   unsafe_from_ordinal = int_to_reversed_digits
