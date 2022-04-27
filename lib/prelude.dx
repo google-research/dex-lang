@@ -533,10 +533,9 @@ def run_accum
   empty = %projMethod0 bm
   combine = %projMethod1 bm
   def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a =
-    accumMonoidData : (AccumMonoidData h' w) = UnsafeMkAccumMonoidData b bm
+    accumMonoidData : (AccumMonoidData h' b) = UnsafeMkAccumMonoidData b bm
     accumBaseMonoid = %explicitDict (AccumMonoid h' b) accumMonoidData
-    accumBaseMonoidLifted = %explicitApply (%explicitApply mlift h') accumBaseMonoid
-    action' = %explicitApply (%explicitApply action h') accumBaseMonoidLifted
+    action' = %explicitApply (%explicitApply action h') accumBaseMonoid
     action' ref
   %runWriter empty combine explicitAction
 
