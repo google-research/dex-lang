@@ -10,7 +10,7 @@ module Builder (
   emit, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
-  liftBuilderT, buildBlock, app, add, mul, sub, neg, div',
+  liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
   select, getUnpacked, emitUnpacked,
@@ -35,12 +35,12 @@ module Builder (
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  liftBuilder, liftEmitBuilder, makeBlock, makeBlockOfType,
+  liftBuilder, liftEmitBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex,
   getIxImpl, IxImpl (..),
   litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
-  telescopicCapture, telescopicCaptureBlock, unpackTelescope,
+  telescopicCapture, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
   emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
@@ -58,7 +58,7 @@ import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
-import Data.Text.Prettyprint.Doc (Pretty (..), line, (<+>))
+import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -67,7 +67,7 @@ import qualified RawName as R
 import Name
 import Syntax
 import Type
-import PPrint ()
+import PPrint (prettyBlock)
 import CheapReduction
 import {-# SOURCE #-} Inference
 import MTL1
@@ -425,27 +425,29 @@ buildBlock
   :: ScopableBuilder m
   => (forall l. (Emits l, DExt n l) => m l (Atom l))
   -> m n (Block n)
-buildBlock cont = do
-  Abs decls results <- buildScoped do
-    result <- cont
-    ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType result
-    return $ result `PairE` ty
-  let (result `PairE` ty) = results
-  let msg = "Decls:" <+> line <> pretty decls <> line
-            <> "Result:" <+> line <> pretty result <> line
-            <> "Of type:" <+> line <> pretty ty
-  ty' <- liftHoistExcept' (docAsStr msg) $ hoist decls ty
-  return $ Block (BlockAnn ty') decls result
+buildBlock cont = buildScoped (cont >>= withType) >>= computeAbsEffects >>= absToBlock
 
-makeBlock :: EnvReader m => Nest Decl n l -> Atom l -> m l (Block n)
-makeBlock decls atom = do
-  ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType atom
-  return $ makeBlockOfType decls atom ty
+withType :: (EnvReader m, HasType e) => e l -> m l ((e `PairE` Type) l)
+withType e = do
+  ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType e
+  return $ e `PairE` ty
+{-# INLINE withType #-}
+
+makeBlock :: Nest Decl n l -> EffectRow l -> Atom l -> Type l -> Block n
+makeBlock decls effs atom ty = Block (BlockAnn ty' effs') decls atom where
+  ty' = ignoreHoistFailure $ hoist decls ty
+  effs' = ignoreHoistFailure $ hoist decls effs
 {-# INLINE makeBlock #-}
 
-makeBlockOfType :: Nest Decl n l -> Atom l -> Type l -> Block n
-makeBlockOfType decls atom ty = Block (BlockAnn ty') decls atom
-  where ty' = ignoreHoistFailure $ hoist decls ty
+absToBlock :: (Fallible m) => Abs (Nest Decl) (EffectRow `PairE` (Atom `PairE` Type)) n -> m (Block n)
+absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
+  let msg = "Block:" <> nest 1 (prettyBlock decls result) <> line
+            <> group ("Of type:" <> nest 2 (line <> pretty ty)) <> line
+            <> group ("With effects:" <> nest 2 (line <> pretty effs))
+  ty' <- liftHoistExcept' (docAsStr msg) $ hoist decls ty
+  effs' <- liftHoistExcept' (docAsStr msg) $ hoist decls effs
+  return $ Block (BlockAnn ty' effs') decls result
+{-# INLINE absToBlock #-}
 
 buildPureLam :: ScopableBuilder m
              => NameHint -> Arrow -> Type n
@@ -625,7 +627,7 @@ buildNaryLam binderNest body = do
     block -> emitBlock block
   where
     naryAbsToNaryLam :: Abs (Nest Binder) Block n -> Block n
-    naryAbsToNaryLam (Abs nest block) = case nest of
+    naryAbsToNaryLam (Abs binders block) = case binders of
       Empty -> block
       Nest (b:>ty) bs ->
         AtomicBlock $ Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
@@ -1320,14 +1322,6 @@ applyReconAbs
 applyReconAbs ab x = do
   xs <- unpackTelescope x
   applyNaryAbs ab $ map SubstVal xs
-
-telescopicCaptureBlock
-  :: (EnvReader m, HoistableE e)
-  => Nest Decl n l -> e l -> m l (Block n, ReconAbs e n)
-telescopicCaptureBlock decls result = do
-  (result', ty, ab) <- telescopicCapture decls result
-  let block = Block (BlockAnn ty) decls result'
-  return (block, ab)
 
 telescopicCapture
   :: (EnvReader m, HoistableE e, HoistableB b)

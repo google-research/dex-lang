@@ -103,7 +103,7 @@ prepareFunctionForExport f = do
         typeRecon :: EnvExtender m => ExportType n -> Atom n -> m n (IType, Block n)
         typeRecon ety v = case ety of
           ScalarType sbt ->
-            return (Scalar sbt, Block (BlockAnn $ BaseTy $ Scalar sbt) Empty v)
+            return (Scalar sbt, Block (BlockAnn (BaseTy $ Scalar sbt) Pure) Empty v)
           RectContArrayPtr sbt shape -> do
               block <- liftBuilder $ buildBlock $ tableAtom (sink v) (sink $ shapeToE shape) [] []
               return (PtrType (Heap CPU, Scalar sbt), block)

@@ -35,7 +35,7 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Type
-import PPrint (pprintCanonicalized)
+import PPrint (pprintCanonicalized, prettyBlock)
 import CheapReduction
 import GenericTraversal
 import MTL1
@@ -737,16 +737,16 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           UPatBinder UIgnore ->
             buildPiInf noHint arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
           _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
-            Abs decls piResult <- buildDeclsInf do
+            Abs decls result <- buildDeclsInf do
               v' <- sinkM v
               bindLamPat (WithSrcB pos' pat) v' do
                 effs' <- checkUEffRow effs
                 ty'   <- checkUType   ty
                 return $ PairE effs' ty'
-            cheapReduceWithDecls decls piResult >>= \case
+            cheapReduceWithDecls decls result >>= \case
               (Just (PairE effs' ty'), DictTypeHoistSuccess, []) -> return $ (effs', ty')
               _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                     pprint (Block (BlockAnn TyKind) decls $ snd $ fromPairE piResult)
+                     docAsStr (prettyBlock decls $ snd $ fromPairE result)
     matchRequirement $ Pi piTy
   UTabPi (UTabPiExpr (UPatAnn (WithSrcB pos' pat) ann) ty) -> do
     ann' <- checkAnn ann
@@ -760,7 +760,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         cheapReduceWithDecls decls piResult >>= \case
           (Just ty', DictTypeHoistSuccess, []) -> return ty'
           _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                 pprint (Block (BlockAnn TyKind) decls piResult)
+                 docAsStr (prettyBlock decls piResult)
     checkIx pos' $ argType piTy
     matchRequirement $ TabPi piTy
   UDecl (UDeclExpr (ULet letAnn (UPatAnn p ann) rhs) body) -> do
@@ -2470,13 +2470,7 @@ buildBlockInf
   :: (EmitsInf n, Solver m, InfBuilder m)
   => (forall l. (EmitsBoth l, Ext n l) => m l (Atom l))
   -> m n (Block n)
-buildBlockInf cont = do
-  Abs decls (PairE result ty) <- buildDeclsInf do
-    result <- cont
-    ty <- cheapNormalize =<< getType result
-    return $ result `PairE` ty
-  ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block (BlockAnn ty') decls result
+buildBlockInf cont = buildDeclsInf (cont >>= withType) >>= computeAbsEffects >>= absToBlock
 
 buildLamInf
   :: (EmitsInf n, Solver m, InfBuilder m)

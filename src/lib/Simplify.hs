@@ -183,27 +183,28 @@ defuncCase scrut alts resultTy = do
         (dataResult, nonDataResult) <- fromPair originalResult
         return $ PairVal dataResult $ Con $ SumCon (sink sumTy) con nonDataResult
 
-    -- similar to `simplifyAbs` but assumes that the result is a pair whose
-    -- first component is data. The reconstruction returned only applies to the
-    -- second component.
+    -- similar to `simplifyAbs` but assumes that the result is a pair
+    -- whose first component is data. The reconstruction returned only
+    -- applies to the second component.
     simplifyAlt
       :: (BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
-      => SplitDataNonData n -> Abs b Block i -> SimplifyM i o (Abs b Block o, ReconstructAtom o)
+      => SplitDataNonData n -> Abs b Block i
+      -> SimplifyM i o (Abs b Block o, ReconstructAtom o)
     simplifyAlt split (Abs bs body) = fromPairE <$> do
       substBinders bs \bs' -> do
         ab <- buildScoped $ simplifyBlock body
         refreshAbs ab \decls result -> do
           let locals = toScopeFrag bs' >>> toScopeFrag decls
-          -- TODO: this might be too cautious. The type only needs to be hoistable
-          -- above the decls. In principle it can still mention vars from the lambda
-          -- binders.
+          -- TODO: this might be too cautious. The type only needs to
+          -- be hoistable above the decls. In principle it can still
+          -- mention vars from the lambda binders.
           Distinct <- getDistinct
           (resultData, resultNonData) <- toSplit split result
           (newResult, newResultTy, reconAbs) <- telescopicCapture locals resultNonData
-          resultDataTy <- (ignoreHoistFailure . hoist decls) <$> getType resultData
-          let block = Block (BlockAnn $ PairTy (sink resultDataTy) (sink newResultTy))
-                            decls
-                            (PairVal resultData newResult)
+          resultDataTy <- getType resultData
+          effs <- declNestEffects decls
+          let ty = PairTy resultDataTy (sink newResultTy)
+          let block = makeBlock decls effs (PairVal resultData newResult) ty
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 simplifyApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
@@ -382,15 +383,16 @@ simplifyBinaryLam atom = case atom of
       -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
     doSimpBinaryLam b1 body1 b2 body2 =
       substBinders b1 \b1' -> do
-        Abs decls (lam2 `PairE` lam2Ty `PairE` (Abs b2' recon')) <- buildScoped $
-          simplifyDecls body1 do
-            (Abs b2' body2', recon) <- simplifyAbs $ Abs b2 body2
-            let lam2' = Lam (LamExpr b2' body2')
-            lam2Ty' <- getType lam2'
-            return (lam2' `PairE` lam2Ty' `PairE` recon)
+        Abs decls (effs `PairE` (lam2 `PairE` lam2Ty `PairE` (Abs b2' recon'))) <-
+          computeAbsEffects =<< buildScoped
+            (simplifyDecls body1 do
+              (Abs b2' body2', recon) <- simplifyAbs $ Abs b2 body2
+              let lam2' = Lam (LamExpr b2' body2')
+              lam2Ty' <- getType lam2'
+              return (lam2' `PairE` lam2Ty' `PairE` recon))
         return $ case hoist decls $ Abs b2' recon' of
           HoistSuccess (Abs b2'' recon'') -> do
-            let binBody = makeBlockOfType decls lam2 lam2Ty
+            let binBody = makeBlock decls effs lam2 lam2Ty
             let binRecon = Abs (b1' `PairB` b2'') recon''
             (Lam (LamExpr b1' binBody), binRecon)
           HoistFailure _ -> error "Binary lambda simplification failed: binder/recon depends on intermediate decls"
@@ -434,18 +436,26 @@ splitDataComponents = \case
 simplifyAbs
   :: (BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
   => Abs b Block i -> SimplifyM i o (Abs b Block o, Abs b ReconstructAtom o)
-simplifyAbs (Abs bs body) = fromPairE <$> do
+simplifyAbs (Abs bs body@(Block ann _ _)) = fromPairE <$> do
   substBinders bs \bs' -> do
     ab <- buildScoped $ simplifyBlock body
     refreshAbs ab \decls result -> do
-      getType result >>= isData >>= \case
+      -- Reuse the input effect annotations, because simplifyBlock
+      -- never changes them.
+      effs <- case ann of
+        (BlockAnn _ origEffs) -> substM origEffs
+        NoBlockAnn -> return Pure
+      ty <- getType result
+      isData ty >>= \case
         True -> do
-          block <- makeBlock decls result
+          ty' <- {-# SCC blockTypeNormalization #-} cheapNormalize ty
+          let block = makeBlock decls effs result ty'
           return $ PairE (Abs bs' block) (Abs bs' IdentityRecon)
         False -> do
           let locals = toScopeFrag decls
           (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
-          let block = Block (BlockAnn $ sink newResultTy) decls newResult
+          let effs' = ignoreHoistFailure $ hoist decls effs
+          let block = Block (BlockAnn (sink newResultTy) effs') decls newResult
           return $ PairE (Abs bs' block) (Abs bs' (LamRecon reconAbs))
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
@@ -613,7 +623,7 @@ simplifyBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result
 
 exceptToMaybeBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
-exceptToMaybeBlock (Block (BlockAnn ty) decls result) = do
+exceptToMaybeBlock (Block (BlockAnn ty _) decls result) = do
   ty' <- substM ty
   exceptToMaybeDecls ty' decls $ Atom result
 exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr $ Atom result

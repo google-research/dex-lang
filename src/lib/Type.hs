@@ -17,7 +17,7 @@ module Type (
   oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
   isSingletonType, singletonTypeVal, asNaryPiType,
   numNaryPiArgs, naryLamExprType, getMethodIndex,
-  extendEffect, exprEffects, getReferentTy) where
+  extendEffect, exprEffects, declNestEffects, computeAbsEffects, getReferentTy) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -115,9 +115,31 @@ getClassTy (ClassDef _ _ bs _ _) = go bs
 
 -- === querying effects ===
 
-exprEffects :: (MonadFail1 m, EnvReader m) => Expr n -> m n (EffectRow n)
+computeAbsEffects :: (EnvExtender m, SubstE Name e)
+  => Abs (Nest Decl) e n -> m n (Abs (Nest Decl) (EffectRow `PairE` e) n)
+computeAbsEffects it = refreshAbs it \decls result -> do
+  effs <- declNestEffects decls
+  return $ Abs decls (effs `PairE` result)
+{-# INLINE computeAbsEffects #-}
+
+declNestEffects :: (EnvReader m) => Nest Decl n l -> m l (EffectRow l)
+declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
+{-# INLINE declNestEffects #-}
+
+declNestEffectsRec :: Nest Decl n l -> EffectRow l -> EnvReaderM l (EffectRow l)
+declNestEffectsRec Empty !acc = return acc
+declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
+  expr <- sinkM $ declExpr decl
+  deff <- exprEffects expr
+  acc' <- sinkM $ acc <> deff
+  declNestEffectsRec rest acc'
+  where
+    declExpr :: Decl n l -> Expr n
+    declExpr (Let _ (DeclBinding _ _ expr)) = expr
+
+exprEffects :: (EnvReader m) => Expr n -> m n (EffectRow n)
 exprEffects expr = case expr of
-  Atom _  -> return $ Pure
+  Atom _  -> return Pure
   App f xs -> do
     fTy <- getType f
     case fromNaryPiType (length xs) fTy of
@@ -129,13 +151,15 @@ exprEffects expr = case expr of
   TabApp _ _ -> return Pure
   Op op   -> case op of
     PrimEffect ref m -> do
-      RefTy (Var h) _ <- getType ref
-      return $ case m of
-        MGet      -> oneEffect (RWSEffect State  $ Just h)
-        MPut    _ -> oneEffect (RWSEffect State  $ Just h)
-        MAsk      -> oneEffect (RWSEffect Reader $ Just h)
-        -- XXX: We don't verify the base monoid. See note about RunWriter.
-        MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
+      getType ref >>= \case
+        RefTy (Var h) _ ->
+          return $ case m of
+            MGet      -> oneEffect (RWSEffect State  $ Just h)
+            MPut    _ -> oneEffect (RWSEffect State  $ Just h)
+            MAsk      -> oneEffect (RWSEffect Reader $ Just h)
+            -- XXX: We don't verify the base monoid. See note about RunWriter.
+            MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
+        _ -> error "References must have reference type"
     ThrowException _ -> return $ oneEffect ExceptionEffect
     IOAlloc  _ _  -> return $ oneEffect IOEffect
     IOFree   _    -> return $ oneEffect IOEffect
@@ -144,7 +168,10 @@ exprEffects expr = case expr of
     _ -> return Pure
   Hof hof -> case hof of
     For _ f         -> functionEffs f
-    Tile _ _ _      -> error "not implemented"
+    -- The tiled and scalar bodies should have the same effects, but
+    -- that's checked elsewhere.  If they are the same, merging them
+    -- with <> is a noop.
+    Tile _ tiled scalar -> liftM2 (<>) (functionEffs tiled) $ functionEffs scalar
     While body      -> functionEffs body
     Linearize _     -> return Pure  -- Body has to be a pure function
     Transpose _     -> return Pure  -- Body has to be a pure function
@@ -159,6 +186,7 @@ exprEffects expr = case expr of
       effs <- functionEffs f
       return $ deleteEff ExceptionEffect effs
   Case _ _ _ effs -> return effs
+{-# SPECIALIZE exprEffects :: Expr n -> EnvReaderM n (EffectRow n) #-}
 
 functionEffs :: EnvReader m => Atom n -> m n (EffectRow n)
 functionEffs f = getType f >>= \case
@@ -470,7 +498,7 @@ instance HasType Expr where
 instance HasType Block where
   getTypeE (Block NoBlockAnn Empty expr) = do
     getTypeE expr
-  getTypeE (Block (BlockAnn ty) decls expr) = do
+  getTypeE (Block (BlockAnn ty _) decls expr) = do
     tyReq <- substM ty
     checkB decls \_ -> do
       tyReq' <- sinkM tyReq
