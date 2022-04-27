@@ -63,13 +63,17 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
       Fin (IdxRepVal n) <- return $ binderType i
-      Block _ (Nest castDecl (Nest offDecl Empty)) loadExpr <- return body
+      Block _ (Nest castDecl (Nest offDecl (Nest loadDecl Empty))) (Var result) <- return body
       Let v (DeclBinding _ _ (Op (CastOp IdxRepTy (Var i')))) <- return castDecl
       guard $ binderName i == i'
       Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (Var v')))) <- return offDecl
       guard $ binderName v == v'
+      Let r (DeclBinding _ _ loadExpr) <- return loadDecl
+      guard $ binderName r == result
       Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
-      HoistSuccess (Block _ Empty (Op (PtrLoad (Var v1')))) <- return $ hoist iob iobody
+      HoistSuccess (Block _ (Nest ioDecl Empty) (Var ioResult)) <- return $ hoist iob iobody
+      Let ioR (DeclBinding _ _ (Op (PtrLoad (Var v1')))) <- return ioDecl
+      guard $ binderName ioR == ioResult
       guard $ binderName v1 == v1'
       HoistSuccess ptrAtomTop <- return $ hoist (PairB i v) ptrName
       return (ptrAtomTop, n)

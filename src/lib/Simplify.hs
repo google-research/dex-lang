@@ -203,7 +203,7 @@ defuncCase scrut alts resultTy = do
           resultDataTy <- (ignoreHoistFailure . hoist decls) <$> getType resultData
           let block = Block (BlockAnn $ PairTy (sink resultDataTy) (sink newResultTy))
                             decls
-                            (Atom (PairVal resultData newResult))
+                            (PairVal resultData newResult)
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 simplifyApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
@@ -214,17 +214,12 @@ simplifyApp f xs =
   where
     fast :: LamExpr i' -> SimplifyM i' o (Atom o)
     fast lam = case fromNaryLam (NE.length xs) (Lam lam) of
-      Just (bsCount, NaryLamExpr bs _ (Block _ decls expr)) -> do
+      Just (bsCount, NaryLamExpr bs _ (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
             case nonEmpty xsRest of
-              Nothing    -> simplifyExpr expr
-              Just rest' ->
-                case expr of
-                  Atom atom -> simplifyApp atom rest'
-                  _         -> do
-                    atom <- simplifyExpr expr
-                    dropSubst $ simplifyApp atom rest'
+              Nothing    -> simplifyAtom atom
+              Just rest' -> simplifyApp atom rest'
       Nothing -> error "should never happen"
 
     slow :: Atom o -> SimplifyM i o (Atom o)
@@ -256,17 +251,12 @@ simplifyTabApp f xs =
   where
     fast :: TabLamExpr i' -> SimplifyM i' o (Atom o)
     fast lam = case fromNaryTabLam (NE.length xs) (TabLam lam) of
-      Just (bsCount, NaryLamExpr bs _ (Block _ decls expr)) -> do
+      Just (bsCount, NaryLamExpr bs _ (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
             case nonEmpty xsRest of
-              Nothing    -> simplifyExpr expr
-              Just rest' ->
-                case expr of
-                  Atom atom -> simplifyTabApp atom rest'
-                  _         -> do
-                    atom <- simplifyExpr expr
-                    dropSubst $ simplifyTabApp atom rest'
+              Nothing    -> simplifyAtom atom
+              Just rest' -> simplifyTabApp atom rest'
       Nothing -> error "should never happen"
 
     slow :: Atom o -> SimplifyM i o (Atom o)
@@ -383,9 +373,9 @@ type BinaryLamBinder = (PairB LamBinder LamBinder)
 simplifyBinaryLam :: Emits o => Atom i
   -> SimplifyM i o (Atom o, Abs BinaryLamBinder ReconstructAtom o)
 simplifyBinaryLam atom = case atom of
-  Lam (LamExpr b1 (Block _ body1 (Atom (Lam (LamExpr b2 body2))))) -> doSimpBinaryLam b1 body1 b2 body2
+  Lam (LamExpr b1 (Block _ body1 (Lam (LamExpr b2 body2)))) -> doSimpBinaryLam b1 body1 b2 body2
   _ -> simplifyAtom atom >>= \case
-    Lam (LamExpr b1 (Block _ body1 (Atom (Lam (LamExpr b2 body2))))) -> dropSubst $ doSimpBinaryLam b1 body1 b2 body2
+    Lam (LamExpr b1 (Block _ body1 (Lam (LamExpr b2 body2)))) -> dropSubst $ doSimpBinaryLam b1 body1 b2 body2
     _ -> error "Not a binary lambda expression"
   where
     doSimpBinaryLam :: LamBinder i i' -> Nest Decl i' i'' -> LamBinder i'' i''' -> Block i'''
@@ -400,7 +390,7 @@ simplifyBinaryLam atom = case atom of
             return (lam2' `PairE` lam2Ty' `PairE` recon)
         return $ case hoist decls $ Abs b2' recon' of
           HoistSuccess (Abs b2'' recon'') -> do
-            let binBody = makeBlockOfType decls (Atom lam2) lam2Ty
+            let binBody = makeBlockOfType decls lam2 lam2Ty
             let binRecon = Abs (b1' `PairB` b2'') recon''
             (Lam (LamExpr b1' binBody), binRecon)
           HoistFailure _ -> error "Binary lambda simplification failed: binder/recon depends on intermediate decls"
@@ -450,12 +440,12 @@ simplifyAbs (Abs bs body) = fromPairE <$> do
     refreshAbs ab \decls result -> do
       getType result >>= isData >>= \case
         True -> do
-          block <- makeBlock decls $ Atom result
+          block <- makeBlock decls result
           return $ PairE (Abs bs' block) (Abs bs' IdentityRecon)
         False -> do
           let locals = toScopeFrag decls
           (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
-          let block = Block (BlockAnn $ sink newResultTy) decls (Atom newResult)
+          let block = Block (BlockAnn $ sink newResultTy) decls newResult
           return $ PairE (Abs bs' block) (Abs bs' (LamRecon reconAbs))
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
@@ -620,13 +610,13 @@ simplifyHof hof = case hof of
   _ -> error $ "not implemented: " ++ pprint hof
 
 simplifyBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
-simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
+simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result
 
 exceptToMaybeBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
 exceptToMaybeBlock (Block (BlockAnn ty) decls result) = do
   ty' <- substM ty
-  exceptToMaybeDecls ty' decls result
-exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr result
+  exceptToMaybeDecls ty' decls $ Atom result
+exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr $ Atom result
 exceptToMaybeBlock _ = error "impossible"
 
 exceptToMaybeDecls :: Emits o => Type o -> Nest Decl i i' -> Expr i' -> SimplifyM i o (Atom o)

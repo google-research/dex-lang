@@ -290,7 +290,7 @@ linearizeAtom atom = case atom of
 
 linearizeBlock :: Emits o => Block i -> LinM i o Atom Atom
 linearizeBlock (Block _ decls result) =
-  linearizeDecls decls $ linearizeExpr result
+  linearizeDecls decls $ linearizeAtom result
 
 linearizeDecls :: Emits o => Nest Decl i i' -> LinM i' o e1 e2 -> LinM i  o e1 e2
 linearizeDecls Empty cont = cont

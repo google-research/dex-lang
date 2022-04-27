@@ -226,7 +226,7 @@ instance CheaplyReducibleE DictExpr Atom where
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
 
-instance (CheaplyReducibleE Expr e', NiceE e') => CheaplyReducibleE Block e' where
+instance (CheaplyReducibleE Atom e', NiceE e') => CheaplyReducibleE Block e' where
   cheapReduceE (Block _ decls result) = cheapReduceE $ Abs decls result
 
 instance CheaplyReducibleE Expr Atom where

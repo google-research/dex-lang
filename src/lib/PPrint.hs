@@ -323,12 +323,12 @@ prettyLamHelper lamExpr lamType = let
   rec :: LamExpr n -> Bool -> (Doc ann, Block n)
   rec (LamExpr (LamBinder b ty _ _) body') first =
     let thisOne = (if first then "" else line) <> p (b:>ty)
-    in case body' of
-      Block _ Empty (Atom (Lam next@(LamExpr (LamBinder _ _ arr' _) _)))
+    in case inlineLastDeclBlock body' of
+      Abs Empty (Atom (Lam next@(LamExpr (LamBinder _ _ arr' _) _)))
         | lamType == PrettyLam arr' ->
             let (binders', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE block)
-      Block _ Empty (Hof (For ann (Lam next)))
+      Abs Empty (Hof (For ann (Lam next)))
         | lamType == PrettyFor ann ->
             let (binders', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE block)
@@ -339,6 +339,18 @@ prettyLamHelper lamExpr lamType = let
                 PrettyLam arr -> " " <> p arr
   (binders, body) = rec lamExpr True
   in align (group $ nest 4 $ binders) <> (group $ nest 2 $ p body)
+
+inlineLastDeclBlock :: Block n -> Abs (Nest Decl) Expr n
+inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
+
+inlineLastDecl :: Nest Decl n l -> Atom l -> Abs (Nest Decl) Expr n
+inlineLastDecl Empty result = Abs Empty $ Atom result
+inlineLastDecl (Nest (Let b (DeclBinding _ _ expr)) Empty) (Var v)
+  | v == binderName b = Abs Empty expr
+inlineLastDecl (Nest decl rest) result =
+  case inlineLastDecl rest result of
+   Abs decls' result' ->
+     Abs (Nest decl decls') result'
 
 instance Pretty (EffectRow n) where
   pretty (EffectRow effs tailVar) =

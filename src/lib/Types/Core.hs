@@ -150,7 +150,7 @@ data DataConDef n =
 -- cheaply query the result, and, more importantly, there's no risk of having a
 -- type that mentions local variables.
 data Block n where
-  Block :: BlockAnn n l -> Nest Decl n l -> Expr l -> Block n
+  Block :: BlockAnn n l -> Nest Decl n l -> Atom l -> Block n
 
 data BlockAnn n l where
   BlockAnn :: Type n -> BlockAnn n l
@@ -668,8 +668,8 @@ pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
 pattern AtomicBlock :: Atom n -> Block n
-pattern AtomicBlock atom <- Block _ Empty (Atom atom)
-  where AtomicBlock atom = Block NoBlockAnn Empty (Atom atom)
+pattern AtomicBlock atom <- Block _ Empty atom
+  where AtomicBlock atom = Block NoBlockAnn Empty atom
 
 pattern BinaryLamExpr :: LamBinder n l1 -> LamBinder l1 l2 -> Block l2 -> LamExpr n
 pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
@@ -1084,7 +1084,7 @@ instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
 instance GenericE Block where
-  type RepE Block = PairE (MaybeE Type) (Abs (Nest Decl) Expr)
+  type RepE Block = PairE (MaybeE Type) (Abs (Nest Decl) Atom)
   fromE (Block (BlockAnn ty) decls result) = PairE (JustE ty) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
   fromE _ = error "impossible"

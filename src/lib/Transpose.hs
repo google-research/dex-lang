@@ -93,8 +93,8 @@ extendLinRegions v cont = local (\(ListE vs) -> ListE (v:vs)) cont
 transposeBlock :: Emits o => Block i -> Atom o -> TransposeM i o ()
 transposeBlock (Block _ decls result) ct = transposeWithDecls decls result ct
 
-transposeWithDecls :: Emits o => Nest Decl i i' -> Expr i' -> Atom o -> TransposeM i o ()
-transposeWithDecls Empty expr ct = transposeExpr expr ct
+transposeWithDecls :: Emits o => Nest Decl i i' -> Atom i' -> Atom o -> TransposeM i o ()
+transposeWithDecls Empty atom ct = transposeAtom atom ct
 transposeWithDecls (Nest (Let b (DeclBinding _ ty expr)) rest) result ct =
   substExprIfNonlin expr >>= \case
     Nothing  -> do

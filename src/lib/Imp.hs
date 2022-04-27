@@ -268,7 +268,7 @@ buildRecon b x = do
 
 translateBlock :: forall i o. Emits o
                => MaybeDest o -> Block i -> SubstImpM i o (Atom o)
-translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest result
+translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest $ Atom result
 
 translateDeclNestSubst :: Emits o => Subst AtomSubstVal l o -> Nest Decl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
 translateDeclNestSubst !s = \case
@@ -749,7 +749,7 @@ buildBlockDest cont = do
     ty <- getType result
     return $ result `PairE` ty
   ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block (BlockAnn ty') decls $ Atom result
+  return $ Block (BlockAnn ty') decls result
 {-# INLINE buildBlockDest #-}
 
 -- TODO: this is mostly copy-paste from Inference
@@ -1292,7 +1292,7 @@ chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
 
     isSmall :: Bool
     isSmall = case numel of
-      Block _ Empty (Atom (Con (Lit l))) | getIntLit l <= 256 -> True
+      Block _ Empty (Con (Lit l)) | getIntLit l <= 256 -> True
       _ -> False
 {-# NOINLINE chooseAddrSpace #-}
 

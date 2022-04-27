@@ -745,7 +745,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
             cheapReduceWithDecls decls piResult >>= \case
               (Just (PairE effs' ty'), DictTypeHoistSuccess, []) -> return $ (effs', ty')
               _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                     pprint (Block (BlockAnn TyKind) decls $ Atom $ snd $ fromPairE piResult)
+                     pprint (Block (BlockAnn TyKind) decls $ snd $ fromPairE piResult)
     matchRequirement $ Pi piTy
   UTabPi (UTabPiExpr (UPatAnn (WithSrcB pos' pat) ann) ty) -> do
     ann' <- checkAnn ann
@@ -759,7 +759,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         cheapReduceWithDecls decls piResult >>= \case
           (Just ty', DictTypeHoistSuccess, []) -> return ty'
           _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                 pprint (Block (BlockAnn TyKind) decls $ Atom piResult)
+                 pprint (Block (BlockAnn TyKind) decls piResult)
     checkIx pos' $ argType piTy
     matchRequirement $ TabPi piTy
   UDecl (UDeclExpr decl body) -> do
@@ -2459,7 +2459,7 @@ buildBlockInf cont = do
     ty <- cheapNormalize =<< getType result
     return $ result `PairE` ty
   ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block (BlockAnn ty') decls $ Atom result
+  return $ Block (BlockAnn ty') decls result
 
 buildLamInf
   :: (EmitsInf n, Solver m, InfBuilder m)
