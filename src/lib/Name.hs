@@ -2811,7 +2811,7 @@ collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
     getParents name = case R.lookup name env of
       Nothing   -> []
 #ifdef DEX_DEBUG
-      Just (SubstItem f _) | itemDistinctness f == ShadowingName ->
+      Just item | itemDistinctness item == ShadowingName ->
         error "shouldn't be possible, due to Distinct constraint"
 #endif
       Just item -> R.keys $ fromSubstItemPoly item freeVarsE
