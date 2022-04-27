@@ -193,7 +193,7 @@ type CPolySubstVal = SubstVal AtomNameC (MaybeE ClampPolynomial)
 
 blockAsCPoly :: (EnvExtender m, EnvReader m) => Block n -> m n (Maybe (ClampPolynomial n))
 blockAsCPoly (Block _ decls' result') =
-  runMaybeT1 $ runSubstReaderT idSubst $ go $ Abs decls' result'
+  runMaybeT1 $ runSubstReaderT idSubst $ go $ Abs decls' $ Atom result'
   where
     go :: (EnvExtender2 m, EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m)
        => Abs (Nest Decl) Expr o -> m o o (ClampPolynomial o)

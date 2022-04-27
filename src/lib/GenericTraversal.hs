@@ -108,7 +108,7 @@ instance GenericallyTraversableE Block where
   traverseGenericE (Block _ decls result) = do
     Abs decls' (PairE ty result') <-
       buildScoped $ traverseDeclNest decls do
-        result' <- traverseExpr result
+        result' <- traverseAtom result
         resultTy <- getType result'
         return $ PairE resultTy result'
     ty' <- liftHoistExcept $ hoist decls' ty

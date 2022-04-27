@@ -51,7 +51,7 @@ liftInterpM cont = do
 {-# INLINE liftInterpM #-}
 
 evalBlock :: Interp m => Block i -> m i o (Atom o)
-evalBlock (Block _ decls result) = evalDecls decls $ evalExpr result
+evalBlock (Block _ decls result) = evalDecls decls $ evalAtom result
 
 evalDecls :: Interp m => Nest Decl i i' -> m i' o a -> m i o a
 evalDecls Empty cont = cont

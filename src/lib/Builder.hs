@@ -33,7 +33,7 @@ module Builder (
   lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
-  inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
+  fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, makeBlockOfType,
   indexToInt, indexSetSize, intToIndex,
@@ -104,11 +104,7 @@ emitUnOp :: (Builder m, Emits n) => UnOp -> Atom n -> m n (Atom n)
 emitUnOp op x = emitOp $ ScalarUnOp op x
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
-emitBlock (Block _ decls result) = do
-  result' <- emitDecls decls result
-  case result' of
-    Atom x -> return x
-    _ -> Var <$> emit result'
+emitBlock (Block _ decls result) = emitDecls decls result
 
 emitDecls :: (Builder m, Emits n, SubstE Name e, SinkableE e)
           => Nest Decl n l -> e l -> m n (e n)
@@ -439,27 +435,17 @@ buildBlock cont = do
             <> "Result:" <+> line <> pretty result <> line
             <> "Of type:" <+> line <> pretty ty
   ty' <- liftHoistExcept' (docAsStr msg) $ hoist decls ty
-  Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
-  return $ Block (BlockAnn ty') decls' result'
+  return $ Block (BlockAnn ty') decls result
 
-makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
-makeBlock decls expr = do
-  ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType expr
-  return $ makeBlockOfType decls expr ty
+makeBlock :: EnvReader m => Nest Decl n l -> Atom l -> m l (Block n)
+makeBlock decls atom = do
+  ty <- {-# SCC blockTypeNormalization #-} cheapNormalize =<< getType atom
+  return $ makeBlockOfType decls atom ty
 {-# INLINE makeBlock #-}
 
-makeBlockOfType :: Nest Decl n l -> Expr l -> Type l -> Block n
-makeBlockOfType decls expr ty = Block (BlockAnn ty') decls expr
+makeBlockOfType :: Nest Decl n l -> Atom l -> Type l -> Block n
+makeBlockOfType decls atom ty = Block (BlockAnn ty') decls atom
   where ty' = ignoreHoistFailure $ hoist decls ty
-
-inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
-inlineLastDecl Empty result = Abs Empty result
-inlineLastDecl (Nest (Let b (DeclBinding _ _ expr)) Empty) (Atom (Var v))
-  | v == binderName b = Abs Empty expr
-inlineLastDecl (Nest decl rest) result =
-  case inlineLastDecl rest result of
-   Abs decls' result' ->
-     Abs (Nest decl decls') result'
 
 buildPureLam :: ScopableBuilder m
              => NameHint -> Arrow -> Type n
@@ -1340,7 +1326,7 @@ telescopicCaptureBlock
   => Nest Decl n l -> e l -> m l (Block n, ReconAbs e n)
 telescopicCaptureBlock decls result = do
   (result', ty, ab) <- telescopicCapture decls result
-  let block = Block (BlockAnn ty) decls (Atom result')
+  let block = Block (BlockAnn ty) decls result'
   return (block, ab)
 
 telescopicCapture
