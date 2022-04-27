@@ -14,7 +14,6 @@ import Control.Monad
 import Name
 import Builder
 import Syntax
-import Type
 import PPrint
 
 import LabeledItems
@@ -106,13 +105,7 @@ instance GenericallyTraversableE Atom where
 
 instance GenericallyTraversableE Block where
   traverseGenericE (Block _ decls result) = do
-    Abs decls' (PairE ty result') <-
-      buildScoped $ traverseDeclNest decls do
-        result' <- traverseAtom result
-        resultTy <- getType result'
-        return $ PairE resultTy result'
-    ty' <- liftHoistExcept $ hoist decls' ty
-    return $ Block (BlockAnn ty') decls' result'
+    buildBlock $ traverseDeclNest decls $ traverseAtom result
 
 instance GenericallyTraversableE FieldRowElems where
   traverseGenericE elems = do

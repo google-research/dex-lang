@@ -743,13 +743,7 @@ buildBlockDest
   :: Mut n
   => (forall l. (Emits l, DExt n l) => DestM l (Atom l))
   -> DestM n (Block n)
-buildBlockDest cont = do
-  Abs decls (PairE result ty) <- buildDeclsDest do
-    result <- cont
-    ty <- getType result
-    return $ result `PairE` ty
-  ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block (BlockAnn ty') decls result
+buildBlockDest cont = buildDeclsDest (cont >>= withType) >>= computeAbsEffects >>= absToBlock
 {-# INLINE buildBlockDest #-}
 
 -- TODO: this is mostly copy-paste from Inference

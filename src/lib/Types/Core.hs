@@ -153,7 +153,7 @@ data Block n where
   Block :: BlockAnn n l -> Nest Decl n l -> Atom l -> Block n
 
 data BlockAnn n l where
-  BlockAnn :: Type n -> BlockAnn n l
+  BlockAnn :: Type n -> EffectRow n -> BlockAnn n l
   NoBlockAnn :: BlockAnn n n
 
 data LamBinding (n::S) = LamBinding Arrow (Type n)
@@ -1084,12 +1084,12 @@ instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
 instance GenericE Block where
-  type RepE Block = PairE (MaybeE Type) (Abs (Nest Decl) Atom)
-  fromE (Block (BlockAnn ty) decls result) = PairE (JustE ty) (Abs decls result)
+  type RepE Block = PairE (MaybeE (PairE Type EffectRow)) (Abs (Nest Decl) Atom)
+  fromE (Block (BlockAnn ty effs) decls result) = PairE (JustE (PairE ty effs)) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
   fromE _ = error "impossible"
   {-# INLINE fromE #-}
-  toE   (PairE (JustE ty) (Abs decls result)) = Block (BlockAnn ty) decls result
+  toE   (PairE (JustE (PairE ty effs)) (Abs decls result)) = Block (BlockAnn ty effs) decls result
   toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
   toE   _ = error "impossible"
   {-# INLINE toE #-}

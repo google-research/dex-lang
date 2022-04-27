@@ -10,7 +10,7 @@
 
 module PPrint (
   pprint, pprintCanonicalized, pprintList, asStr , atPrec, toJSONStr,
-  PrettyPrec(..), PrecedenceLevel (..), printLitBlock, printResult) where
+  PrettyPrec(..), PrecedenceLevel (..), prettyBlock, printLitBlock, printResult) where
 
 import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Exts (Constraint)
@@ -100,8 +100,11 @@ pArg :: PrettyPrec a => a -> Doc ann
 pArg a = prettyPrec a ArgPrec
 
 instance Pretty (Block n) where
-  pretty (Block _ Empty expr) = group $ line <> pLowest expr
-  pretty (Block _ decls expr) = hardline <> prettyLines decls' <> pLowest expr
+  pretty (Block _ decls expr) = prettyBlock decls expr
+
+prettyBlock :: (PrettyPrec (e l)) => Nest Decl n l -> e l -> Doc ann
+prettyBlock Empty expr = group $ line <> pLowest expr
+prettyBlock decls expr = hardline <> prettyLines decls' <> pLowest expr
     where decls' = fromNest decls
 
 fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
