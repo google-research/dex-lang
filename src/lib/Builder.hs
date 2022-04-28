@@ -741,9 +741,17 @@ buildEffLam
 buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
   buildLam noHint PlainArrow TyKind Pure \h -> do
-    let eff' = extendEffect (RWSEffect rws (Just h)) (sink eff)
-    buildLam hint PlainArrow (RefTy (Var h) (sink ty)) eff' \ref ->
-      body (sink h) ref
+    let ty' = RefTy (Var h) (sink ty)
+    withFreshBinder hint (LamBinding PlainArrow ty') \b -> do
+      let ref = binderName b
+      h' <- sinkM h
+      let eff' = extendEffect (RWSEffect rws (Just h')) (sink eff)
+      body' <- withAllowedEffects eff' $ buildBlock $ body (sink h) $ sink ref
+      -- Contract the type of the produced function to only mention
+      -- the effects actually demanded by the body.  This is safe because
+      -- it's immediately consumed by an effect discharge primitive.
+      effs <- effectsE body'
+      return $ Lam $ LamExpr (LamBinder b ty' PlainArrow effs) body'
 
 buildForAnn
   :: (Emits n, ScopableBuilder m)
