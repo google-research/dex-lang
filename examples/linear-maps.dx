@@ -38,7 +38,7 @@ instance {n a} [Arbitrary a] Arbitrary (i:n=>(i<..) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
 
-'## Linear Enomorphisms
+'## Linear Endomorphisms
 a.k.a. linear maps from a space back to that same space.
 
 interface [VSpace m, VSpace v] LinearEndo m v
@@ -88,7 +88,9 @@ instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMat n Float) (n=>v)
   diag = \x. for i. x.i.(0@_) .* one
   solve' = backward_substitute
 
--- Skew symmetric maps
+-- Skew symmetric maps.
+-- For now it's just a wrapper around lower triangular matrices with no diagonal
+-- elements, but that might be a bit presumptuous.
 def transpose_lower_to_upper' {n v}
     (lower:i:n=>(..<i)=>v) :
            i:n=>(i<..)=>v =
@@ -110,6 +112,7 @@ instance {n v} [Mul v, VSpace v] LinearEndo (i:n=>(..<i)=>Float) (n=>v)
     dense_rep = skewSymmetricProd a eye  -- Fall back to naive algorithm
     solve dense_rep y
 
+-- Todo: sparse matrices.
 
 
 '## Determinant typeclass
@@ -194,18 +197,41 @@ def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
 -- an efficient solve and determinant is known.
 def gaussianlogpdf {m v}
     [HasDeterminant m, VSpace m, Mul v, VSpace v, InnerProd v, LinearEndo m v]
-    ((mean, covroot) : (v & m)) (x:v) : Float =
+    (mean:v) (covroot:m) (x:v) : Float =
   dim = get_VSpace_dim x
-  alpha = solve' covroot (solve' covroot x)
-  covpart = -0.5 * inner_prod (x - mean) alpha 
-  normpart = log (determinant' covroot)  -- need a square?
-  constpart = 0.5 * dim * log (2.0 * pi)
-  covpart - normpart - constpart
+  squarepart = inner_prod (x - mean) (solve' covroot (solve' covroot (x - mean)))
+  const = dim * log (2.0 * pi) + log (sq (determinant' covroot))
+  -0.5 * (squarepart + const)
 
-gaussianlogpdf (1.0, 2.0) (arb $ new_key 0)
+-- Tests
 
-gaussianlogpdf ((arb $ new_key 0):(Fin 4)=>Float,
-                (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float) ) (arb $ new_key 0)
+solve [[3.0]] [2.0]
+solve' 3.0 2.0
+
+gaussianlogpdf 1.0 2.0 (arb $ new_key 0)
+
+exp (gaussianlogpdf 0.2 (sqrt 2.0) 0.1)
+exp (gaussianlogpdf [0.2] ([[sqrt 2.0]]) [0.1])
+
+def mld (mean:Float) (var:Float) (v:Float): Float =
+  -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
+
+exp $ mld 0.2 2.0 0.1
+
+mat = (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float)
+vec = (arb $ new_key 0):(Fin 4)=>Float
+gaussianlogpdf vec mat (arb $ new_key 0)
+
+-- Check that it sums to 1
+xs = linspace (Fin 100) (-3.0) 3.0
+6.0 * mean for i:(Fin 100).
+  exp $ gaussianlogpdf (-0.1) 0.07 xs.i
+
+
+-- Check that it sums to 1
+covroot = (arb $ new_key 0):((Fin 2)=>(Fin 2)=>Float)
+36.0 * mean for (i, j):((Fin 100) & (Fin 100)).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot [xs.i, xs.j]
 
 
 '## Application 2: SDEs
@@ -228,7 +254,7 @@ def Drift {v} [VSpace v] (v:Type) : Type = v->Time->v
 def Diffusion {m v} [VSpace m, VSpace v] (m:Type) (v:Type) : Type = v->Time->(LinearEndo m v)
 def SDE {m v} [VSpace m, VSpace v] (m:Type) (v:Type) : Type = (Drift v & Diffusion m v )
 
-def SkewSymmetricProd (v:Type) : Type = v->Time->v->v  -- How to express matrix?
+def SkewSymmetricProd (v:Type) : Type = v->Time->v->v
 def NegEnergyFunc (v:Type) : Type = v->Time->Float
 def StationarySDE (v:Type) : Type = (NegEnergyFunc v & SkewSymmetricProd v & DiffusionProd v)
 
