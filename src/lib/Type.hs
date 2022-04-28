@@ -1406,7 +1406,7 @@ declareEffs effs = do
   allowed <- getAllowedEffects
   checkExtends allowed effs
 
-extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
+extendAllowedEffect :: EnvExtender m => Effect n -> m n a -> m n a
 extendAllowedEffect newEff cont = do
   effs <- getAllowedEffects
   withAllowedEffects (extendEffect newEff effs) cont
