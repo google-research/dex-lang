@@ -18,9 +18,9 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
-import Data.Foldable (toList)
+import Data.Foldable (toList, asum)
 import Data.Function ((&))
-import Data.Functor (($>))
+import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc (Pretty (..))
@@ -2212,14 +2212,12 @@ trySynthTerm ty = do
   hasInferenceVars ty >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
     False -> do
-      synthTy <- typeAsSynthType ty
+      synthTy <- liftExcept $ typeAsSynthType ty
       solutions <- liftSyntherM $ synthTerm synthTy
-      let solutionsInstance = filter ((== UsedInstance) . snd) solutions
-      unless (length solutionsInstance <= 1) $
-        throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
       case solutions of
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-        (d, _):_ -> cheapNormalize d -- normalize to reduce code size
+        [d] -> cheapNormalize d -- normalize to reduce code size
+        _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
 {-# SCC trySynthTerm #-}
 
 -- The type of a `SynthAtom` atom must be `DictTy _` or `Pi _`. If it's `Pi _`,
@@ -2234,39 +2232,29 @@ data SynthType n =
 
 data Givens n = Givens { fromGivens :: HM.HashMap (EKey SynthType n) (SynthAtom n) }
 
-data DerivationKind = OnlyGivens | UsedInstance deriving Eq
-
-instance Semigroup DerivationKind where
-  OnlyGivens <> OnlyGivens = OnlyGivens
-  _          <> _          = UsedInstance
-instance Monoid DerivationKind where
-  mempty = OnlyGivens
-
-class (Alternative1 m, Searcher1 m, Fallible1 m, EnvReader m, EnvExtender m)
+class (Alternative1 m, Searcher1 m, EnvReader m, EnvExtender m)
     => Synther m where
   getGivens :: m n (Givens n)
   withGivens :: Givens n -> m n a -> m n a
-  declareUsedInstance :: m n ()
 
 newtype SyntherM (n::S) (a:: *) = SyntherM
-  { runSyntherM' :: OutReaderT Givens (EnvReaderT (WriterT DerivationKind [])) n a }
+  { runSyntherM' :: OutReaderT Givens (EnvReaderT []) n a }
   deriving ( Functor, Applicative, Monad, EnvReader, EnvExtender
-           , ScopeReader, MonadFail, Fallible
+           , ScopeReader, MonadFail
            , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
   getGivens = askOutReader
+  {-# INLINE getGivens #-}
+  withGivens givens cont = localOutReader givens cont
+  {-# INLINE withGivens #-}
 
-  declareUsedInstance = SyntherM $ tell UsedInstance
-
-  withGivens givens cont = do
-    localOutReader givens cont
-
-liftSyntherM :: EnvReader m => SyntherM n a -> m n [(a, DerivationKind)]
+liftSyntherM :: EnvReader m => SyntherM n a -> m n [a]
 liftSyntherM cont =
-  liftM runWriterT $ liftEnvReaderT do
+  liftEnvReaderT do
     initGivens <- givensFromEnv
     runOutReaderT initGivens $ runSyntherM' cont
+{-# INLINE liftSyntherM #-}
 
 givensFromEnv :: EnvReader m => m n (Givens n)
 givensFromEnv = do
@@ -2280,26 +2268,38 @@ extendGivens newGivens cont = do
   prevGivens <- getGivens
   finalGivens <- getSuperclassClosure prevGivens newGivens
   withGivens finalGivens cont
+{-# INLINE extendGivens #-}
 
 getSynthType :: EnvReader m => SynthAtom n -> m n (SynthType n)
 getSynthType x = do
   ty <- getType x
-  return $ runHardFail $ typeAsSynthType ty
+  return $ case typeAsSynthType ty of
+    Failure errs -> error $ pprint errs
+    Success ty'  -> ty'
+{-# INLINE getSynthType #-}
 
-typeAsSynthType :: Fallible m => Type n -> m (SynthType n)
+typeAsSynthType :: Type n -> Except (SynthType n)
 typeAsSynthType (DictTy dictTy) = return $ SynthDictType dictTy
 typeAsSynthType (Pi (PiType b@(PiBinder _ _ arrow) Pure resultTy))
   | arrow == ImplicitArrow || arrow == ClassArrow = do
      resultTy' <- typeAsSynthType resultTy
      return $ SynthPiType $ Abs b resultTy'
-typeAsSynthType ty = throw TypeErr $ "Can't synthesize terms of type: " ++ pprint ty
+typeAsSynthType ty = Failure $ Errs [Err TypeErr mempty $ "Can't synthesize terms of type: " ++ pprint ty]
+{-# SCC typeAsSynthType #-}
 
-getSuperclassClosure
-  :: forall m n. EnvReader m => Givens n -> [SynthAtom n] -> m n (Givens n)
+getSuperclassClosure :: EnvReader m => Givens n -> [SynthAtom n] -> m n (Givens n)
 getSuperclassClosure givens newGivens = do
-  liftM snd $ runStateT1 (mapM_ visitGiven newGivens) givens
+  Distinct <- getDistinct
+  env <- unsafeGetEnv
+  return $ getSuperclassClosurePure env givens newGivens
+{-# INLINE getSuperclassClosure #-}
+
+getSuperclassClosurePure
+  :: Distinct n => Env n -> Givens n -> [SynthAtom n] -> Givens n
+getSuperclassClosurePure env givens newGivens =
+  snd $ runState (runEnvReaderT env (mapM_ visitGiven newGivens)) givens
   where
-    visitGiven :: EnvReader m => SynthAtom n -> StateT1 Givens m n ()
+    visitGiven :: SynthAtom n -> EnvReaderT (State (Givens n)) n ()
     visitGiven x = alreadyVisited x >>= \case
       True -> return ()
       False -> do
@@ -2307,62 +2307,62 @@ getSuperclassClosure givens newGivens = do
         parents <- getDirectSuperclasses x
         mapM_ visitGiven parents
 
-    alreadyVisited :: EnvReader m => SynthAtom n -> StateT1 Givens m n Bool
+    alreadyVisited :: SynthAtom n -> EnvReaderT (State (Givens n)) n Bool
     alreadyVisited x = do
       Givens m <- get
       ty <- getSynthType x
       return $ EKey ty `HM.member` m
 
-    markAsVisited :: EnvReader m => SynthAtom n -> StateT1 Givens m n ()
+    markAsVisited :: SynthAtom n -> EnvReaderT (State (Givens n)) n ()
     markAsVisited x = do
       ty <- getSynthType x
       modify \(Givens m) -> Givens $ HM.insert (EKey ty) x m
 
-getDirectSuperclasses :: EnvReader m => SynthAtom n -> m n [SynthAtom n]
-getDirectSuperclasses synthExpr = do
-  synthTy <- getSynthType synthExpr
-  numSuperclasses <- getNumSuperclasses synthTy
-  forM [0..numSuperclasses-1] \i -> do
-    return $ DictCon $ SuperclassProj synthExpr i
+    getDirectSuperclasses :: SynthAtom n -> EnvReaderT (State (Givens n)) n [SynthAtom n]
+    getDirectSuperclasses synthExpr = do
+      synthTy <- getSynthType synthExpr
+      -- TODO: Does this really create a full translation only to inspect the top?
+      superclasses <- case synthTy of
+        SynthPiType _ -> return []
+        SynthDictType (DictType _ className _) -> do
+          ClassDef _ _ _ superclasses _ <- lookupClassDef className
+          return $ void superclasses
+      return $ enumerate superclasses <&> \(i, _) -> DictCon $ SuperclassProj synthExpr i
 
-getNumSuperclasses :: EnvReader m => SynthType n -> m n Int
-getNumSuperclasses (SynthPiType _) = return 0
-getNumSuperclasses (SynthDictType (DictType _ className _)) = do
-  ClassDef _ _ _ superclasses _ <- lookupClassDef className
-  return $ length superclasses
-
-synthTerm :: Synther m => SynthType n -> m n (SynthAtom n)
-synthTerm (SynthPiType (Abs (PiBinder b argTy arr) resultTy)) =
-  withFreshBinder (getNameHint b) argTy \b' -> do
-    let v = binderName b'
-    resultTy' <- applySubst (b@>v) resultTy
-    newGivens <- case arr of
-      ClassArrow -> return [Var v]
-      _ -> return []
-    synthExpr <- extendGivens newGivens $ synthTerm resultTy'
-    return $ Lam $ LamExpr (LamBinder b' argTy arr Pure) (AtomicBlock synthExpr)
-synthTerm (SynthDictType dictTy) = do
-  synthDictFromGiven dictTy <|> synthDictFromInstance dictTy
+synthTerm :: SynthType n -> SyntherM n (SynthAtom n)
+synthTerm ty = confuseGHC >>= \_ -> case ty of
+  SynthPiType (Abs (PiBinder b argTy arr) resultTy) ->
+    withFreshBinder (getNameHint b) argTy \b' -> do
+      let v = binderName b'
+      resultTy' <- applySubst (b@>v) resultTy
+      newGivens <- case arr of
+        ClassArrow -> return [Var v]
+        _ -> return []
+      synthExpr <- extendGivens newGivens $ synthTerm resultTy'
+      return $ Lam $ LamExpr (LamBinder b' argTy arr Pure) (AtomicBlock synthExpr)
+  SynthDictType dictTy -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
 {-# SCC synthTerm #-}
 
-synthDictFromGiven :: Synther m => DictType n -> m n (SynthAtom n)
+synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromGiven dictTy = do
-  given <- getAlternative =<< ((HM.elems . fromGivens) <$> getGivens)
-  synthTy <- getSynthType given
-  args <- instantiateSynthArgs dictTy synthTy
-  case nonEmpty args of
-    Nothing -> return given
-    Just args' -> return $ DictCon $ InstantiatedGiven given args'
+  givens <- ((HM.elems . fromGivens) <$> getGivens)
+  asum $ givens <&> \given -> do
+    synthTy <- getSynthType given
+    args <- instantiateSynthArgs dictTy synthTy
+    case nonEmpty args of
+      Nothing -> return given
+      Just args' -> return $ DictCon $ InstantiatedGiven given args'
 
-synthDictFromInstance :: Synther m => DictType n -> m n (SynthAtom n)
+synthDictFromInstance :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromInstance dictTy@(DictType _ targetClass _) = do
-  declareUsedInstance
-  candidate <- getAlternative =<< getInstanceDicts targetClass
-  synthTy <- getInstanceType candidate
-  args <- instantiateSynthArgs dictTy synthTy
-  return $ DictCon $ InstanceDict candidate args
+  instances <- getInstanceDicts targetClass
+  asum $ instances <&> \candidate -> do
+    synthTy <- getInstanceType candidate
+    args <- instantiateSynthArgs dictTy synthTy
+    return $ DictCon $ InstanceDict candidate args
 
-getInstanceType :: EnvReader m => InstanceName n -> m n (SynthType n)
+-- TODO: This seems... excessively expensive?
+getInstanceType :: InstanceName n -> SyntherM n (SynthType n)
 getInstanceType instanceName = do
   InstanceDef className bs params _ <- lookupInstanceDef instanceName
   ClassDef classSourceName _ _ _ _ <- lookupClassDef className
@@ -2376,33 +2376,33 @@ getInstanceType instanceName = do
       Nest b rest ->
         let restTy = go rest classSourceName className params
         in SynthPiType $ Abs b restTy
+{-# SCC getInstanceType #-}
 
-instantiateSynthArgs :: Synther m => DictType n -> SynthType n -> m n [Atom n]
+instantiateSynthArgs :: DictType n -> SynthType n -> SyntherM n [Atom n]
 instantiateSynthArgs target synthTy = do
-  args <- liftM fromListE $ (liftExcept =<<) $ liftSolverM $ solveLocal do
+  ListE args <- {-# SCC argSolving #-} (liftExceptAlt =<<) $ liftSolverM $ solveLocal do
     target' <- sinkM target
     synthTy' <- sinkM synthTy
-    args <- instantiateSynthArgsRec target' synthTy'
+    args <- {-# SCC argInstantiation #-} instantiateSynthArgsRec [] target' emptyInFrag synthTy'
     zonk $ ListE args
   forM args \case
-    Con (DictHole _ argTy) -> typeAsSynthType argTy >>= synthTerm
+    Con (DictHole _ argTy) -> liftExceptAlt (typeAsSynthType argTy) >>= synthTerm
     arg -> return arg
 
 instantiateSynthArgsRec
-  :: (EmitsInf n, Unifier m)
-  => DictType n -> SynthType n -> m n [Atom n]
-instantiateSynthArgsRec dictTy synthTy = case synthTy of
+  :: EmitsInf n
+  => [Atom n] -> DictType n -> SubstFrag AtomSubstVal n l n -> SynthType l -> SolverM n [Atom n]
+instantiateSynthArgsRec prevArgsRec dictTy subst synthTy = case synthTy of
   SynthPiType (Abs (PiBinder b argTy arrow) resultTy) -> do
+    argTy' <- applySubst subst argTy
     param <- case arrow of
-      ImplicitArrow -> Var <$> freshInferenceName argTy
-      ClassArrow -> return $ Con (DictHole Nothing argTy)
+      ImplicitArrow -> Var <$> freshInferenceName argTy'
+      ClassArrow -> return $ Con $ DictHole Nothing argTy'
       _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
-    resultTy' <- applySubst (b@>SubstVal param) resultTy
-    params <- instantiateSynthArgsRec dictTy resultTy'
-    return (param : params)
+    instantiateSynthArgsRec (param:prevArgsRec) dictTy (subst <.> b @> SubstVal param) resultTy
   SynthDictType dictTy' -> do
-    unify (DictTy dictTy) (DictTy dictTy')
-    return []
+    unify dictTy =<< applySubst subst dictTy'
+    return $ reverse prevArgsRec
 
 instance GenericE Givens where
   type RepE Givens = HashMapE (EKey SynthType) SynthAtom
@@ -2610,3 +2610,8 @@ instance SinkableE      SynthType
 instance HoistableE     SynthType
 instance SubstE Name         SynthType
 instance SubstE AtomSubstVal SynthType
+
+-- See Note [Confuse GHC] from Simplify.hs
+confuseGHC :: EnvReader m => m n (DistinctEvidence n)
+confuseGHC = getDistinct
+{-# INLINE confuseGHC #-}
