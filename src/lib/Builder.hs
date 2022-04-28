@@ -751,9 +751,11 @@ buildForAnn
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 buildForAnn hint ann ty body = do
-  -- TODO: consider only tracking the effects that are actually needed.
-  eff <- getAllowedEffects
-  lam <- buildLam hint PlainArrow ty eff body
+  lam <- withFreshBinder hint (LamBinding PlainArrow ty) \b -> do
+    let v = binderName b
+    body' <- buildBlock $ body $ sink v
+    effs <- effectsE body'
+    return $ Lam $ LamExpr (LamBinder b ty PlainArrow effs) body'
   liftM Var $ emit $ Hof $ For ann lam
 
 buildFor :: (Emits n, ScopableBuilder m)
