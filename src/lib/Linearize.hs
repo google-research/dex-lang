@@ -148,7 +148,9 @@ isTrivialForAD expr = do
     Just tTy -> isSingletonType tTy
   hasActiveEffs <- exprEffects expr >>= \case
                      Pure -> return False
-                     _ -> return True -- TODO: be more precise here
+                     -- TODO: Be more precise here, such as checking
+                     -- whether the effects are themselves active.
+                     _ -> return True
   hasActiveVars <- isActive expr
   return $ not hasActiveEffs && (trivialTy || not hasActiveVars)
 
