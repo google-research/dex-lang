@@ -2,6 +2,7 @@
 *.o
 test.db
 *.prof
+*.prof.html
 test-script.cd
 *.out
 *.so
