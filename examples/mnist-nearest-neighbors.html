@@ -337,7 +337,7 @@ findNearestNeighbor metric xs x <span class="symbol">=</span>
 16 | findNearestNeighbor : (a -&gt; a -&gt; Float) -&gt; n=&gt;a -&gt; a -&gt; n
    |                                                          ^
 unexpected newline
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, arrow, backquoted name, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">imgDistance <span class="symbol">:</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> sq (x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j)
 
@@ -346,7 +346,7 @@ imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</spa
 21 | imgDistance : Img -&gt; Img -&gt; Float
    |                                  ^
 unexpected newline
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, arrow, backquoted name, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">fracTrue <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Bool</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> i<span class="symbol">.</span> float (b2i xs<span class="symbol">.</span>i)
 
@@ -355,7 +355,7 @@ fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> 
 24 | fracTrue : n=&gt;Bool -&gt; Float
    |                            ^
 unexpected newline
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, arrow, backquoted name, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx <span class="symbol">@</span><span class="type-name">NTest</span> 123
 </div><div class="err-block">Error: variable not in scope: NTest
 
@@ -400,7 +400,7 @@ closestTrainExample<span class="symbol">.</span>i <span class="symbol">=</span> 
 39 | closestTrainExample : NTestSmall =&gt; NTrain
    |                                           ^
 unexpected newline
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, arrow, expression, or infix operator
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fracTrue <span class="keyword">for</span> i<span class="symbol">.</span> ysTrain<span class="symbol">.</span>(closestTrainExample<span class="symbol">.</span>i) <span class="symbol">==</span> ysTest&#39;<span class="symbol">.</span>i
 </div><div class="err-block">Error: variable not in scope: fracTrue
 
