@@ -4,13 +4,15 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE MagicHash #-}
+
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
              scanM, composeN, mapMaybe, uncons, repeated,
              transitiveClosure, transitiveClosureM,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
-             measureSeconds,
+             measureSeconds, sameConstructor,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
              iota, whenM, unsnoc, anyM,
@@ -29,6 +31,8 @@ import qualified Data.Map.Strict as M
 import Control.Applicative
 import Control.Monad.State.Strict
 import System.CPUTime
+import GHC.Base (getTag)
+import GHC.Exts ((==#), tagToEnum#)
 
 class IsBool a where
   toBool :: a -> Bool
@@ -289,3 +293,7 @@ addHash s = File s $ show (hash s :: Digest SHA256)
 
 readFileWithHash :: MonadIO m => FilePath -> m File
 readFileWithHash path = liftIO $ addHash <$> BS.readFile path
+
+sameConstructor :: a -> a -> Bool
+sameConstructor x y = tagToEnum# (getTag x ==# getTag y)
+{-# INLINE sameConstructor #-}

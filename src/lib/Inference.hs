@@ -1997,31 +1997,30 @@ unify e1 e2 = do
   e1' <- zonk e1
   e2' <- zonk e2
   (unifyZonked e1' e2' <!> throw TypeErr "")
+{-# INLINE unify #-}
 {-# SCC unify #-}
 
 instance Unifiable Atom where
-  unifyZonked e1 e2 =
-        unifyDirect e2 e1
-    <|> unifyDirect e1 e2
-    <|> unifyZip e1 e2
-   where
-     unifyDirect :: Type n -> Type n -> SolverM n ()
-     unifyDirect (Var v) (Var v') | v == v' = return ()
-     unifyDirect t (Var v) = extendSolution v t
-     unifyDirect _ _ = empty
-
-     unifyZip :: EmitsInf n => Type n -> Type n -> SolverM n ()
-     unifyZip t1 t2 = case (t1, t2) of
-       (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
-       (TabPi piTy, TabPi piTy') -> unifyTabPiType piTy piTy'
-       (RecordTy els, RecordTy els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
-       (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
-       (TypeCon _ c xs, TypeCon _ c' xs') ->
-         unless (c == c') empty >> unifyFoldable xs xs'
-       (TC con, TC con') -> unifyFoldable con con'
-       (Eff eff, Eff eff') -> unify eff eff'
-       (DictTy d, DictTy d') -> unify d d'
-       _ -> unifyEq t1 t2
+  unifyZonked e1 e2 = confuseGHC >>= \_ -> case sameConstructor e1 e2 of
+    False -> case (e1, e2) of
+      (t, Var v) -> extendSolution v t
+      (Var v, t) -> extendSolution v t
+      _ -> empty
+    True -> case (e1, e2) of
+      (Var v', Var v) -> if v == v' then return () else extendSolution v e1 <|> extendSolution v' e2
+      (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
+      (TabPi piTy, TabPi piTy') -> unifyTabPiType piTy piTy'
+      (RecordTy els, RecordTy els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
+      (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
+      (TypeCon _ c xs, TypeCon _ c' xs') -> guard (c == c') >> zipWithM_ unify xs xs'
+      (TC con, TC con') -> do
+        guard $ sameConstructor con con'
+        -- TODO: Optimize this!
+        guard $ void con == void con'
+        zipWithM_ unify (toList con) (toList con')
+      (Eff eff, Eff eff') -> unify eff eff'
+      (DictTy d, DictTy d') -> unify d d'
+      _ -> unifyEq e1 e2
 
 instance Unifiable DictType where
   unifyZonked (DictType _ c params) (DictType _ c' params') =
@@ -2041,6 +2040,7 @@ instance Unifiable (EffectRowP AtomName) where
          Just v' | v == v' -> guard $ S.null effs'
          _ -> extendSolution v (Eff r)
      unifyDirect _ _ = empty
+     {-# INLINE unifyDirect #-}
 
      unifyZip :: EmitsInf n => EffectRow n -> EffectRow n -> SolverM n ()
      unifyZip r1 r2 = case (r1, r2) of
@@ -2094,6 +2094,7 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
          Just v' | v == v' -> guard $ null items
          _ -> extendSolution v $ LabeledRow $ extRowAsFieldRowElems r
      unifyDirect _ _ = empty
+     {-# INLINE unifyDirect #-}
 
      unifyZip :: EmitsInf n
               => ExtLabeledItemsE Type AtomName n
@@ -2123,14 +2124,6 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
            -- Catching this fixes the infinite loop described in
            -- Issue #818.
            empty
-
-unifyFoldable
-  :: (Eq (f ()), Functor f, Foldable f, Unifiable e, EmitsInf n)
-  => f (e n) -> f (e n) -> SolverM n ()
-unifyFoldable xs ys = do
-  unless (void xs == void ys) empty
-  zipWithM_ unify (toList xs) (toList ys)
--- TODO: That might be inefficient?
 
 unifyEq :: AlphaEqE e => e n -> e n -> SolverM n ()
 unifyEq e1 e2 = guard =<< alphaEq e1 e2
