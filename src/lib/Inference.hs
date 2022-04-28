@@ -1866,16 +1866,19 @@ instance Solver SolverM where
   extendSolverSubst v ty = SolverM $
     void $ extendTrivialInplaceT $
       SolverOutFrag Empty mempty (singletonSolverSubst v ty)
+  {-# INLINE extendSolverSubst #-}
 
   zonk e = SolverM do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap $ sink e
+  {-# INLINE zonk #-}
 
   emitSolver binding = do
     Abs b v <- freshNameM $ getNameHint @String "?"
     let frag = SolverOutFrag (Nest (b:>binding) Empty) mempty emptySolverSubst
     SolverM $ extendInplaceT $ Abs frag v
+  {-# INLINE emitSolver #-}
 
   addDefault t1 t2 = SolverM $
     extendTrivialInplaceT $ SolverOutFrag Empty defaults emptySolverSubst
@@ -1891,10 +1894,12 @@ instance Solver SolverM where
       EmitsInf <- fabricateEmitsInfEvidenceM
       runSolverM' cont
     Abs (SolverOutFrag unsolvedInfNames _ _) result <- return results
-    case hoist unsolvedInfNames result of
-      HoistSuccess result' -> return result'
-      HoistFailure vs -> do
-        throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+    case unsolvedInfNames of
+      Empty -> return result
+      _     -> case hoist unsolvedInfNames result of
+        HoistSuccess result' -> return result'
+        HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+  {-# INLINE solveLocal #-}
 
 instance Unifier SolverM
 
@@ -1902,9 +1907,11 @@ freshInferenceName :: (EmitsInf n, Solver m) => Kind n -> m n (AtomName n)
 freshInferenceName k = do
   ctx <- srcPosCtx <$> getErrCtx
   emitSolver $ InfVarBound k ctx
+{-# INLINE freshInferenceName #-}
 
 freshSkolemName :: (EmitsInf n, Solver m) => Kind n -> m n (AtomName n)
 freshSkolemName k = emitSolver $ SkolemBound k
+{-# INLINE freshSkolemName #-}
 
 type Solver2 (m::MonadKind2) = forall i. Solver (m i)
 
@@ -1918,7 +1925,8 @@ singletonSolverSubst v ty = SolverSubst $ M.singleton v ty
 -- metadata about which name->type mappings contain no inference variables and
 -- can be skipped.
 catSolverSubsts :: Distinct n => Scope n -> SolverSubst n -> SolverSubst n -> SolverSubst n
-catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) = SolverSubst $ s1' <> s2
+catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) =
+  if M.null s2 then SolverSubst s1 else SolverSubst $ s1' <> s2
   where s1' = fmap (applySolverSubstE scope (SolverSubst s2)) s1
 
 -- TODO: put this pattern and friends in the Name library? Don't really want to
@@ -1933,8 +1941,8 @@ lookupSolverSubst (SolverSubst m) name =
 
 applySolverSubstE :: (SubstE (SubstVal AtomNameC Atom) e, Distinct n)
                   => Scope n -> SolverSubst n -> e n -> e n
-applySolverSubstE scope solverSubst e =
-  fmapNames scope (lookupSolverSubst solverSubst) e
+applySolverSubstE scope solverSubst@(SolverSubst m) e =
+  if M.null m then e else fmapNames scope (lookupSolverSubst solverSubst) e
 
 zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
                => InfOutMap n -> e n -> e n
@@ -2164,17 +2172,21 @@ isInferenceName :: EnvReader m => AtomName n -> m n Bool
 isInferenceName v = lookupEnv v >>= \case
   AtomNameBinding (SolverBound (InfVarBound _ _)) -> return True
   _ -> return False
+{-# INLINE isInferenceName #-}
 
 isSkolemName :: EnvReader m => AtomName n -> m n Bool
 isSkolemName v = lookupEnv v >>= \case
   AtomNameBinding (SolverBound (SkolemBound _)) -> return True
   _ -> return False
+{-# INLINE isSkolemName #-}
 
 freshType :: (EmitsInf n, Solver m) => Kind n -> m n (Type n)
 freshType k = Var <$> freshInferenceName k
+{-# INLINE freshType #-}
 
 freshEff :: (EmitsInf n, Solver m) => m n (EffectRow n)
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
+{-# INLINE freshEff #-}
 
 renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, SubstE Name e)
                    => e n -> m n (Abs (Nest (NameBinder AtomNameC)) e n)
