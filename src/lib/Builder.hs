@@ -708,15 +708,17 @@ buildCase :: (Emits n, ScopableBuilder m)
           -> (forall l. (Emits l, DExt n l) => Int -> [AtomName l] -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
-  eff <- getAllowedEffects
   scrutTy <- getType scrut
   altsBinderTys <- caseAltsBinderTys scrutTy
-  alts <- forM (enumerate altsBinderTys) \(i, bs) -> do
-    buildNaryAbs bs \xs -> do
-      buildBlock do
+  (alts, effs) <- unzip <$> forM (enumerate altsBinderTys) \(i, bs) -> do
+    (Abs bs' (body `PairE` eff')) <- buildNaryAbs bs \xs -> do
+      blk <- buildBlock do
         ListE xs' <- sinkM $ ListE xs
         indexedAltBody i xs'
-  liftM Var $ emit $ Case scrut alts resultTy eff
+      eff <- effectsE blk
+      return $ blk `PairE` eff
+    return (Abs bs' body, ignoreHoistFailure $ hoist bs' eff')
+  liftM Var $ emit $ Case scrut alts resultTy $ mconcat effs
 
 buildSplitCase :: (Emits n, ScopableBuilder m)
                => LabeledItems (Type n) -> Atom n -> Type n
@@ -1189,7 +1191,7 @@ indexSetSize ty = do
 -- XXX: the first argument is the true case, following the
 -- surface-level `if ... then ... else ...`, but the order
 -- is flipped in the actual `Case`, because False acts like 0.
--- TODO: consider a version that figures out the resul type itself.
+-- TODO: consider a version that figures out the result type itself.
 emitIf :: (Emits n, ScopableBuilder m)
        => Atom n
        -> Type n

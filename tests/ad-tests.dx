@@ -356,3 +356,16 @@ grad (\x. dot (grad func2 x) v) x ~~ result
 -- forward over reverse
 jvp (grad func2) x v ~~ result
 > True
+
+-- Regression test for bug #848, AD through state effect over case
+def min' (a:Float) (b:Float) : Float =
+  yield_state a \s.
+    best = get s
+    new_best = select (best < b) best 2.0
+    s := new_best
+
+grad (\x . (min' x (x+1))) 1.0
+> 1.
+
+grad (\x . [x].(argmin [x])) 1.0
+> 1.
