@@ -24,18 +24,16 @@ import qualified Data.Set as S
 import GHC.Exts (inline)
 
 import Err
-
 import Name
 import MTL1
 import Builder
 import Syntax
 import Type
-import Util (enumerate)
+import Util (enumerate, foldMapM, restructure)
 import CheapReduction
 import Linearize
 import Transpose
 import LabeledItems
-import Util (restructure)
 import Types.Primitives
 
 -- === simplification monad ===
@@ -151,6 +149,12 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
             liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
 
+caseComputingEffs
+  :: forall m n. (MonadFail1 m, EnvReader m)
+  => Atom n -> [Alt n] -> Type n -> m n (Expr n)
+caseComputingEffs scrut alts resultTy = do
+  Case scrut alts resultTy <$> foldMapM effectsE alts
+
 defuncCase :: Emits o => Atom o -> [Alt i] -> Type o -> SimplifyM i o (Atom o)
 defuncCase scrut alts resultTy = do
   split <- splitDataComponents resultTy
@@ -159,9 +163,9 @@ defuncCase scrut alts resultTy = do
   let closureSumTy = SumTy closureTys
   let newNonDataTy = nonDataTy split
   alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
-  eff <- getAllowedEffects -- TODO: more precise effects
-  caseResult <- liftM Var $ emit $
-                  Case scrut alts'' (PairTy (dataTy split) closureSumTy) eff
+  caseExpr <- caseComputingEffs scrut alts'' (PairTy (dataTy split) closureSumTy)
+  caseResult <- liftM Var $ emit $ caseExpr
+
   (dataVal, sumVal) <- fromPair caseResult
   reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
     buildUnaryAtomAlt ty \v -> applyRecon (sink recon) (Var v)
@@ -234,8 +238,8 @@ simplifyApp f xs =
           buildAlt (EmptyAbs bs) \vs -> do
             a' <- applySubst (bs@@>vs) a
             naryApp a' (map sink $ toList xs)
-        eff <- getAllowedEffects -- TODO: more precise effects
-        dropSubst $ simplifyExpr $ Case e alts' resultTy eff
+        caseExpr <- caseComputingEffs e alts' resultTy
+        dropSubst $ simplifyExpr caseExpr
       _ -> naryApp atom $ toList xs
 
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
@@ -271,8 +275,8 @@ simplifyTabApp f xs =
           buildAlt (EmptyAbs bs) \vs -> do
             a' <- applySubst (bs@@>vs) a
             naryTabApp a' (map sink $ toList xs)
-        eff <- getAllowedEffects -- TODO: more precise effects
-        dropSubst $ simplifyExpr $ Case e alts' resultTy eff
+        caseExpr <- caseComputingEffs e alts' resultTy
+        dropSubst $ simplifyExpr $ caseExpr
       _ -> naryTabApp atom $ toList xs
 
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (TabLamExpr i) (Atom o))

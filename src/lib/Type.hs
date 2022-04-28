@@ -17,7 +17,8 @@ module Type (
   oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
   isSingletonType, singletonTypeVal, asNaryPiType,
   numNaryPiArgs, naryLamExprType, getMethodIndex,
-  extendEffect, exprEffects, declNestEffects, computeAbsEffects, getReferentTy) where
+  extendEffect, effectsE, exprEffects, declNestEffects,
+  computeAbsEffects, getReferentTy) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -115,27 +116,16 @@ getClassTy (ClassDef _ _ bs _ _) = go bs
 
 -- === querying effects ===
 
-computeAbsEffects :: (EnvExtender m, SubstE Name e)
-  => Abs (Nest Decl) e n -> m n (Abs (Nest Decl) (EffectRow `PairE` e) n)
-computeAbsEffects it = refreshAbs it \decls result -> do
-  effs <- declNestEffects decls
-  return $ Abs decls (effs `PairE` result)
-{-# INLINE computeAbsEffects #-}
+class HasEffectsE (e::E) where
+  effectsEImpl :: e n -> EnvReaderM n (EffectRow n)
 
-declNestEffects :: (EnvReader m) => Nest Decl n l -> m l (EffectRow l)
-declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
-{-# INLINE declNestEffects #-}
+effectsE :: (EnvReader m, HasEffectsE e) => e n -> m n (EffectRow n)
+effectsE = liftEnvReaderM . effectsEImpl
+{-# INLINE effectsE #-}
 
-declNestEffectsRec :: Nest Decl n l -> EffectRow l -> EnvReaderM l (EffectRow l)
-declNestEffectsRec Empty !acc = return acc
-declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
-  expr <- sinkM $ declExpr decl
-  deff <- exprEffects expr
-  acc' <- sinkM $ acc <> deff
-  declNestEffectsRec rest acc'
-  where
-    declExpr :: Decl n l -> Expr n
-    declExpr (Let _ (DeclBinding _ _ expr)) = expr
+instance HasEffectsE Expr where
+  effectsEImpl = exprEffects
+  {-# INLINE effectsEImpl #-}
 
 exprEffects :: (EnvReader m) => Expr n -> m n (EffectRow n)
 exprEffects expr = case expr of
@@ -188,6 +178,16 @@ exprEffects expr = case expr of
   Case _ _ _ effs -> return effs
 {-# SPECIALIZE exprEffects :: Expr n -> EnvReaderM n (EffectRow n) #-}
 
+instance HasEffectsE Block where
+  effectsEImpl (Block (BlockAnn _ effs) _ _) = return effs
+  effectsEImpl (Block NoBlockAnn _ _) = return Pure
+  {-# INLINE effectsEImpl #-}
+
+instance HasEffectsE Alt where
+  effectsEImpl alt = refreshAbs alt \xs blk ->
+    ignoreHoistFailure . hoist xs <$> effectsEImpl blk
+  {-# INLINE effectsEImpl #-}
+
 functionEffs :: EnvReader m => Atom n -> m n (EffectRow n)
 functionEffs f = getType f >>= \case
   Pi (PiType b effs _) -> return $ ignoreHoistFailure $ hoist b effs
@@ -203,6 +203,30 @@ rwsFunEffects rws f = getType f >>= \case
 
 deleteEff :: Effect n -> EffectRow n -> EffectRow n
 deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
+
+-- === computing effects ===
+
+computeAbsEffects :: (EnvExtender m, SubstE Name e)
+  => Abs (Nest Decl) e n -> m n (Abs (Nest Decl) (EffectRow `PairE` e) n)
+computeAbsEffects it = refreshAbs it \decls result -> do
+  effs <- declNestEffects decls
+  return $ Abs decls (effs `PairE` result)
+{-# INLINE computeAbsEffects #-}
+
+declNestEffects :: (EnvReader m) => Nest Decl n l -> m l (EffectRow l)
+declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
+{-# INLINE declNestEffects #-}
+
+declNestEffectsRec :: Nest Decl n l -> EffectRow l -> EnvReaderM l (EffectRow l)
+declNestEffectsRec Empty !acc = return acc
+declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
+  expr <- sinkM $ declExpr decl
+  deff <- exprEffects expr
+  acc' <- sinkM $ acc <> deff
+  declNestEffectsRec rest acc'
+  where
+    declExpr :: Decl n l -> Expr n
+    declExpr (Let _ (DeclBinding _ _ expr)) = expr
 
 -- === the type checking/querying monad ===
 
