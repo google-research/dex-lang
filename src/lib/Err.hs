@@ -10,7 +10,7 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwErr,
             addContext, addSrcContext, addSrcTextContext,
-            catchIOExcept, liftExcept,
+            catchIOExcept, liftExcept, liftExceptAlt,
             assertEq, ignoreExcept,
             pprint, docAsStr,
             FallibleApplicativeWrapper, traverseMergingErrs,
@@ -274,6 +274,12 @@ liftExcept :: Fallible m => Except a -> m a
 liftExcept (Failure errs) = throwErrs errs
 liftExcept (Success ans) = return ans
 {-# INLINE liftExcept #-}
+
+liftExceptAlt :: Alternative m => Except a -> m a
+liftExceptAlt = \case
+  Success a -> pure a
+  Failure _ -> empty
+{-# INLINE liftExceptAlt #-}
 
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Failure e) = error $ pprint e
