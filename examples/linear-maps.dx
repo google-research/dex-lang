@@ -1,0 +1,248 @@
+import linalg
+
+'## Instances for triangular tables
+How to avoid these repetitive instances?
+
+instance {a n} [Add a] Add (i:n => (..<i) => a)
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance {a n} [Add a] Add (i:n => (i<..) => a)
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance {a n} [VSpace a] VSpace (i:n => (..i) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (i..) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (..<i) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (i<..) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(..<i) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(..i) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(i..) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(i<..) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+
+'## Linear Enomorphisms
+a.k.a. linear maps from a space back to that same space.
+
+interface [VSpace m, VSpace v] LinearEndo m v
+  apply: m -> v -> v
+  -- determinant': m -> Float
+  diag: m -> v
+  solve': m -> v -> v
+
+'We'd like to remove `v` from the above interface,
+and instead use associated types to specify a `v` for each `m`.
+But for now, fields in typeclasses can't refer to one another.
+This means that `determinant'` can't be part of this typeclass yet,
+because `v` is always ambiguous at its usage site.
+
+
+instance {v} [Mul v, VSpace v] LinearEndo (Float) v
+  apply = (.*)
+  -- determinant' = id
+  diag = \a. a .* one
+  solve' = \a b. b / a
+
+-- Diagonal matrices
+instance {n v} [Mul v, VSpace v] LinearEndo (n=>Float) (n=>v)
+  apply = \x y. for i. x.i .* y.i
+  -- determinant' = prod
+  diag = \a. for i. a.i .* one
+  solve' = \a b. for i. b.i / a.i
+
+-- Full-rank matrices
+instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
+  apply = \x y. for i. sum for j. x.i.j .* y.j
+  -- determinant' = determinant
+  diag = \x. for i. x.i.i .* one
+  solve' = solve
+
+-- Lower-triangular matrices
+instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMat n Float) (n=>v)
+  apply = \x y. for i. sum for j. x.i.j .* y.(%inject j)
+  -- determinant' = \x. prod $ lower_tri_diag x
+  diag = \x. for i. x.i.(cast i) .* one
+  solve' = forward_substitute
+
+-- Upper-triangular matrices
+instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMat n Float) (n=>v)
+  apply = \x y. for i. sum for j. x.i.j .* y.(%inject j)
+  -- determinant' = \x. prod $ upper_tri_diag x
+  diag = \x. for i. x.i.(0@_) .* one
+  solve' = backward_substitute
+
+-- Skew symmetric maps
+def transpose_lower_to_upper' {n v}
+    (lower:i:n=>(..<i)=>v) :
+           i:n=>(i<..)=>v =
+  for i j.
+    j' = %inject j
+    lower.j'.(unsafe_from_ordinal _ (ordinal i))
+
+def skewSymmetricProd {v n} [VSpace v]
+    (lower: i:n=>(..<i)=>Float) (y: n=>v) : n=>v =
+  lower_prod = for i. sum for j. lower.i.j .* (y.(%inject j))
+  upper = transpose_lower_to_upper' lower
+  upper_prod = for i. sum for j. upper.i.j .* (y.(%inject j))
+  lower_prod - upper_prod
+
+instance {n v} [Mul v, VSpace v] LinearEndo (i:n=>(..<i)=>Float) (n=>v)
+  apply = skewSymmetricProd
+  diag = \x. zero
+  solve' = \a y.
+    dense_rep = skewSymmetricProd a eye  -- Fall back to naive algorithm
+    solve dense_rep y
+
+
+
+'## Determinant typeclass
+This should probably be part of the `LinearEndo` typeclass,
+once associated types work.
+
+interface HasDeterminant m
+  determinant': m -> Float
+
+instance HasDeterminant Float
+  determinant' = id
+
+-- Diagonal matrices
+instance {n} HasDeterminant (n=>Float)
+  determinant' = prod
+
+-- Full-rank matrices
+instance {n} HasDeterminant (n=>n=>Float)
+  determinant' = determinant
+
+-- Lower-triangular matrices
+instance {n} HasDeterminant (LowerTriMat n Float)
+  determinant' = \x. prod $ lower_tri_diag x
+
+-- Upper-triangular matrices
+instance {n} HasDeterminant (UpperTriMat n Float)
+  determinant' = \x. prod $ upper_tri_diag x
+
+instance {n} HasDeterminant (i:n=>(..<i)=>Float)
+  determinant' = case is_odd (size n) of
+    True -> zero
+    False -> todo  -- Pfaffian
+
+
+'## Tests
+
+-- Check inverse of skew-symmetric matrices.
+skew_mat : i:(Fin 4)=>(..<i)=>Float = arb $ new_key 0
+si : (Fin 4)=>(Fin 4)=>Float = solve' skew_mat eye
+sf : (Fin 4)=>(Fin 4)=>Float = apply skew_mat eye
+apply si sf ~~ eye
+> True
+
+
+'## Application 1: Gaussians
+
+-- This typeclass will be obsolete once the `Basis` typeclass can be written.
+interface HasStandardNormal a:Type
+  randNormal : Key -> a
+
+instance HasStandardNormal Float32
+  randNormal = randn
+instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+  randNormal = \key.
+    for i. randNormal (ixkey key i)
+
+def gaussianSample {v m} [VSpace v, VSpace m, LinearEndo m v, HasStandardNormal v]
+                   ((mean, covroot) : (v & m)) (key:Key) : v =
+  noise = randNormal key
+  mean + apply covroot noise
+
+:p gaussianSample (1.0, 2.0) (new_key 0)
+
+
+interface [VSpace v] InnerProd v
+  inner_prod : v->v->Float
+
+instance InnerProd Float
+  inner_prod = \x y. x * y
+
+instance {a n} [InnerProd a] InnerProd (n=>a)
+  inner_prod = \x y. sum for i. inner_prod x.i y.i
+
+
+-- This is a hack until the basis typeclass works.
+def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
+  asdf : v = one
+  inner_prod asdf asdf
+
+-- This single definition of a Gaussian log pdf should work
+-- efficiently for any type of covariance matrix for which
+-- an efficient solve and determinant is known.
+def gaussianlogpdf {m v}
+    [HasDeterminant m, VSpace m, Mul v, VSpace v, InnerProd v, LinearEndo m v]
+    ((mean, covroot) : (v & m)) (x:v) : Float =
+  dim = get_VSpace_dim x
+  alpha = solve' covroot (solve' covroot x)
+  covpart = -0.5 * inner_prod (x - mean) alpha 
+  normpart = log (determinant' covroot)  -- need a square?
+  constpart = 0.5 * dim * log (2.0 * pi)
+  covpart - normpart - constpart
+
+gaussianlogpdf (1.0, 2.0) (arb $ new_key 0)
+
+gaussianlogpdf ((arb $ new_key 0):(Fin 4)=>Float,
+                (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float) ) (arb $ new_key 0)
+
+
+'## Application 2: SDEs
+
+Time = Float
+def radonNikodym {m s} [Mul s, VSpace s, LinearEndo m s]
+                 (drift1: s->Time->s)
+                 (drift2: s->Time->s)
+                 (diffusion: s->Time->m)
+                 (state: s) (t: Time) : s =
+  -- Dynamics of simple Monte Carlo estimatr of KL divergence between
+  -- two SDEs that share a diffusion function. (If not, divergence is infinite)
+  sqd = sq ((drift1 state t) - (drift2 state t))
+  solve' (diffusion state t) sqd
+
+
+-- Drift and diffusion product.
+-- DiffusionProd takes state and noise and returns dstate/dtime
+def Drift {v} [VSpace v] (v:Type) : Type = v->Time->v
+def Diffusion {m v} [VSpace m, VSpace v] (m:Type) (v:Type) : Type = v->Time->(LinearEndo m v)
+def SDE {m v} [VSpace m, VSpace v] (m:Type) (v:Type) : Type = (Drift v & Diffusion m v )
+
+def SkewSymmetricProd (v:Type) : Type = v->Time->v->v  -- How to express matrix?
+def NegEnergyFunc (v:Type) : Type = v->Time->Float
+def StationarySDE (v:Type) : Type = (NegEnergyFunc v & SkewSymmetricProd v & DiffusionProd v)
+
+def stationary_SDE_to_SDE {v} [Mul v, VSpace v] (sta:StationarySDE v) : SDE v =
+  -- From Section 2.1 of "A Complete Recipe for Stochastic Gradient MCMC"
+  -- https://arxiv.org/pdf/1506.04696.pdf
+  (negEnergyFunc, skewSymmetricProd, diffusionProd) = sta
+  varProd = \state time vec.
+    0.5 .* (diffusionProd state time $ diffusionProd state time vec)
+  drift = \state time.
+    curNE = \state. negEnergyFunc state time
+    negenergygrad = (grad curNE) state
+    t1 = (skewSymmetricProd + varProd) state time negenergygrad
+    gammapart = \state. (skewSymmetricProd + varProd) state time one
+    t3 = jvp gammapart state one
+    t1 + t3
+  (drift, diffusionProd)
