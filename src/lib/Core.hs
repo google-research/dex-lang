@@ -137,6 +137,8 @@ instance MonadIO m => MonadIO (EnvReaderT m n) where
   liftIO m = EnvReaderT $ lift $ liftIO m
   {-# INLINE liftIO #-}
 
+deriving instance (Monad m, MonadState s m) => MonadState s (EnvReaderT m o)
+
 -- === EnvReaderI monad ===
 
 newtype EnvReaderIT (m::MonadKind1) (i::S) (o::S) (a:: *) =
@@ -498,14 +500,17 @@ getLambdaDicts :: EnvReader m => m n [AtomName n]
 getLambdaDicts = do
   env <- withEnv moduleEnv
   return $ lambdaDicts $ envSynthCandidates env
+{-# INLINE getLambdaDicts #-}
 
 getInstanceDicts :: EnvReader m => ClassName n -> m n [InstanceName n]
 getInstanceDicts name = do
   env <- withEnv moduleEnv
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
+{-# INLINE getInstanceDicts #-}
 
 getAllowedEffects :: EnvReader m => m n (EffectRow n)
 getAllowedEffects = withEnv $ allowedEffects . moduleEnv
+{-# INLINE getAllowedEffects #-}
 
 nonDepPiType :: ScopeReader m
              => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)

@@ -99,6 +99,7 @@ newtype FallibleM a =
 instance Fallible FallibleM where
   throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
     throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
+  {-# INLINE throwErrs #-}
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
   {-# INLINE addErrCtx #-}
 
@@ -118,6 +119,7 @@ instance CtxReader FallibleM where
 
 instance Fallible IO where
   throwErrs errs = throwIO errs
+  {-# INLINE throwErrs #-}
   addErrCtx ctx m = do
     result <- catchIOExcept m
     liftExcept $ addErrCtx ctx result
@@ -220,6 +222,7 @@ instance MonadFail HardFailM where
 
 instance Fallible HardFailM where
   throwErrs errs = error $ pprint errs
+  {-# INLINE throwErrs #-}
   addErrCtx _ cont = cont
   {-# INLINE addErrCtx #-}
 
@@ -230,9 +233,11 @@ instance FallibleApplicative HardFailM where
 
 throw :: Fallible m => ErrType -> String -> m a
 throw errTy s = throwErrs $ Errs [addCompilerStackCtx $ Err errTy mempty s]
+{-# INLINE throw #-}
 
 throwErr :: Fallible m => Err -> m a
 throwErr err = throwErrs $ Errs [addCompilerStackCtx err]
+{-# INLINE throwErr #-}
 
 addCompilerStackCtx :: Err -> Err
 addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
@@ -307,6 +312,7 @@ instance MonadFail SearcherM where
 
 instance Fallible SearcherM where
   throwErrs e = SearcherM $ lift $ throwErrs e
+  {-# INLINE throwErrs #-}
   addErrCtx ctx (SearcherM (MaybeT m)) = SearcherM $ MaybeT $
     addErrCtx ctx $ m
   {-# INLINE addErrCtx #-}
@@ -337,6 +343,7 @@ instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
 
 instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
   throwErrs errs = lift $ throwErrs errs
+  {-# INLINE throwErrs #-}
   addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
   {-# INLINE addErrCtx #-}
 
@@ -383,6 +390,7 @@ instance MonadFail FallibleM where
 
 instance Fallible Except where
   throwErrs errs = Failure errs
+  {-# INLINE throwErrs #-}
 
   addErrCtx _ (Success ans) = Success ans
   addErrCtx ctx (Failure (Errs errs)) =
@@ -463,6 +471,7 @@ instance Pretty ErrType where
 
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs
+  {-# INLINE throwErrs #-}
   addErrCtx ctx (ReaderT f) = ReaderT \r -> addErrCtx ctx $ f r
   {-# INLINE addErrCtx #-}
 
@@ -484,6 +493,7 @@ instance Pretty Errs where
 
 instance Fallible m => Fallible (StateT s m) where
   throwErrs errs = lift $ throwErrs errs
+  {-# INLINE throwErrs #-}
   addErrCtx ctx (StateT f) = StateT \s -> addErrCtx ctx $ f s
   {-# INLINE addErrCtx #-}
 
