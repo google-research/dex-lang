@@ -639,6 +639,7 @@ inferSigma :: (EmitsBoth o, Inferer m) => UExpr i -> m i o (Atom o)
 inferSigma (WithSrcE pos expr) = case expr of
   ULam lam@(ULamExpr ImplicitArrow _ _) ->
     addSrcContext pos $ inferULam Pure lam
+  -- TODO: Should we be handling class arrows here?
   _ -> inferRho (WithSrcE pos expr)
 
 checkRho :: (EmitsBoth o, Inferer m) => UExpr i -> RhoType o -> m i o (Atom o)
@@ -762,8 +763,11 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
                  pprint (Block (BlockAnn TyKind) decls $ Atom piResult)
     checkIx pos' $ argType piTy
     matchRequirement $ TabPi piTy
-  UDecl (UDeclExpr decl body) -> do
-    inferUDeclLocal decl $ checkOrInferRho body reqTy
+  UDecl (UDeclExpr (ULet letAnn (UPatAnn p ann) rhs) body) -> do
+    val <- checkMaybeAnnExpr ann rhs
+    var <- emitDecl (getNameHint p) letAnn $ Atom val
+    bindLamPat p var $ checkOrInferRho body reqTy
+  UDecl _ -> throw CompilerErr "not a local decl"
   UCase scrut alts -> do
     scrut' <- inferRho scrut
     scrutTy <- getType scrut'
@@ -1138,13 +1142,6 @@ buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
     Distinct <- getDistinct
     resultTy <- instantiateTabPi (sink tabPiTy) $ Var i
     return (sink effs, resultTy)
-
-inferUDeclLocal ::  (EmitsBoth o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
-inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
-  val <- checkMaybeAnnExpr ann rhs
-  var <- emitDecl (getNameHint p) letAnn $ Atom val
-  bindLamPat p var cont
-inferUDeclLocal _ _ = error "not a local decl"
 
 checkMaybeAnnExpr :: (EmitsBoth o, Inferer m) => Maybe (UType i) -> UExpr i -> m i o (Atom o)
 checkMaybeAnnExpr Nothing expr = inferSigma expr
