@@ -27,8 +27,12 @@ import qualified LLVM.CodeModel as CM
 import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Module as Mod
 import qualified LLVM.Internal.Module as Mod
+#if MIN_VERSION_llvm_hs(15,0,0)
+import qualified LLVM.Passes as P
+#else
 import qualified LLVM.PassManager as P
 import qualified LLVM.Transforms as P
+#endif
 import qualified LLVM.Target as T
 import LLVM.Context
 import Data.Int
@@ -203,8 +207,12 @@ exportObjectFile modules exportFn = do
 
 -- === LLVM passes ===
 
+
 runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
 runDefaultPasses t m = do
+#if MIN_VERSION_llvm_hs(15,0,0)
+  P.runPasses (P.PassSetSpec [P.CuratedPassSet 1] (Just t)) m
+#else
   P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
   case extraPasses of
     [] -> return ()
@@ -212,7 +220,12 @@ runDefaultPasses t m = do
   where
     defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 1}
     extraPasses = []
+#endif
 
+#if MIN_VERSION_llvm_hs(15,0,0)
+runPasses :: [P.ModulePass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
+runPasses passes mt m = P.runPasses (P.PassSetSpec passes mt) m
+#else
 runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
 runPasses passes mt m = do
   dl <- case mt of
@@ -220,6 +233,7 @@ runPasses passes mt m = do
          Nothing -> return Nothing
   let passSpec = P.PassSetSpec passes dl Nothing mt
   P.withPassManager passSpec \pm -> void $ P.runPassManager pm m
+#endif
 
 internalize :: [String] -> Mod.Module -> IO ()
 internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeElimination] Nothing m
