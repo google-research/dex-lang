@@ -235,10 +235,13 @@ throwErr err = throwErrs $ Errs [addCompilerStackCtx err]
 
 addCompilerStackCtx :: Err -> Err
 addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
+  where
 #ifdef DEX_DEBUG
-  where compilerStack = Just $! reverse $ unsafePerformIO currentCallStack
+    compilerStack = case reverse (unsafePerformIO currentCallStack) of
+      []    -> Nothing
+      stack -> Just stack
 #else
-  where compilerStack = stackCtx ctx
+    compilerStack = stackCtx ctx
 #endif
 
 addContext :: Fallible m => String -> m a -> m a
