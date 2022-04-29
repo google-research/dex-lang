@@ -89,8 +89,11 @@ instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMat n Float) (n=>v)
   solve' = backward_substitute
 
 -- Skew symmetric maps.
+
 -- For now it's just a wrapper around lower triangular matrices with no diagonal
 -- elements, but that might be a bit presumptuous.
+def SkewSymmetricMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(..<i)=>v
+
 def transpose_lower_to_upper' {n v}
     (lower:i:n=>(..<i)=>v) :
            i:n=>(i<..)=>v =
@@ -115,39 +118,69 @@ instance {n v} [Mul v, VSpace v] LinearEndo (i:n=>(..<i)=>Float) (n=>v)
 -- Todo: sparse matrices.
 
 
-'## Determinant typeclass
+'## Determinant and miscellaneous typeclass
 This should probably be part of the `LinearEndo` typeclass,
 once associated types work.
 
 interface HasDeterminant m
   determinant': m -> Float
+  transpose': m -> m
+  identity': m
 
 instance HasDeterminant Float
   determinant' = id
+  transpose' = id
+  identity' = 1.0
 
 -- Diagonal matrices
 instance {n} HasDeterminant (n=>Float)
   determinant' = prod
+  transpose' = id
+  identity' = one
 
 -- Full-rank matrices
 instance {n} HasDeterminant (n=>n=>Float)
   determinant' = determinant
+  transpose' = transpose
+  identity' = eye
 
 -- Lower-triangular matrices
 instance {n} HasDeterminant (LowerTriMat n Float)
   determinant' = \x. prod $ lower_tri_diag x
+  transpose' = id  -- A transpose in the linear map sense.
+  identity' = for i j. select (ordinal i == ordinal j) one zero
 
 -- Upper-triangular matrices
 instance {n} HasDeterminant (UpperTriMat n Float)
   determinant' = \x. prod $ upper_tri_diag x
+  transpose' = id  -- A transpose in the linear map sense.
+  identity' = for i j. select (0 == ordinal j) one zero
 
 instance {n} HasDeterminant (i:n=>(..<i)=>Float)
   determinant' = case is_odd (size n) of
     True -> zero
     False -> todo  -- Pfaffian
+  transpose' = \x. -x
+  identity' = error "Skew symmetric matrices can't represent the identity map."
+
+
+i : (LowerTriMat (Fin 4) Float) = identity'
+i
+
+vec: (Fin 4)=>Float = (arb $ new_key 0)
+vec
+
+apply i vec
+
+i2 : (UpperTriMat (Fin 4) Float) = identity'
+i2
+
+apply i2 vec
 
 
 '## Tests
+
+inner_prod ((apply (transpose mat) vec) vec) ~~ inner_prod ((apply mat) vec) vec)
 
 -- Check inverse of skew-symmetric matrices.
 skew_mat : i:(Fin 4)=>(..<i)=>Float = arb $ new_key 0
@@ -199,11 +232,12 @@ def gaussianlogpdf {m v}
     [HasDeterminant m, VSpace m, Mul v, VSpace v, InnerProd v, LinearEndo m v]
     (mean:v) (covroot:m) (x:v) : Float =
   dim = get_VSpace_dim x
-  squarepart = inner_prod (x - mean) (solve' covroot (solve' covroot (x - mean)))
+  squarepart = inner_prod (x - mean) (solve' (transpose' covroot) (solve' covroot (x - mean)))
   const = dim * log (2.0 * pi) + log (sq (determinant' covroot))
   -0.5 * (squarepart + const)
 
--- Tests
+
+'## Tests
 
 solve [[3.0]] [2.0]
 solve' 3.0 2.0
@@ -222,16 +256,34 @@ mat = (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float)
 vec = (arb $ new_key 0):(Fin 4)=>Float
 gaussianlogpdf vec mat (arb $ new_key 0)
 
+sizen = Fin 200
+span = 10.0
+
 -- Check that it sums to 1
-xs = linspace (Fin 100) (-3.0) 3.0
-6.0 * mean for i:(Fin 100).
+xs = linspace sizen (-span) span
+2.0 * span* mean for i:sizen.
   exp $ gaussianlogpdf (-0.1) 0.07 xs.i
 
 
 -- Check that it sums to 1
 covroot = (arb $ new_key 0):((Fin 2)=>(Fin 2)=>Float)
-36.0 * mean for (i, j):((Fin 100) & (Fin 100)).
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
   exp $ gaussianlogpdf (arb $ new_key 0) covroot [xs.i, xs.j]
+
+-- Check that it sums to 1
+covroot2 = (arb $ new_key 2):(LowerTriMat (Fin 2) Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot2 [xs.i, xs.j]
+
+-- Check that it sums to 1
+covroot4 = (arb $ new_key 2):(UpperTriMat (Fin 2) Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot4 [xs.i, xs.j]
+
+-- Check that it sums to 1
+covroot3 = (arb $ new_key 2):(SkewSymmetricMat (Fin 2) Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot3 [xs.i, xs.j]
 
 
 '## Application 2: SDEs
@@ -250,15 +302,17 @@ def radonNikodym {m s} [Mul s, VSpace s, LinearEndo m s]
 
 -- Drift and diffusion product.
 -- DiffusionProd takes state and noise and returns dstate/dtime
-def Drift {v} [VSpace v] (v:Type) : Type = v->Time->v
-def Diffusion {m v} [VSpace m, VSpace v] (m:Type) (v:Type) : Type = v->Time->(LinearEndo m v)
-def SDE {m v} [VSpace m, VSpace v] (m:Type) (v:Type) : Type = (Drift v & Diffusion m v )
+def Drift (v:Type) [VSpace v]: Type = v->Time->v
+def Diffusion (m:Type) (v:Type) [VSpace m, VSpace v] : Type = v->Time->(LinearEndo m v)
+def DiffusionProd (v:Type) : Type = v->Time->v->v
+def SDE (m:Type) (v:Type) [VSpace m, VSpace v] : Type = ((Drift v) & (DiffusionProd v))
 
 def SkewSymmetricProd (v:Type) : Type = v->Time->v->v
+
 def NegEnergyFunc (v:Type) : Type = v->Time->Float
 def StationarySDE (v:Type) : Type = (NegEnergyFunc v & SkewSymmetricProd v & DiffusionProd v)
 
-def stationary_SDE_to_SDE {v} [Mul v, VSpace v] (sta:StationarySDE v) : SDE v =
+def stationary_SDE_to_SDE {m v} [Mul v, VSpace v, VSpace m] (sta:StationarySDE v) : (SDE m v) =
   -- From Section 2.1 of "A Complete Recipe for Stochastic Gradient MCMC"
   -- https://arxiv.org/pdf/1506.04696.pdf
   (negEnergyFunc, skewSymmetricProd, diffusionProd) = sta
