@@ -818,10 +818,9 @@ Monoids support <code>fold</code> operations, and similar.</li>
   empty <span class="symbol">=</span> %projMethod0 bm
   combine <span class="symbol">=</span> %projMethod1 bm
   <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span>
-    accumMonoidData <span class="symbol">:</span> (<span class="type-name">AccumMonoidData</span> h&#39; w) <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
+    accumMonoidData <span class="symbol">:</span> (<span class="type-name">AccumMonoidData</span> h&#39; b) <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
     accumBaseMonoid <span class="symbol">=</span> %explicitDict (<span class="type-name">AccumMonoid</span> h&#39; b) accumMonoidData
-    accumBaseMonoidLifted <span class="symbol">=</span> %explicitApply (%explicitApply mlift h&#39;) accumBaseMonoid
-    action&#39; <span class="symbol">=</span> %explicitApply (%explicitApply action h&#39;) accumBaseMonoidLifted
+    action&#39; <span class="symbol">=</span> %explicitApply (%explicitApply action h&#39;) accumBaseMonoid
     action&#39; ref
   %runWriter empty combine explicitAction
 </div></div><div class="cell"><div class="code-block">
