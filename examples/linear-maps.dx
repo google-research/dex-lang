@@ -38,12 +38,20 @@ instance {n a} [Arbitrary a] Arbitrary (i:n=>(i<..) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
 
+'Todo: factor out a more general linear map typeclass, and make this one inherit from it.
+-- interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
+  -- apply: m -> in -> out
+  -- transpose': m -> m
+
 '## Linear Endomorphisms
 a.k.a. linear maps from a space back to that same space.
+
 
 interface [VSpace m, VSpace v] LinearEndo m v
   apply: m -> v -> v
   -- determinant': m -> Float
+  -- transpose': m -> m
+  -- identity': m
   diag: m -> v
   solve': m -> v -> v
 
@@ -88,10 +96,11 @@ instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMat n Float) (n=>v)
   diag = \x. for i. x.i.(0@_) .* one
   solve' = backward_substitute
 
--- Skew symmetric maps.
+
+'### Skew symmetric maps.
 
 -- For now it's just a wrapper around lower triangular matrices with no diagonal
--- elements, but that might be a bit presumptuous.
+-- elements, but that might be confusing.
 def SkewSymmetricMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(..<i)=>v
 
 def transpose_lower_to_upper' {n v}
@@ -115,7 +124,9 @@ instance {n v} [Mul v, VSpace v] LinearEndo (i:n=>(..<i)=>Float) (n=>v)
     dense_rep = skewSymmetricProd a eye  -- Fall back to naive algorithm
     solve dense_rep y
 
--- Todo: sparse matrices.
+'### Sparse matrices.
+def SparseMatrix (n:Type) (m:Type) [Ix n, Ix m] (v:Type) : Type = todo
+def SquareSparseMatrix (n:Type) [Ix n] (v:Type) : Type = SparseMatrix n n v
 
 
 '## Determinant and miscellaneous typeclass
@@ -160,34 +171,8 @@ instance {n} HasDeterminant (i:n=>(..<i)=>Float)
   determinant' = case is_odd (size n) of
     True -> zero
     False -> todo  -- Pfaffian
-  transpose' = \x. -x
+  transpose' = \x. x
   identity' = error "Skew symmetric matrices can't represent the identity map."
-
-
-i : (LowerTriMat (Fin 4) Float) = identity'
-i
-
-vec: (Fin 4)=>Float = (arb $ new_key 0)
-vec
-
-apply i vec
-
-i2 : (UpperTriMat (Fin 4) Float) = identity'
-i2
-
-apply i2 vec
-
-
-'## Tests
-
-inner_prod ((apply (transpose mat) vec) vec) ~~ inner_prod ((apply mat) vec) vec)
-
--- Check inverse of skew-symmetric matrices.
-skew_mat : i:(Fin 4)=>(..<i)=>Float = arb $ new_key 0
-si : (Fin 4)=>(Fin 4)=>Float = solve' skew_mat eye
-sf : (Fin 4)=>(Fin 4)=>Float = apply skew_mat eye
-apply si sf ~~ eye
-> True
 
 
 '## Application 1: Gaussians
@@ -225,9 +210,11 @@ def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
   asdf : v = one
   inner_prod asdf asdf
 
--- This single definition of a Gaussian log pdf should work
--- efficiently for any type of covariance matrix for which
--- an efficient solve and determinant is known.
+'## Generic log pdf of a multivariate Gaussian
+This single definition of a Gaussian log pdf should work
+efficiently for any type of covariance matrix for which
+an efficient solve and determinant is known.
+
 def gaussianlogpdf {m v}
     [HasDeterminant m, VSpace m, Mul v, VSpace v, InnerProd v, LinearEndo m v]
     (mean:v) (covroot:m) (x:v) : Float =
@@ -235,55 +222,6 @@ def gaussianlogpdf {m v}
   squarepart = inner_prod (x - mean) (solve' (transpose' covroot) (solve' covroot (x - mean)))
   const = dim * log (2.0 * pi) + log (sq (determinant' covroot))
   -0.5 * (squarepart + const)
-
-
-'## Tests
-
-solve [[3.0]] [2.0]
-solve' 3.0 2.0
-
-gaussianlogpdf 1.0 2.0 (arb $ new_key 0)
-
-exp (gaussianlogpdf 0.2 (sqrt 2.0) 0.1)
-exp (gaussianlogpdf [0.2] ([[sqrt 2.0]]) [0.1])
-
-def mld (mean:Float) (var:Float) (v:Float): Float =
-  -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
-
-exp $ mld 0.2 2.0 0.1
-
-mat = (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float)
-vec = (arb $ new_key 0):(Fin 4)=>Float
-gaussianlogpdf vec mat (arb $ new_key 0)
-
-sizen = Fin 200
-span = 10.0
-
--- Check that it sums to 1
-xs = linspace sizen (-span) span
-2.0 * span* mean for i:sizen.
-  exp $ gaussianlogpdf (-0.1) 0.07 xs.i
-
-
--- Check that it sums to 1
-covroot = (arb $ new_key 0):((Fin 2)=>(Fin 2)=>Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot [xs.i, xs.j]
-
--- Check that it sums to 1
-covroot2 = (arb $ new_key 2):(LowerTriMat (Fin 2) Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot2 [xs.i, xs.j]
-
--- Check that it sums to 1
-covroot4 = (arb $ new_key 2):(UpperTriMat (Fin 2) Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot4 [xs.i, xs.j]
-
--- Check that it sums to 1
-covroot3 = (arb $ new_key 2):(SkewSymmetricMat (Fin 2) Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot3 [xs.i, xs.j]
 
 
 '## Application 2: SDEs
@@ -326,3 +264,126 @@ def stationary_SDE_to_SDE {m v} [Mul v, VSpace v, VSpace m] (sta:StationarySDE v
     t3 = jvp gammapart state one
     t1 + t3
   (drift, diffusionProd)
+
+
+'## Tests
+
+
+vec_len = (Fin 4)
+full_mat_type = (vec_len=>vec_len=>Float)
+
+'### Check application of the identity is a no-op.
+
+def check_identity (m:Type) (v:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m, Arbitrary v,
+     VSpace v, HasAllClose v, HasDefaultTolerance v] : Bool =
+  i : m = identity'
+  vec : v = (arb $ new_key 0)
+  vec ~~ apply i vec
+
+check_identity (LowerTriMat vec_len Float) (vec_len=>Float)
+> True
+check_identity (UpperTriMat vec_len Float) (vec_len=>Float)
+> True
+check_identity (vec_len=>vec_len=>Float) (vec_len=>Float)
+> True
+check_identity (vec_len=>Float) (vec_len=>Float)
+> True
+check_identity (Float) (vec_len=>Float)
+> True
+
+def check_inverse (m:Type) (v:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m, Arbitrary v, LinearEndo m full_mat_type,
+     VSpace v, HasAllClose v, HasDefaultTolerance v] : Bool =
+  a : m   = (arb $ new_key 0)
+  vec : v = (arb $ new_key 0)
+  inv : full_mat_type = solve' a eye
+  full : full_mat_type = apply a eye
+  apply inv full ~~ eye
+
+check_inverse (SkewSymmetricMat vec_len Float) (vec_len=>Float)
+> True
+check_inverse (LowerTriMat vec_len Float) (vec_len=>Float)
+> True
+check_inverse (UpperTriMat vec_len Float) (vec_len=>Float)
+> True
+check_inverse (vec_len=>vec_len=>Float) (vec_len=>Float)
+> True
+check_inverse (vec_len=>Float) (vec_len=>Float)
+> True
+check_inverse (Float) (vec_len=>Float)
+> True
+
+def check_transpose (m:Type) (v:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m, Arbitrary v, LinearEndo m full_mat_type,
+     VSpace v, HasAllClose v, HasDefaultTolerance v, InnerProd v] : Bool =
+  a : m   = (arb $ new_key 0)
+  vec1 : v = (arb $ new_key 0)
+  vec2 : v = (arb $ new_key 0)
+  
+  hitright = inner_prod (apply (transpose' a) vec1) vec2
+  hitleft = inner_prod (apply a vec1) vec2
+  hitleft ~~ hitright
+
+check_transpose (SkewSymmetricMat vec_len Float) (vec_len=>Float)
+> True
+check_transpose (LowerTriMat vec_len Float) (vec_len=>Float)
+> True
+check_transpose (UpperTriMat vec_len Float) (vec_len=>Float)
+> True
+check_transpose (vec_len=>vec_len=>Float) (vec_len=>Float)
+> True
+check_transpose (vec_len=>Float) (vec_len=>Float)
+> True
+check_transpose (Float) (vec_len=>Float)
+> True
+
+
+
+
+
+
+
+'## Tests
+
+
+
+def mld (mean:Float) (var:Float) (v:Float): Float =
+  -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
+
+exp $ mld 0.2 2.0 0.1
+
+mat = (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float)
+vec = (arb $ new_key 0):(Fin 4)=>Float
+gaussianlogpdf vec mat (arb $ new_key 0)
+
+sizen = Fin 200
+span = 10.0
+
+-- Check that it sums to 1
+xs = linspace sizen (-span) span
+2.0 * span* mean for i:sizen.
+  exp $ gaussianlogpdf (-0.1) 0.07 xs.i
+
+
+-- Check that it sums to 1
+covroot = (arb $ new_key 0):((Fin 2)=>(Fin 2)=>Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot [xs.i, xs.j]
+
+-- Check that it sums to 1
+covroot2 = (arb $ new_key 2):(LowerTriMat (Fin 2) Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot2 [xs.i, xs.j]
+
+-- Check that it sums to 1
+covroot4 = (arb $ new_key 2):(UpperTriMat (Fin 2) Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot4 [xs.i, xs.j]
+
+-- Check that it sums to 1
+covroot3 = (arb $ new_key 2):(SkewSymmetricMat (Fin 2) Float)
+(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+  exp $ gaussianlogpdf (arb $ new_key 0) covroot3 [xs.i, xs.j]
+
+
