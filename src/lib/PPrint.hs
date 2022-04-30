@@ -355,25 +355,28 @@ data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: LamExpr n -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
-  rec :: LamExpr n -> Bool -> (Doc ann, Block n)
-  rec (LamExpr (LamBinder b ty _ _) body') first =
+  rec :: LamExpr n -> Bool -> (Doc ann, EffectRow n, Block n)
+  rec (LamExpr (LamBinder b ty _ effs') body') first =
     let thisOne = (if first then "" else line) <> p (b:>ty)
     in case inlineLastDeclBlock body' of
       Abs Empty (Atom (Lam next@(LamExpr (LamBinder _ _ arr' _) _)))
         | lamType == PrettyLam arr' ->
-            let (binders', block) = rec next False
-            in (thisOne <> binders', unsafeCoerceE block)
+            let (binders', effs'', block) = rec next False
+            in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
       Abs Empty (Hof (For ann (Lam next)))
         | lamType == PrettyFor ann ->
-            let (binders', block) = rec next False
-            in (thisOne <> binders', unsafeCoerceE block)
-      _ -> (thisOne <> punctuation, unsafeCoerceE body')
+            let (binders', effs'', block) = rec next False
+            in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
+      _ -> (thisOne <> punctuation, unsafeCoerceE effs', unsafeCoerceE body')
         where punctuation = case lamType of
                 PrettyFor _ -> "."
                 PrettyLam PlainArrow -> "."
                 PrettyLam arr -> " " <> p arr
-  (binders, body) = rec lamExpr True
-  in align (group $ nest 4 $ binders) <> (group $ nest 2 $ p body)
+  (binders, effs, body) = rec lamExpr True
+  lamAnnot = case effs of
+    Pure -> ""
+    _ -> line <> "lam annotated with effects" <+> p effs
+  in align $ group $ group (nest 4 $ binders) <> group (nest 2 $ p body) <> lamAnnot
 
 inlineLastDeclBlock :: Block n -> Abs (Nest Decl) Expr n
 inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
