@@ -38,6 +38,15 @@ instance {n a} [Arbitrary a] Arbitrary (i:n=>(i<..) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
 
+t = (i:(Fin 2)=> (..i) => Float32)
+x : t = arb $ new_key 0
+
+def f (g:t) : t =
+  g
+
+f x
+
+
 'Todo: factor out a more general linear map typeclass, and make this one inherit from it.
 -- interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
   -- apply: m -> in -> out
@@ -50,7 +59,8 @@ a.k.a. linear maps from a space back to that same space.
 interface [VSpace m, VSpace v] LinearEndo m v
   apply: m -> v -> v
   -- determinant': m -> Float
-  -- transpose': m -> m
+  -- transposeType: Type
+  -- transpose': m -> transposeType
   -- identity': m
   diag: m -> v
   solve': m -> v -> v
@@ -64,43 +74,39 @@ because `v` is always ambiguous at its usage site.
 
 instance {v} [Mul v, VSpace v] LinearEndo (Float) v
   apply = (.*)
-  -- determinant' = id
   diag = \a. a .* one
   solve' = \a b. b / a
 
 -- Diagonal matrices
 instance {n v} [Mul v, VSpace v] LinearEndo (n=>Float) (n=>v)
   apply = \x y. for i. x.i .* y.i
-  -- determinant' = prod
   diag = \a. for i. a.i .* one
   solve' = \a b. for i. b.i / a.i
 
 -- Full-rank matrices
 instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
   apply = \x y. for i. sum for j. x.i.j .* y.j
-  -- determinant' = determinant
   diag = \x. for i. x.i.i .* one
   solve' = solve
 
 -- Lower-triangular matrices
 instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMat n Float) (n=>v)
   apply = \x y. for i. sum for j. x.i.j .* y.(%inject j)
-  -- determinant' = \x. prod $ lower_tri_diag x
   diag = \x. for i. x.i.(cast i) .* one
   solve' = forward_substitute
 
 -- Upper-triangular matrices
 instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMat n Float) (n=>v)
   apply = \x y. for i. sum for j. x.i.j .* y.(%inject j)
-  -- determinant' = \x. prod $ upper_tri_diag x
   diag = \x. for i. x.i.(0@_) .* one
   solve' = backward_substitute
 
 
-'### Skew symmetric maps.
+'### Skew symmetric matrices.
+For now it's just a wrapper around lower triangular matrices with no diagonal
+elements, but the danger is that something accidentally gets treated as a
+skew-symmetric matrix. 
 
--- For now it's just a wrapper around lower triangular matrices with no diagonal
--- elements, but that might be confusing.
 def SkewSymmetricMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(..<i)=>v
 
 def transpose_lower_to_upper' {n v}
@@ -135,44 +141,65 @@ once associated types work.
 
 interface HasDeterminant m
   determinant': m -> Float
-  transpose': m -> m
+  transposeType m : Type  -- unused for now
+  transpose': m -> m   -- In future: m -> transposeType
   identity': m
 
 instance HasDeterminant Float
   determinant' = id
+  transposeType = Float
   transpose' = id
   identity' = 1.0
 
 -- Diagonal matrices
 instance {n} HasDeterminant (n=>Float)
   determinant' = prod
+  transposeType = n=>Float
   transpose' = id
   identity' = one
 
 -- Full-rank matrices
 instance {n} HasDeterminant (n=>n=>Float)
   determinant' = determinant
+  transposeType = n=>n=>Float
   transpose' = transpose
   identity' = eye
 
 -- Lower-triangular matrices
 instance {n} HasDeterminant (LowerTriMat n Float)
   determinant' = \x. prod $ lower_tri_diag x
-  transpose' = id  -- A transpose in the linear map sense.
+  transposeType = UpperTriMat n Float
+  transpose' = error "Can't transpose to different types yet."
   identity' = for i j. select (ordinal i == ordinal j) one zero
 
 -- Upper-triangular matrices
 instance {n} HasDeterminant (UpperTriMat n Float)
   determinant' = \x. prod $ upper_tri_diag x
-  transpose' = id  -- A transpose in the linear map sense.
+  transposeType = LowerTriMat n Float
+  transpose' = error "Can't transpose to different types yet."
   identity' = for i j. select (0 == ordinal j) one zero
 
 instance {n} HasDeterminant (i:n=>(..<i)=>Float)
   determinant' = case is_odd (size n) of
     True -> zero
-    False -> todo  -- Pfaffian
-  transpose' = \x. x
+    False -> \a.
+      dense_rep = skewSymmetricProd a eye
+      determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
+  transposeType = i:n=>(..<i)=>Float
+  transpose' = \x. -x
   identity' = error "Skew symmetric matrices can't represent the identity map."
+
+
+'## Inner product typeclass
+
+interface [VSpace v] InnerProd v
+  inner_prod : v->v->Float
+
+instance InnerProd Float
+  inner_prod = \x y. x * y
+
+instance {a n} [InnerProd a] InnerProd (n=>a)
+  inner_prod = \x y. sum for i. inner_prod x.i y.i
 
 
 '## Application 1: Gaussians
@@ -194,26 +221,15 @@ def gaussianSample {v m} [VSpace v, VSpace m, LinearEndo m v, HasStandardNormal 
 
 :p gaussianSample (1.0, 2.0) (new_key 0)
 
-
-interface [VSpace v] InnerProd v
-  inner_prod : v->v->Float
-
-instance InnerProd Float
-  inner_prod = \x y. x * y
-
-instance {a n} [InnerProd a] InnerProd (n=>a)
-  inner_prod = \x y. sum for i. inner_prod x.i y.i
-
-
--- This is a hack until the basis typeclass works.
-def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
-  asdf : v = one
-  inner_prod asdf asdf
-
 '## Generic log pdf of a multivariate Gaussian
 This single definition of a Gaussian log pdf should work
 efficiently for any type of covariance matrix for which
 an efficient solve and determinant is known.
+
+-- This helper will be osbolete once the basis typeclass works.
+def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
+  asdf : v = one
+  inner_prod asdf asdf
 
 def gaussianlogpdf {m v}
     [HasDeterminant m, VSpace m, Mul v, VSpace v, InnerProd v, LinearEndo m v]
@@ -314,23 +330,23 @@ check_inverse (vec_len=>Float) (vec_len=>Float)
 check_inverse (Float) (vec_len=>Float)
 > True
 
+
 def check_transpose (m:Type) (v:Type)
-    [LinearEndo m v, HasDeterminant m, Arbitrary m, Arbitrary v, LinearEndo m full_mat_type,
+    [LinearEndo m v, HasDeterminant m, Arbitrary m, Arbitrary v,
      VSpace v, HasAllClose v, HasDefaultTolerance v, InnerProd v] : Bool =
-  a : m   = (arb $ new_key 0)
-  vec1 : v = (arb $ new_key 0)
-  vec2 : v = (arb $ new_key 0)
+  a : m                  = arb $ new_key 0
+  (vec1, vec2) : (v & v) = arb $ new_key 1
   
-  hitright = inner_prod (apply (transpose' a) vec1) vec2
   hitleft = inner_prod (apply a vec1) vec2
+  hitright = inner_prod (apply (transpose' a) vec2) vec1
   hitleft ~~ hitright
 
 check_transpose (SkewSymmetricMat vec_len Float) (vec_len=>Float)
 > True
-check_transpose (LowerTriMat vec_len Float) (vec_len=>Float)
-> True
-check_transpose (UpperTriMat vec_len Float) (vec_len=>Float)
-> True
+-- check_transpose (LowerTriMat vec_len Float) (vec_len=>Float)
+-- > True
+-- check_transpose (UpperTriMat vec_len Float) (vec_len=>Float)
+-- > True
 check_transpose (vec_len=>vec_len=>Float) (vec_len=>Float)
 > True
 check_transpose (vec_len=>Float) (vec_len=>Float)
@@ -338,52 +354,38 @@ check_transpose (vec_len=>Float) (vec_len=>Float)
 check_transpose (Float) (vec_len=>Float)
 > True
 
-
-
-
-
-
-
-'## Tests
-
-
-
-def mld (mean:Float) (var:Float) (v:Float): Float =
-  -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
-
-exp $ mld 0.2 2.0 0.1
-
-mat = (arb $ new_key 0):((Fin 4)=>(Fin 4)=>Float)
-vec = (arb $ new_key 0):(Fin 4)=>Float
-gaussianlogpdf vec mat (arb $ new_key 0)
-
-sizen = Fin 200
+-- Check that 1D Gaussian sums to 1
+sizen = Fin 2000
 span = 10.0
-
--- Check that it sums to 1
 xs = linspace sizen (-span) span
-2.0 * span* mean for i:sizen.
+integral = 2.0 * span * mean for i.
   exp $ gaussianlogpdf (-0.1) 0.07 xs.i
+integral ~~ 1.0
 
+def check_2D_Gaussian_normalizes (m:Type)
+    [LinearEndo m ((Fin 2) => Float32), HasDeterminant m, Arbitrary m] : Bool =
 
--- Check that it sums to 1
-covroot = (arb $ new_key 0):((Fin 2)=>(Fin 2)=>Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot [xs.i, xs.j]
+  sizen = Fin 200
+  span = 10.0
+  xs = linspace sizen (-span) span
 
--- Check that it sums to 1
-covroot2 = (arb $ new_key 2):(LowerTriMat (Fin 2) Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot2 [xs.i, xs.j]
+  covroot : m = arb $ new_key 0
+  meanvec : ((Fin 2) => Float32) = arb $ new_key 1
+  integral = (sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+    x = [xs.i, xs.j]
+    exp $ gaussianlogpdf meanvec covroot x
+  integral ~~ 1.0
 
--- Check that it sums to 1
-covroot4 = (arb $ new_key 2):(UpperTriMat (Fin 2) Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot4 [xs.i, xs.j]
+check_2D_Gaussian_normalizes (SkewSymmetricMat (Fin 2) Float)
+> True
+-- check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
+-- > True
+-- check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
+-- > True
+check_2D_Gaussian_normalizes ((Fin 2)=>(Fin 2)=>Float)
+> True
+check_2D_Gaussian_normalizes ((Fin 2)=>Float)
+> True
 
--- Check that it sums to 1
-covroot3 = (arb $ new_key 2):(SkewSymmetricMat (Fin 2) Float)
-(sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
-  exp $ gaussianlogpdf (arb $ new_key 0) covroot3 [xs.i, xs.j]
-
-
+-- check_2D_Gaussian_normalizes (Float)  -- How does this even typecheck?
+-- > True
