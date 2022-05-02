@@ -312,8 +312,17 @@ zonkUnsolvedEnv ss unsolved env =
           let rhsHasInfVars = runEnvReaderM env $ hasInferenceVars rhs'
           when rhsHasInfVars $ tell $ UnsolvedEnv $ S.singleton v
 
+-- TODO: Wouldn't it be faster to carry the set of inference-emitted names in the out map?
 hasInferenceVars :: (EnvReader m, HoistableE e) => e n -> m n Bool
-hasInferenceVars e = anyM isInferenceVar $ freeAtomVarsList e
+hasInferenceVars e = liftEnvReaderM $ anyInferenceVars $ freeAtomVarsList e
+{-# INLINE hasInferenceVars #-}
+
+anyInferenceVars :: [AtomName n] -> EnvReaderM n Bool
+anyInferenceVars = \case
+  [] -> return False
+  (v:vs) -> isInferenceVar v >>= \case
+    True  -> return True
+    False -> anyInferenceVars vs
 
 isInferenceVar :: EnvReader m => AtomName n -> m n Bool
 isInferenceVar v = lookupEnv v >>= \case
