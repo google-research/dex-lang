@@ -193,14 +193,13 @@ class (SubstReader Name m, InfBuilder2 m, Solver2 m)
   liftSolverMInf :: EmitsInf o => SolverM o a -> m i o a
   gatherUnsolvedInterfaces :: m i o a -> m i o (a, IfaceTypeSet o)
   reportUnsolvedInterface  :: Type o  -> m i o ()
-  addDefault :: Type o -> Type VoidS -> m i o ()
+  addIntDefault :: AtomName o -> m i o ()
   getDefaults :: m i o (Defaults o)
 
 applyDefaults :: EmitsInf o => InfererM i o ()
 applyDefaults = do
   Defaults defaults <- getDefaults
-  forM_ defaults \(ty, ty') ->
-    tryConstrainEq ty (sinkFromTop ty')
+  forM_ (nameSetToList defaults) \v -> tryConstrainEq (Var v) $ BaseTy $ Scalar Int32Type
 
 withApplyDefaults :: EmitsInf o => InfererM i o a -> InfererM i o a
 withApplyDefaults cont = cont <* applyDefaults
@@ -218,20 +217,24 @@ data InfOutMap (n::S) =
     -- we zonk bindings)
     (UnsolvedEnv n)
 
-newtype Defaults (n::S) = Defaults [(Atom n, Atom VoidS)]
-        deriving (Semigroup, Monoid, Show)
+-- Set of names that should be defaulted to Int32
+newtype Defaults (n::S) = Defaults (NameSet n)
+        deriving (Semigroup, Monoid)
 
-instance GenericE Defaults where
-  type RepE Defaults = ListE (PairE Atom (LiftE (Atom VoidS)))
-  fromE (Defaults xys) = ListE [PairE x (LiftE y) | (x, y) <- xys]
-  {-# INLINE fromE #-}
-  toE (ListE xys) = Defaults [(x, y) | PairE x (LiftE y) <- xys]
-  {-# INLINE toE #-}
+instance SinkableE Defaults where
+  sinkingProofE _ _ = todoSinkableProof
+instance HoistableE Defaults where
+  freeVarsE (Defaults fvs) = fvs
+instance SubstE Name Defaults where
+  substE env (Defaults ds) = Defaults $ freeVarsE $ substE env $ ListE $ nameSetToList @AtomNameC ds
 
-instance SinkableE         Defaults
-instance SubstE Name         Defaults
-instance SubstE AtomSubstVal Defaults
-instance HoistableE          Defaults
+zonkDefaults :: SolverSubst n -> Defaults n -> Defaults n
+zonkDefaults s (Defaults ds) =
+  Defaults $ flip foldMap (nameSetToList @AtomNameC ds) \v ->
+    case lookupSolverSubst s v of
+      Rename   v'       -> freeVarsE v'
+      SubstVal (Var v') -> freeVarsE v'
+      _ -> mempty
 
 data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (SolverSubst l)
 
@@ -455,9 +458,9 @@ instance Inferer InfererM where
       runSolverM' m
   {-# INLINE liftSolverMInf #-}
 
-  addDefault t1 t2 = InfererM $ SubstReaderT $ lift $ lift11 $
+  addIntDefault v = InfererM $ SubstReaderT $ lift $ lift11 $
     extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
-    where defaults = Defaults [(t1, t2)]
+    where defaults = Defaults $ freeVarsE v
 
   getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
     InfOutMap _ _ defaults _ <- getOutMapInplaceT
@@ -551,26 +554,56 @@ instance HoistableE e => HoistableE (HoistedSolverState e) where
   freeVarsE (HoistedSolverState infVars defaults subst decls result) =
     freeVarsE (Abs infVars (PairE (PairE defaults subst) (Abs decls result)))
 
+-- TODO: Remove Distinct constraints from HoistedSolverState
+unsafeMkHoisted
+    :: forall n l1 l2 e.
+      InferenceNameBinders n l1
+    ->   Defaults l1
+    ->   SolverSubst l1
+    ->   Nest Decl l1 l2
+    ->     e l2
+    -> HoistedSolverState e n
+unsafeMkHoisted bs ds s decls e =
+  case fabricateDistinctEvidence @n of
+    Distinct -> case fabricateDistinctEvidence @UnsafeS of
+      Distinct ->
+        HoistedSolverState (unsafeCoerceB bs :: InferenceNameBinders n UnsafeS)
+                           (unsafeCoerceE ds :: Defaults UnsafeS)
+                           (unsafeCoerceE s  :: SolverSubst UnsafeS)
+                           (unsafeCoerceB decls :: Nest Decl UnsafeS UnsafeS)
+                           (unsafeCoerceE e  :: e UnsafeS)
+
 dceIfSolved :: HoistableE e
             => NameBinder AtomNameC n l -> HoistedSolverState e l
             -> Maybe (HoistedSolverState e n)
-dceIfSolved b (HoistedSolverState infVars defaults subst decls result) = do
+dceIfSolved b (HoistedSolverState infVars defaults (SolverSubst substMap) decls result) = do
   let v = withExtEvidence infVars $ sink $ binderName b
-  case deleteFromSubst subst v of
-    Just subst' ->
-      -- do we need to zonk here? (if not, say why not)
-      case hoist b (HoistedSolverState infVars defaults subst' decls result) of
-        HoistSuccess hoisted -> Just hoisted
-        HoistFailure err -> error $ "this shouldn't happen. Leaked var: " ++ pprint err
-    Nothing -> Nothing
+  case M.member v substMap of
+    True  ->
+      case exchangeBs $ PairB b infVars of
+        HoistSuccess (PairB infVars' b') -> do
+          let defaults' = hoistDefaults b' defaults
+#ifdef DEX_DEBUG
+          let subst' = ignoreHoistFailure $ hoist b' $ SolverSubst $ M.delete v substMap
+#else
+          -- SolverSubst should be recursively zonked, so any v that's a member
+          -- should never appear in an rhs. Hence, deleting the entry corresponding to
+          -- v should hoist the substitution above b'.
+          let subst' = unsafeCoerceE $ SolverSubst $ M.delete v substMap
+#endif
+          case hoist b' (Abs decls result) of
+            HoistSuccess (Abs decls' result') ->
+              Just $ unsafeMkHoisted infVars' defaults' subst' decls' result'
+            HoistFailure err -> error $ "this shouldn't happen. Leaked var: " ++ pprint err
+        HoistFailure _ -> Nothing
+    False -> Nothing
 
 hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
                  => Scope n
                  -> InfEmissions n l -> Defaults l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
-hoistInfStateRec scope Empty defaults subst e = do
-  let defaults' = applySolverSubstE scope subst defaults
-  return $ HoistedSolverState Empty defaults' subst Empty e
+hoistInfStateRec _ Empty defaults subst e = do
+  return $ HoistedSolverState Empty (zonkDefaults subst defaults) subst Empty e
 hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
   withSubscopeDistinct rest do
     solverState@(HoistedSolverState infVars defaults' subst' decls result) <-
@@ -606,10 +639,7 @@ hoistRequiredIfaces bs = \case
     HoistFailure _  -> Nothing
 
 hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
-hoistDefaults b (Defaults defaults) =
-  Defaults $ defaults & mapMaybe \(t1, t2) -> case hoist b t1 of
-      HoistSuccess t1' -> Just (t1', t2)
-      HoistFailure _   -> Nothing
+hoistDefaults b (Defaults defaults) = Defaults $ hoistFilterNameSet b defaults
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions emissions =
@@ -669,10 +699,13 @@ inferRho expr = checkOrInferRho expr Infer
 {-# INLINE inferRho #-}
 
 instantiateSigma :: EmitsBoth o => Atom o -> InfererM i o (Atom o)
-instantiateSigma f = do
+instantiateSigma f = fst <$> instantiateSigmaWithArgs f
+
+instantiateSigmaWithArgs :: EmitsBoth o => Atom o -> InfererM i o (Atom o, [Atom o])
+instantiateSigmaWithArgs f = do
   ty <- tryGetType f
   args <- getImplicitArgs ty
-  naryApp f args
+  (,args) <$> naryApp f args
 
 getImplicitArgs :: EmitsInf o => Type o -> InfererM i o [Atom o]
 getImplicitArgs ty = case ty of
@@ -886,11 +919,10 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x
       Just (UMethodVar fromIntMethod) -> do
         ~(MethodBinding _ _ fromInt) <- lookupEnv fromIntMethod
-        fromInt' <- instantiateSigma fromInt
+        (fromIntInst, (Var resTyVar:_)) <- instantiateSigmaWithArgs fromInt
+        addIntDefault resTyVar
         let i64Atom = Con $ Lit $ Int64Lit $ fromIntegral x
-        result <- matchRequirement =<< app fromInt' i64Atom
-        resultTy <- getType result
-        addDefault resultTy $ BaseTy (Scalar Int32Type)
+        result <- matchRequirement =<< app fromIntInst i64Atom
         return result
       Just _ -> error "not a method"
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
@@ -1960,11 +1992,6 @@ zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
                => InfOutMap n -> e n -> e n
 zonkWithOutMap (InfOutMap bindings solverSubst _ _) e =
   applySolverSubstE (toScope bindings) solverSubst e
-
-deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
-deleteFromSubst (SolverSubst m) v
-  | M.member v m = Just $ SolverSubst $ M.delete v m
-  | otherwise    = Nothing
 
 liftSolverOutFrag :: Distinct l => SolverOutFrag n l -> InfOutFrag n l
 liftSolverOutFrag (SolverOutFrag emissions subst) =
