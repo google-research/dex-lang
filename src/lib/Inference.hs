@@ -193,6 +193,8 @@ class (SubstReader Name m, InfBuilder2 m, Solver2 m)
   liftSolverMInf :: EmitsInf o => SolverM o a -> m i o a
   gatherUnsolvedInterfaces :: m i o a -> m i o (a, IfaceTypeSet o)
   reportUnsolvedInterface  :: Type o  -> m i o ()
+  addDefault :: Type o -> Type VoidS -> m i o ()
+  getDefaults :: m i o (Defaults o)
 
 applyDefaults :: (EmitsInf o, Inferer m) => m i o ()
 applyDefaults = do
@@ -400,14 +402,6 @@ instance Solver (InfererM i) where
 
   emitSolver binding = emitInfererM (getNameHint @String "?") $ RightE binding
 
-  addDefault t1 t2 = InfererM $ SubstReaderT $ lift $ lift11 $
-    extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
-    where defaults = Defaults [(t1, t2)]
-
-  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
-    InfOutMap _ _ defaults _ <- getOutMapInplaceT
-    return defaults
-
   solveLocal cont = do
     Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
@@ -444,6 +438,14 @@ instance Inferer InfererM where
   liftSolverMInf m = InfererM $ SubstReaderT $ lift $ lift11 $
     liftBetweenInplaceTs (liftExcept . liftM fromJust . runSearcherM) id liftSolverOutFrag $
       runSolverM' m
+
+  addDefault t1 t2 = InfererM $ SubstReaderT $ lift $ lift11 $
+    extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
+    where defaults = Defaults [(t1, t2)]
+
+  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
+    InfOutMap _ _ defaults _ <- getOutMapInplaceT
+    return defaults
 
   gatherUnsolvedInterfaces m = do
     s' <- get
@@ -1803,8 +1805,6 @@ class (CtxReader1 m, EnvReader m) => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, SinkableE e) => e n -> m n (e n)
   extendSolverSubst :: AtomName n -> Type n -> m n ()
   emitSolver :: EmitsInf n => SolverBinding n -> m n (AtomName n)
-  addDefault :: Type n -> Type VoidS -> m n ()
-  getDefaults :: m n (Defaults n)
   solveLocal :: (SinkableE e, HoistableE e)
              => (forall l. (EmitsInf l, Ext n l, Distinct l) => m l (e l))
              -> m n (e n)
@@ -1812,14 +1812,14 @@ class (CtxReader1 m, EnvReader m) => Solver (m::MonadKind1) where
 type SolverOutMap = InfOutMap
 
 data SolverOutFrag (n::S) (l::S) =
-  SolverOutFrag (SolverEmissions n l) (Defaults l) (SolverSubst l)
+  SolverOutFrag (SolverEmissions n l) (SolverSubst l)
 
-type SolverEmissions = Nest (BinderP AtomNameC SolverBinding)
+type SolverEmissions = RNest (BinderP AtomNameC SolverBinding)
 
 instance GenericB SolverOutFrag where
-  type RepB SolverOutFrag = PairB SolverEmissions (LiftB (PairE Defaults SolverSubst))
-  fromB (SolverOutFrag em ds subst) = PairB em (LiftB (PairE ds subst))
-  toB   (PairB em (LiftB (PairE ds subst))) = SolverOutFrag em ds subst
+  type RepB SolverOutFrag = PairB SolverEmissions (LiftB SolverSubst)
+  fromB (SolverOutFrag em subst) = PairB em (LiftB subst)
+  toB   (PairB em (LiftB subst)) = SolverOutFrag em subst
 
 instance ProvesExt   SolverOutFrag
 instance SubstB Name SolverOutFrag
@@ -1827,12 +1827,10 @@ instance BindsNames  SolverOutFrag
 instance SinkableB SolverOutFrag
 
 instance OutFrag SolverOutFrag where
-  emptyOutFrag = SolverOutFrag Empty mempty emptySolverSubst
-  catOutFrags scope (SolverOutFrag em ds ss) (SolverOutFrag em' ds' ss') =
+  emptyOutFrag = SolverOutFrag REmpty emptySolverSubst
+  catOutFrags scope (SolverOutFrag em ss) (SolverOutFrag em' ss') =
     withExtEvidence em' $
-      SolverOutFrag (em >>> em')
-                    (sink ds <> ds')
-                    (catSolverSubsts scope (sink ss) ss')
+      SolverOutFrag (em >>> em') (catSolverSubsts scope (sink ss) ss')
 
 instance ExtOutMap InfOutMap SolverOutFrag where
   extendOutMap infOutMap outFrag =
@@ -1859,10 +1857,17 @@ instance EnvReader SolverM where
     InfOutMap env _ _ _ <- getOutMapInplaceT
     return env
 
+newtype SolverEmission (n::S) (l::S) = SolverEmission (BinderP AtomNameC SolverBinding n l)
+instance ExtOutMap SolverOutMap SolverEmission where
+  extendOutMap env (SolverEmission e) = env `extendOutMap` toEnvFrag e
+instance ExtOutFrag SolverOutFrag SolverEmission where
+  extendOutFrag (SolverOutFrag es substs) (SolverEmission e) =
+    withSubscopeDistinct e $ SolverOutFrag (RNest es e) (sink substs)
+
 instance Solver SolverM where
   extendSolverSubst v ty = SolverM $
     void $ extendTrivialInplaceT $
-      SolverOutFrag Empty mempty (singletonSolverSubst v ty)
+      SolverOutFrag REmpty (singletonSolverSubst v ty)
   {-# INLINE extendSolverSubst #-}
 
   zonk e = SolverM do
@@ -1871,29 +1876,20 @@ instance Solver SolverM where
     return $ zonkWithOutMap solverOutMap $ sink e
   {-# INLINE zonk #-}
 
-  emitSolver binding = do
-    Abs b v <- freshNameM $ getNameHint @String "?"
-    let frag = SolverOutFrag (Nest (b:>binding) Empty) mempty emptySolverSubst
-    SolverM $ extendInplaceT $ Abs frag v
+  emitSolver binding =
+    SolverM $ freshExtendSubInplaceT (getNameHint @String "?") \b ->
+      (SolverEmission (b:>binding), binderName b)
   {-# INLINE emitSolver #-}
-
-  addDefault t1 t2 = SolverM $
-    extendTrivialInplaceT $ SolverOutFrag Empty defaults emptySolverSubst
-    where defaults = Defaults [(t1, t2)]
-
-  getDefaults = SolverM do
-    (InfOutMap _ _ defaults _) <- getOutMapInplaceT
-    return defaults
 
   solveLocal cont = SolverM do
     results <- locallyMutableInplaceT do
       Distinct <- getDistinct
       EmitsInf <- fabricateEmitsInfEvidenceM
       runSolverM' cont
-    Abs (SolverOutFrag unsolvedInfNames _ _) result <- return results
+    Abs (SolverOutFrag unsolvedInfNames _) result <- return results
     case unsolvedInfNames of
-      Empty -> return result
-      _     -> case hoist unsolvedInfNames result of
+      REmpty -> return result
+      _      -> case hoist unsolvedInfNames result of
         HoistSuccess result' -> return result'
         HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
   {-# INLINE solveLocal #-}
@@ -1952,12 +1948,12 @@ deleteFromSubst (SolverSubst m) v
   | otherwise    = Nothing
 
 liftSolverOutFrag :: Distinct l => SolverOutFrag n l -> InfOutFrag n l
-liftSolverOutFrag (SolverOutFrag emissions defaults subst) =
-  InfOutFrag (liftSolverEmissions emissions) defaults subst
+liftSolverOutFrag (SolverOutFrag emissions subst) =
+  InfOutFrag (liftSolverEmissions emissions) mempty subst
 
 liftSolverEmissions :: Distinct l => SolverEmissions n l -> InfEmissions n l
 liftSolverEmissions emissions =
-  fmapNest (\(b:>emission) -> (b:>RightE emission)) emissions
+  fmapNest (\(b:>emission) -> (b:>RightE emission)) $ unRNest emissions
 
 instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...
