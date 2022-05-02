@@ -58,11 +58,13 @@ getType e = liftHardFailTyperT $ getTypeE e
 
 getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getAppType f xs = liftHardFailTyperT $ checkApp f xs
+{-# INLINE getAppType #-}
 
 getTabAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getTabAppType f xs = case nonEmpty xs of
   Nothing -> getType f
   Just xs' -> liftHardFailTyperT $ checkTabApp f xs'
+{-# INLINE getTabAppType #-}
 
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
@@ -71,23 +73,25 @@ getTypeSubst e = do
   liftM runHardFail $ liftEnvReaderT $
     runSubstReaderT subst $
       runTyperT' $ getTypeE e
+{-# INLINE getTypeSubst #-}
 
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftExcept =<< liftTyperT (getTypeE e)
-
-depPairLeftTy :: DepPairType n -> Type n
-depPairLeftTy (DepPairType (_:>ty) _) = ty
+{-# INLINE tryGetType #-}
 
 instantiateDepPairTy :: ScopeReader m => DepPairType n -> Atom n -> m n (Type n)
 instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
+{-# INLINE instantiateDepPairTy #-}
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Type n)
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
+{-# INLINE instantiatePi #-}
 
 instantiateTabPi :: ScopeReader m => TabPiType n -> Atom n -> m n (Type n)
 instantiateTabPi (TabPiType b body) x = applyAbs (Abs b body) (SubstVal x)
+{-# INLINE instantiateTabPi #-}
 
 sourceNameType :: (EnvReader m, Fallible1 m)
                => SourceName -> m n (Type n)
@@ -392,6 +396,10 @@ instance HasType AtomName where
     name' <- substM name
     atomBindingType <$> lookupEnv name'
   {-# INLINE getTypeE #-}
+
+depPairLeftTy :: DepPairType n -> Type n
+depPairLeftTy (DepPairType (_:>ty) _) = ty
+{-# INLINE depPairLeftTy #-}
 
 instance HasType Atom where
   getTypeE atom = case atom of
