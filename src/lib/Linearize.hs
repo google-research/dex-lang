@@ -297,7 +297,7 @@ linearizeBlock (Block _ decls result) =
 linearizeDecls :: Emits o => Nest Decl i i' -> LinM i' o e1 e2 -> LinM i  o e1 e2
 linearizeDecls Empty cont = cont
 -- TODO: as an optimization, don't bother extending the tangent args if the
--- tangent is trivial, either because its type is a singleton or because ther
+-- tangent is trivial, either because its type is a singleton or because there
 -- are no active vars.
 linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   expr' <- substM expr
