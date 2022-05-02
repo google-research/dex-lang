@@ -74,7 +74,7 @@ module Name (
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
-  updateSubstFrag, nameSetToList, toNameSet, NameSet, absurdExtEvidence,
+  updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence,
   MonadTrans1 (..), collectGarbage,
   ) where
@@ -1849,7 +1849,7 @@ instance (SinkableB b, SinkableE e) => SinkableE (Abs b e) where
       Abs b' (sinkingProofE fresh' body)
 
 instance (HoistableB b, HoistableE e) => HoistableE (Abs b e) where
-  freeVarsE (Abs b e) = freeVarsB b <> hoistNameSet b (freeVarsE e)
+  freeVarsE (Abs b e) = freeVarsB b <> hoistFilterNameSet b (freeVarsE e)
 
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE env (Abs b body) = do
@@ -2684,8 +2684,8 @@ exchangeBs (PairB b1 b2) =
     UnsafeMakeScopeFrag frag = toScopeFrag b1
     fvs2 = freeVarsB b2
 
-hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
-hoistNameSet b nameSet =
+hoistFilterNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
+hoistFilterNameSet b nameSet =
   unsafeCoerceNameSet $ nameSet `R.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
@@ -2717,7 +2717,7 @@ instance Color c => HoistableE (Name c) where
 
 instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
   freeVarsB (PairB b1 b2) =
-    freeVarsB b1 <> hoistNameSet b1 (freeVarsB b2)
+    freeVarsB b1 <> hoistFilterNameSet b1 (freeVarsB b2)
 
 instance (Color c, HoistableE ann) => HoistableB (BinderP c ann) where
   freeVarsB (b:>ann) = freeVarsB b <> freeVarsE ann
