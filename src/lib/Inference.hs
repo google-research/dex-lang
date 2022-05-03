@@ -532,7 +532,8 @@ hoistThroughDecls'
 hoistThroughDecls' scope (InfOutFrag emissions defaults subst) result = do
   withSubscopeDistinct emissions do
     HoistedSolverState infVars defaults' subst' decls result' <-
-      hoistInfStateRec scope emissions Empty (zonkDefaults subst defaults) subst Empty result
+      hoistInfStateRec scope emissions emptyInferenceNameBindersFV
+        (zonkDefaults subst defaults) subst Empty result
     let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' subst'
     return $ Abs hoistedInfFrag $ Abs decls result'
 
@@ -567,16 +568,33 @@ resolveDelayedSolve topScope = go topScope $ SolverSubst mempty
     unsafeCatSolverSubst :: SolverSubst n -> SolverSubst n -> SolverSubst n
     unsafeCatSolverSubst (SolverSubst a) (SolverSubst b) = SolverSubst $ a <> b
 
+data InferenceNameBindersFV (n::S) (l::S) = InferenceNameBindersFV (NameSet n) (InferenceNameBinders n l)
+instance BindsNames InferenceNameBindersFV where
+  toScopeFrag = toScopeFrag . dropInferenceNameBindersFV
+instance ProvesExt InferenceNameBindersFV where
+  toExtEvidence = toExtEvidence . dropInferenceNameBindersFV
+instance HoistableB InferenceNameBindersFV where
+  freeVarsB (InferenceNameBindersFV fvs _) = fvs
+
+emptyInferenceNameBindersFV :: InferenceNameBindersFV n n
+emptyInferenceNameBindersFV = InferenceNameBindersFV mempty Empty
+
+dropInferenceNameBindersFV :: InferenceNameBindersFV n l -> InferenceNameBinders n l
+dropInferenceNameBindersFV (InferenceNameBindersFV _ bs) = bs
+
+prependNameBinder :: BinderP AtomNameC SolverBinding n q -> InferenceNameBindersFV q l -> InferenceNameBindersFV n l
+prependNameBinder b (InferenceNameBindersFV fvs bs) =
+  InferenceNameBindersFV (freeVarsB b <> hoistFilterNameSet b fvs) (Nest b bs)
+
 -- TODO: Instead of delaying the solve, compute the most-nested scope once
 -- and then use it for all _eager_ substitutions while hoisting! Using a super-scope
 -- for substitution shouldn't be a problem!
--- TODO: Cache free vars in infVars for faster binder exchange
 hoistInfStateRec :: forall n l l1 l2 e. (Distinct n, Distinct l2, HoistableE e)
                  => Scope n -> InfEmissions n l
-                 -> InferenceNameBinders l l1 -> Defaults l1 -> SolverSubst l1 -> DelayedSolveNest Decl l1 l2 -> e l2
+                 -> InferenceNameBindersFV l l1 -> Defaults l1 -> SolverSubst l1 -> DelayedSolveNest Decl l1 l2 -> e l2
                  -> Except (HoistedSolverState e n)
 hoistInfStateRec scope REmpty infVars defaults subst decls e =
-  return $ HoistedSolverState infVars defaults subst decls' e
+  return $ HoistedSolverState (dropInferenceNameBindersFV infVars) defaults subst decls' e
   where
     decls' = withSubscopeDistinct decls $
       resolveDelayedSolve (scope `extendOutMap` toScopeFrag infVars) decls
@@ -588,7 +606,9 @@ hoistInfStateRec scope (RNest rest (b :> infEmission)) infVars defaults subst de
         let SolverSubst substMap = subst
         case M.lookup v substMap of
           -- Unsolved inference variables are just gathered as they are.
-          Nothing -> hoistInfStateRec scope rest (Nest (b:>binding) infVars) defaults subst decls e
+          Nothing ->
+            hoistInfStateRec scope rest (prependNameBinder (b:>binding) infVars)
+                             defaults subst decls e
           -- If a variable is solved, we eliminate it.
           Just bSolution ->
             case exchangeBs $ PairB b infVars of
