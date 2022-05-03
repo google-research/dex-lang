@@ -28,8 +28,8 @@ transpose lam = liftBuilder do
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   runReaderT1 (ListE []) $ runSubstReaderT idSubst $
     buildLam noHint LinArrow resultTy' Pure \ct ->
-      withAccumulator (sink argTy) \ref ->
-        extendSubst (b @> LinRef ref) $
+      withAccumulator (sink argTy) \refSubstVal ->
+        extendSubst (b @> refSubstVal) $
           transposeBlock body (sink $ Var ct)
 {-# SCC transpose #-}
 
@@ -70,12 +70,21 @@ isLin e = do
 withAccumulator
   :: Emits o
   => Type o
-  -> (forall o'. (Emits o', DExt o o') => Atom o' -> TransposeM i o' ())
+  -> (forall o'. (Emits o', DExt o o') => TransposeSubstVal AtomNameC o' -> TransposeM i o' ())
   -> TransposeM i o (Atom o)
 withAccumulator ty cont = do
-  baseMonoid <- getBaseMonoidType ty >>= tangentBaseMonoidFor
-  getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
-               cont (Var ref) >> return UnitVal
+  singletonTypeVal ty >>= \case
+    Nothing -> do
+      baseMonoid <- tangentBaseMonoidFor =<< getBaseMonoidType ty
+      getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
+                   cont (LinRef $ Var ref) >> return UnitVal
+    Just val -> do
+      -- If the accumulator's type is inhabited by just one value, we
+      -- don't need any actual accumulation, and can just return that
+      -- value.  (We still run `cont` because it may emit decls that
+      -- have effects.)
+      Distinct <- getDistinct
+      cont LinTrivial >> return val
 
 emitCTToRef :: (Emits n, Builder m) => Atom n -> Atom n -> m n ()
 emitCTToRef ref ct = do
@@ -99,8 +108,8 @@ transposeWithDecls (Nest (Let b (DeclBinding _ ty expr)) rest) result ct =
   substExprIfNonlin expr >>= \case
     Nothing  -> do
       ty' <- substNonlin ty
-      ctExpr <- withAccumulator ty' \ref ->
-                  extendSubst (b @> LinRef ref) $
+      ctExpr <- withAccumulator ty' \refSubstVal ->
+                  extendSubst (b @> refSubstVal) $
                     transposeWithDecls rest result (sink ct)
       transposeExpr expr ctExpr
     Just nonlinExpr -> do
