@@ -44,7 +44,6 @@ import Interpreter
 import LabeledItems
 import Err
 import Util
-import Core
 
 -- === Top-level interface ===
 
@@ -156,8 +155,7 @@ emitAtomSubstFrag frag = go $ toSubstPairs frag
 
 -- === Inferer interface ===
 
-class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
-      , Builder m, ScopableBuilder m )
+class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder m )
       => InfBuilder (m::MonadKind1) where
 
   -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
@@ -239,7 +237,7 @@ zonkDefaults s (Defaults ds) =
 data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (SolverSubst l)
 
 type InfEmission  = EitherE DeclBinding SolverBinding
-type InfEmissions = Nest (BinderP AtomNameC InfEmission)
+type InfEmissions = RNest (BinderP AtomNameC InfEmission)
 
 instance GenericB InfOutFrag where
   type RepB InfOutFrag = PairB InfEmissions (LiftB (PairE Defaults SolverSubst))
@@ -255,7 +253,7 @@ instance SinkableB InfOutFrag
 instance HoistableB  InfOutFrag
 
 instance OutFrag InfOutFrag where
-  emptyOutFrag = InfOutFrag Empty mempty emptySolverSubst
+  emptyOutFrag = InfOutFrag REmpty mempty emptySolverSubst
   catOutFrags scope (InfOutFrag em ds ss) (InfOutFrag em' ds' ss') =
     withExtEvidence em' $
       InfOutFrag (em >>> em') (sink ds <> ds') (catSolverSubsts scope (sink ss) ss')
@@ -371,7 +369,7 @@ liftInfererMSubst cont = do
   env <- unsafeGetEnv
   subst <- getSubst
   Distinct <- getDistinct
-  (InfOutFrag Empty _ _, (result, _)) <-
+  (InfOutFrag REmpty _ _, (result, _)) <-
     liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
       runStateT1 (runSubstReaderT subst $ runInfererM' $ cont) FailIfRequired
   return result
@@ -397,18 +395,26 @@ initInfOutMap :: Env n -> InfOutMap n
 initInfOutMap bindings =
   InfOutMap bindings emptySolverSubst mempty (UnsolvedEnv mempty)
 
+newtype InfDeclEmission (n::S) (l::S) = InfDeclEmission (BinderP AtomNameC InfEmission n l)
+instance ExtOutMap InfOutMap InfDeclEmission where
+  extendOutMap env (InfDeclEmission d) = env `extendOutMap` toEnvFrag d
+  {-# INLINE extendOutMap #-}
+instance ExtOutFrag InfOutFrag InfDeclEmission where
+  extendOutFrag (InfOutFrag ems ds ss) (InfDeclEmission em) =
+    withSubscopeDistinct em $ InfOutFrag (RNest ems em) (sink ds) (sink ss)
+  {-# INLINE extendOutFrag #-}
+
 emitInfererM :: Mut o => NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = do
-  Abs b v <- freshNameM hint
-  let frag = InfOutFrag (Nest (b :> emission) Empty) mempty emptySolverSubst
-  InfererM $ SubstReaderT $ lift $ lift11 $ extendInplaceT $ Abs frag v
+  InfererM $ SubstReaderT $ lift $ lift11 $ freshExtendSubInplaceT hint \b ->
+    (InfDeclEmission (b :> emission), binderName b)
 {-# INLINE emitInfererM #-}
 
 instance Solver (InfererM i) where
   extendSolverSubst v ty = do
    InfererM $ SubstReaderT $ lift $ lift11 $
     void $ extendTrivialInplaceT $
-      InfOutFrag Empty mempty (singletonSolverSubst v ty)
+      InfOutFrag REmpty mempty (singletonSolverSubst v ty)
   {-# INLINE extendSolverSubst #-}
 
   zonk e = InfererM $ SubstReaderT $ lift $ lift11 do
@@ -423,8 +429,8 @@ instance Solver (InfererM i) where
   solveLocal cont = do
     Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
-      Empty -> return result
-      Nest (_:>RightE (InfVarBound _ ctx)) _ -> do
+      REmpty -> return result
+      RNest _ (_:>RightE (InfVarBound _ ctx)) -> do
         addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
       _ -> error "not possible?"
 
@@ -459,7 +465,7 @@ instance Inferer InfererM where
   {-# INLINE liftSolverMInf #-}
 
   addIntDefault v = InfererM $ SubstReaderT $ lift $ lift11 $
-    extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
+    extendTrivialInplaceT $ InfOutFrag REmpty defaults emptySolverSubst
     where defaults = Defaults $ freeVarsE v
 
   getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
@@ -499,16 +505,6 @@ instance Builder (InfererM i) where
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
   {-# INLINE emitDecl #-}
 
-instance ScopableBuilder (InfererM i) where
-  buildScoped cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      resultWithEmissions <- locallyMutableInplaceT do
-        Emits <- fabricateEmitsEvidenceM
-        toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-      Abs frag@(InfOutFrag emissions _ _) (PairE result s') <- return resultWithEmissions
-      let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
-      return (Abs decls result, hoistRequiredIfaces frag s')
-
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
 -- When we finish building a block of decls we need to hoist the local solver
@@ -536,15 +532,9 @@ hoistThroughDecls'
 hoistThroughDecls' scope (InfOutFrag emissions defaults subst) result = do
   withSubscopeDistinct emissions do
     HoistedSolverState infVars defaults' subst' decls result' <-
-      hoistInfStateRec scope (revNest REmpty emissions) Empty (zonkDefaults subst defaults) subst Empty result
+      hoistInfStateRec scope emissions Empty (zonkDefaults subst defaults) subst Empty result
     let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' subst'
     return $ Abs hoistedInfFrag $ Abs decls result'
-
--- TODO: Use RNests as emissions in the inference monad.
-revNest :: RNest b n q -> Nest b q l -> RNest b n l
-revNest acc = \case
-  Empty -> acc
-  Nest b rest -> revNest (RNest acc b) rest
 
 data HoistedSolverState e n where
   HoistedSolverState
@@ -580,10 +570,9 @@ resolveDelayedSolve topScope = go topScope $ SolverSubst mempty
 -- TODO: Instead of delaying the solve, compute the most-nested scope once
 -- and then use it for all _eager_ substitutions while hoisting! Using a super-scope
 -- for substitution shouldn't be a problem!
--- TODO: Use InfEmissions in type annotation!
 -- TODO: Cache free vars in infVars for faster binder exchange
 hoistInfStateRec :: forall n l l1 l2 e. (Distinct n, Distinct l2, HoistableE e)
-                 => Scope n -> RNest (BinderP AtomNameC InfEmission) n l
+                 => Scope n -> InfEmissions n l
                  -> InferenceNameBinders l l1 -> Defaults l1 -> SolverSubst l1 -> DelayedSolveNest Decl l1 l2 -> e l2
                  -> Except (HoistedSolverState e n)
 hoistInfStateRec scope REmpty infVars defaults subst decls e =
@@ -682,8 +671,12 @@ hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
 hoistDefaults b (Defaults defaults) = Defaults $ hoistFilterNameSet b defaults
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
-infNamesToEmissions emissions =
-  fmapNest (\(b:>binding) -> b :> RightE binding) emissions
+infNamesToEmissions = go REmpty
+ where
+   go :: InfEmissions n q -> InferenceNameBinders q l -> InfEmissions n l
+   go acc = \case
+     Empty -> acc
+     Nest (b:>binding) rest -> go (RNest acc (b:>RightE binding)) rest
 
 instance EnvReader (InfererM i) where
   unsafeGetEnv = do
@@ -2039,7 +2032,13 @@ liftSolverOutFrag (SolverOutFrag emissions subst) =
 
 liftSolverEmissions :: Distinct l => SolverEmissions n l -> InfEmissions n l
 liftSolverEmissions emissions =
-  fmapNest (\(b:>emission) -> (b:>RightE emission)) $ unRNest emissions
+  fmapRNest (\(b:>emission) -> (b:>RightE emission)) emissions
+
+fmapRNest :: (forall ii ii'. b ii ii' -> b' ii ii')
+          -> RNest b  i i'
+          -> RNest b' i i'
+fmapRNest _ REmpty = REmpty
+fmapRNest f (RNest rest b) = RNest (fmapRNest f rest) (f b)
 
 instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...
