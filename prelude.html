@@ -985,6 +985,13 @@ i.e. things that can be compared to other things to find if larger, smaller or e
         fold <span class="type-name">EQ</span> <span class="symbol">$</span> <span class="symbol">\</span>i c<span class="symbol">.</span> c <span class="symbol">&lt;&gt;</span> (compare xs<span class="symbol">.</span>i ys<span class="symbol">.</span>i)
     f <span class="symbol">==</span> <span class="type-name">LT</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> <span class="type-name">Bool</span>
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> 2
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>b<span class="symbol">.</span> <span class="keyword">case</span> b <span class="keyword">of</span>
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> 0
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> i <span class="symbol">&gt;</span> 0
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Elementary/Special Functions</h2>
 <p>This is more or less the standard <a href="https://en.wikipedia.org/wiki/C_mathematical_functions">LibM fare</a>.
 Roughly it lines up with some definitions of the set of <a href="https://en.wikipedia.org/wiki/Elementary_function">Elementary</a> and/or <a href="https://en.wikipedia.org/wiki/Special_functions">Special</a>.
@@ -2135,6 +2142,9 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> <span class="type-name">Complex</span>
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>a<span class="symbol">:</span><span class="type-name">Float</span> (<span class="type-name">MkComplex</span> c d)<span class="symbol">:</span><span class="type-name">Complex</span><span class="symbol">.</span> <span class="type-name">MkComplex</span> (a <span class="symbol">*</span> c) (a <span class="symbol">*</span> d)
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">Complex</span>
+  arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> (<span class="type-name">MkComplex</span> (randn key) (randn key))
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> complex_division (<span class="type-name">MkComplex</span> a b<span class="symbol">:</span><span class="type-name">Complex</span>) (<span class="type-name">MkComplex</span> c d<span class="symbol">:</span><span class="type-name">Complex</span>)<span class="symbol">:</span> <span class="type-name">Complex</span> <span class="symbol">=</span>
   <span class="type-name">MkComplex</span> ((a <span class="symbol">*</span> c <span class="symbol">+</span> b <span class="symbol">*</span> d) <span class="symbol">/</span> (c <span class="symbol">*</span> c <span class="symbol">+</span> d <span class="symbol">*</span> d)) ((b <span class="symbol">*</span> c <span class="symbol">-</span> a <span class="symbol">*</span> d) <span class="symbol">/</span> (c <span class="symbol">*</span> c <span class="symbol">+</span> d <span class="symbol">*</span> d))
@@ -2269,10 +2279,6 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
             <span class="type-name">True</span>
           <span class="keyword">else</span>
             <span class="type-name">False</span>
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> nextpow2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">case</span> is_power_<span class="keyword">of</span>_2 x <span class="keyword">of</span>
-  <span class="type-name">True</span> <span class="symbol">-&gt;</span> x
-  <span class="type-name">False</span> <span class="symbol">-&gt;</span> intpow2 (1 <span class="symbol">+</span> intlog2 x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> general_integer_power {a} (times<span class="command">:a</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) (one<span class="command">:a</span>) (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   <span class="comment">-- Implements exponentiation by squaring.
@@ -2409,4 +2415,26 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--   if ordinal i == 0
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--     then Left (toList [1,2,3])
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--     else Right 1
-</span></div></div></div></body></html>
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Index set for tables</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> int_to_reversed_digits {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] (k<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> a<span class="symbol">=&gt;</span>b <span class="symbol">=</span>
+  base <span class="symbol">=</span> size b
+  snd <span class="symbol">$</span> scan k <span class="symbol">\</span>_ cur_k<span class="symbol">.</span>
+    next_k <span class="symbol">=</span> idiv cur_k base
+    digit  <span class="symbol">=</span> mod  cur_k base
+    (next_k<span class="symbol">,</span> unsafe_from_ordinal b digit)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reversed_digits_to_int {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] (digits<span class="symbol">:</span> a<span class="symbol">=&gt;</span>b) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
+  base <span class="symbol">=</span> size b
+  fst <span class="symbol">$</span> fold (0<span class="symbol">,</span> 1) <span class="symbol">\</span>j (cur_k<span class="symbol">,</span> cur_base)<span class="symbol">.</span>
+    next_k <span class="symbol">=</span> cur_k <span class="symbol">+</span> ordinal digits<span class="symbol">.</span>j <span class="symbol">*</span> cur_base
+    next_base <span class="symbol">=</span> cur_base <span class="symbol">*</span> base
+    (next_k<span class="symbol">,</span> next_base)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a<span class="symbol">=&gt;</span>b)
+  <span class="comment">-- 0@a is the least significant digit,
+</span>  <span class="comment">-- while (size a - 1)@a is the most significant digit.
+</span>  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> intpow (size b) (size a)
+  ordinal             <span class="symbol">=</span> reversed_digits_to_int
+  unsafe_from_ordinal <span class="symbol">=</span> int_to_reversed_digits
+</div></div></div></body></html>

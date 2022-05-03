@@ -204,7 +204,7 @@ function updateNavigation() {
 function extractStructure() { // Also sets ids on h1,h2,...
     var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
     // For now we are just fulling going to regenerate the structure each time
-    // Might be better if we made minimal changes, but ð¤·
+    // Might be better if we made minimal changes, but 🤷
 
     // Extract the structure of the document
     var structure = {children:[]}
@@ -300,22 +300,29 @@ function render(renderMode) {
         };
     }
 }
-render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Fast Fourier Transform</h1>
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Fast Fourier Transform</h1>
 <p>For arrays whose size is a power of 2, we use a radix-2 algorithm based
 on the <a href="https://github.com/diku-dk/fft/blob/master/lib/github.com/diku-dk/fft/stockham-radix-2.fut#L30">Fhutark demo</a>.
-For non-power-of-2 sized arrays, it uses
+This demo also uses types to enforce internally that the array sizes are powers of 2.</p>
+</div></div><div class="cell"><div class="prose-block"><p>For non-power-of-2 sized arrays, it uses
 <a href="https://en.wikipedia.org/wiki/Chirp_Z-transform">Bluestein's Algorithm</a>,
 which calls the power-of-2 FFT as a subroutine.</p>
 </div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h3>Helper functions</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> odd_sized_palindrome (mid<span class="command">:a</span>) (seq<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span>
-  ({backward<span class="command">:n</span> <span class="symbol">|</span> mid<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">|</span> zforward<span class="command">:n</span>}<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>  <span class="comment">-- Alphabetical order matters here.
-</span>  <span class="comment">-- Turns sequence 12345 into 543212345.
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> odd_sized_palindrome {a n} (mid<span class="command">:a</span>) (seq<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> ((n<span class="symbol">|</span><span class="type-name">Unit</span><span class="symbol">|</span>n)<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
+  <span class="comment">-- Turns sequence 12345 into 543212345.
 </span>  <span class="keyword">for</span> i<span class="symbol">.</span>
     <span class="keyword">case</span> i <span class="keyword">of</span>
-      {<span class="symbol">|</span>backward<span class="symbol">=</span>i<span class="symbol">|</span>} <span class="symbol">-&gt;</span> seq<span class="symbol">.</span>(reflect i)
-      {<span class="symbol">|</span>mid<span class="symbol">=</span>i<span class="symbol">|</span>} <span class="symbol">-&gt;</span> mid
-      {<span class="symbol">|</span>zforward<span class="symbol">=</span>i<span class="symbol">|</span>} <span class="symbol">-&gt;</span> seq<span class="symbol">.</span>i
+      <span class="type-name">Left</span> i <span class="symbol">-&gt;</span> <span class="keyword">case</span> i <span class="keyword">of</span>
+        <span class="type-name">Left</span> i <span class="symbol">-&gt;</span> seq<span class="symbol">.</span>(reflect i)
+        <span class="type-name">Right</span> () <span class="symbol">-&gt;</span> mid
+      <span class="type-name">Right</span> i <span class="symbol">-&gt;</span> seq<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> nextpow2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
+  <span class="keyword">case</span> is_power_<span class="keyword">of</span>_2 x <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> intlog2 x
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> 1 <span class="symbol">+</span> intlog2 x
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Inner FFT functions</h2>
@@ -323,65 +330,81 @@ which calls the power-of-2 FFT as a subroutine.</p>
   <span class="type-name">ForwardFT</span>
   <span class="type-name">InverseFT</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> butterfly_ixs (j&#39;<span class="command">:halfn</span>) (pow2<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> (n <span class="symbol">&amp;</span> n <span class="symbol">&amp;</span> n <span class="symbol">&amp;</span> n) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> butterfly_ixs {halfn n} [<span class="type-name">Ix</span> halfn<span class="symbol">,</span> <span class="type-name">Ix</span> n] (j&#39;<span class="command">:halfn</span>) (pow2<span class="symbol">:</span><span class="type-name">Int</span>)
+  <span class="symbol">:</span> (n <span class="symbol">&amp;</span> n <span class="symbol">&amp;</span> n <span class="symbol">&amp;</span> n) <span class="symbol">=</span>
   <span class="comment">-- Re-index at a finer frequency.
 </span>  <span class="comment">-- halfn must have half the size of n.
 </span>  <span class="comment">-- For explanation, see https://en.wikipedia.org/wiki/Butterfly_diagram
 </span>  <span class="comment">-- Note: with fancier index sets, this might be replacable by reshapes.
 </span>  j <span class="symbol">=</span> ordinal j&#39;
   k <span class="symbol">=</span> ((idiv j pow2) <span class="symbol">*</span> pow2 <span class="symbol">*</span> 2) <span class="symbol">+</span> mod j pow2
-  left_write_ix  <span class="symbol">=</span> unsafeFromOrdinal n k
-  right_write_ix <span class="symbol">=</span> unsafeFromOrdinal n (k <span class="symbol">+</span> pow2)
+  left_write_ix  <span class="symbol">=</span> unsafe_from_ordinal n k
+  right_write_ix <span class="symbol">=</span> unsafe_from_ordinal n (k <span class="symbol">+</span> pow2)
 
-  left_read_ix  <span class="symbol">=</span> unsafeFromOrdinal n j
-  right_read_ix <span class="symbol">=</span> unsafeFromOrdinal n (j <span class="symbol">+</span> size halfn)
+  left_read_ix  <span class="symbol">=</span> unsafe_from_ordinal n j
+  right_read_ix <span class="symbol">=</span> unsafe_from_ordinal n (j <span class="symbol">+</span> size halfn)
   (left_read_ix<span class="symbol">,</span> right_read_ix<span class="symbol">,</span> left_write_ix<span class="symbol">,</span> right_write_ix)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> power_<span class="keyword">of</span>_2_fft (direction<span class="symbol">:</span> <span class="type-name">FTDirection</span>) (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
-  <span class="comment">-- Input size must be a power of 2.
-</span>  <span class="comment">-- Can enforce this with tables-as-index-sets like:
-</span>  <span class="comment">-- (x: (log2n=&gt;(Fin 2))=&gt;Complex)) once that&#39;s supported.
-</span>  dir_const <span class="symbol">=</span> <span class="keyword">case</span> direction <span class="keyword">of</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> power_<span class="keyword">of</span>_2_fft {log2_n}
+  (direction<span class="symbol">:</span> <span class="type-name">FTDirection</span>)
+  (x<span class="symbol">:</span> ((<span class="type-name">Fin</span> log2_n)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2))<span class="symbol">=&gt;</span><span class="type-name">Complex</span>) <span class="symbol">:</span>
+      ((<span class="type-name">Fin</span> log2_n)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2))<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
+  <span class="comment">-- (Fin n)=&gt;(Fin 2) has 2^n elements, so (Fin log2_n)=&gt;(Fin n) has exactly n.
+</span>
+  dir_const <span class="symbol">=</span> <span class="keyword">case</span> direction <span class="keyword">of</span>
     <span class="type-name">ForwardFT</span> <span class="symbol">-&gt;</span> <span class="symbol">-</span>pi
     <span class="type-name">InverseFT</span> <span class="symbol">-&gt;</span> pi
-
-  log2n <span class="symbol">=</span> intlog2 (size n)
-  halfn <span class="symbol">=</span> idiv (size n) 2
   
-  ans <span class="symbol">=</span> yieldState x <span class="symbol">\</span>xRef<span class="symbol">.</span>
-    <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> log2n)<span class="symbol">.</span>
-      ipow2 <span class="symbol">=</span> intpow 2 (ordinal i)
+  (n<span class="symbol">,</span> ans) <span class="symbol">=</span> yield_state (1<span class="symbol">,</span> x) <span class="symbol">\</span>combRef<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> log2_n)<span class="symbol">.</span>
+      ipow2Ref <span class="symbol">=</span> fst_ref combRef
+      xRef <span class="symbol">=</span> snd_ref combRef
+      ipow2 <span class="symbol">=</span> get ipow2Ref
+
+      log2_half_n <span class="symbol">=</span> log2_n <span class="symbol">-</span> 1
       xRef <span class="symbol">:=</span> yieldAccum (<span class="type-name">AddMonoid</span> <span class="type-name">Complex</span>) <span class="symbol">\</span>bufRef<span class="symbol">.</span>
-        <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">Fin</span> halfn)<span class="symbol">.</span>  <span class="comment">-- Executes in parallel.
+        <span class="keyword">for</span> j<span class="symbol">:</span>((<span class="type-name">Fin</span> log2_half_n)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2))<span class="symbol">.</span>  <span class="comment">-- Executes in parallel.
 </span>          (left_read_ix<span class="symbol">,</span> right_read_ix<span class="symbol">,</span>
            left_write_ix<span class="symbol">,</span> right_write_ix) <span class="symbol">=</span> butterfly_ixs j ipow2
 
           <span class="comment">-- Read one element from the last buffer, scaled.
-</span>          angle <span class="symbol">=</span> dir_const <span class="symbol">*</span> (<span class="type-name">IToF</span> <span class="symbol">$</span> mod (ordinal j) ipow2) <span class="symbol">/</span> <span class="type-name">IToF</span> ipow2
+</span>          angle <span class="symbol">=</span> dir_const <span class="symbol">*</span> (i_to_f <span class="symbol">$</span> mod (ordinal j) ipow2) <span class="symbol">/</span> i_to_f ipow2
           v <span class="symbol">=</span> (get xRef<span class="symbol">!</span>right_read_ix) <span class="symbol">*</span> (<span class="type-name">MkComplex</span> (cos angle) (sin angle))
 
           <span class="comment">-- Add and subtract it to the relevant places in the new buffer.
 </span>          bufRef<span class="symbol">!</span>left_write_ix  <span class="symbol">+=</span> (get (xRef<span class="symbol">!</span>left_read_ix)) <span class="symbol">+</span> v
           bufRef<span class="symbol">!</span>right_write_ix <span class="symbol">+=</span> (get (xRef<span class="symbol">!</span>left_read_ix)) <span class="symbol">-</span> v
+      ipow2Ref <span class="symbol">:=</span> ipow2 <span class="symbol">*</span> 2
 
   <span class="keyword">case</span> direction <span class="keyword">of</span>
     <span class="type-name">ForwardFT</span> <span class="symbol">-&gt;</span> ans
-    <span class="type-name">InverseFT</span> <span class="symbol">-&gt;</span> ans <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))
+    <span class="type-name">InverseFT</span> <span class="symbol">-&gt;</span> ans <span class="symbol">/</span> (i_to_f n)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> convolve_complex (u<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Complex</span>) (v<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Complex</span>) <span class="symbol">:</span>
-  ({orig_vals<span class="command">:n</span> <span class="symbol">|</span> padding<span class="command">:m</span> }<span class="symbol">=&gt;</span><span class="type-name">Complex</span>) <span class="symbol">=</span>  <span class="comment">-- Alphabetical order matters here.
-</span>  <span class="comment">-- Convolve by pointwise multiplication in the Fourier domain.
-</span>  convolved_size <span class="symbol">=</span> (size n) <span class="symbol">+</span> (size m) <span class="symbol">-</span> 1
-  working_size <span class="symbol">=</span> nextpow2 convolved_size
-  u_padded <span class="symbol">=</span> padTo (<span class="type-name">Fin</span> working_size) zero u
-  v_padded <span class="symbol">=</span> padTo (<span class="type-name">Fin</span> working_size) zero v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pad_to_power_<span class="keyword">of</span>_2 {a n} (log2_m<span class="symbol">:</span><span class="type-name">Int</span>) (pad_val<span class="command">:a</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span>
+    ((<span class="type-name">Fin</span> log2_m)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2))<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  flatsize <span class="symbol">=</span> intpow2 log2_m
+  padded_flat <span class="symbol">=</span> pad_to (<span class="type-name">Fin</span> flatsize) pad_val xs
+  unsafe_cast_table ((<span class="type-name">Fin</span> log2_m)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)) padded_flat
+</div></div><div class="cell"><div class="code-block">  
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> convolve_complex {n m} (u<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Complex</span>) (v<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Complex</span>) <span class="symbol">:</span> ((n<span class="symbol">|</span>m)<span class="symbol">=&gt;</span><span class="type-name">Complex</span>) <span class="symbol">=</span>
+  <span class="comment">-- Convolve by pointwise multiplication in the Fourier domain.
+</span>
+  <span class="comment">-- Pad and convert to Fourier domain.
+</span>  min_convolve_size <span class="symbol">=</span> (size n) <span class="symbol">+</span> (size m) <span class="symbol">-</span> 1
+  log_working_size <span class="symbol">=</span> nextpow2 min_convolve_size
+  u_padded <span class="symbol">=</span> pad_to_power_<span class="keyword">of</span>_2 log_working_size zero u
+  v_padded <span class="symbol">=</span> pad_to_power_<span class="keyword">of</span>_2 log_working_size zero v
   spectral_u <span class="symbol">=</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">ForwardFT</span> u_padded
   spectral_v <span class="symbol">=</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">ForwardFT</span> v_padded
-  spectral_conv <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> spectral_u<span class="symbol">.</span>i <span class="symbol">*</span> spectral_v<span class="symbol">.</span>i
-  padded_conv <span class="symbol">=</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">InverseFT</span> spectral_conv
-  slice padded_conv 0 {orig_vals<span class="command">:n</span> <span class="symbol">|</span> padding<span class="command">:m</span> }
+  
+  <span class="comment">-- Pointwise multiply.
+</span>  spectral_conv <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> spectral_u<span class="symbol">.</span>i <span class="symbol">*</span> spectral_v<span class="symbol">.</span>i
+
+  <span class="comment">-- Convert back to primal domain and undo padding.
+</span>  padded_conv <span class="symbol">=</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">InverseFT</span> spectral_conv
+  slice padded_conv 0 (n <span class="symbol">|</span> m)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> convolve (u<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (v<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> ({orig_vals<span class="command">:n</span> <span class="symbol">|</span> padding<span class="command">:m</span> }<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> convolve {n m} (u<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (v<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> ((n<span class="symbol">|</span>m)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
   u&#39; <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> u<span class="symbol">.</span>i 0<span class="symbol">.</span>0
   v&#39; <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> v<span class="symbol">.</span>i 0<span class="symbol">.</span>0
   ans <span class="symbol">=</span> convolve_complex u&#39; v&#39;
@@ -389,57 +412,70 @@ which calls the power-of-2 FFT as a subroutine.</p>
     (<span class="type-name">MkComplex</span> real imag) <span class="symbol">=</span> ans<span class="symbol">.</span>i
     real
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bluestein {n} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
+  <span class="comment">-- Bluestein&#39;s algorithm.
+</span>  <span class="comment">-- Converts the general FFT into a convolution,
+</span>  <span class="comment">-- which is then solved with calls to a power-of-2 FFT.
+</span>  im <span class="symbol">=</span> <span class="type-name">MkComplex</span> 0<span class="symbol">.</span>0 1<span class="symbol">.</span>0
+  wks <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+    i_squared <span class="symbol">=</span> i_to_f <span class="symbol">$</span> sq <span class="symbol">$</span> ordinal i
+    exp <span class="symbol">$</span> (<span class="symbol">-</span>im) <span class="symbol">*</span> (<span class="type-name">MkComplex</span> (pi <span class="symbol">*</span> i_squared <span class="symbol">/</span> (i_to_f (size n))) 0<span class="symbol">.</span>0)
+
+  (<span class="type-name">AsList</span> _ tailTable) <span class="symbol">=</span> tail wks 1
+  back_and_forth <span class="symbol">=</span> odd_sized_palindrome (head wks) tailTable
+  xq <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> wks<span class="symbol">.</span>i
+  back_and_forth_conj <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> complex_conj back_and_forth<span class="symbol">.</span>i
+  convolution <span class="symbol">=</span> convolve_complex xq back_and_forth_conj
+  convslice <span class="symbol">=</span> slice convolution (size n <span class="symbol">-</span> 1) n
+  <span class="keyword">for</span> i<span class="symbol">.</span> wks<span class="symbol">.</span>i <span class="symbol">*</span> convslice<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>FFT Interface</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fft (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
-  <span class="keyword">if</span> isPowerOf2 (size n)
-    <span class="keyword">then</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">ForwardFT</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fft {n} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
+  <span class="keyword">if</span> is_power_<span class="keyword">of</span>_2 (size n)
+    <span class="keyword">then</span>
+      newsize <span class="symbol">=</span> intlog2 (size n)
+      castx <span class="symbol">=</span> unsafe_cast_table ((<span class="type-name">Fin</span> newsize)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)) x
+      ret <span class="symbol">=</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">ForwardFT</span> castx
+      unsafe_cast_table n ret
     <span class="keyword">else</span>
-      <span class="comment">-- Bluestein&#39;s algorithm.
-</span>      <span class="comment">-- Converts the general FFT into a convolution,
-</span>      <span class="comment">-- which is then solved with calls to a power-of-2 FFT.
-</span>      im <span class="symbol">=</span> <span class="type-name">MkComplex</span> 0<span class="symbol">.</span>0 1<span class="symbol">.</span>0
-      wks <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
-        i_squared <span class="symbol">=</span> <span class="type-name">IToF</span> <span class="symbol">$</span> sq <span class="symbol">$</span> ordinal i
-        exp <span class="symbol">$</span> (<span class="symbol">-</span>im) <span class="symbol">*</span> (<span class="type-name">MkComplex</span> (pi <span class="symbol">*</span> i_squared <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))) 0<span class="symbol">.</span>0)
-
-      (<span class="type-name">AsList</span> _ tailTable) <span class="symbol">=</span> tail wks 1
-      back_and_forth <span class="symbol">=</span> odd_sized_palindrome (head wks) tailTable
-      xq <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> wks<span class="symbol">.</span>i
-      back_and_forth_conj <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> complex_conj back_and_forth<span class="symbol">.</span>i
-      convolution <span class="symbol">=</span> convolve_complex xq back_and_forth_conj
-      convslice <span class="symbol">=</span> slice convolution (size n <span class="symbol">-</span> 1) n
-      <span class="keyword">for</span> i<span class="symbol">.</span> wks<span class="symbol">.</span>i <span class="symbol">*</span> convslice<span class="symbol">.</span>i
+      bluestein x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
-  <span class="keyword">if</span> isPowerOf2 (size n)
-    <span class="keyword">then</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">InverseFT</span> xs
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft {n} (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
+  <span class="keyword">if</span> is_power_<span class="keyword">of</span>_2 (size n)
+    <span class="keyword">then</span>
+      newsize <span class="symbol">=</span> intlog2 (size n)
+      castx <span class="symbol">=</span> unsafe_cast_table ((<span class="type-name">Fin</span> newsize)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)) xs
+      ret <span class="symbol">=</span> power_<span class="keyword">of</span>_2_fft <span class="type-name">InverseFT</span> castx
+      unsafe_cast_table n ret
     <span class="keyword">else</span>
       unscaled_fft <span class="symbol">=</span> fft (<span class="keyword">for</span> i<span class="symbol">.</span> complex_conj xs<span class="symbol">.</span>i)
-      <span class="keyword">for</span> i<span class="symbol">.</span> (complex_conj unscaled_fft<span class="symbol">.</span>i) <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))
+      <span class="keyword">for</span> i<span class="symbol">.</span> (complex_conj unscaled_fft<span class="symbol">.</span>i) <span class="symbol">/</span> (i_to_f (size n))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span>  fft_real (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>  fft <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i 0<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft_real (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span> ifft <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span>  fft_real {n} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>  fft <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft_real {n} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span> ifft <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fft2 (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fft2 {n m} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
   x&#39;      <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> fft x<span class="symbol">.</span>i
   transpose <span class="keyword">for</span> i<span class="symbol">.</span> fft (transpose x&#39;)<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft2 (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft2 {n m} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>
   x&#39;      <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ifft x<span class="symbol">.</span>i
   transpose <span class="keyword">for</span> i<span class="symbol">.</span> ifft (transpose x&#39;)<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span>  fft2_real (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>  fft2 <span class="keyword">for</span> i j<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j 0<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft2_real (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span> ifft2 <span class="keyword">for</span> i j<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span>  fft2_real {n m} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span>  fft2 <span class="keyword">for</span> i j<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ifft2_real {n m} (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span> ifft2 <span class="keyword">for</span> i j<span class="symbol">.</span> <span class="type-name">MkComplex</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">--------</span> <span class="type-name">Tests</span> <span class="symbol">--------</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">a <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">MkComplex</span> [10<span class="symbol">.</span>1<span class="symbol">,</span> <span class="symbol">-</span>2<span class="symbol">.</span>2<span class="symbol">,</span> 8<span class="symbol">.</span>3<span class="symbol">,</span> 4<span class="symbol">.</span>5<span class="symbol">,</span> 9<span class="symbol">.</span>3]<span class="symbol">.</span>i 0<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block">b <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 20) j<span class="symbol">:</span>(<span class="type-name">Fin</span> 70)<span class="symbol">.</span>
-  <span class="type-name">MkComplex</span> (randn <span class="symbol">$</span> ixkey2 (newKey 0) i j) 0<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> map nextpow2 [<span class="symbol">-</span>1<span class="symbol">,</span> 0<span class="symbol">,</span> 1<span class="symbol">,</span> 2<span class="symbol">,</span> 3<span class="symbol">,</span> 4<span class="symbol">,</span> 7<span class="symbol">,</span> 8<span class="symbol">,</span> 9<span class="symbol">,</span> 1023<span class="symbol">,</span> 1024<span class="symbol">,</span> 1025]
+</div><div class="result-block">[0, 0, 0, 1, 2, 2, 3, 3, 4, 10, 10, 11]</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">a <span class="symbol">:</span> (<span class="type-name">Fin</span> 4)<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> a <span class="symbol">~~</span> (ifft <span class="symbol">$</span> fft a)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> a <span class="symbol">~~</span> (fft <span class="symbol">$</span> ifft a)
-</div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> b <span class="symbol">~~</span> (ifft2 <span class="symbol">$</span> fft2 b)
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">b <span class="symbol">:</span> (<span class="type-name">Fin</span> 20)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 70)<span class="symbol">=&gt;</span><span class="type-name">Complex</span> <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> b <span class="symbol">~~</span> (ifft2 <span class="symbol">$</span> fft2 b)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> b <span class="symbol">~~</span> (fft2 <span class="symbol">$</span> ifft2 b)
 </div><div class="result-block">True</div></div></div></body></html>
