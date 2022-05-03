@@ -517,22 +517,22 @@ type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
 hoistThroughDecls
-  :: ( SubstE Name e, HoistableE e
-     , Fallible1 m, ScopeReader m, EnvExtender m, HoistableE e)
+  :: ( SubstE Name e, HoistableE e, Fallible1 m, ScopeReader m, EnvExtender m)
   => InfOutFrag n l
   ->   e l
   -> m n (Abs InfOutFrag (Abs (Nest Decl) e) n)
 hoistThroughDecls outFrag result = do
   scope <- unsafeGetScope
   refreshAbs (Abs outFrag result) \outFrag' result' -> do
-    hoistThroughDecls' scope outFrag' result'
+    liftExcept $ hoistThroughDecls' scope outFrag' result'
+{-# INLINE hoistThroughDecls #-}
 
 hoistThroughDecls'
-  :: (Fallible m, HoistableE e, Distinct l)
+  :: (HoistableE e, Distinct l)
   => Scope n
   -> InfOutFrag n l
   ->   e l
-  -> m (Abs InfOutFrag (Abs (Nest Decl) e) n)
+  -> Except (Abs InfOutFrag (Abs (Nest Decl) e) n)
 hoistThroughDecls' scope (InfOutFrag emissions defaults subst) result = do
   withSubscopeDistinct emissions do
     HoistedSolverState infVars defaults' subst' decls result' <-
@@ -598,10 +598,10 @@ dceIfSolved b (HoistedSolverState infVars defaults (SolverSubst substMap) decls 
         HoistFailure _ -> Nothing
     False -> Nothing
 
-hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
+hoistInfStateRec :: (Distinct n, Distinct l, HoistableE e)
                  => Scope n
                  -> InfEmissions n l -> Defaults l -> SolverSubst l -> e l
-                 -> m (HoistedSolverState e n)
+                 -> Except (HoistedSolverState e n)
 hoistInfStateRec _ Empty defaults subst e = do
   return $ HoistedSolverState Empty (zonkDefaults subst defaults) subst Empty e
 hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
