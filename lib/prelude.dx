@@ -705,6 +705,13 @@ instance {a n} [Ord a] Ord (n=>a)
         fold EQ $ \i c. c <> (compare xs.i ys.i)
     f == LT
 
+instance Ix Bool
+  get_size = \(). 2
+  ordinal = \b. case b of
+    False -> 0
+    True -> 1
+  unsafe_from_ordinal = \i. i > 0
+
 '## Elementary/Special Functions
 This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).
 Roughly it lines up with some definitions of the set of [Elementary](https://en.wikipedia.org/wiki/Elementary_function) and/or [Special](https://en.wikipedia.org/wiki/Special_functions).
@@ -1909,6 +1916,9 @@ instance Mul Complex
 instance VSpace Complex
   scale_vec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
 
+instance Arbitrary Complex
+  arb = \key. (MkComplex (randn key) (randn key))
+
 -- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
 def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
   MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
@@ -2044,10 +2054,6 @@ def intlog2 (x:Int) : Int =
             True
           else
             False
-
-def nextpow2 (x:Int) : Int = case is_power_of_2 x of
-  True -> x
-  False -> intpow2 (1 + intlog2 x)
 
 def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Int) : a =
   -- Implements exponentiation by squaring.
@@ -2189,3 +2195,26 @@ def assert (b:Bool) : {Except} Unit =
 --   if ordinal i == 0
 --     then Left (toList [1,2,3])
 --     else Right 1
+
+'### Index set for tables
+
+def int_to_reversed_digits {a b} [Ix a, Ix b] (k:Int) : a=>b =
+  base = size b
+  snd $ scan k \_ cur_k.
+    next_k = idiv cur_k base
+    digit  = mod  cur_k base
+    (next_k, unsafe_from_ordinal b digit)
+
+def reversed_digits_to_int {a b} [Ix a, Ix b] (digits: a=>b) : Int =
+  base = size b
+  fst $ fold (0, 1) \j (cur_k, cur_base).
+    next_k = cur_k + ordinal digits.j * cur_base
+    next_base = cur_base * base
+    (next_k, next_base)
+
+instance {a b} [Ix a, Ix b] Ix (a=>b)
+  -- 0@a is the least significant digit,
+  -- while (size a - 1)@a is the most significant digit.
+  get_size = \(). intpow (size b) (size a)
+  ordinal             = reversed_digits_to_int
+  unsafe_from_ordinal = int_to_reversed_digits

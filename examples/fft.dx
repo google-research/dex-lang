@@ -1,9 +1,12 @@
 '# Fast Fourier Transform
 For arrays whose size is a power of 2, we use a radix-2 algorithm based
 on the [Fhutark demo](https://github.com/diku-dk/fft/blob/master/lib/github.com/diku-dk/fft/stockham-radix-2.fut#L30).
-For non-power-of-2 sized arrays, it uses
+This demo also uses types to enforce internally that the array sizes are powers of 2.
+
+'For non-power-of-2 sized arrays, it uses
 [Bluestein's Algorithm](https://en.wikipedia.org/wiki/Chirp_Z-transform),
 which calls the power-of-2 FFT as a subroutine.
+
 
 
 '### Helper functions
@@ -16,6 +19,11 @@ def odd_sized_palindrome {a n} (mid:a) (seq:n=>a) : ((n|Unit|n)=>a) =
         Left i -> seq.(reflect i)
         Right () -> mid
       Right i -> seq.i
+
+def nextpow2 (x:Int) : Int =
+  case is_power_of_2 x of
+    True -> intlog2 x
+    False -> 1 + intlog2 x
 
 
 '## Inner FFT functions
@@ -39,22 +47,25 @@ def butterfly_ixs {halfn n} [Ix halfn, Ix n] (j':halfn) (pow2:Int)
   right_read_ix = unsafe_from_ordinal n (j + size halfn)
   (left_read_ix, right_read_ix, left_write_ix, right_write_ix)
 
-def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =
-  -- Input size must be a power of 2.
-  -- Can enforce this with tables-as-index-sets like:
-  -- (x: (log2n=>(Fin 2))=>Complex)) once that's supported.
+def power_of_2_fft {log2_n}
+  (direction: FTDirection)
+  (x: ((Fin log2_n)=>(Fin 2))=>Complex) :
+      ((Fin log2_n)=>(Fin 2))=>Complex =
+  -- (Fin n)=>(Fin 2) has 2^n elements, so (Fin log2_n)=>(Fin n) has exactly n.
+
   dir_const = case direction of
     ForwardFT -> -pi
     InverseFT -> pi
-
-  log2n = intlog2 (size n)
-  halfn = idiv (size n) 2
   
-  ans = yield_state x \xRef.
-    for i:(Fin log2n).
-      ipow2 = intpow 2 (ordinal i)
+  (n, ans) = yield_state (1, x) \combRef.
+    for i:(Fin log2_n).
+      ipow2Ref = fst_ref combRef
+      xRef = snd_ref combRef
+      ipow2 = get ipow2Ref
+
+      log2_half_n = log2_n - 1
       xRef := yieldAccum (AddMonoid Complex) \bufRef.
-        for j:(Fin halfn).  -- Executes in parallel.
+        for j:((Fin log2_half_n)=>(Fin 2)).  -- Executes in parallel.
           (left_read_ix, right_read_ix,
            left_write_ix, right_write_ix) = butterfly_ixs j ipow2
 
@@ -65,23 +76,35 @@ def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =
           -- Add and subtract it to the relevant places in the new buffer.
           bufRef!left_write_ix  += (get (xRef!left_read_ix)) + v
           bufRef!right_write_ix += (get (xRef!left_read_ix)) - v
+      ipow2Ref := ipow2 * 2
 
   case direction of
     ForwardFT -> ans
-    InverseFT -> ans / (i_to_f (size n))
+    InverseFT -> ans / (i_to_f n)
 
-def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) :
-  ((n|m)=>Complex) =  -- Alphabetical order matters here.
+def pad_to_power_of_2 {a n} (log2_m:Int) (pad_val:a) (xs:n=>a) :
+    ((Fin log2_m)=>(Fin 2))=>a =
+  flatsize = intpow2 log2_m
+  padded_flat = pad_to (Fin flatsize) pad_val xs
+  unsafe_cast_table ((Fin log2_m)=>(Fin 2)) padded_flat
+  
+def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) : ((n|m)=>Complex) =
   -- Convolve by pointwise multiplication in the Fourier domain.
-  convolved_size = (size n) + (size m) - 1
-  working_size = nextpow2 convolved_size
-  u_padded = pad_to (Fin working_size) zero u
-  v_padded = pad_to (Fin working_size) zero v
+
+  -- Pad and convert to Fourier domain.
+  min_convolve_size = (size n) + (size m) - 1
+  log_working_size = nextpow2 min_convolve_size
+  u_padded = pad_to_power_of_2 log_working_size zero u
+  v_padded = pad_to_power_of_2 log_working_size zero v
   spectral_u = power_of_2_fft ForwardFT u_padded
   spectral_v = power_of_2_fft ForwardFT v_padded
+  
+  -- Pointwise multiply.
   spectral_conv = for i. spectral_u.i * spectral_v.i
+
+  -- Convert back to primal domain and undo padding.
   padded_conv = power_of_2_fft InverseFT spectral_conv
-  slice padded_conv 0 (n | m )
+  slice padded_conv 0 (n | m)
 
 def convolve {n m} (u:n=>Float) (v:m=>Float) : ((n|m)=>Float) =
   u' = for i. MkComplex u.i 0.0
@@ -91,32 +114,43 @@ def convolve {n m} (u:n=>Float) (v:m=>Float) : ((n|m)=>Float) =
     (MkComplex real imag) = ans.i
     real
 
+def bluestein {n} (x: n=>Complex): n=>Complex =
+  -- Bluestein's algorithm.
+  -- Converts the general FFT into a convolution,
+  -- which is then solved with calls to a power-of-2 FFT.
+  im = MkComplex 0.0 1.0
+  wks = for i.
+    i_squared = i_to_f $ sq $ ordinal i
+    exp $ (-im) * (MkComplex (pi * i_squared / (i_to_f (size n))) 0.0)
+
+  (AsList _ tailTable) = tail wks 1
+  back_and_forth = odd_sized_palindrome (head wks) tailTable
+  xq = for i. x.i * wks.i
+  back_and_forth_conj = for i. complex_conj back_and_forth.i
+  convolution = convolve_complex xq back_and_forth_conj
+  convslice = slice convolution (size n - 1) n
+  for i. wks.i * convslice.i
+
 
 '## FFT Interface
 
 def fft {n} (x: n=>Complex): n=>Complex =
   if is_power_of_2 (size n)
-    then power_of_2_fft ForwardFT x
+    then
+      newsize = intlog2 (size n)
+      castx = unsafe_cast_table ((Fin newsize)=>(Fin 2)) x
+      ret = power_of_2_fft ForwardFT castx
+      unsafe_cast_table n ret
     else
-      -- Bluestein's algorithm.
-      -- Converts the general FFT into a convolution,
-      -- which is then solved with calls to a power-of-2 FFT.
-      im = MkComplex 0.0 1.0
-      wks = for i.
-        i_squared = i_to_f $ sq $ ordinal i
-        exp $ (-im) * (MkComplex (pi * i_squared / (i_to_f (size n))) 0.0)
-
-      (AsList _ tailTable) = tail wks 1
-      back_and_forth = odd_sized_palindrome (head wks) tailTable
-      xq = for i. x.i * wks.i
-      back_and_forth_conj = for i. complex_conj back_and_forth.i
-      convolution = convolve_complex xq back_and_forth_conj
-      convslice = slice convolution (size n - 1) n
-      for i. wks.i * convslice.i
+      bluestein x
 
 def ifft {n} (xs: n=>Complex): n=>Complex =
   if is_power_of_2 (size n)
-    then power_of_2_fft InverseFT xs
+    then
+      newsize = intlog2 (size n)
+      castx = unsafe_cast_table ((Fin newsize)=>(Fin 2)) xs
+      ret = power_of_2_fft InverseFT castx
+      unsafe_cast_table n ret
     else
       unscaled_fft = fft (for i. complex_conj xs.i)
       for i. (complex_conj unscaled_fft.i) / (i_to_f (size n))
@@ -137,14 +171,17 @@ def ifft2_real {n m} (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex 
 
 -------- Tests --------
 
-a = for i. MkComplex [10.1, -2.2, 8.3, 4.5, 9.3].i 0.0
-b = for i:(Fin 20) j:(Fin 70).
-  MkComplex (randn $ ixkey2 (new_key 0) i j) 0.0
+:p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
+> [0, 0, 0, 1, 2, 2, 3, 3, 4, 10, 10, 11]
 
+
+a : (Fin 4)=>Complex = arb $ new_key 0
 :p a ~~ (ifft $ fft a)
 > True
 :p a ~~ (fft $ ifft a)
 > True
+
+b : (Fin 20)=>(Fin 70)=>Complex = arb $ new_key 0
 :p b ~~ (ifft2 $ fft2 b)
 > True
 :p b ~~ (fft2 $ ifft2 b)
