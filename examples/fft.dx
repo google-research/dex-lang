@@ -51,7 +51,7 @@ def power_of_2_fft {log2_n}
   (direction: FTDirection)
   (x: ((Fin log2_n)=>(Fin 2))=>Complex) :
       ((Fin log2_n)=>(Fin 2))=>Complex =
-  -- (Fin log2_n)=>(Fin 2) has 2^n elements.
+  -- (Fin n)=>(Fin 2) has 2^n elements, so (Fin log2_n)=>(Fin n) has exactly n.
 
   dir_const = case direction of
     ForwardFT -> -pi
