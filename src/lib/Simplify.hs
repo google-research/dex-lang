@@ -154,6 +154,7 @@ caseComputingEffs
   => Atom n -> [Alt n] -> Type n -> m n (Expr n)
 caseComputingEffs scrut alts resultTy = do
   Case scrut alts resultTy <$> foldMapM effectsE alts
+{-# INLINE caseComputingEffs #-}
 
 defuncCase :: Emits o => Atom o -> [Alt i] -> Type o -> SimplifyM i o (Atom o)
 defuncCase scrut alts resultTy = do
