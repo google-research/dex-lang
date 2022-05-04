@@ -601,12 +601,13 @@ hoistInfStateRec :: forall n l l1 l2 e. (Distinct n, Distinct l2, HoistableE e)
                  => Scope n -> InfEmissions n l
                  -> InferenceNameBindersFV l l1 -> Defaults l1 -> UnhoistedSolverSubst l1 -> DelayedSolveNest Decl l1 l2 -> e l2
                  -> Except (HoistedSolverState e n)
-hoistInfStateRec scope REmpty infVars defaults subst decls e = do
+hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissions of
+ REmpty -> do
   subst' <- liftHoistExcept $ hoistSolverSubst subst
   let decls' = withSubscopeDistinct decls $
                  resolveDelayedSolve (scope `extendOutMap` toScopeFrag infVars) subst' decls
   return $ HoistedSolverState (dropInferenceNameBindersFV infVars) defaults subst' decls' e
-hoistInfStateRec scope (RNest rest (b :> infEmission)) infVars defaults subst decls e = do
+ RNest rest (b :> infEmission) -> do
   withSubscopeDistinct decls do
     case infEmission of
       RightE binding@(InfVarBound _ _) -> do
