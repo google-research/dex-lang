@@ -194,7 +194,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd psd kernelregression fft \
+                sgd psd kernelregression \
                 quaternions manifold-gradients schrodinger tutorial \
                 latex
 # TODO: re-enable
@@ -204,7 +204,7 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
-             linalg-tests set-tests
+             linalg-tests set-tests fft-tests
 
 lib-names = diagram plot png
 
