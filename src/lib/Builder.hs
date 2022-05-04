@@ -37,7 +37,6 @@ module Builder (
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex,
-  getIxImpl, IxImpl (..),
   litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, unpackTelescope,
@@ -69,7 +68,6 @@ import Syntax
 import Type
 import PPrint (prettyBlock)
 import CheapReduction
-import {-# SOURCE #-} Inference
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
@@ -460,7 +458,7 @@ buildPureLam hint arr ty body = do
 
 buildTabLam
   :: ScopableBuilder m
-  => NameHint -> Type n
+  => NameHint -> IxType n
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 buildTabLam hint ty fBody = do
@@ -567,9 +565,6 @@ buildAbs hint binding cont = do
     body <- cont $ binderName b
     return $ Abs (b:>binding) body
 
-singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
-singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
-
 varsAsBinderNest :: EnvReader m => [AtomName n] -> m n (EmptyAbs (Nest Binder) n)
 varsAsBinderNest [] = return $ EmptyAbs Empty
 varsAsBinderNest (v:vs) = do
@@ -588,30 +583,36 @@ typesAsBinderNest types = liftEnvReaderM $ go types
         Abs bs UnitE <- go $ map sink rest
         return $ Abs (Nest (b:>ty) bs) UnitE
 
-singletonBinderNest :: Builder m
-                    => NameHint -> Type n -> m n (EmptyAbs (Nest Binder) n)
-singletonBinderNest hint ty = do
-  EmptyAbs b <- singletonBinder hint ty
-  return $ EmptyAbs (Nest b Empty)
+singletonBinderNest
+  :: EnvReader m
+  => NameHint -> ann n
+  -> m n (EmptyAbs (Nest (BinderP AtomNameC ann)) n)
+singletonBinderNest hint ann = do
+  Abs b _ <- return $ newName hint
+  return $ EmptyAbs (Nest (b:>ann) Empty)
 
 buildNaryAbs
-  :: (ScopableBuilder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
-  => EmptyAbs (Nest Binder) n
+  :: ( ScopableBuilder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e
+     , BindsOneAtomName b, BindsEnv b, SubstB Name b)
+  => EmptyAbs (Nest b) n
   -> (forall l. DExt n l => [AtomName l] -> m l (e l))
-  -> m n (Abs (Nest Binder) e n)
+  -> m n (Abs (Nest b) e n)
 buildNaryAbs (Abs n UnitE) body = do
   a <- liftBuilder $ buildNaryAbsRec [] n
   refreshAbs a \freshNest (ListE freshNames) ->
     Abs freshNest <$> body freshNames
 {-# INLINE buildNaryAbs #-}
 
-buildNaryAbsRec :: [AtomName n] -> Nest Binder n l -> BuilderM n (Abs (Nest Binder) (ListE AtomName) n)
+buildNaryAbsRec
+  :: (BindsOneAtomName b, BindsEnv b, SubstB Name b)
+  => [AtomName n] -> Nest b n l -> BuilderM n (Abs (Nest b) (ListE AtomName) n)
 buildNaryAbsRec ns x = confuseGHC >>= \_ -> case x of
   Empty -> return $ Abs Empty $ ListE $ reverse ns
   Nest b bs -> do
     refreshAbs (Abs b (EmptyAbs bs)) \b' (EmptyAbs bs') -> do
       Abs bs'' ns'' <- buildNaryAbsRec (binderName b' : sinkList ns) bs'
       return $ Abs (Nest b' bs'') ns''
+{-# INLINE buildNaryAbsRec #-}
 
 -- TODO: probably deprectate this version in favor of `buildNaryLamExpr`
 buildNaryLam
@@ -755,29 +756,29 @@ buildEffLam rws hint ty body = do
 
 buildForAnn
   :: (Emits n, ScopableBuilder m)
-  => NameHint -> ForAnn -> Type n
+  => NameHint -> ForAnn -> IxType n
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildForAnn hint ann ty body = do
-  lam <- withFreshBinder hint (LamBinding PlainArrow ty) \b -> do
+buildForAnn hint ann ixTy@(IxType ty _) body = do
+  lam <- withFreshBinder hint ixTy \b -> do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
     effs <- effectsE body'
     return $ Lam $ LamExpr (LamBinder b ty PlainArrow effs) body'
-  liftM Var $ emit $ Hof $ For ann lam
+  liftM Var $ emit $ Hof $ For ann (IxTy ixTy) lam
 
 buildFor :: (Emits n, ScopableBuilder m)
-         => NameHint -> Direction -> Type n
+         => NameHint -> Direction -> IxType n
          -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
          -> m n (Atom n)
 buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
 
 unzipTab :: (Emits n, Builder m) => Atom n -> m n (Atom n, Atom n)
 unzipTab tab = do
-  TabTy b _ <- getType tab
-  fsts <- liftEmitBuilder $ buildTabLam noHint (binderType b) \i ->
+  TabTy (_:>ixTy) _ <- getType tab
+  fsts <- liftEmitBuilder $ buildTabLam noHint ixTy \i ->
             liftM fst $ tabApp (sink tab) (Var i) >>= fromPair
-  snds <- liftEmitBuilder $ buildTabLam noHint (binderType b) \i ->
+  snds <- liftEmitBuilder $ buildTabLam noHint ixTy \i ->
             liftM snd $ tabApp (sink tab) (Var i) >>= fromPair
   return (fsts, snds)
 
@@ -822,8 +823,8 @@ zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
   ProdTy tys -> ProdVal <$> mapM zeroAt tys
   StaticRecordTy tys -> Record <$> mapM zeroAt tys
-  TabTy b bodyTy ->
-    liftEmitBuilder $ buildTabLam (getNameHint b) (binderType b) \i ->
+  TabTy (b:>ixTy) bodyTy ->
+    liftEmitBuilder $ buildTabLam (getNameHint b) ixTy \i ->
       zeroAt =<< applySubst (b@>i) bodyTy
   _ -> unreachable
   where
@@ -875,8 +876,9 @@ addTangent x y = do
     StaticRecordTy tys -> do
       elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
       return $ Record $ restructure elems tys
-    TabTy b _  -> liftEmitBuilder $ buildFor (getNameHint b) Fwd (binderType b) \i -> do
-      bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
+    TabTy (b:>ixTy) _  ->
+      liftEmitBuilder $ buildFor (getNameHint b) Fwd ixTy \i -> do
+        bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
     TC con -> case con of
       BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
       BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
@@ -1121,8 +1123,8 @@ liftMonoidEmpty accTy x = do
   alphaEq xTy accTy >>= \case
     True -> return x
     False -> case accTy of
-      TabTy b eltTy -> do
-        liftEmitBuilder $ buildTabLam noHint (binderType b) \i -> do
+      TabTy (b:>ixTy) eltTy -> do
+        liftEmitBuilder $ buildTabLam noHint ixTy \i -> do
           x' <- sinkM x
           ab <- sinkM $ Abs b eltTy
           eltTy' <- applyAbs ab i
@@ -1139,8 +1141,8 @@ liftMonoidCombine accTy bc x y = do
   alphaEq accTy baseTy >>= \case
     True -> naryApp bc [x, y]
     False -> case accTy of
-      TabTy b eltTy -> do
-        liftEmitBuilder $ buildFor noHint Fwd (binderType b) \i -> do
+      TabTy (b:>ixTy) eltTy -> do
+        liftEmitBuilder $ buildFor noHint Fwd ixTy \i -> do
           xElt <- tabApp (sink x) (Var i)
           yElt <- tabApp (sink y) (Var i)
           eltTy' <- applySubst (b@>i) eltTy
@@ -1155,44 +1157,27 @@ clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
-data IxImpl n = IxImpl { ixSize :: Atom n, toOrdinal :: Atom n, unsafeFromOrdinal :: Atom n }
-
-instance GenericE IxImpl where
-  type RepE IxImpl = Atom `PairE` Atom `PairE` Atom
-  fromE IxImpl{..} = ixSize `PairE` toOrdinal `PairE` unsafeFromOrdinal
-  {-# INLINE fromE #-}
-  toE (ixSize `PairE` toOrdinal `PairE` unsafeFromOrdinal) = IxImpl{..}
-  {-# INLINE toE #-}
-
-instance SinkableE IxImpl
-
-getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
-getIxImpl ty = do
-  dict <- synthIx ty
-  ixSize            <- projMethod "get_size"            dict
-  toOrdinal         <- projMethod "ordinal"             dict
-  unsafeFromOrdinal <- projMethod "unsafe_from_ordinal" dict
-  return $ IxImpl{..}
-
 projMethod :: (Builder m, Emits n) => String -> Atom n -> m n (Atom n)
 projMethod methodName dict = do
-  DictTy (DictType _ className _) <- getType dict
-  methodIdx <- getMethodIndex className methodName
-  emitOp $ ProjMethod dict methodIdx
+  getType dict >>= \case
+    DictTy (DictType _ className _) -> do
+      methodIdx <- getMethodIndex className methodName
+      emitOp $ ProjMethod dict methodIdx
+    _ -> error $ "Not a dict: " ++ pprint dict
 
-intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
-intToIndex ty i = do
-  f <- synthIx ty >>= projMethod "unsafe_from_ordinal"
+intToIndex :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
+intToIndex (IxType _ dict) i = do
+  f <- projMethod "unsafe_from_ordinal" dict
   app f i
 
-indexToInt :: forall m n. (Builder m, Emits n) => Atom n -> m n (Atom n)
-indexToInt idx = do
-  f <- getType idx >>= synthIx >>= projMethod "ordinal"
+indexToInt :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
+indexToInt (IxType _ dict) idx = do
+  f <- projMethod "ordinal" dict
   app f idx
 
-indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
-indexSetSize ty = do
-  f <- synthIx ty >>= projMethod "get_size"
+indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
+indexSetSize (IxType _ dict) = do
+  f <- projMethod "get_size" dict
   app f UnitVal
 
 -- === pseudo-prelude ===
@@ -1244,10 +1229,10 @@ isJustE x = liftEmitBuilder $
 -- Monoid a -> (n=>a) -> a
 reduceE :: (Emits n, Builder m) => BaseMonoid n -> Atom n -> m n (Atom n)
 reduceE monoid xs = liftEmitBuilder do
-  TabTy n a <- getType xs
+  TabTy (n:>ty) a <- getType xs
   a' <- return $ ignoreHoistFailure $ hoist n a
   getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
-    buildFor noHint Fwd (sink $ binderType n) \i -> do
+    buildFor noHint Fwd (sink ty) \i -> do
       x <- tabApp (sink xs) (Var i)
       emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
 
@@ -1263,8 +1248,8 @@ mapE :: (Emits n, ScopableBuilder m)
      => (forall l. (Emits l, DExt n l) => Atom l -> m l (Atom l))
      -> Atom n -> m n (Atom n)
 mapE f xs = do
-  TabTy n _ <- getType xs
-  buildFor (getNameHint n) Fwd (binderType n) \i -> do
+  TabTy (n:>ty) _ <- getType xs
+  buildFor (getNameHint n) Fwd ty \i -> do
     x <- tabApp (sink xs) (Var i)
     f x
 

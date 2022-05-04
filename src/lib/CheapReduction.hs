@@ -193,6 +193,12 @@ instance CheaplyReducibleE Atom Atom where
         Failure _ -> do
           reportSynthesisFail ty
           return $ Con $ DictHole ctx ty
+    TabPi (TabPiType (b:>IxType ixTy dict) resultTy) -> do
+      ixTy' <- cheapReduceE ixTy
+      dict' <- cheapReduceE dict
+      withFreshBinder (getNameHint b) (IxType ixTy' dict') \b' -> do
+        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
+        return $ TabPi $ TabPiType (b':>IxType ixTy' dict') resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con

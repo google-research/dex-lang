@@ -153,7 +153,7 @@ instance PrettyPrec (Expr n) where
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For ann (Lam lamExpr))) =
+  prettyPrec (Hof (For ann _ (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
@@ -211,6 +211,9 @@ instance PrettyPrec (LamExpr n) where
       atPrec LowestPrec $ "\\"
       <> prettyLamHelper lamExpr (PrettyLam arr)
 
+instance Pretty (IxType n) where
+  pretty (IxType ty _) = parens $ "IxType" <+> pretty ty
+
 instance Pretty (TabLamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (TabLamExpr n) where
   prettyPrec (TabLamExpr b body) =
@@ -258,6 +261,7 @@ instance PrettyPrec (Atom n) where
       _  -> atPrec LowestPrec $ pAppArg (p name) params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
+    IxTy ixTy -> atPrec LowestPrec $ p ixTy
     LabeledRow elems -> prettyRecordTyRow elems "?"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
@@ -338,8 +342,8 @@ instance Pretty (PiType n) where
     in prettyBinder <> (group $ line <> p arr <+> prettyBody)
 
 instance Pretty (TabPiType n) where
-  pretty (TabPiType b body) = let
-    prettyBinder = prettyBinderHelper b body
+  pretty (TabPiType (b :> IxType ty _) body) = let
+    prettyBinder = prettyBinderHelper (b:>ty) body
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
@@ -363,7 +367,7 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyLam arr' ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      Abs Empty (Hof (For ann (Lam next)))
+      Abs Empty (Hof (For ann _ (Lam next)))
         | lamType == PrettyFor ann ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
@@ -411,6 +415,7 @@ instance Pretty (AtomBinding n) where
     LetBound    b -> p b
     LamBound    b -> p b
     PiBound     b -> p b
+    IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
     PtrLitBound _ ptr -> p ptr
@@ -615,6 +620,7 @@ instance PrettyPrec (UExpr' n) where
     UTabPi piType -> prettyPrec piType
     UDecl declExpr -> prettyPrec declExpr
     UHole -> atPrec ArgPrec "_"
+    UIndexType ty -> atPrec ArgPrec $ "IxTy" <+> p ty
     UTypeAnn v ty -> atPrec LowestPrec $
       group $ pApp v <> line <> ":" <+> pApp ty
     UTabCon xs -> atPrec ArgPrec $ p xs
@@ -916,7 +922,7 @@ prettyExprDefault expr =
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For ann lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
+    For ann _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
 
 printDouble :: Double -> Doc ann

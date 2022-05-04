@@ -195,7 +195,7 @@ transposeOp op ct = case op of
         void $ emitEff $ MPut zero
   TabCon ty es -> do
     TabTy b _ <- return ty
-    idxTy <- substNonlin $ binderType b
+    idxTy <- substNonlin $ binderAnn b
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- intToIndex idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e
@@ -220,10 +220,6 @@ transposeOp op ct = case op of
   IOFree _              -> notLinear
   Inject       _        -> notLinear
   SliceOffset  _ _      -> notLinear
-  SliceCurry   _ _      -> notLinear
-  UnsafeFromOrdinal _ _ -> notLinear
-  ToOrdinal    _        -> notLinear
-  IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
@@ -248,7 +244,7 @@ transposeAtom atom ct = case atom of
   DataCon _ _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
   TabVal b body   -> do
-    ty <- substNonlin $ binderType b
+    ty <- substNonlin $ binderAnn b
     void $ buildFor noHint Fwd ty \i -> do
       ct' <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
@@ -258,6 +254,7 @@ transposeAtom atom ct = case atom of
   DictCon _       -> notTangent
   DictTy _        -> notTangent
   TypeCon _ _ _   -> notTangent
+  IxTy _          -> notTangent
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent
   VariantTy _     -> notTangent
@@ -281,8 +278,8 @@ transposeAtom atom ct = case atom of
 
 transposeHof :: Emits o => Hof i -> Atom o -> TransposeM i o ()
 transposeHof hof ct = case hof of
-  For ann (Lam (LamExpr b  body)) -> do
-    ty <- substNonlin $ binderType b
+  For ann ~(IxTy d) (Lam (LamExpr b  body)) -> do
+    ty <- substNonlin d
     void $ buildForAnn (getNameHint b) (flipDir ann) ty \i -> do
       ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt

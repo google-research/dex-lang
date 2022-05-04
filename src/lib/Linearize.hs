@@ -252,7 +252,7 @@ linearizeAtom atom = case atom of
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
   Con con -> linearizePrimCon con
   TabLam (TabLamExpr b body) -> do
-    ty <- substM $ binderType b
+    ty <- substM $ binderAnn b
     wrt <- getActivePrimals
     subst <- getSubst
     atom' <- substM atom
@@ -263,6 +263,7 @@ linearizeAtom atom = case atom of
   DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
+  IxTy _    -> notImplemented
   DepPair _ _ _     -> notImplemented
   Record elems ->
     fmapLin (Record . fromComposeE) $ seqLin (fmap linearizeAtom elems)
@@ -366,13 +367,9 @@ linearizeOp op = case op of
   IOFree _               -> emitZeroT
   Inject _               -> emitZeroT
   SliceOffset _ _        -> emitZeroT
-  SliceCurry  _ _        -> emitZeroT
   VectorBinOp _ _ _      -> notImplemented
   VectorIndex v i -> zipLin (la v) (pureLin i) `bindLin`
                        \(PairE v' i') -> emitOp $ VectorIndex v' i'
-  UnsafeFromOrdinal _ _  -> emitZeroT
-  ToOrdinal _            -> emitZeroT
-  IdxSetSize _           -> emitZeroT
   ThrowError _           -> emitZeroT
   DataConTag _           -> emitZeroT
   ToEnum _ _             -> emitZeroT
@@ -510,8 +507,8 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom
 linearizeHof hof = case hof of
-  For (RegularFor d) (Lam (LamExpr (LamBinder i ty _ _) body)) -> do
-    ty' <- substM ty
+  For (RegularFor d) ixDict (Lam (LamExpr (LamBinder i ty _ _) body)) -> do
+    ty' <- substM $ IxType ty ixDict
     ansWithLinTab <- buildFor (getNameHint i) d ty' \i' ->
       extendSubst (i@>i') $ withTangentFunAsLambda $ linearizeBlock body
     (ans, linTab) <- unzipTab ansWithLinTab

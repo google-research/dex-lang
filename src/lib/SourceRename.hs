@@ -196,6 +196,7 @@ instance SourceRenamableE UExpr' where
     UCase scrut alts ->
       UCase <$> sourceRenameE scrut <*> mapM sourceRenameE alts
     UHole -> return UHole
+    UIndexType ty -> UIndexType <$> sourceRenameE ty
     UTypeAnn e ty -> UTypeAnn <$> sourceRenameE e <*> sourceRenameE ty
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
     UIndexRange low high ->

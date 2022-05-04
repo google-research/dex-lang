@@ -75,9 +75,10 @@ traverseAtomDefault atom = case atom of
       mapM tge params <*> pure con <*> mapM tge args
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> mapM tge params
-  DictCon _ -> error "not implemented"
+  DictCon dictExpr -> DictCon <$> tge dictExpr
   DictTy (DictType sn cn params) ->
     DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
+  IxTy (IxType ty d) -> IxTy <$> (IxType <$> tge ty <*> tge d)
   LabeledRow elems -> LabeledRow <$> traverseGenericE elems
   Record items -> Record <$> mapM tge items
   RecordTy elems -> RecordTy <$> traverseGenericE elems
@@ -114,6 +115,15 @@ instance GenericallyTraversableE FieldRowElems where
       StaticFields items  -> StaticFields <$> mapM tge items
       DynField  labVar ty -> DynField labVar <$> tge ty
       DynFields rowVar    -> return $ DynFields rowVar
+
+instance GenericallyTraversableE IxType where
+  traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
+
+instance GenericallyTraversableE DictExpr where
+  traverseGenericE e = case e of
+    InstanceDict v args -> InstanceDict <$> substM v <*> mapM tge args
+    InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
+    SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
 
 traverseDeclNest
   :: (GenericTraverser m, Emits o)

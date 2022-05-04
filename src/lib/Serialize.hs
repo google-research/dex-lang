@@ -83,7 +83,7 @@ getDexString x = error $ "Not a string: " ++ pprint x
 getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n [Atom n]
 getTableElements tab = do
   TabTy b _ <- getType tab
-  idxs <- indices $ binderType b
+  idxs <- indices $ binderAnn b
   forM idxs \i -> liftInterpM $ evalExpr $ TabApp tab (i:|[])
 
 -- Pretty-print values, e.g. for displaying in the REPL.

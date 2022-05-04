@@ -57,6 +57,7 @@ data PrimTC e =
       | LabeledRowKindTC
       | ParIndexRange e e e  -- Full index set, global thread id, thread count
       | LabelType
+      | IxTypeKind
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 traversePrimTC :: Applicative f => (e -> f e') -> PrimTC e -> f (PrimTC e')
@@ -80,8 +81,13 @@ data PrimCon e =
       | LabelCon String
       -- Used in prelude for `run_accum`. Only works for single-method classes.
       | ExplicitDict e e  -- dict type, dict method
-      | DictHole SrcPosCtx e  -- Only used during type inference
+      | DictHole (AlwaysEqual SrcPosCtx) e  -- Only used during type inference
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+newtype AlwaysEqual a = AlwaysEqual a
+        deriving (Show, Generic, Functor, Foldable, Traversable, Hashable, Store)
+instance Eq (AlwaysEqual a) where
+  _ == _ = True
 
 traversePrimCon :: Applicative f => (e -> f e') -> PrimCon e -> f (PrimCon e')
 traversePrimCon = inline traverse
@@ -97,7 +103,6 @@ data PrimOp e =
       | ProjRef Int e
       | Inject e
       | SliceOffset e e              -- Index slice first, inner index second
-      | SliceCurry  e e              -- Index slice first, curried index second
       -- Low-level memory operations
       | IOAlloc BaseType e
       | IOFree e
@@ -108,10 +113,6 @@ data PrimOp e =
       | VectorBinOp BinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
-      -- Idx (survives simplification, because we allow it to be backend-dependent)
-      | UnsafeFromOrdinal e e   -- index set, ordinal index. XXX: doesn't check bounds
-      | ToOrdinal e
-      | IdxSetSize e
       | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
@@ -150,7 +151,7 @@ traversePrimOp = inline traverse
 {-# INLINABLE traversePrimOp #-}
 
 data PrimHof e =
-        For ForAnn e
+        For ForAnn e e        -- Ix type, body lambda
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e
       | RunReader e e

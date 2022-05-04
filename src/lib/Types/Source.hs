@@ -83,6 +83,7 @@ data UExpr' (n::S) =
  | UFor Direction (UForExpr n)
  | UCase (UExpr n) [UAlt n]
  | UHole
+ | UIndexType (UExpr n)
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
  | UIndexRange (Limit (UExpr n)) (Limit (UExpr n))

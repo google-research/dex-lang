@@ -7,25 +7,21 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-                , liftSimplifyM, buildBlockSimplified
-                , IxCache, MonadIxCache1, SimpleIxInstance (..)
-                , simplifiedIxInstance, appSimplifiedIxMethod ) where
+                , liftSimplifyM, buildBlockSimplified, emitSimplified
+                , dceApproxBlock) where
 
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.State.Class
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.Map.Strict as M
-import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 import GHC.Exts (inline)
 
 import Err
 import Name
-import MTL1
 import Builder
 import Syntax
 import Type
@@ -312,6 +308,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
                  <*> pure con <*> mapM simplifyAtom args
   DictCon d -> DictCon <$> substM d
   DictTy  t -> DictTy  <$> substM t
+  IxTy ixTy -> IxTy    <$> substM ixTy
   Record items -> Record <$> mapM simplifyAtom items
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
@@ -567,10 +564,10 @@ projectDictMethod d i = do
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
-  For d lam@(Lam lamExpr) -> do
-    ixTy <- substM $ argType lamExpr
+  For d ixDict lam@(Lam lamExpr) -> do
+    ixTy@(IxType _ ixDict') <- substM $ IxType (argType lamExpr) ixDict
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- liftM Var $ emit $ Hof $ For d lam'
+    ans <- liftM Var $ emit $ Hof $ For d ixDict' lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
@@ -661,8 +658,8 @@ exceptToMaybeExpr expr = case expr of
   Op (ThrowException _) -> do
     ty <- substM expr >>= getType
     return $ NothingAtom ty
-  Hof (For ann (Lam (LamExpr b body))) -> do
-    ty <- substM $ binderType b
+  Hof (For ann d (Lam (LamExpr b body))) -> do
+    ty <- substM $ IxType (binderType b) d
     maybes <- buildForAnn (getNameHint b) ann ty \i ->
       extendSubst (b@>Rename i) $ exceptToMaybeBlock body
     catMaybesE maybes
@@ -708,97 +705,17 @@ hasExceptions expr = do
     Nothing -> return $ ExceptionEffect `S.member` effs
     Just _  -> error "Shouldn't have tail left"
 
--- === Ix simplification ===
+emitSimplified
+  :: (Emits n, Builder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
+{-# INLINE emitSimplified #-}
 
-data SimpleIxInstance (n::S) =
-  SimpleIxInstance
-    { simpleIxSize            :: (Abs (Nest Decl) LamExpr n)
-    , simpleToOrdinal         :: (Abs (Nest Decl) LamExpr n)
-    , simpleUnsafeFromOrdinal :: (Abs (Nest Decl) LamExpr n)
-    }
-
-instance GenericE SimpleIxInstance where
-  type RepE SimpleIxInstance = (PairE (Abs (Nest Decl) LamExpr)
-                                 (PairE (Abs (Nest Decl) LamExpr)
-                                        (Abs (Nest Decl) LamExpr)))
-  fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
-  {-# INLINE fromE #-}
-  toE (PairE a (PairE b c)) = SimpleIxInstance a b c
-  {-# INLINE toE #-}
-
-instance SubstE Name SimpleIxInstance
-instance SinkableE SimpleIxInstance
-instance HoistableE SimpleIxInstance
-
-data IxCache (n::S) = IxCache
-  { ixCacheFreeVars :: NameSet n
-  , ixCacheMap      :: HM.HashMap (EKey Type n) (SimpleIxInstance n)
-  }
-instance HoistableE IxCache where
-  freeVarsE = ixCacheFreeVars
-instance SinkableE IxCache where
-  sinkingProofE _ _ = todoSinkableProof -- sinkingProofE fresh $ HashMapE $ ixCacheMap c
-instance Semigroup (IxCache n) where
-  (IxCache fv m) <> (IxCache fv' m') = IxCache (fv <> fv') (m <> m')
-instance Monoid (IxCache n) where
-  mempty = IxCache mempty mempty
-instance SubstE Name IxCache where
-  -- This is needed, because IxCache is sometimes below decls that are emitted in-place.
-  -- But all those decls should hopefully already be fresh, since we try to be good about
-  -- generating fresh names before emitting them, so the slow branch of refreshAbs should
-  -- not be taken. If it is, don't implement this method, but better treat this as a
-  -- performance bug instead!
-  substE _ _ = error "needed for static constraints, hopefully dynamically unreachable!"
-
-type MonadIxCache1 (m::MonadKind1) = forall n. MonadState (IxCache n) (m n)
-
-instance Monad1 m => HoistableState IxCache m where
-  -- TODO: I think we can do hoisting only based on the free vars in keys.
-  -- Instances should only be added at the top-level so it's not like they
-  -- can refer to any local vars that could prevent the values from being hoistable.
-  hoistState s b s' = case hoist b s' of
-    HoistSuccess s'' -> return s''
-    HoistFailure _   -> return s
-
-simplifiedIxInstance
-  :: (EnvReader m, MonadIxCache1 m)
-  => Type n -> m n (SimpleIxInstance n)
-simplifiedIxInstance ty = do
-  let key = EKey ty
-  gets (HM.lookup key . ixCacheMap) >>= \case
-    Just a  -> return a
-    Nothing -> {-# SCC simplifyInstance #-} do
-      a <- liftSimplifyM simplifyInstance
-      modify (<> IxCache (freeVarsE key <> freeVarsE a) (HM.singleton key a))
-      return a
-  where
-    simplifyInstance = liftSimplifyM do
-      Abs decls inst <- liftBuilder $ buildScoped $ getIxImpl $ sink ty
-      simpAbs <- buildScoped $ simplifyDecls decls do
-        (s , IdentityReconAbs) <- simplifyLam $ ixSize inst
-        (to, IdentityReconAbs) <- simplifyLam $ toOrdinal inst
-        (fo, IdentityReconAbs) <- simplifyLam $ unsafeFromOrdinal inst
-        return $! IxImpl{ ixSize = s, toOrdinal = to, unsafeFromOrdinal = fo }
-      return $! case simpAbs of
-        Abs simpDecls IxImpl{..} ->
-          SimpleIxInstance
-            (Abs simpDecls $ fromLam ixSize           )
-            (Abs simpDecls $ fromLam toOrdinal        )
-            (Abs simpDecls $ fromLam unsafeFromOrdinal)
-
-    fromLam = \case Lam l -> l; _ -> error "Not a lambda!"
-{-# SCC simplifiedIxInstance #-}
-
-appSimplifiedIxMethod
-  :: (Emits n, Builder m, MonadIxCache1 m)
-  => Type n -> (SimpleIxInstance n -> Abs (Nest Decl) LamExpr n)
-  -> Atom n -> m n (Atom n)
-appSimplifiedIxMethod ty method x = do
-  Abs decls f <- method <$> simplifiedIxInstance ty
-  f' <- emitDecls decls f
-  Distinct <- getDistinct
-  case f' of
-    LamExpr fx' fb' -> emitBlock =<< applySubst (fx' @> SubstVal x) fb'
+dceApproxBlock :: Block n -> Block n
+dceApproxBlock block@(Block _ decls expr) = case hoist decls expr of
+  HoistSuccess expr' -> Block NoBlockAnn Empty expr'
+  HoistFailure _     -> block
 
 -- === GHC performance hacks ===
 

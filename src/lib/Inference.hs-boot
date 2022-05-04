@@ -4,10 +4,9 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Inference (trySynthTerm, synthIx) where
+module Inference (trySynthTerm) where
 
 import Name
 import Syntax
 
 trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
-synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
