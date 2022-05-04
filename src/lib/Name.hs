@@ -3048,16 +3048,21 @@ instance ( Store   (b UnsafeS UnsafeS)
          , Generic (b UnsafeS UnsafeS) ) => Store (Nest b n l)
 
 instance Functor HoistExcept where
-  fmap f x = f <$> x
+  fmap = liftM
+  {-# INLINE fmap #-}
 
 instance Applicative HoistExcept where
   pure x = HoistSuccess x
+  {-# INLINE pure #-}
   liftA2 = liftM2
+  {-# INLINE liftA2 #-}
 
 instance Monad HoistExcept where
   return = pure
+  {-# INLINE return #-}
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
+  {-# INLINE (>>=) #-}
 
 -- === notes ===
 
