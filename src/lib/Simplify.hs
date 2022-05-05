@@ -30,6 +30,7 @@ import Builder
 import Syntax
 import Type
 import Util (enumerate, foldMapM, restructure)
+import QueryType
 import CheapReduction
 import Linearize
 import Transpose
@@ -291,8 +292,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   -- Tables that only contain data aren't necessarily getting inlined,
   -- so this might be the last chance to simplify them.
   TabLam (TabLamExpr b body) -> do
-    -- TODO(subst): Use EnvReaderI to getType before subst
-    substM atom >>= getType >>= isData >>= \case
+    getTypeSubst atom >>= isData >>= \case
       True -> do
         (Abs b' body', IdentityReconAbs) <- simplifyAbs $ Abs b body
         return $ TabLam $ TabLamExpr b' body'
@@ -660,7 +660,7 @@ exceptToMaybeExpr expr = case expr of
     ty <- getType x'
     return $ JustAtom ty x'
   Op (ThrowException _) -> do
-    ty <- substM expr >>= getType
+    ty <- getTypeSubst expr
     return $ NothingAtom ty
   Hof (For ann (Lam (LamExpr b body))) -> do
     ty <- substM $ binderType b
@@ -674,9 +674,7 @@ exceptToMaybeExpr expr = case expr of
       extendSubst (h @> Rename h' <.> ref @> Rename ref') do
         exceptToMaybeBlock body
     (maybeAns, newState) <- fromPair result
-    -- TODO: figure out the return type (or have `emitMaybeCase` do it) rather
-    -- than do the whole subsitution here. Similarly in the RunWriter case.
-    a <- getType =<< substM expr
+    a <- getTypeSubst expr
     emitMaybeCase maybeAns (MaybeTy a)
        (return $ NothingAtom $ sink a)
        (\ans -> return $ JustAtom (sink a) $ PairVal (Var ans) (sink newState))
@@ -687,7 +685,7 @@ exceptToMaybeExpr expr = case expr of
       extendSubst (h @> Rename h' <.> ref @> Rename ref') $
         exceptToMaybeBlock body
     (maybeAns, accumResult) <- fromPair result
-    a <- getType =<< substM expr
+    a <- getTypeSubst expr
     emitMaybeCase maybeAns (MaybeTy a)
       (return $ NothingAtom $ sink a)
       (\ans -> return $ JustAtom (sink a) $ PairVal (Var ans) (sink accumResult))

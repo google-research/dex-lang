@@ -67,6 +67,7 @@ import qualified RawName as R
 import Name
 import Syntax
 import Type
+import QueryType
 import PPrint (prettyBlock)
 import CheapReduction
 import {-# SOURCE #-} Inference

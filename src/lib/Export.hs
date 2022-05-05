@@ -19,6 +19,7 @@ import MTL1
 import Err
 import Syntax
 import Type
+import QueryType
 import Builder
 import Simplify
 import Imp

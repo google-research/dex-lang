@@ -33,7 +33,7 @@ import Err
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 
 import Syntax
-import Type
+import QueryType
 import Name
 import PPrint ()
 
