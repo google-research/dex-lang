@@ -26,11 +26,11 @@ import LabeledItems
 
 import Name
 import Syntax
-import Simplify
 import Type
 import PPrint ()
 import Util ((...))
 import Builder
+import CheapReduction (cheapNormalize)
 
 newtype InterpM (i::S) (o::S) (a:: *) =
   InterpM { runInterpM' :: SubstReaderT AtomSubstVal (EnvReaderT IO) i o a }
@@ -217,7 +217,23 @@ evalOp expr = mapM evalAtom expr >>= \case
   ToEnum ty@(TypeCon _ defName _) i -> do
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ SumAsProd ty i (map (const []) cons)
+  ProjMethod dict i -> evalProjectDictMethod dict i
   _ -> error $ "Not implemented: " ++ pprint expr
+
+evalProjectDictMethod :: Interp m => Atom o -> Int -> m i o (Atom o)
+evalProjectDictMethod d i = cheapNormalize d >>= \case
+  DictCon (InstanceDict instanceName args) -> dropSubst do
+    args' <- mapM evalAtom args
+    InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+    let InstanceBody _ methods = body
+    let method = methods !! i
+    extendSubst (bs@@>(SubstVal <$> args')) $
+      evalBlock method
+  Con (ExplicitDict _ method) -> do
+    case i of
+      0 -> return method
+      _ -> error "ExplicitDict only supports single-method classes"
+  _ -> error $ "Not a simplified dict: " ++ pprint d
 
 matchUPat :: Interp m => UPat i i' -> Atom o -> m i o (SubstFrag AtomSubstVal i i' o)
 matchUPat (WithSrcB _ pat) x = do
@@ -279,10 +295,11 @@ liftBuilderInterp
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Atom n)
 liftBuilderInterp cont = do
-  block <- buildBlockSimplified cont
+  Abs decls result <- liftBuilder $ buildScoped cont
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  return $ unsafePerformIO $ runInterpM env $ evalBlock block
+  return $ unsafePerformIO $ runInterpM env $
+    evalDecls decls $ evalAtom result
 {-# SCC liftBuilderInterp #-}
 
 runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a

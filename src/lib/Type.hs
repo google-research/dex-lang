@@ -979,21 +979,6 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     checkAlphaEq resultTyT' resultTyS
     naryNonDepTabPiType (leadingIdxTysT ++ [n]) resultTyT'
   PTileReduce _ _ _ -> undefined
-  -- PTileReduce baseMonoids n mapping -> do
-  --   -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
-  --   ([_gtid, _nthr], Pure, mapResultTy) <-
-  --     getTypeE mapping >>= fromNaryNonDepPiType [PlainArrow, PlainArrow]
-  --   (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
-  --   (_, tileElemTy) <- fromNonDepTabType tiledArrTy
-  --   -- TOOD: figure out what's going on with threadRange
-  --   --   let threadRange = TC $ ParIndexRange n (binderAsVar gtid) (binderAsVar nthr)
-  --   --   checkAlphaEq threadRange threadRange'
-  --   -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
-  --   -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-  --   n' <- substM n
-  --   tabTy <- n' ==> tileElemTy
-  --   -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-  --   return $ PairTy tabTy $ mkConsListTy accTys
   While body -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
     PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy

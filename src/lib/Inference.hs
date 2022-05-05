@@ -487,7 +487,7 @@ instance Inferer InfererM where
       FailIfRequired    -> do
         givens <- (HM.elems . fromGivens) <$> givensFromEnv
         givenTys <- mapM getType givens
-        throw TypeErr $ "(2) Couldn't synthesize a class dictionary for: "
+        throw TypeErr $ "Couldn't synthesize a class dictionary for: "
           ++ pprintCanonicalized iface ++ "\nGiven: " ++ pprint givenTys
       GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
@@ -782,7 +782,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       -- limitation of our automatic quantification, but it's simpler not to deal with
       -- that for now.
       let checkNoMissing = addSrcContext pos' $ unless (null $ eSetToList missingDs) $ throw TypeErr $
-            "(3) Couldn't synthesize a class dictionary for: " ++ pprint (head $ eSetToList missingDs)
+            "Couldn't synthesize a class dictionary for: " ++ pprint (head $ eSetToList missingDs)
       autoDs <- case arr of
         ClassArrow -> checkNoMissing $> mempty
         _          -> return $ missingDs
@@ -2078,6 +2078,7 @@ instance Unifiable DictType where
   {-# INLINE unifyZonked #-}
 
 instance Unifiable IxType where
+  -- We ignore the dictionaries because we assume coherence
   unifyZonked (IxType t _) (IxType t' _) = unifyZonked t t'
 
 instance Unifiable (EffectRowP AtomName) where
