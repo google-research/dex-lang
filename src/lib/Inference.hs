@@ -35,6 +35,7 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Type
+import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
 import CheapReduction
 import GenericTraversal

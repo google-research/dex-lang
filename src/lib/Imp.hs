@@ -32,6 +32,7 @@ import Syntax
 import Type
 import Simplify
 import LabeledItems
+import QueryType
 import Util (enumerate)
 import Types.Primitives
 import Algebra qualified as A

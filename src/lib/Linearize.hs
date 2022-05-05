@@ -18,6 +18,7 @@ import Builder
 import Syntax
 import Type
 import MTL1
+import QueryType
 import Util (bindM2)
 import PPrint
 

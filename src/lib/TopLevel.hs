@@ -51,6 +51,7 @@ import Inference
 import Simplify
 import Imp
 import JIT
+import QueryType
 
 -- === top-level monad ===
 

@@ -80,6 +80,7 @@ library
                      , Types.Imp
                      , Types.Primitives
                      , Types.Source
+                     , QueryType
                      , Util
   if flag(live)
     exposed-modules:   Actor

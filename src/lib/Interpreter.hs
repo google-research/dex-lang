@@ -28,7 +28,7 @@ import Name
 import MTL1
 import Syntax
 import Simplify
-import Type
+import QueryType
 import PPrint ()
 import Util ((...))
 

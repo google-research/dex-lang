@@ -17,6 +17,7 @@ import Err
 import Name
 import Syntax
 import Builder
+import QueryType
 import Util (zipWithT, enumerate)
 import GHC.Stack
 
