@@ -154,19 +154,19 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
 :p with_reader 5 \r. ()
 > ()
 
-:p yieldAccum (AddMonoid Float) \w.
+:p yield_accum (AddMonoid Float) \w.
   for i:(Fin 2).
     w += 1.0
     w += 1.0
 > 4.
 
-:p yieldAccum (AddMonoid Float) \w.
+:p yield_accum (AddMonoid Float) \w.
   for i:(Fin 2).
     w += 1.0
   w += 1.0
 > 3.
 
-:p yieldAccum (AddMonoid Float) \ref.
+:p yield_accum (AddMonoid Float) \ref.
      ref += [1.,2.,3.]
      ref += [2.,4.,5.]
 > [3., 6., 8.]
@@ -196,7 +196,7 @@ def effectsAtZero {eff:Effects} (f: Int ->{|eff} Unit) : {|eff} Unit =
 
 -- Test custom list monoid with accum
 def adjacencyMatrixToEdgeList {n} (mat: n=>n=>Bool) : List (n & n) =
-  yieldAccum (ListMonoid (n & n)) \list.
+  yield_accum (ListMonoid (n & n)) \list.
     for (i, j).
       if mat.i.j then
         append list (i, j)

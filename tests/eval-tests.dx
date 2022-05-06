@@ -709,7 +709,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
 --   -- Last dimension split to allow for vector loads
 --   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). IToF $ (iota _).(i,j,h)
---   z = yieldAccum \acc.
+--   z = yield_accum \acc.
 --         for l.
 --           for i.
 --             xil = (broadcastVector x.i.l)
