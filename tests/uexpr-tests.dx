@@ -227,19 +227,19 @@ def myOtherFst {a b} ((x, _):(a&b)) : a = x
 :p
    f : Float --o Float =
      \x. 2.0 * (x + x)
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 4.
 
 -- FIXME: This fails due to shadowing!
 --def transpose' (x:n=>m=>Float) --o : m=>n=>Float = for i j. x.j.i
 --
---:p transposeLinear transpose' [[1.0, 2.0, 3.0]]
+--:p transpose_linear transpose' [[1.0, 2.0, 3.0]]
 --> [[1.0], [2.0], [3.0]]
 
 :p
    f : Float --o (Fin 3=>Float) =
      \x. for i. x * 2.0
-   transposeLinear f [1.0, 2.0, 3.0]
+   transpose_linear f [1.0, 2.0, 3.0]
 > 12.
 
 id'' : b:Type ?-> b -> b = id

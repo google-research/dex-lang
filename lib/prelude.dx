@@ -974,11 +974,11 @@ def cumsum {n} (xs: n=>Float) : n=>Float =
 -- TODO: add vector space constraints
 def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = %linearize f x
 def jvp {a b} (f:a->b) (x:a) : a --o b = snd (linearize f x)
-def transposeLinear {a b} (f:a --o b) : b --o a = %linearTranspose f
+def transpose_linear {a b} (f:a --o b) : b --o a = %linearTranspose f
 
 def vjp {a b} (f:a->b) (x:a) : (b & b --o a) =
   (y, df) = linearize f x
-  (y, transposeLinear df)
+  (y, transpose_linear df)
 
 def grad {a} (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 
