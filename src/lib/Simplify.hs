@@ -154,7 +154,7 @@ caseComputingEffs
   :: forall m n. (MonadFail1 m, EnvReader m)
   => Atom n -> [Alt n] -> Type n -> m n (Expr n)
 caseComputingEffs scrut alts resultTy = do
-  Case scrut alts resultTy <$> foldMapM effectsE alts
+  Case scrut alts resultTy <$> foldMapM getEffects alts
 {-# INLINE caseComputingEffs #-}
 
 defuncCase :: Emits o => Atom o -> [Alt i] -> Type o -> SimplifyM i o (Atom o)
@@ -702,7 +702,7 @@ exceptToMaybeExpr expr = case expr of
 
 hasExceptions :: (EnvReader m, MonadFail1 m) => Expr n -> m n Bool
 hasExceptions expr = do
-  (EffectRow effs t) <- exprEffects expr
+  (EffectRow effs t) <- getEffects expr
   case t of
     Nothing -> return $ ExceptionEffect `S.member` effs
     Just _  -> error "Shouldn't have tail left"

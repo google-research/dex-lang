@@ -124,7 +124,7 @@ substExprIfNonlin expr =
     True -> return Nothing
     False -> do
       expr' <- substNonlin expr
-      exprEffects expr' >>= isLinEff >>= \case
+      getEffects expr' >>= isLinEff >>= \case
         True -> return Nothing
         False -> return $ Just expr'
 

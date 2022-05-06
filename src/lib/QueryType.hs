@@ -1,12 +1,14 @@
 module QueryType (
   getType, getTypeSubst, HasType,
-  depPairLeftTy,
+  getEffects, getEffectsSubst,
+  computeAbsEffects, declNestEffects,
+  depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getMethodType, getBaseMonoidType, getReferentTy,
   getMethodIndex,
   instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
-  projectLength, sourceNameType,
+  oneEffect, projectLength, sourceNameType,
   ) where
 
 import Control.Monad
@@ -14,6 +16,7 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Set        as S
 
 import CheapReduction (cheapNormalize)
 import Err
@@ -37,11 +40,27 @@ getType :: (EnvReader m, HasType e) => e n -> m n (Type n)
 getType e = liftTypeQueryM idSubst $ getTypeE e
 {-# INLINE getType #-}
 
--- === Exposed helpers for querying types ===
+-- === Querying effects ===
+
+getEffects :: (EnvReader m, HasEffectsE e) => e n -> m n (EffectRow n)
+getEffects e = liftTypeQueryM idSubst $ getEffectsImpl e
+{-# INLINE getEffects #-}
+
+getEffectsSubst :: (EnvReader2 m, SubstReader AtomSubstVal m, HasEffectsE e)
+              => e i -> m i o (EffectRow o)
+getEffectsSubst e = do
+  subst <- getSubst
+  liftTypeQueryM subst $ getEffectsImpl e
+{-# INLINE getEffectsSubst #-}
+
+-- === Exposed helpers for querying types and effects ===
 
 depPairLeftTy :: DepPairType n -> Type n
 depPairLeftTy (DepPairType (_:>ty) _) = ty
 {-# INLINE depPairLeftTy #-}
+
+extendEffect :: Effect n -> EffectRow n -> EffectRow n
+extendEffect eff (EffectRow effs t) = EffectRow (S.insert eff effs) t
 
 getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getAppType f xs = liftTypeQueryM idSubst $ typeApp f xs
@@ -161,6 +180,33 @@ sourceNameType v = do
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
       UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
+
+oneEffect :: Effect n -> EffectRow n
+oneEffect eff = EffectRow (S.singleton eff) Nothing
+
+-- === computing effects ===
+
+computeAbsEffects :: (EnvExtender m, SubstE Name e)
+  => Abs (Nest Decl) e n -> m n (Abs (Nest Decl) (EffectRow `PairE` e) n)
+computeAbsEffects it = refreshAbs it \decls result -> do
+  effs <- declNestEffects decls
+  return $ Abs decls (effs `PairE` result)
+{-# INLINE computeAbsEffects #-}
+
+declNestEffects :: (EnvReader m) => Nest Decl n l -> m l (EffectRow l)
+declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
+{-# INLINE declNestEffects #-}
+
+declNestEffectsRec :: Nest Decl n l -> EffectRow l -> EnvReaderM l (EffectRow l)
+declNestEffectsRec Empty !acc = return acc
+declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
+  expr <- sinkM $ declExpr decl
+  deff <- getEffects expr
+  acc' <- sinkM $ acc <> deff
+  declNestEffectsRec rest acc'
+  where
+    declExpr :: Decl n l -> Expr n
+    declExpr (Let _ (DeclBinding _ _ expr)) = expr
 
 -- === implementation of querying types ===
 
@@ -642,3 +688,89 @@ getClassTy (ClassDef _ _ bs _ _) = go bs
     go Empty = TyKind
     go (Nest (b:>ty) rest) = Pi $ PiType (PiBinder b ty PlainArrow) Pure $ go rest
 
+-- === querying effects implementation ===
+
+class HasEffectsE (e::E) where
+  getEffectsImpl :: e i -> TypeQueryM i o (EffectRow o)
+
+instance HasEffectsE Expr where
+  getEffectsImpl = exprEffects
+  {-# INLINE getEffectsImpl #-}
+
+exprEffects :: Expr i -> TypeQueryM i o (EffectRow o)
+exprEffects expr = case expr of
+  Atom _  -> return Pure
+  App f xs -> do
+    fTy <- getTypeSubst f
+    case fromNaryPiType (length xs) fTy of
+      Just (NaryPiType bs effs _) -> do
+        xs' <- mapM substM xs
+        let subst = bs @@> fmap SubstVal xs'
+        applySubst subst effs
+      Nothing -> error $
+        "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint expr
+  TabApp _ _ -> return Pure
+  Op op   -> case op of
+    PrimEffect ref m -> do
+      getTypeSubst ref >>= \case
+        RefTy (Var h) _ ->
+          return $ case m of
+            MGet      -> oneEffect (RWSEffect State  $ Just h)
+            MPut    _ -> oneEffect (RWSEffect State  $ Just h)
+            MAsk      -> oneEffect (RWSEffect Reader $ Just h)
+            -- XXX: We don't verify the base monoid. See note about RunWriter.
+            MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
+        _ -> error "References must have reference type"
+    ThrowException _ -> return $ oneEffect ExceptionEffect
+    IOAlloc  _ _  -> return $ oneEffect IOEffect
+    IOFree   _    -> return $ oneEffect IOEffect
+    PtrLoad  _    -> return $ oneEffect IOEffect
+    PtrStore _ _  -> return $ oneEffect IOEffect
+    _ -> return Pure
+  Hof hof -> case hof of
+    For _ f         -> functionEffs f
+    -- The tiled and scalar bodies should have the same effects, but
+    -- that's checked elsewhere.  If they are the same, merging them
+    -- with <> is a noop.
+    Tile _ tiled scalar -> liftM2 (<>) (functionEffs tiled) $ functionEffs scalar
+    While body      -> functionEffs body
+    Linearize _     -> return Pure  -- Body has to be a pure function
+    Transpose _     -> return Pure  -- Body has to be a pure function
+    RunWriter _ f -> rwsFunEffects Writer f
+    RunReader _ f -> rwsFunEffects Reader f
+    RunState  _ f -> rwsFunEffects State  f
+    PTileReduce _ _ _ -> return mempty
+    RunIO f -> do
+      effs <- functionEffs f
+      return $ deleteEff IOEffect effs
+    CatchException f -> do
+      effs <- functionEffs f
+      return $ deleteEff ExceptionEffect effs
+  Case _ _ _ effs -> substM effs
+
+instance HasEffectsE Block where
+  getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs
+  getEffectsImpl (Block NoBlockAnn _ _) = return Pure
+  {-# INLINE getEffectsImpl #-}
+
+instance HasEffectsE Alt where
+  getEffectsImpl (Abs bs body) =
+    substBinders bs \bs' ->
+      ignoreHoistFailure . hoist bs' <$> getEffectsImpl body
+  {-# INLINE getEffectsImpl #-}
+
+functionEffs :: Atom i -> TypeQueryM i o (EffectRow o)
+functionEffs f = getTypeSubst f >>= \case
+  Pi (PiType b effs _) -> return $ ignoreHoistFailure $ hoist b effs
+  _ -> error "Expected a function type"
+
+rwsFunEffects :: RWS -> Atom i -> TypeQueryM i o (EffectRow o)
+rwsFunEffects rws f = getTypeSubst f >>= \case
+   BinaryFunTy h ref effs _ -> do
+     let effs' = ignoreHoistFailure $ hoist ref effs
+     let effs'' = deleteEff (RWSEffect rws (Just (binderName h))) effs'
+     return $ ignoreHoistFailure $ hoist h effs''
+   _ -> error "Expected a binary function type"
+
+deleteEff :: Effect n -> EffectRow n -> EffectRow n
+deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
