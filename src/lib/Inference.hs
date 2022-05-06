@@ -1090,7 +1090,7 @@ inferNaryApp fCtx f args = addSrcContext fCtx do
   Just naryPi <- asNaryPiType <$> Pi <$> fromPiType True PlainArrow fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
   let appExpr = App f inferredArgs
-  addEffects =<< exprEffects appExpr
+  addEffects =<< getEffects appExpr
   partiallyApplied <- Var <$> emit appExpr
   case nonEmpty remaining of
     Nothing ->

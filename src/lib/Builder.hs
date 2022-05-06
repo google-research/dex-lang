@@ -716,7 +716,7 @@ buildCase scrut resultTy indexedAltBody = do
       blk <- buildBlock do
         ListE xs' <- sinkM $ ListE xs
         indexedAltBody i xs'
-      eff <- effectsE blk
+      eff <- getEffects blk
       return $ blk `PairE` eff
     return (Abs bs' body, ignoreHoistFailure $ hoist bs' eff')
   liftM Var $ emit $ Case scrut alts resultTy $ mconcat effs
@@ -751,7 +751,7 @@ buildEffLam rws hint ty body = do
       -- Contract the type of the produced function to only mention
       -- the effects actually demanded by the body.  This is safe because
       -- it's immediately consumed by an effect discharge primitive.
-      effs <- effectsE body'
+      effs <- getEffects body'
       return $ Lam $ LamExpr (LamBinder b ty' PlainArrow effs) body'
 
 buildForAnn
@@ -763,7 +763,7 @@ buildForAnn hint ann ty body = do
   lam <- withFreshBinder hint (LamBinding PlainArrow ty) \b -> do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
-    effs <- effectsE body'
+    effs <- getEffects body'
     return $ Lam $ LamExpr (LamBinder b ty PlainArrow effs) body'
   liftM Var $ emit $ Hof $ For ann lam
 
