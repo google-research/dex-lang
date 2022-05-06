@@ -64,7 +64,7 @@ def power_of_2_fft {log2_n}
       ipow2 = get ipow2Ref
 
       log2_half_n = log2_n - 1
-      xRef := yieldAccum (AddMonoid Complex) \bufRef.
+      xRef := yield_accum (AddMonoid Complex) \bufRef.
         for j:((Fin log2_half_n)=>(Fin 2)).  -- Executes in parallel.
           (left_read_ix, right_read_ix,
            left_write_ix, right_write_ix) = butterfly_ixs j ipow2

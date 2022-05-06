@@ -214,7 +214,7 @@ def sampleLightRadiance {n}
   (surfNor, surf) = osurf
   (rayPos, _) = inRay
   (MkScene objs) = scene
-  yieldAccum (AddMonoid Float) \radiance.
+  yield_accum (AddMonoid Float) \radiance.
     for i. case objs.i of
       PassiveObject _ _ -> ()
       Light lightPos hw _ ->
@@ -229,7 +229,7 @@ def sampleLightRadiance {n}
 
 def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
-  yieldAccum (AddMonoid Float) \radiance.
+  yield_accum (AddMonoid Float) \radiance.
     run_state  noFilter \filter.
      run_state initRay  \ray.
       bounded_iter (get_at #maxBounces params) () \i.

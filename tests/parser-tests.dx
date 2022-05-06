@@ -84,7 +84,7 @@ def myInt2 : {State Int} Int = 1
 > Nullary def can't have effects
 
 :p
-  yieldAccum (AddMonoid Float) \ref.
+  yield_accum (AddMonoid Float) \ref.
     x = if True then 1. else 3.
     if True then ref += x
 

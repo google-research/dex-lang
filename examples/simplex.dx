@@ -451,7 +451,7 @@ def constraints_satisfied (constraints: m=>Constraint n) (x: n=>Float) : Bool =
 
 def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
   (basics, _, table) = tableau
-  yieldAccum (AddMonoid Float) \varRef.
+  yield_accum (AddMonoid Float) \varRef.
     for v:cons.
       var = basics.v
       case var of  -- If this basic variable is an original variable, write it.

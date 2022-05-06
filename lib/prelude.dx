@@ -539,7 +539,7 @@ def run_accum
     action' ref
   %runWriter empty combine explicitAction
 
-def yieldAccum
+def yield_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (m:Monoid b)
@@ -692,7 +692,7 @@ instance Monoid Ordering
 
 instance {a n} [Eq a] Eq (n=>a)
   (==) = \xs ys.
-    yieldAccum AndMonoid \ref.
+    yield_accum AndMonoid \ref.
       for i. ref += xs.i == ys.i
 
 instance {a n} [Ord a] Ord (n=>a)
@@ -918,7 +918,7 @@ def reduce {a n} (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' {a n} [Ix n] (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
-def fsum {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
+def fsum {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. ref += xs.i
 def sum  {n v} [Add v] (xs:n=>v) : v = reduce zero (+) xs
 def prod {n v} [Mul v] (xs:n=>v) : v = reduce one  (*) xs
 def mean {n v} [VSpace v] (xs:n=>v) : v = sum xs / i_to_f (size n)
@@ -1139,14 +1139,14 @@ def append {a h} [AccumMonoid h (List a)]
     list += AsList 1 [x]
 
 def filter {a n} (condition:a->Bool) (xs:n=>a) : List a =
-  yieldAccum (ListMonoid a) \list.
+  yield_accum (ListMonoid a) \list.
     for i.
       if condition xs.i
         then append list xs.i
 
 def arg_filter {a n} (condition:a->Bool) (xs:n=>a) : List n =
   -- Returns all indices where the condition is true.
-  yieldAccum (ListMonoid n) \list.
+  yield_accum (ListMonoid n) \list.
     for i.
       if condition xs.i
         then append list i
