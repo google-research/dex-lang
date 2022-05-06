@@ -48,6 +48,9 @@ type LinRegions = ListE AtomName
 type TransposeM a = SubstReaderT TransposeSubstVal
                       (ReaderT1 LinRegions BuilderM) a
 
+type TransposeM' a = SubstReaderT AtomSubstVal
+                       (ReaderT1 LinRegions BuilderM) a
+
 -- TODO: it might make sense to replace substNonlin/isLin
 -- with a single `trySubtNonlin :: e i -> Maybe (e o)`.
 -- But for that we need a way to traverse names, like a monadic
@@ -59,6 +62,22 @@ substNonlin e = do
   fmapNamesM (\v -> case subst ! v of
                       RenameNonlin v' -> v'
                       _ -> error "not a nonlinear expression") e
+
+-- TODO: Can we generalize onNonLin to accept SubstReaderT Name instead of
+-- SubstReaderT AtomSubstVal?  For that to work, we need another combinator,
+-- that lifts a SubstReader AtomSubstVal into a SubstReader Name, because
+-- effectsSubstE is currently typed as SubstReader AtomSubstVal.
+-- Then we can presumably recode substNonlin as `onNonLin substM`.  We may
+-- be able to do that anyway, except we will then need to restrict the type
+-- of substNonlin to require `SubstE AtomSubstVal e`; but that may be fine.
+onNonLin :: HasCallStack
+         => TransposeM' i o a -> TransposeM i o a
+onNonLin cont = do
+  subst <- getSubst
+  let subst' = newSubst (\v -> case subst ! v of
+                                 RenameNonlin v' -> Rename v'
+                                 _ -> error "not a nonlinear expression")
+  liftSubstReaderT $ runSubstReaderT subst' cont
 
 isLin :: HoistableE e => e i -> TransposeM i o Bool
 isLin e = do
@@ -123,10 +142,9 @@ substExprIfNonlin expr =
   isLin expr >>= \case
     True -> return Nothing
     False -> do
-      expr' <- substNonlin expr
-      getEffects expr' >>= isLinEff >>= \case
+      onNonLin (getEffectsSubst expr) >>= isLinEff >>= \case
         True -> return Nothing
-        False -> return $ Just expr'
+        False -> Just <$> substNonlin expr
 
 isLinEff :: EffectRow o -> TransposeM i o Bool
 isLinEff effs@(EffectRow _ Nothing) = do
