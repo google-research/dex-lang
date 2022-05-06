@@ -87,7 +87,7 @@ def manifoldGrad
   [TangentSpace manifoldA tangentA, VSpace tangentA]
   (f: manifoldA -> Float) (x: manifoldA) : tangentA =
   linearized: (Float & (tangentA --o Float)) = manifoldLinearize f x
-  transposeLinear (snd linearized) 1.0
+  transpose_linear (snd linearized) 1.0
 
 
 ' ### Equivalence to standard differentiation
