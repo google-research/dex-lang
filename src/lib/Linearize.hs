@@ -16,7 +16,7 @@ import GHC.Stack
 import Name
 import Builder
 import Syntax
-import Type
+import CheckType (isSingletonType)
 import MTL1
 import QueryType
 import Util (bindM2)

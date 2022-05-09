@@ -49,6 +49,7 @@ library
                      , CUDA
                      , Cat
                      , CheapReduction
+                     , CheckType
                      , Core
                      , Err
                      , Export
@@ -75,7 +76,6 @@ library
                      , Syntax
                      , TopLevel
                      , Transpose
-                     , Type
                      , Types.Core
                      , Types.Imp
                      , Types.Primitives

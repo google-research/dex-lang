@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Type (
+module CheckType (
   CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM,
   checkExtends, checkedApplyDataDefParams, checkedApplyClassParams,

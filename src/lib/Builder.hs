@@ -66,7 +66,7 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import qualified RawName as R
 import Name
 import Syntax
-import Type
+import CheckType (caseAltsBinderTys)
 import QueryType
 import PPrint (prettyBlock)
 import CheapReduction
