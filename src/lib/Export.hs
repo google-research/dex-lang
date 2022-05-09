@@ -18,7 +18,7 @@ import Name
 import MTL1
 import Err
 import Syntax
-import Type
+import CheckType (asFirstOrderFunction)
 import QueryType
 import Builder
 import Simplify

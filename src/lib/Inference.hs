@@ -34,7 +34,7 @@ import GHC.Generics (Generic (..))
 import Name
 import Builder
 import Syntax hiding (State)
-import Type
+import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType)
 import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
 import CheapReduction

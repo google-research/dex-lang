@@ -29,7 +29,7 @@ import MTL1
 import Name
 import Builder
 import Syntax
-import Type
+import CheckType (CheckableE (..), checkUnOp, checkBinOp)
 import Simplify
 import LabeledItems
 import QueryType

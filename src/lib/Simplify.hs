@@ -28,7 +28,7 @@ import Name
 import MTL1
 import Builder
 import Syntax
-import Type
+import CheckType (CheckableE (..), isData)
 import Util (enumerate, foldMapM, restructure)
 import QueryType
 import CheapReduction

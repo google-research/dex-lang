@@ -45,7 +45,7 @@ import Name
 import Parser
 import Syntax
 import Builder
-import Type
+import CheckType (CheckableE (..), checkTypesM, asFFIFunType, asFirstOrderFunction)
 import SourceRename
 import Inference
 import Simplify
