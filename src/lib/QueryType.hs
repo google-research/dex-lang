@@ -2,13 +2,13 @@ module QueryType (
   getType, getTypeSubst, HasType,
   getEffects, getEffectsSubst,
   computeAbsEffects, declNestEffects,
-  depPairLeftTy, extendEffect,
+  caseAltsBinderTys, depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getMethodType, getBaseMonoidType, getReferentTy,
   getMethodIndex,
   instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
-  oneEffect, projectLength, sourceNameType,
+  oneEffect, projectLength, sourceNameType, typeAsBinderNest
   ) where
 
 import Control.Monad
@@ -54,6 +54,19 @@ getEffectsSubst e = do
 {-# INLINE getEffectsSubst #-}
 
 -- === Exposed helpers for querying types and effects ===
+
+caseAltsBinderTys :: (Fallible1 m, EnvReader m)
+                  => Type n -> m n [EmptyAbs (Nest Binder) n]
+caseAltsBinderTys ty = case ty of
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
+    cons <- applyDataDefParams def params
+    return [bs | DataConDef _ bs <- cons]
+  VariantTy (NoExt types) -> do
+    mapM typeAsBinderNest $ toList types
+  VariantTy _ -> fail "Can't pattern-match partially-known variants"
+  SumTy cases -> mapM typeAsBinderNest cases
+  _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
 depPairLeftTy :: DepPairType n -> Type n
 depPairLeftTy (DepPairType (_:>ty) _) = ty
@@ -159,6 +172,9 @@ naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftTypeQueryM idSu
     binderToPiBinder :: Binder n l -> PiBinder n l
     binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
 
+oneEffect :: Effect n -> EffectRow n
+oneEffect eff = EffectRow (S.singleton eff) Nothing
+
 projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n Int
 projectLength ty = case ty of
   TypeCon _ defName params -> do
@@ -181,8 +197,11 @@ sourceNameType v = do
       UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
 
-oneEffect :: Effect n -> EffectRow n
-oneEffect eff = EffectRow (S.singleton eff) Nothing
+typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
+typeAsBinderNest ty = do
+  Abs ignored body <- toConstAbs UnitE
+  return $ Abs (Nest (ignored:>ty) Empty) body
+{-# INLINE typeAsBinderNest #-}
 
 -- === computing effects ===
 

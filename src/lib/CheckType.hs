@@ -8,7 +8,7 @@ module CheckType (
   CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM,
   checkExtends, checkedApplyDataDefParams, checkedApplyClassParams,
-  caseAltsBinderTys, tryGetType,
+  tryGetType,
   checkUnOp, checkBinOp,
   isData, asFirstOrderFunction, asFFIFunType,
   isSingletonType, singletonTypeVal, asNaryPiType,
@@ -836,14 +836,14 @@ checkCase scrut alts resultTy effs = do
   declareEffs =<< substM effs
   resultTy' <- substM resultTy
   scrutTy <- getTypeE scrut
-  altsBinderTys <- caseAltsBinderTys scrutTy
+  altsBinderTys <- checkCaseAltsBinderTys scrutTy
   forMZipped_ alts altsBinderTys \alt bs ->
     checkAlt resultTy' bs alt
   return resultTy'
 
-caseAltsBinderTys :: (Fallible1 m, EnvReader m)
+checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m)
                   => Type n -> m n [EmptyAbs (Nest Binder) n]
-caseAltsBinderTys ty = case ty of
+checkCaseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     cons <- checkedApplyDataDefParams def params
@@ -869,11 +869,6 @@ checkDataConRefEnv (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding restRef
     restBs' <- applyAbs ab (binderName b'')
     checkDataConRefEnv restBs' (EmptyAbs restRefs)
 checkDataConRefEnv _ _ = throw CompilerErr $ "Mismatched args and binders"
-
-typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
-typeAsBinderNest ty = do
-  Abs ignored body <- toConstAbs UnitE
-  return $ Abs (Nest (ignored:>ty) Empty) body
 
 checkAlt :: HasType body => Typer m
          => Type o -> EmptyAbs (Nest Binder) o -> AltP body i -> m i o ()
