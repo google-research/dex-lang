@@ -8,7 +8,7 @@ module QueryType (
   instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
-  oneEffect, projectLength, sourceNameType, typeAsBinderNest
+  oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp
   ) where
 
 import Control.Monad
@@ -202,6 +202,20 @@ typeAsBinderNest ty = do
   Abs ignored body <- toConstAbs UnitE
   return $ Abs (Nest (ignored:>ty) Empty) body
 {-# INLINE typeAsBinderNest #-}
+
+typeBinOp :: BinOp -> BaseType -> BaseType
+typeBinOp binop xTy = case binop of
+  IAdd   -> xTy;  ISub   -> xTy
+  IMul   -> xTy;  IDiv   -> xTy
+  IRem   -> xTy;
+  ICmp _ -> Scalar Word8Type
+  FAdd   -> xTy;  FSub   -> xTy
+  FMul   -> xTy;  FDiv   -> xTy;
+  FPow   -> xTy
+  FCmp _ -> Scalar Word8Type
+  BAnd   -> xTy;  BOr    -> xTy
+  BXor   -> xTy
+  BShL   -> xTy;  BShR   -> xTy
 
 -- === computing effects ===
 
@@ -459,19 +473,7 @@ getTypePrimOp op = case op of
   TabCon ty _ -> substM ty
   ScalarBinOp binop x _ -> do
     xTy <- getTypeBaseType x
-    resTy <- return $ case binop of
-      IAdd   -> xTy;  ISub   -> xTy
-      IMul   -> xTy;  IDiv   -> xTy
-      IRem   -> xTy;
-      ICmp _ -> Scalar Word8Type
-      FAdd   -> xTy;  FSub   -> xTy
-      FMul   -> xTy;  FDiv   -> xTy;
-      FPow   -> xTy
-      FCmp _ -> Scalar Word8Type
-      BAnd   -> xTy;  BOr    -> xTy
-      BXor   -> xTy
-      BShL   -> xTy;  BShR   -> xTy
-    return $ TC $ BaseType resTy
+    return $ TC $ BaseType $ typeBinOp binop xTy
   -- All unary ops preserve the type of the input
   ScalarUnOp _ x -> getTypeE x
   Select _ x _ -> getTypeE x
