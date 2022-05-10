@@ -12,7 +12,6 @@ import Control.Monad.Reader
 import qualified Data.Set as S
 
 import MTL1
-import CheckType (singletonTypeVal)
 import Err
 import Name
 import Syntax

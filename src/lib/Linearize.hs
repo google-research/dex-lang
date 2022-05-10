@@ -16,7 +16,6 @@ import GHC.Stack
 import Name
 import Builder
 import Syntax
-import CheckType (isSingletonType)
 import MTL1
 import QueryType
 import Util (bindM2)
@@ -144,9 +143,7 @@ liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
 isTrivialForAD :: Expr o -> PrimalM i o Bool
 isTrivialForAD expr = do
-  trivialTy  <- (maybeTangentType <$> getType expr) >>= \case
-    Nothing -> return False
-    Just tTy -> isSingletonType tTy
+  trivialTy  <- any isSingletonType . maybeTangentType <$> getType expr
   hasActiveEffs <- getEffects expr >>= \case
                      Pure -> return False
                      -- TODO: Be more precise here, such as checking
