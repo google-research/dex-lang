@@ -11,7 +11,7 @@ module CheckType (
   tryGetType,
   checkUnOp, checkBinOp,
   isData, asFirstOrderFunction, asFFIFunType,
-  isSingletonType, singletonTypeVal, asNaryPiType,
+  asNaryPiType,
   ) where
 
 import Prelude hiding (id)
@@ -1061,52 +1061,6 @@ checkUnOp op x = do
       BNot             -> (u, sr)
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
-
--- === singleton types ===
-
--- TODO: the following implementation should be valid:
---   isSingletonType :: EnvReader m => Type n -> m n Bool
---   isSingletonType ty =
---     singletonTypeVal ty >>= \case
---       Nothing -> return False
---       Just _  -> return True
--- But we want to be able to query the singleton-ness of types that we haven't
--- implemented tangent types for. So instead we do a separate case analysis.
-isSingletonType :: EnvReader m => Type n -> m n Bool
-isSingletonType topTy =
-  case checkIsSingleton topTy of
-    Just () -> return True
-    Nothing -> return False
-  where
-    checkIsSingleton :: Type n -> Maybe ()
-    checkIsSingleton ty = case ty of
-      Pi (PiType _ _ body) -> checkIsSingleton body
-      StaticRecordTy items -> mapM_ checkIsSingleton items
-      TC con -> case con of
-        ProdType tys -> mapM_ checkIsSingleton tys
-        _ -> Nothing
-      _ -> Nothing
-
-
-singletonTypeVal :: EnvReader m => Type n -> m n (Maybe (Atom n))
-singletonTypeVal ty = liftTyperT do
-  singletonTypeVal' ty
-
--- TODO: TypeCon with a single case?
-singletonTypeVal'
-  :: (MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
-  => Type i -> m i o (Atom o)
-singletonTypeVal' ty = case ty of
-  TabPi (TabPiType b body) ->
-    substBinders b \b' -> do
-      body' <- singletonTypeVal' body
-      return $ TabLam $ TabLamExpr b' $ AtomicBlock body'
-  StaticRecordTy items -> Record <$> traverse singletonTypeVal' items
-  TC con -> case con of
-    ProdType tys -> ProdVal <$> traverse singletonTypeVal' tys
-    _            -> notASingleton
-  _ -> notASingleton
-  where notASingleton = fail "not a singleton type"
 
 -- === various helpers for querying types ===
 

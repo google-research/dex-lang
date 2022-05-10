@@ -8,7 +8,8 @@ module QueryType (
   instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
-  oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp
+  oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp,
+  isSingletonType, singletonTypeVal,
   ) where
 
 import Control.Monad
@@ -16,6 +17,7 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Maybe (isJust)
 import qualified Data.Set        as S
 
 import CheapReduction (cheapNormalize)
@@ -795,3 +797,53 @@ rwsFunEffects rws f = getTypeSubst f >>= \case
 
 deleteEff :: Effect n -> EffectRow n -> EffectRow n
 deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
+
+-- === singleton types ===
+
+-- The following implementation should be valid:
+--   isSingletonType :: EnvReader m => Type n -> m n Bool
+--   isSingletonType ty =
+--     singletonTypeVal ty >>= \case
+--       Nothing -> return False
+--       Just _  -> return True
+-- But a separate implementation doesn't have to go under binders,
+-- because it doesn't have to reconstruct the singleton value (which
+-- may be type annotated and whose type may refer to names).
+
+isSingletonType :: Type n -> Bool
+isSingletonType topTy = isJust $ checkIsSingleton topTy
+  where
+    checkIsSingleton :: Type n -> Maybe ()
+    checkIsSingleton ty = case ty of
+      Pi (PiType _ Pure body) -> checkIsSingleton body
+      TabPi (TabPiType _ body) -> checkIsSingleton body
+      StaticRecordTy items -> mapM_ checkIsSingleton items
+      TC con -> case con of
+        ProdType tys -> mapM_ checkIsSingleton tys
+        _ -> Nothing
+      _ -> Nothing
+
+singletonTypeVal :: EnvReader m => Type n -> m n (Maybe (Atom n))
+singletonTypeVal ty = liftEnvReaderT $
+  runSubstReaderT idSubst $ singletonTypeValRec ty
+{-# INLINE singletonTypeVal #-}
+
+-- TODO: TypeCon with a single case?
+singletonTypeValRec :: Type i
+  -> SubstReaderT Name (EnvReaderT Maybe) i o (Atom o)
+singletonTypeValRec ty = case ty of
+  Pi (PiType b Pure body) ->
+    substBinders b \(PiBinder b' ty' arr) -> do
+      body' <- singletonTypeValRec body
+      return $ Lam $ LamExpr (LamBinder b' ty' arr Pure) $ AtomicBlock body'
+  TabPi (TabPiType b body) ->
+    substBinders b \b' -> do
+      body' <- singletonTypeValRec body
+      return $ TabLam $ TabLamExpr b' $ AtomicBlock body'
+  StaticRecordTy items -> Record <$> traverse singletonTypeValRec items
+  TC con -> case con of
+    ProdType tys -> ProdVal <$> traverse singletonTypeValRec tys
+    _            -> notASingleton
+  _ -> notASingleton
+  where notASingleton = fail "not a singleton type"
+
