@@ -511,7 +511,7 @@ described
   (surfNor<span class="symbol">,</span> surf) <span class="symbol">=</span> osurf
   (rayPos<span class="symbol">,</span> _) <span class="symbol">=</span> inRay
   (<span class="type-name">MkScene</span> objs) <span class="symbol">=</span> scene
-  yieldAccum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>radiance<span class="symbol">.</span>
+  yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>radiance<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> objs<span class="symbol">.</span>i <span class="keyword">of</span>
       <span class="type-name">PassiveObject</span> _ _ <span class="symbol">-&gt;</span> ()
       <span class="type-name">Light</span> lightPos hw _ <span class="symbol">-&gt;</span>
@@ -526,7 +526,7 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trace {n} (params<span class="symbol">:</span><span class="type-name">Params</span>) (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (initRay<span class="symbol">:</span><span class="type-name">Ray</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Color</span> <span class="symbol">=</span>
   noFilter <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0]
-  yieldAccum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>radiance<span class="symbol">.</span>
+  yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>radiance<span class="symbol">.</span>
     run_state  noFilter <span class="symbol">\</span>filter<span class="symbol">.</span>
      run_state initRay  <span class="symbol">\</span>ray<span class="symbol">.</span>
       bounded_iter (get_at <span class="iso-sugar">#maxBounces</span> params) () <span class="symbol">\</span>i<span class="symbol">.</span>

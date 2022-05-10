@@ -824,7 +824,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
     action&#39; ref
   %runWriter empty combine explicitAction
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yieldAccum
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yield_accum
       {a b w eff}
       [mlift<span class="symbol">:</span><span class="type-name">MonoidLifter</span> b w]
       (m<span class="symbol">:</span><span class="type-name">Monoid</span> b)
@@ -972,7 +972,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (n<span class="symbol">=&gt;</span>a)
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span>
-    yieldAccum <span class="type-name">AndMonoid</span> <span class="symbol">\</span>ref<span class="symbol">.</span>
+    yield_accum <span class="type-name">AndMonoid</span> <span class="symbol">\</span>ref<span class="symbol">.</span>
       <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs<span class="symbol">.</span>i <span class="symbol">==</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Ord</span> a] <span class="type-name">Ord</span> (n<span class="symbol">=&gt;</span>a)
@@ -1192,7 +1192,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: call this `scan` and call the current `scan` something else
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan&#39; {a n} [<span class="type-name">Ix</span> n] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> snd <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> dup (body i x)
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: allow tables-via-lambda and get rid of this
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fsum {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> yieldAccum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs<span class="symbol">.</span>i
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fsum {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sum  {n v} [<span class="type-name">Add</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> reduce zero (<span class="symbol">+</span>) xs
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> prod {n v} [<span class="type-name">Mul</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> reduce one  (<span class="symbol">*</span>) xs
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean {n v} [<span class="type-name">VSpace</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> sum xs <span class="symbol">/</span> i_to_f (size n)
@@ -1243,11 +1243,11 @@ It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: add vector space constraints
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> %linearize f x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> jvp {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">--</span>o b <span class="symbol">=</span> snd (linearize f x)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transposeLinear {a b} (f<span class="command">:a</span> <span class="symbol">--</span>o b) <span class="symbol">:</span> b <span class="symbol">--</span>o a <span class="symbol">=</span> %linearTranspose f
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_linear {a b} (f<span class="command">:a</span> <span class="symbol">--</span>o b) <span class="symbol">:</span> b <span class="symbol">--</span>o a <span class="symbol">=</span> %linearTranspose f
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> vjp {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> b <span class="symbol">--</span>o a) <span class="symbol">=</span>
   (y<span class="symbol">,</span> df) <span class="symbol">=</span> linearize f x
-  (y<span class="symbol">,</span> transposeLinear df)
+  (y<span class="symbol">,</span> transpose_linear df)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> grad {a} (f<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Float</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> snd (vjp f x) 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
@@ -1403,14 +1403,14 @@ It's a kind of <code>scan</code>.</p>
     list <span class="symbol">+=</span> <span class="type-name">AsList</span> 1 [x]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> filter {a n} (condition<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
-  yieldAccum (<span class="type-name">ListMonoid</span> a) <span class="symbol">\</span>list<span class="symbol">.</span>
+  yield_accum (<span class="type-name">ListMonoid</span> a) <span class="symbol">\</span>list<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       <span class="keyword">if</span> condition xs<span class="symbol">.</span>i
         <span class="keyword">then</span> append list xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> arg_filter {a n} (condition<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> n <span class="symbol">=</span>
   <span class="comment">-- Returns all indices where the condition is true.
-</span>  yieldAccum (<span class="type-name">ListMonoid</span> n) <span class="symbol">\</span>list<span class="symbol">.</span>
+</span>  yield_accum (<span class="type-name">ListMonoid</span> n) <span class="symbol">\</span>list<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       <span class="keyword">if</span> condition xs<span class="symbol">.</span>i
         <span class="keyword">then</span> append list i
