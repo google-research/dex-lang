@@ -8,25 +8,25 @@
 
 module Util where
 
-import Crypto.Hash
-import Data.Functor.Identity (Identity(..))
-import Data.List (sort)
-import Data.Maybe (catMaybes)
-import Data.Hashable (Hashable)
-import qualified Data.List.NonEmpty as NE
-import qualified Data.ByteString    as BS
-import Data.Foldable
-import Data.List.NonEmpty (NonEmpty (..))
 import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Applicative
 import Control.Monad.State.Strict
 import System.CPUTime
-import Data.Store (Store (..))
-import GHC.Generics (Generic)
 import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)
+import Crypto.Hash
+import Data.Functor.Identity (Identity(..))
+import Data.Maybe (catMaybes)
+import Data.List (sort)
+import Data.Hashable (Hashable)
+import Data.Store (Store)
+import qualified Data.List.NonEmpty as NE
+import qualified Data.ByteString    as BS
+import Data.Foldable
+import Data.List.NonEmpty (NonEmpty (..))
+import GHC.Generics (Generic)
 
 import Err
 

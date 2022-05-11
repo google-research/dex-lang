@@ -5,12 +5,14 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
-module RenderHtml (pprintHtml, progHtml, ToMarkup) where
+module RenderHtml (pprintHtml, progHtml, ToMarkup, treeToHtml) where
 
-import Text.Blaze.Html5 as H  hiding (map)
+import Text.Blaze.Html5 as H hiding (map)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
+import Data.List    qualified as L
 import Data.Text    qualified as T
 import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
@@ -22,10 +24,13 @@ import Text.Megaparsec.Char as C
 
 import Err
 import Lexing (Parser, symChar, keyWordStrs, symbol, parseit, withSource)
-import Paths_dex  (getDataFileName)
+import Paths_dex (getDataFileName)
 import PPrint ()
+import SourceInfo
+import TraverseSourceInfo
 import Types.Misc
 import Types.Source
+import Util
 
 cssSource :: T.Text
 cssSource = unsafePerformIO $
@@ -74,6 +79,8 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
     (Misc (ProseBlock s)) -> cdiv "prose-block" $ mdToHtml s
+    TopDecl decl -> renderSpans decl block
+    Command _ g -> renderSpans g block
     _ -> cdiv "code-block" $ highlightSyntax (sbText block)
 
 mdToHtml :: T.Text -> Html
@@ -83,6 +90,61 @@ cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
 
 -- === syntax highlighting ===
+
+spanDelimitedCode :: SourceBlock -> [SrcPosCtx] -> Html
+spanDelimitedCode block ctxs =
+  let (Just tree) = srcCtxsToTree block ctxs in
+  spanDelimitedCode' block tree
+
+spanDelimitedCode' :: SourceBlock -> SpanTree -> Html
+spanDelimitedCode' block tree = treeToHtml (sbText block) tree
+
+treeToHtml :: T.Text -> SpanTree -> Html
+treeToHtml source' tree =
+  let tree' = fillTreeAndAddTrivialLeaves (T.unpack source') tree in
+  treeToHtml' source' tree'
+
+treeToHtml' :: T.Text -> SpanTree -> Html
+treeToHtml' source' tree = case tree of
+  Span (_, _, spanId) children ->
+    let body' = foldMap (treeToHtml' source') children in
+    createSpan (Just spanId) body' ! spanClass
+  LeafSpan (l, r, spanId) ->
+    let spanText = sliceText l r source' in
+    -- Note: only leaves need the code-span class.
+    createSpan (Just spanId) (highlightSyntax spanText) ! spanLeaf
+  Trivia (l, r) ->
+    let spanText = sliceText l r source' in
+    createSpan Nothing (highlightSyntax spanText)
+  where createSpan :: Maybe SpanId -> Html -> Html
+        createSpan spanId body' = case spanId of
+          Nothing -> H.span body'
+          Just id' -> H.span body' ! spanIdAttribute id'
+        spanIdAttribute :: SpanId -> Attribute
+        spanIdAttribute spanId =
+          At.id (stringValue (show spanId))
+        spanLeaf :: Attribute
+        spanLeaf = At.class_ "code-span-leaf"
+        spanClass :: Attribute
+        spanClass = At.class_ "code-span"
+
+srcCtxsToSpanInfos :: SourceBlock -> [SrcPosCtx] -> [SpanPayload]
+srcCtxsToSpanInfos block ctxs =
+  let blockOffset = sbOffset block in
+  let ctxs' = L.sort ctxs in
+  (0, maxBound, 0) : mapMaybe (convert' blockOffset) ctxs'
+  where convert' :: Int -> SrcPosCtx -> Maybe SpanPayload
+        convert' offset (SrcPosCtx (Just (l, r)) (Just spanId)) = Just (l - offset, r - offset, spanId + 1)
+        convert' _ _ = Nothing
+
+srcCtxsToTree :: SourceBlock -> [SrcPosCtx] -> Maybe SpanTree
+srcCtxsToTree block ctxs = makeEmptySpanTree (srcCtxsToSpanInfos block ctxs)
+
+renderSpans :: HasSourceInfo a => a -> SourceBlock -> Html
+renderSpans x block =
+  let x' = addSpanIds x in
+  let ctxs = gatherSourceInfo x' in
+  toHtml $ cdiv "code-block" $ spanDelimitedCode block ctxs
 
 highlightSyntax :: T.Text -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
@@ -99,11 +161,12 @@ syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
       SymbolStr   -> "symbol"
       TypeNameStr -> "type-name"
       IsoSugarStr -> "iso-sugar"
+      WhitespaceStr -> "whitespace"
       NormalStr -> error "Should have been matched already"
 
 data StrClass = NormalStr
               | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr
-              | IsoSugarStr
+              | IsoSugarStr | WhitespaceStr
 
 classify :: Parser StrClass
 classify =
@@ -115,6 +178,7 @@ classify =
    <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
         >> lowerWord >> return IsoSugarStr)
    <|> (some symChar >> return SymbolStr)
+   <|> (some space1 >> return WhitespaceStr)
    <|> (anySingle >> return NormalStr)
 
 lowerWord :: Parser String

@@ -61,6 +61,7 @@ import Err
 import Name
 import PPrint ()
 import Types.Primitives
+import SourceInfo
 import Types.Source
 import qualified Types.OpNames as P
 import Util
@@ -106,7 +107,7 @@ type SyntaxM = FallibleM
 
 topDecl :: CTopDecl -> SyntaxM (UTopDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
-  topDecl' (CSDecl ann d) = ULocalDecl <$> decl ann (WithSrc Nothing d)
+  topDecl' (CSDecl ann d) = ULocalDecl <$> decl ann (WithSrc emptySrcPosCtx d)
   topDecl' (CData name tyConParams givens constructors) = do
     tyConParams' <- aExplicitParams tyConParams
     givens' <- toNest <$> fromMaybeM givens [] aGivens
@@ -124,7 +125,7 @@ topDecl = dropSrc topDecl' where
     fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
     methods <- forM defs \(ann, d) -> do
       (methodName, lam) <- aDef d
-      return (ann, methodName, Abs (UBindSource "self") lam)
+      return (ann, methodName, Abs (UBindSource emptySrcPosCtx "self") lam)
     return $ UStructDecl (fromString name) (UStructDef name (givens' >>> params') fields' methods)
   topDecl' (CInterface name params methods) = do
     params' <- aExplicitParams params
@@ -206,7 +207,7 @@ generalBinder paramStyle expl g = case expl of
   Inferred _ Unify -> do
     b <- binderOptTy g
     expl' <- return case b of
-      UAnnBinder (UBindSource s) _ _ -> Inferred (Just s) Unify
+      UAnnBinder (UBindSource _ s) _ _ -> Inferred (Just s) Unify
       _ -> expl
     return $ WithExpl expl' b
   Explicit -> WithExpl expl <$> case paramStyle of
@@ -357,10 +358,10 @@ asExpr (WithSrcE src b) = case b of
   _ -> WithSrcE src $ UDo $ WithSrcE src b
 
 block :: CSBlock -> SyntaxM (UBlock VoidS)
-block (ExprBlock g) = WithSrcE Nothing . UBlock Empty <$> expr g
+block (ExprBlock g) = WithSrcE emptySrcPosCtx . UBlock Empty <$> expr g
 block (IndentedBlock decls) = do
   (decls', result) <- blockDecls decls
-  return $ WithSrcE Nothing $ UBlock decls' result
+  return $ WithSrcE emptySrcPosCtx $ UBlock decls' result
 
 blockDecls :: [CSDecl] -> SyntaxM (Nest UDecl VoidS VoidS, UExpr VoidS)
 blockDecls [] = error "shouldn't have empty list of decls"
@@ -527,8 +528,8 @@ unitExpr = UPrim (UCon $ P.ProdCon) []
 buildFor :: SrcPos -> Direction -> [UOptAnnBinder VoidS VoidS] -> UBlock VoidS -> UExpr VoidS
 buildFor pos dir binders body = case binders of
   [] -> error "should have nonempty list of binder"
-  [b] -> WithSrcE (Just pos) $ UFor dir $ UForExpr b body
-  b:bs -> WithSrcE (Just pos) $ UFor dir $ UForExpr b $
+  [b] -> WithSrcE (fromPos pos) $ UFor dir $ UForExpr b body
+  b:bs -> WithSrcE (fromPos pos) $ UFor dir $ UForExpr b $
     ns $ UBlock Empty $ buildFor pos dir bs body
 
 -- === Helpers ===
@@ -548,10 +549,10 @@ explicitApp :: UExpr n -> [UExpr n] -> UExpr' n
 explicitApp f xs = UApp f xs []
 
 ns :: (a n) -> WithSrcE a n
-ns = WithSrcE Nothing
+ns = WithSrcE emptySrcPosCtx
 
 nsB :: (b n l) -> WithSrcB b n l
-nsB = WithSrcB Nothing
+nsB = WithSrcB emptySrcPosCtx
 
 toNest :: [a VoidS VoidS] -> Nest a VoidS VoidS
 toNest = foldr Nest Empty

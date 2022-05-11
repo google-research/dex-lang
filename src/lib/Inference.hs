@@ -41,6 +41,7 @@ import Err
 import IRVariants
 import MTL1
 import Name
+import SourceInfo
 import Subst
 import QueryType
 import Types.Core
@@ -100,7 +101,7 @@ inferTopUDecl (UInterface paramBs methodTys className methodNames) result = do
   let subst = className @> className' <.> methodNames @@> methodNames'
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInstance className instanceBs params methods maybeName expl) result = do
-  let (InternalName _ className') = className
+  let (InternalName _ _ className') = className
   ab <- liftInfererM $ solveLocal do
     withRoleUBinders instanceBs \_ -> do
       ClassDef _ _ _ paramBinders _ _ <- lookupClassDef (sink className')
@@ -1045,7 +1046,7 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
       resultTyVar <- freshInferenceName MiscInfVar TyKind
       dictTy <- DictTy <$> dictType className [Var resultTyVar]
       addDefault (atomVarName resultTyVar) defaultTy
-      emitExpr =<< mkApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
+      emitExpr =<< mkApplyMethod (DictHole (AlwaysEqual emptySrcPosCtx) dictTy Full) 0 [litVal]
 
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
@@ -1095,7 +1096,7 @@ inferWithoutInstantiation
   => UExpr i -> InfererM i o (SigmaAtom o)
 inferWithoutInstantiation (WithSrcE pos expr) =
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
-   UVar ~(InternalName sn v) ->  do
+   UVar ~(InternalName _ sn v) ->  do
      v' <- renameM v
      ty <- getUVarType v'
      return $ SigmaUVar sn ty v'
@@ -1939,7 +1940,7 @@ superclassDictTys (Nest b bs) = do
 checkMethodDef :: EmitsInf o
                => ClassName o -> [CorePiType o] -> UMethodDef i -> InfererM i o (Int, CAtom o)
 checkMethodDef className methodTys (WithSrcE src m) = addSrcContext src do
-  UMethodDef ~(InternalName sourceName v) rhs <- return m
+  UMethodDef ~(InternalName _ sourceName v) rhs <- return m
   MethodBinding className' i <- renameM v >>= lookupEnv
   when (className /= className') do
     ClassBinding (ClassDef classSourceName _ _ _ _ _) <- lookupEnv className
@@ -1951,7 +1952,7 @@ checkUEffRow (UEffectRow effs t) = do
    effs' <- liftM eSetFromList $ mapM checkUEff $ toList effs
    t' <- case t of
      Nothing -> return NoTail
-     Just (~(SIInternalName _ v)) -> do
+     Just (~(SIInternalName _ v _ _)) -> do
        v' <- toAtomVar =<< renameM v
        constrainVarTy v' EffKind
        return $ EffectRowTail v'
@@ -1959,13 +1960,13 @@ checkUEffRow (UEffectRow effs t) = do
 
 checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect CoreIR o)
 checkUEff eff = case eff of
-  URWSEffect rws (~(SIInternalName _ region)) -> do
+  URWSEffect rws (~(SIInternalName _ region _ _)) -> do
     region' <- renameM region >>= toAtomVar
     constrainVarTy region' (TC HeapType)
     return $ RWSEffect rws (Var region')
   UExceptionEffect -> return ExceptionEffect
   UIOEffect        -> return IOEffect
-  UUserEffect ~(SIInternalName _ name) -> UserEffect <$> renameM name
+  UUserEffect ~(SIInternalName _ name _ _) -> UserEffect <$> renameM name
 
 constrainVarTy :: EmitsInf o => CAtomVar o -> CType o -> InfererM i o ()
 constrainVarTy v tyReq = do
@@ -1986,7 +1987,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
 
 getCaseAltIndex :: UPat i i' -> InfererM i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
-  UPatCon ~(InternalName _ conName) _ -> do
+  UPatCon ~(InternalName _ _ conName) _ -> do
     (_, con) <- renameM conName >>= lookupDataCon
     return con
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
@@ -1997,7 +1998,7 @@ checkCasePat :: EmitsBoth o
              -> (forall o'. (EmitsBoth o', Ext o o') => InfererM i' o' (CAtom o'))
              -> InfererM i o (Alt CoreIR o)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
-  UPatCon ~(InternalName _ conName) ps -> do
+  UPatCon ~(InternalName _ _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= lookupDataCon
     TyConDef sourceName paramBs (ADTCons cons) <- lookupTyCon dataDefName
     DataConDef _ _ repTy idxs <- return $ cons !! con
@@ -2058,7 +2059,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- getSnd x' >>= zonk >>= emit . Atom
       bindLetPat p2 x2 do
         cont
-  UPatCon ~(InternalName _ conName) ps -> do
+  UPatCon ~(InternalName _ _ conName) ps -> do
     (dataDefName, _) <- lookupDataCon =<< renameM conName
     TyConDef sourceName paramBs cons <- lookupTyCon dataDefName
     case cons of
@@ -2916,7 +2917,7 @@ instantiateSynthArgs targetTop (Abs bsTop resultTyTop) = do
        arg <- liftSubstReaderT case expl of
          Explicit -> error "instances shouldn't have explicit args"
          Inferred _ Unify -> Var <$> freshInferenceName MiscInfVar argTy
-         Inferred _ (Synth req) -> return $ DictHole (AlwaysEqual Nothing) argTy req
+         Inferred _ (Synth req) -> return $ DictHole (AlwaysEqual emptySrcPosCtx) argTy req
        liftM (arg:) $ extendSubst (b@>SubstVal arg) $ go target (Abs rest proposed)
 
 synthDictForData :: forall n. DictType n -> SyntherM n (SynthAtom n)

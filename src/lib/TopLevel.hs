@@ -59,6 +59,7 @@ import Inline
 import Logging
 import Lower
 import MTL1
+import SourceInfo
 import Subst
 import Name
 import OccAnalysis
@@ -290,7 +291,7 @@ evalSourceBlock' mname block = case sbContents block of
         let hint = getNameHint b
         fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun fname impFunTy
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
-        UBindSource sourceName <- return b
+        UBindSource _ sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
   DeclareCustomLinearization fname zeros g -> do
@@ -309,7 +310,7 @@ evalSourceBlock' mname block = case sbContents block of
         impl <- case expr of
           WithSrcE _ (UVar _) ->
             renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> Var <$> toAtomVar v
+              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
         fType <- getType <$> toAtomVar fname'
@@ -336,11 +337,11 @@ evalSourceBlock' mname block = case sbContents block of
     EmptyLines   -> return ()
   where
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
-    addTypeAnn e = WithSrcE Nothing . UTypeAnn e
+    addTypeAnn e = WithSrcE emptySrcPosCtx . UTypeAnn e
     addShowAny :: UExpr n -> UExpr n
-    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") [e] []
+    addShowAny e = WithSrcE emptySrcPosCtx $ UApp (referTo "show_any") [e] []
     referTo :: SourceName -> UExpr n
-    referTo = WithSrcE Nothing . UVar . SourceName
+    referTo = WithSrcE emptySrcPosCtx . UVar . SourceName emptySrcPosCtx
 
 runEnvQuery :: Topper m => EnvQuery -> m n ()
 runEnvQuery query = do
@@ -452,7 +453,7 @@ evalPartiallyParsedUModule partiallyParsed = do
   emitBinding (getNameHint name) $ ModuleBinding evaluated
 
 -- Assumes all module dependencies have been loaded already
-evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
+evalUModule :: (Topper m, Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
   TopEnvFrag envFrag moduleEnvFrag otherUpdates <- return topFrag

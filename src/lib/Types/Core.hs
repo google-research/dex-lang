@@ -36,9 +36,9 @@ import Data.Store (Store (..))
 import Foreign.Ptr
 
 import Name
-import Err
 import Util (FileHash, SnocList (..), Tree (..))
 import IRVariants
+import SourceInfo
 
 import qualified Types.OpNames as P
 import Types.Primitives
