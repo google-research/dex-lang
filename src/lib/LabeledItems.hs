@@ -12,6 +12,7 @@ module LabeledItems
 
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Data
 import Data.Hashable
 import Data.Foldable (toList)
 import Data.Store (Store)
@@ -29,7 +30,7 @@ type Label = String
 -- fields is discarded (so both `{b:Z & a:X & a:Y}` and `{a:X & b:Z & a:Y}` map
 -- to `M.fromList [("a", NE.fromList [X, Y]), ("b", NE.fromList [Z])]` )
 newtype LabeledItems a = LabeledItems { fromLabeledItems :: M.Map Label (NE.NonEmpty a) }
-  deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Generic, Functor, Foldable, Traversable, Data)
 
 labeledSingleton :: Label -> a -> LabeledItems a
 labeledSingleton label value = LabeledItems $ M.singleton label (value NE.:|[])
@@ -68,7 +69,9 @@ instance Monoid (LabeledItems a) where
 -- an ExtLabeledItems contains first the values in the (LabeledItems a) for that
 -- field, followed by the values in the (Maybe b) for that field if they exist.
 data ExtLabeledItems a b = Ext (LabeledItems a) (Maybe b)
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Show, Generic, Typeable)
+
+deriving instance (Data a, Data b) => Data (ExtLabeledItems a b)
 
 -- Adds more items to the front of an ExtLabeledItems.
 prefixExtLabeledItems :: LabeledItems a -> ExtLabeledItems a b -> ExtLabeledItems a b

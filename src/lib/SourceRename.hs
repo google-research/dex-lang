@@ -98,8 +98,8 @@ class SourceRenamableB (b :: B) where
                 -> m o a
 
 instance SourceRenamableE (SourceNameOr UVar) where
-  sourceRenameE (SourceName sourceName) =
-    InternalName sourceName <$> lookupSourceName sourceName
+  sourceRenameE (SourceName pos sourceName) =
+    InternalName pos sourceName <$> lookupSourceName sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 lookupSourceName :: Renamer m => SourceName -> m n (UVar n)
@@ -127,37 +127,37 @@ ambiguousVarErrMsg v defs =
       error "shouldn't be possible because module vars can't shadow local ones"
 
 instance SourceRenamableE (SourceNameOr (Name (AtomNameC CoreIR))) where
-  sourceRenameE (SourceName sourceName) = do
+  sourceRenameE (SourceName pos sourceName) = do
     lookupSourceName sourceName >>= \case
-      UAtomVar v -> return $ InternalName sourceName v
+      UAtomVar v -> return $ InternalName pos sourceName v
       _ -> throw TypeErr $ "Not an ordinary variable: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableE (SourceNameOr (Name DataConNameC)) where
-  sourceRenameE (SourceName sourceName) = do
+  sourceRenameE (SourceName pos sourceName) = do
     lookupSourceName sourceName >>= \case
-      UDataConVar v -> return $ InternalName sourceName v
+      UDataConVar v -> return $ InternalName pos sourceName v
       _ -> throw TypeErr $ "Not a data constructor: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableE (SourceNameOr (Name ClassNameC)) where
-  sourceRenameE (SourceName sourceName) = do
+  sourceRenameE (SourceName pos sourceName) = do
     lookupSourceName sourceName >>= \case
-      UClassVar v -> return $ InternalName sourceName v
+      UClassVar v -> return $ InternalName pos sourceName v
       _ -> throw TypeErr $ "Not a class name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableE (SourceNameOr (Name EffectNameC)) where
-  sourceRenameE (SourceName sourceName) = do
+  sourceRenameE (SourceName pos sourceName) = do
     lookupSourceName sourceName >>= \case
-      UEffectVar v -> return $ InternalName sourceName v
+      UEffectVar v -> return $ InternalName pos sourceName v
       _ -> throw TypeErr $ "Not an effect name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableE (SourceNameOr (Name HandlerNameC)) where
-  sourceRenameE (SourceName sourceName) = do
+  sourceRenameE (SourceName pos sourceName) = do
     lookupSourceName sourceName >>= \case
-      UHandlerVar v -> return $ InternalName sourceName v
+      UHandlerVar v -> return $ InternalName pos sourceName v
       _ -> throw TypeErr $ "Not a handler name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
@@ -287,7 +287,7 @@ instance SourceRenamableB UDecl where
       sourceRenameUBinder UClassVar className \className' ->
         sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
           cont $ UInterface paramBs' superclasses' methodTys' className' methodNames'
-      where methodSourceNames = nestToList (\(UBindSource n) -> n) methodNames
+      where methodSourceNames = nestToList (\(UBindSource _ n) -> n) methodNames
     UInstance className conditions params methodDefs instanceName -> do
       className' <- sourceRenameE className
       Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
@@ -322,7 +322,7 @@ renameMethodType paramBinders (UMethodType ~(Left explicitNames) ty) methodName 
       where unexpected = filter (not . (`elem` paramNames)) explicitNames
   UMethodType (Right explicitFlags) <$> sourceRenameE ty
   where
-    paramNames = nestToList (\(UAnnBinder (UBindSource n) _) -> n) paramBinders
+    paramNames = nestToList (\(UAnnBinder (UBindSource _ n) _) -> n) paramBinders
 
 instance SourceRenamableB UnitB where
   sourceRenameB UnitB cont = cont UnitB
@@ -356,7 +356,7 @@ sourceRenameUBinder :: (Color c, Distinct o, Renamer m)
                     -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)
                     -> m o a
 sourceRenameUBinder asUVar ubinder cont = case ubinder of
-  UBindSource b -> do
+  UBindSource pos b -> do
     SourceMap sm <- askSourceMap
     mayShadow <- askMayShadow
     let shadows = M.member b sm
@@ -365,8 +365,8 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
       extendSourceMap b (asUVar $ binderName freshName) $
-        cont $ UBind b freshName
-  UBind _ _ -> error "Shouldn't be source-renaming internal names"
+        cont $ UBind pos b freshName
+  UBind _ _ _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> cont UIgnore
 
 instance SourceRenamableE UDataDef where
@@ -403,17 +403,17 @@ instance SourceRenamableE UnitE where
   sourceRenameE UnitE = return UnitE
 
 instance SourceRenamableE UMethodDef where
-  sourceRenameE (UMethodDef ~(SourceName v) expr) = do
+  sourceRenameE (UMethodDef ~(SourceName pos v) expr) = do
     lookupSourceName v >>= \case
-      UMethodVar v' -> UMethodDef (InternalName v v') <$> sourceRenameE expr
+      UMethodVar v' -> UMethodDef (InternalName pos v v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableE UEffectOpDef where
   sourceRenameE (UReturnOpDef expr) = do
     UReturnOpDef <$> sourceRenameE expr
-  sourceRenameE (UEffectOpDef rp ~(SourceName v) expr) = do
+  sourceRenameE (UEffectOpDef rp ~(SourceName pos v) expr) = do
     lookupSourceName v >>= \case
-      UEffectOpVar v' -> UEffectOpDef rp (InternalName v v') <$> sourceRenameE expr
+      UEffectOpVar v' -> UEffectOpDef rp (InternalName pos v v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not an effect operation name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
@@ -440,11 +440,11 @@ class SourceRenamablePat (pat::B) where
 instance SourceRenamablePat (UBinder (AtomNameC CoreIR)) where
   sourceRenamePat sibs ubinder cont = do
     newSibs <- case ubinder of
-      UBindSource b -> do
+      UBindSource _ b -> do
         when (S.member b sibs) $ throw RepeatedPatVarErr $ pprint b
         return $ S.singleton b
       UIgnore -> return mempty
-      UBind _ _ -> error "Shouldn't be source-renaming internal names"
+      UBind _ _ _ -> error "Shouldn't be source-renaming internal names"
     sourceRenameB ubinder \ubinder' ->
       cont (sibs <> newSibs) ubinder'
 
@@ -537,14 +537,14 @@ class HasSourceNames (b::B) where
 instance HasSourceNames UDecl where
   sourceNames decl = case decl of
     ULet _ (UPatAnn pat _) _ -> sourceNames pat
-    UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
+    UDataDefDecl _ ~(UBindSource _ tyConName) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
-    UStructDecl _ ~(UBindSource tyConName) -> do
+    UStructDecl _ ~(UBindSource _ tyConName) -> do
       S.singleton tyConName
-    UInterface _ _ _ ~(UBindSource className) methodNames -> do
+    UInterface _ _ _ ~(UBindSource _ className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName -> sourceNames instanceName
-    UEffectDecl _ ~(UBindSource effName) opNames -> do
+    UEffectDecl _ ~(UBindSource _ effName) opNames -> do
       S.singleton effName <> sourceNames opNames
     UHandlerDecl _ _ _ _ _ _ handlerName -> sourceNames handlerName
 
@@ -582,9 +582,9 @@ instance HasSourceNames b => HasSourceNames (Nest b)where
 
 instance HasSourceNames (UBinder c) where
   sourceNames b = case b of
-    UBindSource name -> S.singleton name
+    UBindSource _ name -> S.singleton name
     UIgnore -> mempty
-    UBind _ _ -> error "Shouldn't be source-renaming internal names"
+    UBind {} -> error "Shouldn't be source-renaming internal names"
 
 -- === misc instance ===
 

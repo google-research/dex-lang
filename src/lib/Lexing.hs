@@ -18,6 +18,7 @@ import Text.Megaparsec.Debug
 
 import Err
 import LabeledItems
+import SourceInfo
 import Types.Source
 
 data ParseCtx = ParseCtx { curIndent :: Int

@@ -29,9 +29,9 @@ import Data.Void
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 
-import Err
 import Lexing
 import Name
+import SourceInfo
 import Types.Source
 import Types.Primitives
 import Util
@@ -109,23 +109,23 @@ pattern ExprBlock g <- (CSBlock [ExprDecl g]) where
 
 pattern Bracketed :: Bracket -> Group -> Group
 pattern Bracketed b g <- (WithSrc _ (CBracket b g)) where
-  Bracketed b g = WithSrc Nothing $ CBracket b g
+  Bracketed b g = WithSrc emptySrcPosCtx $ CBracket b g
 
 pattern Binary :: Bin' -> Group -> Group -> Group
 pattern Binary op lhs rhs <- (WithSrc _ (CBin (WithSrc _ op) lhs rhs)) where
-  Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc Nothing op) lhs rhs
+  Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc emptySrcPosCtx op) lhs rhs
 
 pattern Prefix :: SourceName -> Group -> Group
 pattern Prefix op g <- (WithSrc _ (CPrefix op g)) where
-  Prefix op g = WithSrc Nothing $ CPrefix op g
+  Prefix op g = WithSrc emptySrcPosCtx $ CPrefix op g
 
 pattern Postfix :: SourceName -> Group -> Group
 pattern Postfix op g <- (WithSrc _ (CPostfix op g)) where
-  Postfix op g = WithSrc Nothing $ CPostfix op g
+  Postfix op g = WithSrc emptySrcPosCtx $ CPostfix op g
 
 pattern Identifier :: SourceName -> Group
 pattern Identifier name <- (WithSrc _ (CIdentifier name)) where
-  Identifier name = WithSrc Nothing $ CIdentifier name
+  Identifier name = WithSrc emptySrcPosCtx $ CIdentifier name
 
 binOptL :: Bin' -> Group -> (Maybe Group, Maybe Group)
 binOptL tag = \case
@@ -150,7 +150,7 @@ nary op g = go g [] where
 
 -- Roll up a list of groups as binary applications, associating to the left.
 nary' :: Bin' -> [Group] -> Group
-nary' _ [] = WithSrc Nothing CEmpty
+nary' _ [] = WithSrc emptySrcPosCtx CEmpty
 nary' _ (lst:[]) = lst
 nary' op (g1:(g2:rest)) = go (Binary op g1 g2) rest where
   go lhs [] = lhs
@@ -348,7 +348,7 @@ handlerDef = withSrc do
   keyWord OfKW
   effectName <- anyName
   bodyTyArg <- anyName
-  args <- cGroupNoColon <|> pure (WithSrc Nothing CEmpty)
+  args <- cGroupNoColon <|> pure (WithSrc emptySrcPosCtx CEmpty)
   void $ sym ":"
   retTy <- cGroupNoEqual
   methods <- onePerLine effectOpDef
@@ -426,7 +426,7 @@ instanceDef isNamed = withSrc $ do
   givens <- optional (keyWord GivenKW >> cGroup)
   methods <- try (withIndent (keyWord PassKW) >> return []) <|>
              (onePerLine instanceMethod)
-  return $ CInstance header (fromMaybe (WithSrc Nothing CEmpty) givens) methods name
+  return $ CInstance header (fromMaybe (WithSrc emptySrcPosCtx CEmpty) givens) methods name
 
 instanceMethod :: Parser (SourceName, CSBlock)
 instanceMethod = do
@@ -448,7 +448,7 @@ funDefLet :: Parser (CSBlock -> CSDecl)
 funDefLet = label "function definition" (mayBreak $ withSrc1 do
   keyWord DefKW
   name <- anyName
-  args <- cGroupNoColon <|> pure (WithSrc Nothing CEmpty)
+  args <- cGroupNoColon <|> pure (WithSrc emptySrcPosCtx CEmpty)
   typeAnn <- optional (sym ":" >> cGroupNoEqual)
   return (CDef name args typeAnn)) <* sym "="
 
@@ -494,8 +494,8 @@ cGroupInBraces = optional separator >>= \case
   Just sep -> afterSep sep
   Nothing -> contents
   where
-    afterSep sep = Binary sep (WithSrc Nothing CEmpty) <$> contents
-                   <|> pure (Binary sep (WithSrc Nothing CEmpty) (WithSrc Nothing CEmpty))
+    afterSep sep = Binary sep (WithSrc emptySrcPosCtx CEmpty) <$> contents
+                   <|> pure (Binary sep (WithSrc emptySrcPosCtx CEmpty) (WithSrc emptySrcPosCtx CEmpty))
     separator =     sym "&" $> Ampersand
                 <|> sym "|" $> Pipe
                 <|> sym "?" $> Question
@@ -642,7 +642,7 @@ leafGroupNoBrackets = do
   next <- nextChar
   case next of
     '_'  -> underscore $> CHole
-    '('  -> (symbol "()" $> (CParens $ ExprBlock $ WithSrc Nothing CEmpty))
+    '('  -> (symbol "()" $> (CParens $ ExprBlock $ WithSrc emptySrcPosCtx CEmpty))
             <|> CIdentifier <$> symName
             <|> parens (CParens . ExprBlock <$> cGroupNoEqual)
     '{'  -> curlyBraced
@@ -807,11 +807,11 @@ unOpPost s = (s, Expr.Postfix $ unOp CPostfix s)
 unOp :: (SourceName -> Group -> Group') -> SourceName -> Parser (Group -> Group)
 unOp f s = do
   ((), pos) <- withPos $ sym $ fromString s
-  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (Just pos) grpPos) $ f s g
+  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (fromPos pos) grpPos) $ f s g
 
 binApp :: Bin' -> SrcPos -> Group -> Group -> Group
 binApp f pos x y = joinSrc3 f' x y $ CBin f' x y
-  where f' = WithSrc (Just pos) f
+  where f' = WithSrc (fromPos pos) f
 
 cNames :: Parser Group
 cNames = nary' Juxtapose <$> map (fmap CIdentifier) <$> many (withSrc anyName)
@@ -819,12 +819,12 @@ cNames = nary' Juxtapose <$> map (fmap CIdentifier) <$> many (withSrc anyName)
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
   (x, pos) <- withPos p
-  return $ WithSrc (Just pos) x
+  return $ WithSrc (fromPos pos) x
 
 withSrc1 :: Parser (a -> b) -> Parser (a -> WithSrc b)
 withSrc1 p = do
   (f, pos) <- withPos p
-  return $ WithSrc (Just pos) . f
+  return $ WithSrc (fromPos pos) . f
 
 joinSrc :: WithSrc a1 -> WithSrc a2 -> a3 -> WithSrc a3
 joinSrc (WithSrc p1 _) (WithSrc p2 _) x = WithSrc (joinPos p1 p2) x
@@ -833,16 +833,17 @@ joinSrc3 :: WithSrc a1 -> WithSrc a2 -> WithSrc a3 -> a4 -> WithSrc a4
 joinSrc3 (WithSrc p1 _) (WithSrc p2 _) (WithSrc p3 _) x =
   WithSrc (concatPos [p1, p2, p3]) x
 
-joinPos :: Maybe SrcPos -> Maybe SrcPos -> Maybe SrcPos
-joinPos Nothing p = p
-joinPos p Nothing = p
-joinPos (Just (l, h)) (Just (l', h')) = Just (min l l', max h h')
+joinPos :: SrcPosCtx -> SrcPosCtx -> SrcPosCtx
+joinPos (SrcPosCtx Nothing _) c@(SrcPosCtx _ _) = c
+joinPos c@(SrcPosCtx _ _) (SrcPosCtx Nothing _) = c
+joinPos (SrcPosCtx (Just (l, h)) spanId) (SrcPosCtx (Just (l', h')) _) =
+  SrcPosCtx (Just (min l l', max h h')) spanId
 
-jointPos :: WithSrc a1 -> WithSrc a2 -> Maybe SrcPos
+jointPos :: WithSrc a1 -> WithSrc a2 -> SrcPosCtx
 jointPos (WithSrc p1 _) (WithSrc p2 _) = joinPos p1 p2
 
-concatPos :: [Maybe SrcPos] -> Maybe SrcPos
-concatPos [] = Nothing
+concatPos :: [SrcPosCtx] -> SrcPosCtx
+concatPos [] = emptySrcPosCtx
 concatPos (pos:rest) = foldl joinPos pos rest
 
 -- === primitive constructors and operators ===

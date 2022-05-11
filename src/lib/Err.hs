@@ -4,8 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
-            SrcPosCtx, SrcTextCtx, SrcPos,
+module Err (Err (..), Errs (..), ErrType (..), Except (..),
+            ErrCtx (..), SrcTextCtx,
             Fallible (..), Catchable (..), catchErrExcept,
             FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwErr,
@@ -30,9 +30,11 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
+import GHC.Generics (Generic (..))
 import GHC.Stack
 import System.Environment
 import System.IO.Unsafe
+import SourceInfo
 
 -- === core API ===
 
@@ -63,16 +65,13 @@ data ErrType = NoErr
              | MonadFailErr
                deriving (Show, Eq)
 
-type SrcPosCtx  = Maybe SrcPos
 type SrcTextCtx = Maybe (Int, Text) -- Int is the offset in the source file
 data ErrCtx = ErrCtx
   { srcTextCtx :: SrcTextCtx
   , srcPosCtx  :: SrcPosCtx
   , messageCtx :: [String]
   , stackCtx   :: Maybe [String] }
-    deriving (Show, Eq)
-
-type SrcPos = (Int, Int)
+    deriving (Show, Eq, Generic)
 
 class MonadFail m => Fallible m where
   throwErrs :: Errs -> m a
@@ -441,7 +440,7 @@ instance Pretty Err where
   pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx
     -- TODO: figure out a more uniform way to newlines
     where prettyCtx = case ctx of
-            ErrCtx _ Nothing [] Nothing -> mempty
+            ErrCtx _ (SrcPosCtx Nothing _) [] Nothing -> mempty
             _ -> hardline <> pretty ctx
 
 instance Pretty ErrCtx where
@@ -452,7 +451,7 @@ instance Pretty ErrCtx where
     prettyLines (reverse messages) <> highlightedSource <> prettyStack
     where
       highlightedSource = case (maybeTextCtx, maybePosCtx) of
-        (Just (offset, text), Just (start, stop)) ->
+        (Just (offset, text), SrcPosCtx (Just (start, stop)) _) ->
            hardline <> pretty (highlightRegion (start - offset, stop - offset) text)
         _ -> mempty
       prettyStack = case stack of
@@ -531,13 +530,14 @@ instance CtxReader m => CtxReader (StateT s m) where
   {-# INLINE getErrCtx #-}
 
 instance Semigroup ErrCtx where
-  ErrCtx text pos ctxStrs stk <> ErrCtx text' pos' ctxStrs' stk' =
+  ErrCtx text (SrcPosCtx p spanId) ctxStrs stk <> ErrCtx text' (SrcPosCtx p' spanId') ctxStrs' stk' =
     ErrCtx (leftmostJust  text text')
-           (rightmostJust pos  pos' )
+           (SrcPosCtx (rightmostJust p p') (rightmostJust spanId spanId'))
            (ctxStrs <> ctxStrs')
            (leftmostJust stk stk')  -- We usually extend errors form the right
+
 instance Monoid ErrCtx where
-  mempty = ErrCtx Nothing Nothing [] Nothing
+  mempty = ErrCtx Nothing (SrcPosCtx Nothing Nothing) [] Nothing
 
 -- === misc util stuff ===
 

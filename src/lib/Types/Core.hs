@@ -38,10 +38,10 @@ import Data.Store (Store (..))
 import Foreign.Ptr
 
 import Name
-import Err
 import LabeledItems
 import Util (FileHash, onFst, SnocList (..), toSnocList, Tree (..))
 import IRVariants
+import SourceInfo
 
 import Types.Primitives
 import Types.Source

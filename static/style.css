@@ -47,9 +47,6 @@ nav ol {
   margin: auto;
 }
 
-.cell {
-}
-
 .code-block, .err-block, .result-block {
   padding: 0em 0em 0em 2em;
   display: block;
@@ -105,4 +102,15 @@ code {
 
 .iso-sugar {
   color: #25BBA7;
+}
+
+/* Tooltips support */
+
+.code-span:hover {
+  /* background-color: rgb(255 255 100 / 0.4); */
+  background-color: rgb(155 100 255 / 40%);
+}
+
+.code-span-leaf:hover {
+  background-color: rgb(210 210 100 / 1);
 }

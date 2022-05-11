@@ -18,6 +18,7 @@ module RawName
 import Prelude hiding (lookup)
 import qualified Data.IntMap.Lazy as M
 import qualified Data.IntSet as S
+import Data.Data
 import Data.Hashable
 import Data.Char
 import Data.Bits
@@ -104,7 +105,7 @@ lastSilentName :: NameRep
 lastSilentName = complement zeroBits `clearBit` nameKindBit
 
 newtype NameHint = NameHint Int
-newtype RawName  = RawName  Int deriving (Eq, Ord, Generic, Hashable, Store)
+newtype RawName  = RawName  Int deriving (Eq, Ord, Generic, Hashable, Store, Data)
 
 freshRawName :: NameHint -> RawNameMap a -> RawName
 freshRawName (NameHint hint) usedNames = RawName $! case isStringName hint of

@@ -24,6 +24,7 @@ import Control.Monad.State.Strict
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 import Data.Bits
+import Data.Data
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.Maybe (fromJust, catMaybes)
@@ -2430,7 +2431,7 @@ scopeFragToSubstFrag f (UnsafeScopeFromSubst m) = fmapSubstFrag (\n _ -> f n) m
 newtype Name (c::C)  -- Name color
              (n::S)  -- Scope parameter
   = UnsafeMakeName RawName
-    deriving (Show, Eq, Ord, Pretty, HasNameHint, Generic, Store)
+    deriving (Show, Eq, Ord, Pretty, HasNameHint, Generic, Store, Data)
 
 newtype NameBinder (c::C)  -- name color
                    (n::S)  -- scope above the binder

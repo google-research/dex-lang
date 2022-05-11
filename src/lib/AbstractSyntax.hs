@@ -45,7 +45,10 @@
 -- for example to permit grouping parens in more places, that much
 -- easier.
 
-module AbstractSyntax (parseExpr, parseDecl, parseBlock, parseTopDeclRepl) where
+module AbstractSyntax (
+  parseUModule, parseUModuleDeps,
+  finishUModuleParse, preludeImportBlock,
+  parseTopDeclRepl, parseExpr, parseDecl, parseBlock) where
 
 import Control.Monad (forM, when, liftM2)
 import Data.Functor
@@ -59,7 +62,8 @@ import Err
 import Name
 import PPrint ()
 import IRVariants
-import Types.Primitives
+import SourceInfo
+import Types.Primitives hiding (Equal)
 import Types.Source
 
 -- === Converting concrete syntax to abstract syntax ===
@@ -186,7 +190,7 @@ multiIfaceBinder :: Group -> SyntaxM [UAnnBinder (AtomNameC CoreIR) VoidS VoidS]
 multiIfaceBinder = dropSrc \case
   (CBracket Square g) -> do tys <- mapM expr $ nary Comma g
                             return $ map (UAnnBinder UIgnore) tys
-  g@(CBin (WithSrc _ Juxtapose) _ _) -> concat <$> mapM multiIfaceBinder (nary Juxtapose $ WithSrc Nothing g)
+  g@(CBin (WithSrc _ Juxtapose) _ _) -> concat <$> mapM multiIfaceBinder (nary Juxtapose $ WithSrc emptySrcPosCtx g)
   _ -> fail "Invalid class constraint list; expecting one or more bracketed groups"
 
 effectOpDef :: (SourceName, Maybe UResumePolicy, CSBlock) -> SyntaxM (UEffectOpDef VoidS)
@@ -597,15 +601,15 @@ buildLam binders body@(WithSrcE pos _) = case binders of
 buildFor :: SrcPos -> Direction -> [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
 buildFor pos dir binders body = case binders of
   [] -> body
-  b:bs -> WithSrcE (Just pos) $ UFor dir $ UForExpr b $ buildFor pos dir bs body
+  b:bs -> WithSrcE (fromPos pos) $ UFor dir $ UForExpr b $ buildFor pos dir bs body
 
 -- === Helpers ===
 
 ns :: (a n) -> WithSrcE a n
-ns = WithSrcE Nothing
+ns = WithSrcE emptySrcPosCtx
 
 nsB :: (b n l) -> WithSrcB b n l
-nsB = WithSrcB Nothing
+nsB = WithSrcB emptySrcPosCtx
 
 toNest :: [a VoidS VoidS] -> Nest a VoidS VoidS
 toNest = foldr Nest Empty

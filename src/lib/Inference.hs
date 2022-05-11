@@ -45,6 +45,7 @@ import IRVariants
 import LabeledItems
 import MTL1
 import Name
+import SourceInfo
 import Subst
 import PPrint (pprintCanonicalized, prettyBlock)
 import QueryType
@@ -101,7 +102,7 @@ inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) 
   let subst = className @> className' <.> methodNames @@> methodNames'
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInstance className bs params methods maybeName) result = do
-  let (InternalName _ className') = className
+  let (InternalName _ _ className') = className
   -- XXX: we use `buildDeclsInf` even though we don't actually emit any decls
   -- here. The reason is that it does some DCE of inference vars for us. If we
   -- don't use it, we get spurious "Ambiguous type variable" errors. TODO: Fix
@@ -153,7 +154,7 @@ inferTopUDecl (UEffectDecl opTys effName opNames) result = do
   UDeclResultDone <$> applyRename subst result
 -- TODO(alex): handle retEff
 inferTopUDecl (UHandlerDecl effName bodyTyArg tyArgs _retEff retTy opDefs handlerName) result =
-  do let (InternalName _ effName') = effName
+  do let (InternalName _ _ effName') = effName
      let handlerSourceName = uBinderSourceName handlerName
      Abs Empty (Abs bodyTyArg' (Abs tyArgs' (retTy' `PairE` retOp' `PairE` ListE ops'))) <-
       liftInfererM $ solveLocal $ buildDeclsInf do
@@ -201,7 +202,7 @@ checkHandlerOp :: EmitsInf o
                -> CType o
                -> UEffectOpDef i
                -> InfererM i o (Int, CBlock o)
-checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) = do
+checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ _ opName) opBody) = do
   EffectOpDef effName' (OpIdx opIdx) <- renameM opName >>= lookupEffectOpDef
   EffectDef _ ops <- lookupEffectDef effName'
   let (_, EffectOpType pol' opTy) = ops !! opIdx
@@ -1012,7 +1013,7 @@ checkOrInferRho :: forall i o. EmitsBoth o
                 -> RequiredTy RhoType o -> InfererM i o (CAtom o)
 checkOrInferRho hint (WithSrcE pos expr) reqTy = do
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
-  UVar ~(InternalName _ v) -> do
+  UVar ~(InternalName _ _ v) -> do
     renameM v >>= inferUVar >>= instantiateSigma >>= matchRequirement
   ULam (ULamExpr ImplicitArrow (UPatAnn p ann) body) -> do
     argTy <- checkAnn ann
@@ -1176,7 +1177,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           return (rec, labeledSingleton l e' <> delayItems)
           where (rec, delayItems) = delayedRec
         UDynField    v e -> do
-          v' <- checkRho noHint (WithSrcE Nothing $ UVar v) (NewtypeTyCon LabelType)
+          v' <- checkRho noHint (WithSrcE (SrcPosCtx Nothing Nothing) $ UVar v) (NewtypeTyCon LabelType)
           e' <- inferRho noHint e
           rec' <- emitExpr . RecordOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
           return (Just rec', mempty)
@@ -1249,7 +1250,7 @@ inferFieldRowElem = \case
     return [StaticFields $ labeledSingleton l ty']
   UDynField    v ty -> do
     ty' <- checkUType ty
-    checkRho noHint (WithSrcE Nothing $ UVar v) (NewtypeTyCon LabelType) >>= \case
+    checkRho noHint (WithSrcE (SrcPosCtx Nothing Nothing) $ UVar v) (NewtypeTyCon LabelType) >>= \case
       NewtypeTyCon (LabelCon l) -> return [StaticFields $ labeledSingleton l ty']
       Var v'           -> return [DynField v' ty']
       _                -> error "Unexpected Label atom"
@@ -1272,7 +1273,7 @@ inferFieldLHS
   => UExpr i -> InfererM i o (Either (DataDefName o) (DataDefName o, CAtom o))
 inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
   case x of
-    UVar (InternalName _ (UTyConVar v)) -> do
+    UVar (InternalName _ _ (UTyConVar v)) -> do
       TyConBinding defName _ <- lookupEnv =<< renameM v
       return $ Left defName
     _ -> do
@@ -1361,7 +1362,7 @@ matchPrimApp = \case
 inferFunNoInstantiation :: EmitsBoth o => UExpr i -> InfererM i o (CAtom o)
 inferFunNoInstantiation expr@(WithSrcE pos expr') = do
  addSrcContext pos $ case expr' of
-  UVar ~(InternalName _ v) -> do
+  UVar ~(InternalName _ _ v) -> do
     -- XXX: deliberately no instantiation!
     renameM v >>= inferUVar
   _ -> inferRho noHint expr
@@ -2006,7 +2007,7 @@ introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_
 
 checkMethodDef :: EmitsInf o
                => ClassName o -> [MethodType o] -> UMethodDef i -> InfererM i o (Int, CBlock o)
-checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs) = do
+checkMethodDef className methodTys (UMethodDef ~(InternalName _ sourceName v) rhs) = do
   MethodBinding className' i _ <- renameM v >>= lookupEnv
   when (className /= className') do
     ClassBinding (ClassDef classSourceName _ _ _ _) <- lookupEnv className
@@ -2023,7 +2024,7 @@ checkUEffRow (UEffectRow effs t) = do
    effs' <- liftM eSetFromList $ mapM checkUEff $ toList effs
    t' <- case t of
      Nothing -> return NoTail
-     Just (~(SIInternalName _ v)) -> do
+     Just (~(SIInternalName _ v _ _)) -> do
        v' <- renameM v
        constrainVarTy v' EffKind
        return $ EffectRowTail v'
@@ -2031,13 +2032,13 @@ checkUEffRow (UEffectRow effs t) = do
 
 checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect CoreIR o)
 checkUEff eff = case eff of
-  URWSEffect rws (~(SIInternalName _ region)) -> do
+  URWSEffect rws (~(SIInternalName _ region _ _)) -> do
     region' <- renameM region
     constrainVarTy region' (TC HeapType)
     return $ RWSEffect rws (Var region')
   UExceptionEffect -> return ExceptionEffect
   UIOEffect        -> return IOEffect
-  UUserEffect ~(SIInternalName _ name) -> UserEffect <$> renameM name
+  UUserEffect ~(SIInternalName _ name _ _) -> UserEffect <$> renameM name
   UInitEffect -> return InitEffect
 
 constrainVarTy :: EmitsInf o => CAtomName o -> CType o -> InfererM i o ()
@@ -2058,7 +2059,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
 
 getCaseAltIndex :: UPat i i' -> InfererM i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
-  UPatCon ~(InternalName _ conName) _ -> do
+  UPatCon ~(InternalName _ _ conName) _ -> do
     (_, con) <- renameM conName >>= getDataCon
     return con
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
@@ -2069,7 +2070,7 @@ checkCasePat :: EmitsBoth o
              -> (forall o'. (EmitsBoth o', Ext o o') => InfererM i' o' (CAtom o'))
              -> InfererM i o (Alt CoreIR o)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
-  UPatCon ~(InternalName _ conName) ps -> do
+  UPatCon ~(InternalName _ _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     DataConDef _ _ repTy idxs <- return $ cons !! con
@@ -2135,7 +2136,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- getSnd x' >>= zonk >>= emit . Atom
       bindLamPat p2 x2 do
         cont
-  UPatCon ~(InternalName _ conName) ps -> do
+  UPatCon ~(InternalName _ _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< renameM conName
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     case cons of
@@ -2166,7 +2167,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           resolveDelay rv \rv' -> do
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields tailVar]
-            bindLamPat (WithSrcB Nothing $ UPatBinder b) rv' c
+            bindLamPat (WithSrcB (SrcPosCtx Nothing Nothing) $ UPatBinder b) rv' c
         UStaticFieldPat l p rest -> do
           -- Note that the type constraint will be added when the delay is resolved
           let (ls, ps, rvn) = rv
@@ -2174,7 +2175,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         UDynFieldsPat fv p rest -> do
           resolveDelay rv \rv' -> do
             fv' <- emit . Atom =<< checkRho noHint
-              (WithSrcE Nothing $ UVar fv) LabeledRowKind
+              (WithSrcE (SrcPosCtx Nothing Nothing) $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
             ans <- emitExpr (RecordOp $ RecordSplit (Var fv') (Var rv'))
@@ -2182,8 +2183,8 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
           resolveDelay rv \rv' -> do
-            lv' <- emit. Atom  =<< checkRho noHint
-              (WithSrcE Nothing $ UVar lv) (NewtypeTyCon LabelType)
+            lv' <- emit . Atom =<< checkRho noHint
+              (WithSrcE emptySrcPosCtx $ UVar lv) (NewtypeTyCon LabelType)
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
@@ -3132,7 +3133,7 @@ instantiateSynthArgsRec prevArgsRec dictTy subst synthTy = case synthTy of
     argTy' <- applySubst subst argTy
     param <- case arrow of
       ImplicitArrow -> Var <$> freshInferenceName argTy'
-      ClassArrow -> return $ DictHole (AlwaysEqual Nothing) argTy'
+      ClassArrow -> return $ DictHole (AlwaysEqual emptySrcPosCtx) argTy'
       _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
     instantiateSynthArgsRec (param:prevArgsRec) dictTy (subst <.> b @> SubstVal param) resultTy
   SynthDictType dictTy' -> do
