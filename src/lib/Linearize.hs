@@ -143,7 +143,7 @@ liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
 isTrivialForAD :: Expr o -> PrimalM i o Bool
 isTrivialForAD expr = do
-  trivialTy  <- any isSingletonType . maybeTangentType <$> getType expr
+  trivialTy  <- presentAnd isSingletonType . maybeTangentType <$> getType expr
   hasActiveEffs <- getEffects expr >>= \case
                      Pure -> return False
                      -- TODO: Be more precise here, such as checking
@@ -151,6 +151,8 @@ isTrivialForAD expr = do
                      _ -> return True
   hasActiveVars <- isActive expr
   return $ not hasActiveEffs && (trivialTy || not hasActiveVars)
+    where presentAnd :: (a -> Bool) -> Maybe a -> Bool
+          presentAnd = any
 
 isActive :: HoistableE e => e o -> PrimalM i o Bool
 isActive e = do

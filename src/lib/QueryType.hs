@@ -8,7 +8,7 @@ module QueryType (
   instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
-  oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp,
+  oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal,
   ) where
 
@@ -218,6 +218,9 @@ typeBinOp binop xTy = case binop of
   BAnd   -> xTy;  BOr    -> xTy
   BXor   -> xTy
   BShL   -> xTy;  BShR   -> xTy
+
+typeUnOp :: UnOp -> BaseType -> BaseType
+typeUnOp = const id  -- All unary ops preserve the type of the input
 
 -- === computing effects ===
 
@@ -476,8 +479,7 @@ getTypePrimOp op = case op of
   ScalarBinOp binop x _ -> do
     xTy <- getTypeBaseType x
     return $ TC $ BaseType $ typeBinOp binop xTy
-  -- All unary ops preserve the type of the input
-  ScalarUnOp _ x -> getTypeE x
+  ScalarUnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
   Select _ x _ -> getTypeE x
   UnsafeFromOrdinal ty _ -> substM ty
   ToOrdinal _ -> return IdxRepTy
