@@ -90,7 +90,11 @@ compileModule moduleJIT@JIT{..} objFiles ast compilationPipeline = do
             _ -> []
       -- Sort in the order of decreasing priority!
       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
+#if MIN_VERSION_llvm_hs(15,0,0)
+        \(C.Struct _ _ [C.Int _ n, C.GlobalReference (LLVM.AST.Name dname), _]) ->
+#else
         \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (LLVM.AST.Name dname), _]) ->
+#endif
           (n, C8BS.unpack $ SBS.fromShort dname)
 {-# SCC compileModule #-}
 
