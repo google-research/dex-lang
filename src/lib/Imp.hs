@@ -1591,8 +1591,7 @@ impInstrTypes instr = case instr of
 impOpType :: IPrimOp n -> IType
 impOpType pop = case pop of
   ScalarBinOp op x _ -> typeBinOp op (getIType x)
-  -- All unary ops preserve the type of their input
-  ScalarUnOp  _ x    -> getIType x
+  ScalarUnOp  op x   -> typeUnOp  op (getIType x)
   VectorBinOp op x _ -> typeBinOp op (getIType x)
   Select  _ x  _     -> getIType x
   VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
