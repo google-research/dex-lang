@@ -369,6 +369,8 @@ compileInstr instr = case instr of
        (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
        (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
 #if MIN_VERSION_llvm_hs(15,0,0)
+       -- Pointee casts become no-ops, because LLVM uses opaque pointers
+       (L.PointerType a , L.PointerType a') | a == a' -> return x
        (L.IntegerType 64, ptrTy@(L.PointerType _)) -> emitInstr ptrTy $ L.IntToPtr x ptrTy []
        (L.PointerType _ , L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
 #else
