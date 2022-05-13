@@ -1,0 +1,40 @@
+name: On demand benchmarking
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04]
+        include:
+          - os: ubuntu-20.04
+            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config
+            path_extension: /usr/lib/llvm-12/bin
+
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Install system dependencies
+      run: |
+        ${{ matrix.install_deps }}
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+
+    - name: Cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.stack
+
+        key: ${{ runner.os }}-bench-dmd-v1-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-bench-dmd-v1
+
+    - name: Benchmark
+      run: echo "::warning file=README.md::Possible regression detected!"
+
