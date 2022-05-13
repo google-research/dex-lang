@@ -1,0 +1,55 @@
+name: Continuous benchmarking
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04]
+        include:
+          - os: ubuntu-20.04
+            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config
+            path_extension: /usr/lib/llvm-12/bin
+
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v2
+
+    - name: Install system dependencies
+      run: |
+        ${{ matrix.install_deps }}
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+
+    - name: Cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.stack
+
+        key: ${{ runner.os }}-bench-v1-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-bench-v1
+
+    - name: Benchmark
+      run: python3 benchmarks/continuous.py /tmp/new-perf-data.csv /tmp/new-commits.csv ${GITHUB_SHA}
+
+    - name: Switch to the data branch
+      uses: actions/checkout@v2
+      with:
+        ref: performance-data
+
+    - name: Append new data points
+      run: |
+        cat /tmp/new-perf-data.csv >>performance.csv
+        cat /tmp/new-commits.csv >>commits.csv
+
+    - name: Commit new data points
+      run: |
+          git config --global user.name 'Dex CI'
+          git config --global user.email 'apaszke@users.noreply.github.com'
+          git commit -m "Add measurements for ${GITHUB_SHA}"
+          git push
