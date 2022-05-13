@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dex performance</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+</head>
+<body>
+  <div class="container", id="chart-container">
+  <h1 class="display-4">Dex continuous benchmarking</h1>
+  </div>
+  <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/danfojs@1.1.0/lib/bundle.min.js"></script>
+  <script>
+    const pretty_measure = {
+      alloc: 'Total bytes allocated',
+      time_rel: 'Time relative to baseline',
+    }
+    const pretty_benchmark = {
+      kernelregression: 'Kernel regression example',
+      psd: 'PSD solver example',
+      regression: 'Regression example',
+      fluidsim: 'Fluid simulation example',
+    }
+    var charts = {};
+    var container = $('#chart-container');
+    dfd.readCSV("https://raw.githubusercontent.com/google-research/dex-lang/performance-data/performance.csv", {dynamicTyping: false})
+    .then(perf_data_df => {
+    dfd.readCSV("https://raw.githubusercontent.com/google-research/dex-lang/performance-data/commits.csv", {dynamicTyping: false})
+    .then(commits_df => {
+      const commits = commits_df.head(commits_df.shape[0] - 1).sortValues("date").column("commit").values
+      var commit_to_ord = {};
+      var ord_to_commit = {};
+      for (let i = 0; i < commits.length; i++) {
+        commit_to_ord[commits[i]] = i
+        ord_to_commit[i] = commits[i]
+      }
+      raw_data = perf_data_df.head(perf_data_df.shape[0] - 1)
+      raw_data.print()
+      const benchmarks = raw_data['benchmark'].unique().sortValues().values
+      benchmarks.map(benchmark => {
+        benchmark_data = raw_data.query(raw_data['benchmark'].eq(benchmark))
+        const measures = benchmark_data['measure'].unique().sortValues().values
+        const row = $('<div></div>').addClass('row')
+        measures.map(measure => {
+          const id = benchmark + '-' + measure
+          const col = $('<div></div>').addClass('col-sm').appendTo(row)
+          $('<h4>' + pretty_measure[measure] + '</h4>').addClass('text-muted').appendTo(col)
+          const canvas = $('<canvas/>',{'id':id}).appendTo(col)
+          const measures = benchmark_data['measure'].values
+          const xs = benchmark_data['commit'].values
+          const ys = benchmark_data['value'].values
+          var values = []
+          for (let i = 0; i < benchmark_data.shape[0]; i++) {
+            if (measures[i] != measure) continue;
+            values.push({x: commit_to_ord[xs[i]], y: ys[i]})
+          }
+          const yFormat = Intl.NumberFormat('en-US')
+          const config = {
+            type: 'scatter',
+            data: {
+              datasets: [{
+                label: benchmark + ' ' + measure,
+                data: values,
+                backgroundColor: 'rgb(255, 99, 132)'
+              }],
+            },
+            options: {
+              aspectRatio: 2.8,
+              plugins: {
+                legend: {
+                  display: false,
+                },
+                tooltip: {
+                  callbacks: {
+                    label: context => {
+                      return yFormat.format(context.parsed.y);
+                    }
+                  },
+                },
+              },
+              scales: {
+                x: {
+                  ticks: {
+                    callback: (value, index, ticks) => {
+                      if (value in ord_to_commit) {
+                        return ord_to_commit[value].slice(0, 10)
+                      }
+                      return undefined
+                    }
+                  },
+                },
+              },
+            },
+          };
+          charts[[benchmark, measure]] = new Chart(canvas, config);
+        })
+        $('<h2>' + pretty_benchmark[benchmark] + '</h2>').appendTo(container)
+        row.addClass('mb-5').appendTo(container)
+      })
+    })});
+  </script>
+</body>
+</html>
