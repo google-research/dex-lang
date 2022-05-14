@@ -298,6 +298,29 @@ instance Ix Unit
 
 def iota (n:Type) [Ix n] : n=>Int = view i. ordinal i
 
+'## Fencepost index sets
+
+data Post segment:Type = UnsafeMkPost Int
+
+instance {segment} [Ix segment] Ix (Post segment)
+  get_size = \(). size segment + 1
+  ordinal = \(UnsafeMkPost i). i
+  unsafe_from_ordinal = \i. UnsafeMkPost i
+
+def left_post {n} [Ix n] (i:n) : Post n =
+  unsafe_from_ordinal (Post n) (ordinal i)
+
+def right_post {n} [Ix n] (i:n) : Post n =
+  unsafe_from_ordinal (Post n) (ordinal i + 1)
+
+interface [Ix n] NonEmpty n
+  first_ix : n
+
+def last_ix {n} [NonEmpty n] : n = unsafe_from_ordinal _ (size n - 1)
+
+instance {n} [Ix n] NonEmpty (Post n)
+  first_ix = unsafe_from_ordinal (Post n) 0
+
 '## Arithmetic instances for table types
 
 instance {a n} [Add a] Add (n=>a)
@@ -1242,6 +1265,12 @@ def split_v {a} : Iso a ({|} | a) =
 
 def slice_fields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (build_with $ split_v &>> iso) tab
+
+-- TODO: replace `slice` with this?
+def post_slice {a n} (xs:n=>a) (start:Post n) (end:Post n) : List a =
+  slice_size = ordinal end - ordinal start
+  to_list for i:(Fin slice_size).
+    xs.(unsafe_from_ordinal n (ordinal i + ordinal start))
 
 '## Dynamic buffer
 
