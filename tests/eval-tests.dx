@@ -805,12 +805,12 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 str = ['x', 'y']
 
 :p str
-> "xy"
+> ['x', 'y']
 
 s1 = "hello world"
 
 :p s1
-> (AsList 11 "hello world")
+> "hello world"
 
 :p codepoint 'a'
 > 97
@@ -999,3 +999,9 @@ all for x:((Bool & Fin 3)=>(Fin 4)).
   x == (unsafe_from_ordinal _ (ordinal x))
 > True
 
+def all_prefixes (s:String)  : List String =
+  (AsList _ s') = s
+  to_list for i. post_slice s' first_ix i
+
+:p all_prefixes "fence"
+> (AsList 6 ["", "f", "fe", "fen", "fenc", "fence"])

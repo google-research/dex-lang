@@ -2,41 +2,41 @@
 -- String
 
 :p show "abc"
-> (AsList 3 "abc")
+> "abc"
 
 -- Int32
 
 :p show (1234: Int32)
-> (AsList 4 "1234")
+> "1234"
 
 :p show (-1234: Int32)
-> (AsList 5 "-1234")
+> "-1234"
 
 :p show ((FToI (-(pow 2. 31.))): Int32)
-> (AsList 11 "-2147483648")
+> "-2147483648"
 
 -- Int64
 
 :p show (i_to_i64 1234: Int64)
-> (AsList 4 "1234")
+> "1234"
 
 :p show (i_to_i64 (-1234): Int64)
-> (AsList 5 "-1234")
+> "-1234"
 
 -- Float32
 
 :p show (123.456789: Float32)
-> (AsList 10 "123.456787")
+> "123.456787"
 
 :p show ((pow 2. 16.): Float32)
-> (AsList 5 "65536")
+> "65536"
 
 -- FIXME(https://github.com/google-research/dex-lang/issues/316):
 -- Unparenthesized expression with type ascription does not parse.
 -- :p show (nan: Float32)
 
 :p show ((nan): Float32)
-> (AsList 3 "nan")
+> "nan"
 
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
@@ -44,7 +44,7 @@
 > NaN
 
 :p show ((infinity): Float32)
-> (AsList 3 "inf")
+> "inf"
 
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
@@ -54,13 +54,13 @@
 -- Float64
 
 :p show (f_to_f64 123.456789: Float64)
-> (AsList 16 "123.456787109375")
+> "123.456787109375"
 
 :p show (f_to_f64 (pow 2. 16.): Float64)
-> (AsList 5 "65536")
+> "65536"
 
 :p show ((f_to_f64 nan): Float64)
-> (AsList 3 "nan")
+> "nan"
 
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
@@ -68,7 +68,7 @@
 > NaN
 
 :p show ((f_to_f64 infinity): Float64)
-> (AsList 3 "inf")
+> "inf"
 
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
@@ -78,10 +78,10 @@
 -- Tuples
 
 :p show (123, 456)
-> (AsList 10 "(123, 456)")
+> "(123, 456)"
 
 :p show ("abc", 123)
-> (AsList 10 "(abc, 123)")
+> "(abc, 123)"
 
 :p show ("abc", 123, ("def", 456))
-> (AsList 24 "(abc, (123, (def, 456)))")
+> "(abc, (123, (def, 456)))"
