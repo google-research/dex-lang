@@ -1157,22 +1157,11 @@ named-instance ListMonoid : (a:Type) Monoid (List a)
   mempty = mempty
   mcombine = mcombine
 
+-- TODO Eliminate or reimplement this operation, since it costs O(n)
+-- where n is the length of the list held in the reference.
 def append {a h} [AccumMonoid h (List a)]
   (list: Ref h (List a)) (x:a) : {Accum h} Unit =
     list += AsList 1 [x]
-
-def filter {a n} (condition:a->Bool) (xs:n=>a) : List a =
-  yield_accum (ListMonoid a) \list.
-    for i.
-      if condition xs.i
-        then append list xs.i
-
-def arg_filter {a n} (condition:a->Bool) (xs:n=>a) : List n =
-  -- Returns all indices where the condition is true.
-  yield_accum (ListMonoid n) \list.
-    for i.
-      if condition xs.i
-        then append list i
 
 '## Isomorphisms
 
@@ -2158,6 +2147,12 @@ def cat_maybes {a n} (xs:n=>Maybe a) : List a =
         Just x -> x
         Nothing -> todo -- Impossible
       Nothing -> todo -- Impossible
+
+def filter {a n} [Ix n] (condition:a->Bool) (xs:n=>a) : List a =
+  cat_maybes $ for i. if condition xs.i then Just xs.i else Nothing
+
+def arg_filter {a n} [Ix n] (condition:a->Bool) (xs:n=>a) : List n =
+  cat_maybes $ for i. if condition xs.i then Just i else Nothing
 
 def prev_ix {n} [Ix n] (i:n) : Maybe n =
   ord = ordinal i
