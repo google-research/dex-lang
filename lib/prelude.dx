@@ -2144,6 +2144,41 @@ def concat {n a} (lists:n=>(List a)) : List a =
         eltIdx := eltIdxVal + 1
         xs.(eltIdxVal@_)
 
+def cat_maybes {a n} (xs:n=>Maybe a) : List a =
+  (num_res, res_inds) = yield_state (0:Int, for i:n. Nothing) \ref.
+    for i. case xs.i of
+      Just _ ->
+        ix = get $ fst_ref ref
+        (snd_ref ref) ! (unsafe_from_ordinal _ ix) := Just i
+        fst_ref ref := ix + 1
+      Nothing -> ()
+  to_list $ for i:(Fin num_res).
+    case res_inds.(unsafe_from_ordinal _ $ ordinal i) of
+      Just j -> case xs.j of
+        Just x -> x
+        Nothing -> todo -- Impossible
+      Nothing -> todo -- Impossible
+
+def prev_ix {n} [Ix n] (i:n) : Maybe n =
+  ord = ordinal i
+  if ord == 0
+    then Nothing
+    else Just $ (ord - 1) @ n
+
+def lines (source:String) : List String =
+  (AsList _ s) = source
+  (AsList num_lines newline_ixs) = cat_maybes for i_char.
+    if s.i_char == '\n'
+      then Just i_char
+      else Nothing
+  to_list for i_line:(Fin num_lines).
+    start = case prev_ix i_line of
+      Nothing -> first_ix
+      Just i -> right_post newline_ixs.i
+    end = left_post newline_ixs.i_line
+    post_slice s start end
+
+
 '## Probability
 
 def cumsum_low {n} (xs: n=>Float) : n=>Float =
