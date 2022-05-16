@@ -41,7 +41,7 @@ data AtomEx where
 
 dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do
-  let evalConfig = EvalConfig LLVM Nothing Nothing Nothing
+  let evalConfig = EvalConfig LLVM Nothing Nothing Nothing Nothing
   cachedEnv <- loadCache
   runTopperM evalConfig cachedEnv (evalSourceBlockRepl preludeImportBlock) >>= \case
     (Result _  (Success  ()), preludeEnv) -> toStablePtr $ Context evalConfig preludeEnv
