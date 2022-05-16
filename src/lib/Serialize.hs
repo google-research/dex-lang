@@ -91,11 +91,9 @@ getTableElements tab = do
 prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
 prettyVal val = case val of
   -- Pretty-print strings
-  DataCon "AsList" _ [Word8Ty] _ [_, tab@(TabVal _ _)] -> do
-    atoms <- getTableElements tab
-    elems <- forM atoms \(Con (Lit (Word8Lit  c))) ->
-      return $ showChar (toEnum @Char $ fromIntegral c) ""
-    return $ pretty ('"': concat elems ++ "\"")
+  DataCon "AsList" _ [Word8Ty] _ [_, TabVal _ _] -> do
+    s <- getDexString val
+    return $ pretty $ "\"" ++ s ++ "\""
   -- Pretty-print tables.
   TabVal _ _ -> do
     atoms <- getTableElements val
