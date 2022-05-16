@@ -4,25 +4,24 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE RecordWildCards #-}
+
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
-import Control.Monad.Catch
 import Control.Monad.State.Strict
 import Options.Applicative hiding (Success, Failure)
 import Text.PrettyPrint.ANSI.Leijen (text, hardline)
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
-import System.IO (stderr, hPutStrLn)
+import System.IO (openFile, IOMode (..))
 
-import System.Directory
 import Data.List
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 
 import PPrint (toJSONStr, printResult)
-import Serialize
 import TopLevel
 import Err
 import Syntax
@@ -204,6 +203,7 @@ parseEvalOpts = EvalConfig
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
+  <*> pure Nothing
   where
     backends = [ ("llvm", LLVM)
                , ("llvm-mc", LLVMMC)
@@ -215,7 +215,13 @@ parseEvalOpts = EvalConfig
 #endif
                , ("interpreter", Interpreter)]
 
+openLogFile :: EvalConfig -> IO EvalConfig
+openLogFile EvalConfig {..} = do
+  logFile <- forM logFileName (`openFile` WriteMode)
+  return $ EvalConfig {..}
+
 main :: IO ()
 main = do
   CmdOpts evalMode opts <- execParser parseOpts
-  runMode evalMode opts
+  opts' <- openLogFile opts
+  runMode evalMode opts'
