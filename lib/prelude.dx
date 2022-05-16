@@ -2163,7 +2163,7 @@ def prev_ix {n} [Ix n] (i:n) : Maybe n =
   ord = ordinal i
   if ord == 0
     then Nothing
-    else Just $ (ord - 1) @ n
+    else Just $ unsafe_from_ordinal n (ord - 1)
 
 def lines (source:String) : List String =
   (AsList _ s) = source
