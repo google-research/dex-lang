@@ -590,6 +590,28 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iota (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">view</span> i<span class="symbol">.</span> ordinal i
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Fencepost index sets</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Post</span> segment<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">UnsafeMkPost</span> <span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {segment} [<span class="type-name">Ix</span> segment] <span class="type-name">Ix</span> (<span class="type-name">Post</span> segment)
+  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size segment <span class="symbol">+</span> 1
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkPost</span> i)<span class="symbol">.</span> i
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="type-name">UnsafeMkPost</span> i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> left_post {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Post</span> n <span class="symbol">=</span>
+  unsafe_from_ordinal (<span class="type-name">Post</span> n) (ordinal i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> right_post {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Post</span> n <span class="symbol">=</span>
+  unsafe_from_ordinal (<span class="type-name">Post</span> n) (ordinal i <span class="symbol">+</span> 1)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Ix</span> n] <span class="type-name">NonEmpty</span> n
+  first_ix <span class="symbol">:</span> n
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> last_ix {n} [<span class="type-name">NonEmpty</span> n] <span class="symbol">:</span> n <span class="symbol">=</span> unsafe_from_ordinal _ (size n <span class="symbol">-</span> 1)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} [<span class="type-name">Ix</span> n] <span class="type-name">NonEmpty</span> (<span class="type-name">Post</span> n)
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal (<span class="type-name">Post</span> n) 0
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Arithmetic instances for table types</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> (n<span class="symbol">=&gt;</span>a)
   add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
@@ -1498,6 +1520,12 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> slice_fields {a b c v} [<span class="type-name">Ix</span> b] (iso<span class="symbol">:</span> <span class="type-name">Iso</span> ({<span class="symbol">|</span>} <span class="symbol">|</span> a) (b <span class="symbol">|</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
   reindex (build_with <span class="symbol">$</span> split_v <span class="symbol">&amp;&gt;&gt;</span> iso) tab
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: replace `slice` with this?
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> post_slice {a n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Post</span> n) (end<span class="symbol">:</span><span class="type-name">Post</span> n) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+  slice_size <span class="symbol">=</span> ordinal end <span class="symbol">-</span> ordinal start
+  to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> slice_size)<span class="symbol">.</span>
+    xs<span class="symbol">.</span>(unsafe_from_ordinal n (ordinal i <span class="symbol">+</span> ordinal start))
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Dynamic buffer</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: would be nice to be able to use records here
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DynBuffer</span> a <span class="symbol">=</span>
@@ -2340,6 +2368,41 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
         eltIdx <span class="symbol">:=</span> eltIdxVal <span class="symbol">+</span> 1
         xs<span class="symbol">.</span>(eltIdxVal<span class="symbol">@</span>_)
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cat_maybes {a n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Maybe</span> a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+  (num_res<span class="symbol">,</span> res_inds) <span class="symbol">=</span> yield_state (0<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="type-name">Nothing</span>) <span class="symbol">\</span>ref<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> xs<span class="symbol">.</span>i <span class="keyword">of</span>
+      <span class="type-name">Just</span> _ <span class="symbol">-&gt;</span>
+        ix <span class="symbol">=</span> get <span class="symbol">$</span> fst_ref ref
+        (snd_ref ref) <span class="symbol">!</span> (unsafe_from_ordinal _ ix) <span class="symbol">:=</span> <span class="type-name">Just</span> i
+        fst_ref ref <span class="symbol">:=</span> ix <span class="symbol">+</span> 1
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> ()
+  to_list <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_res)<span class="symbol">.</span>
+    <span class="keyword">case</span> res_inds<span class="symbol">.</span>(unsafe_from_ordinal _ <span class="symbol">$</span> ordinal i) <span class="keyword">of</span>
+      <span class="type-name">Just</span> j <span class="symbol">-&gt;</span> <span class="keyword">case</span> xs<span class="symbol">.</span>j <span class="keyword">of</span>
+        <span class="type-name">Just</span> x <span class="symbol">-&gt;</span> x
+        <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> todo <span class="comment">-- Impossible
+</span>      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> todo <span class="comment">-- Impossible
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> prev_ix {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> n <span class="symbol">=</span>
+  ord <span class="symbol">=</span> ordinal i
+  <span class="keyword">if</span> ord <span class="symbol">==</span> 0
+    <span class="keyword">then</span> <span class="type-name">Nothing</span>
+    <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> unsafe_from_ordinal n (ord <span class="symbol">-</span> 1)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lines (source<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">List</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  (<span class="type-name">AsList</span> _ s) <span class="symbol">=</span> source
+  (<span class="type-name">AsList</span> num_lines newline_ixs) <span class="symbol">=</span> cat_maybes <span class="keyword">for</span> i_char<span class="symbol">.</span>
+    <span class="keyword">if</span> s<span class="symbol">.</span>i_char <span class="symbol">==</span> &#39;<span class="symbol">\</span>n&#39;
+      <span class="keyword">then</span> <span class="type-name">Just</span> i_char
+      <span class="keyword">else</span> <span class="type-name">Nothing</span>
+  to_list <span class="keyword">for</span> i_line<span class="symbol">:</span>(<span class="type-name">Fin</span> num_lines)<span class="symbol">.</span>
+    start <span class="symbol">=</span> <span class="keyword">case</span> prev_ix i_line <span class="keyword">of</span>
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> first_ix
+      <span class="type-name">Just</span> i <span class="symbol">-&gt;</span> right_post newline_ixs<span class="symbol">.</span>i
+    end <span class="symbol">=</span> left_post newline_ixs<span class="symbol">.</span>i_line
+    post_slice s start end
+</div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h2>Probability</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cumsum_low {n} (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
   with_state 0<span class="symbol">.</span>0 <span class="symbol">\</span>total<span class="symbol">.</span>
