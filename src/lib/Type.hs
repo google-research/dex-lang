@@ -731,6 +731,7 @@ typeCheckPrimCon con = case con of
     method |: methodTy
     return dictTy'
   DictHole _ ty -> checkTypeE TyKind ty
+  WithPhantomDicts _ x -> getTypeE x
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of

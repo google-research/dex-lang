@@ -144,6 +144,9 @@ prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 instance PrettyPrec a => PrettyPrec [a] where
   prettyPrec xs = atPrec ArgPrec $ hsep $ map pLowest xs
 
+instance PrettyPrec a => PrettyPrec (NE.NonEmpty a) where
+  prettyPrec xs = atPrec ArgPrec $ hsep $ map pLowest $ toList xs
+
 instance PrettyE ann => Pretty (BinderP c ann n l)
   where pretty (b:>ty) = p b <> ":" <> p ty
 
@@ -891,6 +894,8 @@ prettyPrecPrimCon con = case con of
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
+  WithPhantomDicts phantoms val ->
+    atPrec LowestPrec $ "WithPhantoms" <+> parens (pApp phantoms) <+> pApp val
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where

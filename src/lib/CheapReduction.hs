@@ -7,17 +7,14 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module CheapReduction
-  ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
-  , DictTypeHoistStatus (..))
+  ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls
+  , cheapNormalize, DictTypeHoistStatus (..))
   where
 
-import qualified Data.Map.Strict as M
-import Data.Maybe
 import Data.Functor.Identity
+import Data.Foldable (toList)
 import Control.Applicative
-import Control.Monad.Trans
-import Control.Monad.Writer.Strict
-import Control.Monad.State.Strict
+import Control.Monad
 import GHC.Exts (inline)
 
 import MTL1
@@ -27,25 +24,23 @@ import PPrint ()
 import {-# SOURCE #-} Inference (trySynthTerm)
 import Err
 import Types.Primitives
-import Util (for)
 
 -- === api ===
 
 type NiceE e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
 
+type Phantoms n = [Atom n] -- Atoms whose purpose is to possibly carry phantom dict holes
+
 cheapReduce :: forall e' e m n
              . (EnvReader m, CheaplyReducibleE e e', NiceE e, NiceE e')
-            => e n -> m n (Maybe (e' n), DictTypeHoistStatus, [Type n])
+            => e n -> m n (Maybe (e' n))
 cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
 {-# INLINE cheapReduce #-}
 {-# SCC cheapReduce #-}
 
--- Second result contains the set of dictionary types that failed to synthesize
--- during traversal of the supplied decls.
 cheapReduceWithDecls
-  :: forall e' e m n l
-   . ( CheaplyReducibleE e e', NiceE e', NiceE e, EnvReader m )
-  => Nest Decl n l -> e l -> m n (Maybe (e' n), DictTypeHoistStatus, [Type n])
+  :: ( CheaplyReducibleE e e', NiceE e', NiceE e, EnvReader m )
+  => Nest Decl n l -> e l -> m n (Maybe (Phantoms n, e' n))
 cheapReduceWithDecls decls result = do
   Abs decls' result' <- sinkM $ Abs decls result
   liftCheapReducerM idSubst $
@@ -56,7 +51,7 @@ cheapReduceWithDecls decls result = do
 
 cheapNormalize :: (EnvReader m, CheaplyReducibleE e e, NiceE e) => e n -> m n (e n)
 cheapNormalize a = cheapReduce a >>= \case
-  (Just ans, _, _) -> return ans
+  Just ans -> return ans
   _ -> error "couldn't normalize expression"
 {-# INLINE cheapNormalize #-}
 
@@ -66,52 +61,30 @@ newtype CheapReducerM (i :: S) (o :: S) (a :: *) =
   CheapReducerM
     (SubstReaderT AtomSubstVal
       (MaybeT1
-        (WriterT1 FailedDictTypes
-          (ScopedT1 (MapE AtomName (MaybeE Atom))
-            (EnvReaderT Identity)))) i o a)
+         (EnvReaderT Identity)) i o a)
   deriving ( Functor, Applicative, Monad, Alternative
            , EnvReader, ScopeReader, EnvExtender
            , SubstReader AtomSubstVal)
 
--- The `NothingE` case indicates dictionaries couldn't be hoisted
-newtype FailedDictTypes (n::S) = FailedDictTypes (ESet (MaybeE Type) n)
-        deriving (SinkableE, HoistableE, Semigroup, Monoid)
 data DictTypeHoistStatus = DictTypeHoistFailure | DictTypeHoistSuccess
 
-instance Monad1 m => HoistableState FailedDictTypes m where
-  hoistState _ b (FailedDictTypes ds) =
-    return $ FailedDictTypes $ eSetFromList $
-      for (eSetToList ds) \d -> case hoist b d of
-        HoistSuccess d' -> d'
-        HoistFailure _  -> NothingE
+instance Semigroup DictTypeHoistStatus where
+  DictTypeHoistSuccess <> DictTypeHoistSuccess = DictTypeHoistSuccess
+  _ <> _ = DictTypeHoistFailure
+
+instance Monoid DictTypeHoistStatus where
+  mempty = DictTypeHoistSuccess
 
 class ( Alternative2 m, SubstReader AtomSubstVal m
-      , EnvReader2 m, EnvExtender2 m) => CheapReducer m where
-  reportSynthesisFail :: Type o -> m i o ()
-  updateCache :: AtomName o -> Maybe (Atom o) -> m i o ()
-  lookupCache :: AtomName o -> m i o (Maybe (Maybe (Atom o)))
+      , EnvReader2 m, EnvExtender2 m) => CheapReducer m
 
-instance CheapReducer CheapReducerM where
-  reportSynthesisFail ty = CheapReducerM $ SubstReaderT $ lift $ lift11 $
-    tell $ FailedDictTypes $ eSetSingleton (JustE ty)
-  updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
-    modify (MapE . M.insert v (toMaybeE u) . fromMapE)
-  lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
-    fmap fromMaybeE <$> gets (M.lookup v . fromMapE)
+instance CheapReducer CheapReducerM
 
 liftCheapReducerM :: EnvReader m
                   => Subst AtomSubstVal i o -> CheapReducerM i o a
-                  -> m o (Maybe a, DictTypeHoistStatus, [Type o])
+                  -> m o (Maybe a)
 liftCheapReducerM subst (CheapReducerM m) = do
-  (result, FailedDictTypes tySet) <-
-    liftM runIdentity $ liftEnvReaderT $ runScopedT1
-      (runWriterT1 $ runMaybeT1 $ runSubstReaderT subst m) mempty
-  let maybeTys = eSetToList tySet
-  let tys = catMaybes $ map fromMaybeE maybeTys
-  let hoistStatus = if any (\case NothingE -> True; _ -> False) maybeTys
-                      then DictTypeHoistFailure
-                      else DictTypeHoistSuccess
-  return (result, hoistStatus, tys)
+  liftM runIdentity $ liftEnvReaderT $ runMaybeT1 $ runSubstReaderT subst m
 {-# INLINE liftCheapReducerM #-}
 
 cheapReduceFromSubst
@@ -130,51 +103,12 @@ cheapReduceWithDeclsB
   :: ( HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
   => Nest Decl i i'
   -> (forall o'. Ext o o' => CheapReducerM i' o' (e o'))
-  -> CheapReducerM i o (e o)
-cheapReduceWithDeclsB decls cont = do
-  Abs irreducibleDecls result <- cheapReduceWithDeclsRec decls cont
-  case hoist irreducibleDecls result of
-    HoistSuccess result' -> return result'
-    HoistFailure _       -> empty
-
-cheapReduceWithDeclsRec
-  :: ( HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
-  => Nest Decl i i'
-  -> (forall o'. Ext o o' => CheapReducerM i' o' (e o'))
-  -> CheapReducerM i o (Abs (Nest Decl) e o)
-cheapReduceWithDeclsRec decls cont = case decls of
-  Empty -> Abs Empty <$> cont
-  Nest (Let b binding@(DeclBinding _ _ expr)) rest -> do
-    optional (cheapReduceE expr) >>= \case
-      Nothing -> do
-        binding' <- substM binding
-        withFreshBinder (getNameHint b) binding' \b' -> do
-          updateCache (binderName b') Nothing
-          extendSubst (b@>Rename (binderName b')) do
-            Abs decls' result <- cheapReduceWithDeclsRec rest cont
-            return $ Abs (Nest (Let b' binding') decls') result
-      Just x ->
-        extendSubst (b@>SubstVal x) $
-          cheapReduceWithDeclsRec rest cont
-
-cheapReduceName :: Color c => Name c o -> CheapReducerM i o (AtomSubstVal c o)
-cheapReduceName v =
-  lookupEnv v >>= \case
-    AtomNameBinding (LetBound (DeclBinding _ _ e)) -> case e of
-      -- We avoid synthesizing the dictionaries during the traversal
-      -- and only do that when cheap reduction is performed on the expr directly.
-      _ -> do
-        cachedVal <- lookupCache v >>= \case
-          Nothing -> do
-            result <- optional (dropSubst $ cheapReduceE e)
-            updateCache v result
-            return result
-          Just result -> return result
-        case cachedVal of
-          Nothing  -> stuck
-          Just ans -> return $ SubstVal ans
-    _ -> stuck
-  where stuck = return $ Rename v
+  -> CheapReducerM i o (Phantoms o, e o)
+cheapReduceWithDeclsB Empty cont = ([],) <$> cont
+cheapReduceWithDeclsB (Nest (Let b (DeclBinding _ _ expr)) rest) cont = do
+  x <- cheapReduceE expr
+  (phantoms, result) <- extendSubst (b@>SubstVal x) $ cheapReduceWithDeclsB rest cont
+  return (x:phantoms, result)
 
 class CheaplyReducibleE (e::E) (e'::E) where
   cheapReduceE :: e i -> CheapReducerM i o (e' o)
@@ -182,26 +116,28 @@ class CheaplyReducibleE (e::E) (e'::E) where
 instance CheaplyReducibleE Atom Atom where
   cheapReduceE :: forall i o. Atom i -> CheapReducerM i o (Atom o)
   cheapReduceE a = confuseGHC >>=  \_ -> case a of
+    Var v -> do
+      subst <- getSubst
+      case subst ! v of
+        SubstVal x -> return x
+        Rename v' -> do
+          lookupAtomName v' >>= \case
+            LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ cheapReduceE x
+            _ -> return $ Var v'
     -- Don't try to eagerly reduce lambda bodies. We might get stuck long before
     -- we have a chance to apply tham. Also, recursive traversal of those bodies
     -- means that we will follow the full call chain, so it's really expensive!
     Lam _   -> substM a
+    Pi  _   -> substM a
+    TabPi _ -> substM a
+    DepPairTy _ -> substM a
     Con (DictHole ctx ty') -> do
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthTerm ty) >>= \case
         Success d -> return d
-        Failure _ -> do
-          reportSynthesisFail ty
-          return $ Con $ DictHole ctx ty
-    TabPi (TabPiType (b:>IxType ixTy dict) resultTy) -> do
-      ixTy' <- cheapReduceE ixTy
-      dict' <- cheapReduceE dict
-      withFreshBinder (getNameHint b) (IxType ixTy' dict') \b' -> do
-        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType (b':>IxType ixTy' dict') resultTy'
-    -- We traverse the Atom constructors that might contain lambda expressions
-    -- explicitly, to make sure that we can skip normalizing free vars inside those.
+        Failure _ -> return $ Con $ DictHole ctx ty
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
+    TC tc   -> TC  <$> (inline traversePrimTC)  cheapReduceE tc
     DataCon sourceName dataDefName params con args ->
       DataCon sourceName <$> substM dataDefName <*> mapM cheapReduceE params <*> pure con <*> mapM cheapReduceE args
     Record items -> Record <$> mapM cheapReduceE items
@@ -209,10 +145,9 @@ instance CheaplyReducibleE Atom Atom where
       ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
       Variant ty' l c <$> cheapReduceE p
     DictCon d -> cheapReduceE d
-    -- Do recursive reduction via substitution
-    _ -> do
-      a' <- substM a
-      dropSubst $ traverseNames cheapReduceName a'
+    DictTy  t -> DictTy  <$> substM t
+    IxTy ixTy -> IxTy    <$> substM ixTy
+    _ -> error $ "not implemented " ++ pprint a
 
 instance CheaplyReducibleE DictExpr Atom where
   cheapReduceE d = case d of
@@ -229,11 +164,10 @@ instance CheaplyReducibleE DictExpr Atom where
     InstanceDict _ _ -> justSubst
     where justSubst = DictCon <$> substM d
 
-instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
-  cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
-
-instance (CheaplyReducibleE Atom e', NiceE e') => CheaplyReducibleE Block e' where
-  cheapReduceE (Block _ decls result) = cheapReduceE $ Abs decls result
+instance CheaplyReducibleE Block Atom where
+  cheapReduceE (Block _ decls result) = do
+    (phantoms, result') <- cheapReduceWithDeclsB decls $ cheapReduceE result
+    return $ withPhantoms phantoms result'
 
 instance CheaplyReducibleE Expr Atom where
   cheapReduceE expr = confuseGHC >>= \_ -> case expr of
@@ -244,7 +178,8 @@ instance CheaplyReducibleE Expr Atom where
         Just (NaryLamExpr bs _ body) -> do
           xs <- mapM cheapReduceE xs'
           let subst = bs @@> fmap SubstVal xs
-          dropSubst $ extendSubst subst $ cheapReduceE body
+          liftM (withPhantoms (toList xs)) $
+            dropSubst $ extendSubst subst $ cheapReduceE body
         _ -> empty
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?

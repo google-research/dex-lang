@@ -19,10 +19,9 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
 import Data.Foldable (toList, asum)
-import Data.Function ((&))
-import Data.Functor (($>), (<&>))
-import Data.List (sortOn, intercalate)
-import Data.Maybe (fromJust)
+import Data.Functor ((<&>))
+import Data.List (sortOn)
+import Data.Maybe (fromJust, catMaybes, isNothing)
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
@@ -35,7 +34,6 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Type
-import PPrint (pprintCanonicalized, prettyBlock)
 import CheapReduction
 import GenericTraversal
 import MTL1
@@ -186,13 +184,9 @@ buildDeclsInf cont = buildDeclsInfUnzonked $ cont >>= zonk
 
 type InfBuilder2 (m::MonadKind2) = forall i. InfBuilder (m i)
 
-type IfaceTypeSet = ESet Type
-
 class (SubstReader Name m, InfBuilder2 m, Solver2 m)
       => Inferer (m::MonadKind2) where
   liftSolverMInf :: EmitsInf o => SolverM o a -> m i o a
-  gatherUnsolvedInterfaces :: m i o a -> m i o (a, IfaceTypeSet o)
-  reportUnsolvedInterface  :: Type o  -> m i o ()
   addIntDefault :: AtomName o -> m i o ()
   getDefaults :: m i o (Defaults o)
 
@@ -343,26 +337,9 @@ extendDefaults :: Defaults n -> InfOutMap n -> InfOutMap n
 extendDefaults ds' (InfOutMap bindings ss ds un) =
   InfOutMap bindings ss (ds <> ds') un
 
--- TODO: Make GatherRequired hold a set
-data RequiredIfaces (n::S) = FailIfRequired | GatherRequired (IfaceTypeSet n)
-instance GenericE RequiredIfaces where
-  type RepE RequiredIfaces = MaybeE IfaceTypeSet
-  fromE = \case
-    FailIfRequired    -> NothingE
-    GatherRequired ds -> JustE ds
-  {-# INLINE fromE #-}
-  toE = \case
-    NothingE  -> FailIfRequired
-    JustE ds  -> GatherRequired ds
-    _ -> error "unreachable"
-  {-# INLINE toE #-}
-instance SinkableE RequiredIfaces
-instance SubstE Name RequiredIfaces
-instance HoistableE  RequiredIfaces
-
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
-  { runInfererM' :: SubstReaderT Name (StateT1 RequiredIfaces (InplaceT InfOutMap InfOutFrag FallibleM)) i o a }
-  deriving (Functor, Applicative, Monad, MonadFail, MonadState (RequiredIfaces o),
+  { runInfererM' :: SubstReaderT Name (InplaceT InfOutMap InfOutFrag FallibleM) i o a }
+  deriving (Functor, Applicative, Monad, MonadFail,
             ScopeReader, Fallible, Catchable, CtxReader, SubstReader Name)
 
 liftInfererMSubst :: (Fallible2 m, SubstReader Name m, EnvReader2 m)
@@ -371,9 +348,9 @@ liftInfererMSubst cont = do
   env <- unsafeGetEnv
   subst <- getSubst
   Distinct <- getDistinct
-  (InfOutFrag Empty _ _, (result, _)) <-
+  (InfOutFrag Empty _ _, result) <-
     liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
-      runStateT1 (runSubstReaderT subst $ runInfererM' $ cont) FailIfRequired
+      runSubstReaderT subst $ runInfererM' $ cont
   return result
 
 liftInfererM :: (EnvReader m, Fallible1 m)
@@ -385,12 +362,11 @@ runLocalInfererM
   :: SinkableE e
   => (forall l. (EmitsInf l, DExt n l) => InfererM i l (e l))
   -> InfererM i n (Abs InfOutFrag e n)
-runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-  Abs fg (PairE ans s') <- locallyMutableInplaceT do
+runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> do
+  locallyMutableInplaceT do
     Distinct <- getDistinct
     EmitsInf <- fabricateEmitsInfEvidenceM
-    toPairE <$> (runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s))
-  return (Abs fg ans, hoistRequiredIfaces fg s')
+    runSubstReaderT (sink env) $ runInfererM' cont
 {-# INLINE runLocalInfererM #-}
 
 initInfOutMap :: Env n -> InfOutMap n
@@ -401,17 +377,17 @@ emitInfererM :: Mut o => NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = do
   Abs b v <- freshNameM hint
   let frag = InfOutFrag (Nest (b :> emission) Empty) mempty emptySolverSubst
-  InfererM $ SubstReaderT $ lift $ lift11 $ extendInplaceT $ Abs frag v
+  InfererM $ SubstReaderT $ lift $ extendInplaceT $ Abs frag v
 {-# INLINE emitInfererM #-}
 
 instance Solver (InfererM i) where
   extendSolverSubst v ty = do
-   InfererM $ SubstReaderT $ lift $ lift11 $
+   InfererM $ SubstReaderT $ lift $
     void $ extendTrivialInplaceT $
       InfOutFrag Empty mempty (singletonSolverSubst v ty)
   {-# INLINE extendSolverSubst #-}
 
-  zonk e = InfererM $ SubstReaderT $ lift $ lift11 do
+  zonk e = InfererM $ SubstReaderT $ lift do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap e
@@ -430,66 +406,39 @@ instance Solver (InfererM i) where
 
 instance InfBuilder (InfererM i) where
   buildDeclsInfUnzonked cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      Abs frag resultWithState <- locallyMutableInplaceT do
+    InfererM $ SubstReaderT $ ReaderT \env -> do
+      Abs frag result <- locallyMutableInplaceT do
         Emits    <- fabricateEmitsEvidenceM
         EmitsInf <- fabricateEmitsInfEvidenceM
-        toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-      ab <- hoistThroughDecls frag resultWithState
-      Abs decls (PairE result s') <- extendInplaceT ab
-      return (Abs decls result, hoistRequiredIfaces decls s')
+        runSubstReaderT (sink env) $ runInfererM' cont
+      ab <- hoistThroughDecls frag result
+      extendInplaceT ab
 
   buildAbsInf hint binding cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
+    InfererM $ SubstReaderT $ ReaderT \env -> do
       ab <- withFreshBinder hint binding \b -> do
         ab <- locallyMutableInplaceT do
           EmitsInf <- fabricateEmitsInfEvidenceM
-          toPairE <$> runStateT1 (
-            runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
-        refreshAbs ab \infFrag resultWithState -> do
+          runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)
+        refreshAbs ab \infFrag result -> do
           PairB infFrag' b' <- liftHoistExcept $ exchangeBs $ PairB b infFrag
-          return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
-      Abs b (PairE result s') <- extendInplaceT ab
-      return (Abs (b:>binding) result, hoistRequiredIfaces b s')
+          return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' result
+      Abs b result <- extendInplaceT ab
+      return $ Abs (b:>binding) result
 
 instance Inferer InfererM where
-  liftSolverMInf m = InfererM $ SubstReaderT $ lift $ lift11 $
+  liftSolverMInf m = InfererM $ SubstReaderT $ lift $
     liftBetweenInplaceTs (liftExcept . liftM fromJust . runSearcherM) id liftSolverOutFrag $
       runSolverM' m
   {-# INLINE liftSolverMInf #-}
 
-  addIntDefault v = InfererM $ SubstReaderT $ lift $ lift11 $
+  addIntDefault v = InfererM $ SubstReaderT $ lift $
     extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults $ freeVarsE v
 
-  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
+  getDefaults = InfererM $ SubstReaderT $ lift do
     InfOutMap _ _ defaults _ <- getOutMapInplaceT
     return defaults
-
-  gatherUnsolvedInterfaces m = do
-    s' <- get
-    put $ GatherRequired mempty
-    ans <- m
-    ds <- get
-    put s'
-    case ds of
-      FailIfRequired     -> throw CompilerErr "Unexpected FailIfRequired?"
-      GatherRequired ds' -> return (ans, ds')
-
-  reportUnsolvedInterface iface = do
-    UnitE <- do
-      iface' <- sinkM iface
-      ifaceHasInfVars <- hasInferenceVars iface'
-      when ifaceHasInfVars $ throw NotImplementedErr $
-        "Type inference of this program requires delayed interface resolution"
-      return UnitE
-    get >>= \case
-      FailIfRequired    -> do
-        givens <- (HM.elems . fromGivens) <$> givensFromEnv
-        givenTys <- mapM getType givens
-        throw TypeErr $ "Couldn't synthesize a class dictionary for: "
-          ++ pprintCanonicalized iface ++ "\nGiven: " ++ pprint givenTys
-      GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do
@@ -504,13 +453,13 @@ instance Builder (InfererM i) where
 
 instance ScopableBuilder (InfererM i) where
   buildScoped cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
+    InfererM $ SubstReaderT $ ReaderT \env -> do
       resultWithEmissions <- locallyMutableInplaceT do
         Emits <- fabricateEmitsEvidenceM
-        toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-      Abs frag@(InfOutFrag emissions _ _) (PairE result s') <- return resultWithEmissions
+        runSubstReaderT (sink env) $ runInfererM' cont
+      Abs (InfOutFrag emissions _ _) result <- return resultWithEmissions
       let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
-      return (Abs decls result, hoistRequiredIfaces frag s')
+      return $ Abs decls result
 
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
@@ -634,13 +583,6 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
             return $ HoistedSolverState infVars' defaults'' subst''
                         (Nest (Let b' emission'') decls) result
 
-hoistRequiredIfaces :: BindsNames b => b n l -> RequiredIfaces l -> RequiredIfaces n
-hoistRequiredIfaces bs = \case
-  FailIfRequired    -> FailIfRequired
-  GatherRequired ds -> GatherRequired $ eSetFromList $ eSetToList ds & mapMaybe \d -> case hoist bs d of
-    HoistSuccess d' -> Just d'
-    HoistFailure _  -> Nothing
-
 hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
 hoistDefaults b (Defaults defaults) = Defaults $ hoistFilterNameSet b defaults
 
@@ -650,16 +592,13 @@ infNamesToEmissions emissions =
 
 instance EnvReader (InfererM i) where
   unsafeGetEnv = do
-    InfOutMap bindings _ _ _ <- InfererM $ SubstReaderT $ lift $ lift11 $ getOutMapInplaceT
+    InfOutMap bindings _ _ _ <- InfererM $ SubstReaderT $ lift $ getOutMapInplaceT
     return bindings
   {-# INLINE unsafeGetEnv #-}
 
 instance EnvExtender (InfererM i) where
-  refreshAbs ab cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-    refreshAbs ab \b e -> do
-      (ans, s') <- flip runStateT1 (sink s) $ runSubstReaderT (sink env) $
-                     runInfererM' $ cont b e
-      return (ans, hoistRequiredIfaces b s')
+  refreshAbs ab cont = InfererM $ SubstReaderT $ ReaderT \env -> do
+    refreshAbs ab \b e -> runSubstReaderT (sink env) $ runInfererM' $ cont b e
   {-# INLINE refreshAbs #-}
 
 -- === actual inference pass ===
@@ -774,50 +713,34 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     tab' <- inferRho tab >>= zonk
     inferNaryTabApp (srcPos tab) tab' (NE.fromList args) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
-    -- TODO: make sure there's no effect if it's an implicit or table arrow
-    piTy <- checkAnnWithMissingDicts ann \missingDs getAnnType -> do
-      -- Note that we can't automatically quantify class Pis, because the class dict
-      -- might have been bound on the rhs of a let and it would get bound to the
-      -- inserted arguments instead of the desired dict. It's not a fundemental
-      -- limitation of our automatic quantification, but it's simpler not to deal with
-      -- that for now.
-      let checkNoMissing = addSrcContext pos' $ unless (null $ eSetToList missingDs) $ throw TypeErr $
-            "Couldn't synthesize a class dictionary for: " ++ pprint (head $ eSetToList missingDs)
-      autoDs <- case arr of
-        ClassArrow -> checkNoMissing $> mempty
-        _          -> return $ missingDs
-      introDictTys (eSetToList autoDs) $ do
-        ann' <- getAnnType
-        addSrcContext pos' case pat of
-          UPatBinder UIgnore ->
-            buildPiInf noHint arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
-          _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
-            Abs decls result <- buildDeclsInf do
-              v' <- sinkM v
-              bindLamPat (WithSrcB pos' pat) v' do
-                effs' <- checkUEffRow effs
-                ty'   <- checkUType   ty
-                return $ PairE effs' ty'
-            cheapReduceWithDecls decls result >>= \case
-              (Just (PairE effs' ty'), DictTypeHoistSuccess, []) -> return $ (effs', ty')
-              _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                     docAsStr (prettyBlock decls $ snd $ fromPairE result)
-    matchRequirement $ Pi piTy
+    -- TODO: make sure there's no effect if it's an implicit arrow
+    -- TODO: check with Adam whether it's fine that we got rid of the ClassArrow check
+        -- ClassArrow -> checkNoMissing $> mempty
+    piTy <- checkAnnWithMissingDicts ann \ann' -> Pi <$> addSrcContext pos'
+      case pat of
+        UPatBinder UIgnore ->
+          buildPiInf noHint arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
+        _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
+          let msg = "Can't reduce type expression: " ++ pprint ty
+          Abs decls result <- buildDeclsInf do
+            v' <- sinkM v
+            bindLamPat (WithSrcB pos' pat) v' $
+              PairE <$> checkUEffRow effs <*> checkUType ty
+          cheapReduceWithDecls decls result >>= \case
+            Nothing -> throw TypeErr msg
+            Just (phantoms, PairE effs' result') -> do
+              return (effs', withPhantoms phantoms result')
+    matchRequirement $ piNestToPiType  piTy
   UTabPi (UTabPiExpr (UPatAnn (WithSrcB pos' pat) ann) ty) -> do
     ann' <- asIxType =<< checkAnn ann
     piTy <- addSrcContext pos' case pat of
       UPatBinder UIgnore ->
         buildTabPiInf noHint ann' \_ -> checkUType ty
       _ -> buildTabPiInf (getNameHint pat) ann' \v -> do
-        Abs decls piResult <- buildDeclsInf do
+        let msg = "Can't reduce type expression: " ++ pprint ty
+        buildAndReduceOptionalSynth msg do
           v' <- sinkM v
           bindLamPat (WithSrcB pos' pat) v' $ checkUType ty
-        cheapReduceWithDecls decls piResult >>= \case
-          (Just ty', _, _) -> return ty'
-          -- TODO: handle phantom constraints
-          -- (Just ty', DictTypeHoistSuccess, []) -> return ty'
-          _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                 docAsStr (prettyBlock decls piResult)
     matchRequirement $ TabPi piTy
   UDecl (UDeclExpr (ULet letAnn (UPatAnn p ann) rhs) body) -> do
     val <- checkMaybeAnnExpr ann rhs
@@ -857,8 +780,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       xBlock <- buildBlockInf $ inferRho x
       getType xBlock >>= \case
         TyKind -> cheapReduce xBlock >>= \case
-          (Just reduced, DictTypeHoistSuccess, []) -> return reduced
-          _ -> throw CompilerErr "Type args to primops must be reducible"
+          Just reduced -> return reduced
+          Nothing -> throw CompilerErr "Type args to primops must be reducible"
         _ -> emitBlock xBlock
     val <- case prim' of
       TCExpr  e -> return $ TC e
@@ -1067,12 +990,8 @@ inferAppArg isDependent b@(PiBinder _ argTy _) uArgs = getImplicitArg b >>= \cas
 
 checkSigmaDependent :: EmitsBoth o
                     => UExpr i -> SigmaType o -> InfererM i o (Atom o)
-checkSigmaDependent e@(WithSrcE ctx _) ty = do
-  Abs decls result <- buildDeclsInf $ checkSigma e (sink ty)
-  cheapReduceWithDecls decls result >>= \case
-    (Just x', DictTypeHoistSuccess, ds) ->
-      forM_ ds reportUnsolvedInterface >> return x'
-    _ -> addSrcContext ctx $ throw TypeErr $ depFunErrMsg
+checkSigmaDependent e@(WithSrcE ctx _) ty =
+  buildAndReduce depFunErrMsg $ addSrcContext ctx $ checkSigma e (sink ty)
   where
     depFunErrMsg =
       "Dependent functions can only be applied to fully evaluated expressions. " ++
@@ -1369,14 +1288,12 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
     ClassArrow    -> return ()
     PlainArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
-  ab <- checkAnnWithMissingDicts ann \ds getArgTy -> do
-    introDicts (eSetToList ds) $ do
-      argTy <- getArgTy
-      buildPiAbsInf (getNameHint p) arrow argTy \v -> do
-        WithSrcB pos (UPatBinder b) <- return p  -- TODO: enforce this syntactically
-        addSrcContext pos $ extendSubst (b@>v) $
-          checkInstanceArgs rest do
-            cont
+  ab <- checkAnnWithMissingDicts ann \argTy -> do
+    buildPiAbsInf (getNameHint p) arrow argTy \v -> do
+      WithSrcB pos (UPatBinder b) <- return p  -- TODO: enforce this syntactically
+      addSrcContext pos $ extendSubst (b@>v) $
+        checkInstanceArgs rest do
+          cont
   Abs bs (Abs b (Abs bs' e)) <- return ab
   return $ Abs (bs >>> Nest b Empty >>> bs') e
 
@@ -1391,11 +1308,9 @@ checkInstanceParams params cont = go params []
     go :: forall o'. (EmitsInf o', Ext o o') => [UType i] -> [Type o']
        -> InfererM i o' (Abs (Nest PiBinder) e o')
     go []    ptys = Abs Empty <$> cont (reverse ptys)
-    go (p:t) ptys = checkUTypeWithMissingDicts p \ds getParamType -> do
-      mergeAbs <$> introDicts (eSetToList ds) do
-        pty <- getParamType
-        ListE ptys' <- sinkM $ ListE ptys
-        go t (pty:ptys')
+    go (p:t) ptys = mergeAbs <$> checkUTypeWithMissingDicts p \pty -> do
+      ListE ptys' <- sinkM $ ListE ptys
+      go t (pty:ptys')
 
 mergeAbs :: Abs (Nest b) (Abs (Nest b) e) n -> Abs (Nest b) e n
 mergeAbs (Abs bs (Abs bs' e)) = Abs (bs >>> bs') e
@@ -1417,28 +1332,10 @@ checkInstanceBody className params methods = do
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
   return $ InstanceBody superclassDicts methods'
 
-introDicts
-  :: forall i o e.
-     (EmitsInf o, SinkableE e, HoistableE e, SubstE Name e)
-  => [Type o]
-  -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (e l))
-  -> InfererM i o (Abs (Nest PiBinder) e o)
-introDicts []    m = Abs Empty <$> m
-introDicts (h:t) m = do
-  ab <- buildPiAbsInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
-    ListE t' <- sinkM $ ListE t
-    introDicts t' m
-  Abs b (Abs bs e) <- return ab
-  return $ Abs (Nest b bs) e
-
-introDictTys :: forall i o. EmitsInf o
-             => [Type o]
-             -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (PiType l))
-             -> InfererM i o (PiType o)
-introDictTys []    m = m
-introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
-  ListE t' <- sinkM $ ListE t
-  (Pure,) . Pi <$> (introDictTys t' m)
+piNestToPiType :: Abs (Nest PiBinder) Type n -> Type n
+piNestToPiType (Abs bs ty) = case bs of
+  Empty -> ty
+  Nest b rest -> Pi $ PiType b Pure $ piNestToPiType $ Abs rest ty
 
 checkMethodDef :: EmitsInf o
                => ClassName o -> [MethodType o] -> UMethodDef i -> InfererM i o (Int, Block o)
@@ -1671,67 +1568,78 @@ checkAnn ann = case ann of
   Just ty -> checkUType ty
   Nothing -> freshType TyKind
 
-checkAnnWithMissingDicts :: EmitsInf o
-                         => Maybe (UType i)
-                         -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => InfererM i o' (Type o')) -> InfererM i o a)
-                         -> InfererM i o a
+checkAnnWithMissingDicts
+  :: (EmitsInf o, SubstE Name e, HoistableE e, SinkableE e)
+  => Maybe (UType i)
+  -> (forall o'. (EmitsInf o', Ext o o') => Type o' -> InfererM i o' (e o'))
+  -> InfererM i o (Abs (Nest PiBinder) e o)
 checkAnnWithMissingDicts ann cont = case ann of
   Just ty -> checkUTypeWithMissingDicts ty cont
-  Nothing ->
-    cont mempty (freshType TyKind)  -- Unannotated binders are never auto-quantified
+  Nothing -> do
+    ty <- freshType TyKind  -- Unannotated binders are never auto-quantified
+    Abs Empty <$> cont ty
 
-checkUTypeWithMissingDicts :: EmitsInf o
-                           => UType i
-                           -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => InfererM i o' (Type o')) -> InfererM i o a)
-                           -> InfererM i o a
-checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
-  unsolvedSubset <- do
-    -- We have to be careful not to emit inference vars out of the initial solve.
-    -- The resulting type will never be used in downstream inference, so we can easily
-    -- end up with fake ambiguous variables if they leak out.
-    Abs frag unsolvedSubset' <- liftInfererMSubst $ runLocalInfererM do
-      (Abs decls result, unsolvedSubset) <- gatherUnsolvedInterfaces $
-        buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
-      -- Note that even if the normalization succeeds here, we can't short-circuit
-      -- rechecking the UType, because unsolvedSubset is only an approximation to
-      -- the set of all constraints. We have to reverify it again!
-      -- We could probably add a flag to RequiredIfaces that would indicate whether
-      -- pruning has happened.
-      --
-      -- TODO: When we're gathering the constraints, we shouldn't treat the existence of
-      -- unhoistable dicts as an irrecoverable failure. They might be derivable from the
-      -- hoistable dicts (e.g. as in i:n=>(..i)=>Float). The failures are only irrecoverable
-      -- when we stop doing auto quantification.
-      (_, hoistErr, unsolved) <- cheapReduceWithDecls @Atom decls result
-      case hoistErr of
-        -- DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
-        --   "A type expression has interface constraints that depend on values " ++
-        --   "local to the expression"
-        -- DictTypeHoistSuccess ->
-        _ ->
-          return $ unsolvedSubset <> eSetFromList unsolved
-    return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
-      GatherRequired unsolvedSubset -> unsolvedSubset
-      FailIfRequired                -> error "Unreachable"
-  cont unsolvedSubset $ checkUType uty
+checkUTypeWithMissingDicts
+  :: (EmitsInf o, SubstE Name e, HoistableE e, SinkableE e)
+  => UType i
+  -> (forall o'. (EmitsInf o', Ext o o') => Type o' -> InfererM i o' (e o'))
+  -> InfererM i o (Abs (Nest PiBinder) e o)
+checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = addSrcContext pos do
+  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
+  cheapReduceWithDecls decls result >>= \case
+    Nothing -> throw TypeErr $ "Can't reduce type expression: " ++ pprint uty
+    Just (phantoms, ty) -> do
+      (ty', ds) <- bestEffortSynthTraversal $ withPhantoms phantoms ty
+      introDicts ds do
+        ty'' <- sinkM ty'
+        cont ty''
+
+introDicts
+  :: forall i o e.
+     (EmitsInf o, SinkableE e, HoistableE e, SubstE Name e)
+  => [Type o]
+  -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (e l))
+  -> InfererM i o (Abs (Nest PiBinder) e o)
+introDicts []    m = Abs Empty <$> m
+introDicts (h:t) m = do
+  ab <- buildPiAbsInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
+    ListE t' <- sinkM $ ListE t
+    introDicts t' m
+  Abs b (Abs bs e) <- return ab
+  return $ Abs (Nest b bs) e
 
 checkUType :: EmitsInf o => UType i -> InfererM i o (Type o)
-checkUType uty@(WithSrcE pos _) = do
-  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
-  (ans, hoistStatus, ds) <- cheapReduceWithDecls decls result
-  case hoistStatus of
-    -- DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
-    --   "A type expression has interface constraints that depend on values local to the expression"
-    -- DictTypeHoistSuccess -> case ans of
-    _ -> case ans of
-      Just ty -> addSrcContext pos (forM_ ds reportUnsolvedInterface) $> ty
-      Nothing -> case ds of
-        [] -> addSrcContext pos $ throw TypeErr $
-                "Can't reduce type expression: " ++ pprint uty
-        ds' -> throw TypeErr $
-          "Can't reduce type expression: " ++ pprint uty ++ "\n" ++
-          "This might be due to a failure to find a viable interface implementation " ++
-          "for: " ++ intercalate ", " (pprint <$> ds')
+checkUType uty@(WithSrcE pos _) = addSrcContext pos $
+  buildAndReduce msg $ withAllowedEffects Pure $ checkRho uty TyKind
+  where msg = "Can't reduce expression: " ++ pprint uty
+
+type NiceE e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
+
+buildAndReduceOptionalSynth
+  :: (EmitsInf o, CheaplyReducibleE e Atom, NiceE e)
+  => String
+  -> (forall o'. (EmitsBoth o', DExt o o') => InfererM i o' (e o'))
+  -> InfererM i o (Atom o)
+buildAndReduceOptionalSynth msg cont = do
+  Abs decls result <- buildDeclsInf cont
+  cheapReduceWithDecls decls result >>= \case
+    Nothing -> throw TypeErr msg
+    Just (phantoms, result') ->
+      liftM fst $ bestEffortSynthTraversal $ withPhantoms phantoms result'
+{-# INLINE buildAndReduceOptionalSynth #-}
+
+buildAndReduce
+  :: (EmitsInf o, CheaplyReducibleE e Atom, NiceE e)
+  => String
+  -> (forall o'. (EmitsBoth o', DExt o o') => InfererM i o' (e o'))
+  -> InfererM i o (Atom o)
+buildAndReduce msg cont = do
+  Abs decls result <- buildDeclsInf cont
+  cheapReduceWithDecls decls result >>= \case
+    Nothing -> throw TypeErr msg
+    Just (phantoms, result') ->
+      return $ withPhantoms phantoms result'
+{-# INLINE buildAndReduce #-}
 
 checkExtLabeledRow :: EmitsBoth o
                    => ExtLabeledItems (UExpr i) (UExpr i)
@@ -2018,8 +1926,8 @@ instance HoistableE SolverSubst
 
 constrainEq :: EmitsInf o => Type o -> Type o -> InfererM i o ()
 constrainEq t1 t2 = do
-  t1' <- zonk t1
-  t2' <- zonk t2
+  t1' <- zonk t1 >>= stripPhantoms
+  t2' <- zonk t2 >>= stripPhantoms
   msg <- liftEnvReaderM $ do
     ab <- renameForPrinting $ PairE t1' t2'
     return $ canonicalizeForPrinting ab \(Abs infVars (PairE t1Pretty t2Pretty)) ->
@@ -2255,11 +2163,6 @@ renameForPrinting e = do
 
 -- === dictionary synthesis ===
 
-synthTopBlock :: (EnvReader m, Fallible1 m) => Block n -> m n (Block n)
-synthTopBlock block = do
-  (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
-{-# SCC synthTopBlock #-}
-
 synthInstanceDef
   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
 synthInstanceDef (InstanceDef className bs params body) = do
@@ -2271,15 +2174,16 @@ synthInstanceDef (InstanceDef className bs params body) = do
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (SynthAtom n)
 trySynthTerm ty = do
-  hasInferenceVars ty >>= \case
+  ty' <- stripPhantoms ty
+  hasInferenceVars ty' >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
     False -> do
-      synthTy <- liftExcept $ typeAsSynthType ty
+      synthTy <- liftExcept $ typeAsSynthType ty'
       solutions <- liftSyntherM $ synthTerm synthTy
       case solutions of
-        [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+        [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty'
         [d] -> cheapNormalize d -- normalize to reduce code size
-        _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+        _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty'
 {-# SCC trySynthTerm #-}
 
 -- The type of a `SynthAtom` atom must be `DictTy _` or `Pi _`. If it's `Pi _`,
@@ -2341,6 +2245,7 @@ getSynthType x = do
 {-# INLINE getSynthType #-}
 
 typeAsSynthType :: Type n -> Except (SynthType n)
+typeAsSynthType (Con (WithPhantomDicts _ ty)) = typeAsSynthType ty
 typeAsSynthType (DictTy dictTy) = return $ SynthDictType dictTy
 typeAsSynthType (Pi (PiType b@(PiBinder _ _ arrow) Pure resultTy))
   | arrow == ImplicitArrow || arrow == ClassArrow = do
@@ -2477,6 +2382,17 @@ instance SinkableE Givens where
 
 -- === Dictionary synthesis traversal ===
 
+synthTopBlock :: (EnvReader m, Fallible1 m) => Block n -> m n (Block n)
+synthTopBlock = mustSucceedSynthTraversal
+{-# SCC synthTopBlock #-}
+
+mustSucceedSynthTraversal
+  :: (Fallible1 m, EnvReader m, GenericallyTraversableE e)
+  => e n -> m n (e n)
+mustSucceedSynthTraversal e =
+  (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE e
+{-# INLINE mustSucceedSynthTraversal #-}
+
 liftDictSynthTraverserM
   :: EnvReader m
   => DictSynthTraverserM n n a
@@ -2487,19 +2403,120 @@ liftDictSynthTraverserM m =
 
 newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
   DictSynthTraverserM
-    { runDictSynthTraverserM' :: SubstReaderT Name (BuilderT FallibleM) i o a }
+    { runDictSynthTraverserM'
+       :: SubstReaderT Name (BuilderT FallibleM) i o a }
     deriving ( Functor, Applicative, Monad, SubstReader Name, Builder
              , EnvReader, ScopeReader, EnvExtender, MonadFail, Fallible)
 
 instance GenericTraverser DictSynthTraverserM where
   traverseAtom (Con (DictHole (AlwaysEqual ctx) ty)) = do
-    ty' <- cheapNormalize =<< substM ty
+    ty' <- cheapNormalize =<< traverseAtom ty
     addSrcContext ctx $ trySynthTerm ty'
+  traverseAtom (Con (WithPhantomDicts phantoms x)) = do
+    mapM_ traverseAtom phantoms
+    traverseAtom x
   traverseAtom atom = traverseAtomDefault atom
 
 instance ScopableBuilder (DictSynthTraverserM i) where
   buildScoped cont =
     DictSynthTraverserM $ buildScoped $ runDictSynthTraverserM' cont
+
+-- === Best-effort synthesis traversal ===
+
+type IfaceTypeSet = ESet Type
+data RequiredIfaces (n::S) = RequiredIfaces DictTypeHoistStatus (IfaceTypeSet n)
+
+instance Semigroup (RequiredIfaces n) where
+  RequiredIfaces status ds <> RequiredIfaces status' ds' =
+    RequiredIfaces (status <> status') (ds <> ds')
+
+instance Monoid (RequiredIfaces n) where
+  mempty = RequiredIfaces mempty mempty
+
+instance Monad1 m => HoistableState RequiredIfaces m where
+  hoistState _ b (RequiredIfaces status ds) = return do
+    let maybeDicts = for (eSetToList ds) \d -> case hoist b d of
+          HoistSuccess d' -> Just d'
+          HoistFailure _  -> Nothing
+    let ds' = eSetFromList $ catMaybes maybeDicts
+    let status' = if any isNothing maybeDicts
+                    then DictTypeHoistFailure
+                    else status
+    RequiredIfaces status' ds'
+
+-- traverses the atom, synthesizing what it can and reporting the
+-- dictionaries it failed to synthesize, if they could be hoisted.
+bestEffortSynthTraversal
+  :: (EnvReader m, GenericallyTraversableE e)
+  => e n -> m n (e n, [Type n])
+bestEffortSynthTraversal e = do
+  (e', RequiredIfaces _ ds) <- liftPartialDictSynthTraverserM $ traverseGenericE e
+  return (e', eSetToList ds)
+{-# INLINE bestEffortSynthTraversal #-}
+
+liftPartialDictSynthTraverserM
+  :: EnvReader m
+  => PartialDictSynthTraverserM n n a
+  -> m n (a, RequiredIfaces n)
+liftPartialDictSynthTraverserM m =
+  liftBuilder $ runWriterT1 $
+    runSubstReaderT idSubst $ runPartialDictSynthTraverserM' m
+
+newtype PartialDictSynthTraverserM (i::S) (o::S) (a:: *) =
+  PartialDictSynthTraverserM
+    { runPartialDictSynthTraverserM'
+       :: SubstReaderT Name (WriterT1 RequiredIfaces BuilderM) i o a }
+    deriving ( Functor, Applicative, Monad, SubstReader Name, Builder
+             , EnvReader, ScopeReader, EnvExtender, MonadFail, Fallible)
+
+instance GenericTraverser PartialDictSynthTraverserM where
+  traverseAtom (Con (DictHole (AlwaysEqual ctx) ty)) = do
+    ty' <- cheapNormalize =<< traverseAtom ty
+    liftEnvReaderT (trySynthTerm ty') >>= \case
+      Success d -> return d
+      Failure _ -> do
+        requireIface ty'
+        return $ Con $ DictHole (AlwaysEqual ctx) ty'
+  -- XXX: we deliberately don't have a case for `WithPhantomDicts`. The
+  -- best-effort traversal just recurses into its components like everything
+  -- else. Only the must-succeed traversal strips off the phantoms.
+  traverseAtom atom = traverseAtomDefault atom
+
+requireIface :: Type o -> PartialDictSynthTraverserM i o ()
+requireIface dictTy = PartialDictSynthTraverserM $
+  liftSubstReaderT $ tell $ RequiredIfaces mempty $ eSetSingleton dictTy
+
+instance ScopableBuilder (PartialDictSynthTraverserM i) where
+  buildScoped _ = undefined
+
+instance GenericE RequiredIfaces where
+  type RepE RequiredIfaces = PairE (LiftE DictTypeHoistStatus) IfaceTypeSet
+  fromE (RequiredIfaces status ds) = PairE (LiftE status) ds
+  {-# INLINE fromE #-}
+  toE (PairE (LiftE status) ds) = RequiredIfaces status ds
+  {-# INLINE toE #-}
+
+instance SinkableE RequiredIfaces
+instance SubstE Name RequiredIfaces
+instance HoistableE  RequiredIfaces
+
+-- === Stripping phantom types ===
+
+stripPhantoms :: (EnvReader m, GenericallyTraversableE e) => e n -> m n (e n)
+stripPhantoms x =
+  liftBuilder $ runSubstReaderT idSubst $ runStripPhantomsM' $ traverseGenericE x
+
+newtype StripPhantomsM (i::S) (o::S) (a:: *) =
+  StripPhantomsM
+    { runStripPhantomsM'
+       :: SubstReaderT Name BuilderM i o a }
+    deriving ( Functor, Applicative, Monad, SubstReader Name, Builder
+             , EnvReader, ScopeReader, EnvExtender, MonadFail, Fallible
+             , ScopableBuilder)
+
+instance GenericTraverser StripPhantomsM where
+  traverseAtom (Con (WithPhantomDicts _ x)) = traverseGenericE x
+  traverseAtom atom = traverseAtomDefault atom
 
 -- === Inference-specific builder patterns ===
 

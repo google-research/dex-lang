@@ -97,7 +97,7 @@ module Syntax (
     fromNaryLamExact, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
-    ObjectFile (..), ObjectFileName, CFunName, CFun (..),
+    ObjectFile (..), ObjectFileName, CFunName, CFun (..), withPhantoms,
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal,
     pattern TagRepTy,

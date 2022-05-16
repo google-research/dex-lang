@@ -721,3 +721,7 @@ freshNameM hint = do
   Distinct <- getDistinct
   return $ withFresh hint scope \b -> Abs b (binderName b)
 {-# INLINE freshNameM #-}
+
+withPhantoms :: [Atom n] -> Atom n -> Atom n
+withPhantoms [] x = x
+withPhantoms (p:ps) x = Con $ WithPhantomDicts (p NE.:| ps) x

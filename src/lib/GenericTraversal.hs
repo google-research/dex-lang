@@ -108,6 +108,9 @@ instance GenericallyTraversableE Block where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
 
+instance GenericallyTraversableE EffectRow where
+  traverseGenericE eff = substM eff
+
 instance GenericallyTraversableE FieldRowElems where
   traverseGenericE elems = do
     els' <- fromFieldRowElems <$> substM elems
@@ -124,6 +127,10 @@ instance GenericallyTraversableE DictExpr where
     InstanceDict v args -> InstanceDict <$> substM v <*> mapM tge args
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
+
+instance (GenericallyTraversableE e1, GenericallyTraversableE e2)
+         => GenericallyTraversableE (PairE e1 e2) where
+  traverseGenericE (PairE e1 e2) = PairE <$> tge e1 <*> tge e2
 
 traverseDeclNest
   :: (GenericTraverser m, Emits o)

@@ -22,6 +22,7 @@ module Types.Primitives where
 
 import qualified Data.ByteString       as BS
 import qualified Data.Set              as S
+import qualified Data.List.NonEmpty    as NE
 import Data.Int
 import Data.Word
 import Data.Hashable
@@ -82,6 +83,10 @@ data PrimCon e =
       -- Used in prelude for `run_accum`. Only works for single-method classes.
       | ExplicitDict e e  -- dict type, dict method
       | DictHole (AlwaysEqual SrcPosCtx) e  -- Only used during type inference
+      -- Only used during type inference. It evaluates to the second argument.
+      -- The first argument is there for the DictHoles it might carry.
+      -- We ignore it for the purposes of equality checking.
+      | WithPhantomDicts (NE.NonEmpty e) e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 newtype AlwaysEqual a = AlwaysEqual a

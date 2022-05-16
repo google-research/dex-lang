@@ -384,6 +384,12 @@ instance (SinkableE e, HoistableState e m, Builder m) => Builder (StateT1 e m) w
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
   {-# INLINE emitDecl #-}
 
+instance ( SinkableE e, HoistableState e m, Monoid1 e
+         , HoistableE e, Builder m)
+         => Builder (WriterT1 e m) where
+  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+  {-# INLINE emitDecl #-}
+
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
   {-# INLINE emitDecl #-}
