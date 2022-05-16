@@ -1817,7 +1817,7 @@ checkExtLabeledRow (Ext types (Just ext)) = do
 inferTabCon :: EmitsBoth o => [UExpr i] -> RequiredTy RhoType o -> InfererM i o (Atom o)
 inferTabCon xs reqTy = do
   (tabTy, xs') <- case reqTy of
-    Check tabTy@(TabPi piTy) | null $ freeVarsE (argType piTy) -> do
+    Check tabTy@(TabPi piTy) | null $ freeAtomVarsList (argType piTy) -> do
       TabPiType b _ <- return piTy
       idx <- indices $ binderAnn b
       -- TODO: Check length!!
