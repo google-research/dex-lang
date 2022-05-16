@@ -1,6 +1,6 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum' {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
+def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. ref += xs.i
 
 :p
    f : Float -> Float = \x. x
@@ -24,27 +24,27 @@ def sum' {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. r
 
 :p
    f : Float --o Float = \x. x
-   transposeLinear f 2.0
+   transpose_linear f 2.0
 > 2.
 
 :p
    f : Float --o Float = \x. x + x
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 2.
 
 :p
    f : Float --o Float = \x. x + (x + x) * 2.0
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 5.
 
 :p
    f : Float --o Float = \x. x * 2.0
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 2.
 
 :p
    f : Float --o Float = \x. 2.0 * x
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 2.
 
 :p grad (\x. x * x) 1.0
@@ -69,7 +69,7 @@ def sum' {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. r
 :p jvp sum' [1., 2.] [10.0, 20.0]
 > 30.
 
-f : Float -> Float = \x. yieldAccum (AddMonoid Float) \ref. ref += x
+f : Float -> Float = \x. yield_accum (AddMonoid Float) \ref. ref += x
 :p jvp f 1.0 1.0
 > 1.
 
@@ -85,12 +85,12 @@ f : Float -> Float = \x. yieldAccum (AddMonoid Float) \ref. ref += x
 
 :p
    f : Float --o (Float & Float) = \x. (x, 2.0 * x)
-   transposeLinear f (1.0, 3.0)
+   transpose_linear f (1.0, 3.0)
 > 7.
 
 :p
    f : (Float & Float) --o Float = \(x,y). x + 2.0 * y
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > (1., 2.)
 
 :p deriv cos 0.0
@@ -148,26 +148,26 @@ tripleit : Float --o Float = \x. x + x + x
 :p tripleit 1.0
 > 3.
 
-:p transposeLinear tripleit 1.0
+:p transpose_linear tripleit 1.0
 > 3.
 
-:p transposeLinear (transposeLinear tripleit) 1.0
+:p transpose_linear (transpose_linear tripleit) 1.0
 > 3.
 
 :p
   f : n:Type ?-> Ix n ?=> Float --o n=>Float = \x. for i. x
 
-  transposeLinear f [1.0, 2.0]
+  transpose_linear f [1.0, 2.0]
 > 3.
 
 :p
   f : n:Type ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
 
-  transposeLinear f [1.0, 2.0]
+  transpose_linear f [1.0, 2.0]
 > [2., 4.]
 
 myOtherSquare : Float -> Float =
-  \x. yieldAccum (AddMonoid Float) \w. w += x * x
+  \x. yield_accum (AddMonoid Float) \w. w += x * x
 
 :p check_deriv myOtherSquare 3.0
 > True
@@ -225,7 +225,7 @@ vec = [1.]
 :p
   f : Float -> Float = \x.
     y = x * 2.0
-    yieldAccum (AddMonoid Float) \a.
+    yield_accum (AddMonoid Float) \a.
       a += x * 2.0
       a += y
   grad f 1.0

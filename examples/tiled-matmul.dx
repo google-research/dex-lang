@@ -19,7 +19,7 @@ def matmul
   vectorTile = Fin VectorWidth
   colTile = (colVectors & vectorTile)
   (tile2d (\nt:(Tile n rowTile). \mt:(Tile m colTile).
-             ct = yieldAccum (AddMonoid Float) \acc.
+             ct = yield_accum (AddMonoid Float) \acc.
                for l:k.
                  for i:rowTile.
                    ail = broadcastVector a.(nt +> i).l

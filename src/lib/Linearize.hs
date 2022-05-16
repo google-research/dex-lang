@@ -16,8 +16,8 @@ import GHC.Stack
 import Name
 import Builder
 import Syntax
-import Type
 import MTL1
+import QueryType
 import Util (bindM2)
 import PPrint
 
@@ -143,16 +143,16 @@ liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
 isTrivialForAD :: Expr o -> PrimalM i o Bool
 isTrivialForAD expr = do
-  trivialTy  <- (maybeTangentType <$> getType expr) >>= \case
-    Nothing -> return False
-    Just tTy -> isSingletonType tTy
-  hasActiveEffs <- exprEffects expr >>= \case
+  trivialTy  <- presentAnd isSingletonType . maybeTangentType <$> getType expr
+  hasActiveEffs <- getEffects expr >>= \case
                      Pure -> return False
                      -- TODO: Be more precise here, such as checking
                      -- whether the effects are themselves active.
                      _ -> return True
   hasActiveVars <- isActive expr
   return $ not hasActiveEffs && (trivialTy || not hasActiveVars)
+    where presentAnd :: (a -> Bool) -> Maybe a -> Bool
+          presentAnd = any
 
 isActive :: HoistableE e => e o -> PrimalM i o Bool
 isActive e = do

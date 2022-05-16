@@ -457,7 +457,7 @@ zeroNVVMReflect =
                    { L.name = "__nvvm_reflect"
                    , L.returnType = L.IntegerType 32
                    , L.parameters =
-                       ([ L.Parameter (L.PointerType (L.IntegerType 8) (L.AddrSpace 0)) "name" [] ], False)
+                       ([ L.Parameter i8p "name" [] ], False)
                    , L.functionAttributes = [ Right FA.AlwaysInline ]
                    , L.basicBlocks = [
                        L.BasicBlock "entry" [] $ L.Do $ L.Ret (Just $ L.ConstantOperand $ C.Int 32 0) []
@@ -465,6 +465,12 @@ zeroNVVMReflect =
                    }
                ]
            }
+  where
+#if MIN_VERSION_llvm_hs(15,0,0)
+    i8p = L.PointerType (L.AddrSpace 0)
+#else
+    i8p = L.PointerType (L.IntegerType 8) (L.AddrSpace 0)
+#endif
 
 ptxTargetTriple :: ShortByteString
 ptxTargetTriple = "nvptx64-nvidia-cuda"

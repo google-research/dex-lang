@@ -33,7 +33,7 @@ import Err
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 
 import Syntax
-import Type
+import QueryType
 import Name
 import PPrint ()
 
@@ -90,24 +90,24 @@ getTableElements tab = do
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
 prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
 prettyVal val = case val of
+  -- Pretty-print strings
+  DataCon "AsList" _ [Word8Ty] _ [_, TabVal _ _] -> do
+    s <- getDexString val
+    return $ pretty $ "\"" ++ s ++ "\""
   -- Pretty-print tables.
   TabVal _ _ -> do
     atoms <- getTableElements val
     elems <- forM atoms \atom -> do
       case atom of
-        Con (Lit (Word8Lit  c)) -> return $ showChar (toEnum @Char $ fromIntegral c) ""
+        Con (Lit (Word8Lit  c)) -> return $ "'" ++ showChar (toEnum @Char $ fromIntegral c) "" ++ "'"
         Con (Lit (Word32Lit c)) -> return $ "0x" ++ showHex c ""
         Con (Lit (Word64Lit c)) -> return $ "0x" ++ showHex c ""
         _ -> pprintVal atom
-    TabTy b resultTy <- getType val
+    TabTy b _ <- getType val
     idxSetDoc <- return case binderType b of
       Fin _  -> mempty               -- (Fin n) is not shown
       idxSet -> "@" <> pretty idxSet -- Otherwise, show explicit index set
-    elemsDoc <- return case resultTy of
-      -- Print table of characters as a string literal.
-      TC (BaseType (Scalar Word8Type)) -> pretty ('"': concat elems ++ "\"")
-      _ -> pretty elems
-    return $ elemsDoc <> idxSetDoc
+    return $ pretty elems <> idxSetDoc
   DataCon name _ _ _ args -> do
     mapM prettyVal args <&> \case
       []    -> pretty name

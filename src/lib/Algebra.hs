@@ -25,7 +25,7 @@ import Data.Coerce
 import Builder hiding (sub, add)
 import Simplify
 import Syntax
-import Type
+import QueryType
 import Name
 import Err
 import MTL1

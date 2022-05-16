@@ -298,6 +298,29 @@ instance Ix Unit
 
 def iota (n:Type) [Ix n] : n=>Int = view i. ordinal i
 
+'## Fencepost index sets
+
+data Post segment:Type = UnsafeMkPost Int
+
+instance {segment} [Ix segment] Ix (Post segment)
+  get_size = \(). size segment + 1
+  ordinal = \(UnsafeMkPost i). i
+  unsafe_from_ordinal = \i. UnsafeMkPost i
+
+def left_post {n} [Ix n] (i:n) : Post n =
+  unsafe_from_ordinal (Post n) (ordinal i)
+
+def right_post {n} [Ix n] (i:n) : Post n =
+  unsafe_from_ordinal (Post n) (ordinal i + 1)
+
+interface [Ix n] NonEmpty n
+  first_ix : n
+
+def last_ix {n} [NonEmpty n] : n = unsafe_from_ordinal _ (size n - 1)
+
+instance {n} [Ix n] NonEmpty (Post n)
+  first_ix = unsafe_from_ordinal (Post n) 0
+
 '## Arithmetic instances for table types
 
 instance {a n} [Add a] Add (n=>a)
@@ -539,7 +562,7 @@ def run_accum
     action' ref
   %runWriter empty combine explicitAction
 
-def yieldAccum
+def yield_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (m:Monoid b)
@@ -692,7 +715,7 @@ instance Monoid Ordering
 
 instance {a n} [Eq a] Eq (n=>a)
   (==) = \xs ys.
-    yieldAccum AndMonoid \ref.
+    yield_accum AndMonoid \ref.
       for i. ref += xs.i == ys.i
 
 instance {a n} [Ord a] Ord (n=>a)
@@ -918,7 +941,7 @@ def reduce {a n} (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' {a n} [Ix n] (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
-def fsum {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
+def fsum {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. ref += xs.i
 def sum  {n v} [Add v] (xs:n=>v) : v = reduce zero (+) xs
 def prod {n v} [Mul v] (xs:n=>v) : v = reduce one  (*) xs
 def mean {n v} [VSpace v] (xs:n=>v) : v = sum xs / i_to_f (size n)
@@ -974,11 +997,11 @@ def cumsum {n} (xs: n=>Float) : n=>Float =
 -- TODO: add vector space constraints
 def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = %linearize f x
 def jvp {a b} (f:a->b) (x:a) : a --o b = snd (linearize f x)
-def transposeLinear {a b} (f:a --o b) : b --o a = %linearTranspose f
+def transpose_linear {a b} (f:a --o b) : b --o a = %linearTranspose f
 
 def vjp {a b} (f:a->b) (x:a) : (b & b --o a) =
   (y, df) = linearize f x
-  (y, transposeLinear df)
+  (y, transpose_linear df)
 
 def grad {a} (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 
@@ -1141,14 +1164,14 @@ def append {a h} [AccumMonoid h (List a)]
     list += AsList 1 [x]
 
 def filter {a n} (condition:a->Bool) (xs:n=>a) : List a =
-  yieldAccum (ListMonoid a) \list.
+  yield_accum (ListMonoid a) \list.
     for i.
       if condition xs.i
         then append list xs.i
 
 def arg_filter {a n} (condition:a->Bool) (xs:n=>a) : List n =
   -- Returns all indices where the condition is true.
-  yieldAccum (ListMonoid n) \list.
+  yield_accum (ListMonoid n) \list.
     for i.
       if condition xs.i
         then append list i
@@ -1244,6 +1267,12 @@ def split_v {a} : Iso a ({|} | a) =
 
 def slice_fields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (build_with $ split_v &>> iso) tab
+
+-- TODO: replace `slice` with this?
+def post_slice {a n} (xs:n=>a) (start:Post n) (end:Post n) : List a =
+  slice_size = ordinal end - ordinal start
+  to_list for i:(Fin slice_size).
+    xs.(unsafe_from_ordinal n (ordinal i + ordinal start))
 
 '## Dynamic buffer
 
@@ -2116,6 +2145,41 @@ def concat {n a} (lists:n=>(List a)) : List a =
         eltIdxVal = get eltIdx
         eltIdx := eltIdxVal + 1
         xs.(eltIdxVal@_)
+
+def cat_maybes {a n} (xs:n=>Maybe a) : List a =
+  (num_res, res_inds) = yield_state (0:Int, for i:n. Nothing) \ref.
+    for i. case xs.i of
+      Just _ ->
+        ix = get $ fst_ref ref
+        (snd_ref ref) ! (unsafe_from_ordinal _ ix) := Just i
+        fst_ref ref := ix + 1
+      Nothing -> ()
+  to_list $ for i:(Fin num_res).
+    case res_inds.(unsafe_from_ordinal _ $ ordinal i) of
+      Just j -> case xs.j of
+        Just x -> x
+        Nothing -> todo -- Impossible
+      Nothing -> todo -- Impossible
+
+def prev_ix {n} [Ix n] (i:n) : Maybe n =
+  ord = ordinal i
+  if ord == 0
+    then Nothing
+    else Just $ unsafe_from_ordinal n (ord - 1)
+
+def lines (source:String) : List String =
+  (AsList _ s) = source
+  (AsList num_lines newline_ixs) = cat_maybes for i_char.
+    if s.i_char == '\n'
+      then Just i_char
+      else Nothing
+  to_list for i_line:(Fin num_lines).
+    start = case prev_ix i_line of
+      Nothing -> first_ix
+      Just i -> right_post newline_ixs.i
+    end = left_post newline_ixs.i_line
+    post_slice s start end
+
 
 '## Probability
 

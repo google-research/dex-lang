@@ -17,7 +17,8 @@ import Control.Monad
 import Name
 import Err
 import Syntax
-import Type
+import CheckType (asFirstOrderFunction)
+import QueryType
 import Builder
 import Simplify
 import Imp

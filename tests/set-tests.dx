@@ -15,16 +15,13 @@ set2 = to_set ["Bob", "Xeno", "Charlie"]
 > False
 
 :p set_union set1 set2
-> (UnsafeAsSet 4 [ (AsList 5 "Alice")
->                , (AsList 3 "Bob")
->                , (AsList 7 "Charlie")
->                , (AsList 4 "Xeno") ])
+> (UnsafeAsSet 4 ["Alice", "Bob", "Charlie", "Xeno"])
 
 :p set_intersect set1 set2
-> (UnsafeAsSet 2 [(AsList 3 "Bob"), (AsList 4 "Xeno")])
+> (UnsafeAsSet 2 ["Bob", "Xeno"])
 
 :p remove_duplicates_from_sorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
-> (AsList 3 [(AsList 5 "Alice"), (AsList 3 "Bob"), (AsList 7 "Charlie")])
+> (AsList 3 ["Alice", "Bob", "Charlie"])
 
 :p set1 == (set_union set1 set1)
 > True

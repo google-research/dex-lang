@@ -5,9 +5,9 @@
       fwrite stream "lorem ipsum\n"
       fwrite stream "dolor sit amet\n"
     read_file fname
-> (AsList 27 "lorem ipsum
+> "lorem ipsum
 > dolor sit amet
-> ")
+> "
 
 :p unsafe_io \().
   with_alloc 4 \ptr:(Ptr Int).
@@ -68,7 +68,7 @@ unsafe_io \().
 > Nothing
 
 :p unsafe_io do get_env "DEX_TEST_MODE"
-> (Just (AsList 1 "t"))
+> (Just "t")
 
 :p dex_test_mode ()
 > True

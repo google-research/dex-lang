@@ -34,7 +34,8 @@ import GHC.Generics (Generic (..))
 import Name
 import Builder
 import Syntax hiding (State)
-import Type
+import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType)
+import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
 import CheapReduction
 import GenericTraversal
@@ -44,7 +45,6 @@ import Interpreter
 import LabeledItems
 import Err
 import Util
-import Core
 
 -- === Top-level interface ===
 
@@ -156,8 +156,7 @@ emitAtomSubstFrag frag = go $ toSubstPairs frag
 
 -- === Inferer interface ===
 
-class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
-      , Builder m, ScopableBuilder m )
+class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder m )
       => InfBuilder (m::MonadKind1) where
 
   -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
@@ -239,7 +238,7 @@ zonkDefaults s (Defaults ds) =
 data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (SolverSubst l)
 
 type InfEmission  = EitherE DeclBinding SolverBinding
-type InfEmissions = Nest (BinderP AtomNameC InfEmission)
+type InfEmissions = RNest (BinderP AtomNameC InfEmission)
 
 instance GenericB InfOutFrag where
   type RepB InfOutFrag = PairB InfEmissions (LiftB (PairE Defaults SolverSubst))
@@ -255,7 +254,7 @@ instance SinkableB InfOutFrag
 instance HoistableB  InfOutFrag
 
 instance OutFrag InfOutFrag where
-  emptyOutFrag = InfOutFrag Empty mempty emptySolverSubst
+  emptyOutFrag = InfOutFrag REmpty mempty emptySolverSubst
   catOutFrags scope (InfOutFrag em ds ss) (InfOutFrag em' ds' ss') =
     withExtEvidence em' $
       InfOutFrag (em >>> em') (sink ds <> ds') (catSolverSubsts scope (sink ss) ss')
@@ -371,7 +370,7 @@ liftInfererMSubst cont = do
   env <- unsafeGetEnv
   subst <- getSubst
   Distinct <- getDistinct
-  (InfOutFrag Empty _ _, (result, _)) <-
+  (InfOutFrag REmpty _ _, (result, _)) <-
     liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
       runStateT1 (runSubstReaderT subst $ runInfererM' $ cont) FailIfRequired
   return result
@@ -397,18 +396,26 @@ initInfOutMap :: Env n -> InfOutMap n
 initInfOutMap bindings =
   InfOutMap bindings emptySolverSubst mempty (UnsolvedEnv mempty)
 
+newtype InfDeclEmission (n::S) (l::S) = InfDeclEmission (BinderP AtomNameC InfEmission n l)
+instance ExtOutMap InfOutMap InfDeclEmission where
+  extendOutMap env (InfDeclEmission d) = env `extendOutMap` toEnvFrag d
+  {-# INLINE extendOutMap #-}
+instance ExtOutFrag InfOutFrag InfDeclEmission where
+  extendOutFrag (InfOutFrag ems ds ss) (InfDeclEmission em) =
+    withSubscopeDistinct em $ InfOutFrag (RNest ems em) (sink ds) (sink ss)
+  {-# INLINE extendOutFrag #-}
+
 emitInfererM :: Mut o => NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = do
-  Abs b v <- freshNameM hint
-  let frag = InfOutFrag (Nest (b :> emission) Empty) mempty emptySolverSubst
-  InfererM $ SubstReaderT $ lift $ lift11 $ extendInplaceT $ Abs frag v
+  InfererM $ SubstReaderT $ lift $ lift11 $ freshExtendSubInplaceT hint \b ->
+    (InfDeclEmission (b :> emission), binderName b)
 {-# INLINE emitInfererM #-}
 
 instance Solver (InfererM i) where
   extendSolverSubst v ty = do
    InfererM $ SubstReaderT $ lift $ lift11 $
     void $ extendTrivialInplaceT $
-      InfOutFrag Empty mempty (singletonSolverSubst v ty)
+      InfOutFrag REmpty mempty (singletonSolverSubst v ty)
   {-# INLINE extendSolverSubst #-}
 
   zonk e = InfererM $ SubstReaderT $ lift $ lift11 do
@@ -423,8 +430,8 @@ instance Solver (InfererM i) where
   solveLocal cont = do
     Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
-      Empty -> return result
-      Nest (_:>RightE (InfVarBound _ ctx)) _ -> do
+      REmpty -> return result
+      RNest _ (_:>RightE (InfVarBound _ ctx)) -> do
         addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
       _ -> error "not possible?"
 
@@ -459,7 +466,7 @@ instance Inferer InfererM where
   {-# INLINE liftSolverMInf #-}
 
   addIntDefault v = InfererM $ SubstReaderT $ lift $ lift11 $
-    extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
+    extendTrivialInplaceT $ InfOutFrag REmpty defaults emptySolverSubst
     where defaults = Defaults $ freeVarsE v
 
   getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
@@ -502,16 +509,6 @@ instance Builder (InfererM i) where
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
   {-# INLINE emitDecl #-}
 
-instance ScopableBuilder (InfererM i) where
-  buildScoped cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      resultWithEmissions <- locallyMutableInplaceT do
-        Emits <- fabricateEmitsEvidenceM
-        toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-      Abs frag@(InfOutFrag emissions _ _) (PairE result s') <- return resultWithEmissions
-      let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
-      return (Abs decls result, hoistRequiredIfaces frag s')
-
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
 -- When we finish building a block of decls we need to hoist the local solver
@@ -539,100 +536,168 @@ hoistThroughDecls'
 hoistThroughDecls' scope (InfOutFrag emissions defaults subst) result = do
   withSubscopeDistinct emissions do
     HoistedSolverState infVars defaults' subst' decls result' <-
-      hoistInfStateRec scope emissions defaults subst result
+      hoistInfStateRec scope emissions emptyInferenceNameBindersFV
+        (zonkDefaults subst defaults) (UnhoistedSolverSubst emptyOutFrag subst) Empty result
     let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' subst'
     return $ Abs hoistedInfFrag $ Abs decls result'
 
 data HoistedSolverState e n where
   HoistedSolverState
-    :: (Distinct l1, Distinct l2, Distinct n)
-    => InferenceNameBinders n l1
+    :: InferenceNameBinders n l1
     ->   Defaults l1
     ->   SolverSubst l1
     ->   Nest Decl l1 l2
     ->     e l2
     -> HoistedSolverState e n
 
-instance HoistableE e => HoistableE (HoistedSolverState e) where
-  freeVarsE (HoistedSolverState infVars defaults subst decls result) =
-    freeVarsE (Abs infVars (PairE (PairE defaults subst) (Abs decls result)))
+-- XXX: Be careful how you construct DelayedSolveNests! When the substitution is
+-- applied, the pieces are concatenated through regular map concatenation, not
+-- through recursive substitutions as in catSolverSubsts! This is safe to do when
+-- the individual SolverSubsts come from a projection of a larger SolverSubst,
+-- which is how we use them in `hoistInfStateRec`.
+type DelayedSolveNest (b::B) (n::S) (l::S) = Nest (EitherB b (LiftB SolverSubst)) n l
 
--- TODO: Remove Distinct constraints from HoistedSolverState
-unsafeMkHoisted
-    :: forall n l1 l2 e.
-      InferenceNameBinders n l1
-    ->   Defaults l1
-    ->   SolverSubst l1
-    ->   Nest Decl l1 l2
-    ->     e l2
-    -> HoistedSolverState e n
-unsafeMkHoisted bs ds s decls e =
-  case fabricateDistinctEvidence @n of
-    Distinct -> case fabricateDistinctEvidence @UnsafeS of
-      Distinct ->
-        HoistedSolverState (unsafeCoerceB bs :: InferenceNameBinders n UnsafeS)
-                           (unsafeCoerceE ds :: Defaults UnsafeS)
-                           (unsafeCoerceE s  :: SolverSubst UnsafeS)
-                           (unsafeCoerceB decls :: Nest Decl UnsafeS UnsafeS)
-                           (unsafeCoerceE e  :: e UnsafeS)
+resolveDelayedSolve :: Distinct l => Scope n -> SolverSubst n -> DelayedSolveNest Decl n l -> Nest Decl n l
+resolveDelayedSolve scope subst = \case
+  Empty -> Empty
+  Nest (RightB (LiftB sfrag)) rest -> resolveDelayedSolve scope (subst `unsafeCatSolverSubst` sfrag) rest
+  Nest (LeftB  (Let b rhs)  ) rest ->
+    withSubscopeDistinct rest $ withSubscopeDistinct b $
+      Nest (Let b (applySolverSubstE scope subst rhs)) $
+        resolveDelayedSolve (scope `extendOutMap` toScopeFrag b) (sink subst) rest
+  where
+    unsafeCatSolverSubst :: SolverSubst n -> SolverSubst n -> SolverSubst n
+    unsafeCatSolverSubst (SolverSubst a) (SolverSubst b) = SolverSubst $ a <> b
 
-dceIfSolved :: HoistableE e
-            => NameBinder AtomNameC n l -> HoistedSolverState e l
-            -> Maybe (HoistedSolverState e n)
-dceIfSolved b (HoistedSolverState infVars defaults (SolverSubst substMap) decls result) = do
-  let v = withExtEvidence infVars $ sink $ binderName b
-  case M.member v substMap of
-    True  ->
-      case exchangeBs $ PairB b infVars of
-        HoistSuccess (PairB infVars' b') -> do
-          let defaults' = hoistDefaults b' defaults
-#ifdef DEX_DEBUG
-          let subst' = ignoreHoistFailure $ hoist b' $ SolverSubst $ M.delete v substMap
-#else
-          -- SolverSubst should be recursively zonked, so any v that's a member
-          -- should never appear in an rhs. Hence, deleting the entry corresponding to
-          -- v should hoist the substitution above b'.
-          let subst' = unsafeCoerceE $ SolverSubst $ M.delete v substMap
-#endif
-          case hoist b' (Abs decls result) of
-            HoistSuccess (Abs decls' result') ->
-              Just $ unsafeMkHoisted infVars' defaults' subst' decls' result'
-            HoistFailure err -> error $ "this shouldn't happen. Leaked var: " ++ pprint err
-        HoistFailure _ -> Nothing
-    False -> Nothing
+data InferenceNameBindersFV (n::S) (l::S) = InferenceNameBindersFV (NameSet n) (InferenceNameBinders n l)
+instance BindsNames InferenceNameBindersFV where
+  toScopeFrag = toScopeFrag . dropInferenceNameBindersFV
+instance ProvesExt InferenceNameBindersFV where
+  toExtEvidence = toExtEvidence . dropInferenceNameBindersFV
+instance HoistableB InferenceNameBindersFV where
+  freeVarsB (InferenceNameBindersFV fvs _) = fvs
 
-hoistInfStateRec :: (Distinct n, Distinct l, HoistableE e)
-                 => Scope n
-                 -> InfEmissions n l -> Defaults l -> SolverSubst l -> e l
+emptyInferenceNameBindersFV :: InferenceNameBindersFV n n
+emptyInferenceNameBindersFV = InferenceNameBindersFV mempty Empty
+
+dropInferenceNameBindersFV :: InferenceNameBindersFV n l -> InferenceNameBinders n l
+dropInferenceNameBindersFV (InferenceNameBindersFV _ bs) = bs
+
+prependNameBinder :: BinderP AtomNameC SolverBinding n q -> InferenceNameBindersFV q l -> InferenceNameBindersFV n l
+prependNameBinder b (InferenceNameBindersFV fvs bs) =
+  InferenceNameBindersFV (freeVarsB b <> hoistFilterNameSet b fvs) (Nest b bs)
+
+-- XXX: Stashing Distinct here is a little naughty, since that's generally not allowed.
+-- Here it should be ok, because it's only used in hoistInfStateRec, which doesn't emit.
+data UnhoistedSolverSubst (n::S) where
+  UnhoistedSolverSubst :: Distinct l => ScopeFrag n l -> SolverSubst l -> UnhoistedSolverSubst n
+
+delayedHoistSolverSubst :: BindsNames b => b n l -> UnhoistedSolverSubst l -> UnhoistedSolverSubst n
+delayedHoistSolverSubst b (UnhoistedSolverSubst frag s) = UnhoistedSolverSubst (toScopeFrag b >>> frag) s
+
+hoistSolverSubst :: UnhoistedSolverSubst n -> HoistExcept (SolverSubst n)
+hoistSolverSubst (UnhoistedSolverSubst frag s) = hoist frag s
+
+-- TODO: Instead of delaying the solve, compute the most-nested scope once
+-- and then use it for all _eager_ substitutions while hoisting! Using a super-scope
+-- for substitution shouldn't be a problem!
+hoistInfStateRec :: forall n l l1 l2 e. (Distinct n, Distinct l2, HoistableE e)
+                 => Scope n -> InfEmissions n l
+                 -> InferenceNameBindersFV l l1 -> Defaults l1 -> UnhoistedSolverSubst l1 -> DelayedSolveNest Decl l1 l2 -> e l2
                  -> Except (HoistedSolverState e n)
-hoistInfStateRec _ Empty defaults subst e = do
-  return $ HoistedSolverState Empty (zonkDefaults subst defaults) subst Empty e
-hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
-  withSubscopeDistinct rest do
-    solverState@(HoistedSolverState infVars defaults' subst' decls result) <-
-       hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest defaults subst e
+hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissions of
+ REmpty -> do
+  subst' <- liftHoistExcept $ hoistSolverSubst subst
+  let decls' = withSubscopeDistinct decls $
+                 resolveDelayedSolve (scope `extendOutMap` toScopeFrag infVars) subst' decls
+  return $ HoistedSolverState (dropInferenceNameBindersFV infVars) defaults subst' decls' e
+ RNest rest (b :> infEmission) -> do
+  withSubscopeDistinct decls do
     case infEmission of
-      RightE binding@(InfVarBound _ _) ->
-        case dceIfSolved b solverState of
-          Just solverState' -> return solverState'
-          Nothing -> return $ HoistedSolverState (Nest (b:>binding) infVars)
-                                                 defaults' subst' decls result
-      RightE (SkolemBound _) ->
-        case hoist b solverState of
-          HoistSuccess hoisted -> return hoisted
-          HoistFailure _ -> error "probably shouldn't happen?"
+      RightE binding@(InfVarBound _ _) -> do
+        UnhoistedSolverSubst frag (SolverSubst substMap) <- return subst
+        let vHoist :: AtomName l1 = withSubscopeDistinct infVars $ sink $ binderName b  -- binder name at l1
+        let vUnhoist = withExtEvidence frag $ sink vHoist                               -- binder name below frag
+        case M.lookup vUnhoist substMap of
+          -- Unsolved inference variables are just gathered as they are.
+          Nothing ->
+            hoistInfStateRec scope rest (prependNameBinder (b:>binding) infVars)
+                             defaults subst decls e
+          -- If a variable is solved, we eliminate it.
+          Just bSolutionUnhoisted -> do
+            bSolution <- liftHoistExcept $ hoist frag bSolutionUnhoisted
+            case exchangeBs $ PairB b infVars of
+              -- This used to be accepted by the code at some point (and handled the same way
+              -- as the Nothing) branch above, but I don't understand why. We don't even seem
+              -- to be exercising it anyway, so throw a not implemented error for now.
+              HoistFailure _ -> throw NotImplementedErr "Unzonked unsolved variables"
+              HoistSuccess (PairB infVars' b') -> do
+                let defaults' = hoistDefaults b' defaults
+                let bZonkedDecls = Nest (RightB (LiftB $ SolverSubst $ M.singleton vHoist bSolution)) decls
+#ifdef DEX_DEBUG
+                -- Hoist the subst eagerly, unlike the unsafe implementation.
+                hoistedSubst@(SolverSubst hoistMap) <- liftHoistExcept $ hoistSolverSubst subst
+                let subst' = withSubscopeDistinct b' $ UnhoistedSolverSubst (toScopeFrag b') $
+                               SolverSubst $ M.delete vHoist hoistMap
+                -- Zonk the decls with `v @> bSolution` to make sure hoisting will succeed.
+                -- This is quadratic, which is why we don't do this in the fast implementation!
+                let allEmissions = RNest rest (b :> infEmission)
+                let declsScope = withSubscopeDistinct infVars $
+                      (scope `extendOutMap` toScopeFrag allEmissions) `extendOutMap` toScopeFrag infVars
+                let resolvedDecls = resolveDelayedSolve declsScope hoistedSubst bZonkedDecls
+                PairB resolvedDecls' b'' <- liftHoistExcept $ exchangeBs $ PairB b' resolvedDecls
+                let decls' = fmapNest LeftB resolvedDecls'
+                -- NB: We assume that e is hoistable above e! This has to be taken
+                -- care of by zonking the result before this function is entered.
+                e' <- liftHoistExcept $ hoist b'' e
+                withSubscopeDistinct b'' $
+                  hoistInfStateRec scope rest infVars' defaults' subst' decls' e'
+#else
+                -- SolverSubst should be recursively zonked, so any v that's a member
+                -- should never appear in an rhs. Hence, deleting the entry corresponding to
+                -- v should hoist the substitution above b'.
+                let subst' = unsafeCoerceE $ UnhoistedSolverSubst frag $ SolverSubst $ M.delete vUnhoist substMap
+                -- Applying the substitution `v @> bSolution` would eliminate `b` from decls, so this
+                -- is equivalent to hoisting above b'. This is of course not reflected in the type
+                -- system, which is why we use unsafe coercions.
+                let decls' = unsafeCoerceB bZonkedDecls
+                -- This is much more sketchy, but it reflects the e-hoistability assumption
+                -- that our safe implementation makes as well. Except here it's obviously unchecked.
+                let e' :: e UnsafeS = unsafeCoerceE e
+                Distinct <- return $ fabricateDistinctEvidence @UnsafeS
+                hoistInfStateRec scope rest infVars' defaults' subst' decls' e'
+#endif
+      RightE (SkolemBound _) -> do
+#ifdef DEX_DEBUG
+        PairB infVars' b' <- liftHoistExcept' "Skolem leak?" $ exchangeBs $ PairB b infVars
+        defaults' <- liftHoistExcept' "Skolem leak?" $ hoist b' defaults
+        let subst' = delayedHoistSolverSubst b' subst
+        PairB decls' b'' <- liftHoistExcept' "Skolem leak?" $ exchangeBs $ PairB b' decls
+        e' <- liftHoistExcept' "Skolem leak?" $ hoist b'' e
+        withSubscopeDistinct b'' $ hoistInfStateRec scope rest infVars' defaults' subst' decls' e'
+#else
+        -- Skolem vars are only instantiated in unification, and we're very careful to
+        -- never let them leak into the types of inference vars emitted while unifying
+        -- and into the solver subst.
+        Distinct <- return $ fabricateDistinctEvidence @UnsafeS
+        hoistInfStateRec @n @UnsafeS @UnsafeS @UnsafeS
+          scope
+          (unsafeCoerceB rest) (unsafeCoerceB infVars)
+          (unsafeCoerceE defaults) (unsafeCoerceE subst)
+          (unsafeCoerceB decls) (unsafeCoerceE e)
+#endif
       LeftE emission -> do
-        -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
-        --       above by using `WithRestrictedScope` to cache free vars.
-        PairB infVars' (b':>emission') <- liftHoistExcept $
-                                            exchangeBs (PairB (b:>emission) infVars)
-        subst'' <- liftHoistExcept $ hoist b' subst'
-        let defaults'' = hoistDefaults b' defaults'
-        withSubscopeDistinct b' $ do
-            let scope' = scope `extendOutMap` toScopeFrag infVars'
-            let emission'' = applySolverSubstE scope' subst'' emission'
-            return $ HoistedSolverState infVars' defaults'' subst''
-                        (Nest (Let b' emission'') decls) result
+        -- Move the binder below all unsolved inference vars. Failure to do so is
+        -- an inference error --- a variable cannot be solved once we exist the scope
+        -- of all variables it mentions in its type.
+        -- TODO: Shouldn't this be an ambiguous type error?
+        PairB infVars' (b':>emission') <- liftHoistExcept $ exchangeBs (PairB (b:>emission) infVars)
+        -- Now, those are real leakage errors. We never want to leak this var through a solution!
+        -- But since we delay hoisting, they will only be raised later.
+        let subst' = delayedHoistSolverSubst b' subst
+        let defaults' = hoistDefaults b' defaults
+        let decls' = Nest (LeftB (Let b' emission')) decls
+        hoistInfStateRec scope rest infVars' defaults' subst' decls' e
 
 hoistRequiredIfaces :: BindsNames b => b n l -> RequiredIfaces l -> RequiredIfaces n
 hoistRequiredIfaces bs = \case
@@ -645,8 +710,12 @@ hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
 hoistDefaults b (Defaults defaults) = Defaults $ hoistFilterNameSet b defaults
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
-infNamesToEmissions emissions =
-  fmapNest (\(b:>binding) -> b :> RightE binding) emissions
+infNamesToEmissions = go REmpty
+ where
+   go :: InfEmissions n q -> InferenceNameBinders q l -> InfEmissions n l
+   go acc = \case
+     Empty -> acc
+     Nest (b:>binding) rest -> go (RNest acc (b:>RightE binding)) rest
 
 instance EnvReader (InfererM i) where
   unsafeGetEnv = do
@@ -1021,7 +1090,7 @@ inferNaryApp fCtx f args = addSrcContext fCtx do
   Just naryPi <- asNaryPiType <$> Pi <$> fromPiType True PlainArrow fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
   let appExpr = App f inferredArgs
-  addEffects =<< exprEffects appExpr
+  addEffects =<< getEffects appExpr
   partiallyApplied <- Var <$> emit appExpr
   case nonEmpty remaining of
     Nothing ->
@@ -2002,7 +2071,13 @@ liftSolverOutFrag (SolverOutFrag emissions subst) =
 
 liftSolverEmissions :: Distinct l => SolverEmissions n l -> InfEmissions n l
 liftSolverEmissions emissions =
-  fmapNest (\(b:>emission) -> (b:>RightE emission)) $ unRNest emissions
+  fmapRNest (\(b:>emission) -> (b:>RightE emission)) emissions
+
+fmapRNest :: (forall ii ii'. b ii ii' -> b' ii ii')
+          -> RNest b  i i'
+          -> RNest b' i i'
+fmapRNest _ REmpty = REmpty
+fmapRNest f (RNest rest b) = RNest (fmapRNest f rest) (f b)
 
 instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...

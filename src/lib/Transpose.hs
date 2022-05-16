@@ -12,11 +12,11 @@ import Control.Monad.Reader
 import qualified Data.Set as S
 
 import MTL1
-import Type
 import Err
 import Name
 import Syntax
 import Builder
+import QueryType
 import Util (zipWithT, enumerate)
 import GHC.Stack
 
@@ -28,8 +28,8 @@ transpose lam = liftBuilder do
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   runReaderT1 (ListE []) $ runSubstReaderT idSubst $
     buildLam noHint LinArrow resultTy' Pure \ct ->
-      withAccumulator (sink argTy) \ref ->
-        extendSubst (b @> LinRef ref) $
+      withAccumulator (sink argTy) \refSubstVal ->
+        extendSubst (b @> refSubstVal) $
           transposeBlock body (sink $ Var ct)
 {-# SCC transpose #-}
 
@@ -47,6 +47,9 @@ type LinRegions = ListE AtomName
 type TransposeM a = SubstReaderT TransposeSubstVal
                       (ReaderT1 LinRegions BuilderM) a
 
+type TransposeM' a = SubstReaderT AtomSubstVal
+                       (ReaderT1 LinRegions BuilderM) a
+
 -- TODO: it might make sense to replace substNonlin/isLin
 -- with a single `trySubtNonlin :: e i -> Maybe (e o)`.
 -- But for that we need a way to traverse names, like a monadic
@@ -59,6 +62,22 @@ substNonlin e = do
                       RenameNonlin v' -> v'
                       _ -> error "not a nonlinear expression") e
 
+-- TODO: Can we generalize onNonLin to accept SubstReaderT Name instead of
+-- SubstReaderT AtomSubstVal?  For that to work, we need another combinator,
+-- that lifts a SubstReader AtomSubstVal into a SubstReader Name, because
+-- effectsSubstE is currently typed as SubstReader AtomSubstVal.
+-- Then we can presumably recode substNonlin as `onNonLin substM`.  We may
+-- be able to do that anyway, except we will then need to restrict the type
+-- of substNonlin to require `SubstE AtomSubstVal e`; but that may be fine.
+onNonLin :: HasCallStack
+         => TransposeM' i o a -> TransposeM i o a
+onNonLin cont = do
+  subst <- getSubst
+  let subst' = newSubst (\v -> case subst ! v of
+                                 RenameNonlin v' -> Rename v'
+                                 _ -> error "not a nonlinear expression")
+  liftSubstReaderT $ runSubstReaderT subst' cont
+
 isLin :: HoistableE e => e i -> TransposeM i o Bool
 isLin e = do
   substVals <- mapM lookupSubstM $ freeAtomVarsList e
@@ -70,12 +89,21 @@ isLin e = do
 withAccumulator
   :: Emits o
   => Type o
-  -> (forall o'. (Emits o', DExt o o') => Atom o' -> TransposeM i o' ())
+  -> (forall o'. (Emits o', DExt o o') => TransposeSubstVal AtomNameC o' -> TransposeM i o' ())
   -> TransposeM i o (Atom o)
 withAccumulator ty cont = do
-  baseMonoid <- getBaseMonoidType ty >>= tangentBaseMonoidFor
-  getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
-               cont (Var ref) >> return UnitVal
+  singletonTypeVal ty >>= \case
+    Nothing -> do
+      baseMonoid <- tangentBaseMonoidFor =<< getBaseMonoidType ty
+      getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
+                   cont (LinRef $ Var ref) >> return UnitVal
+    Just val -> do
+      -- If the accumulator's type is inhabited by just one value, we
+      -- don't need any actual accumulation, and can just return that
+      -- value.  (We still run `cont` because it may emit decls that
+      -- have effects.)
+      Distinct <- getDistinct
+      cont LinTrivial >> return val
 
 emitCTToRef :: (Emits n, Builder m) => Atom n -> Atom n -> m n ()
 emitCTToRef ref ct = do
@@ -99,8 +127,8 @@ transposeWithDecls (Nest (Let b (DeclBinding _ ty expr)) rest) result ct =
   substExprIfNonlin expr >>= \case
     Nothing  -> do
       ty' <- substNonlin ty
-      ctExpr <- withAccumulator ty' \ref ->
-                  extendSubst (b @> LinRef ref) $
+      ctExpr <- withAccumulator ty' \refSubstVal ->
+                  extendSubst (b @> refSubstVal) $
                     transposeWithDecls rest result (sink ct)
       transposeExpr expr ctExpr
     Just nonlinExpr -> do
@@ -113,10 +141,9 @@ substExprIfNonlin expr =
   isLin expr >>= \case
     True -> return Nothing
     False -> do
-      expr' <- substNonlin expr
-      exprEffects expr' >>= isLinEff >>= \case
+      onNonLin (getEffectsSubst expr) >>= isLinEff >>= \case
         True -> return Nothing
-        False -> return $ Just expr'
+        False -> Just <$> substNonlin expr
 
 isLinEff :: EffectRow o -> TransposeM i o Bool
 isLinEff effs@(EffectRow _ Nothing) = do

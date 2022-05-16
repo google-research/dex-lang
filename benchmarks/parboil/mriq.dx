@@ -16,7 +16,7 @@ def mriq
       : (cs=>Float & cs=>Float) =
   unzip $ for i.
     run_accum (AddMonoid Float) \qi.
-      yieldAccum (AddMonoid Float) \qr.
+      yield_accum (AddMonoid Float) \qr.
         for j.
           phiMag = phiR.j * phiR.j + phiI.j * phiI.j
           expArg = kx.j * x.i + ky.j * y.i + kz.j * z.i

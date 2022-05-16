@@ -28,9 +28,10 @@ import MTL1
 import Name
 import Builder
 import Syntax
-import Type
+import CheckType (CheckableE (..))
 import Simplify
 import LabeledItems
+import QueryType
 import Util (enumerate)
 import Types.Primitives
 import Algebra qualified as A
@@ -1534,9 +1535,9 @@ impInstrTypes instr = case instr of
 -- TODO: reuse type rules in Type.hs
 impOpType :: IPrimOp n -> IType
 impOpType pop = case pop of
-  ScalarBinOp op x y -> runHardFail $ checkBinOp op (getIType x) (getIType y)
-  ScalarUnOp  op x   -> runHardFail $ checkUnOp  op (getIType x)
-  VectorBinOp op x y -> runHardFail $ checkBinOp op (getIType x) (getIType y)
+  ScalarBinOp op x _ -> typeBinOp op (getIType x)
+  ScalarUnOp  op x   -> typeUnOp  op (getIType x)
+  VectorBinOp op x _ -> typeBinOp op (getIType x)
   Select  _ x  _     -> getIType x
   VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
   VectorIndex x _    -> Scalar ty  where Vector ty = getIType x

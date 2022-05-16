@@ -64,7 +64,7 @@ def power_of_2_fft {log2_n}
       ipow2 = get ipow2Ref
 
       log2_half_n = log2_n - 1
-      xRef := yieldAccum (AddMonoid Complex) \bufRef.
+      xRef := yield_accum (AddMonoid Complex) \bufRef.
         for j:((Fin log2_half_n)=>(Fin 2)).  -- Executes in parallel.
           (left_read_ix, right_read_ix,
            left_write_ix, right_write_ix) = butterfly_ixs j ipow2
@@ -168,21 +168,3 @@ def ifft2 {n m} (x: n=>m=>Complex): n=>m=>Complex =
 
 def  fft2_real {n m} (x: n=>m=>Float): n=>m=>Complex =  fft2 for i j. MkComplex x.i.j 0.0
 def ifft2_real {n m} (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex x.i.j 0.0
-
--------- Tests --------
-
-:p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
-> [0, 0, 0, 1, 2, 2, 3, 3, 4, 10, 10, 11]
-
-
-a : (Fin 4)=>Complex = arb $ new_key 0
-:p a ~~ (ifft $ fft a)
-> True
-:p a ~~ (fft $ ifft a)
-> True
-
-b : (Fin 20)=>(Fin 70)=>Complex = arb $ new_key 0
-:p b ~~ (ifft2 $ fft2 b)
-> True
-:p b ~~ (fft2 $ ifft2 b)
-> True

@@ -26,7 +26,7 @@ import LabeledItems
 
 import Name
 import Syntax
-import Type
+import QueryType
 import PPrint ()
 import Util ((...))
 import Builder

@@ -709,7 +709,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
 --   -- Last dimension split to allow for vector loads
 --   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). IToF $ (iota _).(i,j,h)
---   z = yieldAccum \acc.
+--   z = yield_accum \acc.
 --         for l.
 --           for i.
 --             xil = (broadcastVector x.i.l)
@@ -805,12 +805,12 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 str = ['x', 'y']
 
 :p str
-> "xy"
+> ['x', 'y']
 
 s1 = "hello world"
 
 :p s1
-> (AsList 11 "hello world")
+> "hello world"
 
 :p codepoint 'a'
 > 97
@@ -999,3 +999,9 @@ all for x:((Bool & Fin 3)=>(Fin 4)).
   x == (unsafe_from_ordinal _ (ordinal x))
 > True
 
+def all_prefixes (s:String)  : List String =
+  (AsList _ s') = s
+  to_list for i. post_slice s' first_ix i
+
+:p all_prefixes "fence"
+> (AsList 6 ["", "f", "fe", "fen", "fenc", "fence"])

@@ -346,7 +346,7 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   # parameter at index 1, the evaluated string should look like:
   # ```
   # \ x0 x1 x2 u1 ct.
-  #   transposeLinear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
+  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
   # ```
   # - The `x` variables are the (constant) inputs to the primal function. These
   #   should always be supplied by JAX.
@@ -373,9 +373,9 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
       arg_string("x", range(num_primals)) + " " + linearized_tangent_inputs)
 
   # \ x0 x1 x2 u1 ct.
-  #   transposeLinear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
+  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
   transposed = module.eval(
-      f"\\ {transposed_atom_params}. transposeLinear " +
+      f"\\ {transposed_atom_params}. transpose_linear " +
       f"(\ {linear_lambda_params}. {linearized_name} {linearized_inputs}) ct"
   )
 
