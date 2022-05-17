@@ -89,10 +89,16 @@ class Literal(Expr):
       return f'(%monoLit {self.val})'
 
 @dataclass
+class Prim(Expr):
+  name: str
+  def pprint(self) -> str:
+    return f'%{self.name}'
+
+@dataclass
 class Var(Expr):
   name: str
   def pprint(self) -> str:
-    return f'{self.name}'
+    return self.name
 
 @dataclass
 class Tuple(Expr):
@@ -121,7 +127,13 @@ class NaryApp(Expr):
   fun: Expr
   arguments: Sequence[Expr]
   def pprint(self) -> str:
-    return ' '.join(map(lambda a: f'({a.pprint()})', it.chain((self.fun,), self.arguments)))
+    assert self.arguments
+    arg_strs = ' '.join(map(lambda a: f'({a.pprint()})', self.arguments))
+    if isinstance(self.fun, (Prim, Var)):
+      fun_str = self.fun.pprint()
+    else:
+      fun_str = f'({self.fun.pprint()})'
+    return f'{fun_str} {arg_strs}'
 
 def App(fun, *args):
   return NaryApp(fun, args)
@@ -345,6 +357,7 @@ class LoweringRuleContext:
 
 from jax._src.lax import lax
 
+# TODO: Use primitives to speed-up compile times!
 expr_makers[lax.neg_p] = lambda ctx, x: App(Var('neg'), x)
 expr_makers[lax.sin_p] = lambda ctx, x: App(Var('sin'), x)
 expr_makers[lax.cos_p] = lambda ctx, x: App(Var('cos'), x)
@@ -363,9 +376,15 @@ def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   return For(tuple(idx_names), tuple(tys), x_indexed)
 expr_makers[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
-def _broadcasting_binop(binop_expr: Expr, ctx, x, y):
+def _broadcasting_binop(ibinop_expr: Expr, fbinop_expr: Expr, ctx, x, y):
   x_aval, y_aval = ctx.avals_in
   out_aval, = ctx.avals_out
+  if np.issubdtype(x_aval.dtype, np.integer):
+    binop_expr = ibinop_expr
+  else:
+    binop_expr = fbinop_expr
+  if binop_expr is None:
+    raise NotImplementedError()
   if not out_aval.shape:
     return App(binop_expr, x, y)
   idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
@@ -386,13 +405,13 @@ def _make_bcast_expr(idx_names, out_shape, in_shape, x):
   return Idx(x, tuple(idxs))
 unitIdx = App(Var('unsafe_from_ordinal'), FinType(IxRepLiteral(1)), IxRepLiteral(0))
 
-expr_makers[lax.add_p] = partial(_broadcasting_binop, Var('add'))
-expr_makers[lax.sub_p] = partial(_broadcasting_binop, Var('sub'))
-expr_makers[lax.mul_p] = partial(_broadcasting_binop, Var('mul'))
-expr_makers[lax.div_p] = partial(_broadcasting_binop, Var('divide'))
-expr_makers[lax.max_p] = partial(_broadcasting_binop, Var('max'))
-expr_makers[lax.pow_p] = partial(_broadcasting_binop, Var('pow'))
-expr_makers[lax.lt_p] = partial(_broadcasting_binop,  Var('(<)'))
+expr_makers[lax.add_p] = partial(_broadcasting_binop, Prim('iadd'), Prim('fadd'))
+expr_makers[lax.sub_p] = partial(_broadcasting_binop, Prim('isub'), Prim('fsub'))
+expr_makers[lax.mul_p] = partial(_broadcasting_binop, Prim('imul'), Prim('fmul'))
+expr_makers[lax.div_p] = partial(_broadcasting_binop, Prim('idiv'), Prim('fdiv'))
+expr_makers[lax.max_p] = partial(_broadcasting_binop, Var('max'), Var('max'))
+expr_makers[lax.pow_p] = partial(_broadcasting_binop, None, Prim('fpow'))
+expr_makers[lax.lt_p] = partial(_broadcasting_binop,  Var('(<)'), Var('(<)'))
 
 def _integer_pow_lowering(ctx, x, y):
   if y == 2:
