@@ -565,14 +565,14 @@ projectDictMethod d i = do
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
-  For d ixDict lam@(Lam lamExpr) -> do
-    ixTy@(IxType _ ixDict') <- substM $ IxType (argType lamExpr) ixDict
+  For d (IxTy ixTy) lam -> do
+    ixTy' <- substM ixTy
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- liftM Var $ emit $ Hof $ For d ixDict' lam'
+    ans <- liftM Var $ emit $ Hof $ For d (IxTy ixTy') lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
-        buildTabLam noHint ixTy \i' -> do
+        buildTabLam noHint ixTy' \i' -> do
           elt <- tabApp (sink ans) $ Var i'
           -- TODO Avoid substituting the body of `recon` twice (once
           -- for `applySubst` and once for `applyReconAbs`).  Maybe
@@ -659,9 +659,9 @@ exceptToMaybeExpr expr = case expr of
   Op (ThrowException _) -> do
     ty <- getTypeSubst expr
     return $ NothingAtom ty
-  Hof (For ann d (Lam (LamExpr b body))) -> do
-    ty <- substM $ IxType (binderType b) d
-    maybes <- buildForAnn (getNameHint b) ann ty \i ->
+  Hof (For ann (IxTy ixTy) (Lam (LamExpr b body))) -> do
+    ixTy' <- substM ixTy
+    maybes <- buildForAnn (getNameHint b) ann ixTy' \i ->
       extendSubst (b@>Rename i) $ exceptToMaybeBlock body
     catMaybesE maybes
   Hof (RunState s lam) -> do

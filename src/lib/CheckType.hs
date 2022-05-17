@@ -128,11 +128,7 @@ infixr 7 |:
 (|:) x reqTy = void $ checkTypeE reqTy x
 
 checkIxTy :: Typer m => Atom i -> m i o (IxType o)
-checkIxTy (IxTy (IxType t d)) = do
-  t' <- checkTypeE TyKind t
-  -- TODO: check that `d` has type `Ix t`
-  d' <- substM d
-  return $ IxType t' d'
+checkIxTy (IxTy ixTy) = checkE ixTy
 checkIxTy x = throw TypeErr $ "Not an index type" ++ pprint x
 
 -- === top-level env ===
@@ -256,10 +252,7 @@ instance HasType Atom where
       params' <- mapM substM params
       checkArgTys paramBs params'
       return TyKind
-    IxTy (IxType t _) -> do
-      t |: TyKind
-      -- TODO: check dict type
-      return $ TC IxTypeKind
+    IxTy ixTy -> checkE ixTy >> return (TC IxTypeKind)
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy elems -> checkFieldRowElems elems $> TyKind
@@ -441,9 +434,12 @@ instance HasType PiType where
     return TyKind
 
 instance CheckableE IxType where
-  checkE (IxType ty d) = do
-    -- TODO: check the dict is actually `Ix ty`
-    IxType <$> checkE ty <*> checkE d
+  checkE (IxType t d) = do
+    t' <- checkTypeE TyKind t
+    (d', dictTy) <- getTypeAndSubstE d
+    DictTy (DictType "Ix" _ [tFromDict]) <- return dictTy
+    checkAlphaEq t' tFromDict
+    return $ IxType t' d'
 
 instance HasType TabPiType where
   getTypeE (TabPiType b resultTy) = do
@@ -476,7 +472,10 @@ typeCheckPrimTC tc = case tc of
     IxType t _ <- checkIxTy ixTy
     mapM_ (|:t) a >> mapM_ (|:t) b
     return TyKind
-  IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
+  IndexSlice n l -> do
+    void $ checkIxTy n
+    void $ checkIxTy l
+    return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind

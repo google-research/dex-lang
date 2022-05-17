@@ -485,7 +485,7 @@ getTypePrimOp op = case op of
   Inject i -> do
     TC tc <- getTypeE i
     case tc of
-      IndexRange ty _ _ -> return ty
+      IndexRange (IxTy (IxType ty _)) _ _ -> return ty
       ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do

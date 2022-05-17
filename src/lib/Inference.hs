@@ -491,11 +491,14 @@ instance Inferer InfererM where
         "Type inference of this program requires delayed interface resolution"
       return UnitE
     get >>= \case
-      FailIfRequired    -> do
-        givens <- (HM.elems . fromGivens) <$> givensFromEnv
-        givenTys <- mapM getType givens
+      FailIfRequired -> do
+        givensStr <- do
+          givens <- (HM.elems . fromGivens) <$> givensFromEnv
+          mapM getType givens >>= \case
+            [] -> return ""
+            givensTys -> return $ "\nGiven: " ++ pprint givensTys
         throw TypeErr $ "Couldn't synthesize a class dictionary for: "
-          ++ pprintCanonicalized iface ++ "\nGiven: " ++ pprint givenTys
+          ++ pprintCanonicalized iface ++ givensStr
       GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
 instance Builder (InfererM i) where
