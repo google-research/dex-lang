@@ -83,10 +83,16 @@ class Literal(Expr):
   val: Any
   dtype: np.dtype
   def pprint(self) -> str:
-    if self.dtype in {f32, f64}:
-      return f'{self.val}'
+    if self.dtype == f32:
+      return f'{self.val:f}'
+    elif self.dtype == f64:
+      return f'(f_to_f64 {self.val:f})'
     elif self.dtype == i32:
       return f'(%monoLit {self.val})'
+    elif self.dtype == i64:
+      return f'{self.val}'
+    else:
+      raise NotImplementedError(f"Unsupported literal dtype: {dtype}")
 
 @dataclass
 class Prim(Expr):
