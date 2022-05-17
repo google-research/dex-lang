@@ -271,7 +271,7 @@ instance Fallible (TypeQueryM i o) where
   {-# INLINE throwErrs #-}
   addErrCtx = const id
   {-# INLINE addErrCtx #-}
-    
+
 class HasType (e::E) where
   getTypeE :: e i -> TypeQueryM i o (Type o)
 
@@ -623,6 +623,7 @@ getTypePrimOp op = case op of
     methodTy <- getMethodType className i
     dropSubst $ typeApp methodTy params
   ExplicitApply _ _ -> error "shouldn't appear after inference"
+  MonoLiteral _ -> error "shouldn't appear after inference"
 
 getTypeBaseType :: HasType e => e i -> TypeQueryM i o BaseType
 getTypeBaseType e =

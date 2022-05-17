@@ -911,6 +911,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     ty' <- zonk =<< checkUType ty
     val' <- checkSigma val ty'
     matchRequirement val'
+  UPrimExpr (OpExpr (MonoLiteral (WithSrcE _ (UIntLit x)))) ->
+    matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x
   UPrimExpr (OpExpr (ExplicitApply f x)) -> do
     f' <- inferFunNoInstantiation f
     x' <- inferRho x
