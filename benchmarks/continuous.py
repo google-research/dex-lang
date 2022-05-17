@@ -63,7 +63,10 @@ def benchmark(baseline_bin, latest_bin):
         latest_alloc, latest_time = latest_bench(example, path)
         print(baseline_alloc, '->', latest_alloc)
         print(baseline_time, '->', latest_time)
-        results.append(Result(example, 'alloc', latest_alloc))
+        # Allocation measurements are stable enough so that we don't need to
+        # take too many. But take two to get some estimate of the noise.
+        if i < 2:
+          results.append(Result(example, 'alloc', latest_alloc))
         results.append(Result(example, 'time_rel', latest_time / baseline_time))
     return results
 
