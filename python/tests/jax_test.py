@@ -228,6 +228,8 @@ class JAX2DexTest(unittest.TestCase):
   test_integer_pow = lax_test(lambda x: lax.integer_pow(x, 2), lambda: (rn(10, 10),))
   test_scalar_select_lt = lax_test(lambda i, x, y: lax.select(i < 2.0, x, y),
                                    lambda: (1.0, rn(10), rn(10)))
+  test_array_select_lt = lax_test(lambda i, x, y: lax.select(i < 0.0, x, y),
+                                  lambda: (rn(10), rn(10), rn(10)))
 
   test_squeeze_none = lax_test(lambda x: lax.squeeze(x, [ ]), lambda: (rn(10, 10),))
   test_squeeze_one = lax_test(lambda x: lax.squeeze(x, [1]), lambda: (rn(10, 1, 10),))
