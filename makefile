@@ -170,8 +170,8 @@ build-prof: dexrt-llvm
 
 # For some reason stack fails to detect modifications to foreign library files
 build-ffis: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --force-dirty --flag dex:foreign
-	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --local-install-root))
+	$(STACK) build $(STACK_FLAGS) --work-dir .stack-work-ffis --force-dirty --flag dex:foreign --flag dex:optimized
+	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --work-dir .stack-work-ffis --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
