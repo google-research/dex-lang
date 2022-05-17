@@ -11,6 +11,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax.experimental import enable_x64
 
 import dex
 from dex.interop.jax import primitive, dexjit
@@ -254,6 +255,13 @@ class JAX2DexTest(unittest.TestCase):
     jy = jax.jit(f)(x)
     np.testing.assert_allclose(dy, jy)
     self.assertEqual(dy.dtype, jy.dtype)
+
+  def test_64_bit(self):
+    def f(x):
+      return x * x + 4.0
+    x = np.float64(2.0)
+    with enable_x64():
+      np.testing.assert_allclose(dexjit(f)(x), 8.0)
 
 
 def check_broadcasting_pointwise(prim, full=False):
