@@ -428,10 +428,16 @@ expr_makers[lax.integer_pow_p] = _integer_pow_lowering
 def _select_lowering(ctx, c, *args):
   if len(args) != 2:
     raise NotImplementedError()
-  if ctx.avals_in[0].shape:
-    raise NotImplementedError()
   x, y = args
-  return App(Var('select'), c, y, x)
+  out_aval, = ctx.avals_out
+  if ctx.avals_in[0].shape:
+    idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
+                                for sz in out_aval.shape)
+    idx_vars = tuple(Var(ix) for ix in idx_names)
+    return For(tuple(idx_names), tuple(idx_tys),
+               App(Var('select'), Idx(c, idx_vars), Idx(y, idx_vars), Idx(x, idx_vars)))
+  else:
+    return App(Var('select'), c, y, x)
 expr_makers[lax.select_n_p] = _select_lowering
 
 def _squeeze_lowering(ctx, x, dimensions):
