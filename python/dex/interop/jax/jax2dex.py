@@ -117,11 +117,14 @@ class BinOp(Expr):
     return f'({self.lhs.pprint()} {self.operator} {self.rhs.pprint()})'
 
 @dataclass
-class App(Expr):
+class NaryApp(Expr):
   fun: Expr
-  argument: Expr
+  arguments: Sequence[Expr]
   def pprint(self) -> str:
-    return f'({self.fun.pprint()}) ({self.argument.pprint()})'
+    return ' '.join(map(lambda a: f'({a.pprint()})', it.chain((self.fun,), self.arguments)))
+
+def App(fun, *args):
+  return NaryApp(fun, args)
 
 @dataclass
 class TabApp(Expr):
@@ -364,13 +367,13 @@ def _broadcasting_binop(binop_expr: Expr, ctx, x, y):
   x_aval, y_aval = ctx.avals_in
   out_aval, = ctx.avals_out
   if not out_aval.shape:
-    return App(App(binop_expr, x), y)
+    return App(binop_expr, x, y)
   idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
                               for sz in out_aval.shape)
   x_expr = _make_bcast_expr(idx_names, out_aval.shape, x_aval.shape, x)
   y_expr = _make_bcast_expr(idx_names, out_aval.shape, y_aval.shape, y)
   out = For(tuple(idx_names), tuple(idx_tys),
-            App(App(binop_expr, x_expr), y_expr))
+            App(binop_expr, x_expr, y_expr))
   return out
 
 def _make_bcast_expr(idx_names, out_shape, in_shape, x):
@@ -381,8 +384,7 @@ def _make_bcast_expr(idx_names, out_shape, in_shape, x):
           for idx_name, out_size, in_size
           in zip(idx_names[-ndim:], out_shape[-ndim:], in_shape)]
   return Idx(x, tuple(idxs))
-unitIdx = App(App(Var('unsafe_from_ordinal'),
-              FinType(IxRepLiteral(1))), IxRepLiteral(0))
+unitIdx = App(Var('unsafe_from_ordinal'), FinType(IxRepLiteral(1)), IxRepLiteral(0))
 
 expr_makers[lax.add_p] = partial(_broadcasting_binop, Var('add'))
 expr_makers[lax.sub_p] = partial(_broadcasting_binop, Var('sub'))
@@ -404,7 +406,7 @@ def _select_lowering(ctx, c, *args):
   if ctx.avals_in[0].shape:
     raise NotImplementedError()
   x, y = args
-  return App(App(App(Var('select'), c), y), x)
+  return App(Var('select'), c, y, x)
 expr_makers[lax.select_n_p] = _select_lowering
 
 def _squeeze_lowering(ctx, x, dimensions):
