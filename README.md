@@ -21,6 +21,7 @@ or these example programs:
   * [Sierpinski triangle](https://google-research.github.io/dex-lang/examples/sierpinski.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/examples/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/examples/brownian_motion.html)
+  * [Dynamic programming (Levenshtein distance)](https://google-research.github.io/dex-lang/examples/levenshtein-distance.html)
 
 🚨 **Dex is an experimental research project at an early stage of
 development. Expect monstrous bugs and razor-sharp edges!**
