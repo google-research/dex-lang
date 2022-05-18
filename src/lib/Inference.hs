@@ -269,8 +269,8 @@ instance ExtOutMap InfOutMap EnvFrag where
   extendOutMap (InfOutMap bindings ss dd oldUn) frag =
     withExtEvidence frag do
       let newUn = UnsolvedEnv $ getAtomNames frag
-      -- as an optimization, only do the zonking for the new stuff
       let newEnv = bindings `extendOutMap` frag
+      -- As an optimization, only do the zonking for the new stuff.
       let (zonkedUn, zonkedEnv) = zonkUnsolvedEnv (sink ss) newUn newEnv
       InfOutMap zonkedEnv (sink ss) (sink dd) (sink oldUn <> zonkedUn)
 
@@ -284,15 +284,15 @@ instance SinkableE UnsolvedEnv where
 getAtomNames :: Distinct l => EnvFrag n l -> S.Set (AtomName l)
 getAtomNames frag = S.fromList $ nameSetToList $ toNameSet $ toScopeFrag frag
 
--- query each binding rhs for inference names and add it to the set if needed
 extendInfOutMapSolver :: Distinct n => InfOutMap n -> SolverSubst n -> InfOutMap n
 extendInfOutMapSolver (InfOutMap bindings ss dd un) ss' = do
-  let (un', bindings') = zonkUnsolvedEnv ss' un bindings
+  -- We won't solve any names if the solver subst extension is empty.
+  let (un', bindings') = if substIsEmpty ss' then (un, bindings) else zonkUnsolvedEnv ss' un bindings
   let ssFinal = catSolverSubsts (toScope bindings) ss ss'
   InfOutMap bindings' ssFinal dd un'
 
 substIsEmpty :: SolverSubst n -> Bool
-substIsEmpty (SolverSubst subst) = null subst
+substIsEmpty (SolverSubst subst) = M.null subst
 
 -- TODO: zonk the allowed effects and synth candidates in the bindings too
 -- TODO: the reason we need this is that `getType` uses the bindings to obtain
@@ -301,9 +301,12 @@ substIsEmpty (SolverSubst subst) = null subst
 -- `a -> b` then `getType` will crash. But we control the inference-specific
 -- implementation of `emitDecl`, so maybe we could instead do something like
 -- emit a fresh inference variable in the case thea `getType` fails.
+-- XXX: It might be tempting to add a check for empty solver substs here,
+-- but please don't do that! We use this function to filter overestimates of
+-- UnsolvedEnv, and for performance reasons we should do that even when the
+-- SolverSubst is empty.
 zonkUnsolvedEnv :: Distinct n => SolverSubst n -> UnsolvedEnv n -> Env n
                 -> (UnsolvedEnv n, Env n)
-zonkUnsolvedEnv ss un env | substIsEmpty ss = (un, env)
 zonkUnsolvedEnv ss unsolved env =
   flip runState env $ execWriterT do
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
