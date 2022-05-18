@@ -29,7 +29,11 @@ exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
 prepareFunctionForExport :: (EnvReader m, Fallible1 m) => Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
-prepareFunctionForExport f = do
+prepareFunctionForExport f = liftExcept =<< liftEnvReaderT (prepareFunctionForExport' f)
+{-# INLINE prepareFunctionForExport #-}
+
+prepareFunctionForExport' :: Atom n -> EnvReaderT Except n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport' f = do
   naryPi <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
     Just npi -> return npi

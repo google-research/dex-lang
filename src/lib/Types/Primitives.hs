@@ -144,6 +144,7 @@ data PrimOp e =
       | OutputStreamPtr
       | ProjMethod e Int  -- project a method from the dict
       | ExplicitApply e e
+      | MonoLiteral e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')

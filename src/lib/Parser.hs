@@ -1464,6 +1464,7 @@ builtinNames = M.fromList
   , ("projMethod2", OpExpr $ ProjMethod () 2)
   , ("explicitDict", ConExpr $ ExplicitDict () ())
   , ("explicitApply", OpExpr $ ExplicitApply () ())
+  , ("monoLit", OpExpr $ MonoLiteral ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()

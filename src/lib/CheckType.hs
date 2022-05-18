@@ -739,6 +739,7 @@ typeCheckPrimOp op = case op of
     methodTy <- getMethodType className i
     dropSubst $ checkApp methodTy params
   ExplicitApply _ _ -> error "shouldn't appear after inference"
+  MonoLiteral _ -> error "should't appear after inference"
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

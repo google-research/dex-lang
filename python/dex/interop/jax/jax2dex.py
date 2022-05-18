@@ -37,16 +37,17 @@ class Type:
 class Expr:
   pass
 
+i32 = np.dtype('int32')
+f32 = np.dtype('float32')
+f64 = np.dtype('float64')
 _dtypes = {
-  np.dtype('float32'): 'Float32',
-  np.dtype('float64'): 'Float64',
-  np.dtype('int32'): 'Int32',
+  f32: 'Float32',
+  f64: 'Float64',
+  i32: 'Int32',
   np.dtype('bool'): 'Bool',
 }
 
-_io_dtypes = {
-  np.dtype('float32'), np.dtype('float64'), np.dtype('int32'),
-}
+_io_dtypes = {f32, f64, i32}
 
 @dataclass
 class EType(Type):
@@ -62,7 +63,7 @@ class FinTabType(Type):
   size: int  # TODO Expr
   ty: Type
   def pprint(self) -> str:
-    return f'((Fin {self.size})=>{self.ty.pprint()})'
+    return f'((Fin (%monoLit {self.size}))=>{self.ty.pprint()})'
 
 @dataclass
 class FinType(Type):
@@ -80,14 +81,30 @@ class PairType(Type):
 @dataclass
 class Literal(Expr):
   val: Any
+  dtype: np.dtype
   def pprint(self) -> str:
-    return f'{self.val}'
+    if self.dtype == f32:
+      return f'{self.val:f}'
+    elif self.dtype == f64:
+      return f'(f_to_f64 {self.val:f})'
+    elif self.dtype == i32:
+      return f'(%monoLit {self.val})'
+    elif self.dtype == i64:
+      return f'{self.val}'
+    else:
+      raise NotImplementedError(f"Unsupported literal dtype: {dtype}")
+
+@dataclass
+class Prim(Expr):
+  name: str
+  def pprint(self) -> str:
+    return f'%{self.name}'
 
 @dataclass
 class Var(Expr):
   name: str
   def pprint(self) -> str:
-    return f'{self.name}'
+    return self.name
 
 @dataclass
 class Tuple(Expr):
@@ -112,11 +129,20 @@ class BinOp(Expr):
     return f'({self.lhs.pprint()} {self.operator} {self.rhs.pprint()})'
 
 @dataclass
-class App(Expr):
+class NaryApp(Expr):
   fun: Expr
-  argument: Expr
+  arguments: Sequence[Expr]
   def pprint(self) -> str:
-    return f'({self.fun.pprint()}) ({self.argument.pprint()})'
+    assert self.arguments
+    arg_strs = ' '.join(map(lambda a: f'({a.pprint()})', self.arguments))
+    if isinstance(self.fun, (Prim, Var)):
+      fun_str = self.fun.pprint()
+    else:
+      fun_str = f'({self.fun.pprint()})'
+    return f'{fun_str} {arg_strs}'
+
+def App(fun, *args):
+  return NaryApp(fun, args)
 
 @dataclass
 class TabApp(Expr):
@@ -262,7 +288,7 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
 
   def read(x: core.Atom) -> Expr:
     if type(x) is core.Literal:
-      return Literal(x.val)
+      return Literal(x.val, core.get_aval(x.val).dtype)
     else:
       return env[x]
 
@@ -337,32 +363,42 @@ class LoweringRuleContext:
 
 from jax._src.lax import lax
 
+# TODO: Use primitives to speed-up compile times!
 expr_makers[lax.neg_p] = lambda ctx, x: App(Var('neg'), x)
 expr_makers[lax.sin_p] = lambda ctx, x: App(Var('sin'), x)
 expr_makers[lax.cos_p] = lambda ctx, x: App(Var('cos'), x)
 expr_makers[lax.log_p] = lambda ctx, x: App(Var('log'), x)
 expr_makers[lax.exp_p] = lambda ctx, x: App(Var('exp'), x)
 
+IX_REP_DTYPE = np.dtype('int32')
+def IxRepLiteral(n): return Literal(n, IX_REP_DTYPE)
+
 def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   idx_names = [ctx.fresh('i') for _ in range(len(shape))]
   dyn = iter(dyn_shape)
-  tys = [FinType(next(dyn) if d is None else Literal(d)) for d in shape]
+  tys = [FinType(next(dyn) if d is None else IxRepLiteral(d)) for d in shape]
   idxs = [Var(idx_names[i]) for i in broadcast_dimensions]
   x_indexed = Idx(x, tuple(idxs)) if idxs else x
   return For(tuple(idx_names), tuple(tys), x_indexed)
 expr_makers[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
-def _broadcasting_binop(binop_expr: Expr, ctx, x, y):
+def _broadcasting_binop(ibinop_expr: Expr, fbinop_expr: Expr, ctx, x, y):
   x_aval, y_aval = ctx.avals_in
   out_aval, = ctx.avals_out
+  if np.issubdtype(x_aval.dtype, np.integer):
+    binop_expr = ibinop_expr
+  else:
+    binop_expr = fbinop_expr
+  if binop_expr is None:
+    raise NotImplementedError()
   if not out_aval.shape:
-    return App(App(binop_expr, x), y)
-  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
+    return App(binop_expr, x, y)
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
                               for sz in out_aval.shape)
   x_expr = _make_bcast_expr(idx_names, out_aval.shape, x_aval.shape, x)
   y_expr = _make_bcast_expr(idx_names, out_aval.shape, y_aval.shape, y)
   out = For(tuple(idx_names), tuple(idx_tys),
-            App(App(binop_expr, x_expr), y_expr))
+            App(binop_expr, x_expr, y_expr))
   return out
 
 def _make_bcast_expr(idx_names, out_shape, in_shape, x):
@@ -373,15 +409,15 @@ def _make_bcast_expr(idx_names, out_shape, in_shape, x):
           for idx_name, out_size, in_size
           in zip(idx_names[-ndim:], out_shape[-ndim:], in_shape)]
   return Idx(x, tuple(idxs))
-unitIdx = App(App(Var('unsafe_from_ordinal'), FinType(Literal(1))), Literal(0))
+unitIdx = App(Var('unsafe_from_ordinal'), FinType(IxRepLiteral(1)), IxRepLiteral(0))
 
-expr_makers[lax.add_p] = partial(_broadcasting_binop, Var('add'))
-expr_makers[lax.sub_p] = partial(_broadcasting_binop, Var('sub'))
-expr_makers[lax.mul_p] = partial(_broadcasting_binop, Var('mul'))
-expr_makers[lax.div_p] = partial(_broadcasting_binop, Var('divide'))
-expr_makers[lax.max_p] = partial(_broadcasting_binop, Var('max'))
-expr_makers[lax.pow_p] = partial(_broadcasting_binop, Var('pow'))
-expr_makers[lax.lt_p] = partial(_broadcasting_binop,  Var('(<)'))
+expr_makers[lax.add_p] = partial(_broadcasting_binop, Prim('iadd'), Prim('fadd'))
+expr_makers[lax.sub_p] = partial(_broadcasting_binop, Prim('isub'), Prim('fsub'))
+expr_makers[lax.mul_p] = partial(_broadcasting_binop, Prim('imul'), Prim('fmul'))
+expr_makers[lax.div_p] = partial(_broadcasting_binop, Prim('idiv'), Prim('fdiv'))
+expr_makers[lax.max_p] = partial(_broadcasting_binop, Var('max'), Var('max'))
+expr_makers[lax.pow_p] = partial(_broadcasting_binop, None, Prim('fpow'))
+expr_makers[lax.lt_p] = partial(_broadcasting_binop,  Var('(<)'), Var('(<)'))
 
 def _integer_pow_lowering(ctx, x, y):
   if y == 2:
@@ -392,10 +428,16 @@ expr_makers[lax.integer_pow_p] = _integer_pow_lowering
 def _select_lowering(ctx, c, *args):
   if len(args) != 2:
     raise NotImplementedError()
-  if ctx.avals_in[0].shape:
-    raise NotImplementedError()
   x, y = args
-  return App(App(App(Var('select'), c), y), x)
+  out_aval, = ctx.avals_out
+  if ctx.avals_in[0].shape:
+    idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
+                                for sz in out_aval.shape)
+    idx_vars = tuple(Var(ix) for ix in idx_names)
+    return For(tuple(idx_names), tuple(idx_tys),
+               App(Var('select'), Idx(c, idx_vars), Idx(y, idx_vars), Idx(x, idx_vars)))
+  else:
+    return App(Var('select'), c, y, x)
 expr_makers[lax.select_n_p] = _select_lowering
 
 def _squeeze_lowering(ctx, x, dimensions):
@@ -403,7 +445,7 @@ def _squeeze_lowering(ctx, x, dimensions):
   out_aval, = ctx.avals_out
   if not out_aval.shape:
     return Idx(x, (unitIdx,))
-  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
                               for sz in out_aval.shape)
   idx_name = iter(idx_names)
   idxs = [unitIdx if dim in dimensions else Var(next(idx_name))
@@ -417,11 +459,11 @@ def _slice_lowering(ctx, x, start_indices, limit_indices, strides):
   in_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   assert len(start_indices) == len(limit_indices) == in_aval.ndim == out_aval.ndim
-  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(Literal(sz)))
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
                               for sz in out_aval.shape)
   input_ixs = [Var(ix) if in_size == out_size else
-               App(App(Var('unsafe_from_ordinal'), FinType(Literal(in_size))),
-                   BinOp(Literal(start), '+', App(Var('ordinal'), Var(ix))))
+               App(App(Var('unsafe_from_ordinal'), FinType(IxRepLiteral(in_size))),
+                   BinOp(IxRepLiteral(start), '+', App(Var('ordinal'), Var(ix))))
                for ix, in_size, out_size, start
                in zip(idx_names, in_aval.shape, out_aval.shape, start_indices)]
   return For(tuple(idx_names), tuple(idx_tys), Idx(x, tuple(input_ixs)))
@@ -456,8 +498,8 @@ def _concatenate_lowering(ctx, *xs, dimension):
     xs_v = ctx.fresh('xs')
     return Block([
         Decl(xs_v, Table(tuple(xs)))
-      ], App(App(Var('unsafe_cast_table'), FinType(Literal(dim_size * len(xs)))),
-              For((i,), (PairType(FinType(Literal(len(xs))), FinType(Literal(dim_size))),),
+      ], App(App(Var('unsafe_cast_table'), FinType(IxRepLiteral(dim_size * len(xs)))),
+              For((i,), (PairType(FinType(IxRepLiteral(len(xs))), FinType(IxRepLiteral(dim_size))),),
                   TabApp(TabApp(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
   # Irregular concatenation
   # TODO: Generate specialized code
@@ -465,5 +507,5 @@ def _concatenate_lowering(ctx, *xs, dimension):
   return Block([
         Decl(ConPattern('AsList', (None, xs_v)),
              App(Var('concat'), Table(tuple(App(Var('to_list'), x) for x in xs)))),
-      ], App(App(Var('unsafe_cast_table'), FinType(Literal(out_aval.shape[0]))), Var(xs_v)))
+      ], App(App(Var('unsafe_cast_table'), FinType(IxRepLiteral(out_aval.shape[0]))), Var(xs_v)))
 expr_makers[lax.concatenate_p] = _concatenate_lowering

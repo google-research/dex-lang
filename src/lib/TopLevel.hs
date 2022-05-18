@@ -28,7 +28,7 @@ import qualified Data.Set        as S
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
-import System.IO (stderr, hPutStrLn)
+import System.IO (stderr, hPutStrLn, Handle)
 import System.IO.Error (isDoesNotExistError)
 
 import Paths_dex  (getDataFileName)
@@ -59,7 +59,8 @@ data EvalConfig = EvalConfig
   { backendName   :: Backend
   , libPath       :: Maybe FilePath
   , preludeFile   :: Maybe FilePath
-  , logFile       :: Maybe FilePath }
+  , logFileName   :: Maybe FilePath
+  , logFile       :: Maybe Handle }
 
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig

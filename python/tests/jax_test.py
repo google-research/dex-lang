@@ -11,6 +11,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax.experimental import enable_x64
 
 import dex
 from dex.interop.jax import primitive, dexjit
@@ -227,6 +228,8 @@ class JAX2DexTest(unittest.TestCase):
   test_integer_pow = lax_test(lambda x: lax.integer_pow(x, 2), lambda: (rn(10, 10),))
   test_scalar_select_lt = lax_test(lambda i, x, y: lax.select(i < 2.0, x, y),
                                    lambda: (1.0, rn(10), rn(10)))
+  test_array_select_lt = lax_test(lambda i, x, y: lax.select(i < 0.0, x, y),
+                                  lambda: (rn(10), rn(10), rn(10)))
 
   test_squeeze_none = lax_test(lambda x: lax.squeeze(x, [ ]), lambda: (rn(10, 10),))
   test_squeeze_one = lax_test(lambda x: lax.squeeze(x, [1]), lambda: (rn(10, 1, 10),))
@@ -254,6 +257,13 @@ class JAX2DexTest(unittest.TestCase):
     jy = jax.jit(f)(x)
     np.testing.assert_allclose(dy, jy)
     self.assertEqual(dy.dtype, jy.dtype)
+
+  def test_64_bit(self):
+    def f(x):
+      return x * x + 4.0
+    x = np.float64(2.0)
+    with enable_x64():
+      np.testing.assert_allclose(dexjit(f)(x), 8.0)
 
 
 def check_broadcasting_pointwise(prim, full=False):
