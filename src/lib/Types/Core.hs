@@ -794,12 +794,19 @@ instance GenericE DataDefParams where
   toE   (PairE (ListE xs) (ListE ys)) = DataDefParams xs ys
   {-# INLINE toE #-}
 
+-- We ignore the dictionary parameters because we assume coherence
+instance AlphaEqE DataDefParams where
+  alphaEqE (DataDefParams params _) (DataDefParams params' _) =
+    alphaEqE (ListE params) (ListE params')
+
+instance AlphaHashableE DataDefParams where
+  hashWithSaltE env salt (DataDefParams params _) =
+    hashWithSaltE env salt (ListE params)
+
 instance SinkableE           DataDefParams
 instance HoistableE          DataDefParams
 instance SubstE Name         DataDefParams
 instance SubstE AtomSubstVal DataDefParams
-instance AlphaEqE            DataDefParams
-instance AlphaHashableE      DataDefParams
 
 instance GenericE DataDef where
   type RepE DataDef = PairE (LiftE SourceName) (Abs DataDefBinders (ListE DataConDef))
