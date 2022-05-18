@@ -12,6 +12,7 @@ module QueryType (
   isSingletonType, singletonTypeVal,
   ) where
 
+import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -62,7 +63,7 @@ caseAltsBinderTys :: (Fallible1 m, EnvReader m)
 caseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    cons <- applyDataDefParams def params
+    cons <- instantiateDataDef def params
     return [bs | DataConDef _ bs <- cons]
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
@@ -121,9 +122,9 @@ getMethodIndex className methodSourceName = do
     Just i -> return i
 {-# INLINE getMethodIndex #-}
 
-instantiateDataDef :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) params =
-  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
+instantiateDataDef :: ScopeReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
+instantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons) (DataDefParams xs1 xs2) = do
+  fromListE <$> applyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (map SubstVal $ xs1 <> xs2)
 {-# INLINE instantiateDataDef #-}
 
 instantiateDepPairTy :: ScopeReader m => DepPairType n -> Atom n -> m n (Type n)
@@ -299,7 +300,7 @@ instance HasType Atom where
     DataCon _ defName params _ _ -> do
       defName' <- substM defName
       (DataDef sourceName _ _) <- lookupDataDef defName'
-      params' <- traverse substM params
+      params' <- substM params
       return $ TypeCon sourceName defName' params'
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
@@ -314,7 +315,7 @@ instance HasType Atom where
     DataConRef defName params _ -> do
       defName' <- substM defName
       DataDef sourceName _ _ <- lookupDataDef defName'
-      params' <- traverse substM params
+      params' <- substM params
       return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef _ _ ty -> do
       ty' <- substM ty
@@ -335,7 +336,7 @@ instance HasType Atom where
             (Var v') -> return v'
             _ -> error "!??"
           def <- lookupDataDef defName
-          [DataConDef _ (Abs bs' UnitE)] <- applyDataDefParams def params
+          [DataConDef _ (Abs bs' UnitE)] <- instantiateDataDef def params
           PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
           -- `ty` can depend on earlier binders from this constructor. Rewrite
           -- it to also use projections.
@@ -412,10 +413,6 @@ getTypePrimCon con = case con of
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
-
-applyDataDefParams :: (EnvReader m) => DataDef n -> [Type n] -> m n [DataConDef n]
-applyDataDefParams (DataDef _ bs cons) params =
-  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
 
 dictExprType :: DictExpr i -> TypeQueryM i o (DictType o)
 dictExprType e = case e of

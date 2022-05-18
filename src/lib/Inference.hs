@@ -64,11 +64,11 @@ data UDeclInferenceResult e n =
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  PairE def' clsAbs <- liftInfererM $ solveLocal $ inferDataDef def
+  def' <- liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
-  tc' <- emitTyConName defName =<< tyConDefAsAtom defName (Just clsAbs)
+  tc' <- emitTyConName defName =<< tyConDefAsAtom defName
   dcs' <- forM [0..(nestLength dcs - 1)] \i ->
-    emitDataConName defName i =<< dataConDefAsAtom defName clsAbs i
+    emitDataConName defName i =<< dataConDefAsAtom defName i
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applySubst subst result
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
@@ -1274,18 +1274,6 @@ checkMaybeAnnExpr ty expr = confuseGHC >>= \_ -> case ty of
   Nothing -> inferSigma expr
   Just ty' -> checkSigma expr =<< zonk =<< checkUType ty'
 
-tyConDefAsAtom :: EnvReader m => DataDefName n -> Maybe (DataIfaceReq n) -> m n (Atom n)
-tyConDefAsAtom defName maybeIfaceReq = liftBuilder do
-  DataDef sourceName params _ <- lookupDataDef =<< sinkM defName
-  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow params) \params' -> do
-    EmptyAbs clsBs' <- case maybeIfaceReq of
-      Just clsAbs -> sinkM clsAbs >>= (`applyNaryAbs` params')
-      Nothing     -> return $ EmptyAbs Empty
-    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow clsBs') \_ -> do
-      ListE params'' <- sinkM $ ListE params'
-      defName'' <- sinkM defName
-      return $ TypeCon sourceName defName'' $ Var <$> params''
-
 dictTypeFun :: EnvReader m => ClassName n -> m n (Atom n)
 dictTypeFun v = do
   -- TODO: we should cache this in the ClassDef
@@ -1317,43 +1305,46 @@ instanceFun instanceName = do
         let restAtom = go rest name args
         Lam $ LamExpr (LamBinder b ty arr Pure) (AtomicBlock restAtom)
 
-dataConDefAsAtom :: EnvReader m => DataDefName n -> DataIfaceReq n -> Int -> m n (Atom n)
-dataConDefAsAtom defName ifaceReq conIx = liftBuilder do
-  DataDef _ tyParams conDefs <- lookupDataDef =<< sinkM defName
-  let conDef = conDefs !! conIx
-  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ImplicitArrow tyParams) \tyArgs' -> do
-    EmptyAbs clsParams' <- sinkM ifaceReq >>= (`applyNaryAbs` tyArgs')
-    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow clsParams') \_ -> do
-      ab'' <- sinkM $ Abs tyParams conDef
-      ListE tyArgs'' <- sinkM $ ListE tyArgs'
-      DataConDef conName (EmptyAbs conParams'') <- applyNaryAbs ab'' tyArgs''
-      buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conParams'') \conArgs''' -> do
-        ListE tyArgs''' <- sinkM $ ListE tyArgs'
-        defName''' <- sinkM defName
-        return $ DataCon conName defName''' (Var <$> tyArgs''') conIx (Var <$> conArgs''')
+buildTyConLam
+  :: ScopableBuilder m
+  => DataDefName n
+  -> Arrow
+  -> (forall l. DExt n l => SourceName -> DataDefParams l -> m l (Atom l))
+  -> m n (Atom n)
+buildTyConLam defName arr cont = do
+  DataDef sourceName (DataDefBinders paramBs classBs) _ <- lookupDataDef =<< sinkM defName
+  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest arr paramBs) \params -> do
+    Abs classBs' UnitE <- applySubst (paramBs @@> params) $ Abs classBs UnitE
+    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow classBs') \dicts -> do
+      params' <- mapM sinkM params
+      cont sourceName $ DataDefParams (Var <$> params') (Var <$> dicts)
+
+tyConDefAsAtom :: EnvReader m => DataDefName n -> m n (Atom n)
+tyConDefAsAtom defName = liftBuilder do
+  buildTyConLam defName PlainArrow \sourceName params ->
+    return $ TypeCon sourceName (sink defName) params
+
+dataConDefAsAtom :: EnvReader m => DataDefName n -> Int -> m n (Atom n)
+dataConDefAsAtom defName conIx = liftBuilder do
+  buildTyConLam defName ImplicitArrow \_ params -> do
+    def <- lookupDataDef (sink defName)
+    conDefs <- instantiateDataDef def params
+    DataConDef conName (EmptyAbs conArgBinders) <- return $ conDefs !! conIx
+    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conArgBinders) \conArgs ->
+      return $ DataCon conName (sink defName) (sink params) conIx (Var <$> conArgs)
 
 binderNestAsPiNest :: Arrow -> Nest Binder n l -> Nest PiBinder n l
 binderNestAsPiNest arr = \case
   Empty             -> Empty
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
-type DataIfaceReq =
-  Abs (Nest Binder)  -- Type parameters
-    (EmptyAbs (Nest Binder))  -- Interface binders
-
-inferDataDef :: EmitsInf o => UDataDef i -> InfererM i o (PairE DataDef DataIfaceReq o)
+inferDataDef :: EmitsInf o => UDataDef i -> InfererM i o (DataDef o)
 inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
-  Abs paramBs' (PairE clsBs' (ListE dataCons')) <-
+  Abs paramBs' (Abs clsBs' (ListE dataCons')) <-
     withNestedUBinders paramBs id \_ -> do
-      -- TODO: Don't masquerade as a class lambda
-      Abs clsBs' dataCons'' <-
-        withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ -> do
-          dataCons' <- mapM inferDataCon dataCons
-          return $ ListE dataCons'
-      case hoist clsBs' dataCons'' of
-        HoistFailure _ -> throw NotImplementedErr $ "Non-phantom type constraints in data?"
-        HoistSuccess dataCons' -> return (PairE (EmptyAbs clsBs') dataCons')
-  return $ PairE (DataDef tyConName paramBs' dataCons') (Abs paramBs' clsBs')
+      withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ ->
+        ListE <$> mapM inferDataCon dataCons
+  return $ DataDef tyConName (DataDefBinders paramBs' clsBs') dataCons'
 
 inferDataCon :: EmitsInf o
              => (SourceName, UDataDefTrail i) -> InfererM i o (DataConDef o)
@@ -1614,14 +1605,23 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
       bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e)
-            => Abs (Nest Binder) e o -> InfererM i o ([Type o], e o)
-inferParams (Abs Empty body) = return ([], body)
-inferParams (Abs (Nest (b:>ty) bs) body) = do
-  x <- freshInferenceName ty
-  rest <- applyAbs (Abs b (Abs bs body)) x
-  (xs, body') <- inferParams rest
-  return (Var x : xs, body')
+inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
+            => Abs DataDefBinders e o -> InfererM i o (DataDefParams o, e o)
+inferParams (Abs (DataDefBinders paramBs classBs) body) = case paramBs of
+  Empty -> do
+    case classBs of
+      Empty -> return (DataDefParams [] [], body)
+      Nest (b:>ty) bs -> do
+        ctx <- srcPosCtx <$> getErrCtx
+        let d = Con $ DictHole (AlwaysEqual ctx) ty
+        rest <- applySubst (b@>SubstVal d) $ Abs (DataDefBinders Empty bs) body
+        (DataDefParams params dicts, body') <- inferParams rest
+        return (DataDefParams params (d:dicts), body')
+  Nest (b:>ty) bs -> do
+    x <- freshInferenceName ty
+    rest <- applySubst (b@>x) $ Abs (DataDefBinders bs classBs) body
+    (DataDefParams params dicts, body') <- inferParams rest
+    return (DataDefParams (Var x : params) dicts, body')
 
 bindLamPats :: EmitsBoth o
             => Nest UPat i i' -> [AtomName o] -> InfererM i' o a -> InfererM i o a
@@ -2139,7 +2139,7 @@ instance Unifiable Atom where
       (TabPi piTy, TabPi piTy') -> unifyTabPiType piTy piTy'
       (RecordTy els, RecordTy els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
       (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
-      (TypeCon _ c xs, TypeCon _ c' xs') -> guard (c == c') >> zipWithM_ unify xs xs'
+      (TypeCon _ c params, TypeCon _ c' params') -> guard (c == c') >> unify params params'
       (TC con, TC con') -> do
         guard $ sameConstructor con con'
         -- TODO: Optimize this!
@@ -2158,6 +2158,9 @@ instance Unifiable DictType where
 instance Unifiable IxType where
   -- We ignore the dictionaries because we assume coherence
   unifyZonked (IxType t _) (IxType t' _) = unifyZonked t t'
+
+instance Unifiable DataDefParams where
+  unifyZonked (DataDefParams xs _) (DataDefParams xs' _) = zipWithM_ unify xs xs'
 
 instance Unifiable (EffectRowP AtomName) where
   unifyZonked x1 x2 =

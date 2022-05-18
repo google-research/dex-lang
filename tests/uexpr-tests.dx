@@ -312,7 +312,6 @@ def bug (n : Type) : Unit =
 >   v#0:n = todo n
 >   w:n = v#0
 >   v#1:((v#0..) => Unit) = for i:(v#0..). ()
->   v#2:(Ix (v#0..)) = synthesize (Ix (v#0..))
 >  v#1
 > Of type: ((v#0..) => Unit)
 > With effects: {}

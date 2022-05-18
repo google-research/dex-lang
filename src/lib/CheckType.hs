@@ -7,7 +7,7 @@
 module CheckType (
   CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM,
-  checkExtends, checkedApplyDataDefParams, checkedApplyClassParams,
+  checkExtends, checkedApplyClassParams,
   tryGetType,
   checkUnOp, checkBinOp,
   isData, asFirstOrderFunction, asFFIFunType,
@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as M
 import LabeledItems
 
 import Err
-import Util (forMZipped, forMZipped_, iota)
+import Util (forMZipped_, iota)
 import QueryType hiding (HasType)
 
 import CheapReduction
@@ -234,17 +234,17 @@ instance HasType Atom where
     Eff eff  -> checkE eff $> EffKind
     DataCon _ defName params conIx args -> do
       defName' <- substM defName
-      (DataDef sourceName tyParamNest' absCons') <- lookupDataDef defName'
-      params' <- traverse checkE params
-      ListE cons' <- checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
+      def@(DataDef sourceName _ _) <- lookupDataDef defName'
+      params' <- checkE params
+      cons' <- checkedInstantiateDataDef def params'
       let DataConDef _ conParamAbs' = cons' !! conIx
       args'   <- traverse checkE args
       void $ checkedApplyNaryAbs conParamAbs' args'
       return $ TypeCon sourceName defName' params'
     TypeCon _ defName params -> do
-      DataDef _ tyParamNest' absCons' <- lookupDataDef =<< substM defName
-      params' <- traverse checkE params
-      void $ checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
+      def <- lookupDataDef =<< substM defName
+      params' <- checkE params
+      void $ checkedInstantiateDataDef def params'
       return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ className params) -> do
@@ -273,11 +273,10 @@ instance HasType Atom where
     ACase e alts resultTy -> checkCase e alts resultTy Pure
     DataConRef defName params args -> do
       defName' <- substM defName
-      DataDef sourceName paramBs [DataConDef _ argBs] <- lookupDataDef defName'
-      paramTys <- nonDepBinderNestTypes paramBs
-      params' <- forMZipped paramTys params checkTypeE
-      argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
-      checkDataConRefEnv argBs' args
+      def@(DataDef sourceName _ _) <- lookupDataDef defName'
+      params' <- checkE params
+      [DataConDef _ argBs] <- checkedInstantiateDataDef def params'
+      checkDataConRefEnv argBs args
       return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef l (Abs b r) ty -> do
       ty' <- checkTypeE TyKind ty
@@ -304,7 +303,7 @@ instance HasType Atom where
         TypeCon _ defName params -> do
           v' <- substM v
           def <- lookupDataDef defName
-          [DataConDef _ (Abs bs' UnitE)] <- checkedApplyDataDefParams def params
+          [DataConDef _ (Abs bs' UnitE)] <- checkedInstantiateDataDef def params
           PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
           -- `ty` can depend on earlier binders from this constructor. Rewrite
           -- it to also use projections.
@@ -396,6 +395,9 @@ instance HasType TabLamExpr where
     checkB b \b' -> do
       bodyTy <- getTypeE body
       return $ TabTy b' bodyTy
+
+instance CheckableE DataDefParams where
+  checkE = substM -- TODO
 
 dictExprType :: Typer m => DictExpr i -> m i o (DictType o)
 dictExprType e = case e of
@@ -719,7 +721,7 @@ typeCheckPrimOp op = case op of
     x |: Word8Ty
     t' <- checkTypeE TyKind t
     case t' of
-      TypeCon _ dataDefName [] -> do
+      TypeCon _ dataDefName (DataDefParams [] []) -> do
         DataDef _ _ dataConDefs <- lookupDataDef dataDefName
         forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
       VariantTy _ -> return ()  -- TODO: check empty payload
@@ -830,13 +832,6 @@ checkEmptyNest :: Fallible m => Nest b n l -> m ()
 checkEmptyNest Empty = return ()
 checkEmptyNest _  = throw TypeErr "Not empty"
 
-nonDepBinderNestTypes :: Typer m => Nest Binder o o' -> m i o [Type o]
-nonDepBinderNestTypes Empty = return []
-nonDepBinderNestTypes (Nest (b:>ty) rest) = do
-  Abs rest' UnitE <- liftHoistExcept $ hoist b $ Abs rest UnitE
-  restTys <- nonDepBinderNestTypes rest'
-  return $ ty : restTys
-
 checkCase :: Typer m => HasType body
           => Atom i -> [AltP body i] -> Type i -> EffectRow i -> m i o (Type o)
 checkCase scrut alts resultTy effs = do
@@ -853,7 +848,7 @@ checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m)
 checkCaseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    cons <- checkedApplyDataDefParams def params
+    cons <- checkedInstantiateDataDef def params
     return [bs | DataConDef _ bs <- cons]
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
@@ -1072,9 +1067,12 @@ checkUnOp op x = do
 
 -- === various helpers for querying types ===
 
-checkedApplyDataDefParams :: (EnvReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
-checkedApplyDataDefParams (DataDef _ bs cons) params =
-  fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) params
+checkedInstantiateDataDef
+  :: (EnvReader m, Fallible1 m)
+  => DataDef n -> DataDefParams n -> m n [DataConDef n]
+checkedInstantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons)
+                          (DataDefParams xs1 xs2) = do
+  fromListE <$> checkedApplyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n] -> m n ([Type n], [MethodType n])
@@ -1257,7 +1255,7 @@ checkDataLike ty = case ty of
     recur l
     substBinders b \_ -> checkDataLike r
   TypeCon _ defName params -> do
-    params' <- mapM substM params
+    params' <- substM params
     def <- lookupDataDef =<< substM defName
     dataCons <- instantiateDataDef def params'
     dropSubst $ forM_ dataCons \(DataConDef _ bs) ->

@@ -57,8 +57,8 @@ data Atom (n::S) =
  | DepPairTy (DepPairType n)
  | DepPair   (Atom n) (Atom n) (DepPairType n)
    -- SourceName is purely for printing
- | DataCon SourceName (DataDefName n) [Atom n] Int [Atom n]
- | TypeCon SourceName (DataDefName n) [Atom n]
+ | DataCon SourceName (DataDefName n) (DataDefParams n) Int [Atom n]
+ | TypeCon SourceName (DataDefName n) (DataDefParams n)
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
  | IxTy    (IxType n)
@@ -73,7 +73,7 @@ data Atom (n::S) =
    -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
- | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
+ | DataConRef (DataDefName n) (DataDefParams n) (EmptyAbs (Nest DataConRefBinding) n)
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
  | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
  | BoxedRef [(Atom n, Block n)]        -- ptrptrs/sizes
@@ -136,12 +136,21 @@ data FieldRowElem (n::S)
 data DataDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Env
-  DataDef :: SourceName -> Nest Binder n l -> [DataConDef l] -> DataDef n
+  DataDef :: SourceName -> DataDefBinders n l -> [DataConDef l] -> DataDef n
 
 -- As above, the `SourceName` is just for pretty-printing
 data DataConDef n =
   DataConDef SourceName (EmptyAbs (Nest Binder) n)
   deriving (Show, Generic)
+
+data DataDefBinders n l where
+  DataDefBinders
+    :: Nest Binder n h  -- ordinary params
+    -> Nest Binder h l  -- dict params
+    -> DataDefBinders n l
+
+data DataDefParams n = DataDefParams [Atom n] [Atom n]  -- ordinary params, dict params
+                       deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
 -- block). It's given by querying the result expression's type, and checking
@@ -760,12 +769,45 @@ instance ProvesExt  EffectBinder
 instance BindsNames EffectBinder
 instance SubstB Name EffectBinder
 
-instance GenericE DataDef where
-  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest Binder) (ListE DataConDef))
-  fromE (DataDef name bs cons) = PairE (LiftE name) (Abs bs (ListE cons))
+instance GenericB DataDefBinders where
+  type RepB DataDefBinders = PairB (Nest Binder) (Nest Binder)
+  fromB (DataDefBinders bs1 bs2) = PairB bs1 bs2
+  {-# INLINE fromB #-}
+  toB   (PairB bs1 bs2) = DataDefBinders bs1 bs2
+  {-# INLINE toB #-}
+
+instance SinkableB   DataDefBinders
+instance HoistableB  DataDefBinders
+instance ProvesExt   DataDefBinders
+instance BindsNames  DataDefBinders
+instance SubstB Name DataDefBinders
+instance SubstB AtomSubstVal DataDefBinders
+instance AlphaHashableB DataDefBinders
+instance AlphaEqB       DataDefBinders
+deriving instance Show (DataDefBinders n l)
+deriving via WrapB DataDefBinders n l instance Generic (DataDefBinders n l)
+
+instance GenericE DataDefParams where
+  type RepE DataDefParams = PairE (ListE Atom) (ListE Atom)
+  fromE (DataDefParams xs ys) = PairE (ListE xs) (ListE ys)
   {-# INLINE fromE #-}
-  toE   (PairE (LiftE name) (Abs bs (ListE cons))) = DataDef name bs cons
+  toE   (PairE (ListE xs) (ListE ys)) = DataDefParams xs ys
   {-# INLINE toE #-}
+
+instance SinkableE           DataDefParams
+instance HoistableE          DataDefParams
+instance SubstE Name         DataDefParams
+instance SubstE AtomSubstVal DataDefParams
+instance AlphaEqE            DataDefParams
+instance AlphaHashableE      DataDefParams
+
+instance GenericE DataDef where
+  type RepE DataDef = PairE (LiftE SourceName) (Abs DataDefBinders (ListE DataConDef))
+  fromE (DataDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs (ListE cons))
+  {-# INLINE fromE #-}
+  toE   (PairE (LiftE sourceName) (Abs bs (ListE cons))) = DataDef sourceName bs cons
+  {-# INLINE toE #-}
+
 deriving instance Show (DataDef n)
 deriving via WrapE DataDef n instance Generic (DataDef n)
 instance SinkableE DataDef
@@ -883,9 +925,9 @@ instance GenericE Atom where
   {- DepPair -}    ( Atom `PairE` Atom `PairE` DepPairType)
   {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
                      DataDefName               `PairE`
-                     ListE Atom                `PairE`
+                     DataDefParams               `PairE`
                      ListE Atom )
-  {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` ListE Atom )
+  {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
             ) (EitherE5
@@ -903,7 +945,7 @@ instance GenericE Atom where
             ) (EitherE4
   {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
   {- DataConRef -} ( DataDefName                    `PairE`
-                     ListE Atom                     `PairE`
+                     DataDefParams                  `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
   {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType)
   {- IxTy -}       IxType)
@@ -920,10 +962,10 @@ instance GenericE Atom where
     DataCon printName defName params con args -> Case2 $ Case2 $
       LiftE (printName, con) `PairE`
             defName          `PairE`
-      ListE params           `PairE`
+            params           `PairE`
       ListE args
     TypeCon sourceName defName params -> Case2 $ Case3 $
-      LiftE sourceName `PairE` defName `PairE` ListE params
+      LiftE sourceName `PairE` defName `PairE` params
     DictCon d -> Case2 $ Case4 d
     DictTy  d -> Case2 $ Case5 d
     LabeledRow elems    -> Case3 $ Case0 $ elems
@@ -938,8 +980,7 @@ instance GenericE Atom where
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
     BoxedRef ptrsAndSizes ab ->
       Case5 $ Case0 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
-    DataConRef defName params bs ->
-      Case5 $ Case1 $ defName `PairE` ListE params `PairE` bs
+    DataConRef defName params bs -> Case5 $ Case1 $ defName `PairE` params `PairE` bs
     DepPairRef lhs rhs ty ->
       Case5 $ Case2 $ lhs `PairE` rhs `PairE` ty
     IxTy ixTy -> Case5 $ Case3 ixTy
@@ -961,10 +1002,10 @@ instance GenericE Atom where
       Case1 (l `PairE` r `PairE` ty) -> DepPair l r ty
       Case2 ( LiftE (printName, con) `PairE`
                     defName          `PairE`
-              ListE params           `PairE`
+                    params           `PairE`
               ListE args ) ->
         DataCon printName defName params con args
-      Case3 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
+      Case3 (LiftE sourceName `PairE` defName `PairE` params) ->
         TypeCon sourceName defName params
       Case4 d -> DictCon d
       Case5 d -> DictTy  d
@@ -985,8 +1026,7 @@ instance GenericE Atom where
       _ -> error "impossible"
     Case5 val -> case val of
       Case0 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
-      Case1 (defName `PairE` ListE params `PairE` bs) ->
-        DataConRef defName params bs
+      Case1 (defName `PairE` params `PairE` bs) -> DataConRef defName params bs
       Case2 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       Case3 ixTy -> IxTy ixTy
       _ -> error "impossible"
@@ -1889,6 +1929,8 @@ instance Store (DeclBinding n)
 instance Store (FieldRowElem  n)
 instance Store (FieldRowElems n)
 instance Store (Decl n l)
+instance Store (DataDefBinders n l)
+instance Store (DataDefParams n)
 instance Store (DataDef n)
 instance Store (DataConDef n)
 instance Store (Block n)

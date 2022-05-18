@@ -91,7 +91,7 @@ getTableElements tab = do
 prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
 prettyVal val = case val of
   -- Pretty-print strings
-  DataCon "AsList" _ [Word8Ty] _ [_, TabVal _ _] -> do
+  DataCon "AsList" _ (DataDefParams [Word8Ty] _) _ [_, TabVal _ _] -> do
     s <- getDexString val
     return $ pretty $ "\"" ++ s ++ "\""
   -- Pretty-print tables.

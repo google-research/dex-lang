@@ -80,13 +80,14 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   DictTy  _ -> substM atom
   IxTy    _ -> substM atom
   Eff _ -> substM atom
-  TypeCon sn defName params -> do
+  TypeCon sn defName (DataDefParams params dicts) -> do
     defName' <- substM defName
-    TypeCon sn defName' <$> mapM rec params
-  DataCon printName defName params con args -> do
+    TypeCon sn defName' <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
+  DataCon printName defName (DataDefParams params dicts) con args -> do
     defName' <- substM defName
-    DataCon printName defName' <$> mapM rec params
-                               <*> pure con <*> mapM rec args
+    DataCon printName defName'
+      <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
+      <*> pure con <*> mapM rec args
   Record items -> Record <$> mapM rec items
   RecordTy _ -> substM atom
   Variant ty l con payload ->

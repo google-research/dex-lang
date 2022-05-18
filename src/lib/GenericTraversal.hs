@@ -72,9 +72,9 @@ traverseAtomDefault atom = case atom of
   Eff _   -> substM atom
   DataCon sourceName dataDefName params con args ->
     DataCon sourceName <$> substM dataDefName <*>
-      mapM tge params <*> pure con <*> mapM tge args
+      tge params <*> pure con <*> mapM tge args
   TypeCon sn dataDefName params ->
-    TypeCon sn <$> substM dataDefName <*> mapM tge params
+    TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr
   DictTy (DictType sn cn params) ->
     DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
@@ -115,6 +115,10 @@ instance GenericallyTraversableE FieldRowElems where
       StaticFields items  -> StaticFields <$> mapM tge items
       DynField  labVar ty -> DynField labVar <$> tge ty
       DynFields rowVar    -> return $ DynFields rowVar
+
+instance GenericallyTraversableE DataDefParams where
+  traverseGenericE (DataDefParams params dicts) =
+    DataDefParams <$> mapM tge params <*> mapM tge dicts
 
 instance GenericallyTraversableE IxType where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict

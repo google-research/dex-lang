@@ -203,7 +203,8 @@ instance CheaplyReducibleE Atom Atom where
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
     DataCon sourceName dataDefName params con args ->
-      DataCon sourceName <$> substM dataDefName <*> mapM cheapReduceE params <*> pure con <*> mapM cheapReduceE args
+      DataCon sourceName <$> substM dataDefName <*> cheapReduceE params
+                         <*> pure con <*> mapM cheapReduceE args
     Record items -> Record <$> mapM cheapReduceE items
     Variant ty l c p -> do
       ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
@@ -228,6 +229,11 @@ instance CheaplyReducibleE DictExpr Atom where
       cheapReduceE (App f xs) <|> justSubst
     InstanceDict _ _ -> justSubst
     where justSubst = DictCon <$> substM d
+
+instance CheaplyReducibleE DataDefParams DataDefParams where
+  cheapReduceE (DataDefParams ps ds) =
+    DataDefParams <$> mapM cheapReduceE ps
+                  <*> mapM cheapReduceE ds
 
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result

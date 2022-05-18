@@ -159,8 +159,9 @@ when using a record type as an index set:
 >  ?-> (b:Type)
 >  ?-> (c:Type)
 >  ?-> (v:Type)
->  ?-> (Ix b)
->  ?=> (Ix c) ?=> (Iso ({&} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
+>  ?-> (v#0:(Ix b))
+>  ?=> (v#1:(Ix c))
+>  ?=> (Iso ({&} & a) (b & c)) -> (_autoq:(Ix a)) ?=> (a => v) -> b => c => v)
 
 -- :p
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -184,8 +185,9 @@ when using a record type as an index set:
 >  ?-> (b:Type)
 >  ?-> (c:Type)
 >  ?-> (v:Type)
->  ?-> (Ix b)
->  ?=> (Ix c) ?=> (Iso a (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
+>  ?-> (v#0:(Ix b))
+>  ?=> (v#1:(Ix c))
+>  ?=> (Iso a (b & c)) -> (_autoq:(Ix a)) ?=> (a => v) -> b => c => v)
 
 '`overLens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.

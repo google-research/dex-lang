@@ -253,7 +253,7 @@ instance PrettyPrec (Atom n) where
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
-    TypeCon name _ params -> case params of
+    TypeCon name _ (DataDefParams params _) -> case params of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (fromString name) ->
         atPrec ArgPrec $ align $ group $
@@ -464,6 +464,12 @@ instance Pretty (Module n) where
 
 instance Pretty (ObjectFiles n) where
   pretty (ObjectFiles _) = error "todo"
+
+instance Pretty (DataDefParams n) where
+  pretty (DataDefParams ps ds) = p ps <+> p ds
+
+instance Pretty (DataDefBinders n l) where
+  pretty (DataDefBinders paramBs dictBs) = p paramBs <+> p dictBs
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =

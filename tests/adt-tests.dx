@@ -256,7 +256,7 @@ def graphToAdjacencyMatrix {n a} ((MkGraph nodes (AsList _ edges)):Graph n a) : 
       mRef!from!to := True
 
 :t graphToAdjacencyMatrix
-> ((n:Type) ?-> (a:Type) ?-> (Ix n) ?=> (Graph n a) -> n => n => Bool)
+> ((n:Type) ?-> (a:Type) ?-> (_autoq:(Ix n)) ?=> (Graph n a) -> n => n => Bool)
 
 :p
   g : Graph (Fin 3) Int = MkGraph [5, 6, 7] $ AsList _ [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]

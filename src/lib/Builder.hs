@@ -695,7 +695,7 @@ buildNewtype name paramBs body = do
   Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
     ty <- body params
     singletonBinderNest noHint ty
-  return $ DataDef name paramBs' [DataConDef ("mk" <> name) argBs]
+  return $ DataDef name (DataDefBinders paramBs' Empty) [DataConDef ("mk" <> name) argBs]
 
 fromNewtype :: [DataConDef n]
             -> Maybe (Type n)
