@@ -284,16 +284,6 @@ instance SinkableE UnsolvedEnv where
 getAtomNames :: Distinct l => EnvFrag n l -> S.Set (AtomName l)
 getAtomNames frag = S.fromList $ nameSetToList $ toNameSet $ toScopeFrag frag
 
-extendInfOutMapSolver :: Distinct n => InfOutMap n -> SolverSubst n -> InfOutMap n
-extendInfOutMapSolver (InfOutMap bindings ss dd un) ss' = do
-  -- We won't solve any names if the solver subst extension is empty.
-  let (un', bindings') = if substIsEmpty ss' then (un, bindings) else zonkUnsolvedEnv ss' un bindings
-  let ssFinal = catSolverSubsts (toScope bindings) ss ss'
-  InfOutMap bindings' ssFinal dd un'
-
-substIsEmpty :: SolverSubst n -> Bool
-substIsEmpty (SolverSubst subst) = M.null subst
-
 -- TODO: zonk the allowed effects and synth candidates in the bindings too
 -- TODO: the reason we need this is that `getType` uses the bindings to obtain
 -- type information, and we need this information when we emit decls. For
@@ -335,15 +325,21 @@ isInferenceVar v = lookupEnv v >>= \case
   _                               -> return False
 
 instance ExtOutMap InfOutMap InfOutFrag where
-  extendOutMap infOutMap (InfOutFrag em ds solverSubst) =
-    extendDefaults ds $
-      flip extendInfOutMapSolver solverSubst $
-        flip extendOutMap (toEnvFrag em) $
-          infOutMap
+  extendOutMap m (InfOutFrag em ds' ss') =
+    -- There's no point in extending the subst or zonking unsolved when
+    -- there are no new solutions.
+    case substIsEmpty ss' of
+      True  -> InfOutMap env   ss   ds'' us
+      False -> InfOutMap env'' ss'' ds'' us''
+        where
+          (us'', env'') = zonkUnsolvedEnv ss' us env
+          ss'' = catSolverSubsts (toScope env) ss ss'
+    where
+      InfOutMap env ss ds us = m `extendOutMap` toEnvFrag em
+      ds'' = sink ds <> ds'
 
-extendDefaults :: Defaults n -> InfOutMap n -> InfOutMap n
-extendDefaults ds' (InfOutMap bindings ss ds un) =
-  InfOutMap bindings ss (ds <> ds') un
+substIsEmpty :: SolverSubst n -> Bool
+substIsEmpty (SolverSubst subst) = M.null subst
 
 -- TODO: Make GatherRequired hold a set
 data RequiredIfaces (n::S) = FailIfRequired | GatherRequired (IfaceTypeSet n)
