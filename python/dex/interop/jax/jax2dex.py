@@ -84,13 +84,16 @@ class Literal(Expr):
   dtype: np.dtype
   def pprint(self) -> str:
     if self.dtype == f32:
-      return f'{self.val:f}'
+      return f'{self.val:f}' if self.val >= 0 else f'({self.val:f})'
     elif self.dtype == f64:
-      return f'(f_to_f64 {self.val:f})'
+      val_str = f'{self.val:f}' if self.val >= 0 else f'({self.val:f})'
+      return f'(f_to_f64 {val_str})'
     elif self.dtype == i32:
-      return f'(%monoLit {self.val})'
+      val_str = str(self.val) if self.val >= 0 else f'({self.val})'
+      return f'(%monoLit {val_str})'
     elif self.dtype == i64:
-      return f'{self.val}'
+      val_str = str(self.val) if self.val >= 0 else f'({self.val})'
+      return f'(i_to_i64 (%monoLit {val_str}))'
     else:
       raise NotImplementedError(f"Unsupported literal dtype: {dtype}")
 
@@ -363,8 +366,18 @@ class LoweringRuleContext:
 
 from jax._src.lax import lax
 
+def _neg(ctx, x):
+  aval, = ctx.avals_in
+  if not np.issubdtype(aval.dtype, np.floating):
+    raise NotImplementedError(aval.dtype)
+  if not aval.shape:
+    return App(Prim('fmul'), Literal(-1, aval.dtype), x)
+  idx_names = [ctx.fresh('i') for _ in aval.shape]
+  idx_tys = [FinType(IxRepLiteral(d)) for d in aval.shape]
+  return For(tuple(idx_names), tuple(idx_tys),
+             App(Prim('fmul'), Literal(-1, aval.dtype), Idx(x, tuple(map(Var, idx_names)))))
+expr_makers[lax.neg_p] = _neg
 # TODO: Use primitives to speed-up compile times!
-expr_makers[lax.neg_p] = lambda ctx, x: App(Var('neg'), x)
 expr_makers[lax.sin_p] = lambda ctx, x: App(Var('sin'), x)
 expr_makers[lax.cos_p] = lambda ctx, x: App(Var('cos'), x)
 expr_makers[lax.log_p] = lambda ctx, x: App(Var('log'), x)
@@ -477,12 +490,18 @@ def _dot_general_lowering(ctx, lhs, rhs, dimension_numbers, precision, preferred
   lhs_aval, rhs_aval = ctx.avals_in
   # Matrix-matrix multiply
   if (lhs_aval.ndim == 2 and rhs_aval.ndim == 2 and
-      dimension_numbers == (((1,), (0,)), ((), ()))):
+      dimension_numbers == (((1,), (0,)), ((), ())) and
+      lhs_aval.dtype == f32):
     return BinOp(lhs, '**', rhs)
   # Matrix-vector multiply
   if (lhs_aval.ndim == 2 and rhs_aval.ndim == 1 and
       dimension_numbers == (((1,), (0,)), ((), ()))):
-    return BinOp(lhs, '**.', rhs)
+    n, k = lhs_aval.shape
+    i, j = ctx.fresh('i'), ctx.fresh('j')
+    return For((i,), (FinType(IxRepLiteral(n)),),
+               App(Var('sum'),
+                   For((j,), (FinType(IxRepLiteral(k)),),
+                       App(Var('mul'), Idx(lhs, (Var(i), Var(j))), Idx(rhs, (Var(j),))))))
   raise NotImplementedError("Unimplemented dot_general kind")
 expr_makers[lax.dot_general_p] = _dot_general_lowering
 

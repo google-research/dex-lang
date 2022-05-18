@@ -7,6 +7,7 @@
 import unittest
 import numpy as np
 from functools import partial
+from contextlib import contextmanager
 
 import jax
 import jax.numpy as jnp
@@ -213,18 +214,40 @@ def lax_test(prim, arg_thunk, **kwargs):
     f = dexjit(partial(prim, **kwargs))
     args = arg_thunk()
     np.testing.assert_allclose(f(*args), prim(*args, **kwargs), atol=1e-6, rtol=1e-6)
+    with enable_x64(), default_f64():
+      args = arg_thunk()
+      try:
+        y = f(*args)
+      except NotImplementedError:
+        # Not all ops have to support 64-bit floats
+        pass
+      else:
+        # ... but when they do, they better give good answers!
+        np.testing.assert_allclose(y, prim(*args, **kwargs))
   return test
 
+@contextmanager
+def default_f64():
+  global FP_DTYPE
+  old_dtype = FP_DTYPE
+  FP_DTYPE = np.dtype('float64')
+  try:
+    yield
+  finally:
+    FP_DTYPE = old_dtype
+
+FP_DTYPE = np.dtype('float32')
 def rn(*shape):
-  return np.random.default_rng(seed=1).normal(size=shape).astype(np.float32)
+  return np.random.default_rng(seed=1).normal(size=shape).astype(FP_DTYPE)
 
 class JAX2DexTest(unittest.TestCase):
   test_sin = lax_test(lax.sin, lambda: (rn(10, 10),))
   test_cos = lax_test(lax.cos, lambda: (rn(10, 10),))
   test_neg = lax_test(lax.neg, lambda: (rn(10, 10),))
+  test_neg_scalar = lax_test(lax.neg, lambda: (rn(),))
   test_log = lax_test(lax.log, lambda: (rn(10, 10),))
   test_exp = lax_test(lax.exp, lambda: (rn(10, 10),))
-  test_pow = lax_test(lax.pow, lambda: (rn(10), jnp.arange(10, dtype=np.float32)))
+  test_pow = lax_test(lax.pow, lambda: (rn(10), jnp.arange(10, dtype=FP_DTYPE)))
   test_integer_pow = lax_test(lambda x: lax.integer_pow(x, 2), lambda: (rn(10, 10),))
   test_scalar_select_lt = lax_test(lambda i, x, y: lax.select(i < 2.0, x, y),
                                    lambda: (1.0, rn(10), rn(10)))
