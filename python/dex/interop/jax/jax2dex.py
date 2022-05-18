@@ -307,10 +307,11 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
   for v in jaxpr.invars: write(v, Var(next(varnames)))
   decls = []
   counter = it.count()
+  fin_cache: Dict[int, Var] = {}
   for e in jaxpr.eqns:
     in_avals = [typ(x) for x in e.invars]
     out_avals = [v.aval for v in e.outvars]
-    ctx = LoweringRuleContext(counter, in_avals, out_avals)
+    ctx = LoweringRuleContext(counter, fin_cache, in_avals, out_avals)
     expr_or_block = expr_makers[e.primitive](ctx, *map(read, e.invars), **e.params)
     if e.primitive.multiple_results:
       assert False  # TODO
@@ -331,7 +332,8 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
   for v in jaxpr.outvars:
     if v.aval.dtype not in _io_dtypes:
       raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit output")
-  block = Block(decls, expr)
+  fin_decls = [Decl(v.name, FinType(IxRepLiteral(n))) for n, v in fin_cache.items()]
+  block = Block(fin_decls + decls, expr)
   for v in reversed([*jaxpr.constvars, *jaxpr.invars]):
     if v.aval.dtype not in _io_dtypes:
       raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit input")
@@ -357,11 +359,18 @@ expr_makers: Dict[core.Primitive, ExprMaker] = {}
 @dataclass
 class LoweringRuleContext:
   _counter: Any
+  _fin_cache: Dict[int, Var]
   avals_in: Sequence[core.AbstractValue]
   avals_out: Sequence[core.AbstractValue]
 
   def fresh(self, seed: str) -> str:
     return seed + str(next(self._counter))
+
+  def Fin(self, n: int) -> Var:
+    t = self._fin_cache.get(n, None)
+    if t is None:
+      t = self._fin_cache[n] = Var(self.fresh(f'f{n}_'))
+    return t
 
 
 from jax._src.lax import lax
@@ -373,7 +382,7 @@ def _neg(ctx, x):
   if not aval.shape:
     return App(Prim('fmul'), Literal(-1, aval.dtype), x)
   idx_names = [ctx.fresh('i') for _ in aval.shape]
-  idx_tys = [FinType(IxRepLiteral(d)) for d in aval.shape]
+  idx_tys = [ctx.Fin(d) for d in aval.shape]
   return For(tuple(idx_names), tuple(idx_tys),
              App(Prim('fmul'), Literal(-1, aval.dtype), Idx(x, tuple(map(Var, idx_names)))))
 expr_makers[lax.neg_p] = _neg
@@ -406,23 +415,24 @@ def _broadcasting_binop(ibinop_expr: Expr, fbinop_expr: Expr, ctx, x, y):
     raise NotImplementedError()
   if not out_aval.shape:
     return App(binop_expr, x, y)
-  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), ctx.Fin(sz))
                               for sz in out_aval.shape)
-  x_expr = _make_bcast_expr(idx_names, out_aval.shape, x_aval.shape, x)
-  y_expr = _make_bcast_expr(idx_names, out_aval.shape, y_aval.shape, y)
+  x_expr = _make_bcast_expr(ctx, idx_names, out_aval.shape, x_aval.shape, x)
+  y_expr = _make_bcast_expr(ctx, idx_names, out_aval.shape, y_aval.shape, y)
   out = For(tuple(idx_names), tuple(idx_tys),
             App(binop_expr, x_expr, y_expr))
   return out
 
-def _make_bcast_expr(idx_names, out_shape, in_shape, x):
+def _make_bcast_expr(ctx, idx_names, out_shape, in_shape, x):
   ndim = len(in_shape)
   if not ndim:
     return x
-  idxs = [unitIdx if in_size != out_size else Var(idx_name)
+  idxs = [unitIdx(ctx) if in_size != out_size else Var(idx_name)
           for idx_name, out_size, in_size
           in zip(idx_names[-ndim:], out_shape[-ndim:], in_shape)]
   return Idx(x, tuple(idxs))
-unitIdx = App(Var('unsafe_from_ordinal'), FinType(IxRepLiteral(1)), IxRepLiteral(0))
+def unitIdx(ctx):
+  return App(Var('unsafe_from_ordinal'), ctx.Fin(1), IxRepLiteral(0))
 
 expr_makers[lax.add_p] = partial(_broadcasting_binop, Prim('iadd'), Prim('fadd'))
 expr_makers[lax.sub_p] = partial(_broadcasting_binop, Prim('isub'), Prim('fsub'))
@@ -444,7 +454,7 @@ def _select_lowering(ctx, c, *args):
   x, y = args
   out_aval, = ctx.avals_out
   if ctx.avals_in[0].shape:
-    idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
+    idx_names, idx_tys = unzip2((ctx.fresh('i'), ctx.Fin(sz))
                                 for sz in out_aval.shape)
     idx_vars = tuple(Var(ix) for ix in idx_names)
     return For(tuple(idx_names), tuple(idx_tys),
@@ -457,11 +467,11 @@ def _squeeze_lowering(ctx, x, dimensions):
   in_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   if not out_aval.shape:
-    return Idx(x, (unitIdx,))
-  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
+    return Idx(x, (unitIdx(ctx),))
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), ctx.Fin(sz))
                               for sz in out_aval.shape)
   idx_name = iter(idx_names)
-  idxs = [unitIdx if dim in dimensions else Var(next(idx_name))
+  idxs = [unitIdx(ctx) if dim in dimensions else Var(next(idx_name))
           for dim in range(in_aval.ndim)]
   return For(tuple(idx_names), tuple(idx_tys), Idx(x, tuple(idxs)))
 expr_makers[lax.squeeze_p] = _squeeze_lowering
@@ -472,10 +482,10 @@ def _slice_lowering(ctx, x, start_indices, limit_indices, strides):
   in_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   assert len(start_indices) == len(limit_indices) == in_aval.ndim == out_aval.ndim
-  idx_names, idx_tys = unzip2((ctx.fresh('i'), FinType(IxRepLiteral(sz)))
+  idx_names, idx_tys = unzip2((ctx.fresh('i'), ctx.Fin(sz))
                               for sz in out_aval.shape)
   input_ixs = [Var(ix) if in_size == out_size else
-               App(App(Var('unsafe_from_ordinal'), FinType(IxRepLiteral(in_size))),
+               App(App(Var('unsafe_from_ordinal'), ctx.Fin(in_size)),
                    BinOp(IxRepLiteral(start), '+', App(Var('ordinal'), Var(ix))))
                for ix, in_size, out_size, start
                in zip(idx_names, in_aval.shape, out_aval.shape, start_indices)]
@@ -498,9 +508,9 @@ def _dot_general_lowering(ctx, lhs, rhs, dimension_numbers, precision, preferred
       dimension_numbers == (((1,), (0,)), ((), ()))):
     n, k = lhs_aval.shape
     i, j = ctx.fresh('i'), ctx.fresh('j')
-    return For((i,), (FinType(IxRepLiteral(n)),),
+    return For((i,), (ctx.Fin(n),),
                App(Var('sum'),
-                   For((j,), (FinType(IxRepLiteral(k)),),
+                   For((j,), (ctx.Fin(k),),
                        App(Var('mul'), Idx(lhs, (Var(i), Var(j))), Idx(rhs, (Var(j),))))))
   raise NotImplementedError("Unimplemented dot_general kind")
 expr_makers[lax.dot_general_p] = _dot_general_lowering
@@ -517,8 +527,8 @@ def _concatenate_lowering(ctx, *xs, dimension):
     xs_v = ctx.fresh('xs')
     return Block([
         Decl(xs_v, Table(tuple(xs)))
-      ], App(App(Var('unsafe_cast_table'), FinType(IxRepLiteral(dim_size * len(xs)))),
-              For((i,), (PairType(FinType(IxRepLiteral(len(xs))), FinType(IxRepLiteral(dim_size))),),
+      ], App(App(Var('unsafe_cast_table'), ctx.Fin(dim_size * len(xs))),
+              For((i,), (PairType(ctx.Fin(len(xs)), ctx.Fin(dim_size)),),
                   TabApp(TabApp(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
   # Irregular concatenation
   # TODO: Generate specialized code
@@ -526,5 +536,5 @@ def _concatenate_lowering(ctx, *xs, dimension):
   return Block([
         Decl(ConPattern('AsList', (None, xs_v)),
              App(Var('concat'), Table(tuple(App(Var('to_list'), x) for x in xs)))),
-      ], App(App(Var('unsafe_cast_table'), FinType(IxRepLiteral(out_aval.shape[0]))), Var(xs_v)))
+      ], App(App(Var('unsafe_cast_table'), ctx.Fin(out_aval.shape[0])), Var(xs_v)))
 expr_makers[lax.concatenate_p] = _concatenate_lowering
