@@ -196,7 +196,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 isomorphisms ode-integrator fluidsim \
                 sgd psd kernelregression \
                 quaternions manifold-gradients schrodinger tutorial \
-                latex
+                latex linear-maps
 # TODO: re-enable
 # fft vega-plotting
 
