@@ -163,11 +163,6 @@ function renderLaTeX() {
     Array.from(proseBlocks).map((proseBlock) =&gt;
         renderMathInElement(proseBlock, katexOptions)
     );
-        var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
-        Array.from(proseBlocks).map((proseBlock) =&gt;
-            renderMathInElement(proseBlock, katexOptions)
-        );
-    }
 }
 
 /**
