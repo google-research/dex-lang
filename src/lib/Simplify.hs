@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-                , liftSimplifyM, buildBlockSimplified, emitSimplified
+                , liftSimplifyM, buildBlockSimplified, simplifyBlockToBlock, emitSimplified
                 , dceApproxBlock) where
 
 import Control.Category ((>>>))
@@ -55,6 +55,9 @@ buildBlockSimplified m =
   liftSimplifyM do
     block <- liftBuilder $ buildBlock m
     buildBlock $ simplifyBlock block
+
+simplifyBlockToBlock :: EnvReader m => Block n -> m n (Block n)
+simplifyBlockToBlock block = liftSimplifyM $ buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
 
@@ -560,6 +563,7 @@ projectDictMethod d i = do
       case i of
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
+    DictCon (IxFin n) -> projectIxFinMethod i n
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)

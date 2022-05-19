@@ -90,7 +90,9 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs base
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
     resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
-      traverse (translateBlock Nothing) $ fromListE argRecons
+      forM (fromListE argRecons) \block -> do
+        block' <- simplifyBlockToBlock =<< substM block
+        dropSubst $ translateBlock Nothing block'
     extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []

@@ -234,6 +234,7 @@ evalProjectDictMethod d i = cheapNormalize d >>= \case
     case i of
       0 -> return method
       _ -> error "ExplicitDict only supports single-method classes"
+  DictCon (IxFin n) -> projectIxFinMethod i n
   _ -> error $ "Not a simplified dict: " ++ pprint d
 
 matchUPat :: Interp m => UPat i i' -> Atom o -> m i o (SubstFrag AtomSubstVal i i' o)

@@ -36,7 +36,7 @@ module Builder (
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock,
-  indexToInt, indexSetSize, intToIndex,
+  indexToInt, indexSetSize, intToIndex, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, unpackTelescope,
@@ -1179,6 +1179,19 @@ indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
 indexSetSize (IxType _ dict) = do
   f <- projMethod "get_size" dict
   app f UnitVal
+
+projectIxFinMethod :: EnvReader m => Int -> Atom n -> m n (Atom n)
+projectIxFinMethod methodIx n = liftBuilder do
+  case methodIx of
+    -- get_size
+    0 -> buildPureLam noHint PlainArrow UnitTy \_ -> sinkM n
+    -- ordinal
+    1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
+          emitOp $ CastOp IdxRepTy $ Var ix
+    -- unsafe_from_ordinal
+    2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
+          emitOp $ CastOp (Fin $ sink n) $ Var ix
+    _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===
 

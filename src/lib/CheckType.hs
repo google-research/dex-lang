@@ -418,6 +418,9 @@ dictExprType e = case e of
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
     DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclasses !! i)) params
     return dTy
+  IxFin n -> do
+    n' <- substM n
+    ixDictType $ Fin n'
 
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e

@@ -1902,20 +1902,9 @@ openEffectRow :: EmitsBoth o => EffectRow o -> InfererM i o (EffectRow o)
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
-getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
-getIxClassName = lookupSourceMap "Ix" >>= \case
-  Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
-  Just (UClassVar v) -> return v
-  Just _ -> error "not a class var"
-
-ixDictType :: (Fallible1 m, EnvReader m) => Type n -> m n (Type n)
-ixDictType ty = do
-  ixClassName <- getIxClassName
-  return $ DictTy $ DictType "Ix" ixClassName [ty]
-
 asIxType :: Type o -> InfererM i o (IxType o)
 asIxType ty = do
-  dictTy <- ixDictType ty
+  dictTy <- DictTy <$> ixDictType ty
   ctx <- srcPosCtx <$> getErrCtx
   return $ IxType ty $ Con $ DictHole (AlwaysEqual ctx) dictTy
 {-# SCC asIxType #-}
@@ -2353,6 +2342,8 @@ synthInstanceDef (InstanceDef className bs params body) = do
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (SynthAtom n)
+trySynthTerm (DictTy (DictType "Ix" _ [Fin n])) =
+  return $ DictCon $ IxFin n
 trySynthTerm ty = do
   hasInferenceVars ty >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"

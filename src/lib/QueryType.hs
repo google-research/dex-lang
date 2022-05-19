@@ -9,7 +9,7 @@ module QueryType (
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
   oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal,
+  isSingletonType, singletonTypeVal, ixDictType
   ) where
 
 import Control.Category ((>>>))
@@ -432,6 +432,20 @@ dictExprType e = case e of
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
     DictTy dTy <- applyNaryAbs (Abs bs (superclasses !! i)) $ map SubstVal params
     return dTy
+  IxFin n -> do
+    n' <- substM n
+    ixDictType $ Fin n'
+
+getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
+getIxClassName = lookupSourceMap "Ix" >>= \case
+  Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
+  Just (UClassVar v) -> return v
+  Just _ -> error "not a class var"
+
+ixDictType :: (Fallible1 m, EnvReader m) => Type n -> m n (DictType n)
+ixDictType ty = do
+  ixClassName <- getIxClassName
+  return $ DictType "Ix" ixClassName [ty]
 
 typeApp  :: Type o -> [Atom i] -> TypeQueryM i o (Type o)
 typeApp fTy [] = return fTy

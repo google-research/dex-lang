@@ -275,6 +275,8 @@ data DictExpr (n::S) =
    -- We use NonEmpty because givens without args can be represented using `Var`.
  | InstantiatedGiven (Atom n) (NonEmpty (Atom n))
  | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
+   -- Special case for `Ix (Fin <lit>)`  (TODO: a more general mechanism for built-in classes and instances)
+ | IxFin (Atom n)
    deriving (Show, Generic)
 
 -- === envs and modules ===
@@ -1250,18 +1252,21 @@ instance SubstE AtomSubstVal DictType
 
 instance GenericE DictExpr where
   type RepE DictExpr =
-    EitherE3
+    EitherE4
  {- InstanceDict -}      (PairE InstanceName (ListE Atom))
  {- InstantiatedGiven -} (PairE Atom (ListE Atom))
  {- SuperclassProj -}    (PairE Atom (LiftE Int))
+ {- IxFin -}             (Atom)
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
+    IxFin x            -> Case3 x
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
+    Case3 x -> IxFin x
     _ -> error "impossible"
 
 instance SinkableE           DictExpr

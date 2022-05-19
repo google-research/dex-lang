@@ -38,7 +38,8 @@ prepareFunctionForExport' f = do
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
     Just npi -> return npi
   closedNaryPi <- case hoistToTop naryPi of
-    HoistFailure _   -> throw TypeErr "Types of exported functions have to be closed terms"
+    HoistFailure _   -> throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++
+      pprint naryPi
     HoistSuccess npi -> return npi
   sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
     Success sig -> return sig

@@ -128,6 +128,7 @@ instance GenericallyTraversableE DictExpr where
     InstanceDict v args -> InstanceDict <$> substM v <*> mapM tge args
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
+    IxFin n ->  IxFin <$> tge n
 
 traverseDeclNest
   :: (GenericTraverser m, Emits o)

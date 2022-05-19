@@ -224,6 +224,7 @@ instance Pretty (DictExpr n) where
     InstanceDict name args -> "Instance" <+> p name <+> p args
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
+    IxFin n -> "Ix (Fin" <+> p n <> ")"
 
 instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
