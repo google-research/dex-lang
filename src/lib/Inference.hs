@@ -887,7 +887,6 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         cheapReduceWithDecls decls piResult >>= \case
           (Just ty', _, _) -> return ty'
           -- TODO: handle phantom constraints
-          -- (Just ty', DictTypeHoistSuccess, []) -> return ty'
           _ -> throw TypeErr $ "Can't reduce type expression: " ++
                  docAsStr (prettyBlock decls piResult)
     matchRequirement $ TabPi piTy
@@ -1776,14 +1775,8 @@ checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
       -- unhoistable dicts as an irrecoverable failure. They might be derivable from the
       -- hoistable dicts (e.g. as in i:n=>(..i)=>Float). The failures are only irrecoverable
       -- when we stop doing auto quantification.
-      (_, hoistErr, unsolved) <- cheapReduceWithDecls @Atom decls result
-      case hoistErr of
-        -- DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
-        --   "A type expression has interface constraints that depend on values " ++
-        --   "local to the expression"
-        -- DictTypeHoistSuccess ->
-        _ ->
-          return $ unsolvedSubset <> eSetFromList unsolved
+      (_, _, unsolved) <- cheapReduceWithDecls @Atom decls result
+      return $ unsolvedSubset <> eSetFromList unsolved
     return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
       GatherRequired unsolvedSubset -> unsolvedSubset
       FailIfRequired                -> error "Unreachable"
@@ -1794,10 +1787,9 @@ checkUType uty@(WithSrcE pos _) = do
   Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
   (ans, hoistStatus, ds) <- cheapReduceWithDecls decls result
   case hoistStatus of
-    -- DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
-    --   "A type expression has interface constraints that depend on values local to the expression"
-    -- DictTypeHoistSuccess -> case ans of
-    _ -> case ans of
+    DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
+      "A type expression has interface constraints that depend on values local to the expression"
+    DictTypeHoistSuccess -> case ans of
       Just ty -> addSrcContext pos (forM_ ds reportUnsolvedInterface) $> ty
       Nothing -> case ds of
         [] -> addSrcContext pos $ throw TypeErr $
@@ -2151,6 +2143,7 @@ instance Unifiable IxType where
   unifyZonked (IxType t _) (IxType t' _) = unifyZonked t t'
 
 instance Unifiable DataDefParams where
+  -- We ignore the dictionaries because we assume coherence
   unifyZonked (DataDefParams xs _) (DataDefParams xs' _) = zipWithM_ unify xs xs'
 
 instance Unifiable (EffectRowP AtomName) where

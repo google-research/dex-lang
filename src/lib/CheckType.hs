@@ -397,7 +397,8 @@ instance HasType TabLamExpr where
       return $ TabTy b' bodyTy
 
 instance CheckableE DataDefParams where
-  checkE = substM -- TODO
+  checkE (DataDefParams params dicts) =
+    DataDefParams <$> mapM checkE params <*> mapM checkE dicts
 
 dictExprType :: Typer m => DictExpr i -> m i o (DictType o)
 dictExprType e = case e of
@@ -906,7 +907,6 @@ checkTabApp tabTy xs = go tabTy $ toList xs
     go ty [] = return ty
     go ty (i:rest) = do
       TabTy (b :> IxType ixTy _) resultTy <- return ty
-      -- TODO: check type of Ix dict too
       i' <- checkTypeE ixTy i
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest

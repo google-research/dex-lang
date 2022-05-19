@@ -378,9 +378,6 @@ toImpOp maybeDest op = case op of
         Unlimited      -> return (IIdxRepVal 0)
       restrictIdx' <- fromScalarAtom restrictIdx
       returnVal =<< intToIndexImp ixTy =<< iaddI restrictIdx' offset
-    -- Con (ParIndexCon (TC (ParIndexRange realIdxTy _ _)) i) -> do
-    --   i' <- fromScalarAtom i
-    --   returnVal =<< intToIndexImp realIdxTy i'
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
@@ -405,11 +402,6 @@ toImpOp maybeDest op = case op of
     store ptr' x'
     return UnitVal
   SliceOffset _ _ -> undefined
-  -- SliceOffset ~(Con (IndexSliceVal n _ tileOffset)) idx -> do
-  --   i' <- indexToIntImp idx
-  --   tileOffset' <- fromScalarAtom tileOffset
-  --   i <- iaddI tileOffset' i'
-  --   returnVal =<< intToIndexImp n i
   ThrowError _ -> do
     resultTy <- resultTyM
     dest <- allocDest maybeDest resultTy

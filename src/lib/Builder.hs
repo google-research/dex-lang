@@ -612,7 +612,6 @@ buildNaryAbsRec ns x = confuseGHC >>= \_ -> case x of
     refreshAbs (Abs b (EmptyAbs bs)) \b' (EmptyAbs bs') -> do
       Abs bs'' ns'' <- buildNaryAbsRec (binderName b' : sinkList ns) bs'
       return $ Abs (Nest b' bs'') ns''
-{-# INLINE buildNaryAbsRec #-}
 
 -- TODO: probably deprectate this version in favor of `buildNaryLamExpr`
 buildNaryLam

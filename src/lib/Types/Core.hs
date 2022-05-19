@@ -275,7 +275,7 @@ data DictExpr (n::S) =
    -- We use NonEmpty because givens without args can be represented using `Var`.
  | InstantiatedGiven (Atom n) (NonEmpty (Atom n))
  | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
-   -- Special case for `Ix (Fin <lit>)`  (TODO: a more general mechanism for built-in classes and instances)
+   -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (Atom n)
    deriving (Show, Generic)
 
