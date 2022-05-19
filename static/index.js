@@ -54,11 +54,6 @@ function renderLaTeX() {
     Array.from(proseBlocks).map((proseBlock) =>
         renderMathInElement(proseBlock, katexOptions)
     );
-        var proseBlocks = document.querySelectorAll(".prose-block");
-        Array.from(proseBlocks).map((proseBlock) =>
-            renderMathInElement(proseBlock, katexOptions)
-        );
-    }
 }
 
 /**
