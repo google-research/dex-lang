@@ -78,9 +78,9 @@ newtype FailedDictTypes (n::S) = FailedDictTypes (ESet (MaybeE Type) n)
         deriving (SinkableE, HoistableE, Semigroup, Monoid)
 data DictTypeHoistStatus = DictTypeHoistFailure | DictTypeHoistSuccess
 
-instance Monad1 m => HoistableState FailedDictTypes m where
+instance HoistableState FailedDictTypes where
   hoistState _ b (FailedDictTypes ds) =
-    return $ FailedDictTypes $ eSetFromList $
+    FailedDictTypes $ eSetFromList $
       for (eSetToList ds) \d -> case hoist b d of
         HoistSuccess d' -> d'
         HoistFailure _  -> NothingE

@@ -85,13 +85,13 @@ instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) w
   {-# INLINE getDistinct #-}
 
 instance ( SinkableE w, HoistableE w, Monoid1 w
-         , HoistableState w m, EnvExtender m)
+         , HoistableState w, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
   refreshAbs ab cont = WriterT1 \s -> do
     (ans, Abs b new) <- refreshAbs ab \b e -> do
-      (ans, new) <- runWriterT1From mempty $ cont b e
+      (ans, new) <- runWriterT1From (sink s) $ cont b e
       return (ans, Abs b new)
-    new' <- hoistState mempty b new
+    let new' = hoistState s b new
     return (ans, s <> new')
   {-# INLINE refreshAbs #-}
 
@@ -184,19 +184,20 @@ instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
   getErrCtx = lift11 getErrCtx
   {-# INLINE getErrCtx #-}
 
-class HoistableState (s::E) (m::MonadKind1) where
-  hoistState :: BindsNames b => s n -> b n l -> s l -> m n (s n)
+class HoistableState (s::E) where
+  hoistState :: BindsNames b => s n -> b n l -> s l -> s n
 
-instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT1 s m) where
+instance (SinkableE s, EnvExtender m, HoistableState s) => EnvExtender (StateT1 s m) where
   refreshAbs ab cont = StateT1 \s -> do
     (ans, Abs b s') <- refreshAbs ab \b e -> do
       (ans, s') <- flip runStateT1 (sink s) $ cont b e
       return (ans, Abs b s')
-    s'' <- hoistState s b s'
+    let s'' = hoistState s b s'
     return (ans, s'')
 
-instance Monad1 m => HoistableState (LiftE a) m where
-  hoistState _ _ (LiftE x) = return $ LiftE x
+instance HoistableState (LiftE a) where
+  hoistState _ _ (LiftE x) = LiftE x
+  {-# INLINE hoistState #-}
 
 -------------------- ScopedT1 --------------------
 

@@ -268,7 +268,7 @@ runTopBuilderT bindings cont = do
 
 type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
 
-instance (SinkableE e, HoistableState e m, TopBuilder m) => TopBuilder (StateT1 e m) where
+instance (SinkableE e, HoistableState e, TopBuilder m) => TopBuilder (StateT1 e m) where
   emitBinding hint binding = lift11 $ emitBinding hint binding
   {-# INLINE emitBinding #-}
   emitEnv ab = lift11 $ emitEnv ab
@@ -380,9 +380,16 @@ instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
     ReaderT1 $ lift $ emitDecl hint ann expr
   {-# INLINE emitDecl #-}
 
-instance (SinkableE e, HoistableState e m, Builder m) => Builder (StateT1 e m) where
+instance (SinkableE e, HoistableState e, Builder m) => Builder (StateT1 e m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
   {-# INLINE emitDecl #-}
+
+instance (SinkableE e, HoistableState e, ScopableBuilder m) => ScopableBuilder (StateT1 e m) where
+  buildScoped cont = StateT1 \s -> do
+    Abs decls (e `PairE` s') <- buildScoped $ liftM toPairE $ runStateT1 cont =<< sinkM s
+    let s'' = hoistState s decls s'
+    return (Abs decls e, s'')
+  {-# INLINE buildScoped #-}
 
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
