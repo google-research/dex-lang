@@ -445,8 +445,6 @@ instance Pretty (Binding s n) where
       "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
     ClassBinding    classDef    -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
-    SuperclassBinding className idx ->
-      "Superclass" <+> pretty idx <+> "of" <+> pretty className
     MethodBinding className idx _ ->
       "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f

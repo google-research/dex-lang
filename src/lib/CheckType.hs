@@ -162,7 +162,6 @@ instance Color c => CheckableE (Binding c) where
     DataConBinding    dataDefName idx e -> DataConBinding  <$> substM dataDefName <*> pure idx <*> substM e
     ClassBinding      classDef          -> ClassBinding    <$> substM classDef
     InstanceBinding   instanceDef       -> InstanceBinding <$> substM instanceDef
-    SuperclassBinding className   idx   -> SuperclassBinding <$> substM className <*> pure idx
     MethodBinding className idx f       -> MethodBinding     <$> substM className <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile

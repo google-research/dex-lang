@@ -404,7 +404,6 @@ data Binding (c::C) (n::S) where
   DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
   ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
   InstanceBinding   :: InstanceDef n                  -> Binding InstanceNameC   n
-  SuperclassBinding :: Name ClassNameC n -> Int       -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
   ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
   ObjectFileBinding :: ObjectFile n                   -> Binding ObjectFileNameC n
@@ -1625,8 +1624,7 @@ instance Color c => GenericE (Binding c) where
           (DataDefName `PairE` LiftE Int `PairE` Atom)
           (ClassDef)
           (InstanceDef))
-      (EitherE6
-          (Name ClassNameC `PairE` LiftE Int)
+      (EitherE5
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (ImpFunction)
           (ObjectFile)
@@ -1639,12 +1637,11 @@ instance Color c => GenericE (Binding c) where
     DataConBinding    dataDefName idx e -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx `PairE` e
     ClassBinding      classDef          -> Case0 $ Case4 $ classDef
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ instanceDef
-    SuperclassBinding className idx     -> Case1 $ Case0 $ className `PairE` LiftE idx
-    MethodBinding     className idx f   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` f
-    ImpFunBinding     fun               -> Case1 $ Case2 $ fun
-    ObjectFileBinding objfile           -> Case1 $ Case3 $ objfile
-    ModuleBinding m                     -> Case1 $ Case4 $ m
-    PtrBinding p                        -> Case1 $ Case5 $ LiftE p
+    MethodBinding     className idx f   -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` f
+    ImpFunBinding     fun               -> Case1 $ Case1 $ fun
+    ObjectFileBinding objfile           -> Case1 $ Case2 $ objfile
+    ModuleBinding m                     -> Case1 $ Case3 $ m
+    PtrBinding p                        -> Case1 $ Case4 $ LiftE p
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -1654,12 +1651,11 @@ instance Color c => GenericE (Binding c) where
     Case0 (Case3 (dataDefName `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx e
     Case0 (Case4 (classDef))                                -> fromJust $ tryAsColor $ ClassBinding      classDef
     Case0 (Case5 (instanceDef))                             -> fromJust $ tryAsColor $ InstanceBinding   instanceDef
-    Case1 (Case0 (className `PairE` LiftE idx))             -> fromJust $ tryAsColor $ SuperclassBinding className idx
-    Case1 (Case1 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
-    Case1 (Case2 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
-    Case1 (Case3 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
-    Case1 (Case4 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
-    Case1 (Case5 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
+    Case1 (Case0 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
+    Case1 (Case1 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
+    Case1 (Case2 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
+    Case1 (Case3 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
+    Case1 (Case4 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
     _ -> error "impossible"
   {-# INLINE toE #-}
 
