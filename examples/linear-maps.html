@@ -1,0 +1,657 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX, if available.
+    // Skip rendering if KaTeX is unavailable.
+    if (typeof renderMathInElement == &#39;undefined&#39;) {
+        return;
+    }
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Polymorphic Operations on Linear Maps</h1>
+<p>Often when writing numerical code, there are efficient specializations for
+e.g. diagonal matrices, lower-triangular, or sparse matrices.
+I'd like to be able to write just one version of this code without having to
+fall back to casting everything to full-rank unstructured matrices.
+This example is for brainstorming how the typeclass system might support
+efficient polymorphism for linear algebra over different types of
+structured maps.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> linalg
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Todo: factor out a more general linear map typeclass, and make this one inherit from it.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
+</span></div></div><div class="cell"><div class="code-block">  <span class="comment">-- apply: m -&gt; in -&gt; out
+</span></div></div><div class="cell"><div class="code-block">  <span class="comment">-- transpose&#39;: m -&gt; m
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Linear Endomorphisms</h2>
+<p>a.k.a. linear maps from a space back to that same space.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasDeterminant</span> m
+  determinant&#39;<span class="symbol">:</span> m <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
+  transposeType m <span class="symbol">:</span> <span class="type-name">Type</span>  <span class="comment">-- unused for now
+</span>  transpose&#39;<span class="symbol">:</span> m <span class="symbol">-&gt;</span> m      <span class="comment">-- In future: m -&gt; transposeType m
+</span>  identity&#39;<span class="symbol">:</span> m
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">HasDeterminant</span> m] <span class="type-name">LinearEndo</span> m v
+  apply<span class="symbol">:</span> m <span class="symbol">-&gt;</span> v <span class="symbol">-&gt;</span> v
+  diag<span class="symbol">:</span> m <span class="symbol">-&gt;</span> v
+  solve&#39;<span class="symbol">:</span> m <span class="symbol">-&gt;</span> v <span class="symbol">-&gt;</span> v
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We'd like to remove <code>v</code> from the <code>LinearEndo</code> interface,
+and instead use associated types to specify a <code>v</code> for each <code>m</code>.
+This would let use combine it with <code>HasDeterminant</code>.
+But for now, fields in typeclasses can't refer to one another.
+This means that <code>determinant'</code> and other operations can't be part
+of this typeclass yet, because <code>v</code> is always ambiguous at its usage site.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Instances</h2>
+</div></div><div class="cell"><div class="prose-block"><h3>Scalar maps</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ScalarMap</span> <span class="symbol">=</span>
+  <span class="type-name">MkScalarMap</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> <span class="type-name">ScalarMap</span>
+  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a)<span class="symbol">.</span> a
+  transposeType <span class="symbol">=</span> <span class="type-name">Float</span>
+  transpose&#39; <span class="symbol">=</span> id
+  identity&#39; <span class="symbol">=</span> <span class="type-name">MkScalarMap</span> 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">LinearEndo</span> <span class="type-name">ScalarMap</span> v
+  apply <span class="symbol">=</span>  <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a) b<span class="symbol">.</span> a <span class="symbol">.*</span> b
+  diag <span class="symbol">=</span>   <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a)<span class="symbol">.</span>   a <span class="symbol">.*</span> one
+  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a) b<span class="symbol">.</span> b <span class="symbol">/</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">ScalarMap</span>
+  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkScalarMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Diagonal maps</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DiagMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
+  <span class="type-name">MkDiagMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">DiagMap</span> n)
+  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> x)<span class="symbol">.</span> prod x
+  transposeType <span class="symbol">=</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+  transpose&#39; <span class="symbol">=</span> id
+  identity&#39; <span class="symbol">=</span> <span class="type-name">MkDiagMap</span> one
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">LinearEndo</span> (<span class="type-name">DiagMap</span> n) (n<span class="symbol">=&gt;</span>v)
+  apply <span class="symbol">=</span>  <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> x) y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">.*</span> y<span class="symbol">.</span>i
+  diag <span class="symbol">=</span>   <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> a)<span class="symbol">.</span>   <span class="keyword">for</span> i<span class="symbol">.</span> a<span class="symbol">.</span>i <span class="symbol">.*</span> one
+  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> a) b<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> b<span class="symbol">.</span>i <span class="symbol">/</span> a<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Arbitrary</span> (<span class="type-name">DiagMap</span> n)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkDiagMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Full-rank matrices.</h3>
+<p>I didn't use a newtype for these, but I'm not sure if that's the right call.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  determinant&#39; <span class="symbol">=</span> determinant
+  transposeType <span class="symbol">=</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+  transpose&#39; <span class="symbol">=</span> transpose
+  identity&#39; <span class="symbol">=</span> eye
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">LinearEndo</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (n<span class="symbol">=&gt;</span>v)
+  apply <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> y<span class="symbol">.</span>j
+  diag <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>i <span class="symbol">.*</span> one
+  solve&#39; <span class="symbol">=</span> solve
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Lower-triangular maps</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LowerTriMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
+  <span class="type-name">MkLowerTriMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">LowerTriMap</span> n)
+  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> lower_tri_diag x
+  transposeType <span class="symbol">=</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span>
+  transpose&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
+  identity&#39; <span class="symbol">=</span> <span class="type-name">MkLowerTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">LinearEndo</span> (<span class="type-name">LowerTriMap</span> n) (n<span class="symbol">=&gt;</span>v)
+  apply  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x) y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> y<span class="symbol">.</span>(%inject j)
+  diag   <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span>   <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>(cast i) <span class="symbol">.*</span> one
+  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span>   forward_substitute x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Arbitrary</span> (<span class="type-name">LowerTriMap</span> n)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkLowerTriMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Upper-triangular maps</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">UpperTriMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
+  <span class="type-name">MkUpperTriMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">UpperTriMap</span> n)
+  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> upper_tri_diag x
+  transposeType <span class="symbol">=</span> <span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>
+  transpose&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
+  identity&#39; <span class="symbol">=</span> <span class="type-name">MkUpperTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (0 <span class="symbol">==</span> ordinal j) one zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">LinearEndo</span> (<span class="type-name">UpperTriMap</span> n) (n<span class="symbol">=&gt;</span>v)
+  apply  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x) y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> y<span class="symbol">.</span>(%inject j)
+  diag   <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span>   <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>(0<span class="symbol">@</span>_) <span class="symbol">.*</span> one
+  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span>   backward_substitute x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Arbitrary</span> (<span class="type-name">UpperTriMap</span> n)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkUpperTriMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Skew-symmetric maps</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">SkewSymmetricMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
+  <span class="type-name">MkSkewSymMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">SkewSymmetricMap</span> n)
+  determinant&#39; <span class="symbol">=</span> <span class="keyword">case</span> is_odd (size n) <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> zero
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> a)<span class="symbol">.</span>
+      dense_rep <span class="symbol">=</span> skew_symmetric_prod a eye
+      determinant dense_rep  <span class="comment">-- Naive algorithm, could be done with Pfaffian
+</span>  transposeType <span class="symbol">=</span> i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>  <span class="comment">-- 
+</span>  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x)<span class="symbol">.</span> <span class="type-name">MkSkewSymMap</span> (<span class="symbol">-</span>x)
+  identity&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Skew</span> symmetric matrices can&#39;t represent the identity map<span class="symbol">.</span>&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">LinearEndo</span> (<span class="type-name">SkewSymmetricMap</span> n) (n<span class="symbol">=&gt;</span>v)
+  apply  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x) y<span class="symbol">.</span> skew_symmetric_prod x y
+  diag   <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x)<span class="symbol">.</span>   zero
+  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x) y<span class="symbol">.</span>
+    dense_rep <span class="symbol">=</span> skew_symmetric_prod x eye  <span class="comment">-- Fall back to naive algorithm
+</span>    solve dense_rep y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Arbitrary</span> (<span class="type-name">SkewSymmetricMap</span> n)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkSkewSymMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: Sparse matrices. Need hashmaps for these to be practical.
+</span></div></div><div class="cell"><div class="code-block">
+
+
+</div></div><div class="cell"><div class="prose-block"><h2>Application 1: Gaussians</h2>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- This typeclass will be obsolete once the `Basis` typeclass can be written.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasStandardNormal</span> a<span class="symbol">:</span><span class="type-name">Type</span>
+  randNormal <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span> <span class="type-name">Float32</span>
+  randNormal <span class="symbol">=</span> randn
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">HasStandardNormal</span> a] <span class="type-name">HasStandardNormal</span> (n<span class="symbol">=&gt;</span>a)
+  randNormal <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> randNormal (ixkey key i)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> multivariate_gaussian_sample {v m} [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">HasStandardNormal</span> v]
+                   (mean<span class="command">:v</span>) (covroot<span class="command">:m</span>) (key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> v <span class="symbol">=</span>
+  noise <span class="symbol">=</span> randNormal key
+  mean <span class="symbol">+</span> apply covroot noise
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> multivariate_gaussian_sample 1<span class="symbol">.</span>0 (<span class="type-name">MkScalarMap</span> 2<span class="symbol">.</span>0) (new_key 0)
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Generic log pdf of a multivariate Gaussian</h3>
+<p>This single definition of a Gaussian log pdf should work
+efficiently for any type of covariance matrix for which
+an efficient solve and determinant is known.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- This helper will be osbolete once the basis typeclass works.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_<span class="type-name">VSpace</span>_dim {v} [<span class="type-name">InnerProd</span> v<span class="symbol">,</span> <span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] (x<span class="command">:v</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  one&#39; <span class="symbol">:</span> v <span class="symbol">=</span> one
+  inner_prod one&#39; one&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gaussian_log_pdf {m v}
+    [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">InnerProd</span> v<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m v]
+    (mean<span class="command">:v</span>) (covroot<span class="command">:m</span>) (x<span class="command">:v</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  dim <span class="symbol">=</span> get_<span class="type-name">VSpace</span>_dim x
+  squarepart <span class="symbol">=</span> inner_prod (x <span class="symbol">-</span> mean) (solve&#39; (transpose&#39; covroot)
+                                     (solve&#39;             covroot (x <span class="symbol">-</span> mean)))
+  const <span class="symbol">=</span> dim <span class="symbol">*</span> log (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi) <span class="symbol">+</span> log (sq (determinant&#39; covroot))
+  <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> (squarepart <span class="symbol">+</span> const)
+</div></div><div class="cell"><div class="code-block">
+
+
+</div></div><div class="cell"><div class="prose-block"><h2>Tests</h2>
+</div></div><div class="cell"><div class="code-block">vec_len <span class="symbol">=</span> (<span class="type-name">Fin</span> 4)
+</div></div><div class="cell"><div class="code-block">full_mat_type <span class="symbol">=</span> (vec_len<span class="symbol">=&gt;</span>vec_len<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">v <span class="symbol">=</span> vec_len<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Check application of the identity is a no-op.</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_identity (m<span class="symbol">:</span><span class="type-name">Type</span>)
+    [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">HasDeterminant</span> m<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  i <span class="symbol">:</span> m <span class="symbol">=</span> identity&#39;
+  vec <span class="symbol">:</span> v <span class="symbol">=</span> (arb <span class="symbol">$</span> new_key 0)
+  vec <span class="symbol">~~</span> apply i vec
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> <span class="type-name">LowerTriMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> <span class="type-name">UpperTriMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> vec_len<span class="symbol">=&gt;</span>vec_len<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> <span class="type-name">DiagMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> <span class="type-name">ScalarMap</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_inverse (m<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m full_mat_type] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  a <span class="symbol">:</span> m   <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
+  vec <span class="symbol">:</span> v <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
+  inv  <span class="symbol">:</span> full_mat_type <span class="symbol">=</span> solve&#39; a eye
+  full <span class="symbol">:</span> full_mat_type <span class="symbol">=</span> apply  a eye
+  apply inv full <span class="symbol">~~</span> eye
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">check_inverse <span class="symbol">$</span> <span class="type-name">SkewSymmetricMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_inverse <span class="symbol">$</span> <span class="type-name">LowerTriMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_inverse <span class="symbol">$</span> <span class="type-name">UpperTriMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_inverse <span class="symbol">$</span> vec_len<span class="symbol">=&gt;</span>vec_len<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_inverse <span class="symbol">$</span> <span class="type-name">DiagMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_inverse <span class="type-name">ScalarMap</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_transpose (m<span class="symbol">:</span><span class="type-name">Type</span>)
+    [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">HasDeterminant</span> m<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  a <span class="symbol">:</span> m                  <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
+  (vec1<span class="symbol">,</span> vec2) <span class="symbol">:</span> (v <span class="symbol">&amp;</span> v) <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 1
+  
+  hitleft  <span class="symbol">=</span> inner_prod (apply a vec1) vec2
+  hitright <span class="symbol">=</span> inner_prod (apply (transpose&#39; a) vec2) vec1
+  hitleft <span class="symbol">~~</span> hitright
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">check_transpose <span class="symbol">$</span> <span class="type-name">SkewSymmetricMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="comment">-- Disabled until associated types are implemented.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- check_transpose $ LowerTriMap vec_len
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; True
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- check_transpose $ UpperTriMap vec_len
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; True
+</span></div></div><div class="cell"><div class="code-block">check_transpose <span class="symbol">$</span> vec_len<span class="symbol">=&gt;</span>vec_len<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_transpose <span class="symbol">$</span> <span class="type-name">DiagMap</span> vec_len
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_transpose <span class="type-name">ScalarMap</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Check that 1D Gaussian sums to 1
+</span></div></div><div class="cell"><div class="code-block">sizen <span class="symbol">=</span> <span class="type-name">Fin</span> 2000
+</div></div><div class="cell"><div class="code-block">span <span class="symbol">=</span> 10<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">xs <span class="symbol">=</span> linspace sizen (<span class="symbol">-</span>span) span
+</div></div><div class="cell"><div class="code-block">integral <span class="symbol">=</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> span <span class="symbol">*</span> mean <span class="keyword">for</span> i<span class="symbol">.</span>
+  exp <span class="symbol">$</span> gaussian_log_pdf (<span class="symbol">-</span>0<span class="symbol">.</span>1) (<span class="type-name">MkScalarMap</span> 0<span class="symbol">.</span>07) xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">integral <span class="symbol">~~</span> 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes (m<span class="symbol">:</span><span class="type-name">Type</span>)
+    [<span class="type-name">LinearEndo</span> m ((<span class="type-name">Fin</span> 2) <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>)<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+
+  sizen <span class="symbol">=</span> <span class="type-name">Fin</span> 200
+  span <span class="symbol">=</span> 10<span class="symbol">.</span>0
+  xs <span class="symbol">=</span> linspace sizen (<span class="symbol">-</span>span) span
+
+  covroot <span class="symbol">:</span> m <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
+  meanvec <span class="symbol">:</span> ((<span class="type-name">Fin</span> 2) <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 1
+  integral <span class="symbol">=</span> (sq (2<span class="symbol">.</span>0 <span class="symbol">*</span> span)) <span class="symbol">*</span> mean <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">:</span>(sizen <span class="symbol">&amp;</span> sizen)<span class="symbol">.</span>
+    x <span class="symbol">=</span> [xs<span class="symbol">.</span>i<span class="symbol">,</span> xs<span class="symbol">.</span>j]
+    exp <span class="symbol">$</span> gaussian_log_pdf meanvec covroot x
+  integral <span class="symbol">~~</span> 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes (<span class="type-name">SkewSymmetricMap</span> (<span class="type-name">Fin</span> 2))
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="comment">-- Disabled until associated types are implemented.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; True
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; True
+</span></div></div><div class="cell"><div class="code-block">check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes <span class="symbol">$</span> (<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes <span class="symbol">$</span> <span class="type-name">DiagMap</span> (<span class="type-name">Fin</span> 2)
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Application 2: SDEs</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Time</span> <span class="symbol">=</span> <span class="type-name">MkTime</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Drift</span> (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">VSpace</span> v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span><span class="type-name">Time</span><span class="symbol">-&gt;</span>v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Diffusion</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  v<span class="symbol">-&gt;</span><span class="type-name">Time</span><span class="symbol">-&gt;</span>m
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SDE</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (<span class="type-name">Drift</span> v <span class="symbol">&amp;</span> <span class="type-name">Diffusion</span> m v)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> radon_nikodym {m s} [<span class="type-name">InnerProd</span> s<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m s]
+  (drift1<span class="symbol">:</span><span class="type-name">Drift</span> s)
+  (drift2<span class="symbol">:</span><span class="type-name">Drift</span> s)
+  (diffusion<span class="symbol">:</span><span class="type-name">Diffusion</span> m s)
+  (state<span class="command">:s</span>) (t<span class="symbol">:</span><span class="type-name">Time</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="comment">-- By Girsanov&#39;s theorem, this gives a simple Monte Carlo estimator
+</span>  <span class="comment">-- of the (loosely speaking) instantaneous KL divergence between
+</span>  <span class="comment">-- two SDEs that share a diffusion function.
+</span>  difference <span class="symbol">=</span> (drift1 state t) <span class="symbol">-</span> (drift2 state t)
+  cur_diffusion <span class="symbol">=</span> diffusion state t
+  a <span class="symbol">=</span> solve&#39; cur_diffusion difference
+  0<span class="symbol">.</span>5 <span class="symbol">*</span> inner_prod a a
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Stationary SDEs</h3>
+<p>From Equation 3, Section 2.1 of <a href="https://arxiv.org/pdf/1506.04696.pdf">&quot;A Complete Recipe for Stochastic Gradient
+MCMC&quot;</a>:
+Every SDE with a stationary distribution can be parameterized
+by:</p>
+<ol>
+<li>A state-dependent energy function</li>
+<li>A state-dependent skew-symmetric matrix</li>
+<li>A state-dependent diffusion matrix</li>
+</ol>
+</div></div><div class="cell"><div class="prose-block"><p>The function below converts these matrices into the drift and diffusion which,
+if followed, will converge to a stationary distribution whose marginal
+log-density is equal to the negative energy function (plus a constant).</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationaryDiffusion</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span>m
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NegEnergyFunc</span> (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span><span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SkewSymmetricFunc</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  v<span class="symbol">-&gt;</span>(i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationarySDEParts</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>)
+    [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">LinearEndo</span> n v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (<span class="type-name">NegEnergyFunc</span> v <span class="symbol">&amp;</span> <span class="type-name">SkewSymmetricFunc</span> n v <span class="symbol">&amp;</span> <span class="type-name">StationaryDiffusion</span> n v)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stationary_<span class="type-name">SDE</span>_parts_to_<span class="type-name">SDE</span> {n v}
+  [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">LinearEndo</span> n (n<span class="symbol">=&gt;</span>v)]
+  ((neg_energy_func<span class="symbol">,</span> skew_symm_map<span class="symbol">,</span> diffusion_func)<span class="symbol">:</span><span class="type-name">StationarySDEParts</span> n (n<span class="symbol">=&gt;</span>v)) <span class="symbol">:</span>
+    (<span class="type-name">SDE</span> n (n<span class="symbol">=&gt;</span>v)) <span class="symbol">=</span>
+  drift <span class="symbol">=</span> <span class="symbol">\</span>state time<span class="symbol">.</span>
+
+    diffusion_prod <span class="symbol">=</span> <span class="symbol">\</span>vec<span class="symbol">.</span>  <span class="comment">-- Square the root of the covariance matrix
+</span>      cur_diffusion_root <span class="symbol">=</span> diffusion_func state
+      0<span class="symbol">.</span>5 <span class="symbol">.*</span> (apply cur_diffusion_root (apply cur_diffusion_root vec))
+  
+    neg_energy_grad <span class="symbol">=</span> (grad neg_energy_func) state
+
+    skew_term <span class="symbol">=</span> skew_symmetric_prod (skew_symm_map state) neg_energy_grad
+    diff_term <span class="symbol">=</span> diffusion_prod neg_energy_grad
+
+    gammapart <span class="symbol">=</span> <span class="symbol">\</span>state<span class="symbol">.</span>
+      skew_term&#39; <span class="symbol">=</span> skew_symmetric_prod (skew_symm_map state) one
+      diff_term&#39; <span class="symbol">=</span> diffusion_prod one
+      skew_term&#39; <span class="symbol">+</span> diff_term&#39;
+    gamma_term <span class="symbol">=</span> jvp gammapart state one
+    
+    skew_term <span class="symbol">+</span> diff_term <span class="symbol">+</span> gamma_term
+  diffusion <span class="symbol">=</span> <span class="symbol">\</span>state time<span class="symbol">.</span> diffusion_func state
+  (drift<span class="symbol">,</span> diffusion)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: tests for SDE functions.
+</span></div></div></div></body></html>

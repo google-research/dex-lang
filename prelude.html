@@ -624,6 +624,16 @@ Includes floating point and two field rational representations.</p>
   sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
   zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+  add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
+  sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
+  zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
+  add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
+  sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
+  zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Mul</span> a] <span class="type-name">Mul</span> (n<span class="symbol">=&gt;</span>a)
   mul <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">*</span> ys<span class="symbol">.</span>i
   one <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> one
@@ -662,6 +672,18 @@ Includes floating point and two field rational representations.</p>
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> x <span class="symbol">*</span> y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (n<span class="symbol">=&gt;</span>a)
+  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)
+  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a)
+  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (n<span class="symbol">-&gt;</span>a)
@@ -1981,6 +2003,18 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
   unif <span class="symbol">=</span> rand k
   from_ordinal n <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor <span class="symbol">$</span> unif <span class="symbol">*</span> i_to_f (size n)
 </div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Inner product typeclass</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">VSpace</span> v] <span class="type-name">InnerProd</span> v
+  inner_prod <span class="symbol">:</span> v<span class="symbol">-&gt;</span>v<span class="symbol">-&gt;</span><span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">InnerProd</span> <span class="type-name">Float</span>
+  inner_prod <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> x <span class="symbol">*</span> y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">InnerProd</span> a] <span class="type-name">InnerProd</span> (n<span class="symbol">=&gt;</span>a)
+  inner_prod <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> inner_prod x<span class="symbol">.</span>i y<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h2>Arbitrary</h2>
 <p>Type class for generating example values</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Arbitrary</span> a
@@ -1997,6 +2031,18 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (n<span class="symbol">=&gt;</span>a)
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> ixkey key i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Arbitrary</span> a<span class="symbol">,</span> <span class="type-name">Arbitrary</span> b] <span class="type-name">Arbitrary</span> (a <span class="symbol">&amp;</span> b)
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
