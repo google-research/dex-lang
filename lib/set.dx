@@ -87,7 +87,7 @@ data StringSetIx l:(Set String) =
   MkSetIx Int   -- TODO: Use (Fin (setSize l)) instead.
 
 instance {set} Ix (StringSetIx set)
-  get_size = \(). set_size set
+  size = set_size set
   ordinal = \(MkSetIx i). i
   unsafe_from_ordinal = \k. MkSetIx k
 

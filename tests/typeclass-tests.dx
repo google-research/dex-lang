@@ -213,7 +213,7 @@ data TwoPoints =
   SecondPoint
 
 instance Ix TwoPoints
-  get_size = \(). 2
+  size = 2
   ordinal = \b. case b of
     FirstPoint  -> 0
     SecondPoint -> 1

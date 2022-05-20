@@ -1175,15 +1175,13 @@ indexToInt (IxType _ dict) idx = do
   app f idx
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = do
-  f <- projMethod "get_size" dict
-  app f UnitVal
+indexSetSize (IxType _ dict) = projMethod "size" dict
 
 projectIxFinMethod :: EnvReader m => Int -> Atom n -> m n (Atom n)
 projectIxFinMethod methodIx n = liftBuilder do
   case methodIx of
-    -- get_size
-    0 -> buildPureLam noHint PlainArrow UnitTy \_ -> sinkM n
+    -- size
+    0 -> return n
     -- ordinal
     1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
           emitOp $ CastOp IdxRepTy $ Var ix

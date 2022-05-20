@@ -230,11 +230,9 @@ instance Fractional Float32
 '## Index set interface and instances
 
 interface Ix n
-  get_size n : Unit -> Int
+  size n : Int
   ordinal : n -> Int
   unsafe_from_ordinal n : Int -> n
-
-def size (n : Type) [Ix n] : Int = get_size n ()
 
 def Range (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = Range 0 n
@@ -247,52 +245,52 @@ def clamp_nonneg_prim (a: Int) : Int =
 
 -- TODO: Define Range in surface syntax
 instance {l h} Ix (Range l h)
-  get_size = \(). clamp_nonneg_prim $ h - l
+  size = clamp_nonneg_prim $ h - l
   ordinal = \i. %cast Int i
   unsafe_from_ordinal = \i. %cast (Range l h) i
 
 instance {q:Type} {i:q} [Ix q] Ix (i..)
-  get_size = \(). size q - ordinal i
+  size = size q - ordinal i
   ordinal = \j. %cast Int j
   unsafe_from_ordinal = \j. %cast (i..) j
 
 instance {q:Type} {i:q} [Ix q] Ix (i<..)
-  get_size = \(). size q - ordinal i - 1
+  size = size q - ordinal i - 1
   ordinal = \j. %cast Int j
   unsafe_from_ordinal = \j. %cast (i<..) j
 
 instance {q:Type} {i:q} [Ix q] Ix (..i)
-  get_size = \(). ordinal i + 1
+  size = ordinal i + 1
   ordinal = \j. %cast Int j
   unsafe_from_ordinal = \j. %cast (..i) j
 
 instance {q:Type} {i:q} [Ix q] Ix (..<i)
-  get_size = \(). ordinal i
+  size = ordinal i
   ordinal = \j. %cast Int j
   unsafe_from_ordinal = \j. %cast (..<i) j
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..i)
-  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j + 1
+  size = clamp_nonneg_prim $ ordinal i - ordinal j + 1
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j..i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..<i)
-  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j
+  size = clamp_nonneg_prim $ ordinal i - ordinal j
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j..<i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..i)
-  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j
+  size = clamp_nonneg_prim $ ordinal i - ordinal j
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j<..i) k
 
 instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..<i)
-  get_size = \(). clamp_nonneg_prim $ ordinal i - ordinal j - 1
+  size = clamp_nonneg_prim $ ordinal i - ordinal j - 1
   ordinal = \k. %cast Int k
   unsafe_from_ordinal = \k. %cast (j<..<i) k
 
 instance Ix Unit
-  get_size = \(). 1
+  size = 1
   ordinal = \_. 0
   unsafe_from_ordinal = \_. ()
 
@@ -303,7 +301,7 @@ def iota (n:Type) [Ix n] : n=>Int = view i. ordinal i
 data Post segment:Type = UnsafeMkPost Int
 
 instance {segment} [Ix segment] Ix (Post segment)
-  get_size = \(). size segment + 1
+  size = size segment + 1
   ordinal = \(UnsafeMkPost i). i
   unsafe_from_ordinal = \i. UnsafeMkPost i
 
@@ -351,7 +349,7 @@ def snd {a b} ((_, y): (a & b)) : b = y
 def swap {a b} ((x, y):(a&b)) : (b&a) = (y, x)
 
 instance {a b} [Ix a, Ix b] Ix (a & b)
-  get_size = \(). size a * size b
+  size = size a * size b
   ordinal = \(i, j). (ordinal i * size b) + ordinal j
   unsafe_from_ordinal = \o.
     bs = size b
@@ -455,7 +453,7 @@ data (|) a b =
   Right b
 
 instance {a b} [Ix a, Ix b] Ix (a | b)
-  get_size = \(). size a + size b
+  size = size a + size b
   ordinal = \i. case i of
     Left ai  -> ordinal ai
     Right bi -> ordinal bi + size a
@@ -729,7 +727,7 @@ instance {a n} [Ord a] Ord (n=>a)
     f == LT
 
 instance Ix Bool
-  get_size = \(). 2
+  size = 2
   ordinal = \b. case b of
     False -> 0
     True -> 1
@@ -2276,6 +2274,6 @@ def reversed_digits_to_int {a b} [Ix a, Ix b] (digits: a=>b) : Int =
 instance {a b} [Ix a, Ix b] Ix (a=>b)
   -- 0@a is the least significant digit,
   -- while (size a - 1)@a is the most significant digit.
-  get_size = \(). intpow (size b) (size a)
+  size = intpow (size b) (size a)
   ordinal             = reversed_digits_to_int
   unsafe_from_ordinal = int_to_reversed_digits
