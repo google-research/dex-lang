@@ -59,9 +59,32 @@ def sort {a n} [Ord a] (xs: n=>a) : n=>a =
   (AsList _ r) = reduce mempty mcombine xlists
   unsafe_cast_table n r
 
+
 def (+|) {n} [Ix n] (i:n) (delta:Int) : n =
   i' = ordinal i + delta
   from_ordinal _ $ select (i' >= size n) (size n - 1) i'
 
 def is_sorted {a n} [Ord a] (xs:n=>a) : Bool =
   all for i. xs.i <= xs.(i +| 1)
+
+
+'#### Argsort
+
+-- Wrapper datatype so we can sort on only first part.
+data Ignore_snd a b [Ord a] =
+  MkIgnore_snd orderme:a aux:b
+
+instance {a b} [Eq a, Eq b] Eq (Ignore_snd a b)
+  (==) = \(MkIgnore_snd x1 y1) (MkIgnore_snd x2 y2).
+    (x1 == x2) && (y1 == y2)
+
+instance {a b} [Eq a, Eq b] Ord (Ignore_snd a b)
+  (<) = \(MkIgnore_snd x1 _) (MkIgnore_snd x2 _). (x1 < x2)
+  (>) = \(MkIgnore_snd x1 _) (MkIgnore_snd x2 _). (x1 > x2)
+
+def argsort {a n} [Eq a, Eq n, Ord a] (xs: n=>a) : n=>n =
+  ix_pairs = for i. MkIgnore_snd xs.i i
+  sorted = sort ix_pairs
+  for i.
+    (MkIgnore_snd _ ix) = sorted.i
+    ix
