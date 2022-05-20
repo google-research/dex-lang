@@ -49,6 +49,7 @@ jobs:
         cat /tmp/new-commits.csv >>commits.csv
 
     - name: Commit new data points
+      if: github.event_name == 'push'
       run: |
           git config --global user.name 'Dex CI'
           git config --global user.email 'apaszke@users.noreply.github.com'

@@ -43,6 +43,7 @@ def build(commit):
     run('git', 'checkout', commit)
     run('make', 'install', env=dict(os.environ, PREFIX=commit))
     run('cp', '-r', 'lib', install_path / 'lib')
+    run('cp', '-r', 'examples', install_path / 'examples')
   return install_path
 
 
@@ -61,16 +62,17 @@ def benchmark(baseline_path, latest_path):
     latest_bench = partial(bench, latest_path, 'latest')
     results = []
     for example, repeats in BENCH_EXAMPLES:
-      path = Path('examples') / (example + '.dx')
+      baseline_example = baseline_path / 'examples' / (example + '.dx')
+      latest_example = latest_path / 'examples' / (example + '.dx')
       # warm-up the caches
       baseline_clean()
-      baseline_bench(example, path)
+      baseline_bench(example, baseline_example)
       latest_clean()
-      latest_bench(example, path)
+      latest_bench(example, latest_example)
       for i in range(repeats):
         print(f'Iteration {i}')
-        baseline_alloc, baseline_time = baseline_bench(example, path)
-        latest_alloc, latest_time = latest_bench(example, path)
+        baseline_alloc, baseline_time = baseline_bench(example, baseline_example)
+        latest_alloc, latest_time = latest_bench(example, latest_example)
         print(baseline_alloc, '->', latest_alloc)
         print(baseline_time, '->', latest_time)
         # Allocation measurements are stable enough so that we don't need to
