@@ -502,7 +502,7 @@ with_state 10 $ \ state.
   integer tables (of type `n => Float32`).
 
 :t tableMean
-> ((n:Type) ?-> (Ix n) ?=> (n => Float32) -> Float32)
+> ((n:Type) ?-> (_autoq:(Ix n)) ?=> (n => Float32) -> Float32)
 
 ' If we try to apply `tableMean` to other types for get errors. For example,
   `tableMean` does not work when applied to a table of *pairs* of floats.

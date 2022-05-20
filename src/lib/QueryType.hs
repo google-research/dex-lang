@@ -9,9 +9,10 @@ module QueryType (
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
   oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal,
+  isSingletonType, singletonTypeVal, ixDictType
   ) where
 
+import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -62,7 +63,7 @@ caseAltsBinderTys :: (Fallible1 m, EnvReader m)
 caseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    cons <- applyDataDefParams def params
+    cons <- instantiateDataDef def params
     return [bs | DataConDef _ bs <- cons]
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
@@ -121,9 +122,9 @@ getMethodIndex className methodSourceName = do
     Just i -> return i
 {-# INLINE getMethodIndex #-}
 
-instantiateDataDef :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) params =
-  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
+instantiateDataDef :: ScopeReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
+instantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons) (DataDefParams xs1 xs2) = do
+  fromListE <$> applyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (map SubstVal $ xs1 <> xs2)
 {-# INLINE instantiateDataDef #-}
 
 instantiateDepPairTy :: ScopeReader m => DepPairType n -> Atom n -> m n (Type n)
@@ -299,11 +300,12 @@ instance HasType Atom where
     DataCon _ defName params _ _ -> do
       defName' <- substM defName
       (DataDef sourceName _ _) <- lookupDataDef defName'
-      params' <- traverse substM params
+      params' <- substM params
       return $ TypeCon sourceName defName' params'
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
+    IxTy _ -> return $ TC IxTypeKind
     LabeledRow _ -> return LabeledRowKind
     Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy _ -> return TyKind
@@ -313,7 +315,7 @@ instance HasType Atom where
     DataConRef defName params _ -> do
       defName' <- substM defName
       DataDef sourceName _ _ <- lookupDataDef defName'
-      params' <- traverse substM params
+      params' <- substM params
       return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef _ _ ty -> do
       ty' <- substM ty
@@ -334,7 +336,7 @@ instance HasType Atom where
             (Var v') -> return v'
             _ -> error "!??"
           def <- lookupDataDef defName
-          [DataConDef _ (Abs bs' UnitE)] <- applyDataDefParams def params
+          [DataConDef _ (Abs bs' UnitE)] <- instantiateDataDef def params
           PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
           -- `ty` can depend on earlier binders from this constructor. Rewrite
           -- it to also use projections.
@@ -412,10 +414,6 @@ getTypePrimCon con = case con of
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
 
-applyDataDefParams :: (EnvReader m) => DataDef n -> [Type n] -> m n [DataConDef n]
-applyDataDefParams (DataDef _ bs cons) params =
-  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
-
 dictExprType :: DictExpr i -> TypeQueryM i o (DictType o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
@@ -434,6 +432,20 @@ dictExprType e = case e of
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
     DictTy dTy <- applyNaryAbs (Abs bs (superclasses !! i)) $ map SubstVal params
     return dTy
+  IxFin n -> do
+    n' <- substM n
+    ixDictType $ Fin n'
+
+getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
+getIxClassName = lookupSourceMap "Ix" >>= \case
+  Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
+  Just (UClassVar v) -> return v
+  Just _ -> error "not a class var"
+
+ixDictType :: (Fallible1 m, EnvReader m) => Type n -> m n (DictType n)
+ixDictType ty = do
+  ixClassName <- getIxClassName
+  return $ DictType "Ix" ixClassName [ty]
 
 typeApp  :: Type o -> [Atom i] -> TypeQueryM i o (Type o)
 typeApp fTy [] = return fTy
@@ -481,13 +493,10 @@ getTypePrimOp op = case op of
     return $ TC $ BaseType $ typeBinOp binop xTy
   ScalarUnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
   Select _ x _ -> getTypeE x
-  UnsafeFromOrdinal ty _ -> substM ty
-  ToOrdinal _ -> return IdxRepTy
-  IdxSetSize _ -> return IdxRepTy
   Inject i -> do
     TC tc <- getTypeE i
     case tc of
-      IndexRange ty _ _ -> return ty
+      IndexRange (IxTy (IxType ty _)) _ _ -> return ty
       ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
@@ -517,11 +526,8 @@ getTypePrimOp op = case op of
     return $ BaseTy t
   PtrStore _ _ -> return UnitTy
   SliceOffset s _ -> do
-    TC (IndexSlice n _) <- getTypeE s
+    TC (IndexSlice (IxTy (IxType n _)) _) <- getTypeE s
     return n
-  SliceCurry s _ -> do
-    TC (IndexSlice n (PairTy _ v)) <- getTypeE s
-    return $ TC $ IndexSlice n v
   VectorBinOp _ _ _ -> throw CompilerErr "Vector operations are not supported at the moment"
   VectorPack xs -> do
     BaseTy (Scalar sb) <- getTypeE $ head xs
@@ -650,25 +656,16 @@ labeledRowDifference' (Ext (LabeledItems items) rest)
 
 getTypePrimHof :: PrimHof (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ f -> do
-    Pi (PiType (PiBinder b argTy PlainArrow) _ eltTy) <- getTypeE f
-    return $ TabTy (b:>argTy) eltTy
+  For _ ixTyAtom f -> do
+    Pi (PiType (PiBinder b _ PlainArrow) _ eltTy) <- getTypeE f
+    IxTy ixTy <- substM ixTyAtom
+    return $ TabTy (b:>ixTy) eltTy
   Tile dim fT _ -> do
-    (TC (IndexSlice n _), _, tr) <- getTypeE fT >>= fromNonDepPiType PlainArrow
+    (TC (IndexSlice (IxTy n) _), _, tr) <- getTypeE fT >>= fromNonDepPiType PlainArrow
     (leadingIdxTysT, resultTyT) <- fromNaryNonDepTabType (replicate dim ()) tr
     (_, resultTyT') <- fromNonDepTabType resultTyT
     naryNonDepTabPiType (leadingIdxTysT ++ [n]) resultTyT'
-  PTileReduce baseMonoids n mapping -> do
-    -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
-    ([_gtid, _nthr], Pure, mapResultTy) <-
-      getTypeE mapping >>= fromNaryNonDepPiType [PlainArrow, PlainArrow]
-    (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
-    (_, tileElemTy) <- fromNonDepTabType tiledArrTy
-    -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-    n' <- substM n
-    tabTy <- n' ==> tileElemTy
-    -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-    return $ PairTy tabTy $ mkConsListTy accTys
+  PTileReduce _ _ _ -> undefined
   While _ -> return UnitTy
   Linearize f -> do
     Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
@@ -754,7 +751,7 @@ exprEffects expr = case expr of
     PtrStore _ _  -> return $ oneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
-    For _ f         -> functionEffs f
+    For _ _ f         -> functionEffs f
     -- The tiled and scalar bodies should have the same effects, but
     -- that's checked elsewhere.  If they are the same, merging them
     -- with <> is a noop.

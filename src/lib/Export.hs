@@ -15,7 +15,6 @@ import Data.List (intercalate)
 import Control.Monad
 
 import Name
-import MTL1
 import Err
 import Syntax
 import CheckType (asFirstOrderFunction)
@@ -39,7 +38,8 @@ prepareFunctionForExport' f = do
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
     Just npi -> return npi
   closedNaryPi <- case hoistToTop naryPi of
-    HoistFailure _   -> throw TypeErr "Types of exported functions have to be closed terms"
+    HoistFailure _   -> throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++
+      pprint naryPi
     HoistSuccess npi -> return npi
   sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
     Success sig -> return sig
@@ -110,25 +110,24 @@ prepareFunctionForExport' f = do
           ScalarType sbt ->
             return (Scalar sbt, Block (BlockAnn (BaseTy $ Scalar sbt) Pure) Empty v)
           RectContArrayPtr sbt shape -> do
-              block <- liftBuilder $ buildBlock $ tableAtom (sink v) (sink $ shapeToE shape) [] []
+              block <- liftBuilder $ buildBlock $ tableAtom (sink v) (sink $ ListE shape) []
               return (PtrType (Heap CPU, Scalar sbt), block)
             where
-              tableAtom :: Emits n => Atom n -> ListE (EitherE AtomName (LiftE Int)) n -> [Atom n] -> [Atom n] -> BuilderM n (Atom n)
-              tableAtom basePtr (ListE shapeTail) is sizes = case shapeTail of
-                (h:t) -> buildTabLam noHint (Fin $ dimSize h) \i ->
-                  tableAtom (sink basePtr) (sink $ ListE t)
-                            (sinkList is ++ [Var i]) (sinkList $ sizes ++ [dimSize h])
+              tableAtom :: Emits n => Atom n -> ListE ExportDim n
+                        -> [(Atom n, ExportDim n)] -> BuilderM n (Atom n)
+              tableAtom basePtr (ListE shapeTail) typedIdxs = case shapeTail of
+                (ity:rest) -> buildTabLam noHint (exportDimToIxType ity) \i -> do
+                  let typedIdxs' = [(sink ix, sink t) | (ix, t) <- typedIdxs]
+                  tableAtom (sink basePtr) (sink $ ListE rest) (typedIdxs' ++ [(Var i, sink ity)])
                 [] -> do
+                  sizes <- mapM (indexSetSize . exportDimToIxType . snd) typedIdxs
                   strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
                                                      (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
-                  ords <- flip evalStateT1 mempty $ forM is \i -> do
-                    ity <- getType i
-                    appSimplifiedIxMethod ity simpleToOrdinal i
+                  ords <- forM typedIdxs \(i, ity) -> indexToInt (exportDimToIxType ity) i
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   unsafePtrLoad =<< ptrOffset basePtr offset
 
               dup x = (x, x)
-              dimSize = \case LeftE n -> Var n; RightE (LiftE n) -> IdxRepVal (fromIntegral n)
 
     toExportType :: Fallible m => Type n -> m (ExportType n)
     toExportType ty = case ty of
@@ -144,10 +143,11 @@ prepareFunctionForExport' f = do
       where
         go shape = \case
           BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
-          TabTy  (b:>Fin n) a -> do
+
+          TabTy  (b:>(IxType (Fin n) _)) a -> do
             dim <- case n of
-              Var v       -> Just (Left v)
-              IdxRepVal s -> Just (Right $ fromIntegral s)
+              Var v       -> Just (ExportDimVar v)
+              IdxRepVal s -> Just (ExportDimLit $ fromIntegral s)
               _           -> Nothing
             case hoist b a of
               HoistSuccess a' -> go (shape ++ [dim]) a'
@@ -158,7 +158,19 @@ prepareFunctionForExport' f = do
 -- === Exported function signature ===
 
 data ArgVisibility = ImplicitArg | ExplicitArg
-data ExportType n = RectContArrayPtr ScalarBaseType [Either (AtomName n) Int]
+
+exportDimToIxType :: ExportDim n -> IxType n
+exportDimToIxType dim = IxType (Fin dim') (DictCon $ IxFin dim')
+  where
+    dim' = case dim of
+      ExportDimVar v -> Var v
+      ExportDimLit n -> IdxRepVal (fromIntegral n)
+
+data ExportDim n =
+   ExportDimVar (AtomName n)
+ | ExportDimLit Int
+
+data ExportType n = RectContArrayPtr ScalarBaseType [ExportDim n]
                   | ScalarType ScalarBaseType
 
 data    ExportArg    n l = ExportArg    ArgVisibility (BinderP AtomNameC ExportType n l)
@@ -169,27 +181,31 @@ data ExportedSignature n = forall l l'.
                     , exportedCCallSig :: [AtomName l']
                     }
 
+instance GenericE ExportDim where
+  type RepE ExportDim = EitherE AtomName (LiftE Int)
+  fromE = \case
+    ExportDimVar v -> LeftE v
+    ExportDimLit n -> RightE (LiftE n)
+  {-# INLINE fromE #-}
+  toE = \case
+    LeftE v -> ExportDimVar v
+    RightE (LiftE n) -> ExportDimLit n
+instance SubstE    Name ExportDim
+instance SinkableE      ExportDim
+
 instance GenericE ExportType where
   type RepE ExportType = EitherE (LiftE ScalarBaseType)
-                                 (LiftE ScalarBaseType `PairE` ListE (EitherE AtomName (LiftE Int)))
+                                 (LiftE ScalarBaseType `PairE` ListE ExportDim)
   fromE = \case
     ScalarType sbt   -> LeftE $ LiftE sbt
-    RectContArrayPtr sbt shape -> RightE $ LiftE sbt `PairE` shapeToE shape
+    RectContArrayPtr sbt shape -> RightE $ LiftE sbt `PairE` ListE shape
   {-# INLINE fromE #-}
   toE = \case
     LeftE (LiftE sbt) -> ScalarType sbt
-    RightE (LiftE sbt `PairE` shape) -> RectContArrayPtr sbt (shapeFromE shape)
+    RightE (LiftE sbt `PairE` ListE shape) -> RectContArrayPtr sbt shape
   {-# INLINE toE #-}
 instance SubstE    Name ExportType
 instance SinkableE      ExportType
-
-shapeToE :: [Either (AtomName n) Int] -> ListE (EitherE AtomName (LiftE Int)) n
-shapeToE shape = ListE (dimToE <$> shape)
-  where dimToE = \case Left n -> LeftE n; Right n -> RightE (LiftE n)
-
-shapeFromE :: ListE (EitherE AtomName (LiftE Int)) n -> [Either (AtomName n) Int]
-shapeFromE (ListE shape) = (dimFromE <$> shape)
-  where dimFromE = \case LeftE n -> Left n; RightE (LiftE n) -> Right n
 
 instance ToBinding ExportType AtomNameC where
   toBinding = \case
@@ -243,8 +259,8 @@ instance Show (ExportType n) where
     where
       showShape shape = "[" <> (intercalate "," $ fmap showDim shape) <> "]"
       showDim size = case size of
-        Left  name -> pprint name
-        Right lit  -> show lit
+        ExportDimVar v -> pprint v
+        ExportDimLit n -> show n
 
 instance Show (ExportArg n l) where
   show (ExportArg vis (name:>ty)) = showVis vis <> pprint name <> ":" <> show ty

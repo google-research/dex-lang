@@ -8,7 +8,7 @@ module Interpreter (indices, applyIntBinOp, applyIntCmpOp, applyFloatBinOp, appl
 
 import Syntax
 
-indices :: EnvReader m => Type n -> m n [Atom n]
+indices :: EnvReader m => IxType n -> m n [Atom n]
 
 applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
 applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom n -> Atom n -> Atom n

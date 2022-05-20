@@ -673,7 +673,9 @@ uPrim = withSrc $ do
   s <- primName
   case strToPrimName s of
     Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
-    Nothing -> fail $ "Unrecognized primitive: " ++ s
+    Nothing -> case s of
+      "IndexType" -> UIndexType <$> leafExpr
+      _ -> fail $ "Unrecognized primitive: " ++ s
 
 uVariantExpr :: Parser (UExpr VoidS)
 uVariantExpr = withSrc $ parseVariant expr UVariant UVariantLift
@@ -1400,9 +1402,6 @@ builtinNames = M.fromList
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("log1p", unOp Log1p), ("lgamma", unOp LGamma)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
-  , ("idxSetSize"  , OpExpr $ IdxSetSize ())
-  , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
-  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
   , ("sumToVariant"   , OpExpr $ SumToVariant ())
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
@@ -1452,7 +1451,6 @@ builtinNames = M.fromList
   , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("cast", OpExpr  $ CastOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
-  , ("sliceCurry", OpExpr $ SliceCurry () ())
   , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
   , ("free" , OpExpr $ IOFree ())
   , ("ptrOffset", OpExpr $ PtrOffset () ())

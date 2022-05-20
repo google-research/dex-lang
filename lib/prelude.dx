@@ -1093,7 +1093,8 @@ def check_deriv (f:Float->Float) (x:Float) : Bool =
 
 '## Tiling functions
 
-def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
+def Tile (n : Type) (m : Type) [Ix n, Ix m] : Type =
+  %IndexSlice (%IndexType n) (%IndexType m)
 
 -- One can think of instances of `Tile n m` as injective functions `m -> n`,
 -- with the special property that consecutive elements of m map to consecutive
@@ -1101,7 +1102,8 @@ def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 -- is currying followed by function application. We cannot represent currying
 -- in isolation, because `Tile n (Tile u v)` does not make sense, unlike `Tile n (u & v)`.
 def (+>)  {n l} (t:Tile n l) (i : l) : n = %sliceOffset t i
-def (++>) {n u v} (t : Tile n (u & v)) (i : u) : Tile n v = %sliceCurry t i
+-- def (++>) {n u v} (t : Tile n (u & v)) (i : u) : Tile n v =
+--   %throwError _
 
 def tile {n l a eff} [Ix n, Ix l]
       (fTile : (t:(Tile n l) -> {|eff} l=>a))

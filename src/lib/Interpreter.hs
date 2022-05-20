@@ -25,12 +25,12 @@ import Err
 import LabeledItems
 
 import Name
-import MTL1
 import Syntax
-import Simplify
 import QueryType
 import PPrint ()
 import Util ((...))
+import Builder
+import CheapReduction (cheapNormalize)
 
 newtype InterpM (i::S) (o::S) (a:: *) =
   InterpM { runInterpM' :: SubstReaderT AtomSubstVal (EnvReaderT IO) i o a }
@@ -78,14 +78,16 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   TC  tc  -> TC  <$> mapM rec tc
   DictCon _ -> substM atom
   DictTy  _ -> substM atom
+  IxTy    _ -> substM atom
   Eff _ -> substM atom
-  TypeCon sn defName params -> do
+  TypeCon sn defName (DataDefParams params dicts) -> do
     defName' <- substM defName
-    TypeCon sn defName' <$> mapM rec params
-  DataCon printName defName params con args -> do
+    TypeCon sn defName' <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
+  DataCon printName defName (DataDefParams params dicts) con args -> do
     defName' <- substM defName
-    DataCon printName defName' <$> mapM rec params
-                               <*> pure con <*> mapM rec args
+    DataCon printName defName'
+      <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
+      <*> pure con <*> mapM rec args
   Record items -> Record <$> mapM rec items
   RecordTy _ -> substM atom
   Variant ty l con payload ->
@@ -190,10 +192,6 @@ evalOp expr = mapM evalAtom expr >>= \case
       Con . Lit <$> loadLitVal hostPtr t
   PtrLoad (Con (Lit (PtrLit (PtrLitVal (Stack, _) _)))) ->
     error $ "Unexpected stack pointer in interpreter"
-  ToOrdinal idxArg -> case idxArg of
-    Con (IntRangeVal   _ _   i) -> return i
-    Con (IndexRangeVal _ _ _ i) -> return i
-    _ -> error "Not implemented"
   CastOp destTy x -> do
     sourceTy <- getType x
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
@@ -220,7 +218,24 @@ evalOp expr = mapM evalAtom expr >>= \case
   ToEnum ty@(TypeCon _ defName _) i -> do
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ SumAsProd ty i (map (const []) cons)
+  ProjMethod dict i -> evalProjectDictMethod dict i
   _ -> error $ "Not implemented: " ++ pprint expr
+
+evalProjectDictMethod :: Interp m => Atom o -> Int -> m i o (Atom o)
+evalProjectDictMethod d i = cheapNormalize d >>= \case
+  DictCon (InstanceDict instanceName args) -> dropSubst do
+    args' <- mapM evalAtom args
+    InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+    let InstanceBody _ methods = body
+    let method = methods !! i
+    extendSubst (bs@@>(SubstVal <$> args')) $
+      evalBlock method
+  Con (ExplicitDict _ method) -> do
+    case i of
+      0 -> return method
+      _ -> error "ExplicitDict only supports single-method classes"
+  DictCon (IxFin n) -> projectIxFinMethod i n
+  _ -> error $ "Not a simplified dict: " ++ pprint d
 
 matchUPat :: Interp m => UPat i i' -> Atom o -> m i o (SubstFrag AtomSubstVal i i' o)
 matchUPat (WithSrcB _ pat) x = do
@@ -259,7 +274,7 @@ matchUPat (WithSrcB _ pat) x = do
       getType tab >>= \case
         TabTy b _ -> do
           xs <- dropSubst do
-            idxs <- indices (binderType b)
+            idxs <- indices (binderAnn b)
             forM idxs \i -> evalExpr $ TabApp tab (i:|[])
           matchUPats bs xs
         _ -> error $ "not a table: " ++ pprint tab
@@ -277,23 +292,34 @@ matchUPats _ _ = error "mismatched lengths"
 
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
 -- We could have a partial version of the interpreter that fails when any IO is to happen.
-indices :: EnvReader m => Type n -> m n [Atom n]
-indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $ do
-    env <- unsafeGetEnv
-    Distinct <- getDistinct
-    ix <- simplifiedIxInstance ty
-    let IdxRepVal size = unsafePerformIO $ runInterpM env $ evalMethod ix simpleIxSize UnitVal
-    return $ ListE $ unsafePerformIO $ runInterpM env $
-      forM [0..size - 1] $ evalMethod ix simpleUnsafeFromOrdinal . IdxRepVal
-    where
-      evalMethod ix method x = case method ix of
-        Abs decls lam -> do
-          evalDecls decls $ evalExpr $ App (Lam lam) $ sinkFromTop x NE.:| []
+liftBuilderInterp
+  :: EnvReader m
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+liftBuilderInterp cont = do
+  Abs decls result <- liftBuilder $ buildScoped cont
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return $ unsafePerformIO $ runInterpM env $
+    evalDecls decls $ evalAtom result
+{-# SCC liftBuilderInterp #-}
 
-      runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
-      runInterpM bindings cont =
-        runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
+runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
+runInterpM bindings cont =
+  runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
+{-# SCC runInterpM #-}
+
+indices :: EnvReader m => IxType n -> m n [Atom n]
+indices ixTy = do
+  ~(IdxRepVal size) <- interpIndexSetSize ixTy
+  forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
 {-# SCC indices #-}
+
+interpIndexSetSize :: EnvReader m => IxType n -> m n (Atom n)
+interpIndexSetSize ixTy = liftBuilderInterp $ indexSetSize $ sink ixTy
+
+interpIntToIndex :: EnvReader m => IxType n -> Atom n -> m n (Atom n)
+interpIntToIndex ixTy i = liftBuilderInterp $ intToIndex (sink ixTy) (sink i)
 
 -- === Helpers for function evaluation over fixed-width types ===
 

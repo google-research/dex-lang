@@ -7,7 +7,7 @@
 module CheckType (
   CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM,
-  checkExtends, checkedApplyDataDefParams, checkedApplyClassParams,
+  checkExtends, checkedApplyClassParams,
   tryGetType,
   checkUnOp, checkBinOp,
   isData, asFirstOrderFunction, asFFIFunType,
@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as M
 import LabeledItems
 
 import Err
-import Util (forMZipped, forMZipped_, iota)
+import Util (forMZipped_, iota)
 import QueryType hiding (HasType)
 
 import CheapReduction
@@ -127,6 +127,10 @@ infixr 7 |:
 (|:) :: (Typer m, HasType e) => e i -> Type o -> m i o ()
 (|:) x reqTy = void $ checkTypeE reqTy x
 
+checkIxTy :: Typer m => Atom i -> m i o (IxType o)
+checkIxTy (IxTy ixTy) = checkE ixTy
+checkIxTy x = throw TypeErr $ "Not an index type" ++ pprint x
+
 -- === top-level env ===
 
 instance CheckableE Block where
@@ -170,6 +174,7 @@ instance CheckableE AtomBinding where
     LetBound letBinding -> LetBound    <$> checkE letBinding
     LamBound lamBinding -> LamBound    <$> checkE lamBinding
     PiBound  piBinding  -> PiBound     <$> checkE piBinding
+    IxBound  ixTy       -> IxBound     <$> checkE ixTy
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
     PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
@@ -229,17 +234,17 @@ instance HasType Atom where
     Eff eff  -> checkE eff $> EffKind
     DataCon _ defName params conIx args -> do
       defName' <- substM defName
-      (DataDef sourceName tyParamNest' absCons') <- lookupDataDef defName'
-      params' <- traverse checkE params
-      ListE cons' <- checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
+      def@(DataDef sourceName _ _) <- lookupDataDef defName'
+      params' <- checkE params
+      cons' <- checkedInstantiateDataDef def params'
       let DataConDef _ conParamAbs' = cons' !! conIx
       args'   <- traverse checkE args
       void $ checkedApplyNaryAbs conParamAbs' args'
       return $ TypeCon sourceName defName' params'
     TypeCon _ defName params -> do
-      DataDef _ tyParamNest' absCons' <- lookupDataDef =<< substM defName
-      params' <- traverse checkE params
-      void $ checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
+      def <- lookupDataDef =<< substM defName
+      params' <- checkE params
+      void $ checkedInstantiateDataDef def params'
       return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ className params) -> do
@@ -247,6 +252,7 @@ instance HasType Atom where
       params' <- mapM substM params
       checkArgTys paramBs params'
       return TyKind
+    IxTy ixTy -> checkE ixTy >> return (TC IxTypeKind)
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy elems -> checkFieldRowElems elems $> TyKind
@@ -267,11 +273,10 @@ instance HasType Atom where
     ACase e alts resultTy -> checkCase e alts resultTy Pure
     DataConRef defName params args -> do
       defName' <- substM defName
-      DataDef sourceName paramBs [DataConDef _ argBs] <- lookupDataDef defName'
-      paramTys <- nonDepBinderNestTypes paramBs
-      params' <- forMZipped paramTys params checkTypeE
-      argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
-      checkDataConRefEnv argBs' args
+      def@(DataDef sourceName _ _) <- lookupDataDef defName'
+      params' <- checkE params
+      [DataConDef _ argBs] <- checkedInstantiateDataDef def params'
+      checkDataConRefEnv argBs args
       return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef l (Abs b r) ty -> do
       ty' <- checkTypeE TyKind ty
@@ -298,7 +303,7 @@ instance HasType Atom where
         TypeCon _ defName params -> do
           v' <- substM v
           def <- lookupDataDef defName
-          [DataConDef _ (Abs bs' UnitE)] <- checkedApplyDataDefParams def params
+          [DataConDef _ (Abs bs' UnitE)] <- checkedInstantiateDataDef def params
           PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
           -- `ty` can depend on earlier binders from this constructor. Rewrite
           -- it to also use projections.
@@ -391,6 +396,10 @@ instance HasType TabLamExpr where
       bodyTy <- getTypeE body
       return $ TabTy b' bodyTy
 
+instance CheckableE DataDefParams where
+  checkE (DataDefParams params dicts) =
+    DataDefParams <$> mapM checkE params <*> mapM checkE dicts
+
 dictExprType :: Typer m => DictExpr i -> m i o (DictType o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
@@ -410,6 +419,9 @@ dictExprType e = case e of
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
     DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclasses !! i)) params
     return dTy
+  IxFin n -> do
+    n' <- substM n
+    ixDictType $ Fin n'
 
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e
@@ -426,6 +438,14 @@ instance HasType PiType where
       void $ checkE eff
       resultTy|:TyKind
     return TyKind
+
+instance CheckableE IxType where
+  checkE (IxType t d) = do
+    t' <- checkTypeE TyKind t
+    (d', dictTy) <- getTypeAndSubstE d
+    DictTy (DictType "Ix" _ [tFromDict]) <- return dictTy
+    checkAlphaEq t' tFromDict
+    return $ IxType t' d'
 
 instance HasType TabPiType where
   getTypeE (TabPiType b resultTy) = do
@@ -454,10 +474,14 @@ typeCheckPrimTC :: Typer m => PrimTC (Atom i) -> m i o (Type o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
-  IndexRange t a b -> do
-    t' <- checkTypeE TyKind t
-    mapM_ (|:t') a >> mapM_ (|:t') b >> return TyKind
-  IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
+  IndexRange ixTy a b -> do
+    IxType t _ <- checkIxTy ixTy
+    mapM_ (|:t) a >> mapM_ (|:t) b
+    return TyKind
+  IndexSlice n l -> do
+    void $ checkIxTy n
+    void $ checkIxTy l
+    return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
@@ -466,6 +490,7 @@ typeCheckPrimTC tc = case tc of
   LabeledRowKindTC -> return TyKind
   ParIndexRange t gtid nthr -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
   LabelType        -> return TyKind
+  IxTypeKind       -> return TyKind
 
 typeCheckPrimCon :: Typer m => PrimCon (Atom i) -> m i o (Type o)
 typeCheckPrimCon con = case con of
@@ -478,7 +503,12 @@ typeCheckPrimCon con = case con of
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
   IntRangeVal     l h i -> i|:IdxRepTy >> substM (TC $ IntRange     l h)
-  IndexRangeVal t l h i -> i|:IdxRepTy >> substM (TC $ IndexRange t l h)
+  IndexRangeVal ixTy l h i -> do
+    i |: IdxRepTy
+    ixTy'@(IxType t _) <- checkIxTy ixTy
+    l' <- mapM (checkTypeE t) l
+    h' <- mapM (checkTypeE t) h
+    return $ TC $ IndexRange (IxTy ixTy') l' h'
   IndexSliceVal _ _ _ -> error "not implemented"
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
@@ -492,12 +522,12 @@ typeCheckPrimCon con = case con of
       l' <- substM l
       h' <- substM h
       i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l' h')
-    IndexRangeVal t l h i -> do
-      t' <- substM t
-      l' <- mapM substM l
-      h' <- mapM substM h
+    IndexRangeVal ixTy l h i -> do
+      ixTy'@(IxType t _) <- checkIxTy ixTy
+      l' <- mapM (checkTypeE t) l
+      h' <- mapM (checkTypeE t) h
       i|:(RawRefTy IdxRepTy)
-      return $ RawRefTy $ TC $ IndexRange t' l' h'
+      return $ RawRefTy $ TC $ IndexRange (IxTy ixTy') l' h'
     SumAsProd ty tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
       RawRefTy <$> substM ty
@@ -520,7 +550,7 @@ typeCheckPrimOp op = case op of
     case fromConstAbs (Abs b restTy) of
       HoistSuccess elTy -> forM_ xs (|: elTy)
       HoistFailure _    -> do
-        idxs <- indices $ argType tabPi
+        idxs <- indices $ binderAnn b
         forMZipped_ xs idxs \x i -> do
           eltTy <- instantiateTabPi tabPi i
           x |: eltTy
@@ -537,13 +567,10 @@ typeCheckPrimOp op = case op of
     ty <- getTypeE x
     y |: ty
     return ty
-  UnsafeFromOrdinal ty i -> ty|:TyKind >> i|:IdxRepTy >> substM ty
-  ToOrdinal i -> getTypeE i $> IdxRepTy
-  IdxSetSize i -> getTypeE i $> IdxRepTy
   Inject i -> do
     TC tc <- getTypeE i
     case tc of
-      IndexRange ty _ _ -> return ty
+      IndexRange (IxTy (IxType ty _)) _ _    -> return ty
       ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
@@ -555,7 +582,7 @@ typeCheckPrimOp op = case op of
       MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
     getTypeE ref >>= \case
-      RefTy h (TabTy (b:>iTy) eltTy) -> do
+      RefTy h (TabTy (b:>IxType iTy _) eltTy) -> do
         i' <- checkTypeE iTy i
         eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
         return $ RefTy h eltTy'
@@ -587,15 +614,10 @@ typeCheckPrimOp op = case op of
     declareEff IOEffect
     return $ UnitTy
   SliceOffset s i -> do
-    TC (IndexSlice n l) <- getTypeE s
+    TC (IndexSlice (IxTy (IxType n _)) (IxTy (IxType l _))) <- getTypeE s
     l' <- getTypeE i
     checkAlphaEq l l'
     return n
-  SliceCurry s i -> do
-    TC (IndexSlice n (PairTy u v)) <- getTypeE s
-    u' <- getTypeE i
-    checkAlphaEq u u'
-    return $ TC $ IndexSlice n v
   VectorBinOp _ _ _ -> throw CompilerErr "Vector operations are not supported at the moment"
   VectorPack xs -> do
     unless (length xs == vectorWidth) $ throw TypeErr lengthMsg
@@ -703,7 +725,7 @@ typeCheckPrimOp op = case op of
     x |: Word8Ty
     t' <- checkTypeE TyKind t
     case t' of
-      TypeCon _ dataDefName [] -> do
+      TypeCon _ dataDefName (DataDefParams [] []) -> do
         DataDef _ _ dataConDefs <- lookupDataDef dataDefName
         forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
       VariantTy _ -> return ()  -- TODO: check empty payload
@@ -725,15 +747,20 @@ typeCheckPrimOp op = case op of
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ f -> do
+  For _ ixTyAtom f -> do
+    IxTy ixTy <- return ixTyAtom
+    ixTy' <- checkE ixTy
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
+    checkAlphaEq (ixTypeType ixTy') argTy
     eff' <- liftHoistExcept $ hoist b eff
     declareEffs eff'
-    return $ TabTy (b:>argTy) eltTy
+    return $ TabTy (b:>ixTy') eltTy
   Tile dim fT fS -> do
-    (TC (IndexSlice n l), effT, tr) <- getTypeE fT >>= fromNonDepPiType PlainArrow
+    (TC (IndexSlice (IxTy n) (IxTy l)), effT, tr) <-
+      getTypeE fT >>= fromNonDepPiType PlainArrow
+    IxType nTy _ <- return n
     (sTy                , effS, sr) <- getTypeE fS >>= fromNonDepPiType PlainArrow
-    checkAlphaEq n sTy
+    checkAlphaEq nTy sTy
     checkAlphaEq effT effS
     declareEffs effT
     (leadingIdxTysT, resultTyT) <- fromNaryNonDepTabType (replicate dim ()) tr
@@ -743,21 +770,7 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     checkAlphaEq (ListE leadingIdxTysT) (ListE leadingIdxTysS)
     checkAlphaEq resultTyT' resultTyS
     naryNonDepTabPiType (leadingIdxTysT ++ [n]) resultTyT'
-  PTileReduce baseMonoids n mapping -> do
-    -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
-    ([_gtid, _nthr], Pure, mapResultTy) <-
-      getTypeE mapping >>= fromNaryNonDepPiType [PlainArrow, PlainArrow]
-    (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
-    (_, tileElemTy) <- fromNonDepTabType tiledArrTy
-    -- TOOD: figure out what's going on with threadRange
-    --   let threadRange = TC $ ParIndexRange n (binderAsVar gtid) (binderAsVar nthr)
-    --   checkAlphaEq threadRange threadRange'
-    -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
-    -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-    n' <- substM n
-    tabTy <- n' ==> tileElemTy
-    -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-    return $ PairTy tabTy $ mkConsListTy accTys
+  PTileReduce _ _ _ -> undefined
   While body -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
     PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy
@@ -824,13 +837,6 @@ checkEmptyNest :: Fallible m => Nest b n l -> m ()
 checkEmptyNest Empty = return ()
 checkEmptyNest _  = throw TypeErr "Not empty"
 
-nonDepBinderNestTypes :: Typer m => Nest Binder o o' -> m i o [Type o]
-nonDepBinderNestTypes Empty = return []
-nonDepBinderNestTypes (Nest (b:>ty) rest) = do
-  Abs rest' UnitE <- liftHoistExcept $ hoist b $ Abs rest UnitE
-  restTys <- nonDepBinderNestTypes rest'
-  return $ ty : restTys
-
 checkCase :: Typer m => HasType body
           => Atom i -> [AltP body i] -> Type i -> EffectRow i -> m i o (Type o)
 checkCase scrut alts resultTy effs = do
@@ -847,7 +853,7 @@ checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m)
 checkCaseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    cons <- checkedApplyDataDefParams def params
+    cons <- checkedInstantiateDataDef def params
     return [bs | DataConDef _ bs <- cons]
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
@@ -900,7 +906,7 @@ checkTabApp tabTy xs = go tabTy $ toList xs
     go :: Typer m => Type o -> [Atom i] -> m i o (Type o)
     go ty [] = return ty
     go ty (i:rest) = do
-      TabTy (b:>ixTy) resultTy <- return ty
+      TabTy (b :> IxType ixTy _) resultTy <- return ty
       i' <- checkTypeE ixTy i
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
@@ -1065,9 +1071,12 @@ checkUnOp op x = do
 
 -- === various helpers for querying types ===
 
-checkedApplyDataDefParams :: (EnvReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
-checkedApplyDataDefParams (DataDef _ bs cons) params =
-  fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) params
+checkedInstantiateDataDef
+  :: (EnvReader m, Fallible1 m)
+  => DataDef n -> DataDefParams n -> m n [DataConDef n]
+checkedInstantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons)
+                          (DataDefParams xs1 xs2) = do
+  fromListE <$> checkedApplyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n] -> m n ([Type n], [MethodType n])
@@ -1250,7 +1259,7 @@ checkDataLike ty = case ty of
     recur l
     substBinders b \_ -> checkDataLike r
   TypeCon _ defName params -> do
-    params' <- mapM substM params
+    params' <- substM params
     def <- lookupDataDef =<< substM defName
     dataCons <- instantiateDataDef def params'
     dropSubst $ forM_ dataCons \(DataConDef _ bs) ->

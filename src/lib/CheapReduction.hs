@@ -185,6 +185,8 @@ instance CheaplyReducibleE Atom Atom where
     -- Don't try to eagerly reduce lambda bodies. We might get stuck long before
     -- we have a chance to apply tham. Also, recursive traversal of those bodies
     -- means that we will follow the full call chain, so it's really expensive!
+    -- TODO: we don't collect the dict holes here, so there's a danger of
+    -- dropping them if they turn out to be phantom.
     Lam _   -> substM a
     Con (DictHole ctx ty') -> do
       ty <- cheapReduceE ty'
@@ -193,17 +195,26 @@ instance CheaplyReducibleE Atom Atom where
         Failure _ -> do
           reportSynthesisFail ty
           return $ Con $ DictHole ctx ty
+    TabPi (TabPiType (b:>IxType ixTy dict) resultTy) -> do
+      ixTy' <- cheapReduceE ixTy
+      dict' <- cheapReduceE dict
+      withFreshBinder (getNameHint b) (IxType ixTy' dict') \b' -> do
+        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
+        return $ TabPi $ TabPiType (b':>IxType ixTy' dict') resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
     DataCon sourceName dataDefName params con args ->
-      DataCon sourceName <$> substM dataDefName <*> mapM cheapReduceE params <*> pure con <*> mapM cheapReduceE args
+      DataCon sourceName <$> substM dataDefName <*> cheapReduceE params
+                         <*> pure con <*> mapM cheapReduceE args
     Record items -> Record <$> mapM cheapReduceE items
     Variant ty l c p -> do
       ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
       Variant ty' l c <$> cheapReduceE p
     DictCon d -> cheapReduceE d
     -- Do recursive reduction via substitution
+    -- TODO: we don't collect the dict holes here, so there's a danger of
+    -- dropping them if they turn out to be phantom.
     _ -> do
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
@@ -221,7 +232,13 @@ instance CheaplyReducibleE DictExpr Atom where
     InstantiatedGiven f xs -> do
       cheapReduceE (App f xs) <|> justSubst
     InstanceDict _ _ -> justSubst
+    IxFin _          -> justSubst
     where justSubst = DictCon <$> substM d
+
+instance CheaplyReducibleE DataDefParams DataDefParams where
+  cheapReduceE (DataDefParams ps ds) =
+    DataDefParams <$> mapM cheapReduceE ps
+                  <*> mapM cheapReduceE ds
 
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result

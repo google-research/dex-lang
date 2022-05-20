@@ -519,7 +519,7 @@ nonDepPiType arr argTy eff resultTy =
     Abs b (PairE eff' resultTy') ->
       return $ PiType (PiBinder b argTy arr) eff' resultTy'
 
-nonDepTabPiType :: ScopeReader m => Type n -> Type n -> m n (TabPiType n)
+nonDepTabPiType :: ScopeReader m => IxType n -> Type n -> m n (TabPiType n)
 nonDepTabPiType argTy resultTy =
   toConstAbs resultTy >>= \case
     Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
@@ -545,7 +545,7 @@ naryNonDepPiType arr eff (ty:tys) resultTy = do
   innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
   Pi <$> nonDepPiType arr ty Pure innerFunctionTy
 
-naryNonDepTabPiType :: ScopeReader m =>  [Type n] -> Type n -> m n (Type n)
+naryNonDepTabPiType :: ScopeReader m =>  [IxType n] -> Type n -> m n (Type n)
 naryNonDepTabPiType [] resultTy = return resultTy
 naryNonDepTabPiType (ty:tys) resultTy = do
   innerFunctionTy <- naryNonDepTabPiType tys resultTy
@@ -563,18 +563,18 @@ fromNaryNonDepPiType (arr:arrs) ty = do
   return (argTy:argTys, eff, resultTy)
 
 fromNaryNonDepTabType :: (ScopeReader m, MonadFail1 m)
-                      => [()] -> Type n -> m n ([Type n], Type n)
+                      => [()] -> Type n -> m n ([IxType n], Type n)
 fromNaryNonDepTabType [] ty = return ([], ty)
 fromNaryNonDepTabType (():rest) ty = do
   (argTy, innerTy) <- fromNonDepTabType ty
   (argTys, resultTy) <- fromNaryNonDepTabType rest innerTy
   return (argTy:argTys, resultTy)
 
-fromNonDepTabType :: (ScopeReader m, MonadFail1 m) => Type n -> m n (Type n, Type n)
+fromNonDepTabType :: (ScopeReader m, MonadFail1 m) => Type n -> m n (IxType n, Type n)
 fromNonDepTabType ty = do
-  TabPi (TabPiType (b:>argTy) resultTy) <- return ty
+  TabPi (TabPiType (b :> ixTy) resultTy) <- return ty
   HoistSuccess resultTy' <- return $ hoist b resultTy
-  return (argTy, resultTy')
+  return (ixTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [Type n]
 nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
@@ -590,7 +590,6 @@ nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
 infixr 1 ?-->
 infixr 1 -->
 infixr 1 --@
-infixr 2 ==>
 
 (?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
@@ -601,7 +600,7 @@ a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
 (--@) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
-(==>) :: ScopeReader m => Type n -> Type n -> m n (Type n)
+(==>) :: ScopeReader m => IxType n -> Type n -> m n (Type n)
 a ==> b = TabPi <$> nonDepTabPiType a b
 
 -- first argument is the number of args expected
@@ -628,7 +627,7 @@ fromNaryLam maxDepth = \case
 fromNaryTabLam :: Int -> Atom n -> Maybe (Int, NaryLamExpr n)
 fromNaryTabLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
 fromNaryTabLam maxDepth = \case
-  (TabLam (TabLamExpr (b:>ty) body)) ->
+  (TabLam (TabLamExpr (b:>IxType ty _) body)) ->
     extend <|> (Just $ (1, NaryLamExpr (NonEmptyNest (b:>ty) Empty) Pure body))
     where
       extend = case body of
