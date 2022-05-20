@@ -16,7 +16,15 @@ BENCH_EXAMPLES = [('kernelregression', 10), ('psd', 10), ('fluidsim', 10), ('reg
 
 def run(*args, capture=False, env=None):
   print('> ' + ' '.join(map(str, args)))
-  return subprocess.run(args, check=True, text=True, capture_output=capture, env=env)
+  result = subprocess.run(args, text=True, capture_output=capture, env=env)
+  if result.returncode != 0 and capture:
+    line = '-' * 20
+    print(line, 'CAPTURED STDOUT', line)
+    print(result.stdout)
+    print(line, 'CAPTURED STDERR', line)
+    print(result.stderr)
+  result.check_returncode()
+  return result
 
 
 def read(*args, **kwargs):
@@ -28,27 +36,29 @@ def read_stderr(*args, **kwargs):
 
 
 def build(commit):
-  if os.path.exists(commit):
+  install_path = Path.cwd() / commit
+  if install_path.exists():
     print(f'Skipping the build of {commit}')
   else:
     run('git', 'checkout', commit)
     run('make', 'install', env=dict(os.environ, PREFIX=commit))
-  dex_bin = Path.cwd() / commit / 'dex'
-  return dex_bin
+    run('cp', '-r', 'lib', install_path / 'lib')
+  return install_path
 
 
-def benchmark(baseline_bin, latest_bin):
+def benchmark(baseline_path, latest_path):
   with tempfile.TemporaryDirectory() as tmp:
-    def clean(bin, uniq):
-      run(bin, 'clean', env={'XDG_CACHE_HOME': Path(tmp) / uniq})
-    def bench(bin, uniq, bench_name, path):
+    def clean(p, uniq):
+      run(p / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(tmp) / uniq})
+    def bench(p, uniq, bench_name, path):
       return parse_result(
-          read_stderr(bin, 'script', path, '+RTS', '-s',
+          read_stderr(p / 'dex', '--lib-path', p / 'lib',
+                      'script', path, '+RTS', '-s',
                       env={'XDG_CACHE_HOME': Path(tmp) / uniq}))
-    baseline_clean = partial(clean, baseline_bin, 'baseline')
-    baseline_bench = partial(bench, baseline_bin, 'baseline')
-    latest_clean = partial(clean, latest_bin, 'latest')
-    latest_bench = partial(bench, latest_bin, 'latest')
+    baseline_clean = partial(clean, baseline_path, 'baseline')
+    baseline_bench = partial(bench, baseline_path, 'baseline')
+    latest_clean = partial(clean, latest_path, 'latest')
+    latest_bench = partial(bench, latest_path, 'latest')
     results = []
     for example, repeats in BENCH_EXAMPLES:
       path = Path('examples') / (example + '.dx')
@@ -108,10 +118,10 @@ def main(argv):
     raise ValueError("Expected three arguments!")
   datapath, commitpath, commit = argv
   print('Building baseline: {BASELINE}')
-  baseline_bin = build(BASELINE)
+  baseline_path = build(BASELINE)
   print(f'Building latest: {commit}')
-  latest_bin = build(commit)
-  results = benchmark(baseline_bin, latest_bin)
+  latest_path = build(commit)
+  results = benchmark(baseline_path, latest_path)
   save(commit, results, datapath, commitpath)
   print('DONE!')
 
