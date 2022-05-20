@@ -886,7 +886,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           bindLamPat (WithSrcB pos' pat) v' $ checkUType ty
         cheapReduceWithDecls decls piResult >>= \case
           (Just ty', _, _) -> return ty'
-          -- TODO: handle phantom constraints
+          -- TODO: handle phantom constraints!
           _ -> throw TypeErr $ "Can't reduce type expression: " ++
                  docAsStr (prettyBlock decls piResult)
     matchRequirement $ TabPi piTy
@@ -1770,11 +1770,9 @@ checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
       -- the set of all constraints. We have to reverify it again!
       -- We could probably add a flag to RequiredIfaces that would indicate whether
       -- pruning has happened.
-      --
-      -- TODO: When we're gathering the constraints, we shouldn't treat the existence of
-      -- unhoistable dicts as an irrecoverable failure. They might be derivable from the
-      -- hoistable dicts (e.g. as in i:n=>(..i)=>Float). The failures are only irrecoverable
-      -- when we stop doing auto quantification.
+      -- Note that we ignore the hoist success/failure bit because we're just
+      -- collecting required dictionaries on a best-effort basis here. Failure
+      -- to hoist only becomes an error later.
       (_, _, unsolved) <- cheapReduceWithDecls @Atom decls result
       return $ unsolvedSubset <> eSetFromList unsolved
     return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of

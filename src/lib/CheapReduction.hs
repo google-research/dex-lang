@@ -185,6 +185,8 @@ instance CheaplyReducibleE Atom Atom where
     -- Don't try to eagerly reduce lambda bodies. We might get stuck long before
     -- we have a chance to apply tham. Also, recursive traversal of those bodies
     -- means that we will follow the full call chain, so it's really expensive!
+    -- TODO: we don't collect the dict holes here, so there's a danger of
+    -- dropping them if they turn out to be phantom.
     Lam _   -> substM a
     Con (DictHole ctx ty') -> do
       ty <- cheapReduceE ty'
@@ -211,6 +213,8 @@ instance CheaplyReducibleE Atom Atom where
       Variant ty' l c <$> cheapReduceE p
     DictCon d -> cheapReduceE d
     -- Do recursive reduction via substitution
+    -- TODO: we don't collect the dict holes here, so there's a danger of
+    -- dropping them if they turn out to be phantom.
     _ -> do
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
