@@ -242,12 +242,6 @@ def clamp_nonneg_prim (a: Int) : Int =
   isNeg = %ilt a z
   %select isNeg z a
 
--- TODO: Define Range in surface syntax
-instance {n} Ix (Fin n)
-  size = n
-  ordinal = \i. %cast Int i
-  unsafe_from_ordinal = \i. %cast (Fin n) i
-
 instance {q:Type} {i:q} [Ix q] Ix (i..)
   size = size q - ordinal i
   ordinal = \j. %cast Int j

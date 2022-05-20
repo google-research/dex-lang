@@ -2332,8 +2332,6 @@ synthInstanceDef (InstanceDef className bs params body) = do
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (SynthAtom n)
-trySynthTerm (DictTy (DictType "Ix" _ [TC (Fin n)])) =
-  return $ DictCon $ IxFin n
 trySynthTerm ty = do
   hasInferenceVars ty >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
@@ -2466,7 +2464,9 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
         _ -> return []
       synthExpr <- extendGivens newGivens $ synthTerm resultTy'
       return $ Lam $ LamExpr (LamBinder b' argTy arr Pure) (AtomicBlock synthExpr)
-  SynthDictType dictTy -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
+  SynthDictType dictTy -> case dictTy of
+    DictType "Ix" _ [TC (Fin n)] -> return $ DictCon $ IxFin n
+    _ -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
 {-# SCC synthTerm #-}
 
 synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
