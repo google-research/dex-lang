@@ -348,7 +348,7 @@ transposeCon con ct = case con of
       getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  IntRangeVal _ _ _     -> notTangent
+  FinVal _ _        -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent
   IndexSliceVal _ _ _   -> notTangent
   ParIndexCon _ _       -> notTangent

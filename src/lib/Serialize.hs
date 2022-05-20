@@ -62,7 +62,7 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
     tryParseStringContent :: Atom n -> Maybe (AtomName n, Int32)
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
-      Fin (IdxRepVal n) <- return $ binderType i
+      TC (Fin (IdxRepVal n)) <- return $ binderType i
       Block _ (Nest castDecl (Nest offDecl (Nest loadDecl Empty))) (Var result) <- return body
       Let v (DeclBinding _ _ (Op (CastOp IdxRepTy (Var i')))) <- return castDecl
       guard $ binderName i == i'
@@ -105,7 +105,7 @@ prettyVal val = case val of
         _ -> pprintVal atom
     TabTy b _ <- getType val
     idxSetDoc <- return case binderType b of
-      Fin _  -> mempty               -- (Fin n) is not shown
+      TC (Fin _)  -> mempty               -- (Fin n) is not shown
       idxSet -> "@" <> pretty idxSet -- Otherwise, show explicit index set
     return $ pretty elems <> idxSetDoc
   DataCon name _ _ _ args -> do

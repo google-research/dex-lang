@@ -1434,7 +1434,7 @@ builtinNames = M.fromList
   , ("Word8Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
   , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
   , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
-  , ("IntRange"  , TCExpr $ IntRange () ())
+  , ("Fin"       , TCExpr $ Fin ())
   , ("Label"     , TCExpr $ LabelType)
   , ("Ref"       , TCExpr $ RefType (Just ()) ())
   , ("PairType"  , TCExpr $ ProdType [(), ()])

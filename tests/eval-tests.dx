@@ -648,11 +648,11 @@ for i:(Fin 4).
   (x, z)
 > (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
 
-for i:(Range 4 1). 1.0
-> []@(%IntRange 4 1)
+for i:(Fin (-3)). 1.0
+> []
 
 x = 2 - 4
-for i:(Range 0 x). 1.0
+for i:(Fin x). 1.0
 > []
 
 -- Make sure that we can construct and print an array using a pair index set

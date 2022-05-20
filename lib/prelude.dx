@@ -234,8 +234,7 @@ interface Ix n
   ordinal : n -> Int
   unsafe_from_ordinal n : Int -> n
 
-def Range (low:Int) (high:Int) : Type = %IntRange low high
-def Fin (n:Int) : Type = Range 0 n
+def Fin (n:Int) : Type = %Fin n
 
 -- A max(a, 0) that is friendly to our algebraic simplifier
 def clamp_nonneg_prim (a: Int) : Int =
@@ -244,10 +243,10 @@ def clamp_nonneg_prim (a: Int) : Int =
   %select isNeg z a
 
 -- TODO: Define Range in surface syntax
-instance {l h} Ix (Range l h)
-  size = clamp_nonneg_prim $ h - l
+instance {n} Ix (Fin n)
+  size = n
   ordinal = \i. %cast Int i
-  unsafe_from_ordinal = \i. %cast (Range l h) i
+  unsafe_from_ordinal = \i. %cast (Fin n) i
 
 instance {q:Type} {i:q} [Ix q] Ix (i..)
   size = size q - ordinal i

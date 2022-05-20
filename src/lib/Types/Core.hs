@@ -686,11 +686,8 @@ pattern EffKind = TC EffectRowKind
 pattern LabeledRowKind :: Kind n
 pattern LabeledRowKind = TC LabeledRowKindTC
 
-pattern FixedIntRange :: Int32 -> Int32 -> Type n
-pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
-
-pattern Fin :: Atom n -> Type n
-pattern Fin n = TC (IntRange (IdxRepVal 0) n)
+pattern FinConst :: Int32 -> Type n
+pattern FinConst n = TC (Fin (IdxRepVal n))
 
 pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))

@@ -104,7 +104,7 @@ module Syntax (
     pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
-    pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
+    pattern FinConst, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern TyKind, pattern TabTy, pattern TabVal,
     pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,

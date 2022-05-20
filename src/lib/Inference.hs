@@ -1726,7 +1726,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
     elemTy <- freshType TyKind
-    idxTy <- asIxType $ FixedIntRange 0 (fromIntegral $ nestLength ps)
+    idxTy <- asIxType $ FinConst $ fromIntegral $ nestLength ps
     ty <- getType $ Var v
     tabTy <- idxTy ==> elemTy
     constrainEq ty tabTy
@@ -1825,7 +1825,7 @@ inferTabCon xs reqTy = do
       elemTy <- case xs of
         []    -> freshType TyKind
         (x:_) -> getType =<< inferRho x
-      ixTy <- asIxType $ FixedIntRange 0 (fromIntegral $ length xs)
+      ixTy <- asIxType $ FinConst (fromIntegral $ length xs)
       tabTy <- ixTy ==> elemTy
       case reqTy of
         Check sTy -> addContext context $ constrainEq sTy tabTy
@@ -2332,7 +2332,7 @@ synthInstanceDef (InstanceDef className bs params body) = do
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (SynthAtom n)
-trySynthTerm (DictTy (DictType "Ix" _ [Fin n])) =
+trySynthTerm (DictTy (DictType "Ix" _ [TC (Fin n)])) =
   return $ DictCon $ IxFin n
 trySynthTerm ty = do
   hasInferenceVars ty >>= \case

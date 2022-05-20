@@ -48,7 +48,7 @@ data PrimTC e =
         BaseType BaseType
       | ProdType [e]
       | SumType [e]
-      | IntRange e e
+      | Fin e
       | IndexRange e (Limit e) (Limit e)
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
       | RefType (Maybe e) e
@@ -70,7 +70,7 @@ data PrimCon e =
       | SumCon e Int e  -- type, tag, payload
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
       -- These are just newtype wrappers. TODO: use ADTs instead
-      | IntRangeVal   e e e
+      | FinVal e e
       | IndexRangeVal e (Limit e) (Limit e) e
       | IndexSliceVal e e e    -- Sliced index set, slice length, ordinal index
       | BaseTypeRef e

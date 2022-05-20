@@ -856,7 +856,7 @@ maybeTangentType ty = case ty of
     BaseType (Vector Float64Type) -> return $ TC con
     BaseType (Vector Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
-    IntRange   _ _                -> return $ UnitTy
+    Fin _                         -> return $ UnitTy
     IndexRange _ _ _              -> return $ UnitTy
     IndexSlice _ _                -> return $ UnitTy
     ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
@@ -1187,7 +1187,7 @@ projectIxFinMethod methodIx n = liftBuilder do
           emitOp $ CastOp IdxRepTy $ Var ix
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-          emitOp $ CastOp (Fin $ sink n) $ Var ix
+          emitOp $ CastOp (TC $ Fin $ sink n) $ Var ix
     _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===
