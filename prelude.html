@@ -527,14 +527,11 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Index set interface and instances</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Ix</span> n
-  get_size n <span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> <span class="type-name">Int</span>
+  size n <span class="symbol">:</span> <span class="type-name">Int</span>
   ordinal <span class="symbol">:</span> n <span class="symbol">-&gt;</span> <span class="type-name">Int</span>
   unsafe_from_ordinal n <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> n
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> size (n <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> get_size n ()
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Range</span> (low<span class="symbol">:</span><span class="type-name">Int</span>) (high<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">IntRange</span> low high
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Fin</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Range</span> 0 n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Fin</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Fin</span> n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- A max(a, 0) that is friendly to our algebraic simplifier
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> clamp_nonneg_prim (a<span class="symbol">:</span> <span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
@@ -542,54 +539,48 @@ Includes floating point and two field rational representations.</p>
   isNeg <span class="symbol">=</span> %ilt a z
   %select isNeg z a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Define Range in surface syntax
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {l h} <span class="type-name">Ix</span> (<span class="type-name">Range</span> l h)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> clamp_nonneg_prim <span class="symbol">$</span> h <span class="symbol">-</span> l
-  ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> %cast <span class="type-name">Int</span> i
-  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> %cast (<span class="type-name">Range</span> l h) i
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (i<span class="symbol">..</span>)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size q <span class="symbol">-</span> ordinal i
+  size <span class="symbol">=</span> size q <span class="symbol">-</span> ordinal i
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast <span class="type-name">Int</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast (i<span class="symbol">..</span>) j
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (i<span class="symbol">&lt;..</span>)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size q <span class="symbol">-</span> ordinal i <span class="symbol">-</span> 1
+  size <span class="symbol">=</span> size q <span class="symbol">-</span> ordinal i <span class="symbol">-</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast <span class="type-name">Int</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast (i<span class="symbol">&lt;..</span>) j
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (<span class="symbol">..</span>i)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> ordinal i <span class="symbol">+</span> 1
+  size <span class="symbol">=</span> ordinal i <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast <span class="type-name">Int</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast (<span class="symbol">..</span>i) j
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (<span class="symbol">..&lt;</span>i)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> ordinal i
+  size <span class="symbol">=</span> ordinal i
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast <span class="type-name">Int</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> %cast (<span class="symbol">..&lt;</span>i) j
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} {j<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (j<span class="symbol">..</span>i)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j <span class="symbol">+</span> 1
+  size <span class="symbol">=</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast <span class="type-name">Int</span> k
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast (j<span class="symbol">..</span>i) k
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} {j<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (j<span class="symbol">..&lt;</span>i)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j
+  size <span class="symbol">=</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast <span class="type-name">Int</span> k
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast (j<span class="symbol">..&lt;</span>i) k
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} {j<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (j<span class="symbol">&lt;..</span>i)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j
+  size <span class="symbol">=</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast <span class="type-name">Int</span> k
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast (j<span class="symbol">&lt;..</span>i) k
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} {j<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (j<span class="symbol">&lt;..&lt;</span>i)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j <span class="symbol">-</span> 1
+  size <span class="symbol">=</span> clamp_nonneg_prim <span class="symbol">$</span> ordinal i <span class="symbol">-</span> ordinal j <span class="symbol">-</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast <span class="type-name">Int</span> k
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> %cast (j<span class="symbol">&lt;..&lt;</span>i) k
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> <span class="type-name">Unit</span>
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> 1
+  size <span class="symbol">=</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> 0
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> ()
 </div></div><div class="cell"><div class="code-block">
@@ -599,7 +590,7 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Post</span> segment<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">UnsafeMkPost</span> <span class="type-name">Int</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {segment} [<span class="type-name">Ix</span> segment] <span class="type-name">Ix</span> (<span class="type-name">Post</span> segment)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size segment <span class="symbol">+</span> 1
+  size <span class="symbol">=</span> size segment <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkPost</span> i)<span class="symbol">.</span> i
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="type-name">UnsafeMkPost</span> i
 </div></div><div class="cell"><div class="code-block">
@@ -645,7 +636,7 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap {a b} ((x<span class="symbol">,</span> y)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (b<span class="symbol">&amp;</span>a) <span class="symbol">=</span> (y<span class="symbol">,</span> x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a <span class="symbol">&amp;</span> b)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size a <span class="symbol">*</span> size b
+  size <span class="symbol">=</span> size a <span class="symbol">*</span> size b
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(i<span class="symbol">,</span> j)<span class="symbol">.</span> (ordinal i <span class="symbol">*</span> size b) <span class="symbol">+</span> ordinal j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span>
     bs <span class="symbol">=</span> size b
@@ -744,7 +735,7 @@ Here we define several basic kinds, and some operators on them.</p>
   <span class="type-name">Right</span> b
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a <span class="symbol">|</span> b)
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> size a <span class="symbol">+</span> size b
+  size <span class="symbol">=</span> size a <span class="symbol">+</span> size b
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
     <span class="type-name">Left</span> ai  <span class="symbol">-&gt;</span> ordinal ai
     <span class="type-name">Right</span> bi <span class="symbol">-&gt;</span> ordinal bi <span class="symbol">+</span> size a
@@ -1013,7 +1004,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
     f <span class="symbol">==</span> <span class="type-name">LT</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> <span class="type-name">Bool</span>
-  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> 2
+  size <span class="symbol">=</span> 2
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>b<span class="symbol">.</span> <span class="keyword">case</span> b <span class="keyword">of</span>
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> 0
     <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
@@ -2499,7 +2490,7 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a<span class="symbol">=&gt;</span>b)
   <span class="comment">-- 0@a is the least significant digit,
 </span>  <span class="comment">-- while (size a - 1)@a is the most significant digit.
-</span>  get_size <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> intpow (size b) (size a)
+</span>  size <span class="symbol">=</span> intpow (size b) (size a)
   ordinal             <span class="symbol">=</span> reversed_digits_to_int
   unsafe_from_ordinal <span class="symbol">=</span> int_to_reversed_digits
 </div></div></div></body></html>
