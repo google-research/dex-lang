@@ -162,7 +162,6 @@ instance Color c => CheckableE (Binding c) where
     DataConBinding    dataDefName idx e -> DataConBinding  <$> substM dataDefName <*> pure idx <*> substM e
     ClassBinding      classDef          -> ClassBinding    <$> substM classDef
     InstanceBinding   instanceDef       -> InstanceBinding <$> substM instanceDef
-    SuperclassBinding className   idx   -> SuperclassBinding <$> substM className <*> pure idx
     MethodBinding className idx f       -> MethodBinding     <$> substM className <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
@@ -421,7 +420,7 @@ dictExprType e = case e of
     return dTy
   IxFin n -> do
     n' <- substM n
-    ixDictType $ Fin n'
+    ixDictType $ TC $ Fin n'
 
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e
@@ -473,7 +472,7 @@ instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
 typeCheckPrimTC :: Typer m => PrimTC (Atom i) -> m i o (Type o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
-  IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
+  Fin n -> n|:IdxRepTy >> return TyKind
   IndexRange ixTy a b -> do
     IxType t _ <- checkIxTy ixTy
     mapM_ (|:t) a >> mapM_ (|:t) b
@@ -502,7 +501,7 @@ typeCheckPrimCon con = case con of
     payload |: (caseTys !! tag)
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
-  IntRangeVal     l h i -> i|:IdxRepTy >> substM (TC $ IntRange     l h)
+  FinVal n i -> i|:IdxRepTy >> substM (TC $ Fin n)
   IndexRangeVal ixTy l h i -> do
     i |: IdxRepTy
     ixTy'@(IxType t _) <- checkIxTy ixTy
@@ -518,10 +517,9 @@ typeCheckPrimCon con = case con of
     return $ RawRefTy $ TabTy binder a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM typeCheckRef xs)
-    IntRangeVal     l h i -> do
-      l' <- substM l
-      h' <- substM h
-      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l' h')
+    FinVal n i -> do
+      n' <- substM n
+      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ Fin n')
     IndexRangeVal ixTy l h i -> do
       ixTy'@(IxType t _) <- checkIxTy ixTy
       l' <- mapM (checkTypeE t) l
@@ -628,7 +626,7 @@ typeCheckPrimOp op = case op of
                       " elements: " ++ pprint op
   VectorIndex x i -> do
     BaseTy (Vector sb) <- getTypeE x
-    i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
+    i |: TC (Fin (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind >> substM ty
   ThrowException ty -> do
@@ -977,8 +975,8 @@ checkFloatBaseType allowVector t = case t of
                                "floating-point type, but found: " ++ pprint t
 
 checkValidCast :: Fallible1 m => Type n -> Type n -> m n ()
-checkValidCast (TC (IntRange _ _)) IdxRepTy = return ()
-checkValidCast IdxRepTy (TC (IntRange _ _)) = return ()
+checkValidCast (TC (Fin _)) IdxRepTy = return ()
+checkValidCast IdxRepTy (TC (Fin _)) = return ()
 checkValidCast (TC (IndexRange _ _ _)) IdxRepTy = return ()
 checkValidCast IdxRepTy (TC (IndexRange _ _ _)) = return ()
 checkValidCast (BaseTy l) (BaseTy r) = checkValidBaseCast l r
@@ -1268,7 +1266,7 @@ checkDataLike ty = case ty of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as
     SumType  cs      -> mapM_ recur cs
-    IntRange _ _     -> return ()
+    Fin _            -> return ()
     IndexRange _ _ _ -> return ()
     IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty

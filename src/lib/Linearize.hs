@@ -492,7 +492,7 @@ linearizePrimCon con = case con of
       elemsT <- forM elemsWithT \elemsWithT' ->
                   forM elemsWithT' \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
-  IntRangeVal _ _ _     -> emitZeroT
+  FinVal _ _            -> emitZeroT
   IndexRangeVal _ _ _ _ -> emitZeroT
   IndexSliceVal _ _ _   -> emitZeroT
   LabelCon _     -> error "Unexpected label"

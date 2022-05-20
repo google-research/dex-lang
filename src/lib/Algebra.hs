@@ -240,7 +240,7 @@ blockAsCPoly (Block _ decls' result') =
                  => Atom i -> m i o (ClampPolynomial o)
     indexAsCPoly = \case
       Var v                       -> varAsCPoly v
-      Con (IntRangeVal _ _ i)     -> intAsCPoly i
+      Con (FinVal _ i)            -> intAsCPoly i
       Con (IndexRangeVal _ _ _ i) -> intAsCPoly i
       _                           -> empty
 

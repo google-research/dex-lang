@@ -445,8 +445,6 @@ instance Pretty (Binding s n) where
       "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
     ClassBinding    classDef    -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
-    SuperclassBinding className idx ->
-      "Superclass" <+> pretty idx <+> "of" <+> pretty className
     MethodBinding className idx _ ->
       "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
@@ -852,9 +850,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
       encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
-    IntRange a b -> if docAsStr (pArg a) == "0"
-      then atPrec AppPrec ("Fin" <+> pArg b)
-      else prettyExprDefault $ TCExpr con
+    Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
     IndexRange _ low high -> atPrec LowestPrec $ low' <> ".." <> high'
       where
         low'  = case low  of InclusiveLim x -> pApp x
@@ -885,7 +881,7 @@ prettyPrecPrimCon con = case con of
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
+  FinVal n i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (Fin n)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
   ParIndexCon ty i ->
     atPrec LowestPrec $ pApp i <> "@" <> pApp ty

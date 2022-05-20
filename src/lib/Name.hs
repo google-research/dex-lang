@@ -969,7 +969,6 @@ instance (SinkableE atom, SubstE Name atom) => SubstV Name (SubstVal cMatch atom
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC InstanceNameC   where notEqProof = \case
-instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
 
@@ -1802,7 +1801,6 @@ instance Color TyConNameC      where getColorRep = TyConNameC
 instance Color DataConNameC    where getColorRep = DataConNameC
 instance Color ClassNameC      where getColorRep = ClassNameC
 instance Color InstanceNameC   where getColorRep = InstanceNameC
-instance Color SuperclassNameC where getColorRep = SuperclassNameC
 instance Color MethodNameC     where getColorRep = MethodNameC
 instance Color ImpFunNameC     where getColorRep = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep = ObjectFileNameC
@@ -1820,7 +1818,6 @@ interpretColor c cont = case c of
   DataConNameC    -> cont $ ColorProxy @DataConNameC
   ClassNameC      -> cont $ ColorProxy @ClassNameC
   InstanceNameC   -> cont $ ColorProxy @InstanceNameC
-  SuperclassNameC -> cont $ ColorProxy @SuperclassNameC
   MethodNameC     -> cont $ ColorProxy @MethodNameC
   ImpFunNameC     -> cont $ ColorProxy @ImpFunNameC
   ObjectFileNameC -> cont $ ColorProxy @ObjectFileNameC
@@ -2327,7 +2324,6 @@ data C =
   | DataConNameC
   | ClassNameC
   | InstanceNameC
-  | SuperclassNameC
   | MethodNameC
   | ImpFunNameC
   | ObjectFileNameC

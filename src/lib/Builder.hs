@@ -856,7 +856,7 @@ maybeTangentType ty = case ty of
     BaseType (Vector Float64Type) -> return $ TC con
     BaseType (Vector Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
-    IntRange   _ _                -> return $ UnitTy
+    Fin _                         -> return $ UnitTy
     IndexRange _ _ _              -> return $ UnitTy
     IndexSlice _ _                -> return $ UnitTy
     ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
@@ -1175,21 +1175,19 @@ indexToInt (IxType _ dict) idx = do
   app f idx
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = do
-  f <- projMethod "get_size" dict
-  app f UnitVal
+indexSetSize (IxType _ dict) = projMethod "size" dict
 
 projectIxFinMethod :: EnvReader m => Int -> Atom n -> m n (Atom n)
 projectIxFinMethod methodIx n = liftBuilder do
   case methodIx of
-    -- get_size
-    0 -> buildPureLam noHint PlainArrow UnitTy \_ -> sinkM n
+    -- size
+    0 -> return n
     -- ordinal
     1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
           emitOp $ CastOp IdxRepTy $ Var ix
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-          emitOp $ CastOp (Fin $ sink n) $ Var ix
+          emitOp $ CastOp (TC $ Fin $ sink n) $ Var ix
     _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===

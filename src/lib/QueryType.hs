@@ -385,7 +385,7 @@ getTypePrimCon con = case con of
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
   SumCon ty _ _ -> substM ty
   SumAsProd ty _ _ -> substM ty
-  IntRangeVal     l h _ -> substM (TC $ IntRange     l h)
+  FinVal n _ -> substM $ TC $ Fin n
   IndexRangeVal t l h _ -> substM (TC $ IndexRange t l h)
   IndexSliceVal _ _ _ -> error "not implemented"
   BaseTypeRef p -> do
@@ -396,10 +396,7 @@ getTypePrimCon con = case con of
     return $ RawRefTy $ TabTy binder a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM getTypeRef xs)
-    IntRangeVal     l h _ -> do
-      l' <- substM l
-      h' <- substM h
-      return (RawRefTy $ TC $ IntRange     l' h')
+    FinVal n _ -> substM $ RawRefTy $ TC $ Fin n
     IndexRangeVal t l h _ -> do
       t' <- substM t
       l' <- mapM substM l
@@ -434,7 +431,7 @@ dictExprType e = case e of
     return dTy
   IxFin n -> do
     n' <- substM n
-    ixDictType $ Fin n'
+    ixDictType $ TC $ Fin n'
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case

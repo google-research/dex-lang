@@ -144,7 +144,7 @@ prepareFunctionForExport' f = do
         go shape = \case
           BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
 
-          TabTy  (b:>(IxType (Fin n) _)) a -> do
+          TabTy  (b:>(IxType (TC (Fin n)) _)) a -> do
             dim <- case n of
               Var v       -> Just (ExportDimVar v)
               IdxRepVal s -> Just (ExportDimLit $ fromIntegral s)
@@ -160,7 +160,7 @@ prepareFunctionForExport' f = do
 data ArgVisibility = ImplicitArg | ExplicitArg
 
 exportDimToIxType :: ExportDim n -> IxType n
-exportDimToIxType dim = IxType (Fin dim') (DictCon $ IxFin dim')
+exportDimToIxType dim = IxType (TC (Fin dim')) (DictCon $ IxFin dim')
   where
     dim' = case dim of
       ExportDimVar v -> Var v

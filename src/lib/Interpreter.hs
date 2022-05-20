@@ -197,9 +197,9 @@ evalOp expr = mapM evalAtom expr >>= \case
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
                              " -> " ++ pprint destTy
     case (sourceTy, destTy) of
-      (IdxRepTy, TC (IntRange l h)) -> return $ Con $ IntRangeVal l h x
-      (TC (IntRange _ _), IdxRepTy) -> do
-        let Con (IntRangeVal _ _ ord) = x
+      (IdxRepTy, TC (Fin n)) -> return $ Con $ FinVal n x
+      (TC (Fin _), IdxRepTy) -> do
+        let Con (FinVal _ ord) = x
         return ord
       (IdxRepTy, TC (IndexRange t l h)) -> return $ Con $ IndexRangeVal t l h x
       (TC (IndexRange _ _ _), IdxRepTy) -> do

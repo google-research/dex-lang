@@ -415,11 +415,11 @@ toImpOp maybeDest op = case op of
       (BaseTy _, BaseTy bt) -> do
         x' <- fromScalarAtom x
         returnVal =<< toScalarAtom =<< cast x' bt
-      (TC (IntRange _ _), IdxRepTy) -> do
-        let Con (IntRangeVal _ _ xord) = x
+      (TC (Fin _), IdxRepTy) -> do
+        let Con (FinVal _ xord) = x
         returnVal xord
-      (IdxRepTy, TC (IntRange l h)) ->
-        returnVal $ Con $ IntRangeVal l h x
+      (IdxRepTy, TC (Fin n)) ->
+        returnVal $ Con $ FinVal n x
       (TC (IndexRange _ _ _), IdxRepTy) -> do
         let Con (IndexRangeVal _ _ _ xord) = x
         returnVal xord
@@ -944,9 +944,9 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
       return $ Con $ BaseTypeRef ptr
     SumType cases -> recSumType cases
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
-    IntRange l h -> do
+    Fin n -> do
       x <- rec IdxRepTy
-      return $ Con $ ConRef $ IntRangeVal l h x
+      return $ Con $ ConRef $ FinVal n x
     IndexRange t l h -> do
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IndexRangeVal t l h x
@@ -1025,7 +1025,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
-          (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> copyRec iRef i
+          (FinVal _ iRef, FinVal _ i) -> copyRec iRef i
           (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> copyRec iRef i
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
         _ -> error "unexpected src/dest pair"
@@ -1100,7 +1100,7 @@ loadDest (Con dest) = do
    ConRef con -> Con <$> case con of
      ProdCon ds -> ProdCon <$> traverse loadDest ds
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
-     IntRangeVal     l h iRef -> IntRangeVal     l h <$> loadDest iRef
+     FinVal n iRef -> FinVal n <$> loadDest iRef
      IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
