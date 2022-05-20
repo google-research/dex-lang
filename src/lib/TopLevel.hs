@@ -51,6 +51,7 @@ import Inference
 import Simplify
 import Imp
 import JIT
+import Optimize
 import QueryType
 
 -- === top-level monad ===
@@ -418,7 +419,8 @@ evalUExpr expr = do
 
 evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBlock typed = do
-  synthed <- checkPass SynthPass $ synthTopBlock typed
+  opt <- checkPass EarlyOptPass $ earlyOptimize typed
+  synthed <- checkPass SynthPass $ synthTopBlock opt
   SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
   result <- evalBackend simp
   applyRecon recon result

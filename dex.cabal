@@ -67,6 +67,7 @@ library
                      , Logging
                      , MTL1
                      , Name
+                     , Optimize
                      , PPrint
                      , Parser
                      , RawName
