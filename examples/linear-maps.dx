@@ -1,4 +1,4 @@
-'# General Linear Maps
+'# Polymorphic Operations on Linear Maps
 Often when writing numerical code, there are efficient specializations for
 e.g. diagonal matrices, lower-triangular, or sparse matrices.
 I'd like to be able to write just one version of this code without having to
@@ -145,7 +145,7 @@ instance {n} HasDeterminant (SkewSymmetricMap n)
     False -> \(MkSkewSymMap a).
       dense_rep = skew_symmetric_prod a eye
       determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
-  transposeType = i:n=>(..<i)=>Float
+  transposeType = i:n=>(..<i)=>Float  -- 
   transpose' = \(MkSkewSymMap x). MkSkewSymMap (-x)
   identity' = error "Skew symmetric matrices can't represent the identity map."
 
@@ -177,13 +177,13 @@ instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
     for i. randNormal (ixkey key i)
 
 
-def gaussianSample {v m} [VSpace v, LinearEndo m v, HasStandardNormal v]
-                   ((mean, covroot) : (v & m)) (key:Key) : v =
+def multivariate_gaussian_sample {v m} [LinearEndo m v, HasStandardNormal v]
+                   (mean:v) (covroot:m) (key:Key) : v =
   noise = randNormal key
   mean + apply covroot noise
 
-:p gaussianSample (1.0, (MkScalarMap 2.0)) (new_key 0)
-
+:t multivariate_gaussian_sample 1.0 (MkScalarMap 2.0) (new_key 0)
+> Float32
 
 '### Generic log pdf of a multivariate Gaussian
 This single definition of a Gaussian log pdf should work
@@ -195,8 +195,8 @@ def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
   one' : v = one
   inner_prod one' one'
 
-def gaussianlogpdf {m v}
-    [VSpace v, Mul v, InnerProd v, LinearEndo m v]
+def gaussian_log_pdf {m v}
+    [Mul v, InnerProd v, LinearEndo m v]
     (mean:v) (covroot:m) (x:v) : Float =
   dim = get_VSpace_dim x
   squarepart = inner_prod (x - mean) (solve' (transpose' covroot)
@@ -206,13 +206,12 @@ def gaussianlogpdf {m v}
 
 
 
-
 '## Tests
-
 
 vec_len = (Fin 4)
 full_mat_type = (vec_len=>vec_len=>Float)
 v = vec_len=>Float
+
 
 '### Check application of the identity is a no-op.
 
@@ -265,6 +264,7 @@ def check_transpose (m:Type)
 
 check_transpose $ SkewSymmetricMap vec_len
 > True
+-- Disabled until associated types are implemented.
 -- check_transpose $ LowerTriMap vec_len
 -- > True
 -- check_transpose $ UpperTriMap vec_len
@@ -281,7 +281,7 @@ sizen = Fin 2000
 span = 10.0
 xs = linspace sizen (-span) span
 integral = 2.0 * span * mean for i.
-  exp $ gaussianlogpdf (-0.1) (MkScalarMap 0.07) xs.i
+  exp $ gaussian_log_pdf (-0.1) (MkScalarMap 0.07) xs.i
 integral ~~ 1.0
 > True
 
@@ -296,11 +296,12 @@ def check_2D_Gaussian_normalizes (m:Type)
   meanvec : ((Fin 2) => Float32) = arb $ new_key 1
   integral = (sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
     x = [xs.i, xs.j]
-    exp $ gaussianlogpdf meanvec covroot x
+    exp $ gaussian_log_pdf meanvec covroot x
   integral ~~ 1.0
 
 check_2D_Gaussian_normalizes (SkewSymmetricMap (Fin 2))
 > True
+-- Disabled until associated types are implemented.
 -- check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
 -- > True
 -- check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
@@ -313,45 +314,72 @@ check_2D_Gaussian_normalizes $ DiagMap (Fin 2)
 
 '## Application 2: SDEs
 
-Time = Float
-def radonNikodym {m s} [InnerProd s, VSpace s, LinearEndo m s]
-                 (drift1: s->Time->s)
-                 (drift2: s->Time->s)
-                 (diffusion: s->Time->m)
-                 (state: s) (t: Time) : Float =
-  -- Dynamics of simple Monte Carlo estimatr of KL divergence between
-  -- two SDEs that share a diffusion function. (If not, divergence is infinite)
+data Time = MkTime Float
+
+def Drift (v:Type) [VSpace v] : Type = v->Time->v
+def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type =
+  v->Time->m
+def SDE (m:Type) (v:Type) [LinearEndo m v] : Type =
+  (Drift v & Diffusion m v)
+
+def radon_nikodym {m s} [InnerProd s, LinearEndo m s]
+  (drift1:Drift s)
+  (drift2:Drift s)
+  (diffusion:Diffusion m s)
+  (state:s) (t:Time) : Float =
+  -- By Girsanov's theorem, this gives a simple Monte Carlo estimator
+  -- of the (loosely speaking) instantaneous KL divergence between
+  -- two SDEs that share a diffusion function.
   difference = (drift1 state t) - (drift2 state t)
   cur_diffusion = diffusion state t
   a = solve' cur_diffusion difference
   0.5 * inner_prod a a
 
 
--- Drift and diffusion product.
--- DiffusionProd takes state and noise and returns dstate/dtime
-def Drift (v:Type) [VSpace v]: Type = v->Time->v
-def Diffusion (m:Type) (v:Type) [VSpace m, VSpace v] : Type = v->Time->(LinearEndo m v)
-def DiffusionProd (v:Type) : Type = v->Time->v->v
-def SDE (m:Type) (v:Type) [VSpace m, VSpace v] : Type = ((Drift v) & (DiffusionProd v))
+'### Stationary SDEs
+From Equation 3, Section 2.1 of ["A Complete Recipe for Stochastic Gradient
+MCMC"](https://arxiv.org/pdf/1506.04696.pdf):
+Every SDE with a stationary distribution can be parameterized
+by:
+ 1. A state-dependent energy function
+ 2. A state-dependent skew-symmetric matrix
+ 3. A state-dependent diffusion matrix
 
-def SkewSymmetricProd (v:Type) : Type = v->Time->v->v
+'The function below converts these matrices into the drift and diffusion which,
+if followed, will converge to a stationary distribution whose marginal
+  log-density is equal to the negative energy function (plus a constant).
 
-def NegEnergyFunc (v:Type) : Type = v->Time->Float
-def StationarySDE (v:Type) : Type = (NegEnergyFunc v & SkewSymmetricProd v & DiffusionProd v)
+def StationaryDiffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->m
+def NegEnergyFunc (v:Type) : Type = v->Float
+def SkewSymmetricFunc (n:Type) (v:Type) [Ix n] : Type =
+  v->(i:n=>(..<i)=>Float)
+def StationarySDEParts (n:Type) (v:Type)
+    [Ix n, LinearEndo n v, VSpace v] : Type =
+  (NegEnergyFunc v & SkewSymmetricFunc n v & StationaryDiffusion n v)
 
-def stationary_SDE_to_SDE {m v} [Mul v, VSpace v, VSpace m] (sta:StationarySDE v) : (SDE m v) =
-  -- From Section 2.1 of "A Complete Recipe for Stochastic Gradient MCMC"
-  -- https://arxiv.org/pdf/1506.04696.pdf
-  (negEnergyFunc, skewSymmetricProd, diffusionProd) = sta
-  varProd = \state time vec.
-    0.5 .* (diffusionProd state time $ diffusionProd state time vec)
+def stationary_SDE_parts_to_SDE {n v}
+  [Ix n, VSpace v, Mul v, LinearEndo n (n=>v)]
+  ((neg_energy_func, skew_symm_map, diffusion_func):StationarySDEParts n (n=>v)) :
+    (SDE n (n=>v)) =
   drift = \state time.
-    curNE = \state. negEnergyFunc state time
-    negenergygrad = (grad curNE) state
-    t1 = (skewSymmetricProd + varProd) state time negenergygrad
-    gammapart = \state. (skewSymmetricProd + varProd) state time one
-    t3 = jvp gammapart state one
-    t1 + t3
-  (drift, diffusionProd)
+
+    diffusion_prod = \vec.  -- Square the root of the covariance matrix
+      cur_diffusion_root = diffusion_func state
+      0.5 .* (apply cur_diffusion_root (apply cur_diffusion_root vec))
+  
+    neg_energy_grad = (grad neg_energy_func) state
+
+    skew_term = skew_symmetric_prod (skew_symm_map state) neg_energy_grad
+    diff_term = diffusion_prod neg_energy_grad
+
+    gammapart = \state.
+      skew_term' = skew_symmetric_prod (skew_symm_map state) one
+      diff_term' = diffusion_prod one
+      skew_term' + diff_term'
+    gamma_term = jvp gammapart state one
+    
+    skew_term + diff_term + gamma_term
+  diffusion = \state time. diffusion_func state
+  (drift, diffusion)
 
 -- Todo: tests for SDE functions.
