@@ -1362,7 +1362,8 @@ It's a kind of <code>scan</code>.</p>
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--   MkVSpace vectorFloatAdd \x v. broadcastVector x * v
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Tiling functions</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tile</span> (n <span class="symbol">:</span> <span class="type-name">Type</span>) (m <span class="symbol">:</span> <span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">IndexSlice</span> n m
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tile</span> (n <span class="symbol">:</span> <span class="type-name">Type</span>) (m <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  %<span class="type-name">IndexSlice</span> (%<span class="type-name">IndexType</span> n) (%<span class="type-name">IndexType</span> m)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- One can think of instances of `Tile n m` as injective functions `m -&gt; n`,
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- with the special property that consecutive elements of m map to consecutive
@@ -1370,8 +1371,9 @@ It's a kind of <code>scan</code>.</p>
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- is currying followed by function application. We cannot represent currying
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- in isolation, because `Tile n (Tile u v)` does not make sense, unlike `Tile n (u &amp; v)`.
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+&gt;</span>)  {n l} (t<span class="symbol">:</span><span class="type-name">Tile</span> n l) (i <span class="symbol">:</span> l) <span class="symbol">:</span> n <span class="symbol">=</span> %sliceOffset t i
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">++&gt;</span>) {n u v} (t <span class="symbol">:</span> <span class="type-name">Tile</span> n (u <span class="symbol">&amp;</span> v)) (i <span class="symbol">:</span> u) <span class="symbol">:</span> <span class="type-name">Tile</span> n v <span class="symbol">=</span> %sliceCurry t i
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- def (++&gt;) {n u v} (t : Tile n (u &amp; v)) (i : u) : Tile n v =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   %throwError _
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tile {n l a eff} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> l]
       (fTile <span class="symbol">:</span> (t<span class="symbol">:</span>(<span class="type-name">Tile</span> n l) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} l<span class="symbol">=&gt;</span>a))
       (fScalar <span class="symbol">:</span> n <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>

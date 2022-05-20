@@ -695,7 +695,7 @@ the final result returned by <code>withState</code>.</p>
 index type and computes the sum. However, <code>tableMean</code> explicitly takes only
 integer tables (of type <code>n =&gt; Float32</code>).</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableMean
-</div><div class="result-block">((n:Type) ?-&gt; (Ix n) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">((n:Type) ?-&gt; (_autoq:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>If we try to apply <code>tableMean</code> to other types for get errors. For example,
 <code>tableMean</code> does not work when applied to a table of <em>pairs</em> of floats.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> (x<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">,</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j))
