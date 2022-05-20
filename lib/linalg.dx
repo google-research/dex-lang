@@ -19,6 +19,21 @@ def transpose_lower_to_upper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
     j = %inject j'
     lower.j.(cast i)
 
+def transpose_lower_to_upper_no_diag {n v}
+    (lower:i:n=>(..<i)=>v) :
+           i:n=>(i<..)=>v =
+  for i j.
+    j' = %inject j
+    lower.j'.(unsafe_from_ordinal _ (ordinal i))
+
+def skew_symmetric_prod {v n} [VSpace v]
+    (lower: i:n=>(..<i)=>Float) (y: n=>v) : n=>v =
+  -- We could probably fuse these two for loops.
+  lower_prod = for i. sum for j. lower.i.j .* (y.(%inject j))
+  upper = transpose_lower_to_upper_no_diag lower
+  upper_prod = for i. sum for j. upper.i.j .* (y.(%inject j))
+  lower_prod - upper_prod
+
 def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
   -- Solves lower triangular linear system (inverse a) **. b
   yield_state zero \sRef.

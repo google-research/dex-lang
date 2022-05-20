@@ -329,6 +329,16 @@ instance {a n} [Add a] Add (i:n => (..i) => a)  -- Lower triangular tables
   sub = \xs ys. for i. xs.i - ys.i
   zero = for _. zero
 
+instance {a n} [Add a] Add (i:n => (..<i) => a)
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance {a n} [Add a] Add (i:n => (i<..) => a)
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
 instance {a n} [Mul a] Mul (n=>a)
   mul = \xs ys. for i. xs.i * ys.i
   one = for _. one
@@ -369,6 +379,18 @@ instance VSpace Float
   scale_vec = \x y. x * y
 
 instance {a n} [VSpace a] VSpace (n=>a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (..i) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (i..) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (..<i) => a)
+  scale_vec = \s xs. for i. s .* xs.i
+
+instance {a n} [VSpace a] VSpace (i:n => (i<..) => a)
   scale_vec = \s xs. for i. s .* xs.i
 
 instance {a n} [VSpace a] VSpace (n->a)
@@ -1742,6 +1764,19 @@ def rand_idx {n} [Ix n] (k:Key) : n =
   unif = rand k
   from_ordinal n $ FToI $ floor $ unif * i_to_f (size n)
 
+
+'## Inner product typeclass
+
+interface [VSpace v] InnerProd v
+  inner_prod : v->v->Float
+
+instance InnerProd Float
+  inner_prod = \x y. x * y
+
+instance {a n} [InnerProd a] InnerProd (n=>a)
+  inner_prod = \x y. sum for i. inner_prod x.i y.i
+
+
 '## Arbitrary
 Type class for generating example values
 
@@ -1759,6 +1794,18 @@ instance Arbitrary Int32
 
 instance {n a} [Arbitrary a] Arbitrary (n=>a)
   arb = \key. for i. arb $ ixkey key i
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(..<i) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(..i) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(i..) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
+
+instance {n a} [Arbitrary a] Arbitrary (i:n=>(i<..) => a)
+  arb = \x. for i. arb $ new_key (ordinal i)
 
 instance {a b} [Arbitrary a, Arbitrary b] Arbitrary (a & b)
   arb = \key.

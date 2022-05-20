@@ -1,0 +1,385 @@
+'# Polymorphic Operations on Linear Maps
+Often when writing numerical code, there are efficient specializations for
+e.g. diagonal matrices, lower-triangular, or sparse matrices.
+I'd like to be able to write just one version of this code without having to
+fall back to casting everything to full-rank unstructured matrices.
+This example is for brainstorming how the typeclass system might support
+efficient polymorphism for linear algebra over different types of
+structured maps.
+
+import linalg
+
+'Todo: factor out a more general linear map typeclass, and make this one inherit from it.
+
+-- interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
+  -- apply: m -> in -> out
+  -- transpose': m -> m
+
+'## Linear Endomorphisms
+a.k.a. linear maps from a space back to that same space.
+
+interface HasDeterminant m
+  determinant': m -> Float
+  transposeType m : Type  -- unused for now
+  transpose': m -> m      -- In future: m -> transposeType m
+  identity': m
+
+interface [VSpace v, HasDeterminant m] LinearEndo m v
+  apply: m -> v -> v
+  diag: m -> v
+  solve': m -> v -> v
+
+'We'd like to remove `v` from the `LinearEndo` interface,
+and instead use associated types to specify a `v` for each `m`.
+This would let use combine it with `HasDeterminant`.
+But for now, fields in typeclasses can't refer to one another.
+This means that `determinant'` and other operations can't be part
+of this typeclass yet, because `v` is always ambiguous at its usage site.
+
+
+'## Instances
+
+'### Scalar maps
+
+data ScalarMap =
+  MkScalarMap Float
+
+instance HasDeterminant ScalarMap
+  determinant' = \(MkScalarMap a). a
+  transposeType = Float
+  transpose' = id
+  identity' = MkScalarMap 1.0
+
+instance {v} [Mul v, VSpace v] LinearEndo ScalarMap v
+  apply =  \(MkScalarMap a) b. a .* b
+  diag =   \(MkScalarMap a).   a .* one
+  solve' = \(MkScalarMap a) b. b / a
+
+instance Arbitrary ScalarMap
+  arb = \k. MkScalarMap $ arb k
+
+
+'### Diagonal maps
+
+data DiagMap n [Ix n] =
+  MkDiagMap (i:n=>Float)
+
+instance {n} HasDeterminant (DiagMap n)
+  determinant' = \(MkDiagMap x). prod x
+  transposeType = n=>Float
+  transpose' = id
+  identity' = MkDiagMap one
+
+instance {n v} [Mul v, VSpace v] LinearEndo (DiagMap n) (n=>v)
+  apply =  \(MkDiagMap x) y. for i. x.i .* y.i
+  diag =   \(MkDiagMap a).   for i. a.i .* one
+  solve' = \(MkDiagMap a) b. for i. b.i / a.i
+
+instance {n} Arbitrary (DiagMap n)
+  arb = \k. MkDiagMap $ arb k
+
+
+'### Full-rank matrices.
+I didn't use a newtype for these, but I'm not sure if that's the right call.
+
+instance {n} HasDeterminant (n=>n=>Float)
+  determinant' = determinant
+  transposeType = n=>n=>Float
+  transpose' = transpose
+  identity' = eye
+
+instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
+  apply = \x y. for i. sum for j. x.i.j .* y.j
+  diag = \x. for i. x.i.i .* one
+  solve' = solve
+
+
+'### Lower-triangular maps
+
+data LowerTriMap n [Ix n] =
+  MkLowerTriMap (i:n=>(..i)=>Float)
+
+instance {n} HasDeterminant (LowerTriMap n)
+  determinant' = \(MkLowerTriMap x). prod $ lower_tri_diag x
+  transposeType = UpperTriMat n Float
+  transpose' = error "Can't transpose to different types yet."
+  identity' = MkLowerTriMap for i j. select (ordinal i == ordinal j) one zero
+
+instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMap n) (n=>v)
+  apply  = \(MkLowerTriMap x) y. for i. sum for j. x.i.j .* y.(%inject j)
+  diag   = \(MkLowerTriMap x).   for i. x.i.(cast i) .* one
+  solve' = \(MkLowerTriMap x).   forward_substitute x
+
+instance {n} Arbitrary (LowerTriMap n)
+  arb = \k. MkLowerTriMap $ arb k
+
+
+'### Upper-triangular maps
+
+data UpperTriMap n [Ix n] =
+  MkUpperTriMap (i:n=>(i..)=>Float)
+
+instance {n} HasDeterminant (UpperTriMap n)
+  determinant' = \(MkUpperTriMap x). prod $ upper_tri_diag x
+  transposeType = LowerTriMat n Float
+  transpose' = error "Can't transpose to different types yet."
+  identity' = MkUpperTriMap for i j. select (0 == ordinal j) one zero
+
+instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMap n) (n=>v)
+  apply  = \(MkUpperTriMap x) y. for i. sum for j. x.i.j .* y.(%inject j)
+  diag   = \(MkUpperTriMap x).   for i. x.i.(0@_) .* one
+  solve' = \(MkUpperTriMap x).   backward_substitute x
+
+instance {n} Arbitrary (UpperTriMap n)
+  arb = \k. MkUpperTriMap $ arb k
+
+
+'### Skew-symmetric maps
+
+data SkewSymmetricMap n [Ix n] =
+  MkSkewSymMap (i:n=>(..<i)=>Float)
+
+instance {n} HasDeterminant (SkewSymmetricMap n)
+  determinant' = case is_odd (size n) of
+    True -> zero
+    False -> \(MkSkewSymMap a).
+      dense_rep = skew_symmetric_prod a eye
+      determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
+  transposeType = i:n=>(..<i)=>Float  -- 
+  transpose' = \(MkSkewSymMap x). MkSkewSymMap (-x)
+  identity' = error "Skew symmetric matrices can't represent the identity map."
+
+instance {n v} [Mul v, VSpace v] LinearEndo (SkewSymmetricMap n) (n=>v)
+  apply  = \(MkSkewSymMap x) y. skew_symmetric_prod x y
+  diag   = \(MkSkewSymMap x).   zero
+  solve' = \(MkSkewSymMap x) y.
+    dense_rep = skew_symmetric_prod x eye  -- Fall back to naive algorithm
+    solve dense_rep y
+
+instance {n} Arbitrary (SkewSymmetricMap n)
+  arb = \k. MkSkewSymMap $ arb k
+
+
+-- Todo: Sparse matrices. Need hashmaps for these to be practical.
+
+
+
+'## Application 1: Gaussians
+
+-- This typeclass will be obsolete once the `Basis` typeclass can be written.
+interface HasStandardNormal a:Type
+  randNormal : Key -> a
+
+instance HasStandardNormal Float32
+  randNormal = randn
+instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+  randNormal = \key.
+    for i. randNormal (ixkey key i)
+
+
+def multivariate_gaussian_sample {v m} [LinearEndo m v, HasStandardNormal v]
+                   (mean:v) (covroot:m) (key:Key) : v =
+  noise = randNormal key
+  mean + apply covroot noise
+
+:t multivariate_gaussian_sample 1.0 (MkScalarMap 2.0) (new_key 0)
+> Float32
+
+'### Generic log pdf of a multivariate Gaussian
+This single definition of a Gaussian log pdf should work
+efficiently for any type of covariance matrix for which
+an efficient solve and determinant is known.
+
+-- This helper will be osbolete once the basis typeclass works.
+def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
+  one' : v = one
+  inner_prod one' one'
+
+def gaussian_log_pdf {m v}
+    [Mul v, InnerProd v, LinearEndo m v]
+    (mean:v) (covroot:m) (x:v) : Float =
+  dim = get_VSpace_dim x
+  squarepart = inner_prod (x - mean) (solve' (transpose' covroot)
+                                     (solve'             covroot (x - mean)))
+  const = dim * log (2.0 * pi) + log (sq (determinant' covroot))
+  -0.5 * (squarepart + const)
+
+
+
+'## Tests
+
+vec_len = (Fin 4)
+full_mat_type = (vec_len=>vec_len=>Float)
+v = vec_len=>Float
+
+
+'### Check application of the identity is a no-op.
+
+def check_identity (m:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m] : Bool =
+  i : m = identity'
+  vec : v = (arb $ new_key 0)
+  vec ~~ apply i vec
+
+check_identity $ LowerTriMap vec_len
+> True
+check_identity $ UpperTriMap vec_len
+> True
+check_identity $ vec_len=>vec_len=>Float
+> True
+check_identity $ DiagMap vec_len
+> True
+check_identity $ ScalarMap
+> True
+
+def check_inverse (m:Type) [LinearEndo m v, Arbitrary m, LinearEndo m full_mat_type] : Bool =
+  a : m   = arb $ new_key 0
+  vec : v = arb $ new_key 0
+  inv  : full_mat_type = solve' a eye
+  full : full_mat_type = apply  a eye
+  apply inv full ~~ eye
+
+check_inverse $ SkewSymmetricMap vec_len
+> True
+check_inverse $ LowerTriMap vec_len
+> True
+check_inverse $ UpperTriMap vec_len
+> True
+check_inverse $ vec_len=>vec_len=>Float
+> True
+check_inverse $ DiagMap vec_len
+> True
+check_inverse ScalarMap
+> True
+
+
+def check_transpose (m:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m] : Bool =
+  a : m                  = arb $ new_key 0
+  (vec1, vec2) : (v & v) = arb $ new_key 1
+  
+  hitleft  = inner_prod (apply a vec1) vec2
+  hitright = inner_prod (apply (transpose' a) vec2) vec1
+  hitleft ~~ hitright
+
+check_transpose $ SkewSymmetricMap vec_len
+> True
+-- Disabled until associated types are implemented.
+-- check_transpose $ LowerTriMap vec_len
+-- > True
+-- check_transpose $ UpperTriMap vec_len
+-- > True
+check_transpose $ vec_len=>vec_len=>Float
+> True
+check_transpose $ DiagMap vec_len
+> True
+check_transpose ScalarMap
+> True
+
+-- Check that 1D Gaussian sums to 1
+sizen = Fin 2000
+span = 10.0
+xs = linspace sizen (-span) span
+integral = 2.0 * span * mean for i.
+  exp $ gaussian_log_pdf (-0.1) (MkScalarMap 0.07) xs.i
+integral ~~ 1.0
+> True
+
+def check_2D_Gaussian_normalizes (m:Type)
+    [LinearEndo m ((Fin 2) => Float32), Arbitrary m] : Bool =
+
+  sizen = Fin 200
+  span = 10.0
+  xs = linspace sizen (-span) span
+
+  covroot : m = arb $ new_key 0
+  meanvec : ((Fin 2) => Float32) = arb $ new_key 1
+  integral = (sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+    x = [xs.i, xs.j]
+    exp $ gaussian_log_pdf meanvec covroot x
+  integral ~~ 1.0
+
+check_2D_Gaussian_normalizes (SkewSymmetricMap (Fin 2))
+> True
+-- Disabled until associated types are implemented.
+-- check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
+-- > True
+-- check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
+-- > True
+check_2D_Gaussian_normalizes $ (Fin 2)=>(Fin 2)=>Float
+> True
+check_2D_Gaussian_normalizes $ DiagMap (Fin 2)
+> True
+
+
+'## Application 2: SDEs
+
+data Time = MkTime Float
+
+def Drift (v:Type) [VSpace v] : Type = v->Time->v
+def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type =
+  v->Time->m
+def SDE (m:Type) (v:Type) [LinearEndo m v] : Type =
+  (Drift v & Diffusion m v)
+
+def radon_nikodym {m s} [InnerProd s, LinearEndo m s]
+  (drift1:Drift s)
+  (drift2:Drift s)
+  (diffusion:Diffusion m s)
+  (state:s) (t:Time) : Float =
+  -- By Girsanov's theorem, this gives a simple Monte Carlo estimator
+  -- of the (loosely speaking) instantaneous KL divergence between
+  -- two SDEs that share a diffusion function.
+  difference = (drift1 state t) - (drift2 state t)
+  cur_diffusion = diffusion state t
+  a = solve' cur_diffusion difference
+  0.5 * inner_prod a a
+
+
+'### Stationary SDEs
+From Equation 3, Section 2.1 of ["A Complete Recipe for Stochastic Gradient
+MCMC"](https://arxiv.org/pdf/1506.04696.pdf):
+Every SDE with a stationary distribution can be parameterized
+by:
+ 1. A state-dependent energy function
+ 2. A state-dependent skew-symmetric matrix
+ 3. A state-dependent diffusion matrix
+
+'The function below converts these matrices into the drift and diffusion which,
+if followed, will converge to a stationary distribution whose marginal
+  log-density is equal to the negative energy function (plus a constant).
+
+def StationaryDiffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->m
+def NegEnergyFunc (v:Type) : Type = v->Float
+def SkewSymmetricFunc (n:Type) (v:Type) [Ix n] : Type =
+  v->(i:n=>(..<i)=>Float)
+def StationarySDEParts (n:Type) (v:Type)
+    [Ix n, LinearEndo n v, VSpace v] : Type =
+  (NegEnergyFunc v & SkewSymmetricFunc n v & StationaryDiffusion n v)
+
+def stationary_SDE_parts_to_SDE {n v}
+  [Ix n, VSpace v, Mul v, LinearEndo n (n=>v)]
+  ((neg_energy_func, skew_symm_map, diffusion_func):StationarySDEParts n (n=>v)) :
+    (SDE n (n=>v)) =
+  drift = \state time.
+
+    diffusion_prod = \vec.  -- Square the root of the covariance matrix
+      cur_diffusion_root = diffusion_func state
+      0.5 .* (apply cur_diffusion_root (apply cur_diffusion_root vec))
+  
+    neg_energy_grad = (grad neg_energy_func) state
+
+    skew_term = skew_symmetric_prod (skew_symm_map state) neg_energy_grad
+    diff_term = diffusion_prod neg_energy_grad
+
+    gammapart = \state.
+      skew_term' = skew_symmetric_prod (skew_symm_map state) one
+      diff_term' = diffusion_prod one
+      skew_term' + diff_term'
+    gamma_term = jvp gammapart state one
+    
+    skew_term + diff_term + gamma_term
+  diffusion = \state time. diffusion_func state
+  (drift, diffusion)
+
+-- Todo: tests for SDE functions.
