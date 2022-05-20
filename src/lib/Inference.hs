@@ -18,6 +18,7 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
+import Data.Coerce
 import Data.Foldable (toList, asum)
 import Data.Function ((&))
 import Data.Functor (($>), (<&>))
@@ -2545,25 +2546,31 @@ liftDictSynthTraverserM
   :: EnvReader m
   => DictSynthTraverserM n n a
   -> m n (Except a)
-liftDictSynthTraverserM m =
-  liftM runFallibleM $ liftBuilderT do
-    runSubstReaderT idSubst $ runDictSynthTraverserM' m
+liftDictSynthTraverserM m = do
+  (ans, errs) <- liftGenericTraverserM (coerce $ Errs []) m
+  return $ case coerce errs of
+    Errs [] -> Success ans
+    _       -> Failure $ coerce errs
 
-newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
-  DictSynthTraverserM
-    { runDictSynthTraverserM' :: SubstReaderT Name (BuilderT FallibleM) i o a }
-    deriving ( Functor, Applicative, Monad, SubstReader Name, Builder
-             , EnvReader, ScopeReader, EnvExtender, MonadFail, Fallible)
+type DictSynthTraverserM = GenericTraverserM DictSynthTraverserS
 
-instance GenericTraverser DictSynthTraverserM where
-  traverseAtom (Con (DictHole (AlwaysEqual ctx) ty)) = do
+newtype DictSynthTraverserS (n::S) = DictSynthTraverserS Errs
+instance GenericE DictSynthTraverserS where
+  type RepE DictSynthTraverserS = LiftE Errs
+  fromE = LiftE . coerce
+  toE = coerce . fromLiftE
+instance SinkableE DictSynthTraverserS
+instance HoistableState DictSynthTraverserS where
+  hoistState _ _ (DictSynthTraverserS errs) = DictSynthTraverserS errs
+
+instance GenericTraverser DictSynthTraverserS where
+  traverseAtom a@(Con (DictHole (AlwaysEqual ctx) ty)) = do
     ty' <- cheapNormalize =<< substM ty
-    addSrcContext ctx $ trySynthTerm ty'
+    ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'
+    case ans of
+      Failure errs -> put (DictSynthTraverserS errs) >> substM a
+      Success d    -> return d
   traverseAtom atom = traverseAtomDefault atom
-
-instance ScopableBuilder (DictSynthTraverserM i) where
-  buildScoped cont =
-    DictSynthTraverserM $ buildScoped $ runDictSynthTraverserM' cont
 
 -- === Inference-specific builder patterns ===
 
