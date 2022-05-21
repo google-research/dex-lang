@@ -31,6 +31,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Unsafe.Coerce as TrulyUnsafe
 import GHC.Generics (Generic (..))
+import GHC.Int
 
 import Name
 import Builder
@@ -1812,33 +1813,57 @@ checkExtLabeledRow (Ext types (Just ext)) = do
 inferTabCon :: EmitsBoth o => [UExpr i] -> RequiredTy RhoType o -> InfererM i o (Atom o)
 inferTabCon xs reqTy = do
   (tabTy, xs') <- case reqTy of
-    Check tabTy@(TabPi piTy) | null $ freeAtomVarsList (argType piTy) -> do
-      TabPiType b _ <- return piTy
-      idx <- indices $ binderAnn b
-      -- TODO: Check length!!
-      unless (length idx == length xs) $
-        throw TypeErr "Table type doesn't match annotation"
-      xs' <- forM (zip xs idx) \(x, i) -> do
-        xTy <- instantiateTabPi piTy i
-        checkOrInferRho x $ Check xTy
-      return (tabTy, xs')
-    _ -> do
-      elemTy <- case xs of
-        []    -> freshType TyKind
-        (x:_) -> getType =<< inferRho x
-      ixTy <- asIxType $ FinConst (fromIntegral $ length xs)
-      tabTy <- ixTy ==> elemTy
-      case reqTy of
-        Check sTy -> addContext context $ constrainEq sTy tabTy
-          where context = "If attempting to construct a fixed-size table not " <>
-                          "indexed by 'Fin n' for some n, this error may " <>
-                          "indicate there was not enough information to infer " <>
-                          "a concrete index set; try adding an explicit " <>
-                          "annotation."
-        Infer       -> return ()
-      xs' <- mapM (flip checkRho elemTy) xs
-      return (tabTy, xs')
+    Check tabTy@(TabPi piTy) -> do
+      (TabPiType b _) <- return piTy
+      liftBuilderT (buildScoped $ indexSetSize $ sink $ binderAnn b) >>= \case
+        (Just szMethod) ->
+          staticallyKnownIdx szMethod >>= \case
+            (Just size) | size == fromIntegral (length xs) -> do
+              -- Size matches.  TODO Try to hoist the result type past the
+              -- type binder to avoid synthesizing the indices, if
+              -- possible.
+              idx <- indices $ binderAnn b
+              xs' <- forM (zip xs idx) \(x, i) -> do
+                xTy <- instantiateTabPi piTy i
+                checkOrInferRho x $ Check xTy
+              return (tabTy, xs')
+            (Just size) -> throw TypeErr $ "Literal has " ++ count (length xs) "element"
+                             ++ ", but required type has " ++ show size ++ "."
+              where count :: Int -> String -> String
+                    count 1 singular = "1 " ++ singular
+                    count n singular = show n ++ " " ++ singular ++ "s"
+            -- Size of index set not statically known
+            Nothing -> inferFin
+        -- Couldn't synthesize the Ix dictionary; inference variable
+        -- present in (argType piTy)?
+        Nothing -> inferFin
+    -- Requested type is not a `Check (TabPi _)`
+    _ -> inferFin
   liftM Var $ emit $ Op $ TabCon tabTy xs'
+    where
+      inferFin = do
+        elemTy <- case xs of
+          []    -> freshType TyKind
+          (x:_) -> getType =<< inferRho x
+        ixTy <- asIxType $ FinConst (fromIntegral $ length xs)
+        tabTy <- ixTy ==> elemTy
+        case reqTy of
+          Check sTy -> addContext context $ constrainEq sTy tabTy
+          Infer       -> return ()
+        xs' <- mapM (`checkRho` elemTy) xs
+        return (tabTy, xs')
+
+      staticallyKnownIdx :: (EnvReader m) => Abs (Nest Decl) Atom n -> m n (Maybe Int32)
+      staticallyKnownIdx (Abs decls res) = unsafeLiftInterpMCatch (evalDecls decls $ evalExpr $ Atom res) >>= \case
+        (Success (IdxRepVal ix)) -> return $ Just ix
+        _ -> return Nothing
+      {-# INLINE staticallyKnownIdx #-}
+
+      context = "If attempting to construct a fixed-size table not\n" <>
+                "indexed by 'Fin n' for some static n, this error may\n" <>
+                "indicate there was not enough information to infer\n" <>
+                "a concrete index set; try adding an explicit\n" <>
+                "annotation."
 
 -- Bool flag is just to tweak the reported error message
 fromTabPiType :: EmitsBoth o => Bool -> Type o -> InfererM i o (TabPiType o)
