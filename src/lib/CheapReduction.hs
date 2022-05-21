@@ -11,13 +11,13 @@ module CheapReduction
   , DictTypeHoistStatus (..))
   where
 
-import qualified Data.Map.Strict as M
-import Data.Maybe
-import Data.Functor.Identity
 import Control.Applicative
 import Control.Monad.Trans
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
+import Data.Functor.Identity
+import qualified Data.Map.Strict as M
+import Data.Maybe
 import GHC.Exts (inline)
 
 import MTL1
@@ -28,6 +28,14 @@ import {-# SOURCE #-} Inference (trySynthTerm)
 import Err
 import Types.Primitives
 import Util (for)
+
+-- Carry out the reductions we are willing to carry out during type
+-- inference.  The goal is to support type aliases like `Int = Int32`
+-- and type-level functions like `def Fin (n:Int) : Type = Range 0 n`.
+-- The reductions in question are mostly inlining and beta-reducing
+-- functions.  There's also a bunch of stuff to do with synthesizing
+-- class dictionaries, because types often contain polymorphic
+-- literals (e.g., `Fin 10`).
 
 -- === api ===
 
@@ -40,7 +48,7 @@ cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
 {-# INLINE cheapReduce #-}
 {-# SCC cheapReduce #-}
 
--- Second result contains the set of dictionary types that failed to synthesize
+-- Third result contains the set of dictionary types that failed to synthesize
 -- during traversal of the supplied decls.
 cheapReduceWithDecls
   :: forall e' e m n l
