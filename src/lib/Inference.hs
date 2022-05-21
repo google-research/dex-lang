@@ -1732,13 +1732,15 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     ty <- getType $ Var v
     tabTy <- idxTy ==> elemTy
     constrainEq ty tabTy
-    idxs <- indices idxTy
-    unless (length idxs == nestLength ps) $
-      throw TypeErr $ "Incorrect length of table pattern: table index set has "
-                      <> pprint (length idxs) <> " elements but there are "
-                      <> pprint (nestLength ps) <> " patterns."
-    xs <- forM idxs \i -> emit $ TabApp (Var v) (i:|[])
-    bindLamPats ps xs cont
+    maybeIdxs <- indicesLimit (nestLength ps) idxTy
+    case maybeIdxs of
+      (Right idxs) -> do
+        xs <- forM idxs \i -> emit $ TabApp (Var v) (i:|[])
+        bindLamPats ps xs cont
+      (Left trueSize) ->
+        throw TypeErr $ "Incorrect length of table pattern: table index set has "
+                        <> pprint trueSize <> " elements but there are "
+                        <> pprint (nestLength ps) <> " patterns."
 
 checkAnn :: EmitsInf o => Maybe (UType i) -> InfererM i o (Type o)
 checkAnn ann = case ann of
