@@ -238,13 +238,19 @@ instance GenericB EffectBinder where
 
 -- === type classes ===
 
+data SuperclassBinders n l =
+  SuperclassBinders
+    { superclassBinders :: Nest AtomNameBinder n l
+    , superclassTypes   :: [Type n] }
+  deriving (Show, Generic)
+
 data ClassDef (n::S) where
   ClassDef
     :: SourceName
-    -> [SourceName]       -- method source names
-    -> Nest Binder n1 n2  -- parameters
-    ->   [Type n2]        -- superclasses
-    ->   [MethodType n2]  -- method types
+    -> [SourceName]              -- method source names
+    -> Nest Binder n1 n2         -- parameters
+    ->   SuperclassBinders n2 n3 -- superclasses
+    ->   [MethodType n3]         -- method types
     -> ClassDef n1
 
 data InstanceDef (n::S) where
@@ -1171,14 +1177,31 @@ instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
 deriving via WrapE Block n instance Generic (Block n)
 
+instance GenericB SuperclassBinders where
+  type RepB SuperclassBinders = PairB (LiftB (ListE Type)) (Nest AtomNameBinder)
+  fromB (SuperclassBinders bs tys) = PairB (LiftB (ListE tys)) bs
+  toB   (PairB (LiftB (ListE tys)) bs) = SuperclassBinders bs tys
+
+instance BindsNameList SuperclassBinders AtomNameC where
+  bindNameList (SuperclassBinders bs _) xs = bindNameList bs xs
+
+instance ProvesExt  SuperclassBinders
+instance BindsNames SuperclassBinders
+instance SinkableB SuperclassBinders
+instance HoistableB  SuperclassBinders
+instance SubstB Name SuperclassBinders
+instance SubstB AtomSubstVal SuperclassBinders
+instance AlphaEqB SuperclassBinders
+instance AlphaHashableB SuperclassBinders
+
 instance GenericE ClassDef where
   type RepE ClassDef =
     LiftE (SourceName, [SourceName])
-     `PairE` Abs (Nest Binder) (PairE (ListE Type) (ListE MethodType))
+     `PairE` Abs (Nest Binder) (Abs SuperclassBinders (ListE MethodType))
   fromE (ClassDef name names b scs tys) =
-    LiftE (name, names) `PairE` Abs b (PairE (ListE scs) (ListE tys))
+    LiftE (name, names) `PairE` Abs b (Abs scs (ListE tys))
   {-# INLINE fromE #-}
-  toE (LiftE (name, names) `PairE` Abs b (PairE (ListE scs) (ListE tys))) =
+  toE (LiftE (name, names) `PairE` Abs b (Abs scs (ListE tys))) =
     ClassDef name names b scs tys
   {-# INLINE toE #-}
 
@@ -1948,6 +1971,7 @@ instance Store (PiBinder n l)
 instance Store (PiType n)
 instance Store (TabPiType n)
 instance Store (DepPairType  n)
+instance Store (SuperclassBinders n l)
 instance Store (ClassDef     n)
 instance Store (InstanceDef  n)
 instance Store (InstanceBody n)

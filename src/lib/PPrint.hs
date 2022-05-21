@@ -483,7 +483,7 @@ instance Pretty (ClassDef n) where
     "Class:" <+> pretty classSourceName <+> pretty methodNames
     <> indented (
          line <> "parameter biners:" <+> pretty params <>
-         line <> "superclasses:" <+> pretty superclasses <>
+         line <> "superclasses:" <+> pretty (superclassTypes superclasses) <>
          line <> "methods:" <+> pretty methodTys)
 
 instance Pretty (InstanceDef n) where

@@ -34,7 +34,7 @@ module Syntax (
     PiBinding (..), PiBinder (..),
     PiType (..), DepPairType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), SourceNameDef (..), LitProg,
-    ForAnn (..), Val, Op, Con, Hof, TC,
+    ForAnn (..), Val, Op, Con, Hof, TC, SuperclassBinders (..),
     ClassDef (..), InstanceDef (..), InstanceBody (..), MethodType (..),
     SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..),
     ImportStatus (..), emptyModuleEnv,

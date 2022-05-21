@@ -416,7 +416,7 @@ dictExprType e = case e of
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclasses !! i)) params
+    DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclassTypes superclasses !! i)) params
     return dTy
   IxFin n -> do
     n' <- substM n
@@ -536,7 +536,8 @@ typeCheckPrimCon con = case con of
   ExplicitDict dictTy method  -> do
     dictTy'@(DictTy (DictType _ className params)) <- checkTypeE TyKind dictTy
     classDef <- lookupClassDef className
-    ([], [MethodType _ methodTy]) <- checkedApplyClassParams classDef params
+    Abs (SuperclassBinders Empty _) (ListE [MethodType _ methodTy]) <-
+      checkedApplyClassParams classDef params
     method |: methodTy
     return dictTy'
   DictHole _ ty -> checkTypeE TyKind ty
@@ -738,8 +739,12 @@ typeCheckPrimOp op = case op of
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   ProjMethod dict i -> do
     DictTy (DictType _ className params) <- getTypeE dict
-    methodTy <- getMethodType className i
-    dropSubst $ checkApp methodTy params
+    def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
+    let MethodType _ methodTy = methodTys !! i
+    superclassDicts <- getSuperclassDicts def <$> substM dict
+    let subst = (    paramBs @@> map SubstVal params
+                 <.> classBs @@> map SubstVal superclassDicts)
+    applySubst subst methodTy
   ExplicitApply _ _ -> error "shouldn't appear after inference"
   MonoLiteral _ -> error "should't appear after inference"
 
@@ -1077,12 +1082,11 @@ checkedInstantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons)
   fromListE <$> checkedApplyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
 
 checkedApplyClassParams
-  :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n] -> m n ([Type n], [MethodType n])
-checkedApplyClassParams (ClassDef _ _ bs superclassTys methodTys) params = do
-  let body = PairE (ListE superclassTys) (ListE methodTys)
-  body' <- checkedApplyNaryAbs (Abs bs body) params
-  PairE (ListE superclassTys') (ListE methodTys') <- return body'
-  return (superclassTys', methodTys')
+  :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n]
+  -> m n (Abs SuperclassBinders (ListE MethodType) n)
+checkedApplyClassParams (ClassDef _ _ bs superclassBs methodTys) params = do
+  let body = Abs superclassBs (ListE methodTys)
+  checkedApplyNaryAbs (Abs bs body) params
 
 -- TODO: Subst all at once, not one at a time!
 checkedApplyNaryAbs :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)
