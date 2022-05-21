@@ -5,8 +5,8 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module Interpreter (
-  evalBlock, evalExpr, evalAtom,
-  liftInterpM, InterpM, Interp,
+  evalBlock, evalDecls, evalExpr, evalAtom,
+  liftInterpM, InterpM, Interp, unsafeLiftInterpMCatch,
   indices, matchUPat,
   applyIntBinOp, applyIntCmpOp,
   applyFloatBinOp, applyFloatUnOp) where
@@ -49,6 +49,18 @@ liftInterpM cont = do
   resultIO <- liftEnvReaderT $ runSubstReaderT idSubst $ runInterpM' cont
   liftIO resultIO
 {-# INLINE liftInterpM #-}
+
+-- Variant of liftInterpM meant for internal interpretation.
+-- Discharges the IO unsafely, and catches errors.
+-- TODO Can we implement a FakeIOT monad transformer that provides
+-- MonadIO but with liftIO = fail ?  Then we could call the interpreter
+-- while guaranteeing that no real IO actually happens.
+unsafeLiftInterpMCatch :: (EnvReader m) => InterpM n n a -> m n (Except a)
+unsafeLiftInterpMCatch cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return $ unsafePerformIO $ catchIOExcept $ runInterpM env cont
+{-# INLINE unsafeLiftInterpMCatch #-}
 
 evalBlock :: Interp m => Block i -> m i o (Atom o)
 evalBlock (Block _ decls result) = evalDecls decls $ evalAtom result
