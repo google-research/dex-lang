@@ -1814,19 +1814,24 @@ inferTabCon :: EmitsBoth o => [UExpr i] -> RequiredTy RhoType o -> InfererM i o 
 inferTabCon xs reqTy = do
   (tabTy, xs') <- case reqTy of
     Check tabTy@(TabPi piTy) -> do
-      (TabPiType b _) <- return piTy
+      (TabPiType b restTy) <- return piTy
       liftBuilderT (buildScoped $ indexSetSize $ sink $ binderAnn b) >>= \case
         (Just szMethod) ->
           staticallyKnownIdx szMethod >>= \case
             (Just size) | size == fromIntegral (length xs) -> do
-              -- Size matches.  TODO Try to hoist the result type past the
+              -- Size matches.  Try to hoist the result type past the
               -- type binder to avoid synthesizing the indices, if
               -- possible.
-              idx <- indices $ binderAnn b
-              xs' <- forM (zip xs idx) \(x, i) -> do
-                xTy <- instantiateTabPi piTy i
-                checkOrInferRho x $ Check xTy
-              return (tabTy, xs')
+              case hoist b restTy of
+                HoistSuccess elTy -> do
+                  xs' <- mapM (`checkRho` elTy) xs
+                  return (tabTy, xs')
+                HoistFailure _    -> do
+                  idx <- indices $ binderAnn b
+                  xs' <- forM (zip xs idx) \(x, i) -> do
+                    xTy <- instantiateTabPi piTy i
+                    checkOrInferRho x $ Check xTy
+                  return (tabTy, xs')
             (Just size) -> throw TypeErr $ "Literal has " ++ count (length xs) "element"
                              ++ ", but required type has " ++ show size ++ "."
               where count :: Int -> String -> String
@@ -1849,7 +1854,7 @@ inferTabCon xs reqTy = do
         tabTy <- ixTy ==> elemTy
         case reqTy of
           Check sTy -> addContext context $ constrainEq sTy tabTy
-          Infer       -> return ()
+          Infer     -> return ()
         xs' <- mapM (`checkRho` elemTy) xs
         return (tabTy, xs')
 
