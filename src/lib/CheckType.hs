@@ -548,10 +548,13 @@ typeCheckPrimOp op = case op of
     case fromConstAbs (Abs b restTy) of
       HoistSuccess elTy -> forM_ xs (|: elTy)
       HoistFailure _    -> do
-        idxs <- indices $ binderAnn b
-        forMZipped_ xs idxs \x i -> do
-          eltTy <- instantiateTabPi tabPi i
-          x |: eltTy
+        maybeIdxs <- indicesLimit (length xs) $ binderAnn b
+        case maybeIdxs of
+          (Right idxs) ->
+            forMZipped_ xs idxs \x i -> do
+              eltTy <- instantiateTabPi tabPi i
+              x |: eltTy
+          (Left _) -> fail "zip error"
     return ty'
   ScalarBinOp binop x y -> do
     xTy <- typeCheckBaseType x

@@ -7,7 +7,7 @@
 module Interpreter (
   evalBlock, evalDecls, evalExpr, evalAtom,
   liftInterpM, InterpM, Interp, unsafeLiftInterpMCatch,
-  indices, matchUPat,
+  indices, indicesLimit, matchUPat,
   applyIntBinOp, applyIntCmpOp,
   applyFloatBinOp, applyFloatUnOp) where
 
@@ -17,6 +17,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Foldable (toList)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
+import GHC.Int
 import System.IO.Unsafe
 
 import CUDA
@@ -304,16 +305,12 @@ matchUPats _ _ = error "mismatched lengths"
 
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
 -- We could have a partial version of the interpreter that fails when any IO is to happen.
-liftBuilderInterp
-  :: EnvReader m
-  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> m n (Atom n)
+liftBuilderInterp ::
+  (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> InterpM n n (Atom n)
 liftBuilderInterp cont = do
   Abs decls result <- liftBuilder $ buildScoped cont
-  env <- unsafeGetEnv
-  Distinct <- getDistinct
-  return $ unsafePerformIO $ runInterpM env $
-    evalDecls decls $ evalAtom result
+  evalDecls decls $ evalAtom result
 {-# SCC liftBuilderInterp #-}
 
 runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
@@ -321,17 +318,36 @@ runInterpM bindings cont =
   runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
 {-# SCC runInterpM #-}
 
+unsafeLiftInterpM :: (EnvReader m) => InterpM n n a -> m n a
+unsafeLiftInterpM cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return $ unsafePerformIO $ runInterpM env cont
+{-# INLINE unsafeLiftInterpM #-}
+
 indices :: EnvReader m => IxType n -> m n [Atom n]
-indices ixTy = do
+indices ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
   forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
 {-# SCC indices #-}
 
-interpIndexSetSize :: EnvReader m => IxType n -> m n (Atom n)
+interpIndexSetSize :: IxType n -> InterpM n n (Atom n)
 interpIndexSetSize ixTy = liftBuilderInterp $ indexSetSize $ sink ixTy
 
-interpIntToIndex :: EnvReader m => IxType n -> Atom n -> m n (Atom n)
+interpIntToIndex :: IxType n -> Atom n -> InterpM n n (Atom n)
 interpIntToIndex ixTy i = liftBuilderInterp $ intToIndex (sink ixTy) (sink i)
+
+-- A variant of `indices` that accepts an expected number of them and
+-- only tries to construct the set if the expected number matches the
+-- given index set's size.
+indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Int32 [Atom n])
+indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
+  ~(IdxRepVal size) <- interpIndexSetSize ixTy
+  if size == fromIntegral sizeReq then
+    Right <$> forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
+  else
+    return $ Left size
+{-# SCC indicesLimit #-}
 
 -- === Helpers for function evaluation over fixed-width types ===
 
