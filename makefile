@@ -221,8 +221,10 @@ doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
 tests: unit-tests quine-tests repl-test module-tests
 
+# Keep the unit tests in their own working directory too, due to
+# https://github.com/commercialhaskell/stack/issues/4977
 unit-tests:
-	$(STACK) test $(STACK_FLAGS)
+	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS)
 
 quine-tests: $(quine-test-targets)
 
