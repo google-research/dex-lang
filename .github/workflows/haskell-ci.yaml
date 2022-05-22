@@ -45,6 +45,7 @@ jobs:
         path: |
           ~/.stack
           $GITHUB_WORKSPACE/.stack-work
+          $GITHUB_WORKSPACE/.stack-work-test
           $GITHUB_WORKSPACE/examples/t10k-images-idx3-ubyte
           $GITHUB_WORKSPACE/examples/t10k-labels-idx1-ubyte
 
