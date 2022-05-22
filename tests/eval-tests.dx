@@ -779,7 +779,7 @@ arr2d.(1@_)
 > True
 
 
-'Tests for numerical utilies
+'Tests for numerical utilities
 
 easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
 hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
@@ -1005,3 +1005,15 @@ def all_prefixes (s:String)  : List String =
 
 :p all_prefixes "fence"
 > (AsList 6 ["", "f", "fe", "fen", "fenc", "fence"])
+
+-- Record references
+-- Regression test for https://github.com/google-research/dex-lang/issues/694
+data Thing = T {a: Float}
+ 
+def scan_over {n} (xs:n=>Float) : n=>Float =
+  snd $ scan (T {a=1.0}) \i t.
+    (T {a}) = t
+    (T {a=a + xs.i}, a)
+
+scan_over [1.0, 2.0, 3.0]
+> [1., 2., 4.]
