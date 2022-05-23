@@ -1735,7 +1735,7 @@ def split_key {n} (k:Key) : Fin n => Key = for i. ixkey k i
 
 '### Sample Generators
 These functions generate samples taken from, different distributions.
-Such as `randMat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
+Such as `rand_mat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
 
 foreign "randunif" randunifFFI : Word64 -> {IO} Float64
 
