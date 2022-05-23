@@ -9,6 +9,7 @@
 module Export (
     exportFunctions, prepareFunctionForExport, exportedSignatureDesc,
     ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..),
+    ExportCC (..),
   ) where
 
 import Data.List (intercalate)
@@ -28,12 +29,12 @@ exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
-prepareFunctionForExport :: (EnvReader m, Fallible1 m) => Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
-prepareFunctionForExport f = liftExcept =<< liftEnvReaderT (prepareFunctionForExport' f)
+prepareFunctionForExport :: (EnvReader m, Fallible1 m) => ExportCC -> Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport cc f = liftExcept =<< liftEnvReaderT (prepareFunctionForExport' cc f)
 {-# INLINE prepareFunctionForExport #-}
 
-prepareFunctionForExport' :: Atom n -> EnvReaderT Except n (ImpFunction n, ExportedSignature VoidS)
-prepareFunctionForExport' f = do
+prepareFunctionForExport' :: ExportCC -> Atom n -> EnvReaderT Except n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport' cc f = do
   naryPi <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
     Just npi -> return npi
@@ -49,7 +50,7 @@ prepareFunctionForExport' f = do
       case sinkFromTop $ EmptyAbs argSig of
         Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon argSig'
   fSimp <- simplifyTopFunction naryPi f
-  fImp <- toImpExportedFunction fSimp argRecon
+  fImp <- toImpExportedFunction cc fSimp argRecon
   return (fImp, sig)
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
@@ -64,8 +65,9 @@ prepareFunctionForExport' f = do
                => Nest ExportArg n l' -> [AtomName l'] -> Nest PiBinder l' l -> Type l -> m l' (ExportedSignature n)
         goArgs argSig argVs piBs piRes = case piBs of
           Empty -> goResult piRes \resSig ->
-            return $ ExportedSignature argSig resSig $
-              (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+            return $ ExportedSignature argSig resSig $ case cc of
+              FlatExportCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+              XLAExportCC  -> []
           Nest b bs -> do
             refreshAbs (Abs b (Abs bs piRes)) \(PiBinder v ty arrow) (Abs bs' piRes') -> do
               let invalidArrow = throw TypeErr

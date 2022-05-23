@@ -8,7 +8,7 @@
 
 module Imp
   ( toImpFunction, ImpFunctionWithRecon (..)
-  , toImpStandaloneFunction, toImpExportedFunction
+  , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
   , PtrBinder, impFunType, getIType) where
 
 import Prelude hiding ((.), id)
@@ -67,11 +67,60 @@ toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
       return []
 toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not implemented"
 
+-- | Calling convention for exported function.
+data ExportCC = FlatExportCC
+              | XLAExportCC
+
+data UnpackCC = FlatUnpackCC Int
+              | XLAUnpackCC [FormalArg] [FormalArg]
+
+type FormalArg = (NameHint, IType)
+type ActualArg = AtomName
+
+ccPrepareFormals :: ExportCC -> Nest IBinder n l -> [FormalArg] -> ([FormalArg], UnpackCC)
+ccPrepareFormals cc args destFormals = case cc of
+  FlatExportCC -> do
+    (argFormals ++ destFormals, FlatUnpackCC (length argFormals))
+  XLAExportCC -> ( [(getNameHint @String "out", i8pp), (getNameHint @String "in", i8pp)]
+                 , XLAUnpackCC argFormals destFormals )
+  where
+    argFormals = nestToList ((noHint,) . iBinderType) args
+    i8pp = PtrType (Heap CPU, PtrType (Heap CPU, Scalar Word8Type))
+
+ccUnpackActuals :: Emits n => UnpackCC -> [ActualArg n] -> SubstImpM i n ([ActualArg n], [ActualArg n])
+ccUnpackActuals cc actual = case cc of
+  FlatUnpackCC n -> return $ splitAt n actual
+  XLAUnpackCC argFormals destFormals -> case actual of
+    [outsPtrName, insPtrName] -> do
+      let (outsPtr, insPtr) = (IVar outsPtrName i8pp, IVar insPtrName i8pp)
+      let loadPtr base i pointeeTy =
+            flip cast (PtrType (Heap CPU, pointeeTy)) =<< load =<< impOffset base (IIdxRepVal $ fromIntegral i)
+      args <- forM (enumerate argFormals) \(i, (_, argTy)) ->
+        toAtomName <$> case argTy of
+          PtrType (_, pointeeTy) -> loadPtr insPtr i pointeeTy
+          _ -> load =<< loadPtr insPtr i argTy
+      -- outsPtr points to the buffer when there's one output, not to the pointer array.
+      ptrs <- case destFormals of
+        [(_, destTy)] -> (:[]) . toAtomName <$> cast outsPtr destTy
+        _ ->
+          forM (enumerate destFormals) \(i, (_, destTy)) ->
+            toAtomName <$> case destTy of
+              PtrType (_, pointeeTy) -> loadPtr outsPtr i pointeeTy
+              _ -> error "Destination arguments should all have pointer types"
+      return (args, ptrs)
+    _ -> error "Expected two arguments for the XLA calling convention"
+  where
+    toAtomName = \case
+      IVar v _ -> v
+      _ -> error "Expected a variable"
+    i8pp = PtrType (Heap CPU, PtrType (Heap CPU, Scalar Word8Type))
+
 toImpExportedFunction :: EnvReader m
-                      => NaryLamExpr n
+                      => ExportCC
+                      -> NaryLamExpr n
                       -> (Abs (Nest IBinder) (ListE Block) n)
                       -> m n (ImpFunction n)
-toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs baseArgBs argRecons) = liftImpM do
+toImpExportedFunction cc lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs baseArgBs argRecons) = liftImpM do
   case effs of
     Pure -> return ()
     _    -> throw TypeErr "Can only export pure functions"
@@ -84,9 +133,9 @@ toImpExportedFunction lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs base
     AbsPtrs (Abs ptrBs' resDest') ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
     let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
     return (Abs tbs' (Abs ptrBs' resDest'), ptrFormals)
-  let argFormals = nestToList ((noHint,) . iBinderType) baseArgBs
-  dropSubst $ buildImpFunction CEntryFun (argFormals ++ ptrFormals) \argsAndPtrs -> do
-    let (args, ptrs) = splitAt (length argFormals) argsAndPtrs
+  let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
+  dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
+    (args, ptrs)   <- ccUnpackActuals ccCtx ccActuals
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
     resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $

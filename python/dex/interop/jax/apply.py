@@ -28,7 +28,7 @@ compiler_cache = WeakKeyDictionary()
 def get_compiled(func_atom):
   compiled = compiler_cache.get(func_atom, None)
   if compiled is None:
-    compiled = compiler_cache[func_atom] = func_atom.compile()
+    compiled = compiler_cache[func_atom] = func_atom.compile(calling_convention='xla')
   return compiled
 
 
@@ -108,36 +108,22 @@ def dex_call_cpu_translation(b, *args, func_atom):
   result_xshape = xc.Shape.array_shape(result_aval.dtype, result_aval.shape)
 
   custom_call = custom_call_cache.get(func_atom, None)
-  native = get_compiled(func_atom)
   if custom_call is None:
-    assert len(args) == len(native.explicit_argument_signature)
-    assert 1 == len(native.result_signature)
-    custom_call_ctype = ctypes.CFUNCTYPE(None,
-                                         ctypes.c_void_p,
-                                         ctypes.POINTER(ctypes.c_void_p * len(args)))
-    @custom_call_ctype
-    def trampoline(result_ptr, arg_ptr_array):
-      name_to_cval = {name: IdxRepTy(value) for name, value in shape_vars.items()}
-      for binder, ptr in zip(native.explicit_argument_signature, arg_ptr_array.contents):
-        if isinstance(binder.type, ScalarType):
-          cval = ctypes.cast(ptr, ctypes.POINTER(binder.type.arg_ctype)).contents
-        elif isinstance(binder.type, RectContArrayType):
-          cval = ctypes.cast(ptr, binder.type.arg_ctype)
-        else:
-          raise AssertionError("Unexpected binder type")
-        name_to_cval[binder.name] = cval
-      result_binder = native.result_signature[0]
-      name_to_cval[result_binder.name] = ctypes.cast(result_ptr, result_binder.type.ref_ctype)
-      native.callable(*(name_to_cval[name] for name in native.ccall_signature))
-
-    trampoline_addr = ctypes.c_void_p.from_param(trampoline)
+    native = get_compiled(func_atom)
     custom_call_name = f"dex_custom_call{next(custom_call_id)}".encode('ascii')
+    # TODO: The native call doesn't exactly match XLA's expected signature, because
+    # it has a non-void return type!
     xc.register_custom_call_target(custom_call_name,
-                                   make_custom_call_target(trampoline_addr))
-    custom_call_cache[func_atom] = (custom_call_name, trampoline)
+                                   make_custom_call_target(native._as_parameter_))
+    custom_call_cache[func_atom] = (custom_call_name, native)
     # TODO: Unregister custom calls at some point?
   else:
-    custom_call_name, *_ = custom_call
+    custom_call_name, native = custom_call
+  assert len(args) == len(native.explicit_argument_signature)
+  assert 1 == len(native.result_signature)
+  # TODO: Support inference of implicit arguments
+  if len(native.argument_signature) != len(native.explicit_argument_signature):
+    raise NotImplementedError("Inference of implicit arguments")
   return xc.ops.CustomCall(b, custom_call_name, operands=args, shape=result_xshape)
 
 jax.interpreters.xla.backend_specific_translations['cpu'][dex_apply_p] = dex_call_cpu_translation
