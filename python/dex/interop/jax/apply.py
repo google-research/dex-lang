@@ -12,7 +12,7 @@ import numpy as np
 
 import jax
 from jax.lib import xla_client as xc
-from jax.interpreters import xla
+from jax.interpreters import mlir
 from jax.interpreters import batching
 
 from ... import Atom
@@ -99,13 +99,9 @@ def make_custom_call_target(func_ptr):
 #       the XLA executables outlive jaxprs formed by tracing.
 custom_call_id = count()
 custom_call_cache = {}
-def dex_call_cpu_translation(b, *args, func_atom):
-  xla_shapes = list(map(b.get_shape, args))
+def dex_apply_lowering(ctx, *args, func_atom):
   result_aval, shape_vars = dex_call_abstract_eval_with_shape(
-      *(jax.core.ShapedArray(xshape.dimensions(), xshape.numpy_dtype())
-        for xshape in xla_shapes),
-      func_atom=func_atom)
-  result_xshape = xc.Shape.array_shape(result_aval.dtype, result_aval.shape)
+      *ctx.avals_in, func_atom=func_atom)
 
   custom_call = custom_call_cache.get(func_atom, None)
   if custom_call is None:
@@ -119,14 +115,25 @@ def dex_call_cpu_translation(b, *args, func_atom):
     # TODO: Unregister custom calls at some point?
   else:
     custom_call_name, native = custom_call
+
   assert len(args) == len(native.explicit_argument_signature)
   assert 1 == len(native.result_signature)
   # TODO: Support inference of implicit arguments
   if len(native.argument_signature) != len(native.explicit_argument_signature):
     raise NotImplementedError("Inference of implicit arguments")
-  return xc.ops.CustomCall(b, custom_call_name, operands=args, shape=result_xshape)
 
-jax.interpreters.xla.backend_specific_translations['cpu'][dex_apply_p] = dex_call_cpu_translation
+  result_type = mlir.aval_to_ir_type(result_aval)
+  return mlir.mhlo.CustomCallOp(
+      [result_type],
+      args,
+      call_target_name=mlir.ir.StringAttr.get(custom_call_name),
+      has_side_effect=mlir.ir.BoolAttr.get(False),
+      api_version=mlir.i32_attr(2),
+      called_computations=mlir.ir.ArrayAttr.get([]),
+      backend_config=mlir.ir.StringAttr.get(""),
+      operand_layouts=None,
+      result_layouts=None).result,
+mlir.register_lowering(dex_apply_p, dex_apply_lowering, platform='cpu')
 
 
 # === batching ===
