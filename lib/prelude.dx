@@ -29,6 +29,10 @@ RawPtr : Type = %Word8Ptr
 Int = Int32
 Float = Float32
 
+Nat64 = %Nat64
+Nat32 = %Nat32
+Nat = Nat32
+
 '### Casting
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
@@ -50,6 +54,12 @@ def i_to_f (x:Int) : Float = internal_cast _ x
 def FToI (x:Float) : Int = internal_cast _ x
 def i64_to_raw_ptr (x:Int64 ) : RawPtr = internal_cast _ x
 def raw_ptr_to_i64 (x:RawPtr) : Int64  = internal_cast _ x
+def i64_to_n64 (x : Int64)   : Nat64 = internal_cast _ x
+def i64_to_n32 (x : Int64)   : Nat32 = internal_cast _ x
+def i_to_n64 (x : Int)     : Nat64   = internal_cast _ x
+def i_to_n32 (x : Int)     : Nat32   = internal_cast _ x
+def n64_to_i (x : Nat64)   : Int     = internal_cast _ x
+def n32_to_i (x : Nat32)   : Int     = internal_cast _ x
 
 interface FromInteger a
   from_integer : Int64 -> a
@@ -65,6 +75,12 @@ instance FromInteger Float64
 
 instance FromInteger Int64
   from_integer = \x. x
+
+instance FromInteger Nat64
+  from_integer = \x. i64_to_n64 x
+
+instance FromInteger Nat32
+  from_integer = \x. i64_to_n32 x
 
 '## Bitwise operations
 
@@ -131,6 +147,20 @@ instance Add Int32
   add = \x y. %iadd x y
   sub = \x y. %isub x y
   zero = i_to_i32 0
+
+instance Add Nat32
+  add = \x y. %iadd x y
+  -- For now this is an error. TODO: decide what to call the
+  -- various forms of subtraction on nats
+  sub = \_ _. %throwError Nat32
+  zero = i64_to_n32 0
+
+instance Add Nat64
+  add = \x y. %iadd x y
+  -- For now this is an error. TODO: decide what to call the
+  -- various forms of subtraction on nats
+  sub = \_ _. %throwError Nat64
+  zero = i64_to_n64 0
 
 instance Add Word8
   add = \x y. %iadd x y

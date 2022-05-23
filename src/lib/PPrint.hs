@@ -826,6 +826,8 @@ instance PrettyPrec ScalarBaseType where
   prettyPrec sb = atPrec ArgPrec $ case sb of
     Int64Type   -> "Int64"
     Int32Type   -> "Int32"
+    Nat64Type   -> "Nat64"
+    Nat32Type   -> "Nat32"
     Float64Type -> "Float64"
     Float32Type -> "Float32"
     Word8Type   -> "Word8"
@@ -933,6 +935,8 @@ instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
   prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
+  prettyPrec (Nat64Lit   x) = atPrec ArgPrec $ p x
+  prettyPrec (Nat32Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x

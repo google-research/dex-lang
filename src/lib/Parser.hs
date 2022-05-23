@@ -1424,6 +1424,8 @@ builtinNames = M.fromList
   , ("Float32"   , TCExpr $ BaseType $ Scalar Float32Type)
   , ("Int64"     , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"     , TCExpr $ BaseType $ Scalar Int32Type)
+  , ("Nat64"     , TCExpr $ BaseType $ Scalar Nat64Type)
+  , ("Nat32"     , TCExpr $ BaseType $ Scalar Nat32Type)
   , ("Word8"     , TCExpr $ BaseType $ Scalar Word8Type)
   , ("Word32"    , TCExpr $ BaseType $ Scalar Word32Type)
   , ("Word64"    , TCExpr $ BaseType $ Scalar Word64Type)

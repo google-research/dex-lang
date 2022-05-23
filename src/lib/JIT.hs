@@ -743,6 +743,8 @@ litVal :: LitVal -> Operand
 litVal lit = case lit of
   Int64Lit x   -> i64Lit $ fromIntegral x
   Int32Lit x   -> i32Lit $ fromIntegral x
+  Nat64Lit x   -> i64Lit $ fromIntegral x
+  Nat32Lit x   -> i32Lit $ fromIntegral x
   Word8Lit x   -> i8Lit  $ fromIntegral x
   Word32Lit x  -> i32Lit  $ fromIntegral x
   Word64Lit x  -> i64Lit  $ fromIntegral x
@@ -877,6 +879,8 @@ scalarTy b = case b of
   Scalar sb -> case sb of
     Int64Type   -> i64
     Int32Type   -> i32
+    Nat64Type   -> i64
+    Nat32Type   -> i32
     Word8Type   -> i8
     Word32Type  -> i32
     Word64Type  -> i64

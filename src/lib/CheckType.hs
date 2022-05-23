@@ -915,6 +915,8 @@ checkIntBaseType t = case t of
     checkSBT sbt = case sbt of
       Int64Type -> return ()
       Int32Type -> return ()
+      Nat64Type -> return ()
+      Nat32Type -> return ()
       Word8Type  -> return ()
       Word32Type -> return ()
       Word64Type -> return ()
@@ -953,6 +955,8 @@ checkValidBaseCast sourceTy destTy =
     checkScalarType ty = case ty of
       Scalar Int64Type   -> return ()
       Scalar Int32Type   -> return ()
+      Scalar Nat64Type   -> return ()
+      Scalar Nat32Type   -> return ()
       Scalar Word8Type   -> return ()
       Scalar Word32Type  -> return ()
       Scalar Word64Type  -> return ()
