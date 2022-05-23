@@ -52,7 +52,7 @@ class JAXTest(unittest.TestCase):
   def test_jit_scale(self):
     scale = primitive(dex.eval(r'\x:((Fin 10)=>Float) y:Float. for i. x.i * y'))
     x = jnp.arange(10, dtype=np.float32)
-    np.testing.assert_allclose(scale(x, 5.0), x * 5.0)
+    np.testing.assert_allclose(jax.jit(scale)(x, 5.0), x * 5.0)
 
   def test_vmap(self):
     add_two = primitive(dex.eval(r'\x:((Fin 2)=>Float). for i. x.i + 2.0'))
@@ -287,6 +287,19 @@ class JAX2DexTest(unittest.TestCase):
     x = np.float64(2.0)
     with enable_x64():
       np.testing.assert_allclose(dexjit(f)(x), 8.0)
+
+  def test_jit(self):
+    g = dexjit(lambda y: y * y)
+    f = jax.jit(lambda x: x * g(x))
+    x = jnp.arange(5)
+    np.testing.assert_allclose(f(x), x * x * x)
+
+  def test_jit_two_outputs(self):
+    f = jax.jit(dexjit(lambda x, y: (x + 1, y * 4)))
+    x = jnp.arange(10, dtype=np.float32)
+    y = 5.0
+    for l, r in zip(f(x, y), (x + 1, y * 4)):
+      np.testing.assert_allclose(l, r)
 
 
 def check_broadcasting_pointwise(prim, full=False):

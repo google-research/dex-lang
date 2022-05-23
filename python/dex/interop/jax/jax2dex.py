@@ -13,6 +13,7 @@ from jax import core
 from jax import linear_util as lu
 from jax.core import ShapedArray
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax._src.tree_util import (tree_flatten, tree_unflatten, PyTreeDef,
                                 broadcast_prefix)
 from jax._src import dtypes
@@ -21,7 +22,8 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, cache)
 
-from ... import eval
+from . import apply
+from ... import Atom, eval
 
 map = safe_map
 zip = safe_zip
@@ -283,6 +285,10 @@ def dex_call_impl(*args, jaxpr):
 
 @cache()
 def dex_executable(jaxpr: core.Jaxpr) -> Callable:
+  return dex_atom(jaxpr).compile()
+
+@cache()
+def dex_atom(jaxpr: core.Jaxpr) -> Atom:
   assert not jaxpr.constvars
   varnames = ('v' + ''.join(chars) for n in it.count(1)
               for chars in it.product(ascii_lowercase, repeat=n))
@@ -339,7 +345,7 @@ def dex_executable(jaxpr: core.Jaxpr) -> Callable:
       raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit input")
     expr = Lam(read(v).name, aval_to_type(v.aval), block)
     block = Block([], expr)
-  return eval(expr.pprint()).compile()
+  return eval(expr.pprint())
 
 def aval_to_type(aval: core.AbstractValue) -> Type:
   if type(aval) is core.ShapedArray:
@@ -350,6 +356,15 @@ def aval_to_type(aval: core.AbstractValue) -> Type:
     return ty
   else:
     raise NotImplementedError(aval)
+
+@dex_call_p.def_abstract_eval
+def dex_call_abstract_eval(*args, jaxpr):
+  return [v.aval for v in jaxpr.outvars]
+
+def dex_call_lowering(b, *args, jaxpr):
+  return apply.dex_apply_lowering(b, *args, func_atom=dex_atom(jaxpr))
+mlir.register_lowering(dex_call_p, dex_call_lowering, platform='cpu')
+
 
 ### Dex translation rules for JAX primitives
 
