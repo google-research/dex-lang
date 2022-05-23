@@ -233,11 +233,11 @@ move_y : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
 ' A Demo showing all kind of features
 ```
 mydiagram : Diagram =
-    (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
-    <> (circle 5.0 |> moveXY (40.0, 41.0))
-    <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
-    <> (text "DexLang"  |> moveXY (30.0, 10.0) |> setStrokeColor green)
-    <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
+    (  (circle 7.0 |> move_xy (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
+    <> (circle 5.0 |> move_xy (40.0, 41.0))
+    <> (rect  10.0 20.0 |> move_xy (5.0, 10.0) |> setStrokeColor red)
+    <> (text "DexLang"  |> move_xy (30.0, 10.0) |> setStrokeColor green)
+    <> (pointDiagram |> move_xy (15.0, 5.0) |> setStrokeColor red)
     )
 :html renderScaledSVG mydiagram
 ```
@@ -248,6 +248,6 @@ concentric_diagram : Diagram = (
      (rect 2.0 2.0 |> setFillColor red)
   <> (circle 1.0 |> setFillColor blue)
   <> (text "DexLang" |> setStrokeColor white)
-) |> moveXY (5.0, 5.0)
+) |> move_xy (5.0, 5.0)
 :html renderScaledSVG concentric_diagram
 ```
