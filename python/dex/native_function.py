@@ -89,9 +89,10 @@ class Binder:
 
 
 class NativeFunction:
-  def __init__(self, jit, ptr):
+  def __init__(self, jit, ptr, calling_convention):
     self._as_parameter_ = ptr
     self._jit = jit
+    self.calling_convention = calling_convention
     sig_ptr = api.getFunctionSignature(jit, ptr)
     if not sig_ptr:
       raise RuntimeError("Failed to retrieve the function signature")
@@ -104,10 +105,18 @@ class NativeFunction:
     finally:
       api.freeFunctionSignature(sig_ptr)
 
-    func_type = ctypes.CFUNCTYPE(
-        ctypes.c_int64,
-        *(arg.type.arg_ctype for arg in self.argument_signature),
-        *(res.type.ref_ctype for res in self.result_signature))
+    if calling_convention == api.FlatCC:
+      func_type = ctypes.CFUNCTYPE(
+          ctypes.c_int64,
+          *(arg.type.arg_ctype for arg in self.argument_signature),
+          *(res.type.ref_ctype for res in self.result_signature))
+    elif calling_convention == api.XLACC:
+      # XXX: Note that this is not exactly the XLA signature type, but it is what
+      # Dex emits today. The difference is in the return type, which is non-void.
+      func_type = ctypes.CFUNCTYPE(ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p)
+    else:
+      raise ValueError("Unsupported calling convention")
+
     self.callable = func_type(ctypes.cast(ptr, ctypes.c_void_p).value)
 
   def __del__(self):
@@ -125,7 +134,36 @@ class NativeFunction:
       value, result_thunk = binder.type.create(name_to_cval)
       name_to_cval[binder.name] = value
       result_thunks.append(result_thunk)
-    self.callable(*(name_to_cval[name] for name in self.ccall_signature))
+
+    # Pack args for the native call
+    if self.calling_convention == api.FlatCC:
+      args = (name_to_cval[name] for name in self.ccall_signature)
+    elif self.calling_convention == api.XLACC:
+      ptr_stash = []
+      ins_arr = (ctypes.c_void_p * len(self.argument_signature))()
+      for i, b in enumerate(self.argument_signature):
+        if type(b.type) is ScalarType:
+          ptr = ctypes.cast(ctypes.pointer(name_to_cval[b.name]), ctypes.c_void_p)
+          ptr_stash.append(ptr)
+          ins_arr[i] = ptr
+        elif type(b.type) is RectContArrayType:
+          ins_arr[i] = ctypes.cast(name_to_cval[b.name], ctypes.c_void_p)
+        else:
+          raise RuntimeError(f"Unrecognized argument type: {b.type}")
+      ins_ptr = ctypes.cast(ins_arr, ctypes.c_void_p)
+
+      if len(self.result_signature) > 1:
+        out_arr = (ctypes.c_void_p * len(self.result_signature))(
+            *(ctypes.cast(name_to_cval[b.name], ctypes.c_void_p) for b in self.result_signature))
+        out_ptr = ctypes.cast(out_arr, ctypes.c_void_p)
+      else:
+        out_ptr = name_to_cval[self.result_signature[0].name]
+
+      args = (out_ptr, ins_ptr)
+    else:
+      raise ValueError("Unsupported calling convention")
+
+    self.callable(*args)
     results = tuple(thunk() for thunk in result_thunks)
     if len(results) == 1:
       return results[0]

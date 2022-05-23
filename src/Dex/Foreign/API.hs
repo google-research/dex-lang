@@ -37,7 +37,7 @@ foreign export ccall "dexFromCAtom" dexFromCAtom  :: Ptr CAtom                  
 -- JIT
 foreign export ccall "dexCreateJIT"  dexCreateJIT  :: IO (Ptr JIT)
 foreign export ccall "dexDestroyJIT" dexDestroyJIT :: Ptr JIT -> IO ()
-foreign export ccall "dexCompile"    dexCompile    :: Ptr JIT -> Ptr Context -> Ptr AtomEx -> IO (Ptr NativeFunction)
+foreign export ccall "dexCompile"    dexCompile    :: Ptr JIT -> CInt -> Ptr Context -> Ptr AtomEx -> IO (Ptr NativeFunction)
 foreign export ccall "dexUnload"     dexUnload     :: Ptr JIT -> Ptr NativeFunction -> IO ()
 foreign export ccall "dexGetFunctionSignature"  dexGetFunctionSignature  :: Ptr JIT -> Ptr NativeFunction -> IO (Ptr ClosedExportedSignature)
 foreign export ccall "dexFreeFunctionSignature" dexFreeFunctionSignature :: Ptr ClosedExportedSignature -> IO ()

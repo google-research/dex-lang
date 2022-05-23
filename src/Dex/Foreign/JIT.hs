@@ -17,6 +17,7 @@ import Control.Monad.State.Strict
 
 import Foreign.Ptr
 import Foreign.C.String
+import Foreign.C.Types
 import Foreign.Storable
 import Foreign.Marshal.Alloc
 
@@ -80,14 +81,20 @@ dexDestroyJIT jitPtr = do
   LLVM.JIT.destroyJIT jit
   LLVM.Shims.disposeTargetMachine jitTargetMachine
 
-dexCompile :: Ptr JIT -> Ptr Context -> Ptr AtomEx -> IO NativeFunctionAddr
-dexCompile jitPtr ctxPtr funcAtomPtr = catchErrors $ do
+intAsCC :: CInt -> ExportCC
+intAsCC 0 = FlatExportCC
+intAsCC 1 = XLAExportCC
+intAsCC _ = error "Unregognized calling convention"
+
+dexCompile :: Ptr JIT -> CInt -> Ptr Context -> Ptr AtomEx -> IO NativeFunctionAddr
+dexCompile jitPtr ccInt ctxPtr funcAtomPtr = catchErrors $ do
   ForeignJIT{..} <- fromStablePtr jitPtr
   Context evalConfig initEnv <- fromStablePtr ctxPtr
   AtomEx funcAtom <- fromStablePtr funcAtomPtr
+  let cc = intAsCC ccInt
   fst <$> runTopperM evalConfig initEnv do
     -- TODO: Check if atom is compatible with context! Use module name?
-    (impFunc, nativeSignature) <- prepareFunctionForExport (unsafeCoerceE funcAtom)
+    (impFunc, nativeSignature) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
     filteredLogger <- FilteredLogger (const False) <$> getLogger
     (_, llvmAST) <- impToLLVM filteredLogger "userFunc" impFunc
     objFileNames <- getAllRequiredObjectFiles

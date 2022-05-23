@@ -66,6 +66,11 @@ class Prelude(Module):
 prelude = Prelude()
 eval = prelude.eval
 
+_calling_conventions = {
+  'flat': api.FlatCC,
+  'xla': api.XLACC,
+}
+
 
 class Atom:
   __slots__ = ('__weakref__', '_as_parameter_', 'module', 'name')
@@ -132,7 +137,8 @@ class Atom:
       api.destroyContext(old_env)
     return eval(" ".join(f"python_arg{i}" for i in range(len(args) + 1)), module=self.module, _env=env)
 
-  def compile(self):
-    func_ptr = api.compile(api.jit, self.module, self)
+  def compile(self, calling_convention='flat'):
+    cc = _calling_conventions[calling_convention]
+    func_ptr = api.compile(api.jit, cc, self.module, self)
     if not func_ptr: api.raise_from_dex()
-    return NativeFunction(api.jit, func_ptr)
+    return NativeFunction(api.jit, func_ptr, cc)

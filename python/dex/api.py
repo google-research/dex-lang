@@ -49,6 +49,16 @@ class NativeFunctionSignature(ctypes.Structure):
               ("res", ctypes.c_char_p),
               ("ccall", ctypes.c_char_p)]
 
+class ExportCC:
+  def __init__(self, value):
+    self._as_parameter_ = ctypes.c_int32(value)
+
+  @classmethod
+  def from_param(cls, p):
+    return p._as_parameter_
+FlatCC = ExportCC(0)
+XLACC = ExportCC(1)
+
 
 HsAtomPtr = ctypes.POINTER(HsAtom)
 HsContextPtr = ctypes.POINTER(HsContext)
@@ -82,7 +92,7 @@ fromCAtom = dex_func('dexFromCAtom', CAtomPtr,                HsAtomPtr)
 
 createJIT  = dex_func('dexCreateJIT',  HsJITPtr)
 destroyJIT = dex_func('dexDestroyJIT', HsJITPtr, None)
-compile    = dex_func('dexCompile',    HsJITPtr, HsContextPtr, HsAtomPtr, NativeFunction)
+compile    = dex_func('dexCompile',    HsJITPtr, ExportCC, HsContextPtr, HsAtomPtr, NativeFunction)
 unload     = dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
 
 getFunctionSignature  = dex_func('dexGetFunctionSignature', HsJITPtr, NativeFunction, NativeFunctionSignaturePtr)
