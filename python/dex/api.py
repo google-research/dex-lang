@@ -98,6 +98,8 @@ unload     = dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
 getFunctionSignature  = dex_func('dexGetFunctionSignature', HsJITPtr, NativeFunction, NativeFunctionSignaturePtr)
 freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
 
+xlaCpuTrampoline = lib.dexXLACPUTrampoline
+
 init()
 jit = createJIT()
 nofree = False

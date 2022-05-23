@@ -26,3 +26,9 @@ void _internal_dexSetError(char* new_err, int64_t len) {
   memcpy(dex_err_storage, new_err, len);
   dex_err_storage[2047] = 0;
 }
+
+typedef int64_t (*dex_xla_f)(void*, void**);
+void dexXLACPUTrampoline(void* out, void** in) {
+  dex_xla_f f = *((dex_xla_f*)(*in));
+  f(out, in + 1);
+}

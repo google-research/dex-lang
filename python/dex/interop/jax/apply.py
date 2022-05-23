@@ -94,45 +94,49 @@ PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, PyCapsule_Destructor
 def make_custom_call_target(func_ptr):
   return PyCapsule_New(func_ptr, b"xla._CUSTOM_CALL_TARGET", PyCapsule_Destructor(0))
 
-# TODO: Better lifetime management. func_atoms will be quite often created on the fly
-#       at trace time when different transforms are applied, and I'm pretty sure that
-#       the XLA executables outlive jaxprs formed by tracing.
-custom_call_id = count()
-custom_call_cache = {}
+trampoline_custom_call_name = None
+def get_trampoline():
+  global trampoline_custom_call_name
+  if trampoline_custom_call_name is not None:
+    return trampoline_custom_call_name
+  trampoline_custom_call_name = "dex_xla_cpu_trampoline"
+  xc.register_custom_call_target(
+      trampoline_custom_call_name.encode('ascii'),
+      make_custom_call_target(api.xlaCpuTrampoline))
+  return trampoline_custom_call_name
+
 def dex_apply_lowering(ctx, *args, func_atom):
-  result_aval, shape_vars = dex_call_abstract_eval_with_shape(
-      *ctx.avals_in, func_atom=func_atom)
+  native = get_compiled(func_atom)
+  custom_call_name = get_trampoline()
+  ctx.module_context.add_keepalive(native)
 
-  custom_call = custom_call_cache.get(func_atom, None)
-  if custom_call is None:
-    native = get_compiled(func_atom)
-    custom_call_name = f"dex_custom_call{next(custom_call_id)}".encode('ascii')
-    # TODO: The native call doesn't exactly match XLA's expected signature, because
-    # it has a non-void return type!
-    xc.register_custom_call_target(custom_call_name,
-                                   make_custom_call_target(native._as_parameter_))
-    custom_call_cache[func_atom] = (custom_call_name, native)
-    # TODO: Unregister custom calls at some point?
-  else:
-    custom_call_name, native = custom_call
-
-  assert len(args) == len(native.explicit_argument_signature)
-  assert 1 == len(native.result_signature)
-  # TODO: Support inference of implicit arguments
+  # TODO: Support inference of implicit arguments. Abstract eval already does inference!
   if len(native.argument_signature) != len(native.explicit_argument_signature):
     raise NotImplementedError("Inference of implicit arguments")
+  assert len(args) == len(native.explicit_argument_signature)
 
-  result_type = mlir.aval_to_ir_type(result_aval)
-  return mlir.mhlo.CustomCallOp(
-      [result_type],
-      args,
+  native_ptr = mlir.ir_constant(
+      ctypes.cast(native._as_parameter_, ctypes.c_void_p).value,
+      canonicalize_types=False)
+  result_type = [mlir.aval_to_ir_type(a) for a in ctx.avals_out]
+  multi_result = len(ctx.avals_out) > 1
+  if multi_result:
+    result_type = [mlir.ir.TupleType.get_tuple(result_type)]
+  custom_call = mlir.mhlo.CustomCallOp(
+      result_type,
+      (native_ptr, *args),
       call_target_name=mlir.ir.StringAttr.get(custom_call_name),
       has_side_effect=mlir.ir.BoolAttr.get(False),
       api_version=mlir.i32_attr(2),
       called_computations=mlir.ir.ArrayAttr.get([]),
       backend_config=mlir.ir.StringAttr.get(""),
       operand_layouts=None,
-      result_layouts=None).result,
+      result_layouts=None)
+  if multi_result:
+    return [mlir.mhlo.GetTupleElementOp(custom_call.result, mlir.i32_attr(i)).result
+            for i in range(len(ctx.avals_out))]
+  else:
+    return custom_call.result,
 mlir.register_lowering(dex_apply_p, dex_apply_lowering, platform='cpu')
 
 
