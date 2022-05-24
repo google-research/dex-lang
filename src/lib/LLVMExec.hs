@@ -311,7 +311,6 @@ loadLitVal ptr (Scalar ty) = liftIO case ty of
 loadLitVal ptrPtr (PtrType t) = do
   ptr <- liftIO $ peek $ castPtr ptrPtr
   return $ PtrLit $ PtrLitVal t ptr
-loadLitVal _ _ = error "not implemented"
 
 storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
 storeLitVal ptr val = liftIO case val of

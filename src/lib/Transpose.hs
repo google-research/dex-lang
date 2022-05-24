@@ -193,17 +193,17 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Emits o => Op i -> Atom o -> TransposeM i o ()
 transposeOp op ct = case op of
-  ScalarUnOp  FNeg x    -> transposeAtom x =<< neg ct
-  ScalarUnOp  _    _    -> notLinear
-  ScalarBinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct
-  ScalarBinOp FSub x y  -> transposeAtom x ct >> (transposeAtom y =<< neg ct)
-  ScalarBinOp FMul x y  -> do
+  UnOp  FNeg x    -> transposeAtom x =<< neg ct
+  UnOp  _    _    -> notLinear
+  BinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct
+  BinOp FSub x y  -> transposeAtom x ct >> (transposeAtom y =<< neg ct)
+  BinOp FMul x y  -> do
     xLin <- isLin x
     if xLin
       then transposeAtom x =<< mul ct =<< substNonlin y
       else transposeAtom y =<< mul ct =<< substNonlin x
-  ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
-  ScalarBinOp _    _ _  -> notLinear
+  BinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
+  BinOp _    _ _  -> notLinear
   PrimEffect refArg m   -> do
     refArg' <- substNonlin refArg
     let emitEff = emitOp . PrimEffect refArg'
@@ -229,9 +229,6 @@ transposeOp op ct = case op of
   IndexRef     _ _      -> notImplemented
   ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
-  VectorBinOp  _ _ _    -> notImplemented
-  VectorPack   _        -> notImplemented
-  VectorIndex  _ _      -> notImplemented
   CastOp       _ _      -> notImplemented
   RecordCons   _ _      -> notImplemented
   RecordConsDynamic _ _ _ -> notImplemented
@@ -246,7 +243,6 @@ transposeOp op ct = case op of
   IOAlloc _ _           -> notLinear
   IOFree _              -> notLinear
   Inject       _        -> notLinear
-  SliceOffset  _ _      -> notLinear
   ThrowError   _        -> notLinear
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
@@ -350,8 +346,6 @@ transposeCon con ct = case con of
   SumAsProd _ _ _   -> notImplemented
   FinVal _ _        -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent
-  IndexSliceVal _ _ _   -> notTangent
-  ParIndexCon _ _       -> notTangent
   LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent

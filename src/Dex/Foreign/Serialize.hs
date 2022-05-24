@@ -69,7 +69,6 @@ instance Storable CAtom where
         Float32Lit v -> val @Word64 1 4 >> val 2 v
         Word32Lit  v -> val @Word64 1 5 >> val 2 v
         Word64Lit  v -> val @Word64 1 6 >> val 2 v
-        VecLit     _ -> error "Unsupported"
         PtrLit     _ -> error "Unsupported"
     CRectArray _ _ _ -> error "Unsupported"
     where
@@ -81,7 +80,6 @@ dexToCAtom atomPtr resultPtr = do
   AtomEx atom <- fromStablePtr atomPtr
   case atom of
     Con con -> case con of
-      Lit (VecLit _) -> notSerializable
       Lit l          -> poke resultPtr (CLit l) $> 1
       _ -> notSerializable
     _ -> notSerializable

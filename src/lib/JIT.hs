@@ -475,19 +475,11 @@ throwRuntimeError = do
 
 compilePrimOp :: LLVMBuilder m => PrimOp Operand -> m Operand
 compilePrimOp pop = case pop of
-  ScalarBinOp op x y -> compileBinOp op x y
-  VectorBinOp op x y -> compileBinOp op x y
-  ScalarUnOp  op x   -> compileUnOp  op x
+  BinOp op x y -> compileBinOp op x y
+  UnOp  op x   -> compileUnOp  op x
   Select      p  x y -> do
     pb <- p `asIntWidth` i1
     emitInstr (typeOf x) $ L.Select pb x y []
-  VectorPack elems   -> foldM fillElem undef $ zip elems [0..]
-    where
-      resTy = L.VectorType (fromIntegral vectorWidth) $ typeOf $ head elems
-      fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (i32Lit i) []
-      undef = L.ConstantOperand $ C.Undef resTy
-  VectorIndex v i    -> emitInstr resTy $ L.ExtractElement v i []
-    where (L.VectorType _ resTy) = typeOf v
   OutputStreamPtr -> return outputStreamPtr
   _ -> error $ "Can't JIT primop: " ++ pprint pop
 
@@ -756,12 +748,6 @@ litVal lit = case lit of
   Word64Lit x  -> i64Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
-  VecLit l     -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
-    where
-      consts = fmap (operandToConst . litVal) l
-      undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ typeOf $ head consts
-      fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
-      operandToConst ~(L.ConstantOperand c) = c
   PtrLit _ -> error "Shouldn't be compiling pointer literals"
 
 -- TODO: Assert that the integer can be represented in that number of bits!
@@ -896,7 +882,6 @@ scalarTy b = case b of
     Word64Type  -> i64
     Float64Type -> fp64
     Float32Type -> fp32
-  Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
   PtrType (s, t) -> pointerType (scalarTy t) (lAddress s)
 
 pointeeType :: BaseType -> L.Type

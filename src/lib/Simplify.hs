@@ -536,12 +536,12 @@ simplifyOp op = case op of
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
   -- Those are not no-ops! Builder methods do algebraic simplification!
-  ScalarBinOp ISub x y -> isub x y
-  ScalarBinOp IAdd x y -> iadd x y
-  ScalarBinOp IMul x y -> imul x y
-  ScalarBinOp IDiv x y -> idiv x y
-  ScalarBinOp (ICmp Less ) x y -> ilt x y
-  ScalarBinOp (ICmp Equal) x y -> ieq x y
+  BinOp ISub x y -> isub x y
+  BinOp IAdd x y -> iadd x y
+  BinOp IMul x y -> imul x y
+  BinOp IDiv x y -> idiv x y
+  BinOp (ICmp Less ) x y -> ilt x y
+  BinOp (ICmp Equal) x y -> ieq x y
   Select c x y -> select c x y
   ProjMethod dict i -> projectDictMethod dict i
   _ -> emitOp op

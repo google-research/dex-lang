@@ -815,7 +815,6 @@ instance Pretty BaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec BaseType where
   prettyPrec b = case b of
     Scalar sb -> prettyPrec sb
-    Vector sb -> atPrec ArgPrec $ "<" <> p vectorWidth <+> "x" <+> p sb <> ">"
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
 instance Pretty AddressSpace where
@@ -859,7 +858,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
         high' = case high of InclusiveLim x -> pApp x
                              ExclusiveLim x -> "<" <> pApp x
                              Unlimited      -> ""
-    ParIndexRange n _ _ -> atPrec ArgPrec $ "{" <> pLowest n <> "}"
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
@@ -883,10 +881,6 @@ prettyPrecPrimCon con = case con of
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   FinVal n i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (Fin n)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
-  ParIndexCon ty i ->
-    atPrec LowestPrec $ pApp i <> "@" <> pApp ty
-  IndexSliceVal ty n i ->
-    atPrec LowestPrec $ "IndexSlice" <+> pApp ty <+> pApp n <+> pApp i
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
@@ -947,7 +941,6 @@ instance PrettyPrec LitVal where
   prettyPrec (PtrLit (PtrLitVal ty x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
-  prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty CallingConvention where
   pretty = p . show

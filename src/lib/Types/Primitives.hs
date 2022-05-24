@@ -49,13 +49,11 @@ data PrimTC e =
       | ProdType [e]
       | SumType [e]
       | Fin e
-      | IndexRange e (Limit e) (Limit e)
-      | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
+      | IndexRange e (Limit e) (Limit e)  -- TODO: Define IndexRange in prelude
       | RefType (Maybe e) e
       | TypeKind
       | EffectRowKind
       | LabeledRowKindTC
-      | ParIndexRange e e e  -- Full index set, global thread id, thread count
       | LabelType
       | IxTypeKind
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -67,21 +65,19 @@ traversePrimTC = inline traverse
 data PrimCon e =
         Lit LitVal
       | ProdCon [e]
-      | SumCon e Int e  -- type, tag, payload
-      | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
-      -- These are just newtype wrappers. TODO: use ADTs instead
+      | SumCon    e Int e     -- type, tag, payload
+      | SumAsProd e e   [[e]] -- type, tag, payload
+      | LabelCon String
       | FinVal e e
       | IndexRangeVal e (Limit e) (Limit e) e
-      | IndexSliceVal e e e    -- Sliced index set, slice length, ordinal index
+      -- References
       | BaseTypeRef e
       | TabRef e
       | ConRef (PrimCon e)
       | RecordRef (LabeledItems e)
-      | ParIndexCon e e        -- Type, value
-      | LabelCon String
-      -- Used in prelude for `run_accum`. Only works for single-method classes.
-      | ExplicitDict e e  -- dict type, dict method
-      | DictHole (AlwaysEqual SrcPosCtx) e  -- Only used during type inference
+      -- Misc hacks
+      | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
+      | DictHole (AlwaysEqual SrcPosCtx) e -- Only used during type inference
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 newtype AlwaysEqual a = AlwaysEqual a
@@ -95,27 +91,24 @@ traversePrimCon = inline traverse
 
 data PrimOp e =
         TabCon e [e]                 -- table type elements
-      | ScalarBinOp BinOp e e
-      | ScalarUnOp UnOp e
+      | BinOp BinOp e e
+      | UnOp  UnOp  e
       | Select e e e                 -- predicate, val-if-true, val-if-false
+      | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
+      -- Effects
       | PrimEffect e (PrimEffect e)
+      | ThrowError e                 -- Hard error (parameterized by result type)
+      | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
+      -- References
       | IndexRef e e
       | ProjRef Int e
       | Inject e
-      | SliceOffset e e              -- Index slice first, inner index second
       -- Low-level memory operations
       | IOAlloc BaseType e
       | IOFree e
       | PtrOffset e e
       | PtrLoad e
       | PtrStore e e
-      -- SIMD operations
-      | VectorBinOp BinOp e e
-      | VectorPack [e]               -- List should have exactly vectorWidth elements
-      | VectorIndex e e              -- Vector first, index second
-      | ThrowError e                 -- Hard error (parameterized by result type)
-      | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
-      | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
       -- Extensible record and variant operations:
       -- Concatenate two records.
       | RecordCons   e e
@@ -142,6 +135,7 @@ data PrimOp e =
       | SumToVariant e
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
+      -- Odds, ends and hacks.
       | ProjMethod e Int  -- project a method from the dict
       | ExplicitApply e e
       | MonoLiteral e
@@ -153,7 +147,6 @@ traversePrimOp = inline traverse
 
 data PrimHof e =
         For ForAnn e e        -- Ix type, body lambda
-      | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e
       | RunReader e e
       | RunWriter (BaseMonoidP e) e
@@ -162,7 +155,6 @@ data PrimHof e =
       | CatchException e
       | Linearize e
       | Transpose e
-      | PTileReduce [BaseMonoidP e] e e  -- accumulator monoids, index set, thread body
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
@@ -281,7 +273,6 @@ data LitVal = Int64Lit   Int64
               -- and for passing values to LLVM's JIT. Otherwise, pointers
               -- should be referred to by name.
             | PtrLit PtrLitVal
-            | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Ord, Generic)
 
 data ScalarBaseType = Int64Type | Int32Type
@@ -289,7 +280,6 @@ data ScalarBaseType = Int64Type | Int32Type
                     | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
 data BaseType = Scalar  ScalarBaseType
-              | Vector  ScalarBaseType
               | PtrType PtrType
                 deriving (Show, Eq, Ord, Generic)
 
@@ -307,13 +297,9 @@ sizeOf t = case t of
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
   PtrType _          -> ptrSize
-  Vector st          -> vectorWidth * sizeOf (Scalar st)
 
 ptrSize :: Int
 ptrSize = 8
-
-vectorWidth :: Int
-vectorWidth = 4
 
 getIntLit :: LitVal -> Int
 getIntLit l = case l of

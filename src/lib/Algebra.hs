@@ -212,9 +212,9 @@ blockAsCPoly (Block _ decls' result') =
     exprAsCPoly :: (EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m) => Expr o -> m o o (ClampPolynomial o)
     exprAsCPoly e = case e of
       Atom a                    -> intAsCPoly a
-      Op (ScalarBinOp IAdd x y) -> add  <$> intAsCPoly x <*> intAsCPoly y
-      Op (ScalarBinOp ISub x y) -> sub  <$> intAsCPoly x <*> intAsCPoly y
-      Op (ScalarBinOp IMul x y) -> mulC <$> intAsCPoly x <*> intAsCPoly y
+      Op (BinOp IAdd x y) -> add  <$> intAsCPoly x <*> intAsCPoly y
+      Op (BinOp ISub x y) -> sub  <$> intAsCPoly x <*> intAsCPoly y
+      Op (BinOp IMul x y) -> mulC <$> intAsCPoly x <*> intAsCPoly y
       -- TODO: Remove once IntRange and IndexRange are defined in the surface language
       Op (CastOp IdxRepTy v)    -> getType v >>= \case
         IdxRepTy -> intAsCPoly v
@@ -223,7 +223,7 @@ blockAsCPoly (Block _ decls' result') =
       Op (Select (Var c) t f) -> do
         lookupAtomName c >>= \case
           LetBound (DeclBinding _ _ expr) -> case (expr, t, f) of
-            (Op (ScalarBinOp (ICmp Less) (Var v) (IdxRepVal 0)), IdxRepVal 0, Var v') | v == v' -> do
+            (Op (BinOp (ICmp Less) (Var v) (IdxRepVal 0)), IdxRepVal 0, Var v') | v == v' -> do
               vp <- intAsCPoly (Var v)
               case fromC vp of
                 Just p  -> return $ clamp p

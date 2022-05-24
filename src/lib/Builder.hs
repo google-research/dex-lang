@@ -99,7 +99,7 @@ emitOp op = Var <$> emit (Op op)
 {-# INLINE emitOp #-}
 
 emitUnOp :: (Builder m, Emits n) => UnOp -> Atom n -> m n (Atom n)
-emitUnOp op x = emitOp $ ScalarUnOp op x
+emitUnOp op x = emitOp $ UnOp op x
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
 emitBlock (Block _ decls result) = emitDecls decls result
@@ -839,7 +839,6 @@ zeroAt ty = case ty of
     zeroLit bt = case bt of
       Scalar Float64Type -> Float64Lit 0.0
       Scalar Float32Type -> Float32Lit 0.0
-      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
       _                  -> unreachable
 
 zeroLike :: (HasCallStack, HasType e, Builder m) => e n -> m n (Atom n )
@@ -860,12 +859,9 @@ maybeTangentType ty = case ty of
   TC con    -> case con of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
-    BaseType (Vector Float64Type) -> return $ TC con
-    BaseType (Vector Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
     Fin _                         -> return $ UnitTy
     IndexRange _ _ _              -> return $ UnitTy
-    IndexSlice _ _                -> return $ UnitTy
     ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
     _ -> Nothing
   _ -> Nothing
@@ -886,8 +882,7 @@ addTangent x y = do
       liftEmitBuilder $ buildFor (getNameHint b) Fwd ixTy \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
     TC con -> case con of
-      BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
-      BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
+      BaseType (Scalar _) -> emitOp $ BinOp FAdd x y
       ProdType _          -> do
         xs <- getUnpacked x
         ys <- getUnpacked y
@@ -906,8 +901,7 @@ updateAddAt x = liftEmitBuilder do
 litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom n)
 litValToPointerlessAtom litval = case litval of
   PtrLit val -> Var <$> emitPtrLit (getNameHint @String "ptr") val
-  VecLit _ -> error "not implemented"
-  _ -> return $ Con $ Lit litval
+  _          -> return $ Con $ Lit litval
 
 emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrLitVal -> m n (AtomName n)
 emitPtrLit hint p@(PtrLitVal ty _) = do
@@ -988,63 +982,63 @@ fLitLike x t = do
     _ -> error "Expected a floating point scalar"
 
 neg :: (Builder m, Emits n) => Atom n -> m n (Atom n)
-neg x = emitOp $ ScalarUnOp FNeg x
+neg x = emitOp $ UnOp FNeg x
 
 add :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-add x y = emitOp $ ScalarBinOp FAdd x y
+add x y = emitOp $ BinOp FAdd x y
 
 -- TODO: Implement constant folding for fixed-width integer types as well!
 iadd :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 iadd (Con (Lit l)) y | getIntLit l == 0 = return y
 iadd x (Con (Lit l)) | getIntLit l == 0 = return x
 iadd x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (+) x y
-iadd x y = emitOp $ ScalarBinOp IAdd x y
+iadd x y = emitOp $ BinOp IAdd x y
 
 mul :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-mul x y = emitOp $ ScalarBinOp FMul x y
+mul x y = emitOp $ BinOp FMul x y
 
 imul :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 imul   (Con (Lit l)) y               | getIntLit l == 1 = return y
 imul x                 (Con (Lit l)) | getIntLit l == 1 = return x
 imul x@(Con (Lit _)) y@(Con (Lit _))                    = return $ applyIntBinOp (*) x y
-imul x y = emitOp $ ScalarBinOp IMul x y
+imul x y = emitOp $ BinOp IMul x y
 
 sub :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-sub x y = emitOp $ ScalarBinOp FSub x y
+sub x y = emitOp $ BinOp FSub x y
 
 isub :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 isub x (Con (Lit l)) | getIntLit l == 0 = return x
 isub x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (-) x y
-isub x y = emitOp $ ScalarBinOp ISub x y
+isub x y = emitOp $ BinOp ISub x y
 
 select :: (Builder m, Emits n) => Atom n -> Atom n -> Atom n -> m n (Atom n)
 select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
 select p x y = emitOp $ Select p x y
 
 div' :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-div' x y = emitOp $ ScalarBinOp FDiv x y
+div' x y = emitOp $ BinOp FDiv x y
 
 idiv :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 idiv x (Con (Lit l)) | getIntLit l == 1 = return x
 idiv x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp div x y
-idiv x y = emitOp $ ScalarBinOp IDiv x y
+idiv x y = emitOp $ BinOp IDiv x y
 
 irem :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-irem x y = emitOp $ ScalarBinOp IRem x y
+irem x y = emitOp $ BinOp IRem x y
 
 fpow :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-fpow x y = emitOp $ ScalarBinOp FPow x y
+fpow x y = emitOp $ BinOp FPow x y
 
 flog :: (Builder m, Emits n) => Atom n -> m n (Atom n)
-flog x = emitOp $ ScalarUnOp Log x
+flog x = emitOp $ UnOp Log x
 
 ilt :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 ilt x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (<) x y
-ilt x y = emitOp $ ScalarBinOp (ICmp Less) x y
+ilt x y = emitOp $ BinOp (ICmp Less) x y
 
 ieq :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
-ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
+ieq x y = emitOp $ BinOp (ICmp Equal) x y
 
 fromPair :: (Builder m, Emits n) => Atom n -> m n (Atom n, Atom n)
 fromPair pair = do
@@ -1258,7 +1252,7 @@ andMonoid =  liftM (BaseMonoid TrueAtom) do
   liftBuilder $
     buildLam noHint PlainArrow BoolTy Pure \x ->
       buildLam noHint PlainArrow BoolTy Pure \y -> do
-        emitOp $ ScalarBinOp BAnd (sink $ Var x) (Var y)
+        emitOp $ BinOp BAnd (sink $ Var x) (Var y)
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
 mapE :: (Emits n, ScopableBuilder m)

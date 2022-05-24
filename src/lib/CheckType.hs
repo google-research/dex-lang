@@ -477,17 +477,12 @@ typeCheckPrimTC tc = case tc of
     IxType t _ <- checkIxTy ixTy
     mapM_ (|:t) a >> mapM_ (|:t) b
     return TyKind
-  IndexSlice n l -> do
-    void $ checkIxTy n
-    void $ checkIxTy l
-    return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
-  ParIndexRange t gtid nthr -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
   LabelType        -> return TyKind
   IxTypeKind       -> return TyKind
 
@@ -508,7 +503,6 @@ typeCheckPrimCon con = case con of
     l' <- mapM (checkTypeE t) l
     h' <- mapM (checkTypeE t) h
     return $ TC $ IndexRange (IxTy ixTy') l' h'
-  IndexSliceVal _ _ _ -> error "not implemented"
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -530,7 +524,6 @@ typeCheckPrimCon con = case con of
       tag |:(RawRefTy TagRepTy)
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
-  ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substM t
   RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse typeCheckRef xs
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy method  -> do
@@ -556,11 +549,11 @@ typeCheckPrimOp op = case op of
               x |: eltTy
           (Left _) -> fail "zip error"
     return ty'
-  ScalarBinOp binop x y -> do
+  BinOp binop x y -> do
     xTy <- typeCheckBaseType x
     yTy <- typeCheckBaseType y
     TC <$> BaseType <$> checkBinOp binop xTy yTy
-  ScalarUnOp  unop  x -> do
+  UnOp  unop  x -> do
     xTy <- typeCheckBaseType x
     TC <$> BaseType <$> checkUnOp unop xTy
   Select p x y -> do
@@ -572,7 +565,6 @@ typeCheckPrimOp op = case op of
     TC tc <- getTypeE i
     case tc of
       IndexRange (IxTy (IxType ty _)) _ _    -> return ty
-      ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var h')) s) <- getTypeE ref
@@ -614,23 +606,6 @@ typeCheckPrimOp op = case op of
     val |: BaseTy t
     declareEff IOEffect
     return $ UnitTy
-  SliceOffset s i -> do
-    TC (IndexSlice (IxTy (IxType n _)) (IxTy (IxType l _))) <- getTypeE s
-    l' <- getTypeE i
-    checkAlphaEq l l'
-    return n
-  VectorBinOp _ _ _ -> throw CompilerErr "Vector operations are not supported at the moment"
-  VectorPack xs -> do
-    unless (length xs == vectorWidth) $ throw TypeErr lengthMsg
-    BaseTy (Scalar sb) <- getTypeE $ head xs
-    mapM_ (|: (BaseTy (Scalar sb))) xs
-    return $ BaseTy $ Vector sb
-    where lengthMsg = "VectorBroadcast should have exactly " ++ show vectorWidth ++
-                      " elements: " ++ pprint op
-  VectorIndex x i -> do
-    BaseTy (Vector sb) <- getTypeE x
-    i |: TC (Fin (IdxRepVal $ fromIntegral vectorWidth))
-    return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind >> substM ty
   ThrowException ty -> do
     declareEff ExceptionEffect
@@ -756,22 +731,6 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     eff' <- liftHoistExcept $ hoist b eff
     declareEffs eff'
     return $ TabTy (b:>ixTy') eltTy
-  Tile dim fT fS -> do
-    (TC (IndexSlice (IxTy n) (IxTy l)), effT, tr) <-
-      getTypeE fT >>= fromNonDepPiType PlainArrow
-    IxType nTy _ <- return n
-    (sTy                , effS, sr) <- getTypeE fS >>= fromNonDepPiType PlainArrow
-    checkAlphaEq nTy sTy
-    checkAlphaEq effT effS
-    declareEffs effT
-    (leadingIdxTysT, resultTyT) <- fromNaryNonDepTabType (replicate dim ()) tr
-    (leadingIdxTysS, resultTyS) <- fromNaryNonDepTabType (replicate dim ()) sr
-    (dvTy, resultTyT') <- fromNonDepTabType resultTyT
-    checkAlphaEq l dvTy
-    checkAlphaEq (ListE leadingIdxTysT) (ListE leadingIdxTysS)
-    checkAlphaEq resultTyT' resultTyS
-    naryNonDepTabPiType (leadingIdxTysT ++ [n]) resultTyT'
-  PTileReduce _ _ _ -> undefined
   While body -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
     PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy
@@ -948,10 +907,9 @@ checkArrowAndEffects PlainArrow _ = return ()
 checkArrowAndEffects _ Pure = return ()
 checkArrowAndEffects _ _ = throw TypeErr $ "Only plain arrows may have effects"
 
-checkIntBaseType :: Fallible m => Bool -> BaseType -> m ()
-checkIntBaseType allowVector t = case t of
-  Scalar sbt               -> checkSBT sbt
-  Vector sbt | allowVector -> checkSBT sbt
+checkIntBaseType :: Fallible m => BaseType -> m ()
+checkIntBaseType t = case t of
+  Scalar sbt -> checkSBT sbt
   _ -> notInt
   where
     checkSBT sbt = case sbt of
@@ -961,21 +919,20 @@ checkIntBaseType allowVector t = case t of
       Word32Type -> return ()
       Word64Type -> return ()
       _         -> notInt
-    notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
-                             "integer type, but found: " ++ pprint t
+    notInt = throw TypeErr $
+      "Expected a fixed-width scalar integer type, but found: " ++ pprint t
 
-checkFloatBaseType :: Fallible m => Bool -> BaseType -> m ()
-checkFloatBaseType allowVector t = case t of
-  Scalar sbt               -> checkSBT sbt
-  Vector sbt | allowVector -> checkSBT sbt
-  _ -> notFloat
+checkFloatBaseType :: Fallible m => BaseType -> m ()
+checkFloatBaseType t = case t of
+  Scalar sbt -> checkSBT sbt
+  _          -> notFloat
   where
     checkSBT sbt = case sbt of
       Float64Type -> return ()
       Float32Type -> return ()
       _           -> notFloat
-    notFloat = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
-                               "floating-point type, but found: " ++ pprint t
+    notFloat = throw TypeErr $
+      "Expected a fixed-width scalar floating-point type, but found: " ++ pprint t
 
 checkValidCast :: Fallible1 m => Type n -> Type n -> m n ()
 checkValidCast (TC (Fin _)) IdxRepTy = return ()
@@ -1015,9 +972,9 @@ data ReturnType   = SameReturn | Word8Return
 checkOpArgType :: Fallible m => ArgumentType -> BaseType -> m ()
 checkOpArgType argTy x =
   case argTy of
-    SomeIntArg   -> checkIntBaseType   True x
+    SomeIntArg   -> checkIntBaseType   x
     SomeUIntArg  -> assertEq x (Scalar Word8Type) ""
-    SomeFloatArg -> checkFloatBaseType True x
+    SomeFloatArg -> checkFloatBaseType x
 
 checkBinOp :: Fallible m => BinOp -> BaseType -> BaseType -> m BaseType
 checkBinOp op x y = do
@@ -1271,7 +1228,6 @@ checkDataLike ty = case ty of
     SumType  cs      -> mapM_ recur cs
     Fin _            -> return ()
     IndexRange _ _ _ -> return ()
-    IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty
   where recur = checkDataLike

@@ -342,8 +342,8 @@ linearizeExpr expr = case expr of
 
 linearizeOp :: Emits o => Op i -> LinM i o Atom Atom
 linearizeOp op = case op of
-  ScalarUnOp  uop x       -> linearizeUnOp  uop x
-  ScalarBinOp bop x y     -> linearizeBinOp bop x y
+  UnOp  uop x       -> linearizeUnOp  uop x
+  BinOp bop x y     -> linearizeBinOp bop x y
   PrimEffect ref m -> case m of
     MAsk -> linearizeAtom ref `bindLin` \ref' -> emitOp $ PrimEffect ref' MAsk
     MExtend monoid x -> do
@@ -366,10 +366,6 @@ linearizeOp op = case op of
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
   Inject _               -> emitZeroT
-  SliceOffset _ _        -> emitZeroT
-  VectorBinOp _ _ _      -> notImplemented
-  VectorIndex v i -> zipLin (la v) (pureLin i) `bindLin`
-                       \(PairE v' i') -> emitOp $ VectorIndex v' i'
   ThrowError _           -> emitZeroT
   DataConTag _           -> emitZeroT
   ToEnum _ _             -> emitZeroT
@@ -377,9 +373,6 @@ linearizeOp op = case op of
     ty' <- substM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitOp $ TabCon (sink ty') xs'
-  VectorPack xs ->
-    seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
-      emitOp $ VectorPack xs'
   CastOp t v             -> do
     vt <- getType =<< substM v
     t' <- substM t
@@ -418,7 +411,7 @@ linearizeOp op = case op of
 linearizeUnOp :: Emits o => UnOp -> Atom i -> LinM i o Atom Atom
 linearizeUnOp op x' = do
   WithTangent x tx <- linearizeAtom x'
-  let emitZeroT = withZeroT $ emitOp $ ScalarUnOp op x
+  let emitZeroT = withZeroT $ emitOp $ UnOp op x
   case op of
     Exp    -> do
       y <- emitUnOp Exp x
@@ -447,7 +440,7 @@ linearizeBinOp :: Emits o => BinOp -> Atom i -> Atom i -> LinM i o Atom Atom
 linearizeBinOp op x' y' = do
   WithTangent x tx <- linearizeAtom x'
   WithTangent y ty <- linearizeAtom y'
-  let emitZeroT = withZeroT $ emitOp $ ScalarBinOp op x y
+  let emitZeroT = withZeroT $ emitOp $ BinOp op x y
   case op of
     IAdd   -> emitZeroT
     ISub   -> emitZeroT
@@ -465,7 +458,7 @@ linearizeBinOp op x' y' = do
       ty' <- bindM2 div' (bindM2 mul (sinkM x) ty)
                       (bindM2 mul (sinkM y) (sinkM y))
       sub tx' ty'
-    FPow -> withT (emitOp $ ScalarBinOp FPow x y) do
+    FPow -> withT (emitOp $ BinOp FPow x y) do
       c <- fpow (sink x) =<< bindM2 sub (sinkM y) (1.0 `fLitLike` sink y)
       tx' <- bindM2 mul tx (sinkM y)
       ty' <- bindM2 mul (bindM2 mul (sinkM x) ty) (flog $ sink x)
@@ -494,13 +487,11 @@ linearizePrimCon con = case con of
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
   FinVal _ _            -> emitZeroT
   IndexRangeVal _ _ _ _ -> emitZeroT
-  IndexSliceVal _ _ _   -> emitZeroT
   LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"
   RecordRef _    -> error "Unexpected ref"
-  ParIndexCon   _ _ -> error "Unexpected ParIndexCon"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
   where emitZeroT = withZeroT $ substM $ Con con
