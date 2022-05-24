@@ -450,7 +450,6 @@ toImpOp maybeDest op = case op of
     x'   <- fromScalarAtom x
     store ptr' x'
     return UnitVal
-  SliceOffset _ _ -> undefined
   ThrowError _ -> do
     resultTy <- resultTyM
     dest <- allocDest maybeDest resultTy
@@ -1178,7 +1177,7 @@ emitSwitch testIdx args cont = do
     rec _ [arg] = cont arg
     rec curIdx (arg:rest) = do
       curTag     <- fromScalarAtom $ TagRepVal $ fromIntegral curIdx
-      cond       <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) (sink testIdx) curTag
+      cond       <- emitInstr $ IPrimOp $ BinOp (ICmp Equal) (sink testIdx) curTag
       thisCase   <- buildBlockImp $ cont arg >> return []
       otherCases <- buildBlockImp $ rec (curIdx + 1) rest >> return []
       emitStatement $ ICond cond thisCase otherCases
@@ -1578,12 +1577,9 @@ impInstrTypes instr = case instr of
 -- TODO: reuse type rules in Type.hs
 impOpType :: IPrimOp n -> IType
 impOpType pop = case pop of
-  ScalarBinOp op x _ -> typeBinOp op (getIType x)
-  ScalarUnOp  op x   -> typeUnOp  op (getIType x)
-  VectorBinOp op x _ -> typeBinOp op (getIType x)
+  BinOp op x _       -> typeBinOp op (getIType x)
+  UnOp  op x         -> typeUnOp  op (getIType x)
   Select  _ x  _     -> getIType x
-  VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
-  VectorIndex x _    -> Scalar ty  where Vector ty = getIType x
   PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
   PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
   OutputStreamPtr -> hostPtrTy $ hostPtrTy $ Scalar Word8Type

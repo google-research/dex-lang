@@ -175,7 +175,7 @@ evalExpr expr = case expr of
 
 evalOp :: Interp m => Op i -> m i o (Atom o)
 evalOp expr = mapM evalAtom expr >>= \case
-  ScalarBinOp op x y -> return $ case op of
+  BinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
     ISub -> applyIntBinOp   (-) x y
     IMul -> applyIntBinOp   (*) x y
@@ -192,7 +192,7 @@ evalOp expr = mapM evalAtom expr >>= \case
       LessEqual    -> applyIntCmpOp (<=) x y
       GreaterEqual -> applyIntCmpOp (>=) x y
     _ -> error $ "Not implemented: " ++ pprint expr
-  ScalarUnOp op x -> return $ case op of
+  UnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
   PtrOffset (Con (Lit (PtrLit (PtrLitVal (a, t) p)))) (IdxRepVal i) ->

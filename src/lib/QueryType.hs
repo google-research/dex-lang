@@ -152,8 +152,6 @@ litType v = case v of
   Float32Lit _ -> Scalar Float32Type
   PtrLit (PtrSnapshot t _) -> PtrType t
   PtrLit (PtrLitVal   t _) -> PtrType t
-  VecLit  l -> Vector sb
-    where Scalar sb = litType $ head l
 
 lamExprTy :: LamBinder n l -> Type l -> Type n
 lamExprTy (LamBinder b ty arr eff) bodyTy =
@@ -387,7 +385,6 @@ getTypePrimCon con = case con of
   SumAsProd ty _ _ -> substM ty
   FinVal n _ -> substM $ TC $ Fin n
   IndexRangeVal t l h _ -> substM (TC $ IndexRange t l h)
-  IndexSliceVal _ _ _ -> error "not implemented"
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -405,7 +402,6 @@ getTypePrimCon con = case con of
     SumAsProd ty _ _ -> do
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
-  ParIndexCon t _ -> substM t
   RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse getTypeRef xs
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
@@ -485,16 +481,15 @@ instance HasType Expr where
 getTypePrimOp :: PrimOp (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimOp op = case op of
   TabCon ty _ -> substM ty
-  ScalarBinOp binop x _ -> do
+  BinOp binop x _ -> do
     xTy <- getTypeBaseType x
     return $ TC $ BaseType $ typeBinOp binop xTy
-  ScalarUnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
+  UnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
   Select _ x _ -> getTypeE x
   Inject i -> do
     TC tc <- getTypeE i
     case tc of
       IndexRange (IxTy (IxType ty _)) _ _ -> return ty
-      ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var _)) s) <- getTypeE ref
@@ -522,16 +517,6 @@ getTypePrimOp op = case op of
     PtrTy (_, t) <- getTypeE ptr
     return $ BaseTy t
   PtrStore _ _ -> return UnitTy
-  SliceOffset s _ -> do
-    TC (IndexSlice (IxTy (IxType n _)) _) <- getTypeE s
-    return n
-  VectorBinOp _ _ _ -> throw CompilerErr "Vector operations are not supported at the moment"
-  VectorPack xs -> do
-    BaseTy (Scalar sb) <- getTypeE $ head xs
-    return $ BaseTy $ Vector sb
-  VectorIndex x _ -> do
-    BaseTy (Vector sb) <- getTypeE x
-    return $ BaseTy $ Scalar sb
   ThrowError ty -> substM ty
   ThrowException ty -> substM ty
   CastOp t _ -> substM t
@@ -657,12 +642,6 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     Pi (PiType (PiBinder b _ PlainArrow) _ eltTy) <- getTypeE f
     IxTy ixTy <- substM ixTyAtom
     return $ TabTy (b:>ixTy) eltTy
-  Tile dim fT _ -> do
-    (TC (IndexSlice (IxTy n) _), _, tr) <- getTypeE fT >>= fromNonDepPiType PlainArrow
-    (leadingIdxTysT, resultTyT) <- fromNaryNonDepTabType (replicate dim ()) tr
-    (_, resultTyT') <- fromNonDepTabType resultTyT
-    naryNonDepTabPiType (leadingIdxTysT ++ [n]) resultTyT'
-  PTileReduce _ _ _ -> undefined
   While _ -> return UnitTy
   Linearize f -> do
     Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
@@ -748,18 +727,13 @@ exprEffects expr = case expr of
     PtrStore _ _  -> return $ oneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
-    For _ _ f         -> functionEffs f
-    -- The tiled and scalar bodies should have the same effects, but
-    -- that's checked elsewhere.  If they are the same, merging them
-    -- with <> is a noop.
-    Tile _ tiled scalar -> liftM2 (<>) (functionEffs tiled) $ functionEffs scalar
-    While body      -> functionEffs body
-    Linearize _     -> return Pure  -- Body has to be a pure function
-    Transpose _     -> return Pure  -- Body has to be a pure function
+    For _ _ f     -> functionEffs f
+    While body    -> functionEffs body
+    Linearize _   -> return Pure  -- Body has to be a pure function
+    Transpose _   -> return Pure  -- Body has to be a pure function
     RunWriter _ f -> rwsFunEffects Writer f
     RunReader _ f -> rwsFunEffects Reader f
     RunState  _ f -> rwsFunEffects State  f
-    PTileReduce _ _ _ -> return mempty
     RunIO f -> do
       effs <- functionEffs f
       return $ deleteEff IOEffect effs

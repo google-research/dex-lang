@@ -45,7 +45,10 @@ import Name
 import Parser
 import Syntax
 import Builder
-import CheckType (CheckableE (..), checkTypesM, asFFIFunType, asFirstOrderFunction)
+import CheckType (CheckableE (..), asFFIFunType, asFirstOrderFunction)
+#ifdef DEX_DEBUG
+import CheckType (checkTypesM)
+#endif
 import SourceRename
 import Inference
 import Simplify
