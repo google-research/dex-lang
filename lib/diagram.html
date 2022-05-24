@@ -535,11 +535,11 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>A Demo showing all kind of features</p>
 <pre><code>mydiagram : Diagram =
-    (  (circle 7.0 |&gt; moveXY (20.0, 20.0) |&gt; setFillColor blue |&gt; setStrokeColor red)
-    &lt;&gt; (circle 5.0 |&gt; moveXY (40.0, 41.0))
-    &lt;&gt; (rect  10.0 20.0 |&gt; moveXY (5.0, 10.0) |&gt; setStrokeColor red)
-    &lt;&gt; (text &quot;DexLang&quot;  |&gt; moveXY (30.0, 10.0) |&gt; setStrokeColor green)
-    &lt;&gt; (pointDiagram |&gt; moveXY (15.0, 5.0) |&gt; setStrokeColor red)
+    (  (circle 7.0 |&gt; move_xy (20.0, 20.0) |&gt; setFillColor blue |&gt; setStrokeColor red)
+    &lt;&gt; (circle 5.0 |&gt; move_xy (40.0, 41.0))
+    &lt;&gt; (rect  10.0 20.0 |&gt; move_xy (5.0, 10.0) |&gt; setStrokeColor red)
+    &lt;&gt; (text &quot;DexLang&quot;  |&gt; move_xy (30.0, 10.0) |&gt; setStrokeColor green)
+    &lt;&gt; (pointDiagram |&gt; move_xy (15.0, 5.0) |&gt; setStrokeColor red)
     )
 :html renderScaledSVG mydiagram
 </code></pre>
@@ -548,7 +548,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
      (rect 2.0 2.0 |&gt; setFillColor red)
   &lt;&gt; (circle 1.0 |&gt; setFillColor blue)
   &lt;&gt; (text &quot;DexLang&quot; |&gt; setStrokeColor white)
-) |&gt; moveXY (5.0, 5.0)
+) |&gt; move_xy (5.0, 5.0)
 :html renderScaledSVG concentric_diagram
 </code></pre>
 </div></div></div></body></html>
