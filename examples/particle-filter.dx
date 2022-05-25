@@ -56,8 +56,8 @@ gaussModel : Model Float Float =
   , \s. normalDistn s 1.0
   )
 
-timesteps = 10 : Nat
-num_particles = 10000 : Nat
+timesteps = 10
+num_particles = 10000
 
 truth = for i:(Fin timesteps).
   s = n_to_f (ordinal i)

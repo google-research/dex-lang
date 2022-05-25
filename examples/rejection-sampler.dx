@@ -36,9 +36,9 @@ def trySampleBinomial (n:Nat) (p:Prob) (k:Key) : Maybe Nat =
 'We test the implementation by sampling from a Binomial distribution with 10 trials and success probability 0.4.
 
 -- parameters
-n = 10 : Nat
+n = 10
 p = 0.4
-numSamples = 5000 : Nat
+numSamples = 5000
 k0 = new_key 0
 
 rejectionSamples = rand_vec numSamples (rejectionSample $ trySampleBinomial n p) k0

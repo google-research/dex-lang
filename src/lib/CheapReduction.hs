@@ -273,7 +273,7 @@ instance CheaplyReducibleE Expr Atom where
         BaseTy (Scalar Nat32Type) -> do
           val <- cheapReduceE val'
           case val of
-            Con (Lit (Int64Lit v)) -> return $ Con $ Lit $ Nat32Lit $ fromIntegral v
+            Con (Lit (Nat64Lit v)) -> return $ Con $ Lit $ Nat32Lit $ fromIntegral v
             _ -> empty
         _ -> empty
     Op (ProjMethod dict i) -> do

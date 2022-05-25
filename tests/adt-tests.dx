@@ -10,7 +10,7 @@ data IntFloat =
 data MyPair a:Type b:Type =
    MkMyPair a b
 
-z = MkMyPair 1 2.3
+z = MkMyPair (+1) 2.3
 
 :p z
 > (MkMyPair 1 2.3)
@@ -74,7 +74,7 @@ x : MyEither Int Float = MyLeft 1
 > 1
 
 -- %passes imp
-myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 456]
+myTab = [MyLeft (+1), MyRight 3.5, MyLeft 123, MyLeft 456]
 
 :p myTab
 > [(MyLeft 1), (MyRight 3.5), (MyLeft 123), (MyLeft 456)]

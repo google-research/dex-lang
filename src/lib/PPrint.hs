@@ -647,6 +647,7 @@ instance PrettyPrec (UExpr' n) where
     UVariant labels label value -> prettyVariant labels label value
     UVariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     UVariantLift labels value -> prettyVariantLift labels value
+    UNatLit   v -> atPrec ArgPrec $ p v
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
 

@@ -194,13 +194,17 @@ class (SubstReader Name m, InfBuilder2 m, Solver2 m)
   liftSolverMInf :: EmitsInf o => SolverM o a -> m i o a
   gatherUnsolvedInterfaces :: m i o a -> m i o (a, IfaceTypeSet o)
   reportUnsolvedInterface  :: Type o  -> m i o ()
-  addIntDefault :: AtomName o -> m i o ()
+  addDefault :: AtomName o -> DefaultType -> m i o ()
   getDefaults :: m i o (Defaults o)
 
 applyDefaults :: EmitsInf o => InfererM i o ()
 applyDefaults = do
-  Defaults defaults <- getDefaults
-  forM_ (nameSetToList defaults) \v -> tryConstrainEq (Var v) $ BaseTy $ Scalar Int32Type
+  defaults <- getDefaults
+  applyDefault (intDefaults defaults) (BaseTy $ Scalar Int32Type)
+  applyDefault (natDefaults defaults) (BaseTy $ Scalar Nat32Type)
+  where
+    applyDefault ds ty =
+      forM_ (nameSetToList ds) \v -> tryConstrainEq (Var v) ty
 
 withApplyDefaults :: EmitsInf o => InfererM i o a -> InfererM i o a
 withApplyDefaults cont = cont <* applyDefaults
@@ -218,24 +222,36 @@ data InfOutMap (n::S) =
     -- we zonk bindings)
     (UnsolvedEnv n)
 
--- Set of names that should be defaulted to Int32
-newtype Defaults (n::S) = Defaults (NameSet n)
-        deriving (Semigroup, Monoid)
+data DefaultType = IntDefault | NatDefault -- | StrDefault ??
+
+data Defaults (n::S) = Defaults
+  { intDefaults :: NameSet n   -- Set of names that should be defaulted to Int32
+  , natDefaults :: NameSet n } -- Set of names that should be defaulted to Nat32
+
+instance Semigroup (Defaults n) where
+  Defaults d1 d2 <> Defaults d1' d2' = Defaults (d1 <> d1') (d2 <> d2')
+
+instance Monoid (Defaults n) where
+  mempty = Defaults mempty mempty
 
 instance SinkableE Defaults where
   sinkingProofE _ _ = todoSinkableProof
 instance HoistableE Defaults where
-  freeVarsE (Defaults fvs) = fvs
+  freeVarsE (Defaults d1 d2) = d1 <> d2
 instance SubstE Name Defaults where
-  substE env (Defaults ds) = Defaults $ freeVarsE $ substE env $ ListE $ nameSetToList @AtomNameC ds
+  substE env (Defaults d1 d2) = Defaults (substDefaultSet d1) (substDefaultSet d2)
+    where
+      substDefaultSet d = freeVarsE $ substE env $ ListE $ nameSetToList @AtomNameC d
 
 zonkDefaults :: SolverSubst n -> Defaults n -> Defaults n
-zonkDefaults s (Defaults ds) =
-  Defaults $ flip foldMap (nameSetToList @AtomNameC ds) \v ->
-    case lookupSolverSubst s v of
-      Rename   v'       -> freeVarsE v'
-      SubstVal (Var v') -> freeVarsE v'
-      _ -> mempty
+zonkDefaults s (Defaults d1 d2) =
+  Defaults (zonkDefaultSet d1) (zonkDefaultSet d2)
+  where
+    zonkDefaultSet d = flip foldMap (nameSetToList @AtomNameC d) \v ->
+      case lookupSolverSubst s v of
+        Rename   v'       -> freeVarsE v'
+        SubstVal (Var v') -> freeVarsE v'
+        _ -> mempty
 
 data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (SolverSubst l)
 
@@ -466,9 +482,13 @@ instance Inferer InfererM where
       runSolverM' m
   {-# INLINE liftSolverMInf #-}
 
-  addIntDefault v = InfererM $ SubstReaderT $ lift $ lift11 $
-    extendTrivialInplaceT $ InfOutFrag REmpty defaults emptySolverSubst
-    where defaults = Defaults $ freeVarsE v
+  addDefault v defaultType =
+    InfererM $ SubstReaderT $ lift $ lift11 $
+      extendTrivialInplaceT $ InfOutFrag REmpty defaults emptySolverSubst
+    where
+      defaults = case defaultType of
+        IntDefault -> Defaults (freeVarsE v) mempty
+        NatDefault -> Defaults mempty (freeVarsE v)
 
   getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
     InfOutMap _ _ defaults _ <- getOutMapInplaceT
@@ -711,7 +731,8 @@ hoistRequiredIfaces bs = \case
     HoistFailure _  -> Nothing
 
 hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
-hoistDefaults b (Defaults defaults) = Defaults $ hoistFilterNameSet b defaults
+hoistDefaults b (Defaults d1 d2) = Defaults (hoistFilterNameSet b d1)
+                                            (hoistFilterNameSet b d2)
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions = go REmpty
@@ -992,6 +1013,19 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emitOp (VariantLift prev value')
+  UNatLit x -> do
+    lookupSourceMap "from_natural" >>= \case
+      Nothing ->
+        -- fallback for missing protolude
+        matchRequirement $ Con $ Lit $ Nat32Lit $ fromIntegral x
+      Just (UMethodVar fromNatMethod) -> do
+        ~(MethodBinding _ _ fromNat) <- lookupEnv fromNatMethod
+        (fromNatInst, (Var resTyVar:_)) <- instantiateSigmaWithArgs fromNat
+        addDefault resTyVar NatDefault
+        let i64Atom = Con $ Lit $ Nat64Lit $ fromIntegral x
+        result <- matchRequirement =<< app fromNatInst i64Atom
+        return result
+      Just _ -> error "not a method"
   UIntLit x  -> do
     lookupSourceMap "from_integer" >>= \case
       Nothing ->
@@ -1000,7 +1034,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Just (UMethodVar fromIntMethod) -> do
         ~(MethodBinding _ _ fromInt) <- lookupEnv fromIntMethod
         (fromIntInst, (Var resTyVar:_)) <- instantiateSigmaWithArgs fromInt
-        addIntDefault resTyVar
+        addDefault resTyVar IntDefault
         let i64Atom = Con $ Lit $ Int64Lit $ fromIntegral x
         result <- matchRequirement =<< app fromIntInst i64Atom
         return result

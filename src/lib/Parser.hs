@@ -28,6 +28,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Scientific as Scientific
 import Data.Maybe (fromMaybe)
 import Data.Void
+import Data.Word
 import qualified Data.Set as S
 import Data.String (IsString, fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -225,7 +226,8 @@ leafExpr = uVarOcc <|> lookaheadExprs <?> "expression"
         '%'  -> uPrim
         '#'  -> uLabel <|> uIsoSugar
         '{'  -> (uLabeledExprs `fallBackTo` uVariantExpr)
-        _ | isDigit next -> withSrc (UIntLit <$> intLit <|> UFloatLit <$> doubleLit)
+        _ | isDigit next -> withSrc (    UNatLit   <$> natLit
+                                     <|> UFloatLit <$> doubleLit)
         -- Here we can't commit to a single option yet
         'v'  -> uViewExpr <|> uPiType
         'f'  -> uForExpr  <|> uPiType
@@ -963,7 +965,7 @@ ops :: [[Operator Parser (UExpr VoidS)]]
 ops =
   [ [InfixL $ sym "." $> mkTabApp , symOp "!"]
   , [InfixL $ sc $> mkApp]
-  , [prefixNegOp]
+  , [prefixNegOp, prefixPosOp]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkTabType,
@@ -1009,14 +1011,26 @@ pairingSymOpP s = opWithSrc $ do
 prefixNegOp :: Operator Parser (UExpr VoidS)
 prefixNegOp = Prefix $ label "negation" $ do
   ((), pos) <- withPos $ sym "-"
-  let f = WithSrcE (Just pos) "neg"
-  return \case
-    -- Special case: negate literals directly
-    WithSrcE litpos (IntLitExpr i)
-      -> WithSrcE (joinPos (Just pos) litpos) (IntLitExpr (-i))
-    WithSrcE litpos (FloatLitExpr i)
-      -> WithSrcE (joinPos (Just pos) litpos) (FloatLitExpr (-i))
-    x -> mkApp f x
+  return \(WithSrcE litpos e) -> do
+    let pos' = joinPos (Just pos) litpos
+    case e of
+      UNatLit   i -> WithSrcE pos' $ UIntLit   (-(fromIntegral i))
+      UIntLit   i -> WithSrcE pos' $ UIntLit   (-i)
+      UFloatLit i -> WithSrcE pos' $ UFloatLit (-i)
+      _ -> do
+        let f = WithSrcE (Just pos) "neg"
+        mkApp f $ WithSrcE litpos e
+
+prefixPosOp :: Operator Parser (UExpr VoidS)
+prefixPosOp = Prefix $ label "positive" $ do
+  ((), pos) <- withPos $ sym "+"
+  return \(WithSrcE litpos e) -> do
+    let pos' = joinPos (Just pos) litpos
+    WithSrcE pos' case e of
+      UNatLit   i -> UIntLit   (fromIntegral i)
+      UIntLit   i -> UIntLit   i
+      UFloatLit i -> UFloatLit i
+      _ -> e
 
 binApp :: SourceName -> SrcPos -> UExpr VoidS -> UExpr VoidS -> UExpr VoidS
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
@@ -1179,8 +1193,8 @@ charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
 strLit :: Lexer String
 strLit = lexeme $ char '"' >> manyTill L.charLiteral (char '"')
 
-intLit :: Lexer Int
-intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
+natLit :: Lexer Word64
+natLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
 
 doubleLit :: Lexer Double
 doubleLit = lexeme $

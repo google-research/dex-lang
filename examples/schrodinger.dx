@@ -19,7 +19,7 @@ import png
 '## Parameters
 
 -- The number of points on the grid in each dimension e.g. (41x41 for the 2d case)
-gridSize = 41 : Nat
+gridSize = 41
 D = Fin gridSize
 
 -- Space discretization
@@ -32,7 +32,7 @@ dt = 0.000001
 Steps = Fin 155000
 
 -- The number of frames to output in each GIF animation
-gifFrames = 100 : Nat
+gifFrames = 100
 
 '## Helpers
 

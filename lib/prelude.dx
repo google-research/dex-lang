@@ -72,28 +72,41 @@ def f_to_n (x:Float) : Nat = internal_cast _ x
 def n_to_f (x : Nat) : Float = internal_cast _ x
 def n_to_w8 (x : Nat) : Word8   = internal_cast _ x
 
+interface FromNatural a
+  from_natural : Nat64 -> a
+
+instance FromNatural Float32
+  from_natural = \x. internal_cast _ x
+
+instance FromNatural Float64
+  from_natural = \x. internal_cast _ x
+
+instance FromNatural Int32
+  from_natural = \x. internal_cast _ x
+
+instance FromNatural Int64
+  from_natural = \x. internal_cast _ x
+
+instance FromNatural Nat32
+  from_natural = \x. internal_cast _ x
+
+instance FromNatural Nat64
+  from_natural = \x. x
+
 interface FromInteger a
   from_integer : Int64 -> a
 
 instance FromInteger Float32
-  from_integer = \x. i_to_f $ i64_to_i x
+  from_integer = \x. internal_cast _ x
 
 instance FromInteger Int32
-  from_integer = \x. i64_to_i x
+  from_integer = \x. internal_cast _ x
 
 instance FromInteger Float64
-  from_integer = \x. f_to_f64 $ i_to_f $ i64_to_i x
+  from_integer = \x. internal_cast _ x
 
 instance FromInteger Int64
   from_integer = \x. x
-
-instance FromInteger Nat64
-  -- TODO: figure out how we're going to handle negative literals. Maybe have a
-  -- separate `FromNat` class?
-  from_integer = \x. i64_to_n64 x
-
-instance FromInteger Nat32
-  from_integer = \x. i64_to_n32 x
 
 '## Bitwise operations
 
@@ -538,7 +551,7 @@ def n_to_i (x:Nat) : Int =
   internal_cast _ x
 
 def i_to_n (x:Int) : Maybe Nat =
-  if w8_to_b $ %ilt x 0
+  if w8_to_b $ %ilt x (0:Int)
     then Nothing
     else Just $ unsafe_i_to_n x
 
@@ -2153,7 +2166,7 @@ def is_power_of_2 (x:Nat) : Bool =
     else 0 == %and x (unsafe_nat_diff x 1)
 
 def natlog2 (x:Nat) : Nat =
-  yield_state (-1) \ansRef.
+  tmp = yield_state 0 \ansRef.
     run_state 1 \cmpRef.
       while do
         if x >= (get cmpRef)
@@ -2163,6 +2176,7 @@ def natlog2 (x:Nat) : Nat =
             True
           else
             False
+  unsafe_nat_diff tmp 1  -- TODO: something less horrible
 
 def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Nat) : a =
   -- Implements exponentiation by squaring.

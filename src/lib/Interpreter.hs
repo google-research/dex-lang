@@ -222,8 +222,8 @@ evalOp expr = mapM evalAtom expr >>= \case
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x
           return $ Con $ Lit $ Int32Lit $ fromIntegral v
-        (Int64Type, Nat32Type) -> do
-          let Con (Lit (Int64Lit v)) = x
+        (Nat64Type, Nat32Type) -> do
+          let Con (Lit (Nat64Lit v)) = x
           return $ Con $ Lit $ Nat32Lit $ fromIntegral v
         _ -> failedCast
       _ -> failedCast

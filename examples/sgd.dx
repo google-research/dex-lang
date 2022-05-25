@@ -29,7 +29,7 @@ def gradfunc (x:D=>Float) (iter:Nat) : D=>Float = grad objective x
 x_init = for i:D. 0.0
 stepsize = 0.01
 decay = 0.9
-num_iters = 1000 : Nat
+num_iters = 1000
 :p sgd stepsize decay num_iters gradfunc x_init
 > [1.1, 1.1, 1.1, 1.1]
 

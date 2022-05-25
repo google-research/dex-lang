@@ -211,6 +211,7 @@ instance SourceRenamableE UExpr' where
     URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
     UVariantTy (Ext tys ext) -> UVariantTy <$>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+    UNatLit   x -> return $ UNatLit x
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
 

@@ -458,7 +458,7 @@ tableMean [0.0, 1.0, 0.5]
   constructor in this case).
 
 :t \ x. x + 10
-> (Int32 -> Int32)
+> (Nat32 -> Nat32)
 
 (\ x. x + 10) 20
 > 30

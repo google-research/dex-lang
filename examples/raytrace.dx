@@ -301,12 +301,12 @@ theScene = MkScene $
   ]
 
 defaultParams = {
-    numSamples = 50 : Nat
-  , maxBounces = 10 : Nat
+    numSamples = 50
+  , maxBounces = 10
   , shareSeed  = True }
 
 defaultCamera = {
-    numPix     = 250 : Nat
+    numPix     = 250
   , pos        = 10.0 .* zHat
   , halfWidth  = 0.3
   , sensorDist = 1.0 }
