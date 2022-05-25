@@ -43,11 +43,11 @@ f = \x. x + 10.
 
 lam1 = \{n}. \x:(Fin n). ordinal x
 :t lam1
-> ((n:Int32) ?-> (Fin n) -> Int32)
+> ((n:Nat32) ?-> (Fin n) -> Nat32)
 
 lam4 = \{n m}. (Fin n, Fin m)
 :t lam4
-> (Int32 ?-> Int32 ?-> (Type & Type))
+> (Nat32 ?-> Nat32 ?-> (Type & Type))
 
 :p (
     1

@@ -15,9 +15,9 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List.NonEmpty as NE
 import Data.Foldable (toList)
+import Data.Word
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
-import GHC.Int
 import System.IO.Unsafe
 
 import CUDA
@@ -29,7 +29,7 @@ import Name
 import Syntax
 import QueryType
 import PPrint ()
-import Util ((...))
+import Util ((...), iota)
 import Builder
 import CheapReduction (cheapNormalize)
 
@@ -222,6 +222,9 @@ evalOp expr = mapM evalAtom expr >>= \case
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x
           return $ Con $ Lit $ Int32Lit $ fromIntegral v
+        (Int64Type, Nat32Type) -> do
+          let Con (Lit (Int64Lit v)) = x
+          return $ Con $ Lit $ Nat32Lit $ fromIntegral v
         _ -> failedCast
       _ -> failedCast
   Select cond t f -> case cond of
@@ -328,23 +331,23 @@ unsafeLiftInterpM cont = do
 indices :: EnvReader m => IxType n -> m n [Atom n]
 indices ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
-  forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
+  forM (iota size) \i -> interpNatToIndex ixTy $ IdxRepVal i
 {-# SCC indices #-}
 
 interpIndexSetSize :: IxType n -> InterpM n n (Atom n)
 interpIndexSetSize ixTy = liftBuilderInterp $ indexSetSize $ sink ixTy
 
-interpIntToIndex :: IxType n -> Atom n -> InterpM n n (Atom n)
-interpIntToIndex ixTy i = liftBuilderInterp $ intToIndex (sink ixTy) (sink i)
+interpNatToIndex :: IxType n -> Atom n -> InterpM n n (Atom n)
+interpNatToIndex ixTy i = liftBuilderInterp $ natToIndex (sink ixTy) (sink i)
 
 -- A variant of `indices` that accepts an expected number of them and
 -- only tries to construct the set if the expected number matches the
 -- given index set's size.
-indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Int32 [Atom n])
+indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Word32 [Atom n])
 indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
   if size == fromIntegral sizeReq then
-    Right <$> forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
+    Right <$> forM [0..size-1] \i -> interpNatToIndex ixTy $ IdxRepVal i
   else
     return $ Left size
 {-# SCC indicesLimit #-}
@@ -356,6 +359,8 @@ applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
 applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
   (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
+  (Con (Lit (Nat64Lit xv)), Con (Lit (Nat64Lit yv))) -> f (Con . Lit . Nat64Lit) xv yv
+  (Con (Lit (Nat32Lit xv)), Con (Lit (Nat32Lit yv))) -> f (Con . Lit . Nat32Lit) xv yv
   (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
   (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
   (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv

@@ -224,7 +224,7 @@ transposeOp op ct = case op of
     TabTy b _ <- return ty
     idxTy <- substNonlin $ binderAnn b
     forM_ (enumerate es) \(ordinalIdx, e) -> do
-      i <- intToIndex idxTy (IdxRepVal $ fromIntegral ordinalIdx)
+      i <- natToIndex idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e
   IndexRef     _ _      -> notImplemented
   ProjRef      _ _      -> notImplemented

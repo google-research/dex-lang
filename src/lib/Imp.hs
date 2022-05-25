@@ -398,7 +398,7 @@ toImpOp maybeDest op = case op of
     resultTy <- resultTyM
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) \(i, row) -> do
-      ithDest <- destGet dest =<< intToIndexImp ixTy (IIdxRepVal i)
+      ithDest <- destGet dest =<< natToIndexImp ixTy (IIdxRepVal i)
       copyAtom ithDest row
     destToAtom dest
   PrimEffect refDest m -> do
@@ -422,11 +422,11 @@ toImpOp maybeDest op = case op of
   Inject e -> case e of
     Con (IndexRangeVal (IxTy ixTy) low _ restrictIdx) -> do
       offset <- case low of
-        InclusiveLim a -> indexToIntImp ixTy a
-        ExclusiveLim a -> indexToIntImp ixTy a >>= iaddI (IIdxRepVal 1)
+        InclusiveLim a -> indexToNatImp ixTy a
+        ExclusiveLim a -> indexToNatImp ixTy a >>= iaddI (IIdxRepVal 1)
         Unlimited      -> return (IIdxRepVal 0)
       restrictIdx' <- fromScalarAtom restrictIdx
-      returnVal =<< intToIndexImp ixTy =<< iaddI restrictIdx' offset
+      returnVal =<< natToIndexImp ixTy =<< iaddI restrictIdx' offset
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
@@ -535,7 +535,7 @@ toImpHof maybeDest hof = do
       n <- indexSetSizeImp ixTy'
       dest <- allocDest maybeDest resultTy
       emitLoop (getNameHint b) d n \i -> do
-        idx <- intToIndexImp (sink ixTy') i
+        idx <- natToIndexImp (sink ixTy') i
         ithDest <- destGet (sink dest) idx
         void $ extendSubst (b @> SubstVal idx) $
           translateBlock (Just ithDest) body
@@ -1089,7 +1089,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
       let idxTy = binderAnn b
       n <- indexSetSizeImp idxTy
       emitLoop noHint Fwd n \i -> do
-        idx <- intToIndexImp (sink idxTy) i
+        idx <- natToIndexImp (sink idxTy) i
         destIndexed <- destGet (sink dest) idx
         srcIndexed  <- dropSubst $ translateExpr Nothing (TabApp (sink src) (idx:|[]))
         f destIndexed srcIndexed
@@ -1339,11 +1339,11 @@ computeOffset idxNest' idxs = do
   listOrds     <- forM listIdxs \i -> emitSimplified do
     i' <- sinkM i
     ixTy <- getIxType i'
-    indexToInt ixTy (Var i')
+    indexToNat ixTy (Var i')
   -- We don't compute the first size (which we don't need!) to avoid emitting unnecessary decls.
   idxListSizes <- case idxList of
     [] -> return []
-    _  -> (IdxRepVal (-1):) <$> forM (tail idxList) \ixTy -> do
+    _  -> (IdxRepVal 0:) <$> forM (tail idxList) \ixTy -> do
       emitSimplified $ indexSetSize $ sink ixTy
   listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
   iadd listOffset nestOffset
@@ -1531,15 +1531,15 @@ liftBuilderImpSimplify cont = do
   dropSubst $ translateBlock Nothing block
 {-# INLINE liftBuilderImpSimplify #-}
 
-intToIndexImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
-intToIndexImp ixTy i = liftBuilderImpSimplify do
+natToIndexImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
+natToIndexImp ixTy i = liftBuilderImpSimplify do
   i' <- toScalarAtom =<< sinkM i
-  intToIndex (sink ixTy) i'
+  natToIndex (sink ixTy) i'
 
-indexToIntImp :: Emits n => IxType n -> Atom n -> SubstImpM i n (IExpr n)
-indexToIntImp ixTy i = fromScalarAtom =<< liftBuilderImpSimplify do
+indexToNatImp :: Emits n => IxType n -> Atom n -> SubstImpM i n (IExpr n)
+indexToNatImp ixTy i = fromScalarAtom =<< liftBuilderImpSimplify do
   i' <- sinkM i
-  indexToInt (sink ixTy) i'
+  indexToNat (sink ixTy) i'
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
 indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do

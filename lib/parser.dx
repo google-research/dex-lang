@@ -2,7 +2,7 @@
 
 'Utilities unrelated to parsing
 
-def from_ordinal_exc (n:Type) [Ix n] (i:Int) : {Except} n =
+def from_ordinal_exc (n:Type) [Ix n] (i:Nat) : {Except} n =
   if (0 <= i) && (i < size n)
     then unsafe_from_ordinal _ i
     else throw ()
@@ -13,13 +13,13 @@ def push {h a} (ref:Ref h (List a)) (x:a) : {State h} Unit =
   l = get ref
   ref := l <> AsList _ [x]
 
-def index_list {a} (l:List a) (i:Int) : {Except} a =
+def index_list {a} (l:List a) (i:Nat) : {Except} a =
   (AsList n xs) = l
   xs.(from_ordinal_exc _ i)
 
 'The Parser type
 
-def ParserHandle (h:Type) : Type = (String & Ref h Int)
+def ParserHandle (h:Type) : Type = (String & Ref h Nat)
 
 data Parser a:Type =
   MkParser (h:Type ?-> ParserHandle h -> {Except, State h} a)

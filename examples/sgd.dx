@@ -1,14 +1,14 @@
 
 '## Stochastic Gradient Descent with Momentum
 
-def sgd_step {a} [VSpace a] (step_size: Float) (decay: Float) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
+def sgd_step {a} [VSpace a] (step_size: Float) (decay: Float) (gradfunc: a -> Nat -> a) (x: a) (m: a) (iter:Nat) : (a & a) =
   g = gradfunc x iter
   new_m = decay .* m + g
   new_x = x - step_size .* new_m
   (new_x, new_m)
 
 -- In-place optimization loop.
-def sgd {a} [VSpace a] (step_size:Float) (decay:Float) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
+def sgd {a} [VSpace a] (step_size:Float) (decay:Float) (num_steps:Nat) (gradient: a -> Nat -> a) (x0: a) : a =
   m0 = zero
   (x_final, m_final) = yield_state (x0, m0) \state.
     for i:(Fin num_steps).
@@ -22,14 +22,14 @@ def sgd {a} [VSpace a] (step_size:Float) (decay:Float) (num_steps:Int) (gradient
 D = Fin 4
 optimum = for i:D. 1.1
 def objective (x:D=>Float) : Float = 0.5 * sum for i. sq (optimum.i - x.i)
-def gradfunc (x:D=>Float) (iter:Int) : D=>Float = grad objective x
+def gradfunc (x:D=>Float) (iter:Nat) : D=>Float = grad objective x
 
 '### Run optimizer
 
 x_init = for i:D. 0.0
 stepsize = 0.01
 decay = 0.9
-num_iters = 1000
+num_iters = 1000 : Nat
 :p sgd stepsize decay num_iters gradfunc x_init
 > [1.1, 1.1, 1.1, 1.1]
 

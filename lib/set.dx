@@ -7,7 +7,7 @@ def last {n a} (xs:n=>a) : Maybe a =
   s = size n
   case s == 0 of
     True -> Nothing
-    False -> Just xs.(unsafe_from_ordinal n (s - 1))
+    False -> Just xs.(unsafe_from_ordinal n (unsafe_nat_diff s 1))
 
 def first {n a} (xs:n=>a) : Maybe a =
   s = size n
@@ -16,7 +16,7 @@ def first {n a} (xs:n=>a) : Maybe a =
     False -> Just xs.(unsafe_from_ordinal n 0)
 
 def all_except_last {n a} (xs:n=>a) : List a =
-  shortSize = Fin (max 0 ((size n) - 1))
+  shortSize = Fin (max 0 (unsafe_nat_diff (size n) 1))
   allButLast = view i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
   (AsList _ allButLast)
 
@@ -47,14 +47,14 @@ data Set a [Ord a] =
   -- Guaranteed to be in sorted order with unique elements,
   -- as long as no one else uses this constructor.
   -- Instead use the "toSet" function below.
-  UnsafeAsSet n:Int elements:(Fin n => a)
+  UnsafeAsSet n:Nat elements:(Fin n => a)
 
 def to_set {n a} [Ord a] (xs:n=>a) : Set a =
   sorted_xs = sort xs
   (AsList n' sorted_unique_xs) = remove_duplicates_from_sorted sorted_xs
   UnsafeAsSet n' sorted_unique_xs
 
-def set_size {a} ((UnsafeAsSet n _):Set a) : Int = n
+def set_size {a} ((UnsafeAsSet n _):Set a) : Nat = n
 
 instance {a} [Eq a] Eq (Set a)
   (==) = \(UnsafeAsSet _ xs) (UnsafeAsSet _ ys).
@@ -84,7 +84,7 @@ def set_intersect {a}
 -- data SetIx a l:(Set a) [Ord a] =
 
 data StringSetIx l:(Set String) =
-  MkSetIx Int   -- TODO: Use (Fin (setSize l)) instead.
+  MkSetIx Nat   -- TODO: Use (Fin (setSize l)) instead.
 
 instance {set} Ix (StringSetIx set)
   size = set_size set

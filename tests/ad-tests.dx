@@ -267,7 +267,7 @@ vec = [1.]
 -- > True
 
 :p
-  f = \x. for i:(Fin 4). { x=x * x * (i_to_f $ ordinal i) }
+  f = \x. for i:(Fin 4). { x=x * x * (n_to_f $ ordinal i) }
   jvp f 2.0 1.0
 > [{x = 0.}, {x = 4.}, {x = 8.}, {x = 12.}]
 

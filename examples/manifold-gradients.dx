@@ -94,7 +94,7 @@ def manifoldGrad
 As a sense check we make sure that these functions give the same output as the
 non-manifold versions on functions which are defined on $\mathbb{R}^n$.
 
-x = for i:(Fin 10). i_to_f (ordinal i) / 10.
+x = for i:(Fin 10). n_to_f (ordinal i) / 10.
 
 def myFunc {n} (x : (n => Float)) : Float =
   sum $ for i. if (mod (ordinal i) 2 == 0) then (exp x.i) else (sin x.i)
@@ -276,8 +276,10 @@ quatIdent = Q{x=0.0, y=0.0, z=0.0, w=1.0}
 
 instance Add Quaternion
   add = \ x y. quatFromVec $ (quatAsVec x) + quatAsVec y
-  sub = \ x y. quatFromVec $ (quatAsVec x) - quatAsVec y
   zero = quatFromVec $ zero
+
+instance Sub Quaternion
+  sub = \ x y. quatFromVec $ (quatAsVec x) - quatAsVec y
 
 ' Scaling a quaternion does not affect the rotation it represents, but is still
 useful for numerical computations.

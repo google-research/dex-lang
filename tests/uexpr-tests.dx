@@ -246,7 +246,7 @@ id'' : b:Type ?-> b -> b = id
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left  i -> i
-  Right f -> FToI f
+  Right f -> f_to_i f
 
 :p (eitherFloor (Left 1), eitherFloor (Right 2.3))
 > (1, 2)

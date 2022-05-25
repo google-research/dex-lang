@@ -23,14 +23,14 @@
    vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
-   y = map i_to_f x
+   y = map n_to_f x
    vdot' y y
 > 10.
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. i_to_f x.i * i_to_f y.j
+   z = for i j. n_to_f x.i * n_to_f y.j
    sum (for i. sum z.i)
 > 18.
 
@@ -48,7 +48,7 @@ arr = iota NArr
 :p sum for i:NArr. 1
 > 7
 
-fun = \y. sum (map i_to_f arr) + y
+fun = \y. sum (map n_to_f arr) + y
 
 :p fun 3.0
 > 24.
@@ -113,13 +113,13 @@ fun = \y. sum (map i_to_f arr) + y
 :p tan 1.57079
 > 159378.27
 
-:p FToI $ floor 3.6
+:p f_to_i $ floor 3.6
 > 3
 
-:p FToI $ ceil 3.6
+:p f_to_i $ ceil 3.6
 > 4
 
-:p FToI $ round 3.6
+:p f_to_i $ round 3.6
 > 4
 
 s = 1.0
@@ -244,7 +244,7 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + i_to_f (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + n_to_f (ordinal j))
 > [0., 2., 4.]
 
 :p
@@ -551,7 +551,7 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left i  -> i
-  Right f -> FToI $ floor f
+  Right f -> f_to_i $ floor f
 
 :p eitherFloor (Right 1.2)
 > 1
@@ -580,8 +580,8 @@ def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
 def Biases  (n:Type)          [Ix n]       : Type = n=>Float
 def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
 
-w = for i:(Fin 2). for j:(Fin 3). (i_to_f (ordinal i)) * 3.0 + (i_to_f (ordinal j))
-b = for j:(Fin 2). neg (i_to_f (ordinal j) + 1.0)
+w = for i:(Fin 2). for j:(Fin 3). (n_to_f (ordinal i)) * 3.0 + (n_to_f (ordinal j))
+b = for j:(Fin 2). neg (n_to_f (ordinal j) + 1.0)
 
 def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
@@ -628,7 +628,7 @@ def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
 -- > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
-upperBound = sum $ for i:(Fin 4). 1
+upperBound = sum $ for i:(Fin 4). (1:Nat)
 :p for j:(Fin upperBound). 1.0
 > [1., 1., 1., 1.]
 
@@ -648,12 +648,13 @@ for i:(Fin 4).
   (x, z)
 > (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
 
-for i:(Fin (-3)). 1.0
-> []
+-- TODO: re-enable these once we prevent (`(-3):Nat` occurring
+-- for i:(Fin (-3)). 1.0
+-- > []
 
-x = 2 - 4
-for i:(Fin x). 1.0
-> []
+-- x = 2 - 4
+-- for i:(Fin x). 1.0
+-- > []
 
 -- Make sure that we can construct and print an array using a pair index set
 for i:(Fin 2 & Fin 2). 1.0
@@ -663,8 +664,8 @@ for i:(Fin 2 & Fin 2). 1.0
 > ((0@Fin 2), (1@Fin 2))
 
 for i:(Fin 5). for j:(..i).
-  ir = i_to_f $ ordinal i
-  jr = i_to_f $ ordinal j
+  ir = n_to_f $ ordinal i
+  jr = n_to_f $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
 > [ [0.]@(..(0@Fin 5))
 > , [1., 2.]@(..(1@Fin 5))
@@ -911,8 +912,8 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 :p map is_power_of_2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
 > [False, True, True, False, True, True, True, False]
 
-:p map intlog2 [-1, 0, 1, 2, 3, 4, 5, 1023, 1024, 1025]
-> [-1, -1, 0, 1, 1, 2, 2, 9, 10, 10]
+:p map natlog2 [1, 2, 3, 4, 5, 1023, 1024, 1025]
+> [0, 1, 1, 2, 2, 9, 10, 10]
 
 interface AssociatedInt a
   value a : Int

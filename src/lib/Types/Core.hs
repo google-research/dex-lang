@@ -22,7 +22,6 @@ module Types.Core where
 
 import Control.Applicative
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
-import Data.Int
 import Data.Word
 import Data.Maybe
 import Data.Functor
@@ -614,16 +613,16 @@ instance HasArgType TabLamExpr where
 
 -- Type used to represent indices at run-time
 pattern IdxRepTy :: Type n
-pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
+pattern IdxRepTy = TC (BaseType (Scalar Nat32Type))
 
-pattern IdxRepVal :: Int32 -> Atom n
-pattern IdxRepVal x = Con (Lit (Int32Lit x))
+pattern IdxRepVal :: Word32 -> Atom n
+pattern IdxRepVal x = Con (Lit (Nat32Lit x))
 
-pattern IIdxRepVal :: Int32 -> IExpr n
-pattern IIdxRepVal x = ILit (Int32Lit x)
+pattern IIdxRepVal :: Word32 -> IExpr n
+pattern IIdxRepVal x = ILit (Nat32Lit x)
 
 pattern IIdxRepTy :: IType
-pattern IIdxRepTy = Scalar Int32Type
+pattern IIdxRepTy = Scalar Nat32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type n
@@ -686,7 +685,7 @@ pattern EffKind = TC EffectRowKind
 pattern LabeledRowKind :: Kind n
 pattern LabeledRowKind = TC LabeledRowKindTC
 
-pattern FinConst :: Int32 -> Type n
+pattern FinConst :: Word32 -> Type n
 pattern FinConst n = TC (Fin (IdxRepVal n))
 
 pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n

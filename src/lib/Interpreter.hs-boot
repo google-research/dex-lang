@@ -6,11 +6,11 @@
 
 module Interpreter (indices, indicesLimit, applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp) where
 
-import GHC.Int
+import Data.Word
 import Syntax
 
 indices :: EnvReader m => IxType n -> m n [Atom n]
-indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Int32 [Atom n])
+indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Word32 [Atom n])
 
 applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
 applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom n -> Atom n -> Atom n

@@ -10,7 +10,7 @@
 > "
 
 :p unsafe_io \().
-  with_alloc 4 \ptr:(Ptr Int).
+  with_alloc 4 \ptr:(Ptr Nat).
     for i:(Fin 4). store (ptr +>> ordinal i) (ordinal i)
     table_from_ptr (Fin 4) ptr
 > [0, 1, 2, 3]
@@ -56,7 +56,7 @@ unsafe_io \().
 > 999000
 
 :p unsafe_io \().
-  s = for i:(Fin 10000). i_to_w8 $ FToI $ 128.0 * rand (ixkey (new_key 0) i)
+  s = for i:(Fin 10000). i_to_w8 $ f_to_i $ 128.0 * rand (ixkey (new_key 0) i)
   with_temp_file \fname.
     with_file fname WriteMode \stream.
       fwrite stream $ AsList _ s

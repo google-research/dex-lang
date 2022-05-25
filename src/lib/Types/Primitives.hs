@@ -309,6 +309,8 @@ getIntLit :: LitVal -> Int
 getIntLit l = case l of
   Int64Lit i -> fromIntegral i
   Int32Lit i -> fromIntegral i
+  Nat64Lit i -> fromIntegral i
+  Nat32Lit i -> fromIntegral i
   Word8Lit  i -> fromIntegral i
   _ -> error $ "Expected an integer literal"
 

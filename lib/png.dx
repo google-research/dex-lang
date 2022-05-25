@@ -13,17 +13,17 @@ encoding_table =
 -- TODO: make `Word8` an index set instead of using `Fin 256`
 decoding_table : Fin 256 => Maybe Char =
   for i:(Fin 256).
-    idx = linear_search encoding_table (i_to_w8 (ordinal i))
+    idx = linear_search encoding_table (n_to_w8 (ordinal i))
     case idx of
       Nothing -> Nothing
-      Just x  -> Just $ i_to_w8 $ ordinal x
+      Just x  -> Just $ n_to_w8 $ ordinal x
 
 Base64 = Byte -- first two bits should be zero
 
 -- This could go in the prelude, or in a library of array-dicing functions.
 -- An explicit "view" builder would be good here, to avoid copies
 def get_chunks {n a}
-      (chunkSize:Int) (padVal:a) (xs:n=>a)
+      (chunkSize:Nat) (padVal:a) (xs:n=>a)
       : List (Fin chunkSize => a) =
   numChunks = idiv_ceil (size n) chunkSize
   paddedSize = numChunks * chunkSize
@@ -47,7 +47,7 @@ def bytes_to_base64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
     ,  c                    ]
 
 def base64_to_ascii (x:Base64) : Char =
-  encoding_table.(from_ordinal _ (w8_to_i x))
+  encoding_table.(from_ordinal _ (w8_to_n x))
 
 def encode_chunk (chunk : Fin 3 => Char) : Fin 4 => Char =
   map base64_to_ascii $ bytes_to_base64s chunk
@@ -58,14 +58,14 @@ def base64_encode (s:String) : String =
   (AsList numChunks chunks) = get_chunks 3 '\NUL' cs
   encodedChunks = map encode_chunk chunks
   flattened = for (i,j). encodedChunks.i.j
-  padChars = rem (3 - rem n 3) 3
-  validOutputChars = (numChunks * 4) - padChars
+  padChars = rem (unsafe_nat_diff 3 (rem n 3)) 3
+  validOutputChars = unsafe_nat_diff (numChunks * 4) padChars
   to_list for i. case ordinal i < validOutputChars of
     True  -> flattened.i
     False -> '='
 
 def ascii_to_base64 (c:Char) : Maybe Base64 =
-  decoding_table.(from_ordinal _ (w8_to_i c))
+  decoding_table.(from_ordinal _ (w8_to_n c))
 
 def decode_chunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
   case seq_maybes $ map ascii_to_base64 chunk of
@@ -80,7 +80,7 @@ def replace {a} [Eq a] ((old,new):(a&a)) (x:a) : a =
 
 def base64_decode (s:String) : Maybe String =
   (AsList n cs) = s
-  numValidInputChars = sum for i. b_to_i $ cs.i /= '='
+  numValidInputChars = sum for i. b_to_n $ cs.i /= '='
   numValidOutputChars = idiv (numValidInputChars * 3) 4
   csZeroed = map (replace ('=', 'A')) cs  -- swap padding char with 'zero' char
   (AsList _ chunks) = get_chunks 4 '\NUL' csZeroed
@@ -96,7 +96,7 @@ Html : Type = String
 Png  : Type = String
 Gif  : Type = String
 
-foreign "encodePNG" encodePNG : RawPtr -> Int32 -> Int32 -> {IO} (Int32 & RawPtr)
+foreign "encodePNG" encodePNG : RawPtr -> Nat32 -> Nat32 -> {IO} (Nat32 & RawPtr)
 
 def make_png {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
   (AsList _ imgFlat) = to_list for (i,j,k). img.i.j.k
@@ -121,7 +121,7 @@ def img_to_html (png:String) : Html =
    <> "\">")
 
 def float_to_8bit (x:Float) : Word8 =
-  i_to_w8 $ FToI $ 255.0 * clip (0.0, 1.0) x
+  n_to_w8 $ f_to_n $ 255.0 * clip (0.0, 1.0) x
 
 def img_to_png {n m} (img:n=>m=>(Fin 3)=>Float) : Png =
   make_png for i j k. float_to_8bit img.i.j.k

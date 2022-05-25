@@ -58,12 +58,12 @@ help make the errors more local.
 :t
    x = iota (Fin 10)
    sum x
-> Int32
+> Nat32
 
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   i_to_f (sum for i. x.i) + i_to_f (sum for j. y.j)
+   n_to_f (sum for i. x.i) + n_to_f (sum for j. y.j)
 > Float32
 
 :t
@@ -81,10 +81,10 @@ Narr = Fin 10
 
 arr  = iota Narr
 
-xr = map i_to_f arr
+xr = map n_to_f arr
 
 :t arr
-> ((Fin 10) => Int32)
+> ((Fin 10) => Nat32)
 
 :t (\(x, y). x + y) (1.0, 2.0)
 > Float32
@@ -435,7 +435,7 @@ ff 0
 > 2
 
 -- The two local aliases for Fin n should be unifiable with each other and Fin n
-def q (n : Int) : (Fin n)=>Int =
+def q (n : Nat) : (Fin n)=>Nat =
   ix1 = Fin n
   x1 = for i:ix1. ordinal i
   ix2 = Fin n

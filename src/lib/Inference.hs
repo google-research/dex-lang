@@ -25,13 +25,13 @@ import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Unsafe.Coerce as TrulyUnsafe
 import GHC.Generics (Generic (..))
-import GHC.Int
 
 import Name
 import Builder
@@ -69,7 +69,7 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
   def' <- liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
   tc' <- emitTyConName defName =<< tyConDefAsAtom defName
-  dcs' <- forM [0..(nestLength dcs - 1)] \i ->
+  dcs' <- forM (iota (nestLength dcs)) \i ->
     emitDataConName defName i =<< dataConDefAsAtom defName i
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applySubst subst result
@@ -1860,7 +1860,7 @@ inferTabCon xs reqTy = do
         xs' <- mapM (`checkRho` elemTy) xs
         return (tabTy, xs')
 
-      staticallyKnownIdx :: (EnvReader m) => Abs (Nest Decl) Atom n -> m n (Maybe Int32)
+      staticallyKnownIdx :: (EnvReader m) => Abs (Nest Decl) Atom n -> m n (Maybe Word32)
       staticallyKnownIdx (Abs decls res) = unsafeLiftInterpMCatch (evalDecls decls $ evalExpr $ Atom res) >>= \case
         (Success (IdxRepVal ix)) -> return $ Just ix
         _ -> return Nothing

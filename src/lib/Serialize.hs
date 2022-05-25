@@ -19,6 +19,7 @@ import qualified Data.Map.Strict as M
 import Data.Int
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
+import Data.Word
 import System.IO (stderr, hPutStrLn)
 import Foreign.Ptr
 import Foreign.C.String
@@ -59,7 +60,7 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
     xs' <- getTableElements xs
     forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
   where
-    tryParseStringContent :: Atom n -> Maybe (AtomName n, Int32)
+    tryParseStringContent :: Atom n -> Maybe (AtomName n, Word32)
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
       TC (Fin (IdxRepVal n)) <- return $ binderType i

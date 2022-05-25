@@ -270,10 +270,10 @@ instance CheaplyReducibleE Expr Atom where
     Op (CastOp ty' val') -> do
       ty <- cheapReduceE ty'
       case ty of
-        BaseTy (Scalar Int32Type) -> do
+        BaseTy (Scalar Nat32Type) -> do
           val <- cheapReduceE val'
           case val of
-            Con (Lit (Int64Lit v)) -> return $ Con $ Lit $ Int32Lit $ fromIntegral v
+            Con (Lit (Int64Lit v)) -> return $ Con $ Lit $ Nat32Lit $ fromIntegral v
             _ -> empty
         _ -> empty
     Op (ProjMethod dict i) -> do
