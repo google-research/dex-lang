@@ -613,16 +613,16 @@ instance HasArgType TabLamExpr where
 
 -- Type used to represent indices at run-time
 pattern IdxRepTy :: Type n
-pattern IdxRepTy = TC (BaseType (Scalar Nat32Type))
+pattern IdxRepTy = TC (NatType 32)
 
 pattern IdxRepVal :: Word32 -> Atom n
-pattern IdxRepVal x = Con (Lit (Nat32Lit x))
+pattern IdxRepVal x = Con (NatVal (Con (Lit (Word32Lit x))))
 
 pattern IIdxRepVal :: Word32 -> IExpr n
-pattern IIdxRepVal x = ILit (Nat32Lit x)
+pattern IIdxRepVal x = ILit (Word32Lit x)
 
 pattern IIdxRepTy :: IType
-pattern IIdxRepTy = Scalar Nat32Type
+pattern IIdxRepTy = Scalar Word32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type n
@@ -633,6 +633,12 @@ pattern TagRepVal x = Con (Lit (Word8Lit x))
 
 pattern Word8Ty :: Type n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
+
+pattern Word64Ty :: Type n
+pattern Word64Ty = TC (BaseType (Scalar Word64Type))
+
+pattern Word32Ty :: Type n
+pattern Word32Ty = TC (BaseType (Scalar Word32Type))
 
 pattern ProdTy :: [Type n] -> Type n
 pattern ProdTy tys = TC (ProdType tys)

@@ -345,6 +345,7 @@ transposeCon con ct = case con of
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   FinVal _ _        -> notTangent
+  NatVal _          -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent
   LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent

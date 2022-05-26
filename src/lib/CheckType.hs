@@ -477,6 +477,9 @@ typeCheckPrimTC tc = case tc of
     IxType t _ <- checkIxTy ixTy
     mapM_ (|:t) a >> mapM_ (|:t) b
     return TyKind
+  NatType 32 -> return TyKind
+  NatType 64 -> return TyKind
+  NatType _  -> throw TypeErr $ "Only 32-bit and 64-bit nats supported"
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
@@ -497,6 +500,10 @@ typeCheckPrimCon con = case con of
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
   FinVal n i -> i|:IdxRepTy >> substM (TC $ Fin n)
+  NatVal x -> getTypeE x >>= \case
+    TC (BaseType (Scalar Word32Type)) -> return $ TC $ NatType 32
+    TC (BaseType (Scalar Word64Type)) -> return $ TC $ NatType 64
+    _ -> error $ "not a valid Nat val: " ++ pprint x
   IndexRangeVal ixTy l h i -> do
     i |: IdxRepTy
     ixTy'@(IxType t _) <- checkIxTy ixTy
@@ -915,8 +922,6 @@ checkIntBaseType t = case t of
     checkSBT sbt = case sbt of
       Int64Type -> return ()
       Int32Type -> return ()
-      Nat64Type -> return ()
-      Nat32Type -> return ()
       Word8Type  -> return ()
       Word32Type -> return ()
       Word64Type -> return ()
@@ -937,6 +942,10 @@ checkFloatBaseType t = case t of
       "Expected a fixed-width scalar floating-point type, but found: " ++ pprint t
 
 checkValidCast :: Fallible1 m => Type n -> Type n -> m n ()
+checkValidCast (TC (NatType 32)) (TC (BaseType (Scalar Word32Type))) = return ()
+checkValidCast (TC (BaseType (Scalar Word32Type))) (TC (NatType 32)) = return ()
+checkValidCast (TC (NatType 64)) (TC (BaseType (Scalar Word64Type))) = return ()
+checkValidCast (TC (BaseType (Scalar Word64Type))) (TC (NatType 64)) = return ()
 checkValidCast (TC (Fin _)) IdxRepTy = return ()
 checkValidCast IdxRepTy (TC (Fin _)) = return ()
 checkValidCast (TC (IndexRange _ _ _)) IdxRepTy = return ()
@@ -955,8 +964,6 @@ checkValidBaseCast sourceTy destTy =
     checkScalarType ty = case ty of
       Scalar Int64Type   -> return ()
       Scalar Int32Type   -> return ()
-      Scalar Nat64Type   -> return ()
-      Scalar Nat32Type   -> return ()
       Scalar Word8Type   -> return ()
       Scalar Word32Type  -> return ()
       Scalar Word64Type  -> return ()
@@ -1231,6 +1238,7 @@ checkDataLike ty = case ty of
     ProdType as      -> mapM_ recur as
     SumType  cs      -> mapM_ recur cs
     Fin _            -> return ()
+    NatType _        -> return ()
     IndexRange _ _ _ -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty

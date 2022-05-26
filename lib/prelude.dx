@@ -90,6 +90,13 @@ instance FromNatural Int64
 instance FromNatural Nat32
   from_natural = \x. internal_cast _ x
 
+instance FromNatural Word32
+  from_natural = \x. internal_cast _ x
+
+instance FromNatural Word64
+  from_natural = \x. internal_cast _ x
+
+
 instance FromNatural Nat64
   from_natural = \x. x
 
@@ -181,11 +188,13 @@ instance Sub Int32
   sub = \x y. %isub x y
 
 instance Add Nat32
-  add = \x y. %iadd x y
+  add = \x y. internal_cast Nat32 $
+    %iadd (internal_cast Word32 x) (internal_cast Word32 y)
   zero = i64_to_n32 0
 
 instance Add Nat64
-  add = \x y. %iadd x y
+  add = \x y. internal_cast Nat64 $
+    %iadd (internal_cast Word64 x) (internal_cast Word64 y)
   zero = i64_to_n64 0
 
 instance Add Word8
@@ -245,11 +254,13 @@ instance Mul Int32
   one = i_to_i32 1
 
 instance Mul Nat64
-  mul = \x y. %imul x y
+  mul = \x y. internal_cast Nat64 $
+    %imul (internal_cast Word64 x) (internal_cast Word64 y)
   one = i_to_n64 1
 
 instance Mul Nat32
-  mul = \x y. %imul x y
+  mul = \x y. internal_cast Nat32 $
+    %imul (internal_cast Word32 x) (internal_cast Word32 y)
   one = i_to_n32 1
 
 instance Mul Word8
@@ -279,17 +290,21 @@ instance Integral Int32
   idiv = \x y. %idiv x y
   rem  = \x y. %irem x y
 
-instance Integral Nat64
-  idiv = \x y. %idiv x y
-  rem  = \x y. %irem x y
-
-instance Integral Nat32
-  idiv = \x y. %idiv x y
-  rem  = \x y. %irem x y
-
 instance Integral Word8
   idiv = \x y.  %idiv x y
   rem  = \x y.  %irem x y
+
+instance Integral Nat32
+  idiv = \x y.  internal_cast Nat32 $
+    %idiv (internal_cast Word32 x) (internal_cast Word32 y)
+  rem  = \x y. internal_cast Nat32 $
+    %irem (internal_cast Word32 x) (internal_cast Word32 y)
+
+instance Integral Nat64
+  idiv = \x y.  internal_cast Nat64 $
+    %idiv (internal_cast Word64 x) (internal_cast Word64 y)
+  rem  = \x y. internal_cast Nat64 $
+    %irem (internal_cast Word64 x) (internal_cast Word64 y)
 
 '#### Fractional
 Rational-like things.
@@ -315,10 +330,13 @@ def Fin (n:Nat) : Type = %Fin n
 
 -- version of subtraction on Nats that clamps at zero
 def (-|) (x: Nat) (y:Nat) : Nat =
-  requires_clamp = %ilt x y
-  %select requires_clamp 0 (%isub x y)
+  x' = internal_cast Word32 x
+  y' = internal_cast Word32 y
+  requires_clamp = %ilt x' y'
+  internal_cast Nat $ %select requires_clamp (0:Word32) (%isub x' y')
 
-def unsafe_nat_diff (x:Nat) (y:Nat) : Nat = %isub x y
+def unsafe_nat_diff (x:Nat) (y:Nat) : Nat =
+  internal_cast Nat $ %isub (internal_cast Word32 x) (internal_cast Word32 y)
 
 instance {q:Type} {i:q} [Ix q] Ix (i..)
   size = unsafe_nat_diff (size q) (ordinal i)
@@ -536,10 +554,11 @@ instance {a b} [Ix a, Ix b] Ix (a | b)
   unsafe_from_ordinal = \o.
     as = size a
     -- TODO: Reshuffle the prelude to be able to use (<) here
-    case w8_to_b $ %ilt o as of
+    o'  = internal_cast Word32 o
+    as' = internal_cast Word32 as
+    case w8_to_b $ %ilt o' as' of
       True  -> Left $ unsafe_from_ordinal a o
-      -- TODO: Reshuffle the prelude to be able to use `diff_nat` here
-      False -> Right $ unsafe_from_ordinal b (%isub o as)
+      False -> Right $ unsafe_from_ordinal b (unsafe_nat_diff o as)
 
 '## Subtraction on Nats
 -- TODO: think more about the right API here
@@ -578,10 +597,6 @@ def last_ix {n} [NonEmpty n] : n =
 
 instance {n} [Ix n] NonEmpty (Post n)
   first_ix = unsafe_from_ordinal (Post n) 0
-
-
-
-
 
 '### Monoid
 A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
@@ -753,10 +768,10 @@ instance Eq Int32
   (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Nat64
-  (==) = \x y. w8_to_b $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq (internal_cast Word64 x) (internal_cast Word64 y)
 
 instance Eq Nat32
-  (==) = \x y. w8_to_b $ %ieq x y
+  (==) = \x y. w8_to_b $ %ieq (internal_cast Word32 x) (internal_cast Word32 y)
 
 instance Eq Word8
   (==) = \x y. w8_to_b $ %ieq x y
@@ -787,12 +802,12 @@ instance Ord Int32
   (<) = \x y. w8_to_b $ %ilt x y
 
 instance Ord Nat64
-  (>) = \x y. w8_to_b $ %igt x y
-  (<) = \x y. w8_to_b $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt (internal_cast Word64 x) (internal_cast Word64 y)
+  (<) = \x y. w8_to_b $ %ilt (internal_cast Word64 x) (internal_cast Word64 y)
 
 instance Ord Nat32
-  (>) = \x y. w8_to_b $ %igt x y
-  (<) = \x y. w8_to_b $ %ilt x y
+  (>) = \x y. w8_to_b $ %igt (internal_cast Word32 x) (internal_cast Word32 y)
+  (<) = \x y. w8_to_b $ %ilt (internal_cast Word32 x) (internal_cast Word32 y)
 
 instance Ord Word8
   (>) = \x y. w8_to_b $ %igt x y
@@ -970,9 +985,14 @@ instance Storable Int32
   storage_size = 4
 
 instance Storable Nat32
-  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Nat32Ptr ptr) x
-  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Nat32Ptr ptr)
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Word32Ptr ptr) (internal_cast Word32 x)
+  load  = \(MkPtr ptr)  . internal_cast Nat32 $ %ptrLoad  (internal_cast %Word32Ptr ptr)
   storage_size = 4
+
+instance Storable Nat64
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Word64Ptr ptr) (internal_cast Word64 x)
+  load  = \(MkPtr ptr)  . internal_cast Nat64 $ %ptrLoad  (internal_cast %Word64Ptr ptr)
+  storage_size = 8
 
 instance Storable Float32
   store = \(MkPtr ptr) x. %ptrStore (internal_cast %Float32Ptr ptr) x
@@ -1415,41 +1435,40 @@ interface Show a
 instance Show String
   show = id
 
-foreign "showNat32" showNat32 : Nat32 -> {IO} (Nat32 & RawPtr)
+foreign "showNat32" showNat32 : Word32 -> {IO} (Word32 & RawPtr)
 
 instance Show Nat32
   show = \x. unsafe_io do
-    (n, ptr) = showNat32 x
-    string_from_char_ptr n $ MkPtr ptr
+    (n, ptr) = showNat32 $ internal_cast Word32 x
+    string_from_char_ptr (internal_cast Nat32 n) $ MkPtr ptr
 
-
-foreign "showInt32" showInt32 : Int32 -> {IO} (Nat32 & RawPtr)
+foreign "showInt32" showInt32 : Int32 -> {IO} (Word32 & RawPtr)
 
 instance Show Int32
   show = \x. unsafe_io do
     (n, ptr) = showInt32 x
-    string_from_char_ptr n $ MkPtr ptr
+    string_from_char_ptr (internal_cast Nat32 n) $ MkPtr ptr
 
-foreign "showInt64" showInt64 : Int64 -> {IO} (Nat32 & RawPtr)
+foreign "showInt64" showInt64 : Int64 -> {IO} (Word32 & RawPtr)
 
 instance Show Int64
   show = \x. unsafe_io do
     (n, ptr) = showInt64 x
-    string_from_char_ptr n $ MkPtr ptr
+    string_from_char_ptr (internal_cast Nat32 n) $ MkPtr ptr
 
-foreign "showFloat32" showFloat32 : Float32 -> {IO} (Nat32 & RawPtr)
+foreign "showFloat32" showFloat32 : Float32 -> {IO} (Word32 & RawPtr)
 
 instance Show Float32
   show = \x. unsafe_io do
     (n, ptr) = showFloat32 x
-    string_from_char_ptr n $ MkPtr ptr
+    string_from_char_ptr (internal_cast Nat32 n) $ MkPtr ptr
 
-foreign "showFloat64" showFloat64 : Float64 -> {IO} (Nat32 & RawPtr)
+foreign "showFloat64" showFloat64 : Float64 -> {IO} (Word32 & RawPtr)
 
 instance Show Float64
   show = \x. unsafe_io do
     (n, ptr) = showFloat64 x
-    string_from_char_ptr n $ MkPtr ptr
+    string_from_char_ptr (internal_cast Nat32 n) $ MkPtr ptr
 
 instance {a b} [Show a, Show b] Show (a & b)
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"

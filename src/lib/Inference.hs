@@ -201,7 +201,7 @@ applyDefaults :: EmitsInf o => InfererM i o ()
 applyDefaults = do
   defaults <- getDefaults
   applyDefault (intDefaults defaults) (BaseTy $ Scalar Int32Type)
-  applyDefault (natDefaults defaults) (BaseTy $ Scalar Nat32Type)
+  applyDefault (natDefaults defaults) (TC $ NatType 32)
   where
     applyDefault ds ty =
       forM_ (nameSetToList ds) \v -> tryConstrainEq (Var v) ty
@@ -1017,12 +1017,12 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     lookupSourceMap "from_natural" >>= \case
       Nothing ->
         -- fallback for missing protolude
-        matchRequirement $ Con $ Lit $ Nat32Lit $ fromIntegral x
+        matchRequirement $ Con $ NatVal $ Con $ Lit $ Word32Lit $ fromIntegral x
       Just (UMethodVar fromNatMethod) -> do
         ~(MethodBinding _ _ fromNat) <- lookupEnv fromNatMethod
         (fromNatInst, (Var resTyVar:_)) <- instantiateSigmaWithArgs fromNat
         addDefault resTyVar NatDefault
-        let i64Atom = Con $ Lit $ Nat64Lit $ fromIntegral x
+        let i64Atom = Con $ NatVal $ Con $ Lit $ Word64Lit $ fromIntegral x
         result <- matchRequirement =<< app fromNatInst i64Atom
         return result
       Just _ -> error "not a method"

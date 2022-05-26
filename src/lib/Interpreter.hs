@@ -218,13 +218,13 @@ evalOp expr = mapM evalAtom expr >>= \case
       (TC (IndexRange _ _ _), IdxRepTy) -> do
         let Con (IndexRangeVal _ _ _ ord) = x
         return ord
+      (TC (BaseType (Scalar Word64Type)), TC (NatType 32)) -> do
+        let Con (NatVal (Con (Lit (Word64Lit v)))) = x
+        return $ Con $ NatVal $ Con $ Lit $ Word32Lit $ fromIntegral v
       (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x
           return $ Con $ Lit $ Int32Lit $ fromIntegral v
-        (Nat64Type, Nat32Type) -> do
-          let Con (Lit (Nat64Lit v)) = x
-          return $ Con $ Lit $ Nat32Lit $ fromIntegral v
         _ -> failedCast
       _ -> failedCast
   Select cond t f -> case cond of
@@ -359,8 +359,6 @@ applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
 applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
   (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
-  (Con (Lit (Nat64Lit xv)), Con (Lit (Nat64Lit yv))) -> f (Con . Lit . Nat64Lit) xv yv
-  (Con (Lit (Nat32Lit xv)), Con (Lit (Nat32Lit yv))) -> f (Con . Lit . Nat32Lit) xv yv
   (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
   (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
   (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv

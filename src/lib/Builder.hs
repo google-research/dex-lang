@@ -11,7 +11,7 @@ module Builder (
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
-  iadd, imul, isub, idiv, ilt, ieq, irem,
+  iadd, imul, isub, idiv, ilt, ieq, irem, nadd, nmul, fromNat,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
@@ -1002,6 +1002,22 @@ imul   (Con (Lit l)) y               | getIntLit l == 1 = return y
 imul x                 (Con (Lit l)) | getIntLit l == 1 = return x
 imul x@(Con (Lit _)) y@(Con (Lit _))                    = return $ applyIntBinOp (*) x y
 imul x y = emitOp $ BinOp IMul x y
+
+fromNat :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+fromNat (Con (NatVal x)) = return x
+fromNat x = emitOp $ CastOp Word32Ty x
+
+nadd :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+nadd x y = do
+  x' <- fromNat x
+  y' <- fromNat y
+  (Con . NatVal) <$> iadd x' y'
+
+nmul :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+nmul x y = do
+  x' <- fromNat x
+  y' <- fromNat y
+  (Con . NatVal) <$> iadd x' y'
 
 sub :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 sub x y = emitOp $ BinOp FSub x y

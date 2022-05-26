@@ -248,8 +248,6 @@ showExportSBT :: ScalarBaseType -> String
 showExportSBT sbt = case sbt of
   Int64Type   -> "i64"
   Int32Type   -> "i32"
-  Nat64Type   -> "n64"
-  Nat32Type   -> "n32"
   Word8Type   -> "u8"
   Word32Type  -> "u32"
   Word64Type  -> "u64"

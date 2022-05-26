@@ -102,7 +102,7 @@ module Syntax (
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal,
     pattern TagRepTy,
-    pattern TagRepVal, pattern Word8Ty,
+    pattern TagRepVal, pattern Word8Ty, pattern Word32Ty, pattern Word64Ty,
     pattern UnitTy, pattern PairTy,
     pattern FinConst, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,

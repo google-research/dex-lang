@@ -145,8 +145,6 @@ litType :: LitVal -> BaseType
 litType v = case v of
   Int64Lit   _ -> Scalar Int64Type
   Int32Lit   _ -> Scalar Int32Type
-  Nat64Lit   _ -> Scalar Nat64Type
-  Nat32Lit   _ -> Scalar Nat32Type
   Word8Lit   _ -> Scalar Word8Type
   Word32Lit  _ -> Scalar Word32Type
   Word64Lit  _ -> Scalar Word64Type
@@ -386,6 +384,10 @@ getTypePrimCon con = case con of
   SumCon ty _ _ -> substM ty
   SumAsProd ty _ _ -> substM ty
   FinVal n _ -> substM $ TC $ Fin n
+  NatVal x -> getTypeE x >>= \case
+    TC (BaseType (Scalar Word32Type)) -> return $ TC $ NatType 32
+    TC (BaseType (Scalar Word64Type)) -> return $ TC $ NatType 64
+    _ -> error $ "not a valid Nat val: " ++ pprint x
   IndexRangeVal t l h _ -> substM (TC $ IndexRange t l h)
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p

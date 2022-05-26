@@ -535,8 +535,8 @@ simplifyOp op = case op of
     _ -> error "Not a variant type"
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
-  CastOp (BaseTy (Scalar Nat32Type)) (Con (Lit (Nat64Lit val))) ->
-    return $ Con $ Lit $ Nat32Lit $ fromIntegral val
+  CastOp (TC (NatType 32)) (Con (NatVal (Con (Lit (Word64Lit val))))) ->
+    return $ Con $ NatVal $ Con $ Lit $ Word32Lit $ fromIntegral val
   -- Those are not no-ops! Builder methods do algebraic simplification!
   BinOp ISub x y -> isub x y
   BinOp IAdd x y -> iadd x y

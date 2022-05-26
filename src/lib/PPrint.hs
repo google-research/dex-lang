@@ -827,8 +827,6 @@ instance PrettyPrec ScalarBaseType where
   prettyPrec sb = atPrec ArgPrec $ case sb of
     Int64Type   -> "Int64"
     Int32Type   -> "Int32"
-    Nat64Type   -> "Nat64"
-    Nat32Type   -> "Nat32"
     Float64Type -> "Float64"
     Float32Type -> "Float32"
     Word8Type   -> "Word8"
@@ -853,6 +851,8 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
+    NatType 32 -> atPrec ArgPrec "Nat32"
+    NatType 64 -> atPrec ArgPrec "Nat64"
     IndexRange _ low high -> atPrec LowestPrec $ low' <> ".." <> high'
       where
         low'  = case low  of InclusiveLim x -> pApp x
@@ -883,6 +883,7 @@ prettyPrecPrimCon con = case con of
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   FinVal n i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (Fin n)
+  NatVal x -> prettyPrec x
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
@@ -936,13 +937,11 @@ instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
   prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
-  prettyPrec (Nat64Lit   x) = atPrec ArgPrec $ p x
-  prettyPrec (Nat32Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
+  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p x
+  prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p x
   prettyPrec (PtrLit (PtrLitVal ty x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"

@@ -425,13 +425,13 @@ toImpOp maybeDest op = case op of
         InclusiveLim a -> indexToNatImp ixTy a
         ExclusiveLim a -> indexToNatImp ixTy a >>= iaddI (IIdxRepVal 1)
         Unlimited      -> return (IIdxRepVal 0)
-      restrictIdx' <- fromScalarAtom restrictIdx
+      restrictIdx' <- fromNatAtom restrictIdx
       returnVal =<< natToIndexImp ixTy =<< iaddI restrictIdx' offset
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
   IOAlloc ty n -> do
-    ptr <- emitAlloc (Heap CPU, ty) =<< fromScalarAtom n
+    ptr <- emitAlloc (Heap CPU, ty) =<< fromNatAtom n
     returnVal =<< toScalarAtom ptr
   IOFree ptr -> do
     ptr' <- fromScalarAtom ptr
@@ -440,7 +440,7 @@ toImpOp maybeDest op = case op of
   PtrOffset arr (IdxRepVal 0) -> returnVal arr
   PtrOffset arr off -> do
     arr' <- fromScalarAtom arr
-    off' <- fromScalarAtom off
+    off' <- fromNatAtom off
     buf <- impOffset arr' off'
     returnVal =<< toScalarAtom buf
   PtrLoad arr ->
@@ -473,6 +473,8 @@ toImpOp maybeDest op = case op of
         returnVal xord
       (IdxRepTy, TC (IndexRange t l h)) ->
         returnVal $ Con $ IndexRangeVal t l h x
+      (IdxRepTy, Word32Ty) -> toScalarAtom =<< fromNatAtom x
+      (Word32Ty, IdxRepTy) -> toNatAtom =<< fromScalarAtom x
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   Select p x y -> do
     xTy <- getType x
@@ -998,6 +1000,8 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     IndexRange t l h -> do
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IndexRangeVal t l h x
+    NatType 32 -> (Con . ConRef) <$> NatVal <$> rec Word32Ty
+    NatType 64 -> (Con . ConRef) <$> NatVal <$> rec Word64Ty
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
@@ -1074,6 +1078,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
           (FinVal _ iRef, FinVal _ i) -> copyRec iRef i
+          (NatVal xRef,  NatVal x)  -> copyRec xRef x
           (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> copyRec iRef i
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
         _ -> error "unexpected src/dest pair"
@@ -1150,6 +1155,7 @@ loadDest (Con dest) = do
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
      FinVal n iRef -> FinVal n <$> loadDest iRef
      IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
+     NatVal xRef -> NatVal <$> loadDest xRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest
@@ -1254,7 +1260,7 @@ makeAllocDestWithPtrs allocTy ty = do
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
     Distinct <- getDistinct
     size <- dropSubst $ translateBlock Nothing sizeBlock
-    ptr <- emitAlloc ptrTy =<< fromScalarAtom size
+    ptr <- emitAlloc ptrTy =<< fromNatAtom size
     case ptrTy of
       (Heap _, _) | allocTy == Managed -> extendAllocsToFree ptr
       _ -> return ()
@@ -1309,9 +1315,9 @@ computeElemCount (EmptyAbs Empty) =
 computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
   sizes <- forM idxList \ixTy -> emitSimplified $ indexSetSize $ sink ixTy
-  listSize <- foldM imul (IdxRepVal 1) sizes
+  listSize <- foldM nmul (IdxRepVal 1) sizes
   nestSize <- A.emitCPoly =<< elemCountCPoly idxNest
-  imul listSize nestSize
+  nmul listSize nestSize
 
 -- Split the index structure into a prefix of non-dependent index types
 -- and a trailing nest of indices that can contain inter-dependencies.
@@ -1346,9 +1352,9 @@ computeOffset idxNest' idxs = do
     _  -> (IdxRepVal 0:) <$> forM (tail idxList) \ixTy -> do
       emitSimplified $ indexSetSize $ sink ixTy
   listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
-  iadd listOffset nestOffset
+  nadd listOffset nestOffset
   where
-   accumStrided (total, stride) (size, i) = (,) <$> (iadd total =<< imul i stride) <*> imul stride size
+   accumStrided (total, stride) (size, i) = (,) <$> (nadd total =<< nmul i stride) <*> nmul stride size
    -- Recursively process the dependent part of the nest
    rec :: IndexStructure n -> [AtomName n] -> DestM n (Atom n)
    rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
@@ -1359,7 +1365,7 @@ computeOffset idxNest' idxs = do
      significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
      remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
      otherOffsets <- rec remainingIdxStructure is
-     iadd significantOffset otherOffsets
+     nadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
 elemCountCPoly :: IndexStructure n -> DestM n (A.ClampPolynomial n)
@@ -1495,6 +1501,13 @@ load x = emitInstr $ IPrimOp $ PtrLoad x
 
 -- === Atom <-> IExpr conversions ===
 
+fromNatAtom :: Atom n -> SubstImpM i n (IExpr n)
+fromNatAtom (Con (NatVal x)) = fromScalarAtom x
+fromNatAtom atom = error $ "expected a nat atom, got: " ++ pprint atom
+
+toNatAtom :: Monad m => IExpr n -> m (Atom n)
+toNatAtom x = (Con . NatVal) <$> toScalarAtom x
+
 fromScalarAtom :: Atom n -> SubstImpM i n (IExpr n)
 fromScalarAtom atom = confuseGHC >>= \_ -> case atom of
   Var v -> do
@@ -1537,12 +1550,12 @@ natToIndexImp ixTy i = liftBuilderImpSimplify do
   natToIndex (sink ixTy) i'
 
 indexToNatImp :: Emits n => IxType n -> Atom n -> SubstImpM i n (IExpr n)
-indexToNatImp ixTy i = fromScalarAtom =<< liftBuilderImpSimplify do
+indexToNatImp ixTy i = fromNatAtom =<< liftBuilderImpSimplify do
   i' <- sinkM i
   indexToNat (sink ixTy) i'
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
-indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do
+indexSetSizeImp ty = fromNatAtom =<< liftBuilderImpSimplify do
   indexSetSize $ sink ty
 
 -- === type checking imp programs ===
