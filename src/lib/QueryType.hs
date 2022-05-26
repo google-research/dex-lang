@@ -3,13 +3,13 @@ module QueryType (
   getEffects, getEffectsSubst,
   computeAbsEffects, declNestEffects,
   caseAltsBinderTys, depPairLeftTy, extendEffect,
-  getAppType, getTabAppType, getMethodType, getBaseMonoidType, getReferentTy,
+  getAppType, getTabAppType, getBaseMonoidType, getReferentTy,
   getMethodIndex,
   instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
   oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal, ixDictType
+  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts
   ) where
 
 import Control.Category ((>>>))
@@ -87,19 +87,6 @@ getTabAppType f xs = case nonEmpty xs of
   Nothing -> getType f
   Just xs' -> liftTypeQueryM idSubst $ typeTabApp f xs'
 {-# INLINE getTabAppType #-}
-
-getMethodType :: EnvReader m => ClassName n -> Int -> m n (Type n)
-getMethodType className i = do
-  ClassDef _ _ bs _ methodTys <- lookupClassDef className
-  let MethodType explicits methodTy = methodTys !! i
-  return $ addParamBinders explicits bs methodTy
-  where
-    addParamBinders :: [Bool] -> Nest Binder n l -> Type l -> Type n
-    addParamBinders [] Empty ty = ty
-    addParamBinders (explicit:explicits) (Nest (b:>argTy) bs) ty =
-      Pi $ PiType (PiBinder b argTy arr) Pure $ addParamBinders explicits bs ty
-      where arr = if explicit then PlainArrow else ImplicitArrow
-    addParamBinders _ _ _ = error "arg/binder mismatch"
 
 getBaseMonoidType :: Fallible1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
@@ -423,7 +410,8 @@ dictExprType e = case e of
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    DictTy dTy <- applyNaryAbs (Abs bs (superclasses !! i)) $ map SubstVal params
+    DictTy dTy <- applySubst (bs @@> map SubstVal params) $
+                    superclassTypes superclasses !! i
     return dTy
   IxFin n -> do
     n' <- substM n
@@ -608,10 +596,18 @@ getTypePrimOp op = case op of
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   ProjMethod dict i -> do
     DictTy (DictType _ className params) <- getTypeE dict
-    methodTy <- getMethodType className i
-    dropSubst $ typeApp methodTy params
+    def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
+    let MethodType _ methodTy = methodTys !! i
+    superclassDicts <- getSuperclassDicts def <$> substM dict
+    let subst = (    paramBs @@> map SubstVal params
+                 <.> classBs @@> map SubstVal superclassDicts)
+    applySubst subst methodTy
   ExplicitApply _ _ -> error "shouldn't appear after inference"
   MonoLiteral _ -> error "shouldn't appear after inference"
+
+getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
+getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
+  for [0 .. nestLength classBs - 1] \i -> DictCon $ SuperclassProj dict i
 
 getTypeBaseType :: HasType e => e i -> TypeQueryM i o BaseType
 getTypeBaseType e =

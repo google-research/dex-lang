@@ -1358,15 +1358,40 @@ inferClassDef
   :: SourceName -> [SourceName] -> Nest (UAnnBinder AtomNameC) i i'
   -> [UType i'] -> [UMethodType i']
   -> InfererM i o (ClassDef o)
-inferClassDef className methodNames paramBs superclasses methods = solveLocal do
+inferClassDef className methodNames paramBs superclassTys methods = solveLocal do
   ab <- withNestedUBinders paramBs id \_ -> do
-    superclasses' <- mapM checkUType superclasses
-    methodsTys'   <- forM methods \(UMethodType (Right explicits) ty) -> do
-      ty' <- checkUType ty
-      return $ MethodType explicits ty'
-    return $ PairE (ListE superclasses') (ListE methodsTys')
-  Abs bs (PairE (ListE scs) (ListE mtys)) <- return ab
+    superclassTys' <- mapM checkUType superclassTys
+    withSuperclassBinders superclassTys' do
+      ListE <$> forM methods \(UMethodType (Right explicits) ty) -> do
+        ty' <- checkUType ty
+        return $ MethodType explicits ty'
+  Abs bs (Abs scs (ListE mtys)) <- return ab
   return $ ClassDef className methodNames bs scs mtys
+
+withSuperclassBinders
+  :: (SinkableE e, SubstE Name e, HoistableE e, EmitsInf o)
+  => [Type o]
+  -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (e o'))
+  -> InfererM i o (Abs SuperclassBinders e o)
+withSuperclassBinders tys cont = do
+  Abs bs e <- withSuperclassBindersRec tys cont
+  return $ Abs (SuperclassBinders bs tys) e
+
+withSuperclassBindersRec
+  :: (SinkableE e, SubstE Name e, HoistableE e, EmitsInf o)
+  => [Type o]
+  -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (e o'))
+  -> InfererM i o (Abs (Nest AtomNameBinder) e o)
+withSuperclassBindersRec [] cont = do
+  Distinct <- getDistinct
+  result <- cont
+  return $ Abs Empty result
+withSuperclassBindersRec (ty:rest) cont = do
+  let binding = PiBinding ClassArrow ty
+  Abs (b:>_) (Abs bs e) <- buildAbsInf noHint binding \_ -> do
+    ListE rest' <- sinkM $ ListE rest
+    withSuperclassBindersRec rest' cont
+  return $ Abs (Nest b bs) e
 
 withNestedUBinders
   :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
@@ -1472,13 +1497,15 @@ checkInstanceBody :: EmitsInf o
                   -> InfererM i o (InstanceBody o)
 checkInstanceBody className params methods = do
   def@(ClassDef _ methodNames _ _ _ ) <- getClassDef className
-  (superclassTys, methodTys) <- checkedApplyClassParams def params
+  Abs superclassBs methodTys <- checkedApplyClassParams def params
+  SuperclassBinders bs superclassTys <- return superclassBs
   superclassDicts <- mapM trySynthTerm superclassTys
-  methodsChecked <- mapM (checkMethodDef className methodTys) methods
+  ListE methodTys' <- applySubst (bs @@> map SubstVal superclassDicts) methodTys
+  methodsChecked <- mapM (checkMethodDef className methodTys') methods
   let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
   forM_ (repeated idxs) \i ->
     throw TypeErr $ "Duplicate method: " ++ pprint (methodNames!!i)
-  forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
+  forM_ ([0..(length methodTys' - 1)] `listDiff` idxs) \i ->
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
   return $ InstanceBody superclassDicts methods'
 
@@ -2482,7 +2509,7 @@ getSuperclassClosurePure env givens newGivens =
       superclasses <- case synthTy of
         SynthPiType _ -> return []
         SynthDictType (DictType _ className _) -> do
-          ClassDef _ _ _ superclasses _ <- lookupClassDef className
+          ClassDef _ _ _ (SuperclassBinders _ superclasses) _ <- lookupClassDef className
           return $ void superclasses
       return $ enumerate superclasses <&> \(i, _) -> DictCon $ SuperclassProj synthExpr i
 
