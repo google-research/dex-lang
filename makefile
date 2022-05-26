@@ -285,6 +285,9 @@ bench-summary:
 # --- building docs ---
 
 slow-docs = doc/examples/mnist-nearest-neighbors.html
+# Not actually slow, but not tested because it shows timings
+# https://github.com/google-research/dex-lang/issues/910
+slow-docs += doc/examples/levenshtein-distance.html
 
 docs: doc-prelude $(doc-example-names) $(doc-lib-names) $(slow-docs)
 
