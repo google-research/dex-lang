@@ -251,6 +251,9 @@ transposeOp op ct = case op of
   ProjMethod _ _        -> notLinear
   ExplicitApply _ _     -> notLinear
   MonoLiteral _         -> notLinear
+  AllocDest _           -> notLinear
+  Place _ _             -> notLinear
+  Freeze _              -> notLinear
   where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
 transposeAtom :: HasCallStack => Emits o => Atom i -> Atom o -> TransposeM i o ()
@@ -360,9 +363,8 @@ notImplemented = error "Not implemented"
 
 flipDir :: ForAnn -> ForAnn
 flipDir ann = case ann of
-  RegularFor Fwd -> RegularFor Rev
-  RegularFor Rev -> RegularFor Fwd
-  ParallelFor -> ParallelFor
+  Fwd -> Rev
+  Rev -> Fwd
 
 -- === instances ===
 

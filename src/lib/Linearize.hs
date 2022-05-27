@@ -498,7 +498,7 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom
 linearizeHof hof = case hof of
-  For (RegularFor d) (IxTy ixTy) (Lam (LamExpr i body)) -> do
+  For d (IxTy ixTy) (Lam (LamExpr i body)) -> do
     ixTy' <- substM ixTy
     ansWithLinTab <- buildFor (getNameHint i) d ixTy' \i' ->
       extendSubst (i@>i') $ withTangentFunAsLambda $ linearizeBlock body

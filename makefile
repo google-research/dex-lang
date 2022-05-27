@@ -219,7 +219,7 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-tests: unit-tests quine-tests repl-test module-tests
+tests: unit-tests lower-tests quine-tests repl-test module-tests
 
 # Keep the unit tests in their own working directory too, due to
 # https://github.com/commercialhaskell/stack/issues/4977
@@ -235,6 +235,15 @@ run-tests/%: tests/%.dx just-build
 	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) script
+
+lower-tests: export DEX_LOWER=1
+lower-tests: export DEX_ALLOW_CONTRACTIONS=0
+lower-tests: export DEX_TEST_MODE=t
+lower-tests: just-build
+	misc/check-quine tests/lower.dx $(dex) script
+update-lower-tests: just-build
+	$(dex) script tests/lower.dx > tests/lower.dx.tmp
+	mv tests/lower.dx.tmp tests/lower.dx
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: export DEX_TEST_MODE=t

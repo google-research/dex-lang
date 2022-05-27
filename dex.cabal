@@ -65,6 +65,7 @@ library
                      , LabeledItems
                      , Linearize
                      , Logging
+                     , Lower
                      , MTL1
                      , Name
                      , Optimize

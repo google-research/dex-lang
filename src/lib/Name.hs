@@ -19,7 +19,7 @@ module Name (
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
-  lookupTerminalSubstFrag,
+  lookupTerminalSubstFrag, noShadows,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
   Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..), nonEmptyToNest,
   PairB (..), UnitB (..),
@@ -876,15 +876,19 @@ refreshAbsPure scope (Abs b e) cont =
 extendIfDistinct :: Scope n -> ScopeFrag n l
                  -> Maybe (DistinctEvidence l, Scope l)
 extendIfDistinct scope frag = do
-  if all isUnique extNames && R.disjoint scopeNames extNames
+  if noShadows frag && R.disjoint scopeNames extNames
     then Just ( fabricateDistinctEvidence
               , Scope (UnsafeMakeScopeFrag (extNames  <> scopeNames)))
     else Nothing
   where
     Scope (UnsafeMakeScopeFrag scopeNames) = scope
     UnsafeMakeScopeFrag extNames = frag
+
+noShadows :: ScopeFrag n l -> Bool
+noShadows (UnsafeMakeScopeFrag frag) = all isUnique frag
+  where
     isUnique item = case itemDistinctness item of
-      DistinctName -> True
+      DistinctName  -> True
       ShadowingName -> False
 
 -- === versions of monad constraints with scope params ===

@@ -109,6 +109,10 @@ data PrimOp e =
       | PtrOffset e e
       | PtrLoad e
       | PtrStore e e
+      -- Destination ops
+      | AllocDest e  -- type
+      | Place e e    -- reference, value
+      | Freeze e     -- reference
       -- Extensible record and variant operations:
       -- Concatenate two records.
       | RecordCons   e e
@@ -155,6 +159,8 @@ data PrimHof e =
       | CatchException e
       | Linearize e
       | Transpose e
+      -- Dex abstract machine ops
+      | Seq Direction e e e   -- Ix type, carry dests, body lambda
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
@@ -180,8 +186,7 @@ data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
              deriving (Show, Eq, Generic)
 
 data Direction = Fwd | Rev  deriving (Show, Eq, Generic)
-data ForAnn = RegularFor Direction | ParallelFor
-                deriving (Show, Eq, Generic)
+type ForAnn = Direction
 
 data Limit a = InclusiveLim a
              | ExclusiveLim a
@@ -359,7 +364,6 @@ instance Color c => AlphaHashableE    (EffectRowP (Name c))
 
 instance Store Arrow
 instance Store LetAnn
-instance Store ForAnn
 instance Store AddressSpace
 instance Store RWS
 instance Store Direction
@@ -382,7 +386,6 @@ instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (BaseMonoidP a)
 
-instance Hashable ForAnn
 instance Hashable AddressSpace
 instance Hashable RWS
 instance Hashable Direction

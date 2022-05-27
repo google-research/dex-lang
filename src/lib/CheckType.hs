@@ -725,6 +725,14 @@ typeCheckPrimOp op = case op of
     applySubst subst methodTy
   ExplicitApply _ _ -> error "shouldn't appear after inference"
   MonoLiteral _ -> error "should't appear after inference"
+  AllocDest ty -> checkTypeE TyKind ty
+  Place ref val -> do
+    ty <- getTypeE val
+    ref |: RawRefTy ty
+    return UnitTy
+  Freeze ref -> do
+    RawRefTy ty <- getTypeE ref
+    return ty
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
@@ -777,6 +785,15 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
+  Seq _ ixTyAtom carry f -> do
+    IxTy ixTy <- return ixTyAtom
+    ixTy' <- checkE ixTy
+    carryTy' <- getTypeE carry
+    Pi (PiType (PiBinder b argTy PlainArrow) eff UnitTy) <- getTypeE f
+    checkAlphaEq (PairTy (ixTypeType ixTy') carryTy') argTy
+    declareEffs =<< liftHoistExcept (hoist b eff)
+    RawRefTy _ <- return carryTy'  -- We might need allow products of references too.
+    return carryTy'
 
 checkRWSAction :: Typer m => RWS -> Atom i -> m i o (Type o, Type o)
 checkRWSAction rws f = do

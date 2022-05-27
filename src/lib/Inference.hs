@@ -857,7 +857,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Check _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
     ixTy <- asIxType $ binderType b'
-    result <- liftM Var $ emit $ Hof $ For (RegularFor dir) (IxTy ixTy) lam
+    result <- liftM Var $ emit $ Hof $ For dir (IxTy ixTy) lam
     matchRequirement result
   UApp _ _ -> do
     let (f, args) = asNaryApp $ WithSrcE pos expr

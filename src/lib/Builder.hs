@@ -776,7 +776,7 @@ buildFor :: (Emits n, ScopableBuilder m)
          => NameHint -> Direction -> IxType n
          -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
          -> m n (Atom n)
-buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
+buildFor hint dir ty body = buildForAnn hint dir ty body
 
 unzipTab :: (Emits n, Builder m) => Atom n -> m n (Atom n, Atom n)
 unzipTab tab = do
