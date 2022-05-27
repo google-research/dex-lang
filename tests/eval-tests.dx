@@ -649,12 +649,18 @@ for i:(Fin 4).
 > (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
 
 -- TODO: re-enable these once we prevent (`(-3):Nat` occurring
--- for i:(Fin (-3)). 1.0
--- > []
+for i:(Fin (-3)). 1.0
+> Type error:Can't reduce type expression: (Fin -3)
+> This might be due to a failure to find a viable interface implementation for: (FromInteger Nat)
+>
+> for i:(Fin (-3)). 1.0
+> ^^^^
 
--- x = 2 - 4
--- for i:(Fin x). 1.0
--- > []
+x = 2 - 4
+> Type error:Couldn't synthesize a class dictionary for: (Sub Nat)
+>
+> x = 2 - 4
+>       ^^
 
 -- Make sure that we can construct and print an array using a pair index set
 for i:(Fin 2 & Fin 2). 1.0

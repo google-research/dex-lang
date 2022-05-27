@@ -827,12 +827,12 @@ instance PrettyPrec ScalarBaseType where
   prettyPrec sb = atPrec ArgPrec $ case sb of
     Int64Type   -> "Int64"
     Int32Type   -> "Int32"
-    Nat64Type   -> "Nat64"
-    Nat32Type   -> "Nat32"
     Float64Type -> "Float64"
     Float32Type -> "Float32"
     Word8Type   -> "Word8"
-    Word32Type  -> "Word32"
+    -- TODO: we currently use Word32 for `Nat` but we should move to a new type,
+    -- at least at the user-visible level
+    Word32Type  -> "Nat"
     Word64Type  -> "Word64"
 
 instance PrettyPrec e => Pretty (PrimExpr e) where pretty = prettyFromPrettyPrec
@@ -936,12 +936,11 @@ instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
   prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
-  prettyPrec (Nat64Lit   x) = atPrec ArgPrec $ p x
-  prettyPrec (Nat32Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
+  -- print in decimal rather than hex because we use this for the `Nat` alias
+  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p x
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (PtrLit (PtrLitVal ty x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)

@@ -263,8 +263,6 @@ instance Store PtrLitVal where
 
 data LitVal = Int64Lit   Int64
             | Int32Lit   Int32
-            | Nat64Lit   Word64
-            | Nat32Lit   Word32
             | Word8Lit   Word8
             | Word32Lit  Word32
             | Word64Lit  Word64
@@ -277,7 +275,7 @@ data LitVal = Int64Lit   Int64
             | PtrLit PtrLitVal
               deriving (Show, Eq, Ord, Generic)
 
-data ScalarBaseType = Int64Type | Int32Type | Nat64Type | Nat32Type
+data ScalarBaseType = Int64Type | Int32Type
                     | Word8Type | Word32Type | Word64Type
                     | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
@@ -293,8 +291,6 @@ sizeOf :: BaseType -> Int
 sizeOf t = case t of
   Scalar Int64Type   -> 8
   Scalar Int32Type   -> 4
-  Scalar Nat64Type   -> 8
-  Scalar Nat32Type   -> 4
   Scalar Word8Type   -> 1
   Scalar Word32Type  -> 4
   Scalar Word64Type  -> 8
@@ -309,9 +305,9 @@ getIntLit :: LitVal -> Int
 getIntLit l = case l of
   Int64Lit i -> fromIntegral i
   Int32Lit i -> fromIntegral i
-  Nat64Lit i -> fromIntegral i
-  Nat32Lit i -> fromIntegral i
   Word8Lit  i -> fromIntegral i
+  Word32Lit  i -> fromIntegral i
+  Word64Lit  i -> fromIntegral i
   _ -> error $ "Expected an integer literal"
 
 getFloatLit :: LitVal -> Double

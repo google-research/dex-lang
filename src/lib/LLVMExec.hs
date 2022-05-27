@@ -303,8 +303,6 @@ loadLitVal :: MonadIO m => Ptr () -> BaseType -> m LitVal
 loadLitVal ptr (Scalar ty) = liftIO case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
-  Nat64Type   -> Nat64Lit   <$> peek (castPtr ptr)
-  Nat32Type   -> Nat32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
   Word32Type  -> Word32Lit  <$> peek (castPtr ptr)
   Word64Type  -> Word64Lit  <$> peek (castPtr ptr)

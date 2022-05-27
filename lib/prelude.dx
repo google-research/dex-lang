@@ -29,9 +29,7 @@ RawPtr : Type = %Word8Ptr
 Int = Int32
 Float = Float32
 
-Nat64 = %Nat64
-Nat32 = %Nat32
-Nat = Nat32
+Nat = Word32
 
 '### Casting
 
@@ -54,12 +52,6 @@ def w32_to_w64 (x : Word32): Word64  = internal_cast _ x
 def i_to_f (x:Int) : Float = internal_cast _ x
 def i64_to_raw_ptr (x:Int64 ) : RawPtr = internal_cast _ x
 def raw_ptr_to_i64 (x:RawPtr) : Int64  = internal_cast _ x
-def i64_to_n64 (x : Int64)   : Nat64 = internal_cast _ x
-def i64_to_n32 (x : Int64)   : Nat32 = internal_cast _ x
-def i_to_n64 (x : Int)     : Nat64   = internal_cast _ x
-def i_to_n32 (x : Int)     : Nat32   = internal_cast _ x
-def n64_to_i (x : Nat64)   : Int     = internal_cast _ x
-def n32_to_i (x : Nat32)   : Int     = internal_cast _ x
 def n_to_i64 (x : Nat) : Int64 = internal_cast _ x
 def n_to_i32 (x : Nat) : Int32 = internal_cast _ x
 def n_to_w32 (x : Nat) : Word32  = internal_cast _ x
@@ -73,7 +65,7 @@ def n_to_f (x : Nat) : Float = internal_cast _ x
 def n_to_w8 (x : Nat) : Word8   = internal_cast _ x
 
 interface FromNatural a
-  from_natural : Nat64 -> a
+  from_natural : Word64 -> a
 
 instance FromNatural Float32
   from_natural = \x. internal_cast _ x
@@ -84,13 +76,10 @@ instance FromNatural Float64
 instance FromNatural Int32
   from_natural = \x. internal_cast _ x
 
-instance FromNatural Int64
+instance FromNatural Word32
   from_natural = \x. internal_cast _ x
 
-instance FromNatural Nat32
-  from_natural = \x. internal_cast _ x
-
-instance FromNatural Nat64
+instance FromNatural Word64
   from_natural = \x. x
 
 interface FromInteger a
@@ -180,14 +169,6 @@ instance Add Int32
 instance Sub Int32
   sub = \x y. %isub x y
 
-instance Add Nat32
-  add = \x y. %iadd x y
-  zero = i64_to_n32 0
-
-instance Add Nat64
-  add = \x y. %iadd x y
-  zero = i64_to_n64 0
-
 instance Add Word8
   add = \x y. %iadd x y
   zero = i_to_w8 0
@@ -197,8 +178,7 @@ instance Sub Word8
 instance Add Word32
   add = \x y. %iadd x y
   zero = i_to_w32 0
-instance Sub Word32
-  sub = \x y. %isub x y
+-- XXX: we don't implement `Sub Word32` because we use `Word32` as `Nat`
 
 instance Add Word64
   add = \x y. %iadd x y
@@ -244,17 +224,17 @@ instance Mul Int32
   mul = \x y. %imul x y
   one = i_to_i32 1
 
-instance Mul Nat64
-  mul = \x y. %imul x y
-  one = i_to_n64 1
-
-instance Mul Nat32
-  mul = \x y. %imul x y
-  one = i_to_n32 1
-
 instance Mul Word8
   mul = \x y. %imul x y
   one = i_to_w8 1
+
+instance Mul Word32
+  mul = \x y. %imul x y
+  one = i_to_w32 1
+
+instance Mul Word64
+  mul = \x y. %imul x y
+  one = i_to_w64 1
 
 instance Mul Unit
   mul = \x y. ()
@@ -279,15 +259,15 @@ instance Integral Int32
   idiv = \x y. %idiv x y
   rem  = \x y. %irem x y
 
-instance Integral Nat64
-  idiv = \x y. %idiv x y
-  rem  = \x y. %irem x y
-
-instance Integral Nat32
-  idiv = \x y. %idiv x y
-  rem  = \x y. %irem x y
-
 instance Integral Word8
+  idiv = \x y.  %idiv x y
+  rem  = \x y.  %irem x y
+
+instance Integral Word32
+  idiv = \x y.  %idiv x y
+  rem  = \x y.  %irem x y
+
+instance Integral Word64
   idiv = \x y.  %idiv x y
   rem  = \x y.  %irem x y
 
@@ -752,13 +732,13 @@ instance Eq Int64
 instance Eq Int32
   (==) = \x y. w8_to_b $ %ieq x y
 
-instance Eq Nat64
-  (==) = \x y. w8_to_b $ %ieq x y
-
-instance Eq Nat32
-  (==) = \x y. w8_to_b $ %ieq x y
-
 instance Eq Word8
+  (==) = \x y. w8_to_b $ %ieq x y
+
+instance Eq Word32
+  (==) = \x y. w8_to_b $ %ieq x y
+
+instance Eq Word64
   (==) = \x y. w8_to_b $ %ieq x y
 
 instance Eq Bool
@@ -786,15 +766,15 @@ instance Ord Int32
   (>) = \x y. w8_to_b $ %igt x y
   (<) = \x y. w8_to_b $ %ilt x y
 
-instance Ord Nat64
-  (>) = \x y. w8_to_b $ %igt x y
-  (<) = \x y. w8_to_b $ %ilt x y
-
-instance Ord Nat32
-  (>) = \x y. w8_to_b $ %igt x y
-  (<) = \x y. w8_to_b $ %ilt x y
-
 instance Ord Word8
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
+
+instance Ord Word32
+  (>) = \x y. w8_to_b $ %igt x y
+  (<) = \x y. w8_to_b $ %ilt x y
+
+instance Ord Word64
   (>) = \x y. w8_to_b $ %igt x y
   (<) = \x y. w8_to_b $ %ilt x y
 
@@ -969,9 +949,9 @@ instance Storable Int32
   load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Int32Ptr ptr)
   storage_size = 4
 
-instance Storable Nat32
-  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Nat32Ptr ptr) x
-  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Nat32Ptr ptr)
+instance Storable Word32
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Word32Ptr ptr) x
+  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Word32Ptr ptr)
   storage_size = 4
 
 instance Storable Float32
@@ -1415,36 +1395,35 @@ interface Show a
 instance Show String
   show = id
 
-foreign "showNat32" showNat32 : Nat32 -> {IO} (Nat32 & RawPtr)
+foreign "showNat32" showNat32 : Nat -> {IO} (Nat & RawPtr)
 
-instance Show Nat32
+instance Show Nat
   show = \x. unsafe_io do
     (n, ptr) = showNat32 x
     string_from_char_ptr n $ MkPtr ptr
 
-
-foreign "showInt32" showInt32 : Int32 -> {IO} (Nat32 & RawPtr)
+foreign "showInt32" showInt32 : Int32 -> {IO} (Nat & RawPtr)
 
 instance Show Int32
   show = \x. unsafe_io do
     (n, ptr) = showInt32 x
     string_from_char_ptr n $ MkPtr ptr
 
-foreign "showInt64" showInt64 : Int64 -> {IO} (Nat32 & RawPtr)
+foreign "showInt64" showInt64 : Int64 -> {IO} (Nat & RawPtr)
 
 instance Show Int64
   show = \x. unsafe_io do
     (n, ptr) = showInt64 x
     string_from_char_ptr n $ MkPtr ptr
 
-foreign "showFloat32" showFloat32 : Float32 -> {IO} (Nat32 & RawPtr)
+foreign "showFloat32" showFloat32 : Float32 -> {IO} (Nat & RawPtr)
 
 instance Show Float32
   show = \x. unsafe_io do
     (n, ptr) = showFloat32 x
     string_from_char_ptr n $ MkPtr ptr
 
-foreign "showFloat64" showFloat64 : Float64 -> {IO} (Nat32 & RawPtr)
+foreign "showFloat64" showFloat64 : Float64 -> {IO} (Nat & RawPtr)
 
 instance Show Float64
   show = \x. unsafe_io do
@@ -1785,7 +1764,7 @@ def threefry_2x32 (k:Word64) (count:Word64) : Word64 =
 
   (w32_to_w64 x .<<. 32) .|. (w32_to_w64 y)
 
-def hash (x:Key) (y:Nat32) : Key =
+def hash (x:Key) (y:Nat) : Key =
   y64 = n_to_w64 y
   threefry_2x32 x y64
 def new_key (x:Nat) : Key = hash (n_to_w64 0) x
@@ -1852,7 +1831,7 @@ instance Arbitrary Float32
 instance Arbitrary Int32
   arb = \key. f_to_i $ randn key * 5.0
 
-instance Arbitrary Nat32
+instance Arbitrary Word32
   arb = \key. f_to_n $ randn key * 5.0
 
 instance {n a} [Arbitrary a] Arbitrary (n=>a)

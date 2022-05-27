@@ -101,7 +101,8 @@ prettyVal val = case val of
     elems <- forM atoms \atom -> do
       case atom of
         Con (Lit (Word8Lit  c)) -> return $ "'" ++ showChar (toEnum @Char $ fromIntegral c) "" ++ "'"
-        Con (Lit (Word32Lit c)) -> return $ "0x" ++ showHex c ""
+        -- print in decimal rather than hex because we use this for the `Nat` alias
+        Con (Lit (Word32Lit c)) -> return $ show c
         Con (Lit (Word64Lit c)) -> return $ "0x" ++ showHex c ""
         _ -> pprintVal atom
     TabTy b _ <- getType val

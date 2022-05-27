@@ -53,8 +53,6 @@ instance Storable CAtom where
                    4 -> Float32Lit <$> val 2
                    5 -> Word32Lit  <$> val 2
                    6 -> Word64Lit  <$> val 2
-                   7 -> Nat64Lit   <$> val 2
-                   8 -> Nat32Lit   <$> val 2
                    _ -> error "Invalid tag"
       _ -> error "Invalid tag"
     where
@@ -71,8 +69,6 @@ instance Storable CAtom where
         Float32Lit v -> val @Word64 1 4 >> val 2 v
         Word32Lit  v -> val @Word64 1 5 >> val 2 v
         Word64Lit  v -> val @Word64 1 6 >> val 2 v
-        Nat64Lit   v -> val @Word64 1 7 >> val 2 v
-        Nat32Lit   v -> val @Word64 1 8 >> val 2 v
         PtrLit     _ -> error "Unsupported"
     CRectArray _ _ _ -> error "Unsupported"
     where

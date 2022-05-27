@@ -145,8 +145,6 @@ litType :: LitVal -> BaseType
 litType v = case v of
   Int64Lit   _ -> Scalar Int64Type
   Int32Lit   _ -> Scalar Int32Type
-  Nat64Lit   _ -> Scalar Nat64Type
-  Nat32Lit   _ -> Scalar Nat32Type
   Word8Lit   _ -> Scalar Word8Type
   Word32Lit  _ -> Scalar Word32Type
   Word64Lit  _ -> Scalar Word64Type
