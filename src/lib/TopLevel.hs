@@ -28,6 +28,8 @@ import qualified Data.Set        as S
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
+import System.Environment qualified
+import System.IO.Unsafe (unsafePerformIO)
 import System.IO (stderr, hPutStrLn, Handle)
 import System.IO.Error (isDoesNotExistError)
 
@@ -52,6 +54,7 @@ import CheckType (checkTypesM)
 import SourceRename
 import Inference
 import Simplify
+import Lower
 import Imp
 import JIT
 import Optimize
@@ -432,9 +435,15 @@ evalBlock typed = do
   opt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock opt
   SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
-  result <- evalBackend simp
+  lowered <- case useExperimentalLowering of
+    False -> return simp
+    True  -> lowerFullySequential simp
+  result <- evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
+
+useExperimentalLowering :: Bool
+useExperimentalLowering = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_LOWER"
 
 execUDecl :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do

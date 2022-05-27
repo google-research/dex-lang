@@ -155,6 +155,8 @@ instance PrettyPrec (Expr n) where
   prettyPrec (Op  op ) = prettyPrec op
   prettyPrec (Hof (For ann _ (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
+  prettyPrec (Hof (Seq ann _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
+    atPrec LowestPrec $ "seq" <+> pApp ann <+> pApp c <+> prettyLam (p (b:>ty) <> ".") effs body
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
 
@@ -187,12 +189,9 @@ instance Pretty (DeclBinding n) where
                                  <> hardline <> "value:" <+> p expr)
 
 instance Pretty (Decl n l) where
-  pretty decl = case decl of
-    -- This is just to reduce clutter a bit. We can comment it out when needed.
-    -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let b (DeclBinding ann ty rhs) ->
-      align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-      where annDoc = case ann of PlainLet -> mempty; _ -> pretty ann <> " "
+  pretty (Let b (DeclBinding ann ty rhs)) =
+    align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    where annDoc = case ann of PlainLet -> mempty; _ -> pretty ann <> " "
 
 instance Pretty (NaryLamExpr n) where
   pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
@@ -331,9 +330,8 @@ prettyVariant labels label value = atPrec ArgPrec $
             plabel (l, _) = p l <> "|"
 
 forStr :: ForAnn -> Doc ann
-forStr (RegularFor Fwd) = "for"
-forStr (RegularFor Rev) = "rof"
-forStr ParallelFor      = "pfor"
+forStr Fwd = "for"
+forStr Rev = "rof"
 
 instance Pretty (PiType n) where
   pretty (PiType (PiBinder b ty arr) eff body) = let
@@ -379,10 +377,15 @@ prettyLamHelper lamExpr lamType = let
                 PrettyLam PlainArrow -> "."
                 PrettyLam arr -> " " <> p arr
   (binders, effs, body) = rec lamExpr True
-  lamAnnot = case effs of
-    Pure -> ""
-    _ -> line <> "lam annotated with effects" <+> p effs
-  in align $ group $ group (nest 4 $ binders) <> group (nest 2 $ p body) <> lamAnnot
+  in prettyLam binders effs body
+
+prettyLam :: Doc ann -> EffectRow n -> Block n -> Doc ann
+prettyLam binders effs body =
+  group $ group (nest 4 $ binders) <> group (nest 2 $ p body) <> lamAnnot
+  where
+    lamAnnot = case effs of
+      Pure -> ""
+      _ -> line <> "lam annotated with effects" <+> p effs
 
 inlineLastDeclBlock :: Block n -> Abs (Nest Decl) Expr n
 inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
@@ -801,7 +804,7 @@ instance Pretty (IBinder n l)  where
   pretty (IBinder b ty) = p b <+> ":" <+> p ty
 
 instance Pretty (ImpInstr n)  where
-  pretty (IFor a n (Abs i block)) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
+  pretty (IFor a n (Abs i block)) = forStr a <+> p i <+> "<" <+> p n <>
                                       nest 4 (p block)
   pretty (IWhile body) = "while" <+> nest 2 (p body)
   pretty (ICond predicate cons alt) =
@@ -919,6 +922,9 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     VariantSplit types val -> atPrec AppPrec $
       "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
                      <+> pArg val
+    AllocDest ty -> atPrec LowestPrec $ "alloc" <+> pApp ty
+    Place r v -> atPrec LowestPrec $ pApp r <+> "r:=" <+> pApp v
+    Freeze r  -> atPrec LowestPrec $ "freeze" <+> pApp r
     _ -> prettyExprDefault $ OpExpr op
 
 prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
@@ -933,6 +939,11 @@ instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
     For ann _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
+
+instance PrettyPrec Direction where
+  prettyPrec d = atPrec ArgPrec $ case d of
+    Fwd -> "fwd"
+    Rev -> "rev"
 
 printDouble :: Double -> Doc ann
 printDouble x = p (double2Float x)

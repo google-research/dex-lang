@@ -1,3 +1,9 @@
+-- Copyright 2022 Google LLC
+--
+-- Use of this source code is governed by a BSD-style
+-- license that can be found in the LICENSE file or at
+-- https://developers.google.com/open-source/licenses/bsd
+
 module QueryType (
   getType, getTypeSubst, HasType,
   getEffects, getEffectsSubst,
@@ -488,10 +494,10 @@ getTypePrimOp op = case op of
       MExtend _ _ -> UnitTy
   IndexRef ref i -> do
     getTypeE ref >>= \case
-      RefTy h (TabTy (b:>_) eltTy) -> do
+      TC (RefType h (TabTy (b:>_) eltTy)) -> do
         i' <- substM i
         eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-        return $ RefTy h eltTy'
+        return $ TC $ RefType h eltTy'
       ty -> error $ "Not a reference to a table: " ++
                        pprint (Op op) ++ " : " ++ pprint ty
   ProjRef i ref -> do
@@ -604,6 +610,11 @@ getTypePrimOp op = case op of
     applySubst subst methodTy
   ExplicitApply _ _ -> error "shouldn't appear after inference"
   MonoLiteral _ -> error "shouldn't appear after inference"
+  AllocDest ty -> RawRefTy <$> substM ty
+  Place _ _ -> return UnitTy
+  Freeze ref -> getTypeE ref >>= \case
+    RawRefTy ty -> return ty
+    ty -> error $ "Not a reference type: " ++ pprint ty
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
@@ -635,7 +646,7 @@ labeledRowDifference' (Ext (LabeledItems items) rest)
 getTypePrimHof :: PrimHof (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixTyAtom f -> do
-    Pi (PiType (PiBinder b _ PlainArrow) _ eltTy) <- getTypeE f
+    Pi (PiType (PiBinder b _ _) _ eltTy) <- getTypeE f
     IxTy ixTy <- substM ixTyAtom
     return $ TabTy (b:>ixTy) eltTy
   While _ -> return UnitTy
@@ -662,6 +673,8 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   CatchException f -> do
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ MaybeTy $ ignoreHoistFailure $ hoist b resultTy
+  Seq _ _ cinit _ -> getTypeE cinit
+
 
 getTypeRWSAction :: Atom i -> TypeQueryM i o (Type o, Type o)
 getTypeRWSAction f = do
@@ -736,6 +749,7 @@ exprEffects expr = case expr of
     CatchException f -> do
       effs <- functionEffs f
       return $ deleteEff ExceptionEffect effs
+    Seq _ _ _ f -> functionEffs f
   Case _ _ _ effs -> substM effs
 
 instance HasEffectsE Block where

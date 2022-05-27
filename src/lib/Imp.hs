@@ -503,6 +503,9 @@ toImpOp maybeDest op = case op of
       SumCon    _ tag payload -> Variant labs "c" tag payload
       SumAsProd _ tag payload -> Con $ SumAsProd resultTy tag payload
       _ -> error $ "Not a sum type: " ++ pprint (Con c)
+  AllocDest ty  -> returnVal =<< alloc ty
+  Place ref val -> copyAtom ref val >> returnVal UnitVal
+  Freeze ref -> destToAtom ref
   -- Listing branches that should be dead helps GHC cut down on code size.
   ThrowException _        -> unsupported
   RecordCons _ _          -> unsupported
@@ -528,7 +531,7 @@ toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (Atom i) -> SubstImpM i o (Atom
 toImpHof maybeDest hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
-    For (RegularFor d) (IxTy ixTy) (Lam (LamExpr b body)) -> do
+    For d (IxTy ixTy) (Lam (LamExpr b body)) -> do
       ixTy' <- substM ixTy
       n <- indexSetSizeImp ixTy'
       dest <- allocDest maybeDest resultTy
@@ -571,6 +574,17 @@ toImpHof maybeDest hof = do
     RunIO (Lam (LamExpr b body)) ->
       extendSubst (b@>SubstVal UnitVal) $
         translateBlock maybeDest body
+    Seq d (IxTy ixTy) carry (Lam (LamExpr b body)) -> do
+      ixTy' <- substM ixTy
+      carry' <- substM carry
+      n <- indexSetSizeImp ixTy'
+      emitLoop (getNameHint b) d n \i -> do
+        idx <- unsafeFromOrdinalImp (sink ixTy') i
+        void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
+          translateBlock Nothing body
+      case maybeDest of
+        Nothing -> return carry'
+        Just _  -> error "Unexpected dest"
     _ -> error $ "not implemented: " ++ pprint hof
 
 -- === Destination builder monad ===
