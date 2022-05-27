@@ -47,7 +47,7 @@ class JITTest(unittest.TestCase):
                                 np.sum,
                                 [(np.arange(10, dtype=np.float32),)])
 
-  test_scalar_array = expr_test(r"\x:Int. for i:(Fin 10). x + ordinal i",
+  test_scalar_array = expr_test(r"\x:Int. for i:(Fin 10). x + n_to_i (ordinal i)",
                                 lambda x: x + np.arange(10, dtype=np.int32),
                                 [(i,) for i in range(5)])
 
