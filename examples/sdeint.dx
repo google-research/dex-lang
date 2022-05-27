@@ -1,22 +1,16 @@
-' Adaptive-Step Stochastic Differential Equation Solvers
+'# Adaptive Stochastic Differential Equation Solvers
 
-import plot
-
-interface HasStandardNormal a:Type
-  randNormal : Key -> a
-
-instance HasStandardNormal Float32
-  randNormal = randn
-instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
-  randNormal = \key.
-    for i. randNormal (ixkey key i)
+import linalg
+import linearmaps
 
 UnitInterval = Float
 Time = Float
 
--- Should these go in the prelude?
+
+'### Utility functions
+
 def linear_interp {a} [VSpace a]
-    (z0: a) (z1: a) (t0: Time) (t1: Time) (t: Time) : a =
+    (z0: a) (z1: a) (t0: Float) (t1: Float) (t: Float) : a =
   select (t1 == t0) z0 (z0 + ((t - t0) / (t1 - t0)) .* (z1 - z0))
 
 def norm {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
@@ -28,93 +22,126 @@ def prepend {v m} (first: v) (seq: m=>v) : (Unit | m )=>v =
     Left _  -> first
     Right i -> seq.i
 
-def bbIter {v} [VSpace v, HasStandardNormal v]
+-- This typeclass will be obsolete once the `Basis` typeclass can be written.
+interface HasStandardNormal a:Type
+  randNormal : Key -> a
+
+instance HasStandardNormal Float32
+  randNormal = randn
+instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+  randNormal = \key.
+    for i. randNormal (ixkey key i)
+
+
+
+'## Virtual Brownian Tree
+Memory-less sampler of Brownian motion.  Algorithm from
+[Scalable Gradients for Stochastic Differential Equations](https://arxiv.org/abs/2001.01328)
+
+def brownian_bridge_iter {v} [VSpace v, HasStandardNormal v]
   ((key, y, sigma, t):(Key & v & Float & UnitInterval)) :
     (Key & v & Float & UnitInterval) =
   -- Descend one step in a virtual Brownian tree.
-  -- Algorithm from "Scalable Gradients for Stochastic Differential Equations"
-  -- by Xuechen Li, Ting-Kam Leonard Wong, Ricky T. Q. Chen, David Duvenaud
-  -- AISTATS 2020, https://arxiv.org/abs/2001.01328
-  --\(key, y, sigma, t).
     [kDraw, key_left, key_right] = split_key key
     t' = abs (t - 0.5)
     y' = sigma * (0.5 - t') .* randNormal kDraw
     key' = select (t > 0.5) key_left key_right
     (key', y + y', sigma / sqrt 2.0, t' * 2.0)
 
-def sampleUnitBM {v} [VSpace v, HasStandardNormal v]
+def sample_unit_brownian_motion {v} [VSpace v, HasStandardNormal v]
   (key:Key) (t:UnitInterval) : v =
   -- Brownian motion in interval (0.0, 1.0), where y(0.0) = 0.0
-    (_, y, _, _) = fold (key, zero, 1.0, t) \i:(Fin 14). bbIter
+    (_, y, _, _) = fold (key, zero, 1.0, t) \i:(Fin 14). brownian_bridge_iter
     y
 
-def scaleBM {v} [VSpace v] (f:Time -> v) (t0:Time) (t1:Time) (t:Time) : v =
+def scale_brownian_motion {v} [VSpace v] (f:Time -> v) (t0:Time) (t1:Time) (t:Time) : v =
   (sqrt (t1 - t0)) .* (f ((t - t0) / (t1 - t0)))
 
-def sampleBM {v} [VSpace v, HasStandardNormal v]
+def sample_Brownian_motion {v} [VSpace v, HasStandardNormal v]
   (key:Key) (t0:Time) (t1:Time) (t:Time) : v =
-  curriedBM = sampleUnitBM key
-  scaleBM curriedBM t0 t1 t
-
-xs = linspace (Fin 1000) 0.0 1.0
-ys:(Fin 1000)=>Float = for i. ((sampleUnitBM (new_key 0)) xs.i)
---:plot zip xs ys
-:html show_plot $ xy_plot xs ys
+  scale_brownian_motion (sample_unit_brownian_motion key) t0 t1 t
 
 
---data DiffusionFunc v:Type =
---  HasProd (v->v->Time->v)
---  ManualProd (v->Time->v)
+
+'## SDE Types
+
+--data Time = MkTime Float
+
+def Drift (v:Type) [VSpace v] : Type = v->Time->v
+def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type =
+  v->Time->m
+def SDE (m:Type) (v:Type) [LinearEndo m v] : Type =
+  (Drift v & Diffusion m v)
+
+def radon_nikodym {m s} [InnerProd s, LinearEndo m s]
+  (drift1:Drift s)
+  (drift2:Drift s)
+  (diffusion:Diffusion m s)
+  (state:s) (t:Time) : Float =
+  -- By Girsanov's theorem, this gives a simple Monte Carlo estimator
+  -- of the (loosely speaking) instantaneous KL divergence between
+  -- two SDEs that share a diffusion function.
+  difference = (drift1 state t) - (drift2 state t)
+  cur_diffusion = diffusion state t
+  a = solve' cur_diffusion difference
+  0.5 * inner_prod a a
 
 
-data GenDiffusionProd v:Type =
-  HasProd (v->v->Time->v)
-  ManualProd (v->Time->v)
+'### Stationary SDEs
+From Equation 3, Section 2.1 of ["A Complete Recipe for Stochastic Gradient
+MCMC"](https://arxiv.org/pdf/1506.04696.pdf):
+Every SDE with a stationary distribution can be parameterized
+by:
+ 1. A state-dependent energy function
+ 2. A state-dependent skew-symmetric matrix
+ 3. A state-dependent diffusion matrix
 
---def evaldiffprod (f:GenDiffusionProd v) (state:v) (time:Time) (noise:v) : v =
---  case v of
+'The function below converts these matrices into the drift and diffusion which,
+if followed, will converge to a stationary distribution whose marginal
+  log-density is equal to the negative energy function (plus a constant).
 
--- Drift and diffusion product.
--- DiffusionProd takes state and noise and returns dstate/dtime
-def Drift (v:Type)         : Type = v->Time->v
-def DiagDiffusion (v:Type) : Type = v->Time->v
-def DiffusionProd (v:Type) : Type = v->Time->v->v
-def SDE (v:Type)           : Type = (Drift v & DiffusionProd v )
+def StationaryDiffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->m
+def NegEnergyFunc (v:Type) : Type = v->Float
+def SkewSymmetricFunc (n:Type) (v:Type) [Ix n] : Type =
+  v->(i:n=>(..<i)=>Float)
+def StationarySDEParts (n:Type) (v:Type)
+    [Ix n, LinearEndo n v, VSpace v] : Type =
+  (NegEnergyFunc v & SkewSymmetricFunc n v & StationaryDiffusion n v)
 
--- Idea: use typeclasses to automatically derive products?
-
-def SkewSymmetricProd (v:Type) : Type = v->Time->v->v  -- How to express matrix?
-def NegEnergyFunc (v:Type) : Type = v->Time->Float
-def StationarySDE (v:Type) : Type = (NegEnergyFunc v & SkewSymmetricProd v & DiffusionProd v)
-
-def stationarySDEPartsToSDE {v} [Mul v, VSpace v] (sta:StationarySDE v) : SDE v =
-  -- From Section 2.1 of "A Complete Recipe for Stochastic Gradient MCMC"
-  -- https://arxiv.org/pdf/1506.04696.pdf
-  (negEnergyFunc, skewSymmetricProd, diffusionProd) = sta
-  varProd = \state time vec.
-    0.5 .* (diffusionProd state time $ diffusionProd state time vec)
+def stationary_SDE_parts_to_SDE {n v}
+  [Ix n, VSpace v, Mul v, LinearEndo n (n=>v)]
+  ((neg_energy_func, skew_symm_map, diffusion_func):StationarySDEParts n (n=>v)) :
+    (SDE n (n=>v)) =
   drift = \state time.
-    curNE = \state. negEnergyFunc state time
-    negenergygrad = (grad curNE) state
-    t1 = (skewSymmetricProd + varProd) state time negenergygrad
-    gammapart = \state. (skewSymmetricProd + varProd) state time one
-    t3 = jvp gammapart state one
-    t1 + t3
-  (drift, diffusionProd)
 
-def radonNikodym (drift1: Drift Float)
-                 (drift2: Drift Float)
-                 (diffusion: DiagDiffusion Float)
-                 (state: Float) (t: Time) : Float =
-  -- Dynamics of simple Monte Carlo estimatr of KL divergence between
-  -- two SDEs that share a diffusion function. (If not, divergence is infinite)
-  -- Todo: generalize to multivariate.
-  (sq ((drift1 state t) - (drift2 state t))) / (diffusion state t)
+    diffusion_prod = \vec.  -- Square the root of the covariance matrix
+      cur_diffusion_root = diffusion_func state
+      0.5 .* (apply cur_diffusion_root (apply cur_diffusion_root vec))
+  
+    neg_energy_grad = (grad neg_energy_func) state
 
-def ito_euler_step {v} [VSpace v] (sde: SDE v) (z:v)
+    skew_term = skew_symmetric_prod (skew_symm_map state) neg_energy_grad
+    diff_term = diffusion_prod neg_energy_grad
+
+    gammapart = \state.
+      skew_term' = skew_symmetric_prod (skew_symm_map state) one
+      diff_term' = diffusion_prod one
+      skew_term' + diff_term'
+    gamma_term = jvp gammapart state one
+    
+    skew_term + diff_term + gamma_term
+  diffusion = \state time. diffusion_func state
+  (drift, diffusion)
+
+
+
+
+'## SDE Solvers
+
+def ito_euler_step {v m} [LinearEndo m v] (sde: SDE m v) (z:v)
   (t:Time) (dt:Time) (noise:v) : (v & Time) =
   (drift, diffprod) = sde
-  new_z = z + dt .* (drift z t) + (diffprod z t noise)
+  new_z = z + dt .* (drift z t) + apply (diffprod z t) noise
   (new_z, t + dt)
 
 --def ito_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
@@ -122,20 +149,20 @@ def ito_euler_step {v} [VSpace v] (sde: SDE v) (z:v)
 --    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
 --           + 0.5 * gdg_prod(y, t, args, noise**2 - t_delta)
 
-def ito_milstein_step {v} [VSpace v] (sde: SDE v) (z:v)
+def ito_milstein_step {v m} [LinearEndo m v] (sde: SDE m v) (z:v)
   (t:Time) (dt:Time) (noise:v) : (v & Time) =
   -- Equation 20 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf  
   (drift, diffprod) = sde
   --y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
   --         + 0.5 * gdg_prod(y, t, args, noise**2 - t_delta)
-  new_z = z + dt .* (drift z t) + 0.5 .* (diffprod z t (sq noise))
+  new_z = z + dt .* (drift z t) + 0.5 .* apply (diffprod z t) (sq noise)
   (new_z, t + dt)
 
 
-def strat_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
-    # Equation 21 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf
-    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
-           + 0.5 * gdg_prod(y, t, args, noise**2)
+--def strat_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
+--    # Equation 21 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf
+--    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
+--           + 0.5 * gdg_prod(y, t, args, noise**2)
 
 
 
@@ -151,7 +178,7 @@ def sdeint {d n} (sde: SDE (d=>Float))
 
   lasttime = maximum (prepend t0 eval_times)
   -- Todo: think about how to extend the BM beyond this interval later.
-  noisefunc = \t. sampleBM key t0 lasttime t
+  noisefunc = \t. sample_Brownian_motion key t0 lasttime t
 
   integrate_to_next_time = \iter init_carry.
     target_t = eval_times.iter
@@ -225,7 +252,7 @@ def adaptive_sdeint {d n} (sde: SDE (d=>Float))
 
   lasttime = maximum (prepend t0 times)
   -- Todo: think about how to extend the BM beyond this interval later.
-  noisefunc = \t. sampleBM key t0 lasttime t
+  noisefunc = \t. sample_Brownian_motion key t0 lasttime t
 
   integrate_to_next_time = \iter init_carry.
     target_t = times.iter
@@ -269,6 +296,18 @@ def adaptive_sdeint {d n} (sde: SDE (d=>Float))
   snd $ scan init_carry integrate_to_next_time
 
 
+'# Tests
+
+import plot
+
+'## Virtual Brownian Tree Tests
+xs = linspace (Fin 10) 0.0 1.0
+ys:(Fin 10)=>Float = for i. ((sample_unit_brownian_motion (new_key 0)) xs.i)
+--:plot zip xs ys
+:html show_plot $ xy_plot xs ys
+
+
+
 
 def drift {v} (z: v=>Float) (t:Time): v=>Float = -z
 
@@ -278,7 +317,7 @@ def diffprod {v} (z:v=>Float) (t:Time) (noise:v=>Float): v=>Float = for i. noise
 
 z0 = [1.0]
 t0 = 0.1
-times = linspace (Fin 1000) 0.2 1.9
+times = linspace (Fin 10) 0.2 1.9
 key = new_key 0
 
 %time
