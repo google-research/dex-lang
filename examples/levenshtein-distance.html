@@ -1,0 +1,438 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX, if available.
+    // Skip rendering if KaTeX is unavailable.
+    if (typeof renderMathInElement == &#39;undefined&#39;) {
+        return;
+    }
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Levenshtein Distance</h1>
+</div></div><div class="cell"><div class="prose-block"><p>May 13, 2022</p>
+</div></div><div class="cell"><div class="prose-block"><p>The Levenshtein distance is the minimum edit distance between two
+sequences, counting insertions, deletions, and substitutions each as 1.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Let's see how well Dex handles the conventional dynamic program for
+this: For each pair of prefixes of the input strings, the Levenshtein
+distance between those prefixes is the minimum obtainable from the
+prefixes one shorter by inserting, deleting, or substituting an
+element.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Here is the helper that builds the dynamic program table.  Dex's
+flexible index sets let us encode the fact that the table is 1 larger
+in each dimension than the inputs.  By capturing the relationship
+statically we avoid both programmer off-by-one errors and runtime array
+bounds checks.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein_table
+    {n m a}
+    [<span class="type-name">Eq</span> a]
+    (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a)
+    <span class="symbol">:</span> (<span class="type-name">Post</span> n <span class="symbol">=&gt;</span> <span class="type-name">Post</span> m <span class="symbol">=&gt;</span> <span class="type-name">Int</span>) <span class="symbol">=</span>
+  yield_state (<span class="keyword">for</span> _ _<span class="symbol">.</span> <span class="symbol">-</span>1) <span class="symbol">\</span>tab<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Post</span> n)<span class="symbol">.</span> tab<span class="symbol">!</span>i<span class="symbol">!</span>first_ix <span class="symbol">:=</span> ordinal i
+    <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">Post</span> m)<span class="symbol">.</span> tab<span class="symbol">!</span>first_ix<span class="symbol">!</span>j <span class="symbol">:=</span> ordinal j
+    <span class="keyword">for</span> i<span class="command">:n</span> j<span class="command">:m</span><span class="symbol">.</span>
+      subst_cost <span class="symbol">=</span> <span class="keyword">if</span> xs<span class="symbol">.</span>i <span class="symbol">==</span> ys<span class="symbol">.</span>j <span class="keyword">then</span> 0 <span class="keyword">else</span> 1
+      d_subst  <span class="symbol">=</span> get tab<span class="symbol">!</span>(left_post  i)<span class="symbol">!</span>(left_post  j) <span class="symbol">+</span> subst_cost
+      d_delete <span class="symbol">=</span> get tab<span class="symbol">!</span>(left_post  i)<span class="symbol">!</span>(right_post j) <span class="symbol">+</span> 1
+      d_insert <span class="symbol">=</span> get tab<span class="symbol">!</span>(right_post i)<span class="symbol">!</span>(left_post  j) <span class="symbol">+</span> 1
+      tab<span class="symbol">!</span>(right_post i)<span class="symbol">!</span>(right_post j) <span class="symbol">:=</span>
+        minimum [d_subst<span class="symbol">,</span> d_delete<span class="symbol">,</span> d_insert]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">%time
+levenshtein_table [&#39;k&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;e&#39;<span class="symbol">,</span> &#39;n&#39;] [&#39;s&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;n&#39;<span class="symbol">,</span> &#39;g&#39;]
+</div><div class="result-block">[ [0, 1, 2, 3, 4, 5, 6, 7]@(Post (Fin 7))
+, [1, 1, 2, 3, 4, 5, 6, 7]@(Post (Fin 7))
+, [2, 2, 1, 2, 3, 4, 5, 6]@(Post (Fin 7))
+, [3, 3, 2, 1, 2, 3, 4, 5]@(Post (Fin 7))
+, [4, 4, 3, 2, 1, 2, 3, 4]@(Post (Fin 7))
+, [5, 5, 4, 3, 2, 2, 3, 4]@(Post (Fin 7))
+, [6, 6, 5, 4, 3, 3, 2, 3]@(Post (Fin 7)) ]@(Post (Fin 6))</div><div class="result-block">
+Compile time: 123.285 ms
+Run time:     10.300 us </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The actual distance is of course just the last element of the table.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein {n m a} [<span class="type-name">Eq</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
+  (levenshtein_table xs ys)<span class="symbol">.</span>last_ix<span class="symbol">.</span>last_ix
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">%time
+levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100)
+</div><div class="result-block">0</div><div class="result-block">
+Compile time: 82.030 ms
+Run time:     51.800 us </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Speed</h2>
+</div></div><div class="cell"><div class="prose-block"><p>To check that we don't embarrass ourselves on performance, let's run
+the Sountsov benchmark: Compute Levenshtein distances for all pairs of
+<code>arange</code> arrays of size up to 100.</p>
+</div></div><div class="cell"><div class="code-block">%bench &quot;<span class="type-name">Sountsov</span> <span class="type-name">Benchmark</span>&quot;
+answer <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 100)<span class="symbol">.</span>
+  <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">Fin</span> 100)<span class="symbol">.</span>
+    iint <span class="symbol">=</span> ordinal i
+    jint <span class="symbol">=</span> ordinal j
+    levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> iint) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> jint)
+</div><div class="result-block">
+Sountsov Benchmark
+Compile time: 111.000 ms
+Run time:     148.966 ms 	(based on 14 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
+</div><div class="result-block">333300</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The straightforward C++ program for this takes about 35ms on my
+workstation, so Dex performance is in the right ballpark.  (And we
+know several optimizations that should let us close the gap.)  As of
+this writing, native JAX takes 15 minutes, due to tracing and
+compiling the body 10,000 times (once for each pair of input sizes).</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Real Data</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Just for fun, we can make a crude spelling correcter out of this
+distance function on words:</p>
+</div></div><div class="cell"><div class="code-block">(<span class="type-name">AsList</span> ct words) <span class="symbol">=</span> lines <span class="symbol">$</span> unsafe_io <span class="keyword">do</span> read_file &quot;<span class="symbol">/</span>usr<span class="symbol">/</span>share<span class="symbol">/</span>dict<span class="symbol">/</span>words&quot;
+</div><div class="result-block">Unable to open file: /usr/share/dict/words</div><div class="err-block">Runtime error</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">ct
+</div><div class="err-block">Error in (earlier) definition of variable: ct
+
+ct
+^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> closest_word (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  (<span class="type-name">AsList</span> _ s&#39;) <span class="symbol">=</span> s
+  fst <span class="symbol">$</span> minimum_by snd <span class="keyword">for</span> i<span class="symbol">.</span>
+    (<span class="type-name">AsList</span> _ word) <span class="symbol">=</span> words<span class="symbol">.</span>i
+    (words<span class="symbol">.</span>i<span class="symbol">,</span> levenshtein word s&#39;)
+</div><div class="err-block">Error in (earlier) definition of variable: words
+
+    (AsList _ word) = words.i
+                      ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">%time
+closest_word &quot;hello&quot;
+</div><div class="result-block">
+Compile time: 52.700 us
+Run time:     0.000 ns </div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;hello&quot;
+^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">closest_word &quot;kitttens&quot;
+</div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;kitttens&quot;
+^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">closest_word &quot;functor&quot;
+</div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;functor&quot;
+^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">closest_word &quot;applicative&quot;
+</div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;applicative&quot;
+^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">closest_word &quot;monoids&quot;
+</div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;monoids&quot;
+^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">closest_word &quot;semigroup&quot;
+</div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;semigroup&quot;
+^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">closest_word &quot;paralllel&quot;
+</div><div class="err-block">Error in (earlier) definition of variable: closest_word
+
+closest_word &quot;paralllel&quot;
+^^^^^^^^^^^^^
+</div></div></div></body></html>
