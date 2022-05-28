@@ -344,7 +344,7 @@ most implementations.</p>
   <span class="comment">-- Returns element at 0 if less than zero.
 </span>  <span class="comment">-- Ideally we could have an alternative
 </span>  <span class="comment">-- to Fin that just clips the index at its bounds.
-</span>  from_ordinal n (select (i <span class="symbol">&lt;</span> 0) 0 i)
+</span>  from_ordinal n <span class="symbol">$</span> unsafe_i_to_n (select (i <span class="symbol">&lt;</span> 0) 0 i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logaddexp (x<span class="symbol">:</span><span class="type-name">Float</span>) (y<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   m <span class="symbol">=</span> max x y
@@ -375,7 +375,7 @@ most implementations.</p>
         <span class="type-name">False</span> <span class="symbol">-&gt;</span> log 0<span class="symbol">.</span>000001
 
   same_as_last <span class="symbol">=</span> <span class="symbol">\</span>ilabels s<span class="symbol">.</span>
-    o <span class="symbol">=</span> ordinal s
+    o <span class="symbol">=</span> n_to_i <span class="symbol">$</span> ordinal s
     select (o <span class="symbol">&gt;=</span> 2) (ilabels<span class="symbol">.</span>s <span class="symbol">==</span> ilabels<span class="symbol">.</span>(clipidx _ (o <span class="symbol">-</span> 2))) <span class="type-name">False</span>
 
   safe_idx <span class="symbol">=</span> <span class="symbol">\</span>prev s<span class="symbol">.</span>
@@ -388,8 +388,8 @@ most implementations.</p>
       <span class="type-name">True</span> <span class="symbol">-&gt;</span> log_prob_seq_t0
       <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="keyword">for</span> s<span class="symbol">.</span>
         cond <span class="symbol">=</span> ilabels<span class="symbol">.</span>s <span class="symbol">==</span> blank <span class="symbol">||</span> same_as_last ilabels s
-        labar <span class="symbol">=</span> logaddexp prev<span class="symbol">.</span>s (safe_idx prev ((ordinal s) <span class="symbol">-</span> 1))
-        other <span class="symbol">=</span> logaddexp labar  (safe_idx prev ((ordinal s) <span class="symbol">-</span> 2))
+        labar <span class="symbol">=</span> logaddexp prev<span class="symbol">.</span>s (safe_idx prev (n_to_i (ordinal s) <span class="symbol">-</span> 1))
+        other <span class="symbol">=</span> logaddexp labar  (safe_idx prev (n_to_i (ordinal s) <span class="symbol">-</span> 2))
         ans <span class="symbol">=</span> select cond labar other
         ans <span class="symbol">+</span> normalized_logits<span class="symbol">.</span>t<span class="symbol">.</span>(ilabels<span class="symbol">.</span>s)
 
@@ -397,15 +397,16 @@ most implementations.</p>
 
   <span class="comment">-- Todo: nicer way to get last two elements of log_prob_seq_final.
 </span>  seq_length <span class="symbol">=</span> 1 <span class="symbol">+</span> size (position <span class="symbol">&amp;</span> (<span class="type-name">Fin</span> 2))
-  endlabel <span class="symbol">=</span> log_prob_seq_final<span class="symbol">.</span>((seq_length <span class="symbol">-</span> 2)<span class="symbol">@</span>_)
-  endspace <span class="symbol">=</span> log_prob_seq_final<span class="symbol">.</span>((seq_length <span class="symbol">-</span> 1)<span class="symbol">@</span>_)
+  endlabel <span class="symbol">=</span> log_prob_seq_final<span class="symbol">.</span>((unsafe_nat_diff seq_length 2)<span class="symbol">@</span>_)
+  endspace <span class="symbol">=</span> log_prob_seq_final<span class="symbol">.</span>((unsafe_nat_diff seq_length 1)<span class="symbol">@</span>_)
   logaddexp endlabel endspace
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Demo</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randIdxNoZero (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
   unif <span class="symbol">=</span> rand k
-  from_ordinal n <span class="symbol">$</span> (1 <span class="symbol">+</span> (<span class="type-name">FToI</span> (floor ( unif <span class="symbol">*</span> i_to_f ((size n) <span class="symbol">-</span> 1)))))
+  from_ordinal n <span class="symbol">$</span> unsafe_i_to_n <span class="symbol">$</span>
+    (1 <span class="symbol">+</span> (f_to_i (floor ( unif <span class="symbol">*</span> i_to_f ((n_to_i <span class="symbol">$</span> size n) <span class="symbol">-</span> 1)))))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Vocab</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 6
 </div></div><div class="cell"><div class="code-block">position <span class="symbol">=</span> <span class="type-name">Fin</span> 3

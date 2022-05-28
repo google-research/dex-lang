@@ -319,17 +319,17 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: make `Word8` an index set instead of using `Fin 256`
 </span></div></div><div class="cell"><div class="code-block">decoding_table <span class="symbol">:</span> <span class="type-name">Fin</span> 256 <span class="symbol">=&gt;</span> <span class="type-name">Maybe</span> <span class="type-name">Char</span> <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 256)<span class="symbol">.</span>
-    idx <span class="symbol">=</span> linear_search encoding_table (i_to_w8 (ordinal i))
+    idx <span class="symbol">=</span> linear_search encoding_table (n_to_w8 (ordinal i))
     <span class="keyword">case</span> idx <span class="keyword">of</span>
       <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-      <span class="type-name">Just</span> x  <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> i_to_w8 <span class="symbol">$</span> ordinal x
+      <span class="type-name">Just</span> x  <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> n_to_w8 <span class="symbol">$</span> ordinal x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Base64</span> <span class="symbol">=</span> <span class="type-name">Byte</span> <span class="comment">-- first two bits should be zero
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- This could go in the prelude, or in a library of array-dicing functions.
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- An explicit &quot;view&quot; builder would be good here, to avoid copies
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_chunks {n a}
-      (chunkSize<span class="symbol">:</span><span class="type-name">Int</span>) (padVal<span class="command">:a</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a)
+      (chunkSize<span class="symbol">:</span><span class="type-name">Nat</span>) (padVal<span class="command">:a</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a)
       <span class="symbol">:</span> <span class="type-name">List</span> (<span class="type-name">Fin</span> chunkSize <span class="symbol">=&gt;</span> a) <span class="symbol">=</span>
   numChunks <span class="symbol">=</span> idiv_ceil (size n) chunkSize
   paddedSize <span class="symbol">=</span> numChunks <span class="symbol">*</span> chunkSize
@@ -353,7 +353,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     <span class="symbol">,</span>  c                    ]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_to_ascii (x<span class="symbol">:</span><span class="type-name">Base64</span>) <span class="symbol">:</span> <span class="type-name">Char</span> <span class="symbol">=</span>
-  encoding_table<span class="symbol">.</span>(from_ordinal _ (w8_to_i x))
+  encoding_table<span class="symbol">.</span>(from_ordinal _ (w8_to_n x))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> encode_chunk (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Char</span> <span class="symbol">=</span>
   map base64_to_ascii <span class="symbol">$</span> bytes_to_base64s chunk
@@ -364,14 +364,14 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   (<span class="type-name">AsList</span> numChunks chunks) <span class="symbol">=</span> get_chunks 3 &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39; cs
   encodedChunks <span class="symbol">=</span> map encode_chunk chunks
   flattened <span class="symbol">=</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> encodedChunks<span class="symbol">.</span>i<span class="symbol">.</span>j
-  padChars <span class="symbol">=</span> rem (3 <span class="symbol">-</span> rem n 3) 3
-  validOutputChars <span class="symbol">=</span> (numChunks <span class="symbol">*</span> 4) <span class="symbol">-</span> padChars
+  padChars <span class="symbol">=</span> rem (unsafe_nat_diff 3 (rem n 3)) 3
+  validOutputChars <span class="symbol">=</span> unsafe_nat_diff (numChunks <span class="symbol">*</span> 4) padChars
   to_list <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> ordinal i <span class="symbol">&lt;</span> validOutputChars <span class="keyword">of</span>
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> flattened<span class="symbol">.</span>i
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> &#39;<span class="symbol">=</span>&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ascii_to_base64 (c<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Base64</span> <span class="symbol">=</span>
-  decoding_table<span class="symbol">.</span>(from_ordinal _ (w8_to_i c))
+  decoding_table<span class="symbol">.</span>(from_ordinal _ (w8_to_n c))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> decode_chunk (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">=</span>
   <span class="keyword">case</span> seq_maybes <span class="symbol">$</span> map ascii_to_base64 chunk <span class="keyword">of</span>
@@ -386,7 +386,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_decode (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">String</span> <span class="symbol">=</span>
   (<span class="type-name">AsList</span> n cs) <span class="symbol">=</span> s
-  numValidInputChars <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> b_to_i <span class="symbol">$</span> cs<span class="symbol">.</span>i <span class="symbol">/=</span> &#39;<span class="symbol">=</span>&#39;
+  numValidInputChars <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> b_to_n <span class="symbol">$</span> cs<span class="symbol">.</span>i <span class="symbol">/=</span> &#39;<span class="symbol">=</span>&#39;
   numValidOutputChars <span class="symbol">=</span> idiv (numValidInputChars <span class="symbol">*</span> 3) 4
   csZeroed <span class="symbol">=</span> map (replace (&#39;<span class="symbol">=</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">A</span>&#39;)) cs  <span class="comment">-- swap padding char with &#39;zero&#39; char
 </span>  (<span class="type-name">AsList</span> _ chunks) <span class="symbol">=</span> get_chunks 4 &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39; csZeroed
@@ -401,7 +401,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Png</span>  <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Gif</span>  <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;encodePNG&quot; encodePNG <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">-&gt;</span> <span class="type-name">Int32</span> <span class="symbol">-&gt;</span> <span class="type-name">Int32</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;encodePNG&quot; encodePNG <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> make_png {n m} (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Word8</span>) <span class="symbol">:</span> <span class="type-name">Png</span> <span class="symbol">=</span> unsafe_io <span class="symbol">\</span>()<span class="symbol">.</span>
   (<span class="type-name">AsList</span> _ imgFlat) <span class="symbol">=</span> to_list <span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
@@ -426,7 +426,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
    <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span>&quot;<span class="symbol">&gt;</span>&quot;)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> float_to_8bit (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Word8</span> <span class="symbol">=</span>
-  i_to_w8 <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> 255<span class="symbol">.</span>0 <span class="symbol">*</span> clip (0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0) x
+  n_to_w8 <span class="symbol">$</span> f_to_n <span class="symbol">$</span> 255<span class="symbol">.</span>0 <span class="symbol">*</span> clip (0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0) x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> img_to_png {n m} (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Png</span> <span class="symbol">=</span>
   make_png <span class="keyword">for</span> i j k<span class="symbol">.</span> float_to_8bit img<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k

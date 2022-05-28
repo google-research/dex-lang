@@ -314,7 +314,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> runChain {a}
       (initialize<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a)
       (step<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a)
-      (numSamples<span class="symbol">:</span> <span class="type-name">Int</span>)
+      (numSamples<span class="symbol">:</span> <span class="type-name">Nat</span>)
       (k<span class="symbol">:</span><span class="type-name">Key</span>)
       <span class="symbol">:</span> <span class="type-name">Fin</span> numSamples <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
   [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
@@ -334,10 +334,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   select accept proposal cur
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanAndCovariance {n d} (xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
-   xsMean <span class="symbol">:</span>    d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> (<span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> xs<span class="symbol">.</span>j<span class="symbol">.</span>i) <span class="symbol">/</span> i_to_f (size n)
+   xsMean <span class="symbol">:</span>    d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> (<span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> xs<span class="symbol">.</span>j<span class="symbol">.</span>i) <span class="symbol">/</span> n_to_f (size n)
    xsCov  <span class="symbol">:</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> (<span class="keyword">for</span> i i&#39;<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span>
                            (xs<span class="symbol">.</span>j<span class="symbol">.</span>i&#39; <span class="symbol">-</span> xsMean<span class="symbol">.</span>i&#39;) <span class="symbol">*</span>
-                           (xs<span class="symbol">.</span>j<span class="symbol">.</span>i  <span class="symbol">-</span> xsMean<span class="symbol">.</span>i )   ) <span class="symbol">/</span> i_to_f (size n <span class="symbol">-</span> 1)
+                           (xs<span class="symbol">.</span>j<span class="symbol">.</span>i  <span class="symbol">-</span> xsMean<span class="symbol">.</span>i )   ) <span class="symbol">/</span> (n_to_f (size n) <span class="symbol">-</span> 1)
    (xsMean<span class="symbol">,</span> xsCov)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Metropolis-Hastings implementation</h2>
@@ -354,7 +354,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   propose logProb x proposal k2
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>HMC implementation</h2>
-</div></div><div class="cell"><div class="code-block"><span class="type-name">HMCParams</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Int</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>)  <span class="comment">-- leapfrog steps, step size
+</div></div><div class="cell"><div class="code-block"><span class="type-name">HMCParams</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>)  <span class="comment">-- leapfrog steps, step size
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> leapfrogIntegrate {a}
       [<span class="type-name">VSpace</span> a]
@@ -388,7 +388,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   x&#39; <span class="symbol">=</span> x <span class="symbol">-</span> [1<span class="symbol">.</span>5<span class="symbol">,</span> 2<span class="symbol">.</span>5]
   neg <span class="symbol">$</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> inner x&#39; [[1<span class="symbol">.,</span>0<span class="symbol">.</span>]<span class="symbol">,</span>[0<span class="symbol">.,</span>20<span class="symbol">.</span>]] x&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">numSamples <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block">numSamples <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   <span class="keyword">if</span> dex_test_mode ()
     <span class="keyword">then</span> 1000
     <span class="keyword">else</span> 10000

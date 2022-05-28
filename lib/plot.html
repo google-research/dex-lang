@@ -361,7 +361,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   (x&#39; <span class="symbol">.*</span> low) <span class="symbol">+</span> ((1<span class="symbol">.</span>0 <span class="symbol">-</span> x&#39;) <span class="symbol">.*</span> high)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> make_rgb_color (c <span class="symbol">:</span> <span class="type-name">Color</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> i_to_w8 <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
+  <span class="keyword">for</span> i<span class="symbol">.</span> n_to_w8 <span class="symbol">$</span> f_to_n <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> color_scale (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
   make_rgb_color <span class="symbol">$</span> interpolate low_color high_color x
@@ -421,7 +421,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     set_c_<span class="keyword">data</span> (auto_scale cs)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> y_plot {n} (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
-  xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> i_to_f <span class="symbol">$</span> ordinal i
+  xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> n_to_f <span class="symbol">$</span> ordinal i
   xy_plot xs ys
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- xs = linspace (Fin 100) 0. 1.0

@@ -345,7 +345,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Fit a third-order polynomial</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> poly {d} [<span class="type-name">Ix</span> d] (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> pow x (i_to_f (ordinal i))
+  <span class="keyword">for</span> i<span class="symbol">.</span> pow x (n_to_f (ordinal i))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">params <span class="symbol">:</span> (<span class="type-name">Fin</span> 4)<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> regress poly xs ys
 </div></div><div class="cell"><div class="code-block">

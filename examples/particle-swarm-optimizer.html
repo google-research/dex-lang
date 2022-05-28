@@ -353,8 +353,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><p><strong>Returns</strong>: the optimal point found with-in the bounds on the input domain of <code>f</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> optimize
       {d}
-      (np&#39;<span class="symbol">:</span><span class="type-name">Int</span>)                                        <span class="comment">-- number of particles
-</span>      (niter<span class="symbol">:</span><span class="type-name">Int</span>)                                      <span class="comment">-- number of iterations
+      (np&#39;<span class="symbol">:</span><span class="type-name">Nat</span>)                                        <span class="comment">-- number of particles
+</span>      (niter<span class="symbol">:</span><span class="type-name">Nat</span>)                                      <span class="comment">-- number of iterations
 </span>      (key<span class="symbol">:</span><span class="type-name">Key</span>)                                        <span class="comment">-- random seed
 </span>      (f<span class="symbol">:</span>(d<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span>)                              <span class="comment">-- function to optimize
 </span>      ((lb<span class="symbol">,</span>ub)<span class="symbol">:</span>(d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>))                    <span class="comment">-- bounds

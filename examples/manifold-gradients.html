@@ -391,7 +391,7 @@ manifolds.</p>
 </div></div><div class="cell"><div class="prose-block"><h3>Equivalence to standard differentiation</h3>
 <p>As a sense check we make sure that these functions give the same output as the
 non-manifold versions on functions which are defined on $\mathbb{R}^n$.</p>
-</div></div><div class="cell"><div class="code-block">x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span> i_to_f (ordinal i) <span class="symbol">/</span> 10<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block">x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span> n_to_f (ordinal i) <span class="symbol">/</span> 10<span class="symbol">.</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> myFunc {n} (x <span class="symbol">:</span> (n <span class="symbol">=&gt;</span> <span class="type-name">Float</span>)) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">if</span> (mod (ordinal i) 2 <span class="symbol">==</span> 0) <span class="keyword">then</span> (exp x<span class="symbol">.</span>i) <span class="keyword">else</span> (sin x<span class="symbol">.</span>i)
@@ -550,8 +550,10 @@ multiples of the same quaternion to represent the same rotation.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Quaternion</span>
   add <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> quatFromVec <span class="symbol">$</span> (quatAsVec x) <span class="symbol">+</span> quatAsVec y
-  sub <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> quatFromVec <span class="symbol">$</span> (quatAsVec x) <span class="symbol">-</span> quatAsVec y
   zero <span class="symbol">=</span> quatFromVec <span class="symbol">$</span> zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Quaternion</span>
+  sub <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> quatFromVec <span class="symbol">$</span> (quatAsVec x) <span class="symbol">-</span> quatAsVec y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Scaling a quaternion does not affect the rotation it represents, but is still
 useful for numerical computations.</p>

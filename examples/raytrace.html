@@ -315,8 +315,8 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Generic Helper Functions</h3>
 <p>Some of these should probably go in prelude.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Vec</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Mat</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) (m<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> m <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Vec</span> (n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Mat</span> (n<span class="symbol">:</span><span class="type-name">Nat</span>) (m<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> m <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> max x 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> length {d} (x<span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> sq x<span class="symbol">.</span>i
@@ -329,10 +329,10 @@ described
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randuniform (lower<span class="symbol">:</span><span class="type-name">Float</span>) (upper<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   lower <span class="symbol">+</span> (rand k) <span class="symbol">*</span> (upper <span class="symbol">-</span> lower)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleAveraged {a} [<span class="type-name">VSpace</span> a] (sample<span class="symbol">:</span><span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (n<span class="symbol">:</span><span class="type-name">Int</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleAveraged {a} [<span class="type-name">VSpace</span> a] (sample<span class="symbol">:</span><span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (n<span class="symbol">:</span><span class="type-name">Nat</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   yield_state zero <span class="symbol">\</span>total<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
-      total <span class="symbol">:=</span> get total <span class="symbol">+</span> sample (ixkey k i) <span class="symbol">/</span> i_to_f n
+      total <span class="symbol">:=</span> get total <span class="symbol">+</span> sample (ixkey k i) <span class="symbol">/</span> n_to_f n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> positiveProjection {n} (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> dot x y <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
@@ -344,7 +344,7 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Image</span> <span class="symbol">=</span>
- <span class="type-name">MkImage</span> height<span class="symbol">:</span><span class="type-name">Int</span> width<span class="symbol">:</span><span class="type-name">Int</span> (<span class="type-name">Fin</span> height <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> width <span class="symbol">=&gt;</span> <span class="type-name">Color</span>)
+ <span class="type-name">MkImage</span> height<span class="symbol">:</span><span class="type-name">Nat</span> width<span class="symbol">:</span><span class="type-name">Nat</span> (<span class="type-name">Fin</span> height <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> width <span class="symbol">=&gt;</span> <span class="type-name">Color</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">xHat <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span> [1<span class="symbol">.,</span> 0<span class="symbol">.,</span> 0<span class="symbol">.</span>]
 </div></div><div class="cell"><div class="code-block">yHat <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span> [0<span class="symbol">.,</span> 1<span class="symbol">.,</span> 0<span class="symbol">.</span>]
@@ -415,8 +415,8 @@ described
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a record
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- num samples, num bounces, share seed?
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Params</span> <span class="symbol">=</span> {
-    numSamples <span class="symbol">:</span> <span class="type-name">Int</span>
-  <span class="symbol">&amp;</span> maxBounces <span class="symbol">:</span> <span class="type-name">Int</span>
+    numSamples <span class="symbol">:</span> <span class="type-name">Nat</span>
+  <span class="symbol">&amp;</span> maxBounces <span class="symbol">:</span> <span class="type-name">Nat</span>
   <span class="symbol">&amp;</span> shareSeed  <span class="symbol">:</span> <span class="type-name">Bool</span> }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a list instead, once they work
@@ -550,16 +550,16 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Assumes we&#39;re looking towards -z.
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Camera</span> <span class="symbol">=</span> {
-    numPix     <span class="symbol">:</span> <span class="type-name">Int</span>
+    numPix     <span class="symbol">:</span> <span class="type-name">Nat</span>
   <span class="symbol">&amp;</span> pos        <span class="symbol">:</span> <span class="type-name">Position</span>  <span class="comment">-- pinhole position
 </span>  <span class="symbol">&amp;</span> halfWidth  <span class="symbol">:</span> <span class="type-name">Float</span>     <span class="comment">-- sensor half-width
 </span>  <span class="symbol">&amp;</span> sensorDist <span class="symbol">:</span> <span class="type-name">Float</span> }   <span class="comment">-- pinhole-sensor distance
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: might be better with an anonymous dependent pair for the result
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cameraRays (n<span class="symbol">:</span><span class="type-name">Int</span>) (camera<span class="symbol">:</span><span class="type-name">Camera</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> (<span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Ray</span>) <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cameraRays (n<span class="symbol">:</span><span class="type-name">Nat</span>) (camera<span class="symbol">:</span><span class="type-name">Camera</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> (<span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Ray</span>) <span class="symbol">=</span>
   <span class="comment">-- images indexed from top-left
 </span>  halfWidth <span class="symbol">=</span> get_at <span class="iso-sugar">#halfWidth</span> camera
-  pixHalfWidth <span class="symbol">=</span> halfWidth <span class="symbol">/</span> i_to_f n
+  pixHalfWidth <span class="symbol">=</span> halfWidth <span class="symbol">/</span> n_to_f n
   ys <span class="symbol">=</span> reverse <span class="symbol">$</span> linspace (<span class="type-name">Fin</span> n) (neg halfWidth) halfWidth
   xs <span class="symbol">=</span>           linspace (<span class="type-name">Fin</span> n) (neg halfWidth) halfWidth
   <span class="keyword">for</span> i j<span class="symbol">.</span> <span class="symbol">\</span>key<span class="symbol">.</span>
