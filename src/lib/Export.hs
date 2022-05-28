@@ -125,7 +125,7 @@ prepareFunctionForExport' cc f = do
                   sizes <- mapM (indexSetSize . exportDimToIxType . snd) typedIdxs
                   strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
                                                      (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
-                  ords <- forM typedIdxs \(i, ity) -> indexToNat (exportDimToIxType ity) i
+                  ords <- forM typedIdxs \(i, ity) -> ordinal (exportDimToIxType ity) i
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   unsafePtrLoad =<< ptrOffset basePtr offset
 

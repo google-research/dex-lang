@@ -90,10 +90,8 @@ def pad_to_power_of_2 {a n} (log2_m:Nat) (pad_val:a) (xs:n=>a) :
 
 def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) : ((n|m)=>Complex) =
   -- Convolve by pointwise multiplication in the Fourier domain.
-
   -- Pad and convert to Fourier domain.
-  -- TODO: is this use of `unsafe_nat_diff` actually valid?
-  min_convolve_size = unsafe_nat_diff ((size n) + (size m)) 1
+  min_convolve_size = (size n + size m) -| 1
   log_working_size = nextpow2 min_convolve_size
   u_padded = pad_to_power_of_2 log_working_size zero u
   v_padded = pad_to_power_of_2 log_working_size zero v

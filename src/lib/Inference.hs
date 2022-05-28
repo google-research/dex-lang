@@ -222,7 +222,7 @@ data InfOutMap (n::S) =
     -- we zonk bindings)
     (UnsolvedEnv n)
 
-data DefaultType = IntDefault | NatDefault -- | StrDefault ??
+data DefaultType = IntDefault | NatDefault
 
 data Defaults (n::S) = Defaults
   { intDefaults :: NameSet n   -- Set of names that should be defaulted to Int32

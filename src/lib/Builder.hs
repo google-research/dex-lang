@@ -36,7 +36,7 @@ module Builder (
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock,
-  indexToNat, indexSetSize, natToIndex, projectIxFinMethod,
+  ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, unpackTelescope,
@@ -1165,13 +1165,13 @@ projMethod methodName dict = do
       emitOp $ ProjMethod dict methodIdx
     _ -> error $ "Not a dict: " ++ pprint dict
 
-natToIndex :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
-natToIndex (IxType _ dict) i = do
+unsafeFromOrdinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
+unsafeFromOrdinal (IxType _ dict) i = do
   f <- projMethod "unsafe_from_ordinal" dict
   app f i
 
-indexToNat :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
-indexToNat (IxType _ dict) idx = do
+ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
+ordinal (IxType _ dict) idx = do
   f <- projMethod "ordinal" dict
   app f idx
 

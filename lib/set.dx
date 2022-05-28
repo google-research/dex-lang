@@ -16,7 +16,7 @@ def first {n a} (xs:n=>a) : Maybe a =
     False -> Just xs.(unsafe_from_ordinal n 0)
 
 def all_except_last {n a} (xs:n=>a) : List a =
-  shortSize = Fin (max 0 (unsafe_nat_diff (size n) 1))
+  shortSize = Fin (size n -| 1)
   allButLast = view i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
   (AsList _ allButLast)
 

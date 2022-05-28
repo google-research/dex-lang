@@ -331,14 +331,14 @@ unsafeLiftInterpM cont = do
 indices :: EnvReader m => IxType n -> m n [Atom n]
 indices ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
-  forM (iota size) \i -> interpNatToIndex ixTy $ IdxRepVal i
+  forM (iota size) \i -> interpUnsafeFromOrdinal ixTy $ IdxRepVal i
 {-# SCC indices #-}
 
 interpIndexSetSize :: IxType n -> InterpM n n (Atom n)
 interpIndexSetSize ixTy = liftBuilderInterp $ indexSetSize $ sink ixTy
 
-interpNatToIndex :: IxType n -> Atom n -> InterpM n n (Atom n)
-interpNatToIndex ixTy i = liftBuilderInterp $ natToIndex (sink ixTy) (sink i)
+interpUnsafeFromOrdinal :: IxType n -> Atom n -> InterpM n n (Atom n)
+interpUnsafeFromOrdinal ixTy i = liftBuilderInterp $ unsafeFromOrdinal (sink ixTy) (sink i)
 
 -- A variant of `indices` that accepts an expected number of them and
 -- only tries to construct the set if the expected number matches the
@@ -347,7 +347,7 @@ indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Word32 [Atom n])
 indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
   if size == fromIntegral sizeReq then
-    Right <$> forM [0..size-1] \i -> interpNatToIndex ixTy $ IdxRepVal i
+    Right <$> forM [0..size-1] \i -> interpUnsafeFromOrdinal ixTy $ IdxRepVal i
   else
     return $ Left size
 {-# SCC indicesLimit #-}
