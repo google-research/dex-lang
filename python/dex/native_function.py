@@ -14,10 +14,10 @@ from . import api
 
 ScalarCType = Union[
   ctypes.c_int64, ctypes.c_int32,
-  ctypes.c_uint8,
+  ctypes.c_uint8, ctypes.c_uint32,
   ctypes.c_double, ctypes.c_float
 ]
-IdxRepTy = ctypes.c_int32
+IdxRepTy = ctypes.c_uint32
 
 @dataclass(frozen=True)
 class ScalarType:

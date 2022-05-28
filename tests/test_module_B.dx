@@ -7,7 +7,7 @@ test_module_B_val = 10
 
 test_module_B_val_from_C = test_module_C_val
 
-instance FooClass Int
+instance FooClass Nat
   fooMethod = \x. x + x
 
 arrayVal = [1,2,3]

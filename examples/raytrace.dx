@@ -11,8 +11,8 @@ import plot
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
 
-def Vec (n:Int) : Type = Fin n => Float
-def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Float
+def Vec (n:Nat) : Type = Fin n => Float
+def Mat (n:Nat) (m:Nat) : Type = Fin n => Fin m => Float
 
 def relu (x:Float) : Float = max x 0.0
 def length {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
@@ -25,10 +25,10 @@ def directionAndLength {d} (x: d=>Float) : (d=>Float & Float) =
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
+def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Nat) (k:Key) : a =
   yield_state zero \total.
     for i:(Fin n).
-      total := get total + sample (ixkey k i) / i_to_f n
+      total := get total + sample (ixkey k i) / n_to_f n
 
 def positiveProjection {n} (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
@@ -41,7 +41,7 @@ def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
 
 -- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
 data Image =
- MkImage height:Int width:Int (Fin height => Fin width => Color)
+ MkImage height:Nat width:Nat (Fin height => Fin width => Color)
 
 xHat : Vec 3 = [1., 0., 0.]
 yHat : Vec 3 = [0., 1., 0.]
@@ -113,8 +113,8 @@ Filter   = Color
 -- TODO: use a record
 -- num samples, num bounces, share seed?
 Params = {
-    numSamples : Int
-  & maxBounces : Int
+    numSamples : Nat
+  & maxBounces : Nat
   & shareSeed  : Bool }
 
 -- TODO: use a list instead, once they work
@@ -248,16 +248,16 @@ def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
 
 -- Assumes we're looking towards -z.
 Camera = {
-    numPix     : Int
+    numPix     : Nat
   & pos        : Position  -- pinhole position
   & halfWidth  : Float     -- sensor half-width
   & sensorDist : Float }   -- pinhole-sensor distance
 
 -- TODO: might be better with an anonymous dependent pair for the result
-def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
+def cameraRays (n:Nat) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
   halfWidth = get_at #halfWidth camera
-  pixHalfWidth = halfWidth / i_to_f n
+  pixHalfWidth = halfWidth / n_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.

@@ -39,6 +39,7 @@ class Type:
 class Expr:
   pass
 
+u32 = np.dtype('uint32')
 i32 = np.dtype('int32')
 f32 = np.dtype('float32')
 f64 = np.dtype('float64')
@@ -46,10 +47,11 @@ _dtypes = {
   f32: 'Float32',
   f64: 'Float64',
   i32: 'Int32',
+  u32: 'Word32',
   np.dtype('bool'): 'Bool',
 }
 
-_io_dtypes = {f32, f64, i32}
+_io_dtypes = {f32, f64, i32, u32}
 
 @dataclass
 class EType(Type):
@@ -91,11 +93,10 @@ class Literal(Expr):
       val_str = f'{self.val:f}' if self.val >= 0 else f'({self.val:f})'
       return f'(f_to_f64 {val_str})'
     elif self.dtype == i32:
-      val_str = str(self.val) if self.val >= 0 else f'({self.val})'
+      val_str = f'(+{self.val})' if self.val >= 0 else f'({self.val})'
       return f'(%monoLit {val_str})'
-    elif self.dtype == i64:
-      val_str = str(self.val) if self.val >= 0 else f'({self.val})'
-      return f'(i_to_i64 (%monoLit {val_str}))'
+    elif self.dtype == u32:
+      return f'(%monoLit {self.val})'
     else:
       raise NotImplementedError(f"Unsupported literal dtype: {dtype}")
 
@@ -407,7 +408,7 @@ expr_makers[lax.cos_p] = lambda ctx, x: App(Var('cos'), x)
 expr_makers[lax.log_p] = lambda ctx, x: App(Var('log'), x)
 expr_makers[lax.exp_p] = lambda ctx, x: App(Var('exp'), x)
 
-IX_REP_DTYPE = np.dtype('int32')
+IX_REP_DTYPE = np.dtype('uint32')
 def IxRepLiteral(n): return Literal(n, IX_REP_DTYPE)
 
 def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):

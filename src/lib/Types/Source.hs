@@ -26,6 +26,7 @@ import qualified Data.Map.Strict       as M
 import Data.String (IsString, fromString)
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
+import Data.Word
 
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
@@ -95,15 +96,10 @@ data UExpr' (n::S) =
  | ULabeledRow (UFieldRowElems n)                    -- {@v:X ? a:Y ? b:Z ? ...rest}
  | URecordTy (UFieldRowElems n)                      -- {@v:X & a:Y & b:Z & ...rest}
  | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
- | UIntLit  Int
+ | UNatLit   Word64
+ | UIntLit   Int
  | UFloatLit Double
   deriving (Show, Generic)
-
-pattern IntLitExpr :: Int -> UExpr' n
-pattern IntLitExpr x = UIntLit x
-
-pattern FloatLitExpr :: Double -> UExpr' n
-pattern FloatLitExpr x = UFloatLit x
 
 type UFieldRowElems (n::S) = [UFieldRowElem n]
 data UFieldRowElem (n::S)

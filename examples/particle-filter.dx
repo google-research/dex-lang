@@ -11,7 +11,7 @@ def sample {a} (d: Distribution a) (k: Key) : a =
   (sampler, _) = d
   sampler k
 
-def simulate {s v} (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
+def simulate {s v} (model: Model s v) (t: Nat) (key: Key) : Fin t=>(s & v) =
   (init, dynamics, observe) = model
   [key, subkey] = split_key key
   s0 = sample init subkey
@@ -25,7 +25,7 @@ def simulate {s v} (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
       (s, v)
 
 def particleFilter {s a v}
-    (num_particles: Int) (num_timesteps: Int)
+    (num_particles: Nat) (num_timesteps: Nat)
     (model: Model s v)
     (summarize: (Fin num_particles => s) -> a)
     (obs: Fin num_timesteps=>v)
@@ -60,7 +60,7 @@ timesteps = 10
 num_particles = 10000
 
 truth = for i:(Fin timesteps).
-  s = i_to_f (ordinal i)
+  s = n_to_f (ordinal i)
   (s, sample (normalDistn s 1.0) $ ixkey (new_key 0) i)
 
 filtered = particleFilter num_particles _ gaussModel mean (map snd truth) (new_key 0)

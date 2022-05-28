@@ -12,7 +12,7 @@
 :p show (-1234: Int32)
 > "-1234"
 
-:p show ((FToI (-(pow 2. 31.))): Int32)
+:p show ((f_to_i (-(pow 2. 31.))): Int32)
 > "-2147483648"
 
 -- Int64

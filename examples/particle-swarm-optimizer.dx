@@ -58,8 +58,8 @@ We have **arguments**:
 
 def optimize
       {d}
-      (np':Int)                                        -- number of particles
-      (niter:Int)                                      -- number of iterations
+      (np':Nat)                                        -- number of particles
+      (niter:Nat)                                      -- number of iterations
       (key:Key)                                        -- random seed
       (f:(d=>Float)->Float)                              -- function to optimize
       ((lb,ub):(d=>Float & d=>Float))                    -- bounds

@@ -46,8 +46,10 @@ Scaling a quaternion is multiplying each of its components by a real number (the
 
 instance Add Quaternion
   add = \ x y. from_vec $ (as_vec x) + as_vec y
-  sub = \ x y. from_vec $ (as_vec x) - as_vec y
   zero = from_vec $ zero
+
+instance Sub Quaternion
+  sub = \ x y. from_vec $ (as_vec x) - as_vec y
 
 instance VSpace Quaternion
   scale_vec = \ s x. from_vec (s .* as_vec x)

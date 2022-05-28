@@ -11,16 +11,18 @@ Prob    = Float
 LogProb = Float
 
 -- log probability density of a Binomial distribution
-def logBinomialProb (n:Int) (p:Prob) (counts:Int) : LogProb =
-  pSuccess = log p * i_to_f counts
-  pFailure = log1p (-p) * i_to_f (n - counts)
-  normConst = (lbeta (1. + i_to_f counts) (1. + i_to_f n - i_to_f counts) +
-               log1p (i_to_f n))
+def logBinomialProb (n':Nat) (p:Prob) (counts':Nat) : LogProb =
+  n      = n_to_f n'
+  counts = n_to_f counts'
+  pSuccess = log p * counts
+  pFailure = log1p (-p) * (n - counts)
+  normConst = (lbeta (1. + counts) (1. + n - counts) +
+               log1p (n))
   pSuccess + pFailure - normConst
 
-def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
+def trySampleBinomial (n:Nat) (p:Prob) (k:Key) : Maybe Nat =
   [k1, k2] = split_key k
-  proposal = FToI $ floor $ rand k1 * i_to_f (n + 1)
+  proposal = f_to_n $ floor $ rand k1 * n_to_f (n + 1)
   if proposal > n
     then Nothing
     else
@@ -48,14 +50,14 @@ rejectionSamples = rand_vec numSamples (rejectionSample $ trySampleBinomial n p)
 
 def meanAndVariance {n} (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
 
-:p meanAndVariance $ map i_to_f rejectionSamples
+:p meanAndVariance $ map n_to_f rejectionSamples
 > (3.9984, 2.361596)
 
 '## Alternative: Inversion sampling
 
 'Alternatively, we can use inversion sampling.
 
-def binomialSample (n:Int) (p:Prob) (k:Key) : Int =
+def binomialSample (n:Nat) (p:Prob) (k:Key) : Nat =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   ordinal $ categorical logprobs k
@@ -65,20 +67,20 @@ inversionSamples = rand_vec numSamples (binomialSample n p) k0
 :p slice inversionSamples 0 $ Fin 10
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
 
-:p meanAndVariance $ map i_to_f inversionSamples
+:p meanAndVariance $ map n_to_f inversionSamples
 > (3.9978, 2.409796)
 
 'The following variant is guaranteed to evaluate the CDF only once.
 
-def binomialBatch {a} [Ix a] (n:Int) (p:Prob) (k:Key) : a => Int =
+def binomialBatch {a} [Ix a] (n:Nat) (p:Prob) (k:Key) : a => Nat =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   map ordinal $ categorical_batch logprobs k
 
-inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Int
+inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Nat
 
 :p slice inversionBatchSamples 0 $ Fin 10
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
 
-:p meanAndVariance $ map i_to_f inversionBatchSamples
+:p meanAndVariance $ map n_to_f inversionBatchSamples
 > (3.9978, 2.409796)

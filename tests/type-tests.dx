@@ -53,17 +53,17 @@ help make the errors more local.
 :t
    myid : a:Type ?-> a -> a = \x. x
    myid (myid) (myid 1)
-> Int32
+> Nat
 
 :t
    x = iota (Fin 10)
    sum x
-> Int32
+> Nat
 
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   i_to_f (sum for i. x.i) + i_to_f (sum for j. y.j)
+   n_to_f (sum for i. x.i) + n_to_f (sum for j. y.j)
 > Float32
 
 :t
@@ -81,10 +81,10 @@ Narr = Fin 10
 
 arr  = iota Narr
 
-xr = map i_to_f arr
+xr = map n_to_f arr
 
 :t arr
-> ((Fin 10) => Int32)
+> ((Fin 10) => Nat)
 
 :t (\(x, y). x + y) (1.0, 2.0)
 > Float32
@@ -96,16 +96,16 @@ xr = map i_to_f arr
 > Float32
 
 :t [1, 2, 3]
-> ((Fin 3) => Int32)
+> ((Fin 3) => Nat)
 
 :t [1, [2]]
-> Type error:Couldn't synthesize a class dictionary for: (FromInteger ((Fin 1) => Int32))
+> Type error:Couldn't synthesize a class dictionary for: (FromNatural ((Fin 1) => Nat))
 >
 > :t [1, [2]]
 >     ^
 
 :t [[1, 2], [3, 4]]
-> ((Fin 2) => (Fin 2) => Int32)
+> ((Fin 2) => (Fin 2) => Nat)
 
 :t [[1, 2], [3]]
 > Type error:Literal has 1 element, but required type has 2.
@@ -373,7 +373,7 @@ def weakerInferenceReduction {n} (l : i:n=>(..i)=>Float) (j:n): Unit =
 val = for i:(Fin 2). \(x:Float). for j:(..i). 1
 
 :t val
-> ((v#0:(Fin 2)) => Float32 -> (..v#0) => Int32)
+> ((v#0:(Fin 2)) => Float32 -> (..v#0) => Nat)
 
 -- Tests for table
 
@@ -421,7 +421,7 @@ def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
 :t uncurryTable [0.0, 1.0, 2.0, 3.0]  -- We should be able to infer the tuple type here
 > ((Fin 2) => (Fin 2) => Float32)
 :t uncurryTable [0, 1, 2, 3]          -- Extra difficulty: need to default the integer type
-> ((Fin 2) => (Fin 2) => Int32)
+> ((Fin 2) => (Fin 2) => Nat)
 
 
 -- Make sure that the local type alias is unifiable with Int
@@ -435,7 +435,7 @@ ff 0
 > 2
 
 -- The two local aliases for Fin n should be unifiable with each other and Fin n
-def q (n : Int) : (Fin n)=>Int =
+def q (n : Nat) : (Fin n)=>Nat =
   ix1 = Fin n
   x1 = for i:ix1. ordinal i
   ix2 = Fin n
@@ -496,3 +496,11 @@ def frob {n} (_:Unit) : Unit =
 xbool : Bool = arb $ new_key 0
 :p xbool
 > True
+
+-- This is to ensure we don't accidentally implement `Sub Word32` while we
+-- have `Nat` as an alias for `Word32`.
+:p for i:(Fin 4). ordinal i - 1
+> Type error:Couldn't synthesize a class dictionary for: (Sub Nat)
+>
+> :p for i:(Fin 4). ordinal i - 1
+>                             ^^

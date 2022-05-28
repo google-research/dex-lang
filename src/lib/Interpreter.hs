@@ -15,9 +15,9 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List.NonEmpty as NE
 import Data.Foldable (toList)
+import Data.Word
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
-import GHC.Int
 import System.IO.Unsafe
 
 import CUDA
@@ -29,7 +29,7 @@ import Name
 import Syntax
 import QueryType
 import PPrint ()
-import Util ((...))
+import Util ((...), iota)
 import Builder
 import CheapReduction (cheapNormalize)
 
@@ -222,6 +222,9 @@ evalOp expr = mapM evalAtom expr >>= \case
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x
           return $ Con $ Lit $ Int32Lit $ fromIntegral v
+        (Word64Type, Word32Type) -> do
+          let Con (Lit (Word64Lit v)) = x
+          return $ Con $ Lit $ Word32Lit $ fromIntegral v
         _ -> failedCast
       _ -> failedCast
   Select cond t f -> case cond of
@@ -328,23 +331,23 @@ unsafeLiftInterpM cont = do
 indices :: EnvReader m => IxType n -> m n [Atom n]
 indices ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
-  forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
+  forM (iota size) \i -> interpUnsafeFromOrdinal ixTy $ IdxRepVal i
 {-# SCC indices #-}
 
 interpIndexSetSize :: IxType n -> InterpM n n (Atom n)
 interpIndexSetSize ixTy = liftBuilderInterp $ indexSetSize $ sink ixTy
 
-interpIntToIndex :: IxType n -> Atom n -> InterpM n n (Atom n)
-interpIntToIndex ixTy i = liftBuilderInterp $ intToIndex (sink ixTy) (sink i)
+interpUnsafeFromOrdinal :: IxType n -> Atom n -> InterpM n n (Atom n)
+interpUnsafeFromOrdinal ixTy i = liftBuilderInterp $ unsafeFromOrdinal (sink ixTy) (sink i)
 
 -- A variant of `indices` that accepts an expected number of them and
 -- only tries to construct the set if the expected number matches the
 -- given index set's size.
-indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Int32 [Atom n])
+indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Word32 [Atom n])
 indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
   if size == fromIntegral sizeReq then
-    Right <$> forM [0..size-1] \i -> interpIntToIndex ixTy $ IdxRepVal i
+    Right <$> forM [0..size-1] \i -> interpUnsafeFromOrdinal ixTy $ IdxRepVal i
   else
     return $ Left size
 {-# SCC indicesLimit #-}

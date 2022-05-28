@@ -55,7 +55,7 @@ def interpolate {a} [VSpace a] (low:a) (high:a) (x:Float) : a =
   (x' .* low) + ((1.0 - x') .* high)
 
 def make_rgb_color (c : Color) : HtmlColor =
-  for i. i_to_w8 $ FToI $ floor (255.0 * c.i)
+  for i. n_to_w8 $ f_to_n $ floor (255.0 * c.i)
 
 def color_scale (x:Float) : HtmlColor =
   make_rgb_color $ interpolate low_color high_color x
@@ -115,7 +115,7 @@ def xyc_plot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float 
     set_c_data (auto_scale cs)
 
 def y_plot {n} (ys:n=>Float) : Plot n Float Float Unit =
-  xs = for i. i_to_f $ ordinal i
+  xs = for i. n_to_f $ ordinal i
   xy_plot xs ys
 
 -- xs = linspace (Fin 100) 0. 1.0

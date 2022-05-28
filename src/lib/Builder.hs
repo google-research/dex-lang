@@ -36,7 +36,7 @@ module Builder (
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock,
-  indexToInt, indexSetSize, intToIndex, projectIxFinMethod,
+  ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, unpackTelescope,
@@ -71,7 +71,7 @@ import CheapReduction
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
-import Util (enumerate, restructure, transitiveClosureM, bindM2)
+import Util (enumerate, restructure, transitiveClosureM, bindM2, iota)
 import Err
 import Core
 
@@ -1072,7 +1072,7 @@ getUnpacked atom = do
   atom' <- cheapNormalize atom
   ty <- getType atom'
   len <- projectLength ty
-  return $ map (\i -> getProjection [i] atom') [0..(len-1)]
+  return $ map (\i -> getProjection [i] atom') (iota len)
 {-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
@@ -1165,13 +1165,13 @@ projMethod methodName dict = do
       emitOp $ ProjMethod dict methodIdx
     _ -> error $ "Not a dict: " ++ pprint dict
 
-intToIndex :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
-intToIndex (IxType _ dict) i = do
+unsafeFromOrdinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
+unsafeFromOrdinal (IxType _ dict) i = do
   f <- projMethod "unsafe_from_ordinal" dict
   app f i
 
-indexToInt :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
-indexToInt (IxType _ dict) idx = do
+ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
+ordinal (IxType _ dict) idx = do
   f <- projMethod "ordinal" dict
   app f idx
 

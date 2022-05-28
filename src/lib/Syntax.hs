@@ -108,7 +108,7 @@ module Syntax (
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern TyKind, pattern TabTy, pattern TabVal,
     pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
-    pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
+    pattern ProdTy, pattern ProdVal,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern BinaryLamExpr,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,

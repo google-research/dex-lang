@@ -23,7 +23,7 @@ gridSize = 41
 D = Fin gridSize
 
 -- Space discretization
-dx = 1. / i_to_f gridSize
+dx = 1. / n_to_f gridSize
 
 -- Time discretization (solution unstable if much higher)
 dt = 0.000001
@@ -44,7 +44,7 @@ def fToC (x:Float) : Complex = MkComplex x 0.
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension
-def ixToF {n} [Ix n] (i:n) : Float = (i_to_f (ordinal i)) / (i_to_f gridSize - 1.)
+def ixToF {n} [Ix n] (i:n) : Float = (n_to_f (ordinal i)) / (n_to_f gridSize - 1.)
 
 -- Helper to generate zero-delay GIF animations
 def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
@@ -67,12 +67,13 @@ def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
 -- Are the given indices at the bounds of the grid
 def atBounds {n m} [Ix n, Ix m] (i:n) (j:m) : Bool =
   (ordinal i == 0
-   || ordinal i == (gridSize - 1)
+   || n_to_i (ordinal i) == (n_to_i gridSize - 1)
    || ordinal j == 0
-   || ordinal j == (gridSize - 1))
+   || n_to_i (ordinal j) == (n_to_i gridSize - 1))
 
 -- Operators for performing unsafe ordinal arithmetic
-def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafe_from_ordinal _ ((ordinal i) + off)
+def (+!) {n} [Ix n] (i:n) (off:Int) : n =
+  unsafe_from_ordinal _ $ unsafe_i_to_n (n_to_i (ordinal i) + off)
 def (-!) {n} [Ix n] (i:n) (off:Int) : n = i +! (-1 * off)
 
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
@@ -134,7 +135,7 @@ def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
 
 :html (run
         ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
-        (for i j. i_to_f $ ordinal i + ordinal j))
+        (for i j. n_to_f $ ordinal i + ordinal j))
 > <html output>
 
 ' Square wavefunction

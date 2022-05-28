@@ -10,12 +10,12 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
              scanM, composeN, mapMaybe, uncons, repeated,
              transitiveClosure, transitiveClosureM,
-             showErr, listDiff, splitMap, enumerate, restructure,
+             showErr, listDiff, splitMap, enumerate, iota, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
              measureSeconds, sameConstructor,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
-             iota, whenM, unsnoc, anyM,
+             whenM, unsnoc, anyM,
              File (..), FileHash, FileContents, addHash, readFileWithHash) where
 
 import Crypto.Hash
@@ -37,8 +37,8 @@ import GHC.Exts ((==#), tagToEnum#)
 class IsBool a where
   toBool :: a -> Bool
 
-iota :: Int -> [Int]
-iota n = [0..n-1]
+iota :: (Enum a, Integral a) => a -> [a]
+iota n = take (fromEnum n) [0..] -- XXX: `[0..(n-1)]` is incorrect for unsigned ints!
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"

@@ -32,7 +32,7 @@ class JAXTest(unittest.TestCase):
 
   def test_abstract_eval_simple(self):
     add_two = primitive(
-        dex.eval(r'\x:((Fin 10)=>Float). for i. FToI $ x.i + 2.0'))
+        dex.eval(r'\x:((Fin 10)=>Float). for i. f_to_i $ x.i + 2.0'))
     x = jax.ShapeDtypeStruct((10,), np.float32)
     output_shape = jax.eval_shape(add_two, x)
     assert output_shape.shape == (10,)
@@ -45,7 +45,7 @@ class JAXTest(unittest.TestCase):
 
   def test_jit_array(self):
     add_two = primitive(
-        dex.eval(r'\x:((Fin 10)=>Float). for i. FToI $ x.i + 2.0'))
+        dex.eval(r'\x:((Fin 10)=>Float). for i. f_to_i $ x.i + 2.0'))
     x = jnp.zeros((10,), dtype=np.float32)
     np.testing.assert_allclose(jax.jit(add_two)(x), (x + 2.0).astype(np.int32))
 
@@ -132,7 +132,7 @@ class JAXTest(unittest.TestCase):
   def test_grad(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float). '
-        'sum $ for i. (i_to_f $ ordinal i) * x.i * x.i'))
+        'sum $ for i. (n_to_f $ ordinal i) * x.i * x.i'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)
@@ -147,7 +147,7 @@ class JAXTest(unittest.TestCase):
   def test_grad_jit(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float). '
-        'sum $ for i. (i_to_f $ ordinal i) * x.i * x.i'))
+        'sum $ for i. (n_to_f $ ordinal i) * x.i * x.i'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)

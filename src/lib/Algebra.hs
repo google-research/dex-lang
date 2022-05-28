@@ -213,6 +213,8 @@ blockAsCPoly (Block _ decls' result') =
     exprAsCPoly e = case e of
       Atom a                    -> intAsCPoly a
       Op (BinOp IAdd x y) -> add  <$> intAsCPoly x <*> intAsCPoly y
+      -- XXX: we rely on the wrapping behavior of subtraction on unsigned ints
+      -- so that the distributive law holds, `a * (b - c) == (a * b) - (a * c)`
       Op (BinOp ISub x y) -> sub  <$> intAsCPoly x <*> intAsCPoly y
       Op (BinOp IMul x y) -> mulC <$> intAsCPoly x <*> intAsCPoly y
       -- TODO: Remove once IntRange and IndexRange are defined in the surface language
@@ -310,7 +312,7 @@ ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 emitPolyName :: (Emits n, Builder m) => PolyName n -> m n (Atom n)
 emitPolyName v =
   lookupAtomName v >>= \case
-    IxBound ixTy -> emitSimplified $ indexToInt (sink ixTy) (sink $ Var v)
+    IxBound ixTy -> emitSimplified $ ordinal (sink ixTy) (sink $ Var v)
     _ -> return $ Var v
 
 -- === instances ===

@@ -32,17 +32,17 @@ Syntax for records, variants, and their types.
 :p {a=3, b=4}
 > {a = 3, b = 4}
 :t {a=3, b=4}
-> {a: Int32 & b: Int32}
+> {a: Nat & b: Nat}
 
 :p {a=3, b=4,}
 > {a = 3, b = 4}
 :t {a=3, b=4,}
-> {a: Int32 & b: Int32}
+> {a: Nat & b: Nat}
 
 :p {a=3, a=4}
 > {a = 3, a = 4}
 :t {a=3, a=4}
-> {a: Int32 & a: Int32}
+> {a: Nat & a: Nat}
 
 :p
   x = {a=5.0, b=2}
@@ -398,7 +398,7 @@ q = {@abc=1, y=2}
 q
 > {abc = 1, y = 2}
 :t q
-> {abc: Int32 & y: Int32}
+> {abc: Nat & y: Nat}
 
 :p
   {@abc=xv, y=yv} = q

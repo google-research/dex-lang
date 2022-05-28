@@ -171,12 +171,12 @@ row = x.(2 @ Height)
 >                                   ^
 
 :t for i:Height. for j:Width. (ordinal i) + (ordinal j)
-> ((Fin 3) => (Fin 8) => Int32)
+> ((Fin 3) => (Fin 8) => Nat)
 
 ' If we want to convert these values to floats, we do it manually with the `IToF`
   function. We can use this to make an image gradient.
 
-gradient = for i:Height. for j:Width. i_to_f ((ordinal i) + (ordinal j))
+gradient = for i:Height. for j:Width. n_to_f ((ordinal i) + (ordinal j))
 :html matshow gradient
 > <html output>
 
@@ -332,7 +332,7 @@ def getLabel : Batch => Class =
   -- File is unsigned bytes offset with 8 starting bytes
   (AsList _ lab) = unsafe_io do read_file "examples/t10k-labels-idx1-ubyte"
   r = unsafe_cast_table Batch (for i:Batch. lab.((ordinal i + 8) @ _))
-  for i. (w8_to_i r.i @ Class)
+  for i. (w8_to_n r.i @ Class)
 
 all_ims = getIm
 all_labels = getLabel
@@ -365,7 +365,7 @@ imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
 imscolor2 = for b. for i. for j. for c:Channels.
   case ordinal c == 0 of
-    True  -> (sum ims).i.j / (i_to_f (size Batch))
+    True  -> (sum ims).i.j / (n_to_f (size Batch))
     False -> ims.b.i.j
 
 :html imseqshow (imscolor2 / 255.0)
@@ -428,7 +428,7 @@ def tableMean {n} (x : n => Float32) : Float32 =
       -- acc = acc + x[i]
       acc := (get acc) + x.i
     -- return acc / len(x)
-    (get acc) / (i_to_f (size n))
+    (get acc) / (n_to_f (size n))
 
 
 tableMean [0.0, 1.0, 0.5]
@@ -458,7 +458,7 @@ tableMean [0.0, 1.0, 0.5]
   constructor in this case).
 
 :t \ x. x + 10
-> (Int32 -> Int32)
+> (Nat -> Nat)
 
 (\ x. x + 10) 20
 > 30
@@ -487,7 +487,7 @@ with_state 10 $ \ state.
         temp = (ordinal i) + 10
         for j:Width.
             temp
-> ((Fin 3) => (Fin 8) => Int32)
+> ((Fin 3) => (Fin 8) => Nat)
 
 ' The other is `:=`, which is an assignment operator that can only be used
   when a `State` effect is available (e.g. inside of a body function passed to
@@ -554,8 +554,10 @@ interface [Add a] VSpace a
 
 instance Add (Float32 & Float32)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
   zero = (0.0, 0.0)
+
+instance Sub (Float32 & Float32)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
 
 ' And here is a `VSpace` instance for the float pair type:
 
@@ -569,7 +571,7 @@ def tableMean' {n v} [VSpace v] (x : n => v) : v =
    with_state zero $ \acc: (Ref _ v).
         for i.
             acc := add (get acc) x.i       -- `Add` requirement
-        (get acc) / (i_to_f (size n))  -- `VSpace` requirement
+        (get acc) / (n_to_f (size n))  -- `VSpace` requirement
 
 tableMean' [0.1, 0.5, 0.9]
 > 0.5
@@ -583,8 +585,10 @@ tableMean' [(1.0, 0.5), (0.5, 0.8)]
 
 instance {v w} [Add v, Add w] Add (v & w)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
   zero = (zero, zero)
+
+instance {v w} [Sub v, Sub w] Sub (v & w)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
 
 instance {v w} [VSpace v, VSpace w] VSpace (v & w)
   scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
@@ -597,7 +601,7 @@ instance {v w} [VSpace v, VSpace w] VSpace (v & w)
 
 Pixels = Fin 256
 
-def bincount {a b} [Ix b] (inp : a => b) : b => Int =
+def bincount {a b} [Ix b] (inp : a => b) : b => Nat =
   with_state zero \acc .
     for i.
       v = acc!(inp.i)
@@ -606,11 +610,11 @@ def bincount {a b} [Ix b] (inp : a => b) : b => Int =
 
 ' Plot how many times each pixel value occurs in an image:
 
-hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
+hist = bincount $ for (i,j). (f_to_n (ims.(0 @ _).i.j) @ Pixels)
 :t hist
-> ((Fin 256) => Int32)
+> ((Fin 256) => Nat)
 
-:html show_plot $ y_plot (for i. (i_to_f hist.i))
+:html show_plot $ y_plot (for i. (n_to_f hist.i))
 > <html output>
 
 ' Find nearest images in the dataset:

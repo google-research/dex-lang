@@ -152,18 +152,18 @@ def lu {n} (a: n=>n=>Float) :
         s = sum for k:(..i).
           k'' = %inject k
           k' = %inject k''
-          ukj = get $ umat k' (((ordinal j) - (ordinal k))@_)
+          ukj = get $ umat k' ((unsafe_nat_diff (ordinal j) (ordinal k))@_)
           lik = get $ lmat i' (cast k)
           ukj * lik
 
-        uijRef = umat i' (((ordinal j) - (ordinal i))@_)
+        uijRef = umat i' ((unsafe_nat_diff (ordinal j) (ordinal i))@_)
         uijRef := a.(%inject i).j - s
 
       for i:(j<..).
         i' = %inject i
         s = sum for k:(..j).
           k' = %inject k
-          i'' = (((ordinal j) - (ordinal k))@_)
+          i'' = ((unsafe_nat_diff (ordinal j) (ordinal k))@_)
           ukj = get $ umat k' i''
           lik = get $ lmat i' (cast k)
           ukj * lik
@@ -201,7 +201,7 @@ def sign_and_log_determinant {n} (a:n=>n=>Float) : (Float & Float) =
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
-def matrix_power {n} (base:n=>n=>Float) (power:Int) : n=>n=>Float =
+def matrix_power {n} (base:n=>n=>Float) (power:Nat) : n=>n=>Float =
   general_integer_power (**) eye base power
 
 def trace {n a} [Add a] (x:n=>n=>a) : a =

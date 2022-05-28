@@ -7,15 +7,15 @@ import plot
 
 def wrapidx (n:Type) [Ix n] (i:Int) : n =
   -- Index wrapping around at ends.
-  asidx $ mod i $ size n
+  asidx $ unsafe_i_to_n $ mod i $ n_to_i $ size n
 
 def incwrap {n} [Ix n] (i:n) : n =  -- Increment index, wrapping around at ends.
-  asidx $ mod ((ordinal i) + 1) $ size n
+  asidx $ unsafe_i_to_n $ mod ((n_to_i $ ordinal i) + 1) $ n_to_i $ size n
 
 def decwrap {n} [Ix n] (i:n) : n =  -- Decrement index, wrapping around at ends.
-  asidx $ mod ((ordinal i) - 1) $ size n
+  asidx $ unsafe_i_to_n $ mod (n_to_i (ordinal i) - 1) $ n_to_i $ size n
 
-def finite_difference_neighbours {n a} [Add a] (x:n=>a) : n=>a =
+def finite_difference_neighbours {n a} [Sub a, Add a] (x:n=>a) : n=>a =
   for i. x.(incwrap i) - x.(decwrap i)
 
 def add_neighbours {n a} [Add a] (x:n=>a) : n=>a =
@@ -27,13 +27,13 @@ def apply_along_axis1 {b c a} (f:b=>a -> b=>a) (x:b=>c=>a) : b=>c=>a =
 def apply_along_axis2 {b c a} (f:c=>a -> c=>a) (x:b=>c=>a) : b=>c=>a =
   for i. f x.i
 
-def fdx {n m a} [Add a] (x:n=>m=>a) : (n=>m=>a) =
+def fdx {n m a} [Sub a, Add a] (x:n=>m=>a) : (n=>m=>a) =
   apply_along_axis1 finite_difference_neighbours x
 
-def fdy {n m a} [Add a] (x:n=>m=>a) : (n=>m=>a) =
+def fdy {n m a} [Sub a, Add a] (x:n=>m=>a) : (n=>m=>a) =
   apply_along_axis2 finite_difference_neighbours x
 
-def divergence {n m a} [Add a] (vx:n=>m=>a) (vy:n=>m=>a) : (n=>m=>a) =
+def divergence {n m a} [Sub a, Add a] (vx:n=>m=>a) (vy:n=>m=>a) : (n=>m=>a) =
   fdx vx + fdy vy
 
 def add_neighbours_2d {n m a} [Add a] (x:n=>m=>a) : (n=>m=>a) =
@@ -44,7 +44,7 @@ def add_neighbours_2d {n m a} [Add a] (x:n=>m=>a) : (n=>m=>a) =
 def project {n m a} [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
   -- Project the velocity field to be approximately mass-conserving,
   -- using a few iterations of Gauss-Seidel.
-  h = 1.0 / i_to_f (size n)
+  h = 1.0 / n_to_f (size n)
 
   -- unpack into two scalar fields
   vx = for i j. v.i.j.(from_ordinal _ 0)
@@ -71,8 +71,8 @@ def advect {n m a} [VSpace a] (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   -- Move field f according to x and y velocities (u and v)
   -- using an implicit Euler integrator.
 
-  cell_xs = linspace n 0.0 $ i_to_f (size n)
-  cell_ys = linspace m 0.0 $ i_to_f (size m)
+  cell_xs = linspace n 0.0 $ n_to_f (size n)
+  cell_ys = linspace m 0.0 $ n_to_f (size m)
 
   for i j.
     -- Location of source of flow for this cell.  No meshgrid!
@@ -88,15 +88,15 @@ def advect {n m a} [VSpace a] (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
     bottom_weight = center_ys - source_row
 
     -- Cast back to indices, wrapping around edges.
-    l = wrapidx n  (FToI source_col)
-    r = wrapidx n ((FToI source_col) + 1)
-    t = wrapidx m  (FToI source_row)
-    b = wrapidx m ((FToI source_row) + 1)
+    l = wrapidx n  (f_to_i source_col)
+    r = wrapidx n ((f_to_i source_col) + 1)
+    t = wrapidx m  (f_to_i source_row)
+    b = wrapidx m ((f_to_i source_row) + 1)
 
     -- A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
 
-def fluidsim {n m a} [VSpace a] (num_steps: Int) (color_init: n=>m=>a)
+def fluidsim {n m a} [VSpace a] (num_steps: Nat) (color_init: n=>m=>a)
   (v: n=>m=>(Fin 2)=>Float) : (Fin num_steps)=>n=>m=>a =
   with_state (color_init, v) \state.
     for i:(Fin num_steps).
@@ -120,9 +120,11 @@ init_velocity = for i:N j:M k:(Fin 2).
 
 -- Create diagonally-striped color pattern.
 init_color = for i:N j:M.
-  r = b_to_f $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
-  b = b_to_f $ (sin $ (i_to_f $ (ordinal j) - (ordinal i)) / 6.0) > 0.0
-  g = b_to_f $ (sin $ (i_to_f $ (ordinal j) + (ordinal i)) / 4.0) > 0.0
+  i' = n_to_f $ ordinal i
+  j' = n_to_f $ ordinal j
+  r = b_to_f $ (sin $ (j' + i') / 8.0) > 0.0
+  b = b_to_f $ (sin $ (j' - i') / 6.0) > 0.0
+  g = b_to_f $ (sin $ (j' + i') / 4.0) > 0.0
   [r, g, b]
 
 -- Run fluid sim and plot it.
@@ -135,7 +137,7 @@ num_steps = 5
 target = transpose init_color
 
 -- This is partial
-def last {n a} (xs:n=>a) : a = xs.((size n - 1)@_)
+def last {n a} (xs:n=>a) : a = xs.((unsafe_nat_diff (size n) 1)@_)
 
 def objective (v:N=>M=>(Fin 2)=>Float) : Float =
   final_color = last $ fluidsim num_steps init_color v

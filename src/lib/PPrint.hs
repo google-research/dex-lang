@@ -647,6 +647,7 @@ instance PrettyPrec (UExpr' n) where
     UVariant labels label value -> prettyVariant labels label value
     UVariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     UVariantLift labels value -> prettyVariantLift labels value
+    UNatLit   v -> atPrec ArgPrec $ p v
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
 
@@ -829,7 +830,9 @@ instance PrettyPrec ScalarBaseType where
     Float64Type -> "Float64"
     Float32Type -> "Float32"
     Word8Type   -> "Word8"
-    Word32Type  -> "Word32"
+    -- TODO: we currently use Word32 for `Nat` but we should move to a new type,
+    -- at least at the user-visible level
+    Word32Type  -> "Nat"
     Word64Type  -> "Word64"
 
 instance PrettyPrec e => Pretty (PrimExpr e) where pretty = prettyFromPrettyPrec
@@ -936,7 +939,8 @@ instance PrettyPrec LitVal where
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
+  -- print in decimal rather than hex because we use this for the `Nat` alias
+  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p x
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (PtrLit (PtrLitVal ty x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
