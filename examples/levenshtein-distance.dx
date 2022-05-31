@@ -21,8 +21,8 @@ def levenshtein_table
     {n m a}
     [Eq a]
     (xs: n=>a) (ys: m=>a)
-    : (Post n => Post m => Int) =
-  yield_state (for _ _. -1) \tab.
+    : (Post n => Post m => Nat) =
+  yield_state (for _ _. 0) \tab.
     for i:(Post n). tab!i!first_ix := ordinal i
     for j:(Post m). tab!first_ix!j := ordinal j
     for i:n j:m.
@@ -48,7 +48,7 @@ levenshtein_table ['k', 'i', 't', 't', 'e', 'n'] ['s', 'i', 't', 't', 'i', 'n', 
 
 'The actual distance is of course just the last element of the table.
 
-def levenshtein {n m a} [Eq a] (xs: n=>a) (ys: m=>a) : Int =
+def levenshtein {n m a} [Eq a] (xs: n=>a) (ys: m=>a) : Nat =
   (levenshtein_table xs ys).last_ix.last_ix
 
 %time
