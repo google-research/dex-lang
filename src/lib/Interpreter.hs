@@ -214,10 +214,6 @@ evalOp expr = mapM evalAtom expr >>= \case
       (TC (Fin _), IdxRepTy) -> do
         let Con (FinVal _ ord) = x
         return ord
-      (IdxRepTy, TC (IndexRange t l h)) -> return $ Con $ IndexRangeVal t l h x
-      (TC (IndexRange _ _ _), IdxRepTy) -> do
-        let Con (IndexRangeVal _ _ _ ord) = x
-        return ord
       (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x

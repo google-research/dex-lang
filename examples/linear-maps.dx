@@ -106,7 +106,7 @@ instance {n} HasDeterminant (LowerTriMap n)
   identity' = MkLowerTriMap for i j. select (ordinal i == ordinal j) one zero
 
 instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMap n) (n=>v)
-  apply  = \(MkLowerTriMap x) y. for i. sum for j. x.i.j .* y.(%inject j)
+  apply  = \(MkLowerTriMap x) y. for i. sum for j. x.i.j .* y.(inject _ j)
   diag   = \(MkLowerTriMap x).   for i. x.i.(cast i) .* one
   solve' = \(MkLowerTriMap x).   forward_substitute x
 
@@ -126,7 +126,7 @@ instance {n} HasDeterminant (UpperTriMap n)
   identity' = MkUpperTriMap for i j. select (0 == ordinal j) one zero
 
 instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMap n) (n=>v)
-  apply  = \(MkUpperTriMap x) y. for i. sum for j. x.i.j .* y.(%inject j)
+  apply  = \(MkUpperTriMap x) y. for i. sum for j. x.i.j .* y.(inject _ j)
   diag   = \(MkUpperTriMap x).   for i. x.i.(0@_) .* one
   solve' = \(MkUpperTriMap x).   backward_substitute x
 

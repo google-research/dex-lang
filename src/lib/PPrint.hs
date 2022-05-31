@@ -254,6 +254,10 @@ instance PrettyPrec (Atom n) where
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
+    TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
+    TypeCon "RangeToExc"   _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ "..<" <> pApp i
+    TypeCon "RangeFrom"    _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <>  ".."
+    TypeCon "RangeFromExc" _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <> "<.."
     TypeCon name _ (DataDefParams params _) -> case params of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (fromString name) ->
@@ -629,14 +633,6 @@ instance PrettyPrec (UExpr' n) where
     UTypeAnn v ty -> atPrec LowestPrec $
       group $ pApp v <> line <> ":" <+> pApp ty
     UTabCon xs -> atPrec ArgPrec $ p xs
-    UIndexRange low high -> atPrec LowestPrec $ low' <> ".." <> high'
-      where
-        low'  = case low of  InclusiveLim x -> pApp x
-                             ExclusiveLim x -> pApp x <> "<"
-                             Unlimited      -> ""
-        high' = case high of InclusiveLim x -> pApp x
-                             ExclusiveLim x -> "<" <> pApp x
-                             Unlimited      -> ""
     UPrimExpr prim -> prettyPrec prim
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
@@ -853,14 +849,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
-    IndexRange _ low high -> atPrec LowestPrec $ low' <> ".." <> high'
-      where
-        low'  = case low  of InclusiveLim x -> pApp x
-                             ExclusiveLim x -> pApp x <> "<"
-                             Unlimited      -> ""
-        high' = case high of InclusiveLim x -> pApp x
-                             ExclusiveLim x -> "<" <> pApp x
-                             Unlimited      -> ""
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
@@ -883,7 +871,6 @@ prettyPrecPrimCon con = case con of
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   FinVal n i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (Fin n)
-  IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef

@@ -43,7 +43,7 @@ module Syntax (
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..),
-    Direction (..), Limit (..), DataDefParams (..), DataDefBinders (..),
+    Direction (..), DataDefParams (..), DataDefBinders (..),
     DataDef (..), DataConDef (..), Nest (..),
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,

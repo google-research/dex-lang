@@ -447,31 +447,6 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 > 4.
 
 :p
-  one = from_ordinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one..i). 1.0
-> [0., 1., 2., 3.]
-
-:p
-  one = from_ordinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one<..i). 1.0
-> [0., 0., 1., 2.]
-
-:p
-  one = from_ordinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one<..i). 1.0
-> [0., 0., 1., 2.]
-
-:p
-  one = from_ordinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one..<i). 1.0
-> [0., 0., 1., 2.]
-
-:p
-  one = from_ordinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one<..<i). 1.0
-> [0., 0., 0., 1.]
-
-:p
   for i:(Fin 4). sum for j:(..i). 1.0
 > [1., 2., 3., 4.]
 

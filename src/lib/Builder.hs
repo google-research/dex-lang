@@ -23,7 +23,7 @@ module Builder (
   buildLam, buildTabLam, buildLamGeneral,
   buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr,
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
-  buildNewtype, fromNewtype,
+  buildNewtype,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
@@ -703,11 +703,6 @@ buildNewtype name paramBs body = do
     singletonBinderNest noHint ty
   return $ DataDef name (DataDefBinders paramBs' Empty) [DataConDef ("mk" <> name) argBs]
 
-fromNewtype :: [DataConDef n]
-            -> Maybe (Type n)
-fromNewtype [DataConDef _ (EmptyAbs (Nest (_:>ty) Empty))] = Just ty
-fromNewtype _ = Nothing
-
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, ScopableBuilder m)
@@ -861,7 +856,6 @@ maybeTangentType ty = case ty of
     BaseType (Scalar Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
     Fin _                         -> return $ UnitTy
-    IndexRange _ _ _              -> return $ UnitTy
     ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
     _ -> Nothing
   _ -> Nothing

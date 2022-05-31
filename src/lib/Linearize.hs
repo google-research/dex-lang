@@ -365,7 +365,6 @@ linearizeOp op = case op of
   PtrOffset _ _          -> emitZeroT
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
-  Inject _               -> emitZeroT
   ThrowError _           -> emitZeroT
   DataConTag _           -> emitZeroT
   ToEnum _ _             -> emitZeroT
@@ -486,7 +485,6 @@ linearizePrimCon con = case con of
                   forM elemsWithT' \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
   FinVal _ _            -> emitZeroT
-  IndexRangeVal _ _ _ _ -> emitZeroT
   LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"

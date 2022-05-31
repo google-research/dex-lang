@@ -16,22 +16,22 @@ def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = for i. l.i.(cast i)
 
 def transpose_lower_to_upper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
   for i:n. for j':(i..).
-    j = %inject j'
+    j = inject n j'
     lower.j.(cast i)
 
 def transpose_lower_to_upper_no_diag {n v}
     (lower:i:n=>(..<i)=>v) :
            i:n=>(i<..)=>v =
   for i j.
-    j' = %inject j
+    j' = inject n j
     lower.j'.(unsafe_from_ordinal _ (ordinal i))
 
 def skew_symmetric_prod {v n} [VSpace v]
     (lower: i:n=>(..<i)=>Float) (y: n=>v) : n=>v =
   -- We could probably fuse these two for loops.
-  lower_prod = for i. sum for j. lower.i.j .* (y.(%inject j))
+  lower_prod = for i. sum for j. lower.i.j .* (y.(inject n j))
   upper = transpose_lower_to_upper_no_diag lower
-  upper_prod = for i. sum for j. upper.i.j .* (y.(%inject j))
+  upper_prod = for i. sum for j. upper.i.j .* (y.(inject n j))
   lower_prod - upper_prod
 
 def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
@@ -39,7 +39,7 @@ def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v 
   yield_state zero \sRef.
     for i:n.
       s = sum for k:(..<i).  -- dot product
-        a.i.(cast k) .* get sRef!(%inject k)
+        a.i.(cast k) .* get sRef!(inject n k)
       sRef!i := (b.i - s) / a.i.(cast i)
 
 def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
@@ -47,7 +47,7 @@ def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v
   yield_state zero \sRef.
     rof i:n.
       s = sum for k:(i..).  -- dot product
-        a.i.(cast k) .* get sRef!(%inject k)
+        a.i.(cast k) .* get sRef!(inject n k)
       sRef!i := (b.i - s) / a.i.(0@_) -- 0 is the diagonal index
 
 -- Todo: get rid of these by writing a dependent indexing (!) operator.
@@ -64,7 +64,7 @@ def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
   yield_state zero \buf.
     mat = lower_tri_mat buf
     for i:n. for j':(..i).
-      j = %inject j'
+      j = inject n j'
       row  = for k:(..<j). get $ mat i (cast k)
       row' = for k:(..<j). get $ mat j (cast k)
       a = x.i.j - vdot row row'
@@ -106,10 +106,10 @@ def pivotize {n} (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yield_state identity_permutation \permRef.
     for j:n.
-      row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j))
+      row_with_largest = argmin for i:(j..). (-(abs a.(inject n i).j))
       case ordinal j == ordinal row_with_largest of
         True -> ()
-        False -> swap_in_place permRef j (%inject row_with_largest)
+        False -> swap_in_place permRef j (inject n row_with_largest)
 
 def lu {n} (a: n=>n=>Float) :
        (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
@@ -119,7 +119,7 @@ def lu {n} (a: n=>n=>Float) :
   a = apply_permutation permutation a
 
   init_lower = for i:n. for j':(..i).
-    select (ordinal i == (ordinal (%inject j'))) 1.0 0.0
+    select (ordinal i == (ordinal (inject n j'))) 1.0 0.0
   init_upper = zero
 
   (lower, upper) = yield_state (init_lower, init_upper) \stateRef.
@@ -130,16 +130,16 @@ def lu {n} (a: n=>n=>Float) :
   -- without dependent tables (i.e. with standard flat matrices):
   --  for j:n.
   --    for i:(..j).
-  --      i = %inject i
+  --      i = inject _ i
   --      s = sum for k':(..i).
-  --        k = %inject k'
+  --        k = inject _ k'
   --        (get uRef!k!j) * (get lRef!i!k)
   --      uRef!i!j := a.i.j - s
 
   --    for i':(j<..).
-  --      i = %inject i'
+  --      i = inject _ i'
   --      s = sum for k':(..j).
-  --        k = %inject k'
+  --        k = inject _ k'
   --        (get uRef!k!j) * (get lRef!i!k)
   --      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
   --    for i:n. ()
@@ -148,21 +148,22 @@ def lu {n} (a: n=>n=>Float) :
     umat = upper_tri_mat uRef
     for j:n.
       for i:(..j).
-        i' = %inject i
+        i' = inject n i
         s = sum for k:(..i).
-          k'' = %inject k
-          k' = %inject k''
+          -- TODO: get transitivity of Subset working so we can do a single injection
+          k'' = inject (..j) k
+          k' = inject n k''
           ukj = get $ umat k' ((unsafe_nat_diff (ordinal j) (ordinal k))@_)
           lik = get $ lmat i' (cast k)
           ukj * lik
 
         uijRef = umat i' ((unsafe_nat_diff (ordinal j) (ordinal i))@_)
-        uijRef := a.(%inject i).j - s
+        uijRef := a.(inject _ i).j - s
 
       for i:(j<..).
-        i' = %inject i
+        i' = inject _ i
         s = sum for k:(..j).
-          k' = %inject k
+          k' = inject _ k
           i'' = ((unsafe_nat_diff (ordinal j) (ordinal k))@_)
           ukj = get $ umat k' i''
           lik = get $ lmat i' (cast k)

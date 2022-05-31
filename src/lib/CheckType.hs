@@ -127,10 +127,6 @@ infixr 7 |:
 (|:) :: (Typer m, HasType e) => e i -> Type o -> m i o ()
 (|:) x reqTy = void $ checkTypeE reqTy x
 
-checkIxTy :: Typer m => Atom i -> m i o (IxType o)
-checkIxTy (IxTy ixTy) = checkE ixTy
-checkIxTy x = throw TypeErr $ "Not an index type" ++ pprint x
-
 -- === top-level env ===
 
 instance CheckableE Block where
@@ -473,10 +469,6 @@ typeCheckPrimTC :: Typer m => PrimTC (Atom i) -> m i o (Type o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   Fin n -> n|:IdxRepTy >> return TyKind
-  IndexRange ixTy a b -> do
-    IxType t _ <- checkIxTy ixTy
-    mapM_ (|:t) a >> mapM_ (|:t) b
-    return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
@@ -497,12 +489,6 @@ typeCheckPrimCon con = case con of
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
   FinVal n i -> i|:IdxRepTy >> substM (TC $ Fin n)
-  IndexRangeVal ixTy l h i -> do
-    i |: IdxRepTy
-    ixTy'@(IxType t _) <- checkIxTy ixTy
-    l' <- mapM (checkTypeE t) l
-    h' <- mapM (checkTypeE t) h
-    return $ TC $ IndexRange (IxTy ixTy') l' h'
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -514,12 +500,6 @@ typeCheckPrimCon con = case con of
     FinVal n i -> do
       n' <- substM n
       i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ Fin n')
-    IndexRangeVal ixTy l h i -> do
-      ixTy'@(IxType t _) <- checkIxTy ixTy
-      l' <- mapM (checkTypeE t) l
-      h' <- mapM (checkTypeE t) h
-      i|:(RawRefTy IdxRepTy)
-      return $ RawRefTy $ TC $ IndexRange (IxTy ixTy') l' h'
     SumAsProd ty tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
       RawRefTy <$> substM ty
@@ -562,11 +542,6 @@ typeCheckPrimOp op = case op of
     ty <- getTypeE x
     y |: ty
     return ty
-  Inject i -> do
-    TC tc <- getTypeE i
-    case tc of
-      IndexRange (IxTy (IxType ty _)) _ _    -> return ty
-      _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var h')) s) <- getTypeE ref
     case m of
@@ -942,8 +917,6 @@ checkFloatBaseType t = case t of
 checkValidCast :: Fallible1 m => Type n -> Type n -> m n ()
 checkValidCast (TC (Fin _)) IdxRepTy = return ()
 checkValidCast IdxRepTy (TC (Fin _)) = return ()
-checkValidCast (TC (IndexRange _ _ _)) IdxRepTy = return ()
-checkValidCast IdxRepTy (TC (IndexRange _ _ _)) = return ()
 checkValidCast (BaseTy l) (BaseTy r) = checkValidBaseCast l r
 checkValidCast sourceTy destTy =
   throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
@@ -1231,7 +1204,6 @@ checkDataLike ty = case ty of
     ProdType as      -> mapM_ recur as
     SumType  cs      -> mapM_ recur cs
     Fin _            -> return ()
-    IndexRange _ _ _ -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty
   where recur = checkDataLike

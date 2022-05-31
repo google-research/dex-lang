@@ -927,12 +927,6 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     scrut'' <- zonk scrut'
     buildSortedCase scrut'' alts' reqTy'
   UTabCon xs -> inferTabCon xs reqTy >>= matchRequirement
-  UIndexRange low high -> do
-    n <- freshType TyKind
-    low'  <- mapM (flip checkRho n) low
-    high' <- mapM (flip checkRho n) high
-    ixTy <- asIxType n
-    matchRequirement $ TC $ IndexRange (IxTy ixTy) low' high'
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty

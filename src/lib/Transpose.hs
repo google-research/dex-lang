@@ -242,7 +242,6 @@ transposeOp op ct = case op of
   PtrOffset _ _         -> notLinear
   IOAlloc _ _           -> notLinear
   IOFree _              -> notLinear
-  Inject       _        -> notLinear
   ThrowError   _        -> notLinear
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
@@ -345,7 +344,6 @@ transposeCon con ct = case con of
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   FinVal _ _        -> notTangent
-  IndexRangeVal _ _ _ _ -> notTangent
   LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent

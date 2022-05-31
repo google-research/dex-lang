@@ -87,7 +87,6 @@ data UExpr' (n::S) =
  | UIndexType (UExpr n)
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
- | UIndexRange (Limit (UExpr n)) (Limit (UExpr n))
  | UPrimExpr (PrimExpr (UExpr n))
  | ULabel String
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}

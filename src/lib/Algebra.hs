@@ -243,7 +243,6 @@ blockAsCPoly (Block _ decls' result') =
     indexAsCPoly = \case
       Var v                       -> varAsCPoly v
       Con (FinVal _ i)            -> intAsCPoly i
-      Con (IndexRangeVal _ _ _ i) -> intAsCPoly i
       _                           -> empty
 
     intAsCPoly :: (SubstReader CPolySubstVal m, Alternative2 m)

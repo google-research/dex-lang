@@ -419,15 +419,6 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
-  Inject e -> case e of
-    Con (IndexRangeVal (IxTy ixTy) low _ restrictIdx) -> do
-      offset <- case low of
-        InclusiveLim a -> ordinalImp ixTy a
-        ExclusiveLim a -> ordinalImp ixTy a >>= iaddI (IIdxRepVal 1)
-        Unlimited      -> return (IIdxRepVal 0)
-      restrictIdx' <- fromScalarAtom restrictIdx
-      returnVal =<< unsafeFromOrdinalImp ixTy =<< iaddI restrictIdx' offset
-    _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
   IOAlloc ty n -> do
@@ -468,11 +459,6 @@ toImpOp maybeDest op = case op of
         returnVal xord
       (IdxRepTy, TC (Fin n)) ->
         returnVal $ Con $ FinVal n x
-      (TC (IndexRange _ _ _), IdxRepTy) -> do
-        let Con (IndexRangeVal _ _ _ xord) = x
-        returnVal xord
-      (IdxRepTy, TC (IndexRange t l h)) ->
-        returnVal $ Con $ IndexRangeVal t l h x
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   Select p x y -> do
     xTy <- getType x
@@ -995,9 +981,6 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     Fin n -> do
       x <- rec IdxRepTy
       return $ Con $ ConRef $ FinVal n x
-    IndexRange t l h -> do
-      x <- rec IdxRepTy
-      return $ Con $ ConRef $ IndexRangeVal t l h x
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
@@ -1074,7 +1057,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
           (FinVal _ iRef, FinVal _ i) -> copyRec iRef i
-          (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> copyRec iRef i
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
         _ -> error "unexpected src/dest pair"
       _ -> error "unexpected src/dest pair"
@@ -1149,7 +1131,6 @@ loadDest (Con dest) = do
      ProdCon ds -> ProdCon <$> traverse loadDest ds
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
      FinVal n iRef -> FinVal n <$> loadDest iRef
-     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest
@@ -1472,18 +1453,6 @@ emitAlloc :: (ImpBuilder m, Emits n) => PtrType -> IExpr n -> m n (IExpr n)
 emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
 {-# INLINE emitAlloc #-}
 
-buildBinOp :: Emits n
-           => (forall l. (Emits l, DExt n l) => Atom l -> Atom l -> BuilderM l (Atom l))
-           -> IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
-buildBinOp f x y = fromScalarAtom =<< liftBuilderImp do
-  Distinct <- getDistinct
-  x' <- toScalarAtom $ sink x
-  y' <- toScalarAtom $ sink y
-  f x' y'
-
-iaddI :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
-iaddI = buildBinOp iadd
-
 impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
 
@@ -1535,11 +1504,6 @@ unsafeFromOrdinalImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
 unsafeFromOrdinalImp ixTy i = liftBuilderImpSimplify do
   i' <- toScalarAtom =<< sinkM i
   unsafeFromOrdinal (sink ixTy) i'
-
-ordinalImp :: Emits n => IxType n -> Atom n -> SubstImpM i n (IExpr n)
-ordinalImp ixTy i = fromScalarAtom =<< liftBuilderImpSimplify do
-  i' <- sinkM i
-  ordinal (sink ixTy) i'
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
 indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do
