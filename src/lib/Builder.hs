@@ -839,26 +839,39 @@ zeroAt ty = case ty of
 zeroLike :: (HasCallStack, HasType e, Builder m) => e n -> m n (Atom n )
 zeroLike x = zeroAt =<< getType x
 
-tangentType :: Type n -> Type n
-tangentType ty = case maybeTangentType ty of
-  Just tanTy -> tanTy
+tangentType :: EnvReader m => Type n -> m n (Type n)
+tangentType ty = maybeTangentType ty >>= \case
+  Just tanTy -> return tanTy
   Nothing -> error $ "can't differentiate wrt type: " ++ pprint ty
 
-maybeTangentType :: Type n -> Maybe (Type n)
-maybeTangentType ty = case ty of
-  StaticRecordTy items -> StaticRecordTy <$> mapM maybeTangentType items
-  TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
+maybeTangentType :: EnvReader m => Type n -> m n (Maybe (Type n))
+maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
+
+maybeTangentType' :: Type n -> EnvReaderT Maybe n (Type n)
+maybeTangentType' ty = case ty of
+  StaticRecordTy items -> StaticRecordTy <$> mapM rec items
+  TypeCon _ _ _ -> rec =<< fromNewtypeWrapper ty
   TabTy b bodyTy -> do
-    bodyTanTy <- maybeTangentType bodyTy
-    return $ TabTy b bodyTanTy
+    refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
+      bodyTanTy <- rec bodyTy'
+      return $ TabTy b' bodyTanTy
   TC con    -> case con of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
     Fin _                         -> return $ UnitTy
-    ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
-    _ -> Nothing
-  _ -> Nothing
+    ProdType   tys                -> ProdTy <$> traverse rec tys
+    _ -> empty
+  _ -> empty
+  where rec = maybeTangentType'
+
+fromNewtypeWrapper :: (EnvReader m, Fallible1 m) => Type n -> m n (Type n)
+fromNewtypeWrapper ty = do
+  TypeCon _ defName params <- return ty
+  def <- lookupDataDef defName
+  [con] <- instantiateDataDef def params
+  DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) <- return con
+  return wrappedTy
 
 tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
 tangentBaseMonoidFor ty = do
