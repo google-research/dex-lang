@@ -131,7 +131,7 @@ instance Pretty (Block n) where
 
 prettyBlock :: (PrettyPrec (e l)) => Nest Decl n l -> e l -> Doc ann
 prettyBlock Empty expr = group $ line <> pLowest expr
-prettyBlock decls expr = hardline <> prettyLines decls' <> pLowest expr
+prettyBlock decls expr = prettyLines decls' <> hardline <> pLowest expr
     where decls' = fromNest decls
 
 fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
@@ -139,7 +139,7 @@ fromNest Empty = []
 fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
-prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
+prettyLines xs = foldMap (\d -> hardline <> p d) $ toList xs
 
 instance PrettyPrec a => PrettyPrec [a] where
   prettyPrec xs = atPrec ArgPrec $ hsep $ map pLowest xs
@@ -472,7 +472,7 @@ instance Pretty (DataDefBinders n l) where
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
-    "data" <+> p name <+> p bs <> hardline <> prettyLines cons
+    "data" <+> p name <+> p bs <> prettyLines cons
 
 instance Pretty (DataConDef n) where
   pretty (DataConDef name bs) =
@@ -639,7 +639,7 @@ instance PrettyPrec (UExpr' n) where
                              Unlimited      -> ""
     UPrimExpr prim -> prettyPrec prim
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
-      nest 2 (hardline <> prettyLines alts)
+      nest 2 (prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
     ULabeledRow elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "?") ": " elems
     URecord   elems -> atPrec ArgPrec $ prettyUFieldRowElems (line' <> ",") "=" elems
@@ -674,7 +674,7 @@ instance Pretty (UDecl n l) where
   pretty (UDataDefDecl (UDataDef bParams bIfaces dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
        <+> "where" <> nest 2
-       (hardline <> prettyLines (zip (toList $ fromNest bDataCons) dataCons))
+       (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods
@@ -684,10 +684,10 @@ instance Pretty (UDecl n l) where
                  | (b, UMethodType e ty) <- zip (toList $ fromNest methodNames) methodTys]
   pretty (UInstance className bs params methods (RightB UnitB)) =
     "instance" <+> prettyBinderNest bs <+> p className <+> spaced params <+>
-       hardline <> prettyLines methods
+       prettyLines methods
   pretty (UInstance bs className params methods (LeftB v)) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
-        <> hardline <> prettyLines methods
+        <> prettyLines methods
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
@@ -784,8 +784,10 @@ instance Pretty (ImpFunction n) where
   pretty (FFIFunction _ f) = p f
 
 instance Pretty (ImpBlock n)  where
+  pretty (ImpBlock Empty []) = mempty
   pretty (ImpBlock Empty expr) = group $ line <> pLowest expr
-  pretty (ImpBlock decls expr) = hardline <> prettyLines decls' <> pLowest expr
+  pretty (ImpBlock decls []) = prettyLines $ fromNest decls
+  pretty (ImpBlock decls expr) = prettyLines decls' <> hardline <> pLowest expr
     where decls' = fromNest decls
 
 instance Pretty (IBinder n l)  where
@@ -793,11 +795,11 @@ instance Pretty (IBinder n l)  where
 
 instance Pretty (ImpInstr n)  where
   pretty (IFor a n (Abs i block)) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
-                                      nest 4 (hardline <> p block)
+                                      nest 4 (p block)
   pretty (IWhile body) = "while" <+> nest 2 (p body)
   pretty (ICond predicate cons alt) =
-    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
-    hardline <> "else" <> nest 2 (hardline <> p alt)
+    "if" <+> p predicate <+> "then" <> nest 2 (p cons) <>
+    hardline <> "else" <> nest 2 (p alt)
   pretty (IQueryParallelism f s) = "queryParallelism" <+> p f <+> p s
   pretty (ILaunch f size args) =
     "launch" <+> p f <+> p size <+> spaced args

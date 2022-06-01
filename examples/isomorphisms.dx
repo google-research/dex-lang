@@ -55,12 +55,10 @@ that produce isos. We will start with the first two:
 > (MkIso
 >    {fwd=(\v. case v
 >              {| b = x |} -> (Left x)
->              {|b| ...r |} -> (Right r)
->              )
+>              {|b| ...r |} -> (Right r))
 >    , bwd=(\v. case v
 >               ((Left x)) -> {| b = x |}
->               ((Right r)) -> {|b| ...r |}
->               )}
+>               ((Right r)) -> {|b| ...r |})}
 >  : Iso {a: Int | b: Float | c: Unit} _)
 
 'There are also two "zipper" forms, described later on this page:
@@ -236,16 +234,12 @@ zipper isomorphisms:
 >              ((Left l)) -> (Left {|a| ...l |})
 >              ((Right w)) -> (case w
 >                                {| a = x |} -> (Left {| a = x |})
->                                {|a| ...r |} -> (Right r)
->                                )
->              )
+>                                {|a| ...r |} -> (Right r)))
 >    , bwd=(\v. case v
 >               ((Left w)) -> (case w
 >                                {| a = x |} -> (Right {| a = x |})
->                                {|a| ...r |} -> (Left r)
->                                )
->               ((Right l)) -> (Right {|a| ...l |})
->               )}
+>                                {|a| ...r |} -> (Left r))
+>               ((Right l)) -> (Right {|a| ...l |}))}
 >  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:
