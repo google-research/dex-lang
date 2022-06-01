@@ -29,7 +29,7 @@ import Name
 import Builder
 import Syntax
 import CheckType (CheckableE (..))
-import Simplify
+import Simplify (buildBlockSimplified, dceApproxBlock, emitSimplified, simplifyBlockToBlock)
 import LabeledItems
 import QueryType
 import Util (enumerate)
@@ -294,7 +294,7 @@ translateTopLevel cc maybeDest (Abs bs body) = do
   ab  <- buildImpNaryAbs argTys \vs ->
     extendSubst (bs @@> map Rename vs) do
       outDest <- case maybeDest of
-        Nothing   -> makeAllocDest Unmanaged =<< getType =<< substM body
+        Nothing   -> makeAllocDest Unmanaged =<< getTypeSubst body
         Just dest -> sinkM dest
       void $ translateBlock (Just outDest) body
       destToAtom outDest
@@ -411,7 +411,7 @@ toImpOp maybeDest op = case op of
                     liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
         copyAtom refDest result
         returnVal UnitVal
-      MPut x -> copyAtom  refDest x >> returnVal UnitVal
+      MPut x -> copyAtom refDest x >> returnVal UnitVal
       MGet -> do
         resultTy <- resultTyM
         dest <- allocDest maybeDest resultTy
@@ -526,9 +526,7 @@ toImpOp maybeDest op = case op of
 
 toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (Atom i) -> SubstImpM i o (Atom o)
 toImpHof maybeDest hof = do
-  -- TODO: it's a shame to have to substitute the whole expression just to get its type.
-  -- Laziness *might* save us, but we should check.
-  resultTy <- getType =<< substM (Hof hof)
+  resultTy <- getTypeSubst (Hof hof)
   case hof of
     For (RegularFor d) (IxTy ixTy) (Lam (LamExpr b body)) -> do
       ixTy' <- substM ixTy
@@ -889,13 +887,12 @@ type NaryLamDest = Abs (Nest (BinderP AtomNameC Dest)) Dest
 makeNaryLamDest :: NaryPiType n -> SubstImpM i n (AbsPtrs NaryLamDest n)
 makeNaryLamDest piTy = do
   let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
-  result <- liftDestM allocInfo $ buildLocalDest do
+  liftDestM allocInfo $ buildLocalDest do
     Abs decls dest <- buildDeclsDest $
                         makeNaryLamDestRec (Abs Empty UnitE, []) [] (sink piTy)
     case decls of
       Empty -> return dest
       _ -> error "shouldn't have decls if we have empty indices"
-  return result
 
 makeNaryLamDestRec :: forall n. Emits n => DestIdxs n -> DepVars n
                    -> NaryPiType n -> DestM n (NaryLamDest n)
