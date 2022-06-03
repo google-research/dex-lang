@@ -249,9 +249,15 @@ blockAsCPoly (Block _ decls' result') =
                 => Atom i -> m i o (ClampPolynomial o)
     intAsCPoly = \case
       Var v       -> varAsCPoly v
+      -- XXX: this case is needed to handle the Nat-wrapper types, RangeFrom,
+      -- RangeFromExc, RangeTo, and RangeToExc. But user-defined index sets
+      -- won't always just be wrappers around `Nat`! So we need Algebra to be
+      -- aware of their definitions.
+      ProjectElt (0:|[]) v -> varAsCPoly v
       IdxRepVal x -> return $ fromInt x
       _ -> empty
-      where fromInt i = liftC $ poly [((fromIntegral i) % 1, mono [])]
+      where
+        fromInt i = liftC $ poly [((fromIntegral i) % 1, mono [])]
 
     varAsCPoly :: (SubstReader CPolySubstVal m, Alternative2 m)
                => AtomName i -> m i o (ClampPolynomial o)
