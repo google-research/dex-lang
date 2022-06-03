@@ -73,13 +73,13 @@ Syntax for records, variants, and their types.
 'Variants (enums)
 
 
-:p {| a=3 |} : {a:Int | b:Float}
+:p {| a=3 |} :: {a:Int | b:Float}
 > {| a = 3 |}
 
-:p {| a | a = 3.0 |} : {a:Int | a:Float | a:Int}
+:p {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
 > {|a| a = 3. |}
 
-:t {| a | a = 3.0 |} : {a:Int | a:Float | a:Int}
+:t {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
 > {a: Int32 | a: Float32 | a: Int32}
 
 :p
@@ -98,7 +98,7 @@ Syntax for records, variants, and their types.
 > 94 | :p {a:Int & b:Float | c:Int }
 >    |                     ^
 > unexpected '|'
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', ':', '}', arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "::", "<..", "<..<", "=>", "{|", '$', '&', '.', '}', arrow, backquoted name, expression, or infix operator
 
 :p {a:Int,}
 
@@ -107,7 +107,7 @@ Syntax for records, variants, and their types.
 > 103 | :p {a:Int,}
 >     |          ^
 > unexpected ','
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', ':', '?', '|', '}', arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "::", "<..", "<..<", "=>", "{|", '$', '&', '.', '?', '|', '}', arrow, backquoted name, expression, or infix operator
 
 :p {|3}
 

@@ -99,3 +99,14 @@ def myInt2 : {State Int} Int = 1
     if True
       then ref += 2.
 > 9.
+
+-- Check that a syntax error in a funDefLet doesn't try to reparse the
+-- whole definition as something it's not.
+def frob (x:Int) (y:Int) : + =
+
+> Parse error:105:30:
+>     |
+> 105 | def frob (x:Int) (y:Int) : + =
+>     |                              ^
+> unexpected '='
+> expecting expression

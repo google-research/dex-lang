@@ -77,7 +77,7 @@ def binomialBatch {a} [Ix a] (n:Nat) (p:Prob) (k:Key) : a => Nat =
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   map ordinal $ categorical_batch logprobs k
 
-inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Nat
+inversionBatchSamples = (binomialBatch n p k0) :: Fin numSamples => Nat
 
 :p slice inversionBatchSamples 0 $ Fin 10
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
