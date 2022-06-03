@@ -115,26 +115,26 @@ def gaussian {n m} [Ix n, Ix m] ((ux, uy):(Float & Float)) ((ox, oy):(Float & Fl
 
 -- Create an animation of the evolution of the given wavefunction under the given potential.
 def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
-  animate (map toImg (cut (map pdf (evolve psi v))):(Fin gifFrames=>_))
+  animate (map toImg (cut (map pdf (evolve psi v)))::(Fin gifFrames=>_))
 
 ' Centred particle in a zero-potential box.
 
 :html (run
-        ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
+        ((gaussian (0.5, 0.5) (0.1, 0.1))::(D=>D=>_))
         (for i j. 0.))
 > <html output>
 
 ' Off-centre particle tunnelling through a high-potential barrier
 
 :html (run
-        ((gaussian (0.25, 0.5) (0.1, 0.1)):(D=>D=>_))
+        ((gaussian (0.25, 0.5) (0.1, 0.1))::(D=>D=>_))
         (for i j. if (ordinal j) == 20 then 1000. else 0.))
 > <html output>
 
 ' Ramp potential confining a particle to a corner over time
 
 :html (run
-        ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
+        ((gaussian (0.5, 0.5) (0.1, 0.1))::(D=>D=>_))
         (for i j. n_to_f $ ordinal i + ordinal j))
 > <html output>
 
@@ -146,6 +146,6 @@ def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
             x = ordinal j
             if x >= 15 && y >= 15 && x < 25 && y < 25
                then fToC 0.01
-               else fToC 0.0):(D=>D=>_))
+               else fToC 0.0)::(D=>D=>_))
         (for i j. 0.))
 > <html output>

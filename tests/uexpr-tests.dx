@@ -118,10 +118,10 @@ myPair = (1, 2.3)
   x
 > [1, 2, 3, 4]@(Fin 2 & Fin 2)
 
-:p [] : (Fin 0 => Int)
+:p [] :: (Fin 0 => Int)
 > []
 
-:p [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
+:p [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
 > [1, 2, 3, 4]@(Fin 2 & Fin 2)
 
 
@@ -285,20 +285,19 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 
 -- Can only unpack tables indexed by `Fin n`
 :p
-  [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
+  [a, b, c, d] = [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
   (a, b, c, d)
 > Type error:
 > Expected: ((Fin 2 & Fin 2) => Int32)
 >   Actual: ((Fin 4) => a)
 > (Solving for: [a])
 >
->   [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
+>   [a, b, c, d] = [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
 >   ^^^^^^^^^^^^^
 
 -- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
 -- :p
---   -- parentheses needed to stop the parser from reading "zero" as a binder name
---   [a, b, c, d] = (zero) : (_ => Int)
+--   [a, b, c, d] = zero :: (_ => Int)
 --   (a, b, c, d)
 -- > (0, (0, (0, 0)))
 

@@ -31,7 +31,7 @@ set2 = to_set ["Bob", "Xeno", "Charlie"]
 
 '#### Empty set tests
 
-emptyset = to_set ([]:(Fin 0)=>String)
+emptyset = to_set ([]::(Fin 0)=>String)
 
 :p emptyset == emptyset
 > True

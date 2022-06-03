@@ -531,7 +531,7 @@ def n_to_i (x:Nat) : Int =
   internal_cast _ x
 
 def i_to_n (x:Int) : Maybe Nat =
-  if w8_to_b $ %ilt x (0:Int)
+  if w8_to_b $ %ilt x (0::Int)
     then Nothing
     else Just $ unsafe_i_to_n x
 
@@ -2129,8 +2129,8 @@ def pad_to {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
       False -> x
 
 def idiv_ceil (x:Nat) (y:Nat) : Nat = idiv x y + b_to_n (rem x y /= 0)
-def intdiv2 (x:Nat) : Nat = %shr x (1 : Nat)
-def intpow2 (power:Nat) : Nat = %shl (1 : Nat) power
+def intdiv2 (x:Nat) : Nat = %shr x (1 :: Nat)
+def intpow2 (power:Nat) : Nat = %shl (1 :: Nat) power
 def is_odd  (x:Nat) : Bool = rem x 2 == 1
 def is_even (x:Nat) : Bool = rem x 2 == 0
 
@@ -2151,7 +2151,7 @@ def natlog2 (x:Nat) : Nat =
         if x >= (get cmpRef)
           then
             ansRef := (get ansRef) + 1
-            cmpRef := %shl (get cmpRef) (1 : Nat)
+            cmpRef := %shl (get cmpRef) (1 :: Nat)
             True
           else
             False
@@ -2217,7 +2217,7 @@ def concat {n a} (lists:n=>(List a)) : List a =
         xs.(eltIdxVal@_)
 
 def cat_maybes {a n} (xs:n=>Maybe a) : List a =
-  (num_res, res_inds) = yield_state (0:Nat, for i:n. Nothing) \ref.
+  (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
     for i. case xs.i of
       Just _ ->
         ix = get $ fst_ref ref

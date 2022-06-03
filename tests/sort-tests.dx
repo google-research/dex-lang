@@ -1,6 +1,6 @@
 import sort
 
-:p is_sorted $ sort []:((Fin 0)=>Int)
+:p is_sorted $ sort []::((Fin 0)=>Int)
 > True
 :p is_sorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
 > True
@@ -29,10 +29,10 @@ import sort
 :p "a" < "aa"
 > True
 
-:p ("": List Word8) > ("": List Word8)
+:p ("" :: List Word8) > ("" :: List Word8)
 > False
 
-:p ("": List Word8) < ("": List Word8)
+:p ("" :: List Word8) < ("" :: List Word8)
 > False
 
 :p "a" > "a"

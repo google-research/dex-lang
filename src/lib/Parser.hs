@@ -344,7 +344,7 @@ dataConDefBinder = annBinder <|> (UAnnBinder UIgnore <$> containedExpr)
 
 decl :: Parser (UDecl VoidS VoidS)
 decl = do
-  lhs <- simpleLet <|> funDefLet
+  lhs <- funDefLet <|> (try $ simpleLet <* lookAhead (sym "="))
   rhs <- sym "=" >> blockOrExpr
   return $ lhs rhs
 
@@ -1090,7 +1090,7 @@ limFromMaybe (Just x) = InclusiveLim x
 
 annotatedExpr :: Operator Parser (UExpr VoidS)
 annotatedExpr = InfixL $ opWithSrc $
-  sym ":" $> (\pos v ty -> WithSrcE (Just pos) $ UTypeAnn v ty)
+  sym "::" $> (\pos v ty -> WithSrcE (Just pos) $ UTypeAnn v ty)
 
 inpostfix :: Parser (UExpr VoidS -> Maybe (UExpr VoidS) -> UExpr VoidS)
           -> Operator Parser (UExpr VoidS)
@@ -1208,7 +1208,7 @@ doubleLit = lexeme $
 
 knownSymStrs :: HS.HashSet String
 knownSymStrs = HS.fromList
-  [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":="
+  [".", ":", "::", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":="
   , "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>"
   , "..", "<..", "..<", "..<", "<..<", "?"]
 

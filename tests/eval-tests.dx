@@ -628,7 +628,7 @@ def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
 -- > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
-upperBound = sum $ for i:(Fin 4). (1:Nat)
+upperBound = sum $ for i:(Fin 4). (1::Nat)
 :p for j:(Fin upperBound). 1.0
 > [1., 1., 1., 1.]
 
