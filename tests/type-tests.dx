@@ -493,6 +493,8 @@ def frob {n} (_:Unit) : Unit =
 :p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
 > True
 
+'### Miscellany
+
 xbool : Bool = arb $ new_key 0
 :p xbool
 > True
@@ -504,3 +506,17 @@ xbool : Bool = arb $ new_key 0
 >
 > :p for i:(Fin 4). ordinal i - 1
 >                             ^^
+
+-- Check that the result passed to :html has type `String`.  This is
+-- also a regression test for
+-- https://github.com/google-research/dex-lang/issues/934
+
+table = [1.0, 2.0]
+
+:html table
+> Type error:
+> Expected: (List Word8)
+>   Actual: ((Fin 2) => Float32)
+>
+> :html table
+>       ^^^^^
