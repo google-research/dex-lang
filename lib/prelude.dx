@@ -852,16 +852,6 @@ instance {a b c} [Subset a b, Subset b c] Subset a c
     Nothing -> Nothing
     Just y -> project a y
 
--- TODO: figure out how to have an instance like this without producing an
--- infinite number of apparent synthesis paths.
--- instance {a} Subset a a
---   inject' = \x. x
---   inject' = \x. inject c $ inject b x
-
--- TODO?: Subset (Fin n) Nat
--- TODO?: Subset Nat Int
--- TODO?: Subset Int Float
-
 instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
   inject' = \(UnsafeMkRangeFrom j).
     unsafe_from_ordinal _ $ j + ordinal i
