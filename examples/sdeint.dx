@@ -6,7 +6,6 @@ import linearmaps
 UnitInterval = Float
 Time = Float
 
-
 '### Utility functions
 
 def linear_interp {a} [VSpace a]
@@ -67,11 +66,30 @@ def sample_Brownian_motion {v} [VSpace v, HasStandardNormal v]
 
 --data Time = MkTime Float
 
-def Drift (v:Type) [VSpace v] : Type = v->Time->v
-def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type =
-  v->Time->m
-def SDE (m:Type) (v:Type) [LinearEndo m v] : Type =
-  (Drift v & Diffusion m v)
+def Drift              (v:Type) [VSpace v]       : Type = v->Time->v
+def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->Time->m
+
+data ItoSDE m v [LinearEndo m v] =
+  MkItoSDE drift:(Drift v) diffusion:(Diffusion m v)
+
+data StratSDE m v [LinearEndo m v] =
+  MkStratSDE drift:(Drift v) diffusion:(Diffusion m v)
+
+def diffusion_grad_product {m v} [LinearEndo m v]
+    (diff : Diffusion m v) (z : v) (t : Time) : v =
+  g_z_only = \z'. apply (diff z t) z'
+  jvp g_z_only z (g_z_only z)
+
+def ito_to_strat {m v} (MkItoSDE ito_drift ito_diff : ItoSDE m v) : StratSDE m v =
+  strat_drift = \z t.
+    ito_drift z t - 0.5 .* (diffusion_grad_product ito_diff z t)
+  MkStratSDE strat_drift ito_diff
+
+def strat_to_ito {m v} (MkStratSDE strat_drift strat_diff : StratSDE m v) : ItoSDE m v =
+  ito_drift = \z t.
+    strat_drift z t - 0.5 .* (diffusion_grad_product strat_diff z t)
+  MkItoSDE ito_drift strat_diff
+
 
 def radon_nikodym {m s} [InnerProd s, LinearEndo m s]
   (drift1:Drift s)
@@ -111,7 +129,7 @@ def StationarySDEParts (n:Type) (v:Type)
 def stationary_SDE_parts_to_SDE {n v}
   [Ix n, VSpace v, Mul v, LinearEndo n (n=>v)]
   ((neg_energy_func, skew_symm_map, diffusion_func):StationarySDEParts n (n=>v)) :
-    (SDE n (n=>v)) =
+    (ItoSDE n (n=>v)) =
   drift = \state time.
 
     diffusion_prod = \vec.  -- Square the root of the covariance matrix
@@ -131,32 +149,76 @@ def stationary_SDE_parts_to_SDE {n v}
     
     skew_term + diff_term + gamma_term
   diffusion = \state time. diffusion_func state
-  (drift, diffusion)
+  MkItoSDE drift diffusion
 
+
+'### Commutativity
+This interface is used to ensure that the fast version of Milstein's method,
+which avoids computing Levy areas, is only ever called on diffusion maps for which
+the approximation is valid.
+
+'Another approach we could take would be to supply `LinearMap` with a function
+that computes products with those Levy areas, which would allow efficient specializations
+in some cases.  But then we'd have to make sure that those Levy areas shared the same
+Brownian motion sample as the rest of the randomness. 
+
+interface [LinearEndo m v] Commutative m v   -- Todo: Change to LinearMap and only one type.
+  commutative_prod : m -> v -> v
+
+instance Commutative ScalarMap Float
+  commutative_prod = apply
+
+instance {m v} [LinearEndo (DiagMap m) v] Commutative (DiagMap m) v
+  commutative_prod = apply
+
+
+'### Low-rank matrices. (Or should this just be compositions of maps?)
+
+data LowRankMap n rank [Ix n, Ix rank] =
+  MkLowRankMap u:(n=>rank=>Float) v:(n=>rank=>Float)
+
+instance {n rank} HasDeterminant (LowRankMap n rank)
+  determinant' = \x. 0.0  -- add check for full rankness?
+  transposeType = (LowRankMap n rank)
+  transpose' = \(MkLowRankMap u v). MkLowRankMap v u
+  identity' = error "Low rank matrices don't necessarily have an identity."
+
+instance {n v rank} [Mul v, VSpace v] LinearEndo (LowRankMap n rank) (n=>Float)
+  apply = \(MkLowRankMap u v) y. (u **. ((transpose u) **. y))
+  diag = todo
+  solve' = todo
+
+def RankOneMap (n:Type) [Ix n] : Type = LowRankMap n Unit
+
+
+-- Todo: make this work with linearmaps?  Maybe need Basis.
+interface [VSpace v] OuterProd v
+  outer_prod : v->v->(v --o v)
+
+instance OuterProd Float
+  outer_prod = \x y. \v. v * x * y
+
+instance {n} OuterProd (n=>Float)
+  outer_prod = \x y. \v. for i. y.i .* sum for j. x.j * y.j
 
 
 
 '## SDE Solvers
 
-def ito_euler_step {v m} [LinearEndo m v] (sde: SDE m v) (z:v)
+def ito_euler_step {v m} [LinearEndo m v] (sde: ItoSDE m v) (z:v)
   (t:Time) (dt:Time) (noise:v) : (v & Time) =
-  (drift, diffprod) = sde
+  (MkItoSDE drift diffprod) = sde
   new_z = z + dt .* (drift z t) + apply (diffprod z t) noise
   (new_z, t + dt)
 
---def ito_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
---    # Equation 20 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf
---    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
---           + 0.5 * gdg_prod(y, t, args, noise**2 - t_delta)
-
-def ito_milstein_step {v m} [LinearEndo m v] (sde: SDE m v) (z:v)
-  (t:Time) (dt:Time) (noise:v) : (v & Time) =
-  -- Equation 20 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf  
-  (drift, diffprod) = sde
-  --y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
-  --         + 0.5 * gdg_prod(y, t, args, noise**2 - t_delta)
-  new_z = z + dt .* (drift z t) + 0.5 .* apply (diffprod z t) (sq noise)
-  (new_z, t + dt)
+def ito_milstein_step {v m} [Commutative m v, OuterProd v, Mul v, LinearEndo v v]
+    (MkItoSDE drift diffusion: ItoSDE m v)
+    (z:v) (t:Time) (dt:Time) (noise:v) : (v & Time) =
+  -- based on https://github.com/patrick-kidger/diffrax/blob/main/diffrax/solver/milstein.py
+  term2 = diffusion_grad_product diffusion z t
+  term3 = (outer_prod noise noise) term2
+  term4 = noise * (diag term2)
+  (z + dt .* (drift z t) + 0.5 .* (term3 - term4), t + dt)
 
 
 --def strat_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
@@ -165,9 +227,7 @@ def ito_milstein_step {v m} [LinearEndo m v] (sde: SDE m v) (z:v)
 --           + 0.5 * gdg_prod(y, t, args, noise**2)
 
 
-
-
-def sdeint {d n} (sde: SDE (d=>Float))
+def sdeint {d n m} (sde: ItoSDE m (d=>Float))
            (initial_state: d=>Float) (t0: Time) (eval_times: n=>Time)
            (key: Key) : n=>d=>Float =
   --  eval_times must be strictly increasing.  Todo: enforce / automate.
@@ -238,7 +298,7 @@ def step_size (error_estimate:Float)
   new_step_size = prev_step_size * factor
   (new_step_size, Just prev_error_ratio)
 
-def adaptive_sdeint {d n} (sde: SDE (d=>Float))
+def adaptive_sdeint {d n m} (sde: ItoSDE m (d=>Float))
            (z0: d=>Float) (t0: Time) (times: n=>Time)
            (key: Key) : n=>d=>Float =
   --  z0: the initial value for the state.
@@ -301,30 +361,33 @@ def adaptive_sdeint {d n} (sde: SDE (d=>Float))
 import plot
 
 '## Virtual Brownian Tree Tests
-xs = linspace (Fin 10) 0.0 1.0
-ys:(Fin 10)=>Float = for i. ((sample_unit_brownian_motion (new_key 0)) xs.i)
+
+num_evals = Fin 100
+xs = linspace num_evals 0.0 1.0
+ys:num_evals=>Float = for i. ((sample_unit_brownian_motion (new_key 0)) xs.i)
 --:plot zip xs ys
 :html show_plot $ xy_plot xs ys
 
 
+dim = (Fin 1)
 
+def drift (z: dim=>Float) (t:Time): dim=>Float = -z
 
-def drift {v} (z: v=>Float) (t:Time): v=>Float = -z
+def diffusion (z:dim=>Float) (t:Time) : DiagMap dim =
+  MkDiagMap one
 
-def diffprod {v} (z:v=>Float) (t:Time) (noise:v=>Float): v=>Float = for i. noise.i
-
---sde = (drift, diffprod)
+sde = (MkItoSDE drift diffusion)
 
 z0 = [1.0]
 t0 = 0.1
-times = linspace (Fin 10) 0.2 1.9
+times = linspace (Fin 1000) 0.2 1.9
 key = new_key 0
 
 %time
-yout = sdeint (drift, diffprod) z0 t0 times key
+yout = sdeint sde z0 t0 times key
 
 %time
-yout' = adaptive_sdeint (drift, diffprod) z0 t0 times key
+yout' = adaptive_sdeint sde z0 t0 times key
 
 --:p yout - yout'
 
