@@ -193,13 +193,15 @@ evalSourceBlock' mname block = case sbContents block of
   EvalUDecl decl -> execUDecl mname decl
   Command cmd expr -> case cmd of
     EvalExpr fmt -> do
-      val <- evalUExpr expr
+      annExpr <- case fmt of
+        Printed -> return expr
+        RenderHtml -> return $ addTypeAnn expr $ referTo "String"
+      val <- evalUExpr annExpr
       case fmt of
         Printed -> do
           s <- pprintVal val
           logTop $ TextOut s
         RenderHtml -> do
-          -- TODO: check types before we get here
           s <- getDexString val
           logTop $ HtmlOut s
     ExportFun _ -> error "not implemented"
@@ -235,6 +237,11 @@ evalSourceBlock' mname block = case sbContents block of
   CommentLine  -> return ()
   EmptyLines   -> return ()
   UnParseable _ s -> throw ParseErr s
+  where
+    addTypeAnn :: UExpr n -> UExpr n -> UExpr n
+    addTypeAnn e = WithSrcE Nothing . UTypeAnn e
+    referTo :: SourceName -> UExpr VoidS
+    referTo = WithSrcE Nothing . UVar . SourceName
 
 runEnvQuery :: Topper m => EnvQuery -> m n ()
 runEnvQuery query = do
