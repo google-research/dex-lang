@@ -196,7 +196,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 isomorphisms ode-integrator fluidsim \
                 sgd psd kernelregression \
                 quaternions manifold-gradients schrodinger tutorial \
-                latex linear-maps
+                latex
 # TODO: re-enable
 # fft vega-plotting
 
@@ -204,7 +204,7 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
-             linalg-tests set-tests fft-tests
+             linalg-tests set-tests fft-tests linearmap-tests
 
 lib-names = diagram plot png
 

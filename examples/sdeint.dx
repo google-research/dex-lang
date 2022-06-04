@@ -64,7 +64,6 @@ def sample_Brownian_motion {v} [VSpace v, HasStandardNormal v]
 
 '## SDE Types
 
---data Time = MkTime Float
 
 def Drift              (v:Type) [VSpace v]       : Type = v->Time->v
 def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->Time->m
@@ -172,24 +171,6 @@ instance {m v} [LinearEndo (DiagMap m) v] Commutative (DiagMap m) v
   commutative_prod = apply
 
 
-'### Low-rank matrices. (Or should this just be compositions of maps?)
-
-data LowRankMap n rank [Ix n, Ix rank] =
-  MkLowRankMap u:(n=>rank=>Float) v:(n=>rank=>Float)
-
-instance {n rank} HasDeterminant (LowRankMap n rank)
-  determinant' = \x. 0.0  -- add check for full rankness?
-  transposeType = (LowRankMap n rank)
-  transpose' = \(MkLowRankMap u v). MkLowRankMap v u
-  identity' = error "Low rank matrices don't necessarily have an identity."
-
-instance {n v rank} [Mul v, VSpace v] LinearEndo (LowRankMap n rank) (n=>Float)
-  apply = \(MkLowRankMap u v) y. (u **. ((transpose u) **. y))
-  diag = todo
-  solve' = todo
-
-def RankOneMap (n:Type) [Ix n] : Type = LowRankMap n Unit
-
 
 -- Todo: make this work with linearmaps?  Maybe need Basis.
 interface [VSpace v] OuterProd v
@@ -202,38 +183,30 @@ instance {n} OuterProd (n=>Float)
   outer_prod = \x y. \v. for i. y.i .* sum for j. x.j * y.j
 
 
-
 '## SDE Solvers
 
-def ito_euler_step {v m} [LinearEndo m v] (sde: ItoSDE m v) (z:v)
-  (t:Time) (dt:Time) (noise:v) : (v & Time) =
-  (MkItoSDE drift diffprod) = sde
-  new_z = z + dt .* (drift z t) + apply (diffprod z t) noise
-  (new_z, t + dt)
+def SolverStepFunc (m:Type) (v:Type) [LinearEndo m v] : Type =
+  (ItoSDE m v)->v->Time->Time->v->v
 
-def ito_milstein_step {v m} [Commutative m v, OuterProd v, Mul v, LinearEndo v v]
-    (MkItoSDE drift diffusion: ItoSDE m v)
-    (z:v) (t:Time) (dt:Time) (noise:v) : (v & Time) =
+def ito_euler_step {m v} [LinearEndo m v]
+    (MkItoSDE drift diffprod : ItoSDE m v) (z:v) (t:Time) (dt:Time) (noise:v) : v =
+  z + dt .* (drift z t) + apply (diffprod z t) noise
+
+def ito_milstein_step {m v} [Commutative m v, OuterProd v, Mul v]
+    (MkItoSDE drift diffusion: ItoSDE m v) (z:v) (t:Time) (dt:Time) (noise:v) : v =
   -- based on https://github.com/patrick-kidger/diffrax/blob/main/diffrax/solver/milstein.py
-  term2 = diffusion_grad_product diffusion z t
-  term3 = (outer_prod noise noise) term2
-  term4 = noise * (diag term2)
-  (z + dt .* (drift z t) + 0.5 .* (term3 - term4), t + dt)
+  diffprod = diffusion_grad_product diffusion z t
+  z + dt .* (drift z t) + apply (diffusion z t) noise + 0.5 .* (
+    ((outer_prod noise noise) diffprod) - (noise * diffprod))
 
-
---def strat_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
---    # Equation 21 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf
---    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
---           + 0.5 * gdg_prod(y, t, args, noise**2)
-
-
-def sdeint {d n m} (sde: ItoSDE m (d=>Float))
-           (initial_state: d=>Float) (t0: Time) (eval_times: n=>Time)
-           (key: Key) : n=>d=>Float =
-  --  eval_times must be strictly increasing.  Todo: enforce / automate.
+def sdeint {d n m}
+    (step_func: SolverStepFunc m (d=>Float))
+    (sde: ItoSDE m (d=>Float))
+    (initial_state: d=>Float) (t0: Time) (dt: Time) (eval_times: n=>Time)
+    (key: Key) : n=>d=>Float =
+  --  eval_times must be strictly increasing.  Todo: check or enforce with types.
   --  Returns:
   --    Values of a sampled trajectory at each time point in times.
-  dt = 0.0001
   max_iters = 10000
 
   lasttime = maximum (prepend t0 eval_times)
@@ -248,8 +221,8 @@ def sdeint {d n m} (sde: ItoSDE m (d=>Float))
 
     step = \(old_z, old_t, z, t, dt).
       dB = (noisefunc (t + dt)) - (noisefunc t)
-      (new_z, new_t) = ito_euler_step sde z t dt dB
-      (z, t, new_z, new_t, dt)
+      new_z = step_func sde z t dt dB
+      (z, t, new_z, t + dt, dt)
 
     -- Take steps until we pass target_t
     new_state = yield_state init_carry \state.
@@ -298,9 +271,11 @@ def step_size (error_estimate:Float)
   new_step_size = prev_step_size * factor
   (new_step_size, Just prev_error_ratio)
 
-def adaptive_sdeint {d n m} (sde: ItoSDE m (d=>Float))
-           (z0: d=>Float) (t0: Time) (times: n=>Time)
-           (key: Key) : n=>d=>Float =
+def adaptive_sdeint {d n m}
+    (step_func: SolverStepFunc m (d=>Float))
+    (sde: ItoSDE m (d=>Float))
+    (z0: d=>Float) (t0: Time) (times: n=>Time)
+    (key: Key) : n=>d=>Float =
   --  z0: the initial value for the state.
   --  t: times for evaluation. values must be strictly increasing.
   --  Returns:
@@ -322,8 +297,8 @@ def adaptive_sdeint {d n m} (sde: ItoSDE m (d=>Float))
 
     step = \(old_z, old_t, z, t, dt).
       dB = (noisefunc (t + dt)) - (noisefunc t)
-      (new_z, new_t) = ito_euler_step sde z t dt dB
-      (z, t, new_z, new_t, dt)
+      new_z = step_func sde z t dt dB
+      (z, t, new_z, t + dt, dt)
 
     possibly_step = \(old_z, old_t, z, t, dt, maybe_prev_error_ratio).
       -- Take 1 full step.
@@ -338,7 +313,7 @@ def adaptive_sdeint {d n m} (sde: ItoSDE m (d=>Float))
 
       move_state = (z,     t,     new_z_2xhf, new_t, new_dt, maybe_prev_error_ratio)
       stay_state = (old_z, old_t, z,              t, new_dt, maybe_prev_error_ratio)
-      select (ratio <= 1.0) move_state stay_state
+      if ratio <= 1.0 then move_state else stay_state
 
     -- Take steps until we pass target_t
     new_state = yield_state init_carry \state.
@@ -355,6 +330,10 @@ def adaptive_sdeint {d n m} (sde: ItoSDE m (d=>Float))
   init_carry = (z0, t0, z0, t0, init_dt, Nothing)
   snd $ scan init_carry integrate_to_next_time
 
+--sdeint_euler             = sdeint ito_euler_step
+--sdeint_milstein          = sdeint ito_milstein_step
+--adaptive_sdeint_euler    = adaptive_sdeint ito_euler_step
+--adaptive_sdeint_milstein = adaptive_sdeint ito_milstein_step
 
 '# Tests
 
@@ -368,26 +347,40 @@ ys:num_evals=>Float = for i. ((sample_unit_brownian_motion (new_key 0)) xs.i)
 --:plot zip xs ys
 :html show_plot $ xy_plot xs ys
 
-
+-- Define example SDE
 dim = (Fin 1)
-
 def drift (z: dim=>Float) (t:Time): dim=>Float = -z
-
-def diffusion (z:dim=>Float) (t:Time) : DiagMap dim =
-  MkDiagMap one
+def diffusion (z:dim=>Float) (t:Time) : DiagMap dim = MkDiagMap one
 
 sde = (MkItoSDE drift diffusion)
 
-z0 = [1.0]
+z0 : dim=>Float = one
 t0 = 0.1
-times = linspace (Fin 1000) 0.2 1.9
+times = linspace (Fin 100) 0.2 1.9
 key = new_key 0
+dt = 0.0001
 
 %time
-yout = sdeint sde z0 t0 times key
+yout  = sdeint ito_euler_step    sde z0 t0 dt times key
 
 %time
-yout' = adaptive_sdeint sde z0 t0 times key
+yout' = sdeint ito_milstein_step sde z0 t0 dt times key
+--yout' = adaptive_sdeint ito_milstein_step sde z0 t0 times key
+
+ground_truth = (sdeint ito_euler_step    sde z0 t0 0.00001 [1.9] key).(0@_)
+
+num_dts = (Fin 40)
+dts = exp $ linspace (num_dts) 0.0 (-7.0)
+
+accuracies_euler = for i:num_dts.
+  cur_sol = sdeint ito_milstein_step sde z0 t0 dts.i [1.9] key
+  log $ abs $ sum $ cur_sol.(0@_) - ground_truth
+
+log dts
+accuracies_euler
+
+%time
+:html show_plot $ xy_plot (log dts) accuracies_euler
 
 --:p yout - yout'
 
@@ -396,3 +389,7 @@ yout' = adaptive_sdeint sde z0 t0 times key
 
 %time
 :html show_plot $ xy_plot times for i. yout'.i.(0@(Fin 1))
+
+-- TODO: Check linear time scaling of SDE solves with diagonal noise
+-- TODO: Check convergence rates of Euler and Misltein solvers
+
