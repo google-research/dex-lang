@@ -1291,7 +1291,7 @@ computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
   sizes <- forM idxList \ixTy -> emitSimplified $ indexSetSize $ sink ixTy
   listSize <- foldM imul (IdxRepVal 1) sizes
-  nestSize <- A.emitCPoly =<< elemCountCPoly idxNest
+  nestSize <- A.emitPolynomial =<< elemCountCPoly idxNest
   imul listSize nestSize
 
 -- Split the index structure into a prefix of non-dependent index types
@@ -1337,13 +1337,13 @@ computeOffset idxNest' idxs = do
      rhsElemCounts <- refreshBinders b \(b':>_) s -> do
        rest' <- applySubst s $ EmptyAbs bs
        Abs b' <$> elemCountCPoly rest'
-     significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
+     significantOffset <- A.emitPolynomial $ A.sumC i rhsElemCounts
      remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
      otherOffsets <- rec remainingIdxStructure is
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: IndexStructure n -> DestM n (A.ClampPolynomial n)
+elemCountCPoly :: IndexStructure n -> DestM n (A.Polynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
   Nest b rest -> do
