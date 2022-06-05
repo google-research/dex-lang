@@ -22,7 +22,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
-import Data.Text (Text, uncons, unsnoc, unpack)
+import Data.Text (Text, snoc, uncons, unsnoc, unpack)
 import qualified Data.Set        as S
 import Data.String (fromString)
 import Data.Maybe (isNothing)
@@ -520,7 +520,13 @@ prettyRecord :: [(String, Doc ann)] -> Doc ann
 prettyRecord xs = foldMap (\(name, val) -> pretty name <> indented val) xs
 
 instance Pretty SourceBlock where
-  pretty block = pretty (sbText block)
+  pretty block = pretty $ ensureNewline (sbText block) where
+    -- Force the SourceBlock to end in a newline for echoing, even if
+    -- it was terminated with EOF in the original program.
+    ensureNewline t = case unsnoc t of
+      Nothing -> t
+      Just (_, '\n') -> t
+      _ -> t `snoc` '\n'
 
 prettyDuration :: Double -> Doc ann
 prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
