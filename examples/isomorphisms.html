@@ -348,12 +348,10 @@ that produce isos. We will start with the first two:</p>
 </div><div class="result-block">(Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))</div><div class="result-block">(MkIso
    {fwd=(\v. case v
              {| b = x |} -&gt; (Left x)
-             {|b| ...r |} -&gt; (Right r)
-             )
+             {|b| ...r |} -&gt; (Right r))
    , bwd=(\v. case v
               ((Left x)) -&gt; {| b = x |}
-              ((Right r)) -&gt; {|b| ...r |}
-              )}
+              ((Right r)) -&gt; {|b| ...r |})}
  : Iso {a: Int | b: Float | c: Unit} _)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>There are also two &quot;zipper&quot; forms, described later on this page:</p>
 <ul>
@@ -495,16 +493,12 @@ zipper isomorphisms:</p>
              ((Left l)) -&gt; (Left {|a| ...l |})
              ((Right w)) -&gt; (case w
                                {| a = x |} -&gt; (Left {| a = x |})
-                               {|a| ...r |} -&gt; (Right r)
-                               )
-             )
+                               {|a| ...r |} -&gt; (Right r)))
    , bwd=(\v. case v
               ((Left w)) -&gt; (case w
                                {| a = x |} -&gt; (Right {| a = x |})
-                               {|a| ...r |} -&gt; (Left r)
-                               )
-              ((Right l)) -&gt; (Right {|a| ...l |})
-              )}
+                               {|a| ...r |} -&gt; (Left r))
+              ((Right l)) -&gt; (Right {|a| ...l |}))}
  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p><code>splitV</code> makes a prism zipper into an ordinary prism isomorphism:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> split_v
