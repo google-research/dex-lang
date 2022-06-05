@@ -166,7 +166,7 @@ sourceBlock' =
   <|> liftM EvalUDecl (instanceDef True  <* eolf)
   <|> liftM EvalUDecl (instanceDef False <* eolf)
   <|> liftM EvalUDecl (interfaceDef <* eolf)
-  <|> liftM (Command (EvalExpr Printed)) (expr <* eol)
+  <|> liftM (Command (EvalExpr Printed)) (expr <* eolf)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
 
