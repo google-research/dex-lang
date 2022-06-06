@@ -1,0 +1,162 @@
+'# Polymorphic Operations on Linear Maps
+Often when writing numerical code, there are efficient specializations for
+e.g. diagonal matrices, lower-triangular, or sparse matrices.
+I'd like to be able to write just one version of this code without having to
+fall back to casting everything to full-rank unstructured matrices.
+This example is for brainstorming how the typeclass system might support
+efficient polymorphism for linear algebra over different types of
+structured maps.
+
+import linalg
+
+'Todo: factor out a more general linear map typeclass, and make this one inherit from it.
+
+-- interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
+  -- apply: m -> in -> out
+  -- transpose': m -> m
+
+'## Linear Endomorphisms
+a.k.a. linear maps from a space back to that same space.
+
+interface HasDeterminant m
+  determinant': m -> Float
+  transposeType m : Type  -- unused for now
+  transpose': m -> m      -- In future: m -> transposeType m
+  identity': m
+
+interface [VSpace v, HasDeterminant m] LinearEndo m v
+  apply: m -> v -> v
+  diag: m -> v
+  solve': m -> v -> v
+
+'We'd like to remove `v` from the `LinearEndo` interface,
+and instead use associated types to specify a `v` for each `m`.
+This would let use combine it with `HasDeterminant`.
+But for now, fields in typeclasses can't refer to one another.
+This means that `determinant'` and other operations can't be part
+of this typeclass yet, because `v` is always ambiguous at its usage site.
+
+
+'## Instances
+
+'### Scalar maps
+
+data ScalarMap =
+  MkScalarMap Float
+
+instance HasDeterminant ScalarMap
+  determinant' = \(MkScalarMap a). a
+  transposeType = Float
+  transpose' = id
+  identity' = MkScalarMap 1.0
+
+instance {v} [Mul v, VSpace v] LinearEndo ScalarMap v
+  apply =  \(MkScalarMap a) b. a .* b
+  diag =   \(MkScalarMap a).   a .* one
+  solve' = \(MkScalarMap a) b. b / a
+
+instance Arbitrary ScalarMap
+  arb = \k. MkScalarMap $ arb k
+
+
+'### Diagonal maps
+
+data DiagMap n [Ix n] =
+  MkDiagMap (i:n=>Float)
+
+instance {n} HasDeterminant (DiagMap n)
+  determinant' = \(MkDiagMap x). prod x
+  transposeType = n=>Float
+  transpose' = id
+  identity' = MkDiagMap one
+
+instance {n v} [Mul v, VSpace v] LinearEndo (DiagMap n) (n=>v)
+  apply =  \(MkDiagMap x) y. for i. x.i .* y.i
+  diag =   \(MkDiagMap a).   for i. a.i .* one
+  solve' = \(MkDiagMap a) b. for i. b.i / a.i
+
+instance {n} Arbitrary (DiagMap n)
+  arb = \k. MkDiagMap $ arb k
+
+
+'### Full-rank matrices.
+I didn't use a newtype for these, but I'm not sure if that's the right call.
+
+instance {n} HasDeterminant (n=>n=>Float)
+  determinant' = determinant
+  transposeType = n=>n=>Float
+  transpose' = transpose
+  identity' = eye
+
+instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
+  apply = \x y. for i. sum for j. x.i.j .* y.j
+  diag = \x. for i. x.i.i .* one
+  solve' = solve
+
+
+'### Lower-triangular maps
+
+data LowerTriMap n [Ix n] =
+  MkLowerTriMap (i:n=>(..i)=>Float)
+
+instance {n} HasDeterminant (LowerTriMap n)
+  determinant' = \(MkLowerTriMap x). prod $ lower_tri_diag x
+  transposeType = UpperTriMat n Float
+  transpose' = error "Can't transpose to different types yet."
+  identity' = MkLowerTriMap for i j. select (ordinal i == ordinal j) one zero
+
+instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMap n) (n=>v)
+  apply  = \(MkLowerTriMap x) y. for i. sum for j. x.i.j .* y.(%inject j)
+  diag   = \(MkLowerTriMap x).   for i. x.i.(cast i) .* one
+  solve' = \(MkLowerTriMap x).   forward_substitute x
+
+instance {n} Arbitrary (LowerTriMap n)
+  arb = \k. MkLowerTriMap $ arb k
+
+
+'### Upper-triangular maps
+
+data UpperTriMap n [Ix n] =
+  MkUpperTriMap (i:n=>(i..)=>Float)
+
+instance {n} HasDeterminant (UpperTriMap n)
+  determinant' = \(MkUpperTriMap x). prod $ upper_tri_diag x
+  transposeType = LowerTriMat n Float
+  transpose' = error "Can't transpose to different types yet."
+  identity' = MkUpperTriMap for i j. select (0 == ordinal j) one zero
+
+instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMap n) (n=>v)
+  apply  = \(MkUpperTriMap x) y. for i. sum for j. x.i.j .* y.(%inject j)
+  diag   = \(MkUpperTriMap x).   for i. x.i.(0@_) .* one
+  solve' = \(MkUpperTriMap x).   backward_substitute x
+
+instance {n} Arbitrary (UpperTriMap n)
+  arb = \k. MkUpperTriMap $ arb k
+
+
+'### Skew-symmetric maps
+
+data SkewSymmetricMap n [Ix n] =
+  MkSkewSymMap (i:n=>(..<i)=>Float)
+
+instance {n} HasDeterminant (SkewSymmetricMap n)
+  determinant' = case is_odd (size n) of
+    True -> zero
+    False -> \(MkSkewSymMap a).
+      dense_rep = skew_symmetric_prod a eye
+      determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
+  transposeType = i:n=>(..<i)=>Float  -- 
+  transpose' = \(MkSkewSymMap x). MkSkewSymMap (-x)
+  identity' = error "Skew symmetric matrices can't represent the identity map."
+
+instance {n v} [Mul v, VSpace v] LinearEndo (SkewSymmetricMap n) (n=>v)
+  apply  = \(MkSkewSymMap x) y. skew_symmetric_prod x y
+  diag   = \(MkSkewSymMap x).   zero
+  solve' = \(MkSkewSymMap x) y.
+    dense_rep = skew_symmetric_prod x eye  -- Fall back to naive algorithm
+    solve dense_rep y
+
+instance {n} Arbitrary (SkewSymmetricMap n)
+  arb = \k. MkSkewSymMap $ arb k
+
+-- Todo: Sparse matrices. Need hashmaps for these to be practical.

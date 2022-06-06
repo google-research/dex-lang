@@ -1,0 +1,145 @@
+-- This typeclass will be obsolete once the `Basis` typeclass can be written.
+interface HasStandardNormal a:Type
+  randNormal : Key -> a
+
+instance HasStandardNormal Float32
+  randNormal = randn
+instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+  randNormal = \key.
+    for i. randNormal (ixkey key i)
+
+
+def multivariate_gaussian_sample {v m} [LinearEndo m v, HasStandardNormal v]
+                   (mean:v) (covroot:m) (key:Key) : v =
+  noise = randNormal key
+  mean + apply covroot noise
+
+:t multivariate_gaussian_sample 1.0 (MkScalarMap 2.0) (new_key 0)
+> Float32
+
+'### Generic log pdf of a multivariate Gaussian
+This single definition of a Gaussian log pdf should work
+efficiently for any type of covariance matrix for which
+an efficient solve and determinant is known.  Formula from
+Algorithm 2.1 of [Gaussian Processes for Machine Learning by Rasmussen & Williams](http://gaussianprocess.org/gpml/chapters/RW.pdf)
+
+-- This helper will be osbolete once the basis typeclass works.
+def get_VSpace_dim {v} [InnerProd v, Mul v, VSpace v] (x:v) : Float =
+  one' : v = one
+  inner_prod one' one'
+
+def gaussian_log_pdf {m v}
+    [Mul v, InnerProd v, LinearEndo m v]
+    (mean:v) (covroot:m) (x:v) : Float =
+  dim = get_VSpace_dim x
+  squarepart = inner_prod (x - mean) (solve' (transpose' covroot)
+                                     (solve'             covroot (x - mean)))
+  const = dim * log (2.0 * pi) + log (sq (determinant' covroot))
+  -0.5 * (squarepart + const)
+
+
+
+'## Tests
+
+vec_len = (Fin 4)
+full_mat_type = (vec_len=>vec_len=>Float)
+v = vec_len=>Float
+
+
+'### Check application of the identity is a no-op.
+
+def check_identity (m:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m] : Bool =
+  i : m = identity'
+  vec : v = (arb $ new_key 0)
+  vec ~~ apply i vec
+
+check_identity $ LowerTriMap vec_len
+> True
+check_identity $ UpperTriMap vec_len
+> True
+check_identity $ vec_len=>vec_len=>Float
+> True
+check_identity $ DiagMap vec_len
+> True
+check_identity $ ScalarMap
+> True
+
+def check_inverse (m:Type) [LinearEndo m v, Arbitrary m, LinearEndo m full_mat_type] : Bool =
+  a : m   = arb $ new_key 0
+  vec : v = arb $ new_key 0
+  inv  : full_mat_type = solve' a eye
+  full : full_mat_type = apply  a eye
+  apply inv full ~~ eye
+
+check_inverse $ SkewSymmetricMap vec_len
+> True
+check_inverse $ LowerTriMap vec_len
+> True
+check_inverse $ UpperTriMap vec_len
+> True
+check_inverse $ vec_len=>vec_len=>Float
+> True
+check_inverse $ DiagMap vec_len
+> True
+check_inverse ScalarMap
+> True
+
+
+def check_transpose (m:Type)
+    [LinearEndo m v, HasDeterminant m, Arbitrary m] : Bool =
+  a : m                  = arb $ new_key 0
+  (vec1, vec2) : (v & v) = arb $ new_key 1
+  
+  hitleft  = inner_prod (apply a vec1) vec2
+  hitright = inner_prod (apply (transpose' a) vec2) vec1
+  hitleft ~~ hitright
+
+check_transpose $ SkewSymmetricMap vec_len
+> True
+-- Disabled until associated types are implemented.
+-- check_transpose $ LowerTriMap vec_len
+-- > True
+-- check_transpose $ UpperTriMap vec_len
+-- > True
+check_transpose $ vec_len=>vec_len=>Float
+> True
+check_transpose $ DiagMap vec_len
+> True
+check_transpose ScalarMap
+> True
+
+-- Check that 1D Gaussian sums to 1
+sizen = Fin 2000
+span = 10.0
+xs = linspace sizen (-span) span
+integral = 2.0 * span * mean for i.
+  exp $ gaussian_log_pdf (-0.1) (MkScalarMap 0.07) xs.i
+integral ~~ 1.0
+> True
+
+def check_2D_Gaussian_normalizes (m:Type)
+    [LinearEndo m ((Fin 2) => Float32), Arbitrary m] : Bool =
+
+  sizen = Fin 200
+  span = 10.0
+  xs = linspace sizen (-span) span
+
+  covroot : m = arb $ new_key 0
+  meanvec : ((Fin 2) => Float32) = arb $ new_key 1
+  integral = (sq (2.0 * span)) * mean for (i, j):(sizen & sizen).
+    x = [xs.i, xs.j]
+    exp $ gaussian_log_pdf meanvec covroot x
+  integral ~~ 1.0
+
+check_2D_Gaussian_normalizes (SkewSymmetricMap (Fin 2))
+> True
+-- Disabled until associated types are implemented.
+-- check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
+-- > True
+-- check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
+-- > True
+check_2D_Gaussian_normalizes $ (Fin 2)=>(Fin 2)=>Float
+> True
+check_2D_Gaussian_normalizes $ DiagMap (Fin 2)
+> True

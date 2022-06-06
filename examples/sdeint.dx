@@ -1,0 +1,395 @@
+'# Adaptive Stochastic Differential Equation Solvers
+
+import linalg
+import linearmaps
+
+UnitInterval = Float
+Time = Float
+
+'### Utility functions
+
+def linear_interp {a} [VSpace a]
+    (z0: a) (z1: a) (t0: Float) (t1: Float) (t: Float) : a =
+  select (t1 == t0) z0 (z0 + ((t - t0) / (t1 - t0)) .* (z1 - z0))
+
+def norm {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+def (./) {d} (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
+
+def prepend {v m} (first: v) (seq: m=>v) : (Unit | m )=>v =
+  -- Concatenates a single element to the beginning of a sequence.
+  for idx. case idx of
+    Left _  -> first
+    Right i -> seq.i
+
+-- This typeclass will be obsolete once the `Basis` typeclass can be written.
+interface HasStandardNormal a:Type
+  randNormal : Key -> a
+
+instance HasStandardNormal Float32
+  randNormal = randn
+instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+  randNormal = \key.
+    for i. randNormal (ixkey key i)
+
+
+
+'## Virtual Brownian Tree
+Memory-less sampler of Brownian motion.  Algorithm from
+[Scalable Gradients for Stochastic Differential Equations](https://arxiv.org/abs/2001.01328)
+
+def brownian_bridge_iter {v} [VSpace v, HasStandardNormal v]
+  ((key, y, sigma, t):(Key & v & Float & UnitInterval)) :
+    (Key & v & Float & UnitInterval) =
+  -- Descend one step in a virtual Brownian tree.
+    [kDraw, key_left, key_right] = split_key key
+    t' = abs (t - 0.5)
+    y' = sigma * (0.5 - t') .* randNormal kDraw
+    key' = select (t > 0.5) key_left key_right
+    (key', y + y', sigma / sqrt 2.0, t' * 2.0)
+
+def sample_unit_brownian_motion {v} [VSpace v, HasStandardNormal v]
+  (key:Key) (t:UnitInterval) : v =
+  -- Brownian motion in interval (0.0, 1.0), where y(0.0) = 0.0
+    (_, y, _, _) = fold (key, zero, 1.0, t) \i:(Fin 14). brownian_bridge_iter
+    y
+
+def scale_brownian_motion {v} [VSpace v] (f:Time -> v) (t0:Time) (t1:Time) (t:Time) : v =
+  (sqrt (t1 - t0)) .* (f ((t - t0) / (t1 - t0)))
+
+def sample_Brownian_motion {v} [VSpace v, HasStandardNormal v]
+  (key:Key) (t0:Time) (t1:Time) (t:Time) : v =
+  scale_brownian_motion (sample_unit_brownian_motion key) t0 t1 t
+
+
+
+'## SDE Types
+
+
+def Drift              (v:Type) [VSpace v]       : Type = v->Time->v
+def Diffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->Time->m
+
+data ItoSDE m v [LinearEndo m v] =
+  MkItoSDE drift:(Drift v) diffusion:(Diffusion m v)
+
+data StratSDE m v [LinearEndo m v] =
+  MkStratSDE drift:(Drift v) diffusion:(Diffusion m v)
+
+def diffusion_grad_product {m v} [LinearEndo m v]
+    (diff : Diffusion m v) (z : v) (t : Time) : v =
+  g_z_only = \z'. apply (diff z t) z'
+  jvp g_z_only z (g_z_only z)
+
+def ito_to_strat {m v} (MkItoSDE ito_drift ito_diff : ItoSDE m v) : StratSDE m v =
+  strat_drift = \z t.
+    ito_drift z t - 0.5 .* (diffusion_grad_product ito_diff z t)
+  MkStratSDE strat_drift ito_diff
+
+def strat_to_ito {m v} (MkStratSDE strat_drift strat_diff : StratSDE m v) : ItoSDE m v =
+  ito_drift = \z t.
+    strat_drift z t - 0.5 .* (diffusion_grad_product strat_diff z t)
+  MkItoSDE ito_drift strat_diff
+
+
+def radon_nikodym {m s} [InnerProd s, LinearEndo m s]
+  (drift1:Drift s)
+  (drift2:Drift s)
+  (diffusion:Diffusion m s)
+  (state:s) (t:Time) : Float =
+  -- By Girsanov's theorem, this gives a simple Monte Carlo estimator
+  -- of the (loosely speaking) instantaneous KL divergence between
+  -- two SDEs that share a diffusion function.
+  difference = (drift1 state t) - (drift2 state t)
+  cur_diffusion = diffusion state t
+  a = solve' cur_diffusion difference
+  0.5 * inner_prod a a
+
+
+'### Stationary SDEs
+From Equation 3, Section 2.1 of ["A Complete Recipe for Stochastic Gradient
+MCMC"](https://arxiv.org/pdf/1506.04696.pdf):
+Every SDE with a stationary distribution can be parameterized
+by:
+ 1. A state-dependent energy function
+ 2. A state-dependent skew-symmetric matrix
+ 3. A state-dependent diffusion matrix
+
+'The function below converts these matrices into the drift and diffusion which,
+if followed, will converge to a stationary distribution whose marginal
+  log-density is equal to the negative energy function (plus a constant).
+
+def StationaryDiffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->m
+def NegEnergyFunc (v:Type) : Type = v->Float
+def SkewSymmetricFunc (n:Type) (v:Type) [Ix n] : Type =
+  v->(i:n=>(..<i)=>Float)
+def StationarySDEParts (n:Type) (v:Type)
+    [Ix n, LinearEndo n v, VSpace v] : Type =
+  (NegEnergyFunc v & SkewSymmetricFunc n v & StationaryDiffusion n v)
+
+def stationary_SDE_parts_to_SDE {n v}
+  [Ix n, VSpace v, Mul v, LinearEndo n (n=>v)]
+  ((neg_energy_func, skew_symm_map, diffusion_func):StationarySDEParts n (n=>v)) :
+    (ItoSDE n (n=>v)) =
+  drift = \state time.
+
+    diffusion_prod = \vec.  -- Square the root of the covariance matrix
+      cur_diffusion_root = diffusion_func state
+      0.5 .* (apply cur_diffusion_root (apply cur_diffusion_root vec))
+  
+    neg_energy_grad = (grad neg_energy_func) state
+
+    skew_term = skew_symmetric_prod (skew_symm_map state) neg_energy_grad
+    diff_term = diffusion_prod neg_energy_grad
+
+    gammapart = \state.
+      skew_term' = skew_symmetric_prod (skew_symm_map state) one
+      diff_term' = diffusion_prod one
+      skew_term' + diff_term'
+    gamma_term = jvp gammapart state one
+    
+    skew_term + diff_term + gamma_term
+  diffusion = \state time. diffusion_func state
+  MkItoSDE drift diffusion
+
+
+'### Commutativity
+This interface is used to ensure that the fast version of Milstein's method,
+which avoids computing Levy areas, is only ever called on diffusion maps for which
+the approximation is valid.
+
+'Another approach we could take would be to supply `LinearMap` with a function
+that computes products with those Levy areas, which would allow efficient specializations
+in some cases.  But then we'd have to make sure that those Levy areas shared the same
+Brownian motion sample as the rest of the randomness. 
+
+interface [LinearEndo m v] Commutative m v   -- Todo: Change to LinearMap and only one type.
+  commutative_prod : m -> v -> v
+
+instance Commutative ScalarMap Float
+  commutative_prod = apply
+
+instance {m v} [LinearEndo (DiagMap m) v] Commutative (DiagMap m) v
+  commutative_prod = apply
+
+
+
+-- Todo: make this work with linearmaps?  Maybe need Basis.
+interface [VSpace v] OuterProd v
+  outer_prod : v->v->(v --o v)
+
+instance OuterProd Float
+  outer_prod = \x y. \v. v * x * y
+
+instance {n} OuterProd (n=>Float)
+  outer_prod = \x y. \v. for i. y.i .* sum for j. x.j * y.j
+
+
+'## SDE Solvers
+
+def SolverStepFunc (m:Type) (v:Type) [LinearEndo m v] : Type =
+  (ItoSDE m v)->v->Time->Time->v->v
+
+def ito_euler_step {m v} [LinearEndo m v]
+    (MkItoSDE drift diffprod : ItoSDE m v) (z:v) (t:Time) (dt:Time) (noise:v) : v =
+  z + dt .* (drift z t) + apply (diffprod z t) noise
+
+def ito_milstein_step {m v} [Commutative m v, OuterProd v, Mul v]
+    (MkItoSDE drift diffusion: ItoSDE m v) (z:v) (t:Time) (dt:Time) (noise:v) : v =
+  -- based on https://github.com/patrick-kidger/diffrax/blob/main/diffrax/solver/milstein.py
+  diffprod = diffusion_grad_product diffusion z t
+  z + dt .* (drift z t) + apply (diffusion z t) noise + 0.5 .* (
+    ((outer_prod noise noise) diffprod) - (noise * diffprod))
+
+def sdeint {d n m}
+    (step_func: SolverStepFunc m (d=>Float))
+    (sde: ItoSDE m (d=>Float))
+    (initial_state: d=>Float) (t0: Time) (dt: Time) (eval_times: n=>Time)
+    (key: Key) : n=>d=>Float =
+  --  eval_times must be strictly increasing.  Todo: check or enforce with types.
+  --  Returns:
+  --    Values of a sampled trajectory at each time point in times.
+  max_iters = 10000
+
+  lasttime = maximum (prepend t0 eval_times)
+  -- Todo: think about how to extend the BM beyond this interval later.
+  noisefunc = \t. sample_Brownian_motion key t0 lasttime t
+
+  integrate_to_next_time = \iter init_carry.
+    target_t = eval_times.iter
+
+    shouldContinue = \(_, _, _, t, dt).
+      (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
+
+    step = \(old_z, old_t, z, t, dt).
+      dB = (noisefunc (t + dt)) - (noisefunc t)
+      new_z = step_func sde z t dt dB
+      (z, t, new_z, t + dt, dt)
+
+    -- Take steps until we pass target_t
+    new_state = yield_state init_carry \state.
+      if shouldContinue (get state) then
+        while do
+          state := step (get state)
+          shouldContinue (get state)
+    (old_z, old_t, cur_z, cur_t, _) = new_state
+
+    -- Interpolate to the target time.
+    z_target = linear_interp old_z cur_z old_t cur_t target_t
+    (new_state, z_target)
+
+  init_carry = (initial_state, t0, initial_state, t0, dt)
+  snd $ scan init_carry integrate_to_next_time
+
+def error_ratio {d} (z_full:d=>Float) (z_half:d=>Float) (rtol:Float) (atol:Float) : Float =
+  -- z_full obtained with one full step.
+  -- z_half obtained with two half steps.
+  eps = 1.0e-7
+  tol = for i. max eps $ rtol * (max (abs z_full.i) (abs z_half.i)) + atol
+  max eps $ norm $ (z_full - z_half) ./ tol
+
+def step_size (error_estimate:Float)
+              (prev_step_size:Time)
+              (maybe_prev_error_ratio: Maybe Float) : (Float & Maybe Float) =
+  safety=0.9
+  facmin=0.2
+  facmax=1.4
+  (pfactor, ifactor) = case error_estimate > 1.0 of
+    True -> (0.0, 1.0 / 1.5)
+    False -> (0.13, 1.0 / 4.5)
+
+  error_ratio = safety / error_estimate
+  prev_error_ratio = case maybe_prev_error_ratio of
+    Nothing -> error_ratio
+    Just prev_error_ratio -> prev_error_ratio
+
+  factor = pow error_ratio $ ifactor * ( pow (error_ratio / prev_error_ratio) pfactor)
+    
+  (prev_error_ratio, facmin) = case error_estimate <= 1.0 of
+    True -> (error_ratio, 1.0)
+    False -> (prev_error_ratio, facmin)
+
+  factor = min facmax (max facmin factor)
+  new_step_size = prev_step_size * factor
+  (new_step_size, Just prev_error_ratio)
+
+def adaptive_sdeint {d n m}
+    (step_func: SolverStepFunc m (d=>Float))
+    (sde: ItoSDE m (d=>Float))
+    (z0: d=>Float) (t0: Time) (times: n=>Time)
+    (key: Key) : n=>d=>Float =
+  --  z0: the initial value for the state.
+  --  t: times for evaluation. values must be strictly increasing.
+  --  Returns:
+  --    Values of the solution at each time point in times.
+  rtol = 0.0001 --1.4e-7 -- relative local error tolerance for solver.
+  atol = 0.00001 --1.4e-7 -- absolute local error tolerance for solver.
+  max_iters = 10000
+  init_dt = 1.0e-3
+
+  lasttime = maximum (prepend t0 times)
+  -- Todo: think about how to extend the BM beyond this interval later.
+  noisefunc = \t. sample_Brownian_motion key t0 lasttime t
+
+  integrate_to_next_time = \iter init_carry.
+    target_t = times.iter
+
+    shouldContinue = \(_, _, _, t, dt, _).
+      (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
+
+    step = \(old_z, old_t, z, t, dt).
+      dB = (noisefunc (t + dt)) - (noisefunc t)
+      new_z = step_func sde z t dt dB
+      (z, t, new_z, t + dt, dt)
+
+    possibly_step = \(old_z, old_t, z, t, dt, maybe_prev_error_ratio).
+      -- Take 1 full step.
+      (_, _, new_z_full, new_t, _) = step (old_z, old_t, z, t, dt)
+      -- Take 2 half steps.
+      (_, _, new_z_half, new_t_half, _) = step (old_z, old_t, z, t, dt / 2.0)
+      (_, _, new_z_2xhf, _, _)          = step (old_z, old_t, new_z_half, new_t_half, dt / 2.0)
+
+      ratio = error_ratio new_z_full new_z_2xhf rtol atol
+      
+      (new_dt, maybe_prev_error_ratio) = step_size ratio dt maybe_prev_error_ratio
+
+      move_state = (z,     t,     new_z_2xhf, new_t, new_dt, maybe_prev_error_ratio)
+      stay_state = (old_z, old_t, z,              t, new_dt, maybe_prev_error_ratio)
+      if ratio <= 1.0 then move_state else stay_state
+
+    -- Take steps until we pass target_t
+    new_state = yield_state init_carry \state.
+      if shouldContinue (get state) then
+        while do
+          state := possibly_step (get state)
+          shouldContinue (get state)
+    (old_z, old_t, cur_z, cur_t, _, _) = new_state
+
+    -- Interpolate to the target time.
+    z_target = linear_interp old_z cur_z old_t cur_t target_t
+    (new_state, z_target)
+
+  init_carry = (z0, t0, z0, t0, init_dt, Nothing)
+  snd $ scan init_carry integrate_to_next_time
+
+--sdeint_euler             = sdeint ito_euler_step
+--sdeint_milstein          = sdeint ito_milstein_step
+--adaptive_sdeint_euler    = adaptive_sdeint ito_euler_step
+--adaptive_sdeint_milstein = adaptive_sdeint ito_milstein_step
+
+'# Tests
+
+import plot
+
+'## Virtual Brownian Tree Tests
+
+num_evals = Fin 100
+xs = linspace num_evals 0.0 1.0
+ys:num_evals=>Float = for i. ((sample_unit_brownian_motion (new_key 0)) xs.i)
+--:plot zip xs ys
+:html show_plot $ xy_plot xs ys
+
+-- Define example SDE
+dim = (Fin 1)
+def drift (z: dim=>Float) (t:Time): dim=>Float = -z
+def diffusion (z:dim=>Float) (t:Time) : DiagMap dim = MkDiagMap one
+
+sde = (MkItoSDE drift diffusion)
+
+z0 : dim=>Float = one
+t0 = 0.1
+times = linspace (Fin 100) 0.2 1.9
+key = new_key 0
+dt = 0.0001
+
+%time
+yout  = sdeint ito_euler_step    sde z0 t0 dt times key
+
+%time
+yout' = sdeint ito_milstein_step sde z0 t0 dt times key
+--yout' = adaptive_sdeint ito_milstein_step sde z0 t0 times key
+
+ground_truth = (sdeint ito_euler_step    sde z0 t0 0.00001 [1.9] key).(0@_)
+
+num_dts = (Fin 40)
+dts = exp $ linspace (num_dts) 0.0 (-7.0)
+
+accuracies_euler = for i:num_dts.
+  cur_sol = sdeint ito_milstein_step sde z0 t0 dts.i [1.9] key
+  log $ abs $ sum $ cur_sol.(0@_) - ground_truth
+
+log dts
+accuracies_euler
+
+%time
+:html show_plot $ xy_plot (log dts) accuracies_euler
+
+--:p yout - yout'
+
+%time
+:html show_plot $ xy_plot times for i. yout.i.(0@(Fin 1))
+
+%time
+:html show_plot $ xy_plot times for i. yout'.i.(0@(Fin 1))
+
+-- TODO: Check linear time scaling of SDE solves with diagonal noise
+-- TODO: Check convergence rates of Euler and Misltein solvers
+
