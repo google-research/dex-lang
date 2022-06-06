@@ -325,7 +325,7 @@ type <span class="type-name">NTest</span>  <span class="symbol">=</span> 10000
 10 | type Img = 28=&gt;28=&gt;Float
    |          ^^
 unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">(xsTrain<span class="symbol">,</span> ysTrain<span class="symbol">,</span> xsTest<span class="symbol">,</span> ysTest) <span class="symbol">=</span> mnist
 </div><div class="err-block">Error: variable not in scope: mnist
 
@@ -346,7 +346,7 @@ findNearestNeighbor : (a -&gt; a -&gt; Float) -&gt; n=&gt;a -&gt; a -&gt; n
 17 | findNearestNeighbor metric xs x =
    |                                 ^^
 unexpected &quot;=&lt;newline&gt;&quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">imgDistance <span class="symbol">:</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 </div><div class="err-block">Error: variable not in scope: Img
 
@@ -359,7 +359,7 @@ imgDistance : Img -&gt; Img -&gt; Float
 22 | imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
    |                 ^^
 unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">fracTrue <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Bool</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 </div><div class="err-block">Error: variable not in scope: n
 
@@ -372,7 +372,7 @@ fracTrue : n=&gt;Bool -&gt; Float
 25 | fracTrue xs = mean for i. float (b2i xs.i)
    |             ^^
 unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx <span class="symbol">@</span><span class="type-name">NTest</span> 123
 </div><div class="err-block">Error: variable not in scope: NTest
 
@@ -408,7 +408,7 @@ ysTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><sp
 35 | type NTestSmall = 1000
    |                 ^^
 unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">closestTrainExample <span class="symbol">:</span> <span class="type-name">NTestSmall</span> <span class="symbol">=&gt;</span> <span class="type-name">NTrain</span>
 </div><div class="err-block">Error: variable not in scope: NTestSmall
 
@@ -421,7 +421,7 @@ closestTrainExample : NTestSmall =&gt; NTrain
 40 | closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest&#39;.i
    |                       ^^
 unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fracTrue <span class="keyword">for</span> i<span class="symbol">.</span> ysTrain<span class="symbol">.</span>(closestTrainExample<span class="symbol">.</span>i) <span class="symbol">==</span> ysTest&#39;<span class="symbol">.</span>i
 </div><div class="err-block">Error: variable not in scope: fracTrue
 
