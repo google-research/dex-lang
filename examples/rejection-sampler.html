@@ -372,7 +372,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   logprobs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> m)<span class="symbol">.</span> logBinomialProb n p <span class="symbol">$</span> ordinal i
   map ordinal <span class="symbol">$</span> categorical_batch logprobs k
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">inversionBatchSamples <span class="symbol">=</span> (binomialBatch n p k0) <span class="symbol">:</span> <span class="type-name">Fin</span> numSamples <span class="symbol">=&gt;</span> <span class="type-name">Nat</span>
+</div></div><div class="cell"><div class="code-block">inversionBatchSamples <span class="symbol">=</span> (binomialBatch n p k0) <span class="symbol">::</span> <span class="type-name">Fin</span> numSamples <span class="symbol">=&gt;</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> slice inversionBatchSamples 0 <span class="symbol">$</span> <span class="type-name">Fin</span> 10
 </div><div class="result-block">[6, 7, 6, 5, 3, 2, 4, 4, 3, 4]</div></div><div class="cell"><div class="code-block">

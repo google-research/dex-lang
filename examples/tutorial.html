@@ -398,13 +398,13 @@ remembers the original ranges.</p>
 </div></div><div class="cell"><div class="prose-block"><p>The use of typed indices lets you do really neat things, but
 let's consider how it works. Critically, one cannot
 simply index an table with an integer.</p>
-</div></div><div class="cell"><div class="code-block">r <span class="symbol">=</span> x<span class="symbol">.</span>(2 <span class="symbol">:</span> <span class="type-name">Int</span>)
+</div></div><div class="cell"><div class="code-block">r <span class="symbol">=</span> x<span class="symbol">.</span>(2 <span class="symbol">::</span> <span class="type-name">Int</span>)
 </div><div class="err-block">Type error:
 Expected: (Fin 3)
   Actual: Int32
 
-r = x.(2 : Int)
-         ^^
+r = x.(2 :: Int)
+         ^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Instead, it is necessary to cast the integer into the index type of the
 current shape. This type annotation is done with the <code>@</code> operator.</p>
