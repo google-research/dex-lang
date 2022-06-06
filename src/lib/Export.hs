@@ -122,13 +122,17 @@ prepareFunctionForExport' cc f = do
                   let typedIdxs' = [(sink ix, sink t) | (ix, t) <- typedIdxs]
                   tableAtom (sink basePtr) (sink $ ListE rest) (typedIdxs' ++ [(Var i, sink ity)])
                 [] -> do
-                  sizes <- mapM (indexSetSize . exportDimToIxType . snd) typedIdxs
+                  sizes <- mapM (indexSetSizeFin . finArg . snd) typedIdxs
                   strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
                                                      (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
-                  ords <- forM typedIdxs \(i, ity) -> ordinal (exportDimToIxType ity) i
+                  ords <- forM typedIdxs \(i, ity) -> ordinalFin (finArg ity) i
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   unsafePtrLoad =<< ptrOffset basePtr offset
 
+              indexSetSizeFin n = projectIxFinMethod 0 n
+              ordinalFin n ix = do
+                Lam (LamExpr b body) <- projectIxFinMethod 1 n
+                emitBlock =<< applySubst (b@>SubstVal ix) body
               dup x = (x, x)
 
     toExportType :: Fallible m => Type n -> m (ExportType n)
@@ -163,10 +167,12 @@ data ArgVisibility = ImplicitArg | ExplicitArg
 
 exportDimToIxType :: ExportDim n -> IxType n
 exportDimToIxType dim = IxType (TC (Fin dim')) (DictCon $ IxFin dim')
-  where
-    dim' = case dim of
-      ExportDimVar v -> Var v
-      ExportDimLit n -> IdxRepVal (fromIntegral n)
+  where dim' = finArg dim
+
+finArg :: ExportDim n -> Atom n
+finArg dim = case dim of
+  ExportDimVar v -> Var v
+  ExportDimLit n -> IdxRepVal (fromIntegral n)
 
 data ExportDim n =
    ExportDimVar (AtomName n)
