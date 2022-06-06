@@ -29,7 +29,7 @@ import Name
 import Builder
 import Syntax
 import CheckType (CheckableE (..))
-import Simplify (buildBlockSimplified, dceApproxBlock, emitSimplified, simplifyBlockToBlock)
+import Simplify (buildBlockSimplified, dceApproxBlock, emitSimplified)
 import LabeledItems
 import QueryType
 import Util (enumerate)
@@ -139,9 +139,7 @@ toImpExportedFunction cc lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs b
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
     resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
-      forM (fromListE argRecons) \block -> do
-        block' <- simplifyBlockToBlock =<< substM block
-        dropSubst $ translateBlock Nothing block'
+      traverse (translateBlock Nothing) $ fromListE argRecons
     extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []

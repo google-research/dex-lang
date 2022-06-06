@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-                , liftSimplifyM, buildBlockSimplified, simplifyBlockToBlock, emitSimplified
+                , liftSimplifyM, buildBlockSimplified, emitSimplified
                 , dceApproxBlock) where
 
 import Control.Category ((>>>))
@@ -55,9 +55,6 @@ buildBlockSimplified m =
   liftSimplifyM do
     block <- liftBuilder $ buildBlock m
     buildBlock $ simplifyBlock block
-
-simplifyBlockToBlock :: EnvReader m => Block n -> m n (Block n)
-simplifyBlockToBlock block = liftSimplifyM $ buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
 
