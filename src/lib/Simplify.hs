@@ -128,6 +128,13 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     xs' <- mapM simplifyAtom xs
     simplifyTabApp f xs'
   Atom x -> simplifyAtom x
+  -- Handle PrimEffect here, to avoid traversing cb multiple times
+  Op (PrimEffect ref (MExtend (BaseMonoid em cb) x)) -> do
+    ref' <- simplifyAtom ref
+    em' <- simplifyAtom em
+    x' <- simplifyAtom x
+    (cb', IdentityReconAbs) <- simplifyBinaryLam cb
+    emitOp $ PrimEffect ref' $ MExtend (BaseMonoid em' cb') x'
   Op  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
   Case e alts resultTy eff -> do
