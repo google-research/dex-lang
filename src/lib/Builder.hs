@@ -38,7 +38,6 @@ module Builder (
   liftBuilder, liftEmitBuilder, makeBlock,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
-  liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
   emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
@@ -1115,40 +1114,6 @@ unsafePtrLoad x = do
 
 ptrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 ptrLoad x = emitOp $ PtrLoad x
-
-liftMonoidEmpty :: (Builder m, Emits n)
-                => Type n -> Atom n -> m n (Atom n)
-liftMonoidEmpty accTy x = do
-  xTy <- getType x
-  alphaEq xTy accTy >>= \case
-    True -> return x
-    False -> case accTy of
-      TabTy (b:>ixTy) eltTy -> do
-        liftEmitBuilder $ buildTabLam noHint ixTy \i -> do
-          x' <- sinkM x
-          ab <- sinkM $ Abs b eltTy
-          eltTy' <- applyAbs ab i
-          liftMonoidEmpty eltTy' x'
-      _ -> error $ "Base monoid type mismatch: can't lift " ++
-             pprint xTy ++ " to " ++ pprint accTy
-
-liftMonoidCombine :: (Builder m, Emits n)
-                  => Type n -> Atom n -> Atom n -> Atom n
-                  -> m n (Atom n)
-liftMonoidCombine accTy bc x y = do
-  Pi baseCombineTy <- getType bc
-  let baseTy = argType baseCombineTy
-  alphaEq accTy baseTy >>= \case
-    True -> naryApp bc [x, y]
-    False -> case accTy of
-      TabTy (b:>ixTy) eltTy -> do
-        liftEmitBuilder $ buildFor noHint Fwd ixTy \i -> do
-          xElt <- tabApp (sink x) (Var i)
-          yElt <- tabApp (sink y) (Var i)
-          eltTy' <- applySubst (b@>i) eltTy
-          liftMonoidCombine eltTy' (sink bc) xElt yElt
-      _ -> error $ "Base monoid type mismatch: can't lift " ++
-             pprint baseTy ++ " to " ++ pprint accTy
 
 -- === index set type class ===
 

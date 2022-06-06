@@ -407,7 +407,7 @@ toImpOp maybeDest op = case op of
       MExtend (BaseMonoid _ combine) x -> do
         xTy <- getType x
         refVal <- destToAtom refDest
-        result <- liftBuilderImpSimplify $
+        result <- liftBuilderImp $
                     liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
         copyAtom refDest result
         returnVal UnitVal
@@ -419,6 +419,26 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
+    where
+      liftMonoidCombine :: Emits n => Type n -> Atom n -> Atom n -> Atom n -> BuilderM n (Atom n)
+      liftMonoidCombine accTy bc x y = do
+        Pi baseCombineTy <- getType bc
+        let baseTy = argType baseCombineTy
+        alphaEq accTy baseTy >>= \case
+          -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
+          True -> do
+            Lam (BinaryLamExpr xb yb body) <- return bc
+            body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
+            emitBlock body'
+          False -> case accTy of
+            TabTy (b:>ixTy) eltTy -> do
+              buildFor noHint Fwd ixTy \i -> do
+                xElt <- tabApp (sink x) (Var i)
+                yElt <- tabApp (sink y) (Var i)
+                eltTy' <- applySubst (b@>i) eltTy
+                liftMonoidCombine eltTy' (sink bc) xElt yElt
+            _ -> error $ "Base monoid type mismatch: can't lift " ++
+                   pprint baseTy ++ " to " ++ pprint accTy
   Inject e -> case e of
     Con (IndexRangeVal (IxTy ixTy) low _ restrictIdx) -> do
       offset <- case low of
@@ -572,6 +592,22 @@ toImpHof maybeDest hof = do
       extendSubst (b@>SubstVal UnitVal) $
         translateBlock maybeDest body
     _ -> error $ "not implemented: " ++ pprint hof
+    where
+      liftMonoidEmpty :: Type n -> Atom n -> BuilderM n (Atom n)
+      liftMonoidEmpty accTy x = do
+        xTy <- getType x
+        alphaEq xTy accTy >>= \case
+          True -> return x
+          False -> case accTy of
+            TabTy (b:>ixTy) eltTy -> do
+              buildTabLam noHint ixTy \i -> do
+                x' <- sinkM x
+                ab <- sinkM $ Abs b eltTy
+                eltTy' <- applyAbs ab i
+                liftMonoidEmpty eltTy' x'
+            _ -> error $ "Base monoid type mismatch: can't lift " ++
+                  pprint xTy ++ " to " ++ pprint accTy
+
 
 -- === Destination builder monad ===
 
