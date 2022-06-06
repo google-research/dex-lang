@@ -191,7 +191,8 @@ instance Pretty (Decl n l) where
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let b (DeclBinding ann ty rhs) ->
-      align $ p ann <+> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+      align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+      where annDoc = case ann of PlainLet -> mempty; _ -> pretty ann <> " "
 
 instance Pretty (NaryLamExpr n) where
   pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
