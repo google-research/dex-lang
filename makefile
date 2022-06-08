@@ -219,6 +219,18 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
+tutorial-data = t10k-images-idx3-ubyte t10k-labels-idx1-ubyte
+tutorial-data := $(tutorial-data:%=examples/%)
+
+$(tutorial-data):
+	wget -qO $@.gz http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/$(@F).gz
+	gunzip $@.gz
+
+.PHONY: tutorial-data
+tutorial-data: $(tutorial-data)
+
+run-examples/tutorial: tutorial-data 
+
 tests: unit-tests lower-tests quine-tests repl-test module-tests
 
 # Keep the unit tests in their own working directory too, due to
@@ -314,4 +326,5 @@ doc/lib/%.html: lib/%.dx
 
 clean:
 	$(STACK) clean
-	rm -rf src/lib/dexrt.bc
+	$(RM) src/lib/dexrt.bc
+	$(RM) $(tutorial-data)
