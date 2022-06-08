@@ -245,6 +245,16 @@ update-lower-tests: just-build
 	$(dex) script tests/lower.dx > tests/lower.dx.tmp
 	mv tests/lower.dx.tmp tests/lower.dx
 
+lower-vectorize-tests: export DEX_LOWER=1
+lower-vectorize-tests: export DEX_VECTORIZE=1
+lower-vectorize-tests: export DEX_ALLOW_CONTRACTIONS=0
+lower-vectorize-tests: export DEX_TEST_MODE=t
+lower-vectorize-tests: just-build
+	misc/check-quine tests/lower-vectorize.dx $(dex) script
+update-lower-vectorize-tests: just-build
+	DEX_LOWER=1 DEX_VECTORIZE=1 $(dex) script tests/lower-vectorize.dx > tests/lower-vectorize.dx.tmp
+	mv tests/lower-vectorize.dx.tmp tests/lower-vectorize.dx
+
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: export DEX_TEST_MODE=t
 

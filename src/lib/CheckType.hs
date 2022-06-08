@@ -733,6 +733,19 @@ typeCheckPrimOp op = case op of
   Freeze ref -> do
     RawRefTy ty <- getTypeE ref
     return ty
+  VectorBroadcast v ty -> do
+    ty'@(BaseTy (Vector _ sbt)) <- checkTypeE TyKind ty
+    v |: BaseTy (Scalar sbt)
+    return ty'
+  VectorIota ty -> do
+    ty'@(BaseTy (Vector _ _)) <- checkTypeE TyKind ty
+    return ty'
+  VectorSubref ref i ty -> do
+    RawRefTy (TabTy b (BaseTy (Scalar sbt))) <- getTypeE ref
+    i |: binderType b
+    ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
+    unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
+    return ty'
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

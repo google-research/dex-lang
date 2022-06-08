@@ -4,19 +4,26 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Lower (lowerFullySequential) where
+module Lower (lowerFullySequential, vectorizeLoops) where
 
+import Control.Monad.Reader
+import Data.Word
+import Data.Functor
 import Data.Map.Strict qualified as M
-import Control.Monad
+import Data.List.NonEmpty qualified as NE
+import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
 import Unsafe.Coerce
+import GHC.Exts (inline)
 
 import Types.Core
 import Types.Primitives
 
+import Err
 import Name
 import MTL1
 import Core
 import Builder
+import PPrint
 import QueryType
 import GenericTraversal
 
@@ -111,6 +118,216 @@ traverseExprWithDest dest expr = case expr of
         ans <- Var <$> emit expr'
         void $ emitOp $ Place d ans
         return $ Atom ans
+
+-- === Vectorization ===
+
+-- WATCH OUT! This vectorization assumes that all raw references represent
+-- destinations, and so no Place operations can cause write conflicts.
+
+-- TODO: Local vector values? We might want to pack short and pure for loops into vectors,
+-- to support things like float3 etc.
+data Stability
+  = Uniform    -- constant across vectorized dimension
+  | Varying    -- varying across vectorized dimension
+  | Contiguous -- varying, but contiguous across vectorized dimension
+  | ProdStability [Stability]
+  deriving (Eq, Show)
+
+data VSubstValC (c::C) (n::S) where
+  VVal :: Stability -> Atom n -> VSubstValC AtomNameC n
+type VAtom = VSubstValC AtomNameC
+instance SinkableV VSubstValC
+instance SinkableE (VSubstValC c) where
+  sinkingProofE fresh (VVal s x) = VVal s $ sinkingProofE fresh x
+
+instance PrettyPrec (VSubstValC c n) where
+  prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
+
+type TopVectorizeM = BuilderT (ReaderT Word32 HardFailM)
+
+vectorizeLoops :: EnvReader m => Word32 -> Block n -> m n (Block n)
+vectorizeLoops vectorByteWidth (Block _ decls ans) = do
+  liftM (runHardFail . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
+    s <- vectorizeLoopsRec emptyInFrag decls
+    applySubst s ans
+{-# INLINE vectorizeLoops #-}
+
+vectorizeLoopsRec :: (Ext i o, Emits o)
+                  => SubstFrag Name i i' o -> Nest Decl i' i''
+                  -> TopVectorizeM o (SubstFrag Name i i'' o)
+vectorizeLoopsRec frag = \case
+  Empty -> return frag
+  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+    vectorByteWidth <- ask
+    let narrowestTypeByteWidth = 1  -- TODO: This is too conservative! Find the shortest type in the loop.
+    let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
+    v <- case expr of
+      Hof (Seq dir (IxTy (IxType _ (DictCon (IxFin (IdxRepVal n))))) dest (Lam body))
+        | n `mod` loopWidth == 0 -> do
+          Distinct <- getDistinct
+          let vn = IdxRepVal $ n `div` loopWidth
+          let ixTy' = IxTy $ IxType (TC $ Fin vn) (DictCon $ IxFin vn)
+          body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
+          dest' <- applySubst frag dest
+          emit $ Hof $ Seq dir ixTy' dest' body'
+      _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
+    vectorizeLoopsRec (frag <.> b @> v) rest
+
+vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
+             => Word32 -> Type o -> SubstFrag Name i i' o -> LamExpr i'
+             -> TopVectorizeM o (Atom o)
+vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
+  case eff of
+    Pure -> do
+      ty' <- case ty of
+        ProdTy [_, ref] -> do
+          ref' <- applySubst frag ref
+          return $ ProdTy [newIxTy, ref']
+        _ -> error "Unexpected seq binder type"
+      liftM (runHardFail . (`runReaderT` loopWidth)) $ liftBuilderT $ do
+        buildLam (getNameHint b) arr (sink ty') Pure \ci -> do
+          (vi, dest) <- fromPair $ Var ci
+          viOrd <- emitOp $ CastOp IdxRepTy vi
+          iOrd <- emitOp $ BinOp IMul viOrd (IdxRepVal loopWidth)
+          i <- emitOp $ CastOp (sink newIxTy) iOrd
+          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, Uniform]) (PairVal i dest)
+          runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
+    _ -> error "Effectful loop vectorization not implemented!"
+  where
+    iSubst :: (DExt o o', Color c) => Name c i' -> VSubstValC c o'
+    iSubst v = case lookupSubstFragProjected frag v of
+      Left v'  -> sink $ fromNameVAtom v'
+      Right v' -> sink $ fromNameVAtom v'
+
+fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
+fromNameVAtom v = case eqColorRep @c @AtomNameC of
+  Just ColorsEqual -> VVal Uniform $ Var v
+  _ -> error "Unexpected non-atom name"
+
+newtype VectorizeM i o a =
+  VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT (ReaderT Word32 HardFailM)) i o a }
+  deriving ( Functor, Applicative, Monad, Fallible, MonadFail, SubstReader VSubstValC
+           , Builder, EnvReader, EnvExtender, ScopeReader, ScopableBuilder )
+
+getLoopWidth :: VectorizeM i o Word32
+getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
+
+vectorizeBlock :: Emits o => Block i -> VectorizeM i o (VAtom o)
+vectorizeBlock (Block _ decls topAns) = go topAns decls
+  where
+    go :: Emits o => Atom i' -> Nest Decl i i' -> VectorizeM i o (VAtom o)
+    go ans = \case
+      Empty -> vectorizeAtom ans
+      Nest (Let b (DeclBinding ann _ expr)) rest -> do
+        unless (ann == PlainLet) $ error "Encountered a non-plain let?"
+        v <- vectorizeExpr expr
+        extendSubst (b @> v) $ go ans rest
+
+vectorizeExpr :: Emits o => Expr i -> VectorizeM i o (VAtom o)
+vectorizeExpr expr = case expr of
+  Atom atom -> vectorizeAtom atom
+  Op op -> vectorizeOp op
+  Hof (RunIO (Lam (LamExpr (LamBinder b UnitTy PlainArrow _) body))) -> do
+    -- TODO: buildBlockAux?
+    (vy, lam') <- withFreshBinder (getNameHint b) UnitTy \b' -> do
+      Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
+        VVal vy y <- extendSubst (b @> VVal Uniform UnitVal) $ vectorizeBlock body
+        PairE (LiftE vy) <$> withType y
+      body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
+      effs' <- getEffects body'
+      return (vy, LamExpr (LamBinder b' UnitTy PlainArrow effs') body')
+    VVal vy . Var <$> emit (Hof (RunIO (Lam lam')))
+  _ -> error $ "Cannot vectorize expr: " ++ pprint expr
+
+vectorizeOp :: Emits o => Op i -> VectorizeM i o (VAtom o)
+vectorizeOp op = do
+  op' <- (inline traversePrimOp) vectorizeAtom op
+  case op' of
+    IndexRef (VVal Uniform ref) (VVal Contiguous i) -> do
+      TC (RefType _ (TabTy tb a)) <- getType ref
+      vty <- getVectorType $ case hoist tb a of
+        HoistSuccess a' -> a'
+        HoistFailure _  -> error "Can't vectorize dependent table application"
+      VVal Contiguous <$> emitOp (VectorSubref ref i vty)
+    Place (VVal vref ref) sval@(VVal vval val) -> do
+      VVal Uniform <$> case (vref, vval) of
+        (Uniform   , Uniform   ) -> emitOp $ Place ref val
+        (Uniform   , _         ) -> error "Write conflict? This should never happen!"
+        (Varying   , _         ) -> error "Vector scatter not implemented"
+        (Contiguous, Varying   ) -> emitOp $ Place ref val
+        (Contiguous, Contiguous) -> emitOp . Place ref =<< ensureVarying sval
+        _ -> error "Not implemented yet"
+    UnOp opk sx@(VVal vx x) -> do
+      let v = case vx of Uniform -> Uniform; _ -> Varying
+      x' <- if vx /= v then ensureVarying sx else return x
+      VVal v <$> emitOp (UnOp opk x')
+    BinOp opk sx@(VVal vx x) sy@(VVal vy y) -> do
+      let v = case (vx, vy) of (Uniform, Uniform) -> Uniform; _ -> Varying
+      x' <- if vx /= v then ensureVarying sx else return x
+      y' <- if vy /= v then ensureVarying sy else return y
+      VVal v <$> emitOp (BinOp opk x' y')
+    CastOp (VVal Uniform ty) (VVal vx x) -> do
+      ty' <- case vx of
+        Uniform    -> return ty
+        Varying    -> getVectorType ty
+        Contiguous -> return ty
+        ProdStability _ -> error "Unexpected cast of product type"
+      VVal vx <$> emitOp (CastOp ty' x)
+    PtrOffset (VVal Uniform ptr) (VVal Contiguous off) -> do
+      VVal Contiguous <$> emitOp (PtrOffset ptr off)
+    PtrLoad (VVal Contiguous ptr) -> do
+      BaseTy (PtrType (addrSpace, a)) <- getType ptr
+      BaseTy av <- getVectorType $ BaseTy a
+      ptr' <- emitOp $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
+      VVal Varying <$> emitOp (PtrLoad ptr')
+    _ -> error $ "Can't vectorize op: " ++ pprint op'
+
+vectorizeAtom :: Atom i -> VectorizeM i o (VAtom o)
+vectorizeAtom atom = case atom of
+  Var v -> lookupSubstM v
+  ProjectElt p v -> do
+    VVal vv v' <- lookupSubstM v
+    return $ VVal (projStability (reverse $ NE.toList p) vv) $ getProjection (NE.toList p) v'
+  Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
+  _ -> do
+    subst <- getSubst
+    VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
+  where
+    uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
+    uniformSubst subst n = case subst ! n of
+      VVal Uniform x -> SubstVal x
+      _ -> error $ "Can't vectorize atom " ++ pprint atom
+    projStability p s = case (p, s) of
+      ([]  , _                ) -> s
+      (i:is, ProdStability sbs) -> projStability is (sbs !! i)
+      (_   , Uniform          ) -> s
+      _ -> error "Invalid projection"
+
+getVectorType :: Type o -> VectorizeM i o (Atom o)
+getVectorType ty = case ty of
+  BaseTy (Scalar sbt) -> do
+    els <- getLoopWidth
+    return $ BaseTy $ Vector [els] sbt
+  -- TODO: Should we support tables?
+  _ -> error $ "Can't make a vector of " ++ pprint ty
+
+ensureVarying :: Emits o => VAtom o -> VectorizeM i o (Atom o)
+ensureVarying (VVal s val) = case s of
+  Varying -> return val
+  Uniform -> do
+    vty <- getVectorType =<< getType val
+    emitOp $ VectorBroadcast val vty
+  -- Note that the implementation of this case will depend on val's type.
+  Contiguous -> do
+    ty <- getType val
+    vty <- getVectorType ty
+    case ty of
+      BaseTy (Scalar sbt) -> do
+        bval <- emitOp $ VectorBroadcast val vty
+        iota <- emitOp $ VectorIota vty
+        emitOp $ BinOp (if isIntegral sbt then IAdd else FAdd) bval iota
+      _ -> error "Not implemented"
+  ProdStability _ -> error "Not implemented"
 
 -- === Extensions to the name system ===
 

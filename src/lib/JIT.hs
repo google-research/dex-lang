@@ -50,6 +50,7 @@ import PPrint
 import Builder (TopBuilder (..), queryObjCache)
 import Logging
 import LLVMExec
+import Types.Primitives
 import Util (IsBool (..), bindM2)
 
 -- === Compile monad ===
@@ -353,14 +354,33 @@ compileInstr instr = case instr of
   IPrimOp (PtrOffset ptr off) ->
     (:[]) <$> bindM2 (gep (pointeeType $ getIType ptr)) (compileExpr ptr) (compileExpr off)
   IPrimOp op -> (:[]) <$> (traverse compileExpr op >>= compilePrimOp)
+  IVectorBroadcast v vty -> do
+    v' <- compileExpr v
+    let vty'@(L.VectorType vlen _) = scalarTy vty
+    tmp <- emitInstr vty' $ L.InsertElement (L.ConstantOperand $ C.Undef vty') v' (L.ConstantOperand $ C.Int 32 0) []
+    ans <- emitInstr vty' $ L.ShuffleVector tmp (L.ConstantOperand $ C.Undef vty') (replicate (fromIntegral vlen) 0) []
+    return [ans]
+  IVectorIota vty -> case vty of
+    Vector [n] sbt -> do
+      let raiseConstant c = case sbt of
+            Float32Type -> C.Float $ L.Single $ fromIntegral c
+            Float64Type -> C.Float $ L.Double $ fromIntegral c
+            _ | isIntegral sbt -> C.Int (fromIntegral $ sizeOf (Scalar sbt) * 8) $ fromIntegral c
+            _ -> error "Unrecognized scalar base type"
+      return [L.ConstantOperand $ C.Vector $ raiseConstant <$> [0..(n-1)]]
+    _ -> error "Expected a 1D vector type"
   ICastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
     let (xt, dt) = (typeOf x, scalarTy idt)
-    case (xt, idt) of
+    -- Choose instructions based on the scalar type of vectors
+    let sidt = case idt of Vector [_] sbt -> Scalar sbt; _ -> idt
+    let sxt = case xt of L.VectorType _ sbt -> sbt; _ -> xt
+    let sdt = case dt of L.VectorType _ sbt -> sbt; _ -> dt
+    case (sxt, sidt) of
       -- if upcasting to unsigned int, use zext instruction
       (L.IntegerType _,    Scalar Word64Type)             -> x `zeroExtendTo` dt
       (L.IntegerType bits, Scalar Word32Type) | bits < 32 -> x `zeroExtendTo` dt
-      _ -> case (xt, dt) of
+      _ -> case (sxt, sdt) of
        (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
        (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
          LT -> emitInstr dt $ L.FPExt x dt []
@@ -882,6 +902,8 @@ scalarTy b = case b of
     Word64Type  -> i64
     Float64Type -> fp64
     Float32Type -> fp32
+  Vector [n] sb -> L.VectorType n $ scalarTy $ Scalar sb
+  Vector _   _  -> error "Expected a 1D vector type"
   PtrType (s, t) -> pointerType (scalarTy t) (lAddress s)
 
 pointeeType :: BaseType -> L.Type

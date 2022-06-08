@@ -47,6 +47,7 @@ type IPrimOp n = PrimOp (IExpr n)
 type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
 type Size = IExpr
+type IVectorType = BaseType -- has to be a vector type
 
 type IFunName = String
 
@@ -97,6 +98,8 @@ data ImpInstr n =
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
  | IPrimOp (IPrimOp n)
+ | IVectorBroadcast (IExpr n) IVectorType
+ | IVectorIota                IVectorType
    deriving (Show, Generic)
 
 iBinderType :: IBinder n l -> IType
@@ -109,7 +112,7 @@ newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 -- === instances ===
 
 instance GenericE ImpInstr where
-  type RepE ImpInstr = EitherE4
+  type RepE ImpInstr = EitherE5
       (EitherE4
   {- IFor -}    (LiftE Direction `PairE` Size `PairE` Abs IBinder ImpBlock)
   {- IWhile -}  (ImpBlock)
@@ -128,7 +131,11 @@ instance GenericE ImpInstr where
     ) (EitherE2
   {- ICastOp -} (LiftE IType `PairE` IExpr)
   {- IPrimOp -} (ComposeE PrimOp IExpr)
-      )
+    ) (EitherE2
+  {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
+  {- IVectorIota      -} (              LiftE IVectorType)
+    )
+
 
   fromE instr = case instr of
     IFor d n ab           -> Case0 $ Case0 $ LiftE d `PairE` n `PairE` ab
@@ -148,6 +155,8 @@ instance GenericE ImpInstr where
 
     ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
     IPrimOp op     -> Case3 $ Case1 $ ComposeE op
+    IVectorBroadcast v vty -> Case4 $ Case0 $ v `PairE` LiftE vty
+    IVectorIota vty        -> Case4 $ Case1 $ LiftE vty
   {-# INLINE fromE #-}
 
   toE instr = case instr of
@@ -175,6 +184,11 @@ instance GenericE ImpInstr where
     Case3 instr' -> case instr' of
       Case0 (LiftE idt `PairE` ix ) -> ICastOp idt ix
       Case1 (ComposeE op )          -> IPrimOp op
+      _ -> error "impossible"
+
+    Case4 instr' -> case instr' of
+      Case0 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
+      Case1 (          LiftE vty) -> IVectorIota vty
       _ -> error "impossible"
 
     _ -> error "impossible"

@@ -254,6 +254,9 @@ transposeOp op ct = case op of
   AllocDest _           -> notLinear
   Place _ _             -> notLinear
   Freeze _              -> notLinear
+  VectorBroadcast _ _   -> notLinear
+  VectorIota _          -> notLinear
+  VectorSubref _ _ _    -> notLinear
   where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
 transposeAtom :: HasCallStack => Emits o => Atom i -> Atom o -> TransposeM i o ()

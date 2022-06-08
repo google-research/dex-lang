@@ -615,6 +615,11 @@ getTypePrimOp op = case op of
   Freeze ref -> getTypeE ref >>= \case
     RawRefTy ty -> return ty
     ty -> error $ "Not a reference type: " ++ pprint ty
+  VectorBroadcast _ vty -> substM vty
+  VectorIota vty -> substM vty
+  VectorSubref ref _ vty -> getTypeE ref >>= \case
+    TC (RefType h _) -> TC . RefType h <$> substM vty
+    ty -> error $ "Not a reference type: " ++ pprint ty
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =

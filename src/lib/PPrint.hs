@@ -823,11 +823,14 @@ instance Pretty (ImpInstr n)  where
   pretty ISyncWorkgroup   = "syncWorkgroup"
   pretty IThrowError      = "throwError"
   pretty (ICall f args)   = "call" <+> p f <+> p args
+  pretty (IVectorBroadcast v _) = "vbroadcast" <+> p v
+  pretty (IVectorIota _) = "viota"
 
 instance Pretty BaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec BaseType where
   prettyPrec b = case b of
     Scalar sb -> prettyPrec sb
+    Vector shape sb -> atPrec ArgPrec $ encloseSep "<" ">" "x" $ (p <$> shape) ++ [p sb]
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
 instance Pretty AddressSpace where
@@ -925,6 +928,9 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     AllocDest ty -> atPrec LowestPrec $ "alloc" <+> pApp ty
     Place r v -> atPrec LowestPrec $ pApp r <+> "r:=" <+> pApp v
     Freeze r  -> atPrec LowestPrec $ "freeze" <+> pApp r
+    VectorBroadcast v vty -> atPrec LowestPrec $ "vbroadcast" <+> pApp v <+> pApp vty
+    VectorIota vty -> atPrec LowestPrec $ "viota" <+> pApp vty
+    VectorSubref ref i _ -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
     _ -> prettyExprDefault $ OpExpr op
 
 prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
