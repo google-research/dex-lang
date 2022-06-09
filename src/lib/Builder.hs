@@ -711,25 +711,30 @@ fromNewtype _ = Nothing
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, ScopableBuilder m)
           => Atom n -> Type n
-          -> (forall l. (Emits l, DExt n l) => Int -> [AtomName l] -> m l (Atom l))
+          -> (forall l. (Emits l, DExt n l) => Int -> [Atom l] -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
-  scrutTy <- getType scrut
-  altsBinderTys <- caseAltsBinderTys scrutTy
-  (alts, effs) <- unzip <$> forM (enumerate altsBinderTys) \(i, bs) -> do
-    (Abs bs' (body `PairE` eff')) <- buildNaryAbs bs \xs -> do
-      blk <- buildBlock do
-        ListE xs' <- sinkM $ ListE xs
-        indexedAltBody i xs'
-      eff <- getEffects blk
-      return $ blk `PairE` eff
-    return (Abs bs' body, ignoreHoistFailure $ hoist bs' eff')
-  liftM Var $ emit $ Case scrut alts resultTy $ mconcat effs
+  case trySelectBranch scrut of
+    Just (i, args) -> do
+      Distinct <- getDistinct
+      indexedAltBody i (map sink args)
+    Nothing -> do
+      scrutTy <- getType scrut
+      altsBinderTys <- caseAltsBinderTys scrutTy
+      (alts, effs) <- unzip <$> forM (enumerate altsBinderTys) \(i, bs) -> do
+        (Abs bs' (body `PairE` eff')) <- buildNaryAbs bs \xs -> do
+          blk <- buildBlock do
+            ListE xs' <- sinkM $ ListE xs
+            indexedAltBody i (Var <$> xs')
+          eff <- getEffects blk
+          return $ blk `PairE` eff
+        return (Abs bs' body, ignoreHoistFailure $ hoist bs' eff')
+      liftM Var $ emit $ Case scrut alts resultTy $ mconcat effs
 
 buildSplitCase :: (Emits n, ScopableBuilder m)
                => LabeledItems (Type n) -> Atom n -> Type n
-               -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
-               -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+               -> (forall l. (Emits l, DExt n l) => Atom l -> m l (Atom l))
+               -> (forall l. (Emits l, DExt n l) => Atom l -> m l (Atom l))
                -> m n (Atom n)
 buildSplitCase tys scrut resultTy match fallback = do
   split <- emitOp $ VariantSplit tys scrut
@@ -1179,8 +1184,8 @@ emitIf predicate resultTy trueCase falseCase = do
 
 emitMaybeCase :: (Emits n, ScopableBuilder m)
               => Atom n -> Type n
-              -> (forall l. (Emits l, DExt n l) =>               m l (Atom l))
-              -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+              -> (forall l. (Emits l, DExt n l) =>           m l (Atom l))
+              -> (forall l. (Emits l, DExt n l) => Atom l -> m l (Atom l))
               -> m n (Atom n)
 emitMaybeCase scrut resultTy nothingCase justCase = do
   buildCase scrut resultTy \i [v] ->
@@ -1195,7 +1200,7 @@ fromJustE x = liftEmitBuilder do
   MaybeTy a <- getType x
   emitMaybeCase x a
     (emitOp $ ThrowError $ sink a)
-    (return . Var)
+    (return)
 
 -- Maybe a -> Bool
 isJustE :: (Emits n, Builder m) => Atom n -> m n (Atom n)
@@ -1271,7 +1276,7 @@ runMaybeWhile body = do
       ans <- body
       emitMaybeCase ans Word8Ty
         (emitOp (PrimEffect (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
-        (return . Var)
+        (return)
     return UnitVal
   emitIf hadError (MaybeTy UnitTy)
     (return $ NothingAtom UnitTy)
