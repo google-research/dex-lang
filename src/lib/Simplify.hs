@@ -515,7 +515,7 @@ simplifyOp op = case op of
           let idx = case M.lookup label litems of Nothing  -> i
                                                   Just tys -> i + length tys
           let fullRow' = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
-          return $ Variant fullRow' label idx (Var v)
+          return $ Variant fullRow' label idx v
     _ -> error "not a variant"
   VariantSplit leftTys@(LabeledItems litems) full -> getType full >>= \case
     VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
@@ -531,11 +531,11 @@ simplifyOp op = case op of
         case M.lookup label litems of
           Just tys -> if i < length tys
             then return $ Variant resultRow' InternalSingletonLabel 0 $
-              Variant (NoExt $ fmap sink leftTys) label i (Var v)
+              Variant (NoExt $ fmap sink leftTys) label i v
             else return $ Variant resultRow' InternalSingletonLabel 1 $
-              Variant (NoExt $ fmap sink rightTys) label (i - length tys) $ Var v
+              Variant (NoExt $ fmap sink rightTys) label (i - length tys) $ v
           Nothing -> return $ Variant resultRow' InternalSingletonLabel 1 $
-            Variant (NoExt $ fmap sink rightTys) label i $ Var v
+            Variant (NoExt $ fmap sink rightTys) label i $ v
     _ -> error "Not a variant type"
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
@@ -650,7 +650,7 @@ exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResu
       extendSubst (b@> SubstVal x) $ exceptToMaybeDecls resultTy decls finalResult
     _ -> emitMaybeCase maybeResult (MaybeTy resultTy)
           (return $ NothingAtom $ sink resultTy)
-          (\v -> extendSubst (b@> Rename v) $
+          (\v -> extendSubst (b@> SubstVal v) $
                    exceptToMaybeDecls (sink resultTy) decls finalResult)
 
 exceptToMaybeExpr :: Emits o => Expr i -> SimplifyM i o (Atom o)
@@ -660,7 +660,7 @@ exceptToMaybeExpr expr = case expr of
     resultTy' <- substM $ MaybeTy resultTy
     buildCase e' resultTy' \i vs -> do
       Abs bs body <- return $ alts !! i
-      extendSubst (bs @@> map Rename vs) $ exceptToMaybeBlock body
+      extendSubst (bs @@> map SubstVal vs) $ exceptToMaybeBlock body
   Atom x -> do
     x' <- substM x
     ty <- getType x'
@@ -683,7 +683,7 @@ exceptToMaybeExpr expr = case expr of
     a <- getTypeSubst expr
     emitMaybeCase maybeAns (MaybeTy a)
        (return $ NothingAtom $ sink a)
-       (\ans -> return $ JustAtom (sink a) $ PairVal (Var ans) (sink newState))
+       (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink newState))
   Hof (RunWriter monoid (Lam (BinaryLamExpr h ref body))) -> do
     monoid' <- mapM substM monoid
     accumTy <- substM =<< (getReferentTy $ EmptyAbs $ PairB h ref)
@@ -694,7 +694,7 @@ exceptToMaybeExpr expr = case expr of
     a <- getTypeSubst expr
     emitMaybeCase maybeAns (MaybeTy a)
       (return $ NothingAtom $ sink a)
-      (\ans -> return $ JustAtom (sink a) $ PairVal (Var ans) (sink accumResult))
+      (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink accumResult))
   Hof (While (Lam (LamExpr b body))) ->
     runMaybeWhile $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock body
   _ -> do

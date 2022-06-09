@@ -186,8 +186,9 @@ transposeExpr expr ct = case expr of
       False -> do
         e' <- substNonlin e
         void $ buildCase e' UnitTy \i vs -> do
+          vs' <- mapM emitAtomToName vs
           Abs bs body <- return $ alts !! i
-          extendSubst (bs @@> map RenameNonlin vs) do
+          extendSubst (bs @@> map RenameNonlin vs') do
             transposeBlock body (sink ct)
           return UnitVal
 

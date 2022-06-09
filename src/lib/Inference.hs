@@ -1196,14 +1196,14 @@ instance SinkableE IndexedAlt where
   sinkingProofE = todoSinkableProof
 
 buildNthOrderedAlt :: (Emits n, Builder m)
-                   => [IndexedAlt n] -> Type n -> Type n -> Int -> [AtomName n]
+                   => [IndexedAlt n] -> Type n -> Type n -> Int -> [Atom n]
                    -> m n (Atom n)
 buildNthOrderedAlt alts scrutTy resultTy i vs = do
   case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
       emitOp $ ThrowError resultTy'
-    Just alt -> applyNaryAbs alt vs >>= emitBlock
+    Just alt -> applyNaryAbs alt (SubstVal <$> vs) >>= emitBlock
 
 -- converts from the ordinal index used in the core IR to the more complicated
 -- `CaseAltIndex` used in the surface IR.
@@ -1248,7 +1248,7 @@ buildSortedCase scrut alts resultTy = do
             liftEmitBuilder $ buildSplitCase types scrut resultTy
               (\v -> do ListE alts' <- sinkM $ ListE alts
                         resultTy'   <- sinkM resultTy
-                        liftEmitBuilder $ buildMonomorphicCase alts' (Var v) resultTy')
+                        liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
               (\_ -> do resultTy' <- sinkM resultTy
                         emitOp $ ThrowError resultTy')
         [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
@@ -1260,9 +1260,9 @@ buildSortedCase scrut alts resultTy = do
             liftEmitBuilder $ buildSplitCase left scrut resultTy
               (\v -> do ListE alts' <- sinkM $ ListE alts
                         resultTy'   <- sinkM resultTy
-                        liftEmitBuilder $ buildMonomorphicCase alts' (Var v) resultTy')
+                        liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
               (\v -> do tailAlt' <- sinkM tailAlt
-                        applyNaryAbs tailAlt' [v] >>= emitBlock )
+                        applyNaryAbs tailAlt' [SubstVal v] >>= emitBlock )
         _ -> throw TypeErr "Can't specify more than one variant tail pattern."
     _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
 
