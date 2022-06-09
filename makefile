@@ -219,11 +219,17 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
+t10k-images-idx3-ubyte-sha256 = 346e55b948d973a97e58d2351dde16a484bd415d4595297633bb08f03db6a073
+t10k-labels-idx1-ubyte-sha256 = 67da17c76eaffca5446c3361aaab5c3cd6d1c2608764d35dfb1850b086bf8dd5
+
 tutorial-data = t10k-images-idx3-ubyte t10k-labels-idx1-ubyte
 tutorial-data := $(tutorial-data:%=examples/%)
 
 $(tutorial-data):
 	wget -qO $@.gz http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/$(@F).gz
+	@echo $($(@F)-sha256) $@.gz > $@.sha256
+	sha256sum -c $@.sha256
+	$(RM) $@.sha256
 	gunzip $@.gz
 
 .PHONY: tutorial-data
