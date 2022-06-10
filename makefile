@@ -208,13 +208,17 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
 
 lib-names = diagram plot png
 
-all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
+text-names = functions
+
+all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(text-names:%=texts/%)
 
 quine-test-targets = $(all-names:%=run-%)
 
 update-test-targets    = $(test-names:%=update-tests/%)
+update-text-targets    = $(text-names:%=update-texts/%)
 update-example-targets = $(example-names:%=update-examples/%)
 
+doc-text-names = $(text-names:%=doc/%.html)
 doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
@@ -251,6 +255,8 @@ run-%: export DEX_TEST_MODE=t
 
 run-tests/%: tests/%.dx just-build
 	misc/check-quine $< $(dex) script
+run-texts/%: texts/%.dx just-build
+	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) script
 
@@ -269,6 +275,10 @@ update-%: export DEX_TEST_MODE=t
 update-all: $(update-test-targets) $(update-example-targets)
 
 update-tests/%: tests/%.dx just-build
+	$(dex) script $< > $<.tmp
+	mv $<.tmp $<
+
+update-texts/%: texts/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
@@ -316,7 +326,7 @@ slow-docs = doc/examples/mnist-nearest-neighbors.html
 # https://github.com/google-research/dex-lang/issues/910
 slow-docs += doc/examples/levenshtein-distance.html
 
-docs: doc-prelude $(doc-example-names) $(doc-lib-names) $(slow-docs)
+docs: doc-prelude $(doc-text-names) $(doc-example-names) $(doc-lib-names) $(slow-docs)
 
 doc-prelude: lib/prelude.dx
 	mkdir -p doc
@@ -328,6 +338,10 @@ doc/examples/%.html: examples/%.dx
 
 doc/lib/%.html: lib/%.dx
 	mkdir -p doc/lib
+	$(dex) script $^ --outfmt html > $@
+
+${doc-text-names}:doc/%.html: texts/%.dx
+	mkdir -p doc
 	$(dex) script $^ --outfmt html > $@
 
 clean:

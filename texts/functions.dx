@@ -1,0 +1,264 @@
+'# Functions and function types
+
+'Generally Dex functions are defined with the `def` keyword, for example
+
+def square (x: Float) : Float =
+  x * x
+
+square 5.0
+> 25.
+
+'The anatomy of a function definition is
+```
+def <name> <parameters> : <effect annotation> <return type> =
+  <body>
+```
+
+'The `name` can be any Dex identifier, though it is an error to
+redefine a name already in the same scope (nested definitions
+shadowing outer definitions is allowed).
+
+'## Parameters
+
+'Dex functions can have three kinds of parameters:
+1. Explicit parameters, which are the normal kind of parameters the caller passes explicitly;
+2. Implicit parameters, which the compiler fills in from context (like implicit parameters in Agda or Idris); and
+3. Interface constraints, which the compiler synthesizes based on the
+   defined instances (like typeclasses in Haskell).
+
+'The interface constraints are also implicit in that the caller does
+not explicitly supply them, but we distinguish them because they are
+filled in by a different mechanism from the implicit parameters in
+item (2).
+
+'Here's an example of a definition that uses all three:
+
+def average {n:Type} [_:Ix n] (xs: n=>Float) : Float =
+  total = sum xs
+  total / (n_to_f $ size n)
+
+'This function depends on an implicitly-supplied type `n`, requires
+the constraint `Ix n` (which it does not bind to a name), and accepts an explicit parameter
+named `xs` of type `n=>Float` to produce a `Float` result.
+
+'Note that every parameter is in scope for all the subsequent
+parameters' type annotations, as well as the return type and the body.
+If you're not familiar with other dependently-typed programming
+languages this may seem strange, but it gives Dex a lot of its power.
+
+'Each kind of parameter can be specified as `<name>:<type>`, with curly
+braces `{}` meaning an implicit parameter, square brackets `[]` meaning
+an interface constraint, and parens `()` meaning an explicit parameter.
+
+'In addition, Dex has two short-hands for the common cases:
+- Several consecutive implicit parameters can be written in a
+  single pair of braces without type annotations, like `{n a b}`.  In
+  this case, each parameter's type is inferred; the preceding is syntactic sugar
+  for `{n:_} {a:_} {b:_}`.
+- Several consecutive anonymous constraints can be written in a single pair
+  of square brackets separated by commas, like `[Ix n, Ix m, VSpace v]`.
+
+'Parameters tend to be specified in the order implicit, constraint,
+explicit, but that's not required; any interleaving is legal, subject
+to the caveat that type annotations cannot refer to names of subsequent
+parameters.
+
+'An underscore `_` in place of a name means "accept this parameter but
+do not name it".  An underscore `_` in place of a type means "infer
+this type (if possible)".  We recommend always spelling out the types
+of top-level definitions explicitly, but `_` is especially handy in
+local contexts where the types are obvious and would only make the
+program unnecessarily verbose.
+
+'While it's certainly common for implicit parameters to be arbitrary
+types, that's by no means required.  For example, here is the same
+`average` function explicitly specialized to a `Fin` index set of
+indeterminate size:
+
+def fin_average {n:Nat} (xs: (Fin n)=>Float) : Float =
+  average xs
+
+'The size `n` of the input `xs` can be inferred from the latter's full
+type, so it doesn't need to be provided to the function explicitly.
+
+'## Effects
+
+'Dex has an effect system to keep track of what side-effects functions
+may have.  This is key to automatic parallelization: a pure loop can
+be parallelized with no communication, whereas one with unrestricted
+side-effects must be run in series.
+
+'A function's effects are specified in a special curly-braced block
+prefixing the return type.  For example, here is an in-place integer
+increment function using the assignment operator `:=` from the
+Prelude:
+
+def inc {h} (ref:Ref h Int) : {State h} Unit =
+  current = get ref
+  ref := current + 1
+
+'The effect-annotated return type, `{State h} Unit`, tells Dex that
+`inc` is not a pure function, but may have a side-effect before
+returning a value of type `Unit`.  Specifically, the side effect is
+`State h`, namely destructively updating references tagged with the
+heap type `h`.  TODO([Issue
+949](https://github.com/google-research/dex-lang/issues/949)):
+Reference full explanation of effects.
+
+'The full syntax of the effect specifier is
+```
+{<eff1>, <eff2>, ... | <name>}
+```
+
+'Each optional `<eff>` specifies one effect, which must be one of
+- `State <name>`
+- `Accum <name>`
+- `Read <name>`
+- `Except`
+- `IO`
+
+'The optional `| <name>` clause names all the remaining effects.  This
+is useful for writing a higher-order function that accepts an
+effectful function as an argument.  For example, we can write an
+effect-polymorphic `map` function like this:
+
+def my_map {n a b eff} (f: a -> {|eff} b) (xs:n=>a) : {|eff} n=>b =
+  for i. f xs.i
+
+'If we had left off the `{|eff}` bit, our `map` function would only
+work on pure functions.  As another example, `catch` from the
+Prelude has this type:
+
+def my_catch {a eff} (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
+  catch f
+
+'It accepts a function `f` that is permitted to have an
+`Except` effect and an arbitrary set of other effects, and computes
+its result, turning a thrown exception into a `Nothing` return value.
+Any effects except `Except` remain to be discharged by the caller of
+`catch`.
+
+'The whole effect specifier can also be omitted, in which case the
+function must be pure.
+
+'## Calling functions
+
+'As in many functional programming languages, calling a function in
+Dex is just writing it next to its argument(s), so:
+```
+f x y
+```
+
+'Juxtaposition is the tightest-binding operator, so `f x + 1` parses
+as `(f x) + 1`, not `f (x + 1)`.  It also associates to the left, so
+`f x y` parses as `(f x) y` (which is what we want for an binary
+function `f`).  This is not always convenient, so Dex (like Haskell) offers
+the `$` operator.  This operator means "function call" like whitespace, but has
+the loosest binding precedence and associates to the right.  Thus, `f $ x + 1` is
+`f (x + 1)` and `f $ g $ h x` is `f (g (h x))`.
+
+'When calling a function, it is only necessary to supply the explicit
+arguments, because both the implicit and constraint arguments are
+filled in.  (Incidentally, the difference is in _how_ they are filled
+in.  Implicit arguments are filled in by type unification, whereas
+constraint arguments are filled in by locating or synthesizing the
+appropriate instance.)  For example,
+
+average [1., 2., 3.]
+> 2.
+
+'Here, the index set type `n` is inferred to be `Fin 3` from the type
+of the argument, and then the `Ix` constraint is satisfied by the
+instance for `Ix (Fin n)` instantiated at `n = 3`.
+
+'### Underscore: Infer an explicit argument implicitly
+
+'Sometimes, a required function argument can be successfully inferred.
+In these cases one can write `_`, which means "fill this in by
+unification" (the same as implicit parameters).  For example,
+`from_ordinal` accepts the type to cast the ordinal to as an explicit
+argument, but when the index set of an array is obvious, there is no
+need to spell it:
+
+["foo", "bar"].(from_ordinal _ 0)
+> "foo"
+
+'Sadly, the reverse (explicitly supplying an implicit argument) is
+currently not possible (see [Issue
+464](https://github.com/google-research/dex-lang/issues/464)).  This
+is actually why `from_ordinal` takes the type as an explicit argument,
+so that it _can_ be supplied when it would not be inferrable.
+
+from_ordinal (Fin 2) 0
+> (0@Fin 2)
+
+'## Standalone function types
+
+'The syntax for spelling bare function types is slightly different
+from the syntax for defining functions with their type signatures.  To
+wit, for now (but see [Issue
+925](https://github.com/google-research/dex-lang/issues/925)), a
+function type uses different kinds of arrows to disambiguate different
+kinds of parameters.
+- The `->` arrow means "explicit parameter",
+- The `?->` arrow means "implicit parameter", and
+- The `?=>` arrow means "interface constraint".
+
+'(As usual, `=>` means "array type".)
+
+'For instance, the type of our `average` function above is
+
+:t average
+> ((n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32)
+
+'Confusingly ([Issue
+236](https://github.com/google-research/dex-lang/issues/236)), parens
+are not allowed around binders in standalone function types, so
+inputting that type into Dex would look like this:
+
+n:Type ?-> Ix n ?=> n => Float -> Float
+> (n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32
+
+'The effect specifier, as usual, is written in curly braces preceding the result type.
+
+'## Anonymous functions (lambda)
+
+'The syntax for anonymous functions is
+```
+\ <parameters> . <body>
+```
+The `body` can be a block.
+
+'The syntax for parameters is slightly different than allowed in
+`def`.  First, the `\` syntax permits bare explicit parameters
+(without parens), whose types are inferred.
+
+map (\a. a + 1) [1., 2., 3.]
+> [2., 3., 4.]
+
+'We can also explicitly type-annotate the arguments if we want, by wrapping
+them in parens like `def`.
+
+map (\(a:Float). a + 1) [1., 2., 3.]
+> [2., 3., 4.]
+
+'Like `def`, we can also specify implicit parameters with curly braces,
+
+\{a} (x:a). x
+> \a:Type ?-> \x:a. x
+
+'whose types are inferred if not annotated.  However, the `\`
+syntax does not allow listing interface constraints, because that
+conflicts with pattern-matching a table argument (see [Issue
+954](https://github.com/google-research/dex-lang/issues/954)).
+The (unfortunate) error message looks like this, should you try it:
+
+\{n} [Ix n] (xs:n=>Float). sum xs
+> Type error:Not a data constructor: Ix
+>
+> \{n} [Ix n] (xs:n=>Float). sum xs
+>       ^^^^
+
+'The workaround is to either use a `def`, or to annotate the type of
+the anonymous function.  If the type include interface constraints,
+the compiler will insert an appropriate parameter to accept them.
