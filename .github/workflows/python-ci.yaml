@@ -9,6 +9,10 @@ on:
 env:
   DEX_CI: 1
 
+concurrency:
+  group: python-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
