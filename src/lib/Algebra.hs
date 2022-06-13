@@ -6,12 +6,10 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module Algebra (
-  Polynomial, PolyName, emitPolynomial,
-  emptyMonomial, sumC, psubst,
-  liftPoly, showPoly, blockAsCPoly) where
+module Algebra (sumUsingPolys) where
 
 import Prelude hiding (lookup, sum, pi)
+import Control.Category ((>>>))
 import Control.Monad
 import Data.Functor
 import Data.Ratio
@@ -20,15 +18,14 @@ import Data.Map.Strict hiding (foldl, map, empty, (!))
 import Data.Text.Prettyprint.Doc
 import Data.List (intersperse)
 import Data.Tuple (swap)
-import Data.Coerce
 
-import Builder hiding (sub, add)
+import Builder hiding (sub, add, mul)
 import Simplify
 import Syntax
-import QueryType
 import Name
 import Err
 import MTL1
+import QueryType
 
 type PolyName = Name AtomNameC
 type PolyBinder = NameBinder AtomNameC
@@ -44,10 +41,57 @@ newtype Polynomial (n::S) =
   Polynomial { fromPolynomial :: Map (Monomial n) Constant }
   deriving (Show, Eq, Ord)
 
--- === Polynomial math ===
+-- This is the main entrypoint. Doing polynomial math sometimes lets
+-- us compute sums in closed form. This tries to compute
+-- `\sum_{i=0}^(lim-1) body`. `i`, `lim`, and `body` should all have type `Nat`.
+sumUsingPolys :: (Builder m, Fallible1 m, Emits n)
+              => Atom n -> Abs Binder Block n -> m n (Atom n)
+sumUsingPolys lim (Abs i body) = do
+  Abs i' body' <- refreshAbs (Abs i body) \i' body' ->
+    Abs i' <$> simplifyBlockToBlock body'
+  Abs i'' body'' <- hoistDecls i' body'
+  sumAbs <- refreshAbs (Abs i'' body'') \(i''':>_) body''' -> do
+    blockAsPoly body''' >>= \case
+      Just poly' -> return $ Abs i''' poly'
+      Nothing ->
+        throw NotImplementedErr $
+          "Algebraic simplification failed to model index computations: " ++ pprint body''
+  limName <- emitAtomToName lim
+  emitPolynomial $ sum limName sumAbs
 
-mulC :: Polynomial n-> Polynomial n -> Polynomial n
-mulC (Polynomial x) (Polynomial y) =
+-- TODO: consider effects?
+hoistDecls
+  :: ( Builder m, EnvReader m, Emits n
+     , BindsNames b, BindsEnv b, SubstB Name b, SinkableB b)
+  => b n l -> Block l -> m n (Abs b Block n)
+hoistDecls b block = do
+  Abs hoistedDecls rest <- liftEnvReaderM $
+    refreshAbs (Abs b block) \b' (Block _ decls result) ->
+      hoistDeclsRec b' Empty decls result
+  ab <- emitDecls hoistedDecls rest
+  refreshAbs ab \b'' blockAbs' ->
+    Abs b'' <$> absToBlockInferringTypes blockAbs'
+
+type Decls = Nest Decl -- TODO: Let's put this in Core. `Nest Decl` is common.
+
+hoistDeclsRec
+  :: (BindsNames b, SinkableB b)
+  => b n1 n2 -> Decls n2 n3 -> Decls n3 n4 -> Atom n4
+  -> EnvReaderM n3 (Abs Decls (Abs b (Abs Decls Atom)) n1)
+hoistDeclsRec b declsAbove Empty result =
+  return $ Abs Empty $ Abs b $ Abs declsAbove result
+hoistDeclsRec b declsAbove (Nest candidateDecl declsBelow) result  =
+  refreshAbs (Abs candidateDecl (Abs declsBelow result))
+    \candidateDecl' (Abs declsBelow' result') ->
+      case exchangeBs (PairB (PairB b declsAbove) candidateDecl') of
+        HoistSuccess (PairB hoistedDecl (PairB b' declsAbove')) -> do
+          Abs hoistedDecls fullResult <- hoistDeclsRec b' declsAbove' declsBelow' result'
+          return $ Abs (Nest hoistedDecl hoistedDecls) fullResult
+        HoistFailure _ ->
+          hoistDeclsRec b (declsAbove >>> Nest candidateDecl' Empty) declsBelow' result'
+
+mul :: Polynomial n-> Polynomial n -> Polynomial n
+mul (Polynomial x) (Polynomial y) =
   poly [ (cx * cy, mulMono mx my)
        | (mx, cx) <- toList x, (my, cy) <- toList y]
   where mulMono (Monomial mx) (Monomial my) = Monomial $ unionWith (+) mx my
@@ -64,18 +108,11 @@ sumPolys ps = Polynomial $ unionsWith (+) $ map fromPolynomial ps
 mulConst :: Constant -> Polynomial n -> Polynomial n
 mulConst c (Polynomial p) = Polynomial $ (*c) <$> p
 
--- (Lazy) infinite list of powers of p
-powersL :: (a -> a -> a) -> a -> a -> [a]
-powersL mult e p = e : fmap (mult p) (powersL mult e p)
-
-powersC :: Polynomial n -> [Polynomial n]
-powersC p = coerce $ powersL mulC (poly [(1, mono [])]) p
-
 -- evaluates `\sum_{i=0}^(lim-1) p`
-sumC :: PolyName n -> Abs PolyBinder Polynomial n -> Polynomial n
-sumC lim (Abs i p) = sumPolys polys
+sum :: PolyName n -> Abs PolyBinder Polynomial n -> Polynomial n
+sum lim (Abs i p) = sumPolys polys
   where polys = (toList $ fromPolynomial p) <&> \(m, c) ->
-                  mulConst c $ sumMono lim (Abs i m)
+                 mulConst c $ sumMono lim (Abs i m)
 
 sumMono :: PolyName n -> Abs PolyBinder Monomial n -> Polynomial n
 sumMono lim (Abs b (Monomial m)) = case lookup (binderName b) m of
@@ -91,18 +128,6 @@ sumMono lim (Abs b (Monomial m)) = case lookup (binderName b) m of
     c = fromMonomial $ ignoreHoistFailure $ hoist b $  -- failure impossible
           Monomial $ delete (binderName b) m
 
-psubst :: Abs PolyBinder Polynomial n -> Polynomial n -> Polynomial n
-psubst (Abs b (Polynomial p)) x = sumPolys ps
-  where ps = toList p <&> \(m, c) -> mulConst c $ psubstMono (Abs b m) x
-
-psubstMono :: Abs PolyBinder Monomial n -> Polynomial n -> Polynomial n
-psubstMono (Abs b (Monomial m)) x = case lookup (binderName b) m of
-  Nothing -> poly [(1, m')]
-    where m' = ignoreHoistFailure $ hoist b $ Monomial m
-  Just 0  -> error "Each variable appearing in a monomial should have a positive power"
-  Just n  -> mulC (poly [(1, m')]) (powersC x !! n)
-    where m' = ignoreHoistFailure $ hoist b $ Monomial $ delete (binderName b) m
-
 -- === Constructors and singletons ===
 
 poly :: [(Constant, Monomial n)] -> Polynomial n
@@ -117,84 +142,60 @@ showMono :: Monomial n -> String
 showMono (Monomial m) =
   concat $ intersperse " " $ fmap (\(n, p) -> docAsStr $ pretty n <> "^" <> pretty p) $ toList m
 
-showPoly :: Polynomial n -> String
-showPoly (Polynomial p) =
+_showPoly :: Polynomial n -> String
+_showPoly (Polynomial p) =
   concat $ intersperse " + " $ fmap (\(m, c) -> show c ++ " " ++ showMono m) $ toList p
-
-emptyMonomial :: Monomial n
-emptyMonomial = mono []
-
-liftPoly :: Monomial n -> Polynomial n
-liftPoly m = Polynomial $ singleton m (fromInteger 1)
 
 -- === core expressions as polynomials ===
 
-type CPolySubstVal = SubstVal AtomNameC (MaybeE Polynomial)
+type PolySubstVal = SubstVal AtomNameC (MaybeE Polynomial)
+type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 BuilderM) i o a
 
-blockAsCPoly :: (EnvExtender m, EnvReader m) => Block n -> m n (Maybe (Polynomial n))
-blockAsCPoly (Block _ decls' result') =
-  runMaybeT1 $ runSubstReaderT idSubst $ go $ Abs decls' $ Atom result'
+blockAsPoly
+  :: (EnvExtender m, EnvReader m)
+  => Block n -> m n (Maybe (Polynomial n))
+blockAsPoly (Block _ decls result) =
+  liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ blockAsPolyRec decls result
+
+blockAsPolyRec :: Nest Decl i i' -> Atom i' -> BlockTraverserM i o (Polynomial o)
+blockAsPolyRec decls result = case decls of
+  Empty -> atomAsPoly result
+  Nest (Let b (DeclBinding _ _ expr)) restDecls -> do
+    p <- toMaybeE <$> optional (exprAsPoly expr)
+    extendSubst (b@>SubstVal p) $ blockAsPolyRec restDecls result
+
   where
-    go :: (EnvExtender2 m, EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m)
-       => Abs (Nest Decl) Expr o -> m o o (Polynomial o)
-    go (Abs decls result) = case decls of
-      Empty -> exprAsCPoly result
-      Nest decl@(Let _ (DeclBinding _ _ expr)) restDecls -> do
-        let rest = Abs restDecls result
-        cp <- toMaybeE <$> optional (exprAsCPoly expr)
-        refreshAbs (Abs decl rest) \(Let b _) rest' -> do
-          extendSubst (b@>SubstVal (sink cp)) $ do
-            cpresult <- go rest'
-            case hoist b cpresult of
-              HoistSuccess ans -> return ans
-              HoistFailure _   -> empty
-
-    exprAsCPoly :: (EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m) => Expr o -> m o o (Polynomial o)
-    exprAsCPoly e = case e of
-      Atom a                    -> intAsCPoly a
-      Op (BinOp IAdd x y) -> add  <$> intAsCPoly x <*> intAsCPoly y
-      -- XXX: we rely on the wrapping behavior of subtraction on unsigned ints
-      -- so that the distributive law holds, `a * (b - c) == (a * b) - (a * c)`
-      Op (BinOp ISub x y) -> sub  <$> intAsCPoly x <*> intAsCPoly y
-      Op (BinOp IMul x y) -> mulC <$> intAsCPoly x <*> intAsCPoly y
-      -- TODO: Remove once IntRange and IndexRange are defined in the surface language
-      Op (CastOp IdxRepTy v)    -> getType v >>= \case
-        IdxRepTy -> intAsCPoly v
-        _        -> indexAsCPoly v
+    atomAsPoly :: Atom i -> BlockTraverserM i o (Polynomial o)
+    atomAsPoly = \case
+      Var v       -> varAsPoly v
+      IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
       _ -> empty
 
-    -- We identify index typed values as their ordinals. This assumes that all
-    -- index vars appearing in the size expressions will come from dependent
-    -- dimensions, so that summing over those dims will erase those vars from
-    -- polynomials.
-    indexAsCPoly :: (SubstReader CPolySubstVal m, Alternative2 m)
-                 => Atom i -> m i o (Polynomial o)
-    indexAsCPoly = \case
-      Var v                       -> varAsCPoly v
-      Con (FinVal _ i)            -> intAsCPoly i
-      _                           -> empty
-
-    intAsCPoly :: (SubstReader CPolySubstVal m, Alternative2 m)
-                => Atom i -> m i o (Polynomial o)
-    intAsCPoly = \case
-      Var v       -> varAsCPoly v
-      -- XXX: this case is needed to handle the Nat-wrapper types, RangeFrom,
-      -- RangeFromExc, RangeTo, and RangeToExc. But user-defined index sets
-      -- won't always just be wrappers around `Nat`! So we need Algebra to be
-      -- aware of their definitions.
-      ProjectElt (0:|[]) v -> varAsCPoly v
-      IdxRepVal x -> return $ fromInt x
-      _ -> empty
-      where
-        fromInt i = poly [((fromIntegral i) % 1, mono [])]
-
-    varAsCPoly :: (SubstReader CPolySubstVal m, Alternative2 m)
-               => AtomName i -> m i o (Polynomial o)
-    varAsCPoly v = getSubst <&> (!v) >>= \case
+    varAsPoly :: AtomName i -> BlockTraverserM i o (Polynomial o)
+    varAsPoly v = getSubst <&> (!v) >>= \case
       SubstVal NothingE   -> empty
       SubstVal (JustE cp) -> return cp
       SubstVal _          -> error "impossible"
-      Rename   v'         -> return $ poly [(1, mono [(v', 1)])]
+      Rename   v'         ->
+        getType v' >>= \case
+          IdxRepTy -> return $ poly [(1, mono [(v', 1)])]
+          _ -> empty
+
+    exprAsPoly :: Expr i -> BlockTraverserM i o (Polynomial o)
+    exprAsPoly e = case e of
+      Atom a -> atomAsPoly a
+      Op (BinOp op x y) -> case op of
+        IAdd -> add <$> atomAsPoly x <*> atomAsPoly y
+        IMul -> mul <$> atomAsPoly x <*> atomAsPoly y
+        -- XXX: we rely on the wrapping behavior of subtraction on unsigned ints
+        -- so that the distributive law holds, `a * (b - c) == (a * b) - (a * c)`
+        ISub -> sub <$> atomAsPoly x <*> atomAsPoly y
+        -- This is to handle `idiv` generated by `emitPolynomial`
+        IDiv -> case y of
+          IdxRepVal n -> mulConst (1 / fromIntegral n) <$> atomAsPoly x
+          _ -> empty
+        _ -> empty
+      _ -> empty
 
 -- === polynomials to Core expressions ===
 
@@ -219,24 +220,11 @@ emitPolynomial (Polynomial p) = do
 
 emitMonomial :: (Emits n, Builder m) => Monomial n -> m n (Atom n)
 emitMonomial (Monomial m) = do
-  varAtoms <- forM (toList m) \(v, e) -> do
-    v' <- emitPolyName v
-    ipow v' e
+  varAtoms <- forM (toList m) \(v, e) -> ipow (Var v) e
   foldM imul (IdxRepVal 1) varAtoms
 
 ipow :: (Emits n, Builder m) => Atom n -> Int -> m n (Atom n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
-
--- XXX: names in polynomials can either be integers (IdxRepTy), or indices of
--- some index set. In the latter case, we identify them with their ordinals for
--- the purposes of doing polynomial manipulation. But when we eventually emit
--- them into a realy dex program we need to the conversion-to-ordinal
--- explicitly.
-emitPolyName :: (Emits n, Builder m) => PolyName n -> m n (Atom n)
-emitPolyName v =
-  lookupAtomName v >>= \case
-    IxBound ixTy -> emitSimplified $ ordinal (sink ixTy) (sink $ Var v)
-    _ -> return $ Var v
 
 -- === instances ===
 

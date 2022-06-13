@@ -35,7 +35,7 @@ module Builder (
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  liftBuilder, liftEmitBuilder, makeBlock,
+  liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
@@ -443,6 +443,15 @@ makeBlock decls effs atom ty = Block (BlockAnn ty' effs') decls atom where
   ty' = ignoreHoistFailure $ hoist decls ty
   effs' = ignoreHoistFailure $ hoist decls effs
 {-# INLINE makeBlock #-}
+
+absToBlockInferringTypes :: EnvReader m => Abs (Nest Decl) Atom n -> m n (Block n)
+absToBlockInferringTypes ab = liftEnvReaderM do
+  abWithEffs <-  computeAbsEffects ab
+  refreshAbs abWithEffs \decls (effs `PairE` result) -> do
+    ty <- cheapNormalize =<< getType result
+    return $ ignoreExcept $
+      absToBlock $ Abs decls (effs `PairE` (result `PairE` ty))
+{-# INLINE absToBlockInferringTypes #-}
 
 absToBlock :: (Fallible m) => Abs (Nest Decl) (EffectRow `PairE` (Atom `PairE` Type)) n -> m (Block n)
 absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
@@ -1192,10 +1201,10 @@ projectIxFinMethod methodIx n = liftBuilder do
     0 -> return n
     -- ordinal
     1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-          emitOp $ CastOp IdxRepTy $ Var ix
+           emitOp $ CastOp IdxRepTy $ Var ix
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-          emitOp $ CastOp (TC $ Fin $ sink n) $ Var ix
+           return $ Con $ FinVal (sink n) $ Var ix
     _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===
