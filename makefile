@@ -208,20 +208,20 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
 
 lib-names = diagram plot png
 
-text-names = functions
+doc-names = functions
 
-all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(text-names:%=texts/%)
+all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(doc-names:%=doc/%)
 
 quine-test-targets = $(all-names:%=run-%)
 
 update-test-targets    = $(test-names:%=update-tests/%)
-update-text-targets    = $(text-names:%=update-texts/%)
+update-doc-targets     = $(doc-names:%=update-doc/%)
 update-example-targets = $(example-names:%=update-examples/%)
 
-doc-text-names = $(text-names:%=doc/%.html)
-doc-example-names = $(example-names:%=doc/examples/%.html)
+pages-doc-names = $(doc-names:%=pages/%.html)
+pages-example-names = $(example-names:%=pages/examples/%.html)
 
-doc-lib-names = $(lib-names:%=doc/lib/%.html)
+pages-lib-names = $(lib-names:%=pages/lib/%.html)
 
 t10k-images-idx3-ubyte-sha256 = 346e55b948d973a97e58d2351dde16a484bd415d4595297633bb08f03db6a073
 t10k-labels-idx1-ubyte-sha256 = 67da17c76eaffca5446c3361aaab5c3cd6d1c2608764d35dfb1850b086bf8dd5
@@ -255,7 +255,7 @@ run-%: export DEX_TEST_MODE=t
 
 run-tests/%: tests/%.dx just-build
 	misc/check-quine $< $(dex) script
-run-texts/%: texts/%.dx just-build
+run-doc/%: doc/%.dx just-build
 	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) script
@@ -278,7 +278,7 @@ update-tests/%: tests/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
-update-texts/%: texts/%.dx just-build
+update-doc/%: doc/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
@@ -321,27 +321,27 @@ bench-summary:
 
 # --- building docs ---
 
-slow-docs = doc/examples/mnist-nearest-neighbors.html
+slow-pages = pages/examples/mnist-nearest-neighbors.html
 # Not actually slow, but not tested because it shows timings
 # https://github.com/google-research/dex-lang/issues/910
-slow-docs += doc/examples/levenshtein-distance.html
+slow-pages += pages/examples/levenshtein-distance.html
 
-docs: doc-prelude $(doc-text-names) $(doc-example-names) $(doc-lib-names) $(slow-docs)
+docs: pages-prelude $(pages-doc-names) $(pages-example-names) $(pages-lib-names) $(slow-pages)
 
-doc-prelude: lib/prelude.dx
-	mkdir -p doc
-	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > doc/prelude.html
+pages-prelude: lib/prelude.dx
+	mkdir -p pages
+	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > pages/prelude.html
 
-doc/examples/%.html: examples/%.dx
-	mkdir -p doc/examples
+pages/examples/%.html: examples/%.dx
+	mkdir -p pages/examples
 	$(dex) script $^ --outfmt html > $@
 
-doc/lib/%.html: lib/%.dx
-	mkdir -p doc/lib
+pages/lib/%.html: lib/%.dx
+	mkdir -p pages/lib
 	$(dex) script $^ --outfmt html > $@
 
-${doc-text-names}:doc/%.html: texts/%.dx
-	mkdir -p doc
+${pages-doc-names}:pages/%.html: doc/%.dx
+	mkdir -p pages
 	$(dex) script $^ --outfmt html > $@
 
 clean:

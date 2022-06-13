@@ -16,7 +16,7 @@ test-script.cd
 garbage.hs
 *.lock
 *.pyc
-doc/
+pages/
 scratch*
 scratch/
 test-scratch/
