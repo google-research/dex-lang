@@ -551,16 +551,19 @@ interface [Add a] VSpace a
   implement the interface (via an *instance*).
 
 ' Here is an `Add` instance for the float pair type.
+ (Again, this will throw error because it mirrors the prelude, so we just quote it here.):
 
+' ```
 instance Add (Float32 & Float32)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
   zero = (0.0, 0.0)
-
+ 
 instance Sub (Float32 & Float32)
   sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
 
 ' And here is a `VSpace` instance for the float pair type:
 
+' ```
 instance VSpace (Float32 & Float32)
   scale_vec = \s (x, y). (x * s, y * s)
 
@@ -583,13 +586,14 @@ tableMean' [(1.0, 0.5), (0.5, 0.8)]
   we can and should instead define `Add` and `VSpace` instances for generic
 ' tuple types.
 
+' ```
 instance {v w} [Add v, Add w] Add (v & w)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
   zero = (zero, zero)
-
+ 
 instance {v w} [Sub v, Sub w] Sub (v & w)
   sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
-
+ 
 instance {v w} [VSpace v, VSpace w] VSpace (v & w)
   scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
 
