@@ -49,7 +49,7 @@ module Name (
   eMapFromList, eSetFromList,
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
   withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
-  lookupSubstFrag, lookupSubstFragRaw,
+  lookupSubstFrag, lookupSubstFragProjected, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,

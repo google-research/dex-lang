@@ -17,7 +17,7 @@ module Builder (
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
   indexRef, naryIndexRef,
-  ptrOffset, unsafePtrLoad, ptrLoad,
+  ptrOffset, unsafePtrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
   buildLam, buildTabLam, buildLamGeneral,
@@ -283,7 +283,8 @@ type BuilderEmissions = RNest Decl
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Env BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
-           , CtxReader, ScopeReader, Alternative, Searcher, MonadWriter w)
+           , CtxReader, ScopeReader, Alternative, Searcher
+           , MonadWriter w, MonadReader r)
 
 type BuilderM = BuilderT HardFailM
 
@@ -1114,11 +1115,8 @@ ptrOffset x i = emitOp $ PtrOffset x i
 unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 unsafePtrLoad x = do
   lam <- liftEmitBuilder $ buildLam noHint PlainArrow UnitTy (oneEffect IOEffect) \_ ->
-    ptrLoad =<< sinkM x
+    emitOp . PtrLoad =<< sinkM x
   liftM Var $ emit $ Hof $ RunIO $ lam
-
-ptrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
-ptrLoad x = emitOp $ PtrLoad x
 
 -- === index set type class ===
 

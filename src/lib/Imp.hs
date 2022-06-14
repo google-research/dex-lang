@@ -34,6 +34,7 @@ import LabeledItems
 import QueryType
 import Util (enumerate)
 import Types.Primitives
+import Types.Imp
 import Algebra qualified as A
 import RawName qualified as R
 
@@ -534,6 +535,18 @@ toImpOp maybeDest op = case op of
   VariantSplit _ _        -> unsupported
   ProjMethod _ _          -> unsupported
   ExplicitApply _ _       -> unsupported
+  VectorBroadcast val vty -> do
+    val' <- fromScalarAtom val
+    emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= toScalarAtom >>= returnVal
+  VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= toScalarAtom >>= returnVal
+  VectorSubref ref i vty -> do
+    Con (BaseTypeRef refi) <- liftBuilderImp $ indexDest (sink ref) (sink i)
+    refi' <- fromScalarAtom refi
+    let PtrType (addrSpace, _) = getIType refi'
+    returnVal =<< case vty of
+      BaseTy vty'@(Vector _ _) -> do
+        Con . BaseTypeRef <$> (toScalarAtom =<< cast refi' (PtrType (addrSpace, vty')))
+      _ -> error "Expected a vector type"
   _ -> do
     instr <- IPrimOp <$> (inline traversePrimOp) fromScalarAtom op
     emitInstr instr >>= toScalarAtom >>= returnVal
@@ -1592,6 +1605,11 @@ indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do
 
 -- === type checking imp programs ===
 
+toIVectorType :: Type n -> IVectorType
+toIVectorType = \case
+  BaseTy vty@(Vector _ _) -> vty
+  _ -> error "Not a vector type"
+
 impFunType :: ImpFunction n -> IFunType
 impFunType (ImpFunction ty _) = ty
 impFunType (FFIFunction ty _) = ty
@@ -1614,6 +1632,8 @@ impInstrTypes instr = case instr of
   ICond _ _ _     -> return []
   ILaunch _ _ _   -> return []
   ISyncWorkgroup  -> return []
+  IVectorBroadcast _ vty -> return [vty]
+  IVectorIota vty        -> return [vty]
   IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
   ICall f _ -> do
     IFunType _ _ resultTys <- impFunType <$> lookupImpFun f

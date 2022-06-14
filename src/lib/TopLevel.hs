@@ -437,13 +437,20 @@ evalBlock typed = do
   SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
   lowered <- case useExperimentalLowering of
     False -> return simp
-    True  -> lowerFullySequential simp
+    True  -> do
+      simp' <- lowerFullySequential simp
+      case useExperimentalVectorization of
+        True -> vectorizeLoops (512 `div` 8) simp'
+        False -> return simp'
   result <- evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
 
 useExperimentalLowering :: Bool
 useExperimentalLowering = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_LOWER"
+
+useExperimentalVectorization :: Bool
+useExperimentalVectorization = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_VECTORIZE"
 
 execUDecl :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do

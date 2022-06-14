@@ -113,6 +113,10 @@ data PrimOp e =
       | AllocDest e  -- type
       | Place e e    -- reference, value
       | Freeze e     -- reference
+      -- Vector operations
+      | VectorBroadcast e e  -- value, vector type
+      | VectorIota e  -- vector type
+      | VectorSubref e e e -- ref, base ix, vector type
       -- Extensible record and variant operations:
       -- Concatenate two records.
       | RecordCons   e e
@@ -285,6 +289,7 @@ data ScalarBaseType = Int64Type | Int32Type
                     | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
 data BaseType = Scalar  ScalarBaseType
+              | Vector  [Word32] ScalarBaseType
               | PtrType PtrType
                 deriving (Show, Eq, Ord, Generic)
 
@@ -301,10 +306,17 @@ sizeOf t = case t of
   Scalar Word64Type  -> 8
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
+  Vector _ _         -> error "Not implemented"
   PtrType _          -> ptrSize
 
 ptrSize :: Int
 ptrSize = 8
+
+isIntegral :: ScalarBaseType -> Bool
+isIntegral = \case
+  Float64Type -> False
+  Float32Type -> False
+  _           -> True
 
 getIntLit :: LitVal -> Int
 getIntLit l = case l of
