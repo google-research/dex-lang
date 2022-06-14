@@ -214,7 +214,7 @@ data PiType  (n::S) where
   PiType :: PiBinder n l -> EffectRow l -> Type l -> PiType n
 
 data DepPairType (n::S) where
-  DepPairType :: Binder n l -> Type  l -> DepPairType n
+  DepPairType :: Binder n l -> Type l -> DepPairType n
 
 type Val  = Atom
 type Type = Atom
