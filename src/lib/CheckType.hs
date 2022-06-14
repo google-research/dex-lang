@@ -576,15 +576,15 @@ typeCheckPrimOp op = case op of
       MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
     getTypeE ref >>= \case
-      RefTy h (TabTy (b:>IxType iTy _) eltTy) -> do
+      TC (RefType h (TabTy (b:>IxType iTy _) eltTy)) -> do
         i' <- checkTypeE iTy i
         eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-        return $ RefTy h eltTy'
+        return $ TC $ RefType h eltTy'
       ty -> error $ "Not a reference to a table: " ++
                        pprint (Op op) ++ " : " ++ pprint ty
   ProjRef i ref -> do
     getTypeE ref >>= \case
-      RefTy h (ProdTy tys) -> return $ RefTy h $ tys !! i
+      TC (RefType h (ProdTy tys)) -> return $ TC $ RefType h $ tys !! i
       ty -> error $ "Not a reference to a product: " ++ pprint ty
   IOAlloc t n -> do
     n |: IdxRepTy
@@ -725,7 +725,7 @@ typeCheckPrimOp op = case op of
     applySubst subst methodTy
   ExplicitApply _ _ -> error "shouldn't appear after inference"
   MonoLiteral _ -> error "should't appear after inference"
-  AllocDest ty -> checkTypeE TyKind ty
+  AllocDest ty -> RawRefTy <$> checkTypeE TyKind ty
   Place ref val -> do
     ty <- getTypeE val
     ref |: RawRefTy ty

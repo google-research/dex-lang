@@ -437,7 +437,7 @@ evalBlock typed = do
   SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
   lowered <- case useExperimentalLowering of
     False -> return simp
-    True  -> do
+    True  -> checkPass LowerPass do
       simp' <- lowerFullySequential simp
       case useExperimentalVectorization of
         True -> vectorizeLoops (512 `div` 8) simp'
