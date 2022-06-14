@@ -230,12 +230,12 @@ transposeOp op ct = case op of
   ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
   CastOp       _ _      -> notImplemented
-  RecordCons   _ _      -> notImplemented
-  RecordConsDynamic _ _ _ -> notImplemented
-  RecordSplitDynamic _ _  -> notImplemented
-  RecordSplit  _ _      -> notImplemented
-  VariantLift  _ _      -> notImplemented
-  VariantSplit _ _      -> notImplemented
+  RecordCons   _ _      -> unreachable
+  RecordConsDynamic _ _ _ -> unreachable
+  RecordSplitDynamic _ _  -> unreachable
+  RecordSplit  _ _      -> unreachable
+  VariantLift  _ _      -> unreachable
+  VariantSplit _ _      -> unreachable
   SumToVariant _        -> notImplemented
   PtrStore _ _          -> notLinear
   PtrLoad    _          -> notLinear
@@ -248,16 +248,18 @@ transposeOp op ct = case op of
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
-  ProjMethod _ _        -> notLinear
-  ExplicitApply _ _     -> notLinear
-  MonoLiteral _         -> notLinear
-  AllocDest _           -> notLinear
-  Place _ _             -> notLinear
-  Freeze _              -> notLinear
-  VectorBroadcast _ _   -> notLinear
-  VectorIota _          -> notLinear
-  VectorSubref _ _ _    -> notLinear
-  where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
+  ProjMethod _ _        -> unreachable
+  ExplicitApply _ _     -> unreachable
+  MonoLiteral _         -> unreachable
+  AllocDest _           -> unreachable
+  Place _ _             -> unreachable
+  Freeze _              -> unreachable
+  VectorBroadcast _ _   -> unreachable
+  VectorIota _          -> unreachable
+  VectorSubref _ _ _    -> unreachable
+  where
+    notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
+    unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
 
 transposeAtom :: HasCallStack => Emits o => Atom i -> Atom o -> TransposeM i o ()
 transposeAtom atom ct = case atom of

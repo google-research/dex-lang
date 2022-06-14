@@ -213,20 +213,23 @@ getLoopWidth :: VectorizeM i o Word32
 getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
 
 vectorizeBlock :: Emits o => Block i -> VectorizeM i o (VAtom o)
-vectorizeBlock (Block _ decls topAns) = go topAns decls
+vectorizeBlock (Block _ decls (ans :: Atom i')) = go decls
   where
-    go :: Emits o => Atom i' -> Nest Decl i i' -> VectorizeM i o (VAtom o)
-    go ans = \case
+    go :: Emits o => Nest Decl i i' -> VectorizeM i o (VAtom o)
+    go = \case
       Empty -> vectorizeAtom ans
       Nest (Let b (DeclBinding ann _ expr)) rest -> do
         unless (ann == PlainLet) $ error "Encountered a non-plain let?"
         v <- vectorizeExpr expr
-        extendSubst (b @> v) $ go ans rest
+        extendSubst (b @> v) $ go rest
 
 vectorizeExpr :: Emits o => Expr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = case expr of
   Atom atom -> vectorizeAtom atom
   Op op -> vectorizeOp op
+  -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
+  -- being picky about the IO-inducing ops it supports, and expect it to
+  -- complain about FFI calls and the like.
   Hof (RunIO (Lam (LamExpr (LamBinder b UnitTy PlainArrow _) body))) -> do
     -- TODO: buildBlockAux?
     (vy, lam') <- withFreshBinder (getNameHint b) UnitTy \b' -> do
