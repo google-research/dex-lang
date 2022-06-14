@@ -63,7 +63,7 @@ module Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..), ExtOutFrag (..),
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
   HoistExcept (..), liftHoistExcept', liftHoistExcept, abstractFreeVars, abstractFreeVar,
-  abstractFreeVarsNoAnn,
+  abstractFreeVarsNoAnn, decideScope,
   WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV, withScopeFromFreeVars, canonicalizeForPrinting,
   ClosedWithScope (..),
@@ -2648,6 +2648,13 @@ hoistToTop e =
 sinkFromTop :: SinkableE e => e VoidS -> e n
 sinkFromTop = unsafeCoerceE
 {-# INLINE sinkFromTop #-}
+
+decideScope :: ScopeFrag n l -> Name c l -> Either (Name c n) (Name c (n:=>:l))
+decideScope (UnsafeMakeScopeFrag frag) (UnsafeMakeName rn) =
+  case R.member rn frag of
+    False -> Left  $ UnsafeMakeName rn
+    True  -> Right $ UnsafeMakeName rn
+{-# INLINE decideScope #-}
 
 freeVarsList :: (HoistableE e, Color c) => e n -> [Name c n]
 freeVarsList e = nameSetToList $ freeVarsE e

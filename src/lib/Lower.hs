@@ -79,6 +79,9 @@ lookupDest = flip M.lookup
 -- as much as possible, but it can lead to unnecessary copies being done at run-time.
 decomposeDest :: Emits o => Dest o -> Atom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
+  -- TODO: Think carefully about what happens when a single variable is mentioned
+  -- multiple times in the result! Perhaps fuse the places of variables defined
+  -- outside of the block into that check too?
   Var v -> return $ Just $ M.singleton v dest
   _ -> return Nothing
 
@@ -89,6 +92,10 @@ traverseBlockWithDest dest (Block _ decls ans) = do
       ans' <- traverseDeclNest decls $ traverseAtom ans
       void $ emitOp $ Place dest ans'
     Just destMap -> do
+      let declsScope = toScopeFrag decls
+      void $ flip M.traverseWithKey destMap \v d -> case decideScope declsScope v of
+        Left vh -> void $ emitOp . Place d =<< substM (Var vh)
+        Right _ -> return ()  -- Values
       s <- getSubst
       case isDistinctNest decls of
         Nothing -> error "Non-distinct decls?"
@@ -110,6 +117,8 @@ traverseDeclNestWithDestS destMap s = \case
 traverseExprWithDest :: Emits o => Maybe (Dest o) -> Expr i -> LowerM i o (Expr o)
 traverseExprWithDest dest expr = case expr of
   Hof (For dir ixTy (Lam body)) -> traverseFor dest dir ixTy body
+  -- TODO: Simplify TabCons by unrolling into dest placements
+  -- TODO: Propagate dests through effect handlers
   _ -> do
     expr' <- traverseExprDefault expr
     case dest of
