@@ -298,6 +298,19 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 5.0 .* ()
 > ()
 
+
+-- Test for pairs
+
+((2.0, 3.0) + (4.0, 1.1)) ~~ (6.0, 4.1)
+> True
+
+((2.0, 3.0) - (4.0, 1.1)) ~~ (-2.0, 1.9)
+> True
+
+(0.5 .* (2.0, 3.0)) ~~ (1.0, 1.5)
+> True
+
+
 -- Tests for Bool
 :p True == True
 > True

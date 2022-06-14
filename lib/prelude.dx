@@ -383,6 +383,13 @@ def fst {a b} ((x, _): (a & b)) : a = x
 def snd {a b} ((_, y): (a & b)) : b = y
 def swap {a b} ((x, y):(a&b)) : (b&a) = (y, x)
 
+instance {a b} [Add a, Add b] Add (a & b)
+  add = \(a, b) (c, d). ( (a + c), (b + d))
+  zero = (zero, zero)
+
+instance {a b} [Sub a, Sub b] Sub (a & b)
+  sub = \(a, b) (c, d). ( (a - c), (b - d))
+
 instance {a b} [Ix a, Ix b] Ix (a & b)
   size = size a * size b
   ordinal = \(i, j). (ordinal i * size b) + ordinal j
@@ -412,6 +419,9 @@ instance VSpace Float
 
 instance {a n} [VSpace a] VSpace (n=>a)
   scale_vec = \s xs. for i. s .* xs.i
+
+instance {a b} [VSpace a, VSpace b] VSpace (a & b)
+  scale_vec = \ s (a, b) . (scale_vec s a, scale_vec s b)
 
 instance {a n} [VSpace a] VSpace (i:n => (..i) => a)
   scale_vec = \s xs. for i. s .* xs.i
@@ -1180,7 +1190,8 @@ interface HasDefaultTolerance a
   atol : a
   rtol : a
 
-def (~~) {a} [HasAllClose a, HasDefaultTolerance a] : a -> a -> Bool = allclose atol rtol
+def (~~) {a} [HasAllClose a, HasDefaultTolerance a] : a -> a -> Bool =
+  allclose atol rtol
 
 instance HasAllClose Float32
   allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
@@ -1195,6 +1206,14 @@ instance HasDefaultTolerance Float32
 instance HasDefaultTolerance Float64
   atol = f_to_f64 0.00000001
   rtol = f_to_f64 0.00001
+
+instance {a b} [HasDefaultTolerance a, HasDefaultTolerance b,
+                HasAllClose a, HasAllClose b] HasAllClose (a & b)
+  allclose = \atol rtol (a, b) (c, d). (a ~~ c) && (b ~~ d)
+
+instance {a b} [HasDefaultTolerance a, HasDefaultTolerance b] HasDefaultTolerance (a & b)
+  atol = (atol, atol)
+  rtol = (rtol, rtol)
 
 instance {n t} [HasAllClose t] HasAllClose (n=>t)
   allclose = \atol rtol a b.
