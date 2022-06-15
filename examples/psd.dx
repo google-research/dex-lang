@@ -21,7 +21,7 @@ psd : N=>N=>Float =
 def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
   for i j.
     if (ordinal j)<=(ordinal i)
-      then mat.i.(cast j)
+      then mat.i.(unsafe_cast j)
       else zero
 
 l = chol psd
