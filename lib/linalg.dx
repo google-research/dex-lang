@@ -4,33 +4,51 @@
 - Matrix Inversion
 
 
-def cast {a m} [Ix a, Ix m] (d:a) : m = (ordinal d)@m
+def unsafe_cast {a m} [Ix a, Ix m] (d:a) : m = unsafe_from_ordinal m (ordinal d)
+def unsafe_first_ix {n} [Ix n] : n = unsafe_from_ordinal n 0
+def unsafe_last_ix  {n} [Ix n] : n = unsafe_from_ordinal n (unsafe_nat_diff (size n) 1)
+
+def first_ix_of {n} [Ix n] (x:n) : n =
+  -- This function is safe because one can't produce an element of type n
+  -- if there isn't at least one possible value in its type. So being able
+  -- to produce x to call this function is proof that `n` is non-empty.
+  unsafe_from_ordinal n 0
+
+def last_ix_of {n} [NonEmpty n] (x:n) : n =
+  unsafe_from_ordinal _ $ unsafe_i_to_n $ n_to_i (size n) - 1
+
+def is_last {n} [Ix n] (x:n) : Bool =  -- Todo: add NonEmpty constraint
+  ((ordinal x) + 1) == size n
+
 
 '### Triangular matrices
 
 def LowerTriMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(..i)=>v
 def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = i:n=>(i..)=>v
 
-def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = for i. u.i.(0@_)
-def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = for i. l.i.(cast i)
+def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = view i. u.i.unsafe_first_ix
+def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = view i. l.i.unsafe_last_ix
+
+def lower_tri_identity {a n} [Ix n, Add a, Mul a] : LowerTriMat n a =
+  for i j. select (is_last j) one zero
 
 def transpose_lower_to_upper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
   for i:n. for j':(i..).
     j = inject n j'
-    lower.j.(cast i)
+    lower.j.(unsafe_cast i)
 
 def transpose_lower_to_upper_no_diag {n v}
     (lower:i:n=>(..<i)=>v) :
            i:n=>(i<..)=>v =
   for i j.
     j' = inject n j
-    lower.j'.(unsafe_from_ordinal _ (ordinal i))
+    lower.j'.(unsafe_cast i)
 
 def skew_symmetric_prod {v n} [VSpace v]
     (lower: i:n=>(..<i)=>Float) (y: n=>v) : n=>v =
+  upper = transpose_lower_to_upper_no_diag lower
   -- We could probably fuse these two for loops.
   lower_prod = for i. sum for j. lower.i.j .* (y.(inject n j))
-  upper = transpose_lower_to_upper_no_diag lower
   upper_prod = for i. sum for j. upper.i.j .* (y.(inject n j))
   lower_prod - upper_prod
 
@@ -39,16 +57,16 @@ def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v 
   yield_state zero \sRef.
     for i:n.
       s = sum for k:(..<i).  -- dot product
-        a.i.(cast k) .* get sRef!(inject n k)
-      sRef!i := (b.i - s) / a.i.(cast i)
+        a.i.(unsafe_cast k) .* get sRef!(inject n k)
+      sRef!i := (b.i - s) / (lower_tri_diag a).i
 
 def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
   -- Solves upper triangular linear system (inverse a) **. b
   yield_state zero \sRef.
     rof i:n.
       s = sum for k:(i..).  -- dot product
-        a.i.(cast k) .* get sRef!(inject n k)
-      sRef!i := (b.i - s) / a.i.(0@_) -- 0 is the diagonal index
+        a.i.(unsafe_cast k) .* get sRef!(inject n k)
+      sRef!i := (b.i - s) / (upper_tri_diag a).i
 
 -- Todo: get rid of these by writing a dependent indexing (!) operator.
 def lower_tri_mat {a b h} (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
@@ -65,14 +83,14 @@ def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
     mat = lower_tri_mat buf
     for i:n. for j':(..i).
       j = inject n j'
-      row  = for k:(..<j). get $ mat i (cast k)
-      row' = for k:(..<j). get $ mat j (cast k)
+      row  = for k:(..<j). get $ mat i (unsafe_cast k)
+      row' = for k:(..<j). get $ mat j (unsafe_cast k)
       a = x.i.j - vdot row row'
       if (ordinal i) == (ordinal j)
         then
           mat i j' := sqrt a
         else
-          b = get $ mat j (cast j')
+          b = get $ mat j (unsafe_cast j')
           mat i j' := a / b
 
 '### Permutations
@@ -107,9 +125,8 @@ def pivotize {n} (a:n=>n=>Float) : Permutation n =
   yield_state identity_permutation \permRef.
     for j:n.
       row_with_largest = argmin for i:(j..). (-(abs a.(inject n i).j))
-      case ordinal j == ordinal row_with_largest of
-        True -> ()
-        False -> swap_in_place permRef j (inject n row_with_largest)
+      if (ordinal j) /= (ordinal row_with_largest) then
+        swap_in_place permRef j (inject n row_with_largest)
 
 def lu {n} (a: n=>n=>Float) :
        (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
@@ -118,8 +135,7 @@ def lu {n} (a: n=>n=>Float) :
   permutation = pivotize a
   a = apply_permutation permutation a
 
-  init_lower = for i:n. for j':(..i).
-    select (ordinal i == (ordinal (inject n j'))) 1.0 0.0
+  init_lower = lower_tri_identity
   init_upper = zero
 
   (lower, upper) = yield_state (init_lower, init_upper) \stateRef.
@@ -151,27 +167,25 @@ def lu {n} (a: n=>n=>Float) :
         i' = inject n i
         s = sum for k:(..i).
           -- TODO: get transitivity of Subset working so we can do a single injection
-          k'' = inject (..j) k
-          k' = inject n k''
-          ukj = get $ umat k' ((unsafe_nat_diff (ordinal j) (ordinal k))@_)
-          lik = get $ lmat i' (cast k)
+          k' = inject n (inject (..j) k)
+          ukj = get $ umat k' (unsafe_from_ordinal _ (unsafe_nat_diff (ordinal j) (ordinal k)))
+          lik = get $ lmat i' (unsafe_cast k)
           ukj * lik
 
         uijRef = umat i' ((unsafe_nat_diff (ordinal j) (ordinal i))@_)
         uijRef := a.(inject _ i).j - s
 
       for i:(j<..).
-        i' = inject _ i
+        i' = inject n i
         s = sum for k:(..j).
-          k' = inject _ k
-          i'' = ((unsafe_nat_diff (ordinal j) (ordinal k))@_)
-          ukj = get $ umat k' i''
-          lik = get $ lmat i' (cast k)
+          k' = inject n k
+          ukj = get $ umat k' (unsafe_from_ordinal _ (unsafe_nat_diff (ordinal j) (ordinal k)))
+          lik = get $ lmat i' (unsafe_cast k)
           ukj * lik
 
-        i'' = ((ordinal i) + (ordinal j) + 1)@_
-        ujj = get $ umat j (0@_)
-        lijRef = lmat i'' (cast j)
+        i'' = unsafe_from_ordinal _ ((ordinal i) + (ordinal j) + 1)
+        ujj = get $ umat j unsafe_first_ix
+        lijRef = lmat i'' (unsafe_cast j)
         lijRef := (a.i'.j - s) / ujj
   (lower, upper, permutation)
 
