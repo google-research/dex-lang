@@ -17,7 +17,7 @@ def first_ix_of {n} [Ix n] (x:n) : n =
 def last_ix_of {n} [NonEmpty n] (x:n) : n =
   unsafe_from_ordinal _ $ unsafe_i_to_n $ n_to_i (size n) - 1
 
-def is_last {n} [Ix n] (x:n) : Bool =
+def is_last {n} [Ix n] (x:n) : Bool =  -- Todo: add NonEmpty constraint
   ((ordinal x) + 1) == size n
 
 
@@ -115,8 +115,7 @@ def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Un
 
 def perm_to_table {n} ((perm, _):Permutation n) : n=>n = perm
 def perm_sign    {n} ((_, sign):Permutation n) : PermutationSign = sign
-
-
+  
 
 '### LU decomposition functions
 
@@ -160,33 +159,37 @@ def lu {n} (a: n=>n=>Float) :
   --      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
   --    for i:n. ()
 
-    lmat = lower_tri_mat lRef
-    umat = upper_tri_mat uRef
+    -- Helper functions to index into triangular matrices
+    -- from indices that themselves need to be cast or projected
+    -- to the right type.
+    def lmat {m} (i:n) (j:m) [Ix m] : Ref _ Float =
+      lower_tri_mat lRef i $ unsafe_cast j
+    def umat {m} (i:n) (j:m) [Ix m, Subset (i..) m] : Ref _ Float =
+      upper_tri_mat uRef i $ from_just (project (i..) j)
+
     for j:n.
       for i:(..j).
         i' = inject n i
         s = sum for k:(..i).
           -- TODO: get transitivity of Subset working so we can do a single injection
           k' = inject n (inject (..j) k)
-          ukj = get $ umat k' (unsafe_from_ordinal _ (unsafe_nat_diff (ordinal j) (ordinal k)))
-          lik = get $ lmat i' (unsafe_cast k)
+          ukj = get $ umat k' j
+          lik = get $ lmat i' k
           ukj * lik
 
-        uijRef = umat i' ((unsafe_nat_diff (ordinal j) (ordinal i))@_)
-        uijRef := a.(inject _ i).j - s
+        umat i' j := a.(inject _ i).j - s
 
       for i:(j<..).
         i' = inject n i
         s = sum for k:(..j).
           k' = inject n k
-          ukj = get $ umat k' (unsafe_from_ordinal _ (unsafe_nat_diff (ordinal j) (ordinal k)))
-          lik = get $ lmat i' (unsafe_cast k)
+          ukj = get $ umat k' j
+          lik = get $ lmat i' k
           ukj * lik
 
-        i'' = unsafe_from_ordinal _ ((ordinal i) + (ordinal j) + 1)
-        ujj = get $ umat j unsafe_first_ix
-        lijRef = lmat i'' (unsafe_cast j)
-        lijRef := (a.i'.j - s) / ujj
+        ujj = get $ umat j j
+        i'' = unsafe_cast i'
+        lmat i'' j := (a.i'.j - s) / ujj
   (lower, upper, permutation)
 
 
@@ -221,3 +224,11 @@ def matrix_power {n} (base:n=>n=>Float) (power:Nat) : n=>n=>Float =
 
 def trace {n a} [Add a] (x:n=>n=>a) : a =
   sum for i. x.i.i
+
+
+a : (Fin 1000)=>(Fin 1000)=>Float = arb (new_key 0)
+
+%time
+sign_and_log_determinant a
+
+
