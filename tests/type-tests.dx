@@ -275,17 +275,6 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 -- :p fst $ fromNewPair newPair
 -- > 1
 
-good_range : Type = (1@Fin 3)..(2@_)
-
-bad_range : Int = (1@Fin 3)..(2@_)
-> Type error:
-> Expected: Int32
->   Actual: Type
->
-> bad_range : Int = (1@Fin 3)..(2@_)
->                            ^^
-
-
 -- Tests for the Unit index set
 
 () == ()
@@ -360,7 +349,7 @@ id (for i:(Fin 2). for j:(..i). 1.0)
 
 def weakerInferenceReduction {n} (l : i:n=>(..i)=>Float) (j:n): Unit =
   for i:(..j).
-    i' = %inject i
+    i' = inject n i
     for k:(..i').
       l.i'.k
     ()

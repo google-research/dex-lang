@@ -300,45 +300,37 @@ def (-|) (x: Nat) (y:Nat) : Nat =
 
 def unsafe_nat_diff (x:Nat) (y:Nat) : Nat = %isub x y
 
-instance {q:Type} {i:q} [Ix q] Ix (i..)
+-- `(i..)` parses as `RangeFrom _ i`
+data RangeFrom q:Type i:q = UnsafeMkRangeFrom Nat
+
+-- `(i<..)` parses as `RangeFromExc _ i`
+data RangeFromExc q:Type i:q = UnsafeMkRangeFromExc Nat
+
+-- `(..i)` parses as `RangeTo _ i`
+data RangeTo q:Type i:q = UnsafeMkRangeTo Nat
+
+-- `(..<i)` parses as `RangeToExc _ i`
+data RangeToExc q:Type i:q = UnsafeMkRangeToExc Nat
+
+instance {q:Type} {i:q} [Ix q] Ix (RangeFrom q i)
   size = unsafe_nat_diff (size q) (ordinal i)
-  ordinal = \j. %cast Nat j
-  unsafe_from_ordinal = \j. %cast (i..) j
+  ordinal = \(UnsafeMkRangeFrom j). j
+  unsafe_from_ordinal = \j. UnsafeMkRangeFrom j
 
-instance {q:Type} {i:q} [Ix q] Ix (i<..)
+instance {q:Type} {i:q} [Ix q] Ix (RangeFromExc q i)
   size = unsafe_nat_diff (size q) (ordinal i + 1)
-  ordinal = \j. %cast Nat j
-  unsafe_from_ordinal = \j. %cast (i<..) j
+  ordinal = \(UnsafeMkRangeFromExc j). j
+  unsafe_from_ordinal = \j. UnsafeMkRangeFromExc j
 
-instance {q:Type} {i:q} [Ix q] Ix (..i)
+instance {q:Type} {i:q} [Ix q] Ix (RangeTo q i)
   size = ordinal i + 1
-  ordinal = \j. %cast Nat j
-  unsafe_from_ordinal = \j. %cast (..i) j
+  ordinal = \(UnsafeMkRangeTo j). j
+  unsafe_from_ordinal = \j. UnsafeMkRangeTo j
 
-instance {q:Type} {i:q} [Ix q] Ix (..<i)
+instance {q:Type} {i:q} [Ix q] Ix (RangeToExc q i)
   size = ordinal i
-  ordinal = \j. %cast Nat j
-  unsafe_from_ordinal = \j. %cast (..<i) j
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..i)
-  size = (ordinal i + 1) -| ordinal j
-  ordinal = \k. %cast Nat k
-  unsafe_from_ordinal = \k. %cast (j..i) k
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..<i)
-  size = ordinal i -| ordinal j
-  ordinal = \k. %cast Nat k
-  unsafe_from_ordinal = \k. %cast (j..<i) k
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..i)
-  size = ordinal i -| ordinal j
-  ordinal = \k. %cast Nat k
-  unsafe_from_ordinal = \k. %cast (j<..i) k
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..<i)
-  size = ordinal i -| (ordinal j + 1)
-  ordinal = \k. %cast Nat k
-  unsafe_from_ordinal = \k. %cast (j<..<i) k
+  ordinal = \(UnsafeMkRangeToExc j). j
+  unsafe_from_ordinal = \j. UnsafeMkRangeToExc j
 
 instance Ix Unit
   size = 1
@@ -558,10 +550,6 @@ def last_ix {n} [NonEmpty n] : n =
 
 instance {n} [Ix n] NonEmpty (Post n)
   first_ix = unsafe_from_ordinal (Post n) 0
-
-
-
-
 
 '### Monoid
 A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
@@ -845,6 +833,63 @@ instance Ix Bool
     False -> 0
     True -> 1
   unsafe_from_ordinal = \i. i > 0
+
+'## Subset class
+
+interface Subset a_sub a
+  inject' : a_sub -> a
+  project' : a -> Maybe a_sub
+
+def project {a} (a_sub:Type) [Subset a_sub a] (x:a) : Maybe a_sub =
+  project' x
+
+def inject {a_sub} (a:Type) [Subset a_sub a] (x:a_sub) : a =
+  inject' x
+
+instance {a b c} [Subset a b, Subset b c] Subset a c
+  inject' = \x. inject c $ inject b x
+  project' = \x. case project b x of
+    Nothing -> Nothing
+    Just y -> project a y
+
+instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
+  inject' = \(UnsafeMkRangeFrom j).
+    unsafe_from_ordinal _ $ j + ordinal i
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' < i'
+      then Nothing
+      else Just $ UnsafeMkRangeFrom $ unsafe_nat_diff j' i'
+
+instance {q:Type} {i:q} [Ix q] Subset (RangeFromExc q i) q
+  inject' = \(UnsafeMkRangeFromExc j).
+    unsafe_from_ordinal _ $ j + ordinal i + 1
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' <= i'
+      then Nothing
+      else Just $ UnsafeMkRangeFromExc $ unsafe_nat_diff j' (i' + 1)
+
+instance {q:Type} {i:q} [Ix q] Subset (RangeTo q i) q
+  inject' = \(UnsafeMkRangeTo j). unsafe_from_ordinal _ j
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' > i'
+      then Nothing
+      else Just $ UnsafeMkRangeTo j'
+
+instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) q
+  inject' = \(UnsafeMkRangeToExc j). unsafe_from_ordinal _ j
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' >= i'
+      then Nothing
+      else Just $ UnsafeMkRangeToExc j'
+
 
 '## Elementary/Special Functions
 This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).

@@ -23,7 +23,7 @@ module Builder (
   buildLam, buildTabLam, buildLamGeneral,
   buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr,
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
-  buildNewtype, fromNewtype,
+  buildNewtype,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
@@ -35,7 +35,7 @@ module Builder (
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  liftBuilder, liftEmitBuilder, makeBlock,
+  liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   telescopicCapture, unpackTelescope,
@@ -444,6 +444,15 @@ makeBlock decls effs atom ty = Block (BlockAnn ty' effs') decls atom where
   effs' = ignoreHoistFailure $ hoist decls effs
 {-# INLINE makeBlock #-}
 
+absToBlockInferringTypes :: EnvReader m => Abs (Nest Decl) Atom n -> m n (Block n)
+absToBlockInferringTypes ab = liftEnvReaderM do
+  abWithEffs <-  computeAbsEffects ab
+  refreshAbs abWithEffs \decls (effs `PairE` result) -> do
+    ty <- cheapNormalize =<< getType result
+    return $ ignoreExcept $
+      absToBlock $ Abs decls (effs `PairE` (result `PairE` ty))
+{-# INLINE absToBlockInferringTypes #-}
+
 absToBlock :: (Fallible m) => Abs (Nest Decl) (EffectRow `PairE` (Atom `PairE` Type)) n -> m (Block n)
 absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
   let msg = "Block:" <> nest 1 (prettyBlock decls result) <> line
@@ -703,11 +712,6 @@ buildNewtype name paramBs body = do
     singletonBinderNest noHint ty
   return $ DataDef name (DataDefBinders paramBs' Empty) [DataConDef ("mk" <> name) argBs]
 
-fromNewtype :: [DataConDef n]
-            -> Maybe (Type n)
-fromNewtype [DataConDef _ (EmptyAbs (Nest (_:>ty) Empty))] = Just ty
-fromNewtype _ = Nothing
-
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, ScopableBuilder m)
@@ -849,27 +853,39 @@ zeroAt ty = case ty of
 zeroLike :: (HasCallStack, HasType e, Builder m) => e n -> m n (Atom n )
 zeroLike x = zeroAt =<< getType x
 
-tangentType :: Type n -> Type n
-tangentType ty = case maybeTangentType ty of
-  Just tanTy -> tanTy
+tangentType :: EnvReader m => Type n -> m n (Type n)
+tangentType ty = maybeTangentType ty >>= \case
+  Just tanTy -> return tanTy
   Nothing -> error $ "can't differentiate wrt type: " ++ pprint ty
 
-maybeTangentType :: Type n -> Maybe (Type n)
-maybeTangentType ty = case ty of
-  StaticRecordTy items -> StaticRecordTy <$> mapM maybeTangentType items
-  TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
+maybeTangentType :: EnvReader m => Type n -> m n (Maybe (Type n))
+maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
+
+maybeTangentType' :: Type n -> EnvReaderT Maybe n (Type n)
+maybeTangentType' ty = case ty of
+  StaticRecordTy items -> StaticRecordTy <$> mapM rec items
+  TypeCon _ _ _ -> rec =<< fromNewtypeWrapper ty
   TabTy b bodyTy -> do
-    bodyTanTy <- maybeTangentType bodyTy
-    return $ TabTy b bodyTanTy
+    refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
+      bodyTanTy <- rec bodyTy'
+      return $ TabTy b' bodyTanTy
   TC con    -> case con of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
     Fin _                         -> return $ UnitTy
-    IndexRange _ _ _              -> return $ UnitTy
-    ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
-    _ -> Nothing
-  _ -> Nothing
+    ProdType   tys                -> ProdTy <$> traverse rec tys
+    _ -> empty
+  _ -> empty
+  where rec = maybeTangentType'
+
+fromNewtypeWrapper :: (EnvReader m, Fallible1 m) => Type n -> m n (Type n)
+fromNewtypeWrapper ty = do
+  TypeCon _ defName params <- return ty
+  def <- lookupDataDef defName
+  [con] <- instantiateDataDef def params
+  DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) <- return con
+  return wrappedTy
 
 tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
 tangentBaseMonoidFor ty = do
@@ -1153,10 +1169,10 @@ projectIxFinMethod methodIx n = liftBuilder do
     0 -> return n
     -- ordinal
     1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-          emitOp $ CastOp IdxRepTy $ Var ix
+           emitOp $ CastOp IdxRepTy $ Var ix
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-          emitOp $ CastOp (TC $ Fin $ sink n) $ Var ix
+           return $ Con $ FinVal (sink n) $ Var ix
     _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===

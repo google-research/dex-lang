@@ -6,7 +6,7 @@
 
 module QueryType (
   getType, getTypeSubst, HasType,
-  getEffects, getEffectsSubst,
+  getEffects, getEffectsSubst, isPure,
   computeAbsEffects, declNestEffects,
   caseAltsBinderTys, depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getBaseMonoidType, getReferentTy,
@@ -21,6 +21,7 @@ module QueryType (
 import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable (toList)
+import Data.Functor ((<&>))
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -50,6 +51,11 @@ getType e = liftTypeQueryM idSubst $ getTypeE e
 {-# INLINE getType #-}
 
 -- === Querying effects ===
+
+isPure :: (EnvReader m, HasEffectsE e) => e n -> m n Bool
+isPure e = getEffects e <&> \case
+  Pure -> True
+  _    -> False
 
 getEffects :: (EnvReader m, HasEffectsE e) => e n -> m n (EffectRow n)
 getEffects e = liftTypeQueryM idSubst $ getEffectsImpl e
@@ -377,7 +383,6 @@ getTypePrimCon con = case con of
   SumCon ty _ _ -> substM ty
   SumAsProd ty _ _ -> substM ty
   FinVal n _ -> substM $ TC $ Fin n
-  IndexRangeVal t l h _ -> substM (TC $ IndexRange t l h)
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -387,11 +392,6 @@ getTypePrimCon con = case con of
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM getTypeRef xs)
     FinVal n _ -> substM $ RawRefTy $ TC $ Fin n
-    IndexRangeVal t l h _ -> do
-      t' <- substM t
-      l' <- mapM substM l
-      h' <- mapM substM h
-      return $ RawRefTy $ TC $ IndexRange t' l' h'
     SumAsProd ty _ _ -> do
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
@@ -480,11 +480,6 @@ getTypePrimOp op = case op of
     return $ TC $ BaseType $ typeBinOp binop xTy
   UnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
   Select _ x _ -> getTypeE x
-  Inject i -> do
-    TC tc <- getTypeE i
-    case tc of
-      IndexRange (IxTy (IxType ty _)) _ _ -> return ty
-      _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var _)) s) <- getTypeE ref
     return case m of
@@ -708,6 +703,10 @@ class HasEffectsE (e::E) where
 
 instance HasEffectsE Expr where
   getEffectsImpl = exprEffects
+  {-# INLINE getEffectsImpl #-}
+
+instance HasEffectsE DeclBinding where
+  getEffectsImpl (DeclBinding _ _ expr) = getEffectsImpl expr
   {-# INLINE getEffectsImpl #-}
 
 exprEffects :: Expr i -> TypeQueryM i o (EffectRow o)

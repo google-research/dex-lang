@@ -199,8 +199,6 @@ instance SourceRenamableE UExpr' where
     UIndexType ty -> UIndexType <$> sourceRenameE ty
     UTypeAnn e ty -> UTypeAnn <$> sourceRenameE e <*> sourceRenameE ty
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
-    UIndexRange low high ->
-      UIndexRange <$> mapM sourceRenameE low <*> mapM sourceRenameE high
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
     ULabel name -> return $ ULabel name
     URecord elems -> URecord <$> mapM sourceRenameE elems

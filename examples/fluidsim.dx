@@ -41,8 +41,8 @@ def add_neighbours_2d {n m a} [Add a] (x:n=>m=>a) : (n=>m=>a) =
   ax2 = apply_along_axis2 add_neighbours x
   ax1 + ax2
 
-def project {n m a} [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
-  -- Project the velocity field to be approximately mass-conserving,
+def project_vel {n m a} [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
+  -- Project_vel the velocity field to be approximately mass-conserving,
   -- using a few iterations of Gauss-Seidel.
   h = 1.0 / n_to_f (size n)
 
@@ -102,7 +102,7 @@ def fluidsim {n m a} [VSpace a] (num_steps: Nat) (color_init: n=>m=>a)
     for i:(Fin num_steps).
       (color, v) = get state
       v = advect v v          -- Move velocities
-      v = project v           -- Project to be volume-preserving
+      v = project_vel v       -- Project to be volume-preserving
       color' = advect color v -- Move color
       state := (color', v)
       color

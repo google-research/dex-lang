@@ -35,7 +35,7 @@ import QueryType
 import Util (enumerate)
 import Types.Primitives
 import Types.Imp
-import Algebra qualified as A
+import Algebra
 import RawName qualified as R
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
@@ -438,15 +438,6 @@ toImpOp maybeDest op = case op of
                 liftMonoidCombine eltTy' (sink bc) xElt yElt
             _ -> error $ "Base monoid type mismatch: can't lift " ++
                    pprint baseTy ++ " to " ++ pprint accTy
-  Inject e -> case e of
-    Con (IndexRangeVal (IxTy ixTy) low _ restrictIdx) -> do
-      offset <- case low of
-        InclusiveLim a -> ordinalImp ixTy a
-        ExclusiveLim a -> ordinalImp ixTy a >>= iaddI (IIdxRepVal 1)
-        Unlimited      -> return (IIdxRepVal 0)
-      restrictIdx' <- fromScalarAtom restrictIdx
-      returnVal =<< unsafeFromOrdinalImp ixTy =<< iaddI restrictIdx' offset
-    _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
   IOAlloc ty n -> do
@@ -487,11 +478,6 @@ toImpOp maybeDest op = case op of
         returnVal xord
       (IdxRepTy, TC (Fin n)) ->
         returnVal $ Con $ FinVal n x
-      (TC (IndexRange _ _ _), IdxRepTy) -> do
-        let Con (IndexRangeVal _ _ _ xord) = x
-        returnVal xord
-      (IdxRepTy, TC (IndexRange t l h)) ->
-        returnVal $ Con $ IndexRangeVal t l h x
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   Select p x y -> do
     xTy <- getType x
@@ -1053,9 +1039,6 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     Fin n -> do
       x <- rec IdxRepTy
       return $ Con $ ConRef $ FinVal n x
-    IndexRange t l h -> do
-      x <- rec IdxRepTy
-      return $ Con $ ConRef $ IndexRangeVal t l h x
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
@@ -1068,8 +1051,8 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
 
 makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr (idxsTy, idxs) ty = do
-  offset <- computeOffset idxsTy idxs
-  numel <- buildBlockDest $ computeElemCount (sink idxsTy)
+  offset <- liftEmitBuilder $ computeOffset idxsTy idxs
+  numel <- liftBuilder $ buildBlock $ computeElemCount (sink idxsTy)
   allocInfo <- getAllocInfo
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrTy = (addrSpace, ty)
@@ -1132,7 +1115,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
           (FinVal _ iRef, FinVal _ i) -> copyRec iRef i
-          (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> copyRec iRef i
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
         _ -> error "unexpected src/dest pair"
       _ -> error "unexpected src/dest pair"
@@ -1207,7 +1189,6 @@ loadDest (Con dest) = do
      ProdCon ds -> ProdCon <$> traverse loadDest ds
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
      FinVal n iRef -> FinVal n <$> loadDest iRef
-     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest
@@ -1356,9 +1337,14 @@ chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
 
 -- === Determining buffer sizes and offsets using polynomials ===
 
+-- These document that we're only building terms that are valid in the
+-- post-simplification IR (one day we should enforce this properly)
+type SimpleBuilderM = BuilderM
+type SimpleBlock = Block
+
 type IndexStructure = EmptyAbs IdxNest :: E
 
-computeElemCount :: Emits n => IndexStructure n -> DestM n (Atom n)
+computeElemCount :: Emits n => IndexStructure n -> SimpleBuilderM n (Atom n)
 computeElemCount (EmptyAbs Empty) =
   -- XXX: this optimization is important because we don't want to emit any decls
   -- in the case that we don't have any indices. The more general path will
@@ -1368,8 +1354,26 @@ computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
   sizes <- forM idxList \ixTy -> emitSimplified $ indexSetSize $ sink ixTy
   listSize <- foldM imul (IdxRepVal 1) sizes
-  nestSize <- A.emitCPoly =<< elemCountCPoly idxNest
+  nestSize <- emitSimplified $ elemCountPoly (sink idxNest)
   imul listSize nestSize
+
+elemCountPoly :: Emits n => IndexStructure n -> SimpleBuilderM n (Atom n)
+elemCountPoly (Abs bs UnitE) = case bs of
+  Empty -> return $ IdxRepVal 1
+  Nest b@(_:>ixTy) rest -> do
+   curSize <- emitSimplified $ indexSetSize $ sink ixTy
+   restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
+   sumUsingPolysImp curSize restSizes
+
+computeSizeGivenOrdinal
+  :: EnvReader m
+  => IxBinder n l -> IndexStructure l -> m n (Abs Binder SimpleBlock n)
+computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
+  withFreshBinder noHint IdxRepTy \bOrdinal ->
+    Abs (bOrdinal:>IdxRepTy) <$> buildBlockSimplified do
+      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
+      idxStruct' <- applySubst (b@>SubstVal i) idxStruct
+      elemCountPoly $ sink idxStruct'
 
 -- Split the index structure into a prefix of non-dependent index types
 -- and a trailing nest of indices that can contain inter-dependencies.
@@ -1388,7 +1392,7 @@ getIxType name = do
     _ -> error $ "not an ix-bound name" ++ pprint name
 
 computeOffset :: forall n. Emits n
-              => IndexStructure n -> [AtomName n] -> DestM n (Atom n)
+              => IndexStructure n -> [AtomName n] -> SimpleBuilderM n (Atom n)
 computeOffset idxNest' idxs = do
   let (idxList , idxNest ) = indexStructureSplit idxNest'
   let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
@@ -1408,35 +1412,51 @@ computeOffset idxNest' idxs = do
   where
    accumStrided (total, stride) (size, i) = (,) <$> (iadd total =<< imul i stride) <*> imul stride size
    -- Recursively process the dependent part of the nest
-   rec :: IndexStructure n -> [AtomName n] -> DestM n (Atom n)
+   rec :: IndexStructure n -> [AtomName n] -> SimpleBuilderM n (Atom n)
    rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
-   rec (Abs (Nest b bs) UnitE) (i:is) = do
-     rhsElemCounts <- refreshBinders b \(b':>_) s -> do
-       rest' <- applySubst s $ EmptyAbs bs
-       Abs b' <$> elemCountCPoly rest'
-     significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
-     remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
+   rec (Abs (Nest b@(_:>ixTy) bs) UnitE) (i:is) = do
+     let rest = EmptyAbs bs
+     rhsElemCounts <- computeSizeGivenOrdinal b rest
+     iOrd <- emitSimplified $ ordinal (sink ixTy) (Var $ sink i)
+     significantOffset <- sumUsingPolysImp iOrd rhsElemCounts
+     remainingIdxStructure <- applySubst (b@>i) rest
      otherOffsets <- rec remainingIdxStructure is
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: IndexStructure n -> DestM n (A.ClampPolynomial n)
-elemCountCPoly (Abs bs UnitE) = case bs of
-  Empty -> return $ A.liftPoly $ A.emptyMonomial
-  Nest b rest -> do
-    -- TODO: Use the simplified version here!
-    sizeBlock <-buildBlockSimplified $ indexSetSize $ sink $ binderAnn b
-    msize <- A.blockAsCPoly sizeBlock
-    case msize of
-      Just size -> do
-        rhsElemCounts <- refreshBinders b \(b':>_) s -> do
-          rest' <- applySubst s $ Abs rest UnitE
-          Abs b' <$> elemCountCPoly rest'
-        withFreshBinder noHint IdxRepTy \b' -> do
-          let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
-          return $ A.psubst (Abs b' sumPoly) size
-      _ -> throw NotImplementedErr $
-        "Algebraic simplification failed to model index computations: " ++ pprint sizeBlock
+sumUsingPolysImp :: Emits n => Atom n -> Abs Binder SimpleBlock n -> SimpleBuilderM n (Atom n)
+sumUsingPolysImp lim (Abs i body) = do
+  ab <- hoistDecls i body
+  sumUsingPolys lim ab
+
+hoistDecls
+  :: ( Builder m, EnvReader m, Emits n
+     , BindsNames b, BindsEnv b, SubstB Name b, SinkableB b)
+  => b n l -> Block l -> m n (Abs b Block n)
+hoistDecls b block = do
+  Abs hoistedDecls rest <- liftEnvReaderM $
+    refreshAbs (Abs b block) \b' (Block _ decls result) ->
+      hoistDeclsRec b' Empty decls result
+  ab <- emitDecls hoistedDecls rest
+  refreshAbs ab \b'' blockAbs' ->
+    Abs b'' <$> absToBlockInferringTypes blockAbs'
+
+hoistDeclsRec
+  :: (BindsNames b, SinkableB b)
+  => b n1 n2 -> Decls n2 n3 -> Decls n3 n4 -> Atom n4
+  -> EnvReaderM n3 (Abs Decls (Abs b (Abs Decls Atom)) n1)
+hoistDeclsRec b declsAbove Empty result =
+  return $ Abs Empty $ Abs b $ Abs declsAbove result
+hoistDeclsRec b declsAbove (Nest decl declsBelow) result  = do
+  let (Let _ expr) = decl
+  exprIsPure <- isPure expr
+  refreshAbs (Abs decl (Abs declsBelow result))
+    \decl' (Abs declsBelow' result') ->
+      case exchangeBs (PairB (PairB b declsAbove) decl') of
+        HoistSuccess (PairB hoistedDecl (PairB b' declsAbove')) | exprIsPure -> do
+          Abs hoistedDecls fullResult <- hoistDeclsRec b' declsAbove' declsBelow' result'
+          return $ Abs (Nest hoistedDecl hoistedDecls) fullResult
+        _ -> hoistDeclsRec b (declsAbove >>> Nest decl' Empty) declsBelow' result'
 
 -- === Imp IR builder ===
 
@@ -1530,18 +1550,6 @@ emitAlloc :: (ImpBuilder m, Emits n) => PtrType -> IExpr n -> m n (IExpr n)
 emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
 {-# INLINE emitAlloc #-}
 
-buildBinOp :: Emits n
-           => (forall l. (Emits l, DExt n l) => Atom l -> Atom l -> BuilderM l (Atom l))
-           -> IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
-buildBinOp f x y = fromScalarAtom =<< liftBuilderImp do
-  Distinct <- getDistinct
-  x' <- toScalarAtom $ sink x
-  y' <- toScalarAtom $ sink y
-  f x' y'
-
-iaddI :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
-iaddI = buildBinOp iadd
-
 impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
 
@@ -1593,11 +1601,6 @@ unsafeFromOrdinalImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
 unsafeFromOrdinalImp ixTy i = liftBuilderImpSimplify do
   i' <- toScalarAtom =<< sinkM i
   unsafeFromOrdinal (sink ixTy) i'
-
-ordinalImp :: Emits n => IxType n -> Atom n -> SubstImpM i n (IExpr n)
-ordinalImp ixTy i = fromScalarAtom =<< liftBuilderImpSimplify do
-  i' <- sinkM i
-  ordinal (sink ixTy) i'
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
 indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do

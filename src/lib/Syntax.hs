@@ -21,7 +21,7 @@
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
-    Binder, Block (..), BlockAnn (..), Decl (..), DeclBinding (..),
+    Binder, Block (..), BlockAnn (..), Decl (..), Decls, DeclBinding (..),
     FieldRowElem (..), FieldRowElems, fromFieldRowElems,
     fieldRowElemsFromList, prependFieldRowElem, extRowAsFieldRowElems, fieldRowElemsAsExtRow,
     pattern StaticRecordTy, pattern RecordTyWithElems,
@@ -43,7 +43,7 @@ module Syntax (
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..),
-    Direction (..), Limit (..), DataDefParams (..), DataDefBinders (..),
+    Direction (..), DataDefParams (..), DataDefBinders (..),
     DataDef (..), DataConDef (..), Nest (..),
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,

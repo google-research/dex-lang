@@ -98,6 +98,7 @@ data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
      deriving (Show, Generic)
 data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
      deriving (Show, Generic)
+type Decls = Nest Decl
 
 type AtomName     = Name AtomNameC
 type DataDefName  = Name DataDefNameC

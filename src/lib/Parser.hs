@@ -1074,33 +1074,19 @@ joinPos (Just (l, h)) (Just (l', h')) = Just (min l l', max h h')
 
 indexRangeOps :: [Operator Parser (UExpr VoidS)]
 indexRangeOps =
-  [ Prefix    $ symPos ".."   <&> \pos h   -> range pos  Unlimited       (InclusiveLim h)
-  , inpostfix $ symPos ".."   <&> \pos l h -> range pos (InclusiveLim l) (limFromMaybe h)
-  , inpostfix $ symPos "<.."  <&> \pos l h -> range pos (ExclusiveLim l) (limFromMaybe h)
-  , Prefix    $ symPos "..<"  <&> \pos h   -> range pos  Unlimited       (ExclusiveLim h)
-  , InfixL    $ symPos "..<"  <&> \pos l h -> range pos (InclusiveLim l) (ExclusiveLim h)
-  , InfixL    $ symPos "<..<" <&> \pos l h -> range pos (ExclusiveLim l) (ExclusiveLim h) ]
+  [ Prefix  $ symPos ".."  <&> \pos l -> range "RangeTo"      pos l
+  , Prefix  $ symPos "..<" <&> \pos l -> range "RangeToExc"   pos l
+  , Postfix $ symPos ".."  <&> \pos l -> range "RangeFrom"    pos l
+  , Postfix $ symPos "<.." <&> \pos l -> range "RangeFromExc" pos l ]
   where
-    range pos l h = WithSrcE (Just pos) $ UIndexRange l h
     symPos s = snd <$> withPos (sym s)
 
-limFromMaybe :: Maybe a -> Limit a
-limFromMaybe Nothing = Unlimited
-limFromMaybe (Just x) = InclusiveLim x
+    range :: SourceName -> SrcPos -> UExpr VoidS -> UExpr VoidS
+    range rangeName pos lim = binApp rangeName pos (ns UHole) lim
 
 annotatedExpr :: Operator Parser (UExpr VoidS)
 annotatedExpr = InfixL $ opWithSrc $
   sym "::" $> (\pos v ty -> WithSrcE (Just pos) $ UTypeAnn v ty)
-
-inpostfix :: Parser (UExpr VoidS -> Maybe (UExpr VoidS) -> UExpr VoidS)
-          -> Operator Parser (UExpr VoidS)
-inpostfix = inpostfix' expr
-
-inpostfix' :: Parser a -> Parser (a -> Maybe a -> a) -> Operator Parser a
-inpostfix' p op = Postfix $ do
-  f <- op
-  rest <- optional p
-  return \x -> f x rest
 
 -- === lexemes ===
 
@@ -1423,7 +1409,6 @@ builtinNames = M.fromList
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
-  , ("inject"     , OpExpr $ Inject ())
   , ("select"     , OpExpr $ Select () () ())
   , ("while"           , HofExpr $ While ())
   , ("linearize"       , HofExpr $ Linearize ())

@@ -143,7 +143,7 @@ liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
 isTrivialForAD :: Expr o -> PrimalM i o Bool
 isTrivialForAD expr = do
-  trivialTy  <- presentAnd isSingletonType . maybeTangentType <$> getType expr
+  trivialTy  <- presentAnd isSingletonType <$> (maybeTangentType =<< getType expr)
   hasActiveEffs <- getEffects expr >>= \case
                      Pure -> return False
                      -- TODO: Be more precise here, such as checking
@@ -332,8 +332,9 @@ linearizeExpr expr = case expr of
     isActive e' >>= \case
       True -> notImplemented
       False -> do
+        resultTangentType <- tangentType resultTy'
         resultTyWithTangent <- PairTy <$> substM resultTy
-                                      <*> tangentFunType (tangentType resultTy')
+                                      <*> tangentFunType resultTangentType
         (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i xs -> do
           xs' <- mapM emitAtomToName xs
           Abs bs body <- return $ alts !! i
@@ -366,7 +367,6 @@ linearizeOp op = case op of
   PtrOffset _ _          -> emitZeroT
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
-  Inject _               -> emitZeroT
   ThrowError _           -> emitZeroT
   DataConTag _           -> emitZeroT
   ToEnum _ _             -> emitZeroT
@@ -377,13 +377,15 @@ linearizeOp op = case op of
   CastOp t v             -> do
     vt <- getType =<< substM v
     t' <- substM t
-    ((&&) <$> (tangentType vt `alphaEq` vt)
-          <*> (tangentType t' `alphaEq` t')) >>= \case
+    vtTangentType <- tangentType vt
+    tTangentType  <- tangentType t'
+    ((&&) <$> (vtTangentType `alphaEq` vt)
+          <*> (tTangentType  `alphaEq` t')) >>= \case
       True -> do
         linearizeAtom v `bindLin` \v' -> emitOp $ CastOp (sink t') v'
       False -> do
         WithTangent x xt <- linearizeAtom v
-        yt <- case (tangentType vt, tangentType t') of
+        yt <- case (vtTangentType, tTangentType) of
           (_     , UnitTy) -> return $ UnitVal
           (UnitTy, tt    ) -> zeroAt tt
           _                -> error "Expected at least one side of the CastOp to have a trivial tangent type"
@@ -487,7 +489,6 @@ linearizePrimCon con = case con of
                   forM elemsWithT' \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
   FinVal _ _            -> emitZeroT
-  IndexRangeVal _ _ _ _ -> emitZeroT
   LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"
@@ -559,7 +560,8 @@ linearizeEffectFun rws ~(Lam lam) = do
       extendActiveEffs (RWSEffect rws (Just h)) do
         WithTangent p tangentFun <- linearizeBlock body
         return $ WithTangent p do
-          buildEffLam rws (getNameHint refB) (tangentType $ sink referentTy) \h' ref' ->
+          tt <- tangentType $ sink referentTy
+          buildEffLam rws (getNameHint refB) tt \h' ref' ->
             extendTangentArgs h' $ extendTangentArgs ref' $
               tangentFun
 
@@ -576,7 +578,7 @@ withZeroT p = do
   p' <- p
   return $ WithTangent p' do
     pTy <- getType $ sink p'
-    zeroAt $ tangentType pTy
+    zeroAt =<< tangentType pTy
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"

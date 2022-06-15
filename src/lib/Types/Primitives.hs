@@ -49,7 +49,6 @@ data PrimTC e =
       | ProdType [e]
       | SumType [e]
       | Fin e
-      | IndexRange e (Limit e) (Limit e)  -- TODO: Define IndexRange in prelude
       | RefType (Maybe e) e
       | TypeKind
       | EffectRowKind
@@ -69,7 +68,6 @@ data PrimCon e =
       | SumAsProd e e   [[e]] -- type, tag, payload
       | LabelCon String
       | FinVal e e
-      | IndexRangeVal e (Limit e) (Limit e) e
       -- References
       | BaseTypeRef e
       | TabRef e
@@ -102,7 +100,6 @@ data PrimOp e =
       -- References
       | IndexRef e e
       | ProjRef Int e
-      | Inject e
       -- Low-level memory operations
       | IOAlloc BaseType e
       | IOFree e
@@ -191,11 +188,6 @@ data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
 
 data Direction = Fwd | Rev  deriving (Show, Eq, Generic)
 type ForAnn = Direction
-
-data Limit a = InclusiveLim a
-             | ExclusiveLim a
-             | Unlimited
-               deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
@@ -394,7 +386,6 @@ instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
 instance Store a => Store (PrimTC  a)
 instance Store a => Store (PrimHof a)
-instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (BaseMonoidP a)
 
@@ -417,6 +408,5 @@ instance Hashable a => Hashable (PrimOp  a)
 instance Hashable a => Hashable (PrimCon a)
 instance Hashable a => Hashable (PrimTC  a)
 instance Hashable a => Hashable (PrimHof a)
-instance Hashable a => Hashable (Limit a)
 instance Hashable a => Hashable (PrimEffect a)
 instance Hashable a => Hashable (BaseMonoidP a)
