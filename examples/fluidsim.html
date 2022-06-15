@@ -347,8 +347,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   ax2 <span class="symbol">=</span> apply_along_axis2 add_neighbours x
   ax1 <span class="symbol">+</span> ax2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> project {n m a} [<span class="type-name">VSpace</span> a] (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  <span class="comment">-- Project the velocity field to be approximately mass-conserving,
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> project_vel {n m a} [<span class="type-name">VSpace</span> a] (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="comment">-- Project_vel the velocity field to be approximately mass-conserving,
 </span>  <span class="comment">-- using a few iterations of Gauss-Seidel.
 </span>  h <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> n_to_f (size n)
 
@@ -408,7 +408,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_steps)<span class="symbol">.</span>
       (color<span class="symbol">,</span> v) <span class="symbol">=</span> get state
       v <span class="symbol">=</span> advect v v          <span class="comment">-- Move velocities
-</span>      v <span class="symbol">=</span> project v           <span class="comment">-- Project to be volume-preserving
+</span>      v <span class="symbol">=</span> project_vel v       <span class="comment">-- Project to be volume-preserving
 </span>      color&#39; <span class="symbol">=</span> advect color v <span class="comment">-- Move color
 </span>      state <span class="symbol">:=</span> (color&#39;<span class="symbol">,</span> v)
       color
