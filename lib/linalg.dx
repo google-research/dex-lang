@@ -17,7 +17,7 @@ def first_ix_of {n} [Ix n] (x:n) : n =
 def last_ix_of {n} [NonEmpty n] (x:n) : n =
   unsafe_from_ordinal _ $ unsafe_i_to_n $ n_to_i (size n) - 1
 
-def is_last {n} [Ix n] (x:n) : Bool =  -- Todo: add NonEmpty constraint
+def is_last {n} [Ix n] (x:n) : Bool =
   ((ordinal x) + 1) == size n
 
 
