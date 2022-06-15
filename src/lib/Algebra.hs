@@ -72,8 +72,6 @@ hoistDecls b block = do
   refreshAbs ab \b'' blockAbs' ->
     Abs b'' <$> absToBlockInferringTypes blockAbs'
 
-type Decls = Nest Decl -- TODO: Let's put this in Core. `Nest Decl` is common.
-
 hoistDeclsRec
   :: (BindsNames b, SinkableB b)
   => b n1 n2 -> Decls n2 n3 -> Decls n3 n4 -> Atom n4

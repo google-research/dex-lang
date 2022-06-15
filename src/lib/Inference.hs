@@ -1263,8 +1263,6 @@ buildSortedCase scrut alts resultTy = do
 -- Make sure all of the alternatives are exclusive with the tail pattern (could
 -- technically allow overlap but this is simpler). Split based on the tail
 -- pattern's skipped types.
-
-
 checkNoTailOverlaps :: Fallible1 m => [IndexedAlt n] -> LabeledItems (Type n) ->  m n ()
 checkNoTailOverlaps alts (LabeledItems tys) = do
   forM_ alts \case

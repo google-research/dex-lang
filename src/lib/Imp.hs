@@ -407,7 +407,7 @@ toImpOp maybeDest op = case op of
       MExtend (BaseMonoid _ combine) x -> do
         xTy <- getType x
         refVal <- destToAtom refDest
-        result <- liftBuilderImp $
+        result <- liftBuilderImpSimplify $
                     liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
         copyAtom refDest result
         returnVal UnitVal
@@ -1279,9 +1279,14 @@ chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
 
 -- === Determining buffer sizes and offsets using polynomials ===
 
+-- These document that we're only building terms that are valid in the
+-- post-simplification IR (one day we should enforce this properly)
+type SimpleBuilderM = BuilderM
+type SimpleBlock = Block
+
 type IndexStructure = EmptyAbs IdxNest :: E
 
-computeElemCount :: Emits n => IndexStructure n -> BuilderM n (Atom n)
+computeElemCount :: Emits n => IndexStructure n -> SimpleBuilderM n (Atom n)
 computeElemCount (EmptyAbs Empty) =
   -- XXX: this optimization is important because we don't want to emit any decls
   -- in the case that we don't have any indices. The more general path will
@@ -1294,20 +1299,20 @@ computeElemCount idxNest' = do
   nestSize <- emitSimplified $ elemCountPoly (sink idxNest)
   imul listSize nestSize
 
-elemCountPoly :: Emits n => IndexStructure n -> BuilderM n (Atom n)
+elemCountPoly :: Emits n => IndexStructure n -> SimpleBuilderM n (Atom n)
 elemCountPoly (Abs bs UnitE) = case bs of
   Empty -> return $ IdxRepVal 1
   Nest b@(_:>ixTy) rest -> do
-   curSize <- indexSetSize ixTy
-   restSizes <- computeSizeVsOrdinal b $ EmptyAbs rest
+   curSize <- emitSimplified $ indexSetSize $ sink ixTy
+   restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
    sumUsingPolys curSize restSizes
 
-computeSizeVsOrdinal
+computeSizeGivenOrdinal
   :: EnvReader m
-  => IxBinder n l -> IndexStructure l -> m n (Abs Binder Block n)
-computeSizeVsOrdinal (b:>idxTy) idxStruct = liftBuilder do
+  => IxBinder n l -> IndexStructure l -> m n (Abs Binder SimpleBlock n)
+computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
-    Abs (bOrdinal:>IdxRepTy) <$> buildBlock do
+    Abs (bOrdinal:>IdxRepTy) <$> buildBlockSimplified do
       i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
@@ -1329,7 +1334,7 @@ getIxType name = do
     _ -> error $ "not an ix-bound name" ++ pprint name
 
 computeOffset :: forall n. Emits n
-              => IndexStructure n -> [AtomName n] -> BuilderM n (Atom n)
+              => IndexStructure n -> [AtomName n] -> SimpleBuilderM n (Atom n)
 computeOffset idxNest' idxs = do
   let (idxList , idxNest ) = indexStructureSplit idxNest'
   let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
@@ -1349,13 +1354,13 @@ computeOffset idxNest' idxs = do
   where
    accumStrided (total, stride) (size, i) = (,) <$> (iadd total =<< imul i stride) <*> imul stride size
    -- Recursively process the dependent part of the nest
-   rec :: IndexStructure n -> [AtomName n] -> BuilderM n (Atom n)
+   rec :: IndexStructure n -> [AtomName n] -> SimpleBuilderM n (Atom n)
    rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
    rec (Abs (Nest b@(_:>ixTy) bs) UnitE) (i:is) = do
      let rest = EmptyAbs bs
-     rhsElemCounts <- computeSizeVsOrdinal b rest
-     iOrd <- ordinal ixTy $ Var i
-     significantOffset <- sumUsingPolys iOrd rhsElemCounts
+     rhsElemCounts <- computeSizeGivenOrdinal b rest
+     iOrd <- emitSimplified $ ordinal (sink ixTy) (Var $ sink i)
+     significantOffset <- emitSimplified $ sumUsingPolys (sink iOrd) (sink rhsElemCounts)
      remainingIdxStructure <- applySubst (b@>i) rest
      otherOffsets <- rec remainingIdxStructure is
      iadd significantOffset otherOffsets
@@ -1479,22 +1484,34 @@ toScalarAtom ie = case ie of
 
 -- === Type classes ===
 
-liftBuilderImp
+-- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
+-- are part of the same conspiracy.
+liftBuilderImp :: (Emits n, SubstE AtomSubstVal e, SinkableE e)
+               => (forall l. (Emits l, DExt n l) => BuilderM l (e l))
+               -> SubstImpM i n (e n)
+liftBuilderImp cont = do
+  Abs decls result <- liftBuilder $ buildScoped cont
+  dropSubst $ translateDeclNest decls $ substM result
+{-# INLINE liftBuilderImp #-}
+
+-- TODO: should we merge this with `liftBuilderImp`? Not much harm in
+-- simplifying even if it's not needed.
+liftBuilderImpSimplify
   :: Emits n
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> SubstImpM i n (Atom n)
-liftBuilderImp cont = do
+liftBuilderImpSimplify cont = do
   block <- dceApproxBlock <$> buildBlockSimplified cont
   dropSubst $ translateBlock Nothing block
-{-# INLINE liftBuilderImp #-}
+{-# INLINE liftBuilderImpSimplify #-}
 
 unsafeFromOrdinalImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
-unsafeFromOrdinalImp ixTy i = liftBuilderImp do
+unsafeFromOrdinalImp ixTy i = liftBuilderImpSimplify do
   i' <- toScalarAtom =<< sinkM i
   unsafeFromOrdinal (sink ixTy) i'
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
-indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImp do
+indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do
   indexSetSize $ sink ty
 
 -- === type checking imp programs ===

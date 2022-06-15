@@ -21,7 +21,7 @@
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
-    Binder, Block (..), BlockAnn (..), Decl (..), DeclBinding (..),
+    Binder, Block (..), BlockAnn (..), Decl (..), Decls, DeclBinding (..),
     FieldRowElem (..), FieldRowElems, fromFieldRowElems,
     fieldRowElemsFromList, prependFieldRowElem, extRowAsFieldRowElems, fieldRowElemsAsExtRow,
     pattern StaticRecordTy, pattern RecordTyWithElems,
