@@ -107,7 +107,7 @@ instance {n} HasDeterminant (LowerTriMap n)
 
 instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMap n) (n=>v)
   apply  = \(MkLowerTriMap x) y. for i. sum for j. x.i.j .* y.(inject _ j)
-  diag   = \(MkLowerTriMap x).   for i. x.i.(cast i) .* one
+  diag   = \(MkLowerTriMap x).   for i. x.i.(unsafe_cast i) .* one
   solve' = \(MkLowerTriMap x).   forward_substitute x
 
 instance {n} Arbitrary (LowerTriMap n)
