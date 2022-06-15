@@ -1,6 +1,6 @@
 module QueryType (
   getType, getTypeSubst, HasType,
-  getEffects, getEffectsSubst,
+  getEffects, getEffectsSubst, isPure,
   computeAbsEffects, declNestEffects,
   caseAltsBinderTys, depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getBaseMonoidType, getReferentTy,
@@ -15,6 +15,7 @@ module QueryType (
 import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable (toList)
+import Data.Functor ((<&>))
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -44,6 +45,11 @@ getType e = liftTypeQueryM idSubst $ getTypeE e
 {-# INLINE getType #-}
 
 -- === Querying effects ===
+
+isPure :: (EnvReader m, HasEffectsE e) => e n -> m n Bool
+isPure e = getEffects e <&> \case
+  Pure -> True
+  _    -> False
 
 getEffects :: (EnvReader m, HasEffectsE e) => e n -> m n (EffectRow n)
 getEffects e = liftTypeQueryM idSubst $ getEffectsImpl e
@@ -679,6 +685,10 @@ class HasEffectsE (e::E) where
 
 instance HasEffectsE Expr where
   getEffectsImpl = exprEffects
+  {-# INLINE getEffectsImpl #-}
+
+instance HasEffectsE DeclBinding where
+  getEffectsImpl (DeclBinding _ _ expr) = getEffectsImpl expr
   {-# INLINE getEffectsImpl #-}
 
 exprEffects :: Expr i -> TypeQueryM i o (EffectRow o)

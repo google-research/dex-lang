@@ -9,7 +9,6 @@
 module Algebra (sumUsingPolys) where
 
 import Prelude hiding (lookup, sum, pi)
-import Control.Category ((>>>))
 import Control.Monad
 import Data.Functor
 import Data.Ratio
@@ -20,7 +19,6 @@ import Data.List (intersperse)
 import Data.Tuple (swap)
 
 import Builder hiding (sub, add, mul)
-import Simplify
 import Syntax
 import Name
 import Err
@@ -47,46 +45,13 @@ newtype Polynomial (n::S) =
 sumUsingPolys :: (Builder m, Fallible1 m, Emits n)
               => Atom n -> Abs Binder Block n -> m n (Atom n)
 sumUsingPolys lim (Abs i body) = do
-  Abs i' body' <- refreshAbs (Abs i body) \i' body' ->
-    Abs i' <$> simplifyBlockToBlock body'
-  Abs i'' body'' <- hoistDecls i' body'
-  sumAbs <- refreshAbs (Abs i'' body'') \(i''':>_) body''' -> do
-    blockAsPoly body''' >>= \case
-      Just poly' -> return $ Abs i''' poly'
-      Nothing ->
-        throw NotImplementedErr $
-          "Algebraic simplification failed to model index computations: " ++ pprint body''
+  sumAbs <- refreshAbs (Abs i body) \(i':>_) body' -> do
+    blockAsPoly body' >>= \case
+      Just poly' -> return $ Abs i' poly'
+      Nothing -> throw NotImplementedErr $
+        "Algebraic simplification failed to model index computations: " ++ pprint body'
   limName <- emitAtomToName lim
   emitPolynomial $ sum limName sumAbs
-
--- TODO: consider effects?
-hoistDecls
-  :: ( Builder m, EnvReader m, Emits n
-     , BindsNames b, BindsEnv b, SubstB Name b, SinkableB b)
-  => b n l -> Block l -> m n (Abs b Block n)
-hoistDecls b block = do
-  Abs hoistedDecls rest <- liftEnvReaderM $
-    refreshAbs (Abs b block) \b' (Block _ decls result) ->
-      hoistDeclsRec b' Empty decls result
-  ab <- emitDecls hoistedDecls rest
-  refreshAbs ab \b'' blockAbs' ->
-    Abs b'' <$> absToBlockInferringTypes blockAbs'
-
-hoistDeclsRec
-  :: (BindsNames b, SinkableB b)
-  => b n1 n2 -> Decls n2 n3 -> Decls n3 n4 -> Atom n4
-  -> EnvReaderM n3 (Abs Decls (Abs b (Abs Decls Atom)) n1)
-hoistDeclsRec b declsAbove Empty result =
-  return $ Abs Empty $ Abs b $ Abs declsAbove result
-hoistDeclsRec b declsAbove (Nest candidateDecl declsBelow) result  =
-  refreshAbs (Abs candidateDecl (Abs declsBelow result))
-    \candidateDecl' (Abs declsBelow' result') ->
-      case exchangeBs (PairB (PairB b declsAbove) candidateDecl') of
-        HoistSuccess (PairB hoistedDecl (PairB b' declsAbove')) -> do
-          Abs hoistedDecls fullResult <- hoistDeclsRec b' declsAbove' declsBelow' result'
-          return $ Abs (Nest hoistedDecl hoistedDecls) fullResult
-        HoistFailure _ ->
-          hoistDeclsRec b (declsAbove >>> Nest candidateDecl' Empty) declsBelow' result'
 
 mul :: Polynomial n-> Polynomial n -> Polynomial n
 mul (Polynomial x) (Polynomial y) =

@@ -1305,7 +1305,7 @@ elemCountPoly (Abs bs UnitE) = case bs of
   Nest b@(_:>ixTy) rest -> do
    curSize <- emitSimplified $ indexSetSize $ sink ixTy
    restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
-   sumUsingPolys curSize restSizes
+   sumUsingPolysImp curSize restSizes
 
 computeSizeGivenOrdinal
   :: EnvReader m
@@ -1360,11 +1360,45 @@ computeOffset idxNest' idxs = do
      let rest = EmptyAbs bs
      rhsElemCounts <- computeSizeGivenOrdinal b rest
      iOrd <- emitSimplified $ ordinal (sink ixTy) (Var $ sink i)
-     significantOffset <- emitSimplified $ sumUsingPolys (sink iOrd) (sink rhsElemCounts)
+     significantOffset <- sumUsingPolysImp iOrd rhsElemCounts
      remainingIdxStructure <- applySubst (b@>i) rest
      otherOffsets <- rec remainingIdxStructure is
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
+
+sumUsingPolysImp :: Emits n => Atom n -> Abs Binder SimpleBlock n -> SimpleBuilderM n (Atom n)
+sumUsingPolysImp lim (Abs i body) = do
+  ab <- hoistDecls i body
+  sumUsingPolys lim ab
+
+hoistDecls
+  :: ( Builder m, EnvReader m, Emits n
+     , BindsNames b, BindsEnv b, SubstB Name b, SinkableB b)
+  => b n l -> Block l -> m n (Abs b Block n)
+hoistDecls b block = do
+  Abs hoistedDecls rest <- liftEnvReaderM $
+    refreshAbs (Abs b block) \b' (Block _ decls result) ->
+      hoistDeclsRec b' Empty decls result
+  ab <- emitDecls hoistedDecls rest
+  refreshAbs ab \b'' blockAbs' ->
+    Abs b'' <$> absToBlockInferringTypes blockAbs'
+
+hoistDeclsRec
+  :: (BindsNames b, SinkableB b)
+  => b n1 n2 -> Decls n2 n3 -> Decls n3 n4 -> Atom n4
+  -> EnvReaderM n3 (Abs Decls (Abs b (Abs Decls Atom)) n1)
+hoistDeclsRec b declsAbove Empty result =
+  return $ Abs Empty $ Abs b $ Abs declsAbove result
+hoistDeclsRec b declsAbove (Nest decl declsBelow) result  = do
+  let (Let _ expr) = decl
+  exprIsPure <- isPure expr
+  refreshAbs (Abs decl (Abs declsBelow result))
+    \decl' (Abs declsBelow' result') ->
+      case exchangeBs (PairB (PairB b declsAbove) decl') of
+        HoistSuccess (PairB hoistedDecl (PairB b' declsAbove')) | exprIsPure -> do
+          Abs hoistedDecls fullResult <- hoistDeclsRec b' declsAbove' declsBelow' result'
+          return $ Abs (Nest hoistedDecl hoistedDecls) fullResult
+        _ -> hoistDeclsRec b (declsAbove >>> Nest decl' Empty) declsBelow' result'
 
 -- === Imp IR builder ===
 
