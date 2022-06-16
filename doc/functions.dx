@@ -50,13 +50,16 @@ languages this may seem strange, but it gives Dex a lot of its power.
 braces `{}` meaning an implicit parameter, square brackets `[]` meaning
 an interface constraint, and parens `()` meaning an explicit parameter.
 
-'In addition, Dex has two short-hands for the common cases:
+'In addition, Dex has three short-hands for the common cases:
 - Several consecutive implicit parameters can be written in a
   single pair of braces without type annotations, like `{n a b}`.  In
   this case, each parameter's type is inferred; the preceding is syntactic sugar
   for `{n:_} {a:_} {b:_}`.
 - Several consecutive anonymous constraints can be written in a single pair
   of square brackets separated by commas, like `[Ix n, Ix m, VSpace v]`.
+- A parameter not enclosed in any bracketing is assumed to be an
+  explicit parameter with an inferred type, for example the function
+  `\a. a + 1`.
 
 'Parameters tend to be specified in the order implicit, constraint,
 explicit, but that's not required; any interleaving is legal, subject
@@ -211,12 +214,11 @@ kinds of parameters.
 :t average
 > ((n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32)
 
-'Confusingly ([Issue
-236](https://github.com/google-research/dex-lang/issues/236)), parens
-are not allowed around binders in standalone function types, so
-inputting that type into Dex would look like this:
+'Note that the colon `:` is looser-binding than the arrows `->`, so
+spelling a type like this that refers to previous arguments generally
+requires grouping parens.
 
-n:Type ?-> Ix n ?=> n => Float -> Float
+(n:Type) ?-> Ix n ?=> n => Float -> Float
 > (n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32
 
 'The effect specifier, as usual, is written in curly braces preceding the result type.
@@ -227,11 +229,9 @@ n:Type ?-> Ix n ?=> n => Float -> Float
 ```
 \ <parameters> . <body>
 ```
-The `body` can be a block.
+The `body` can but need not be a block.
 
-'The syntax for parameters is slightly different than allowed in
-`def`.  First, the `\` syntax permits bare explicit parameters
-(without parens), whose types are inferred.
+'For example, `\a. a + 1` means "the add 1 function":
 
 map (\a. a + 1) [1., 2., 3.]
 > [2., 3., 4.]
@@ -242,23 +242,16 @@ them in parens like `def`.
 map (\(a:Float). a + 1) [1., 2., 3.]
 > [2., 3., 4.]
 
-'Like `def`, we can also specify implicit parameters with curly braces,
+'Also like `def`, we can specify implicit parameters with curly braces:
 
 \{a} (x:a). x
 > \a:Type ?-> \x:a. x
 
-'whose types are inferred if not annotated.  However, the `\`
-syntax does not allow listing interface constraints, because that
-conflicts with pattern-matching a table argument (see [Issue
-954](https://github.com/google-research/dex-lang/issues/954)).
-The (unfortunate) error message looks like this, should you try it:
+'and class parameters with square brackets:
 
 \{n} [Ix n] (xs:n=>Float). sum xs
-> Type error:Not a data constructor: Ix
->
-> \{n} [Ix n] (xs:n=>Float). sum xs
->       ^^^^
-
-'The workaround is to either use a `def`, or to annotate the type of
-the anonymous function.  If the type include interface constraints,
-the compiler will insert an appropriate parameter to accept them.
+> \n:Type ?->
+>   \v#0:(Ix n) ?=>
+>     \xs:(n => Float32).
+>       v#1:Float32 = sum n Float32 (Instance Add.2 []) v#0 xs
+>       v#1

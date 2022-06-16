@@ -51,7 +51,7 @@ help make the errors more local.
 -- >   (tmp3) (tmp2) ] )
 
 :t
-   myid : a:Type ?-> a -> a = \x. x
+   myid : (a:Type) ?-> a -> a = \x. x
    myid (myid) (myid 1)
 > Nat
 
@@ -199,7 +199,7 @@ def fEff {a} : Unit -> {| a} a = todo
 -- > :p (\(u,v). for i:0...u. 1.0) (2, 3)
 -- >     ^^^^^^^^^^^^^^^^^^^^^^^^
 
-g : a:Type ?-> a -> a = \x. x
+g : (a:Type) ?-> a -> a = \x. x
 
 :t g
 > ((a:Type) ?-> a -> a)
@@ -214,27 +214,27 @@ g : a:Type ?-> a -> a = \x. x
    f 1
 > Float32
 
-g1 : a:Type ?-> (a -> Int) -> (a -> Int) = \x. x
+g1 : (a:Type) ?-> (a -> Int) -> (a -> Int) = \x. x
 
 :t g1
 > ((a:Type) ?-> (a -> Int32) -> a -> Int32)
 
-g2 : aaa:Type ?-> aaa -> aaa = \x. idiv x x
+g2 : (aaa:Type) ?-> aaa -> aaa = \x. idiv x x
 > Type error:Couldn't synthesize a class dictionary for: (Integral aaa)
 >
-> g2 : aaa:Type ?-> aaa -> aaa = \x. idiv x x
->                                    ^^^^^
+> g2 : (aaa:Type) ?-> aaa -> aaa = \x. idiv x x
+>                                      ^^^^^
 
-h : a:Type ?-> b:Type ?-> (a -> b) -> (a -> b) = \x. x
+h : (a:Type) ?-> (b:Type) ?-> (a -> b) -> (a -> b) = \x. x
 
 :t h
 > ((a:Type) ?-> (b:Type) ?-> (a -> b) -> a -> b)
 
-fun : aaa:Type ?-> aaa -> aaa = \x. sin x
+fun : (aaa:Type) ?-> aaa -> aaa = \x. sin x
 > Type error:Couldn't synthesize a class dictionary for: (Floating aaa)
 >
-> fun : aaa:Type ?-> aaa -> aaa = \x. sin x
->                                     ^^^^
+> fun : (aaa:Type) ?-> aaa -> aaa = \x. sin x
+>                                       ^^^^
 
 data NewPair aa:Type bb:Type = MkNewPair aa bb
 
@@ -341,14 +341,14 @@ def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
 :p getFst3 [1,2,3]
 > 1
 
-def triRefIndex {h n} (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
+def triRefIndex {h n} (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
   %indexRef ref i
 
 (for i:(Fin 5). for j:(i..). 0.0).(0@_)
 > Type error:Dependent functions can only be applied to fully evaluated expressions. Bind the argument to a name before you apply the function.
 >
 > (for i:(Fin 5). for j:(i..). 0.0).(0@_)
->                                    ^^^
+>                                   ^^^^^
 
 -- Type inference of arguments always happens in checking mode, but the checking
 -- doesn't provide any insight into what the argument is in this case. This checks
@@ -360,7 +360,7 @@ def triRefIndex {h n} (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Fl
 id (for i:(Fin 2). for j:(..i). 1.0)
 > [[1.]@(..(0@Fin 2)), [1., 1.]@(..(1@Fin 2))]
 
-def weakerInferenceReduction {n} (l : i:n=>(..i)=>Float) (j:n): Unit =
+def weakerInferenceReduction {n} (l : (i:n)=>(..i)=>Float) (j:n): Unit =
   for i:(..j).
     i' = inject n i
     for k:(..i').
@@ -410,11 +410,11 @@ def mkEmpty (a:Type) : (Fin 0)=>a = []
 :t [0.0, 1.0] :: ((Fin 1) & (Fin 2))=>Float
 > ((Fin 1 & Fin 2) => Float32)
 
-:t [[0.0], [1.0, 2.0]] :: i:(Fin 2)=>(..i)=>Float
+:t [[0.0], [1.0, 2.0]] :: (i:Fin 2)=>(..i)=>Float
 > ((v#0:(Fin 2)) => (..v#0) => Float32)
-:t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] :: i:(Fin 2)=>(..i)=>(Fin 2)=>Float
+:t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] :: (i:Fin 2)=>(..i)=>(Fin 2)=>Float
 > ((v#0:(Fin 2)) => (..v#0) => (Fin 2) => Float32)
-:t [0@_, 1@_]::(i:(Fin 2)=>(..i))
+:t [0@_, 1@_]::((i:Fin 2)=>(..i))
 > ((v#0:(Fin 2)) => ..v#0)
 
 def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
@@ -463,10 +463,10 @@ q 5
 > :t [0.0, 1.0]::((Fin 100000000)=>Float)
 >    ^^^^^^^^^^
 
-:t [0.0, 1.0]::(i:(Fin 100000000)=>(..i)=>Float)
+:t [0.0, 1.0]::((i: Fin 100000000)=>(..i)=>Float)
 > Type error:Literal has 2 elements, but required type has 100000000.
 >
-> :t [0.0, 1.0]::(i:(Fin 100000000)=>(..i)=>Float)
+> :t [0.0, 1.0]::((i: Fin 100000000)=>(..i)=>Float)
 >    ^^^^^^^^^^
 
 -- Make sure we fail gracefully when the annotated index set doesn't
@@ -507,7 +507,7 @@ sum $ foo :: (Fin 3) => Float
 > 3.
 
 -- A pi type that locally binds foo to the index
-foo : (Fin 3) => Float
+(foo : (Fin 3)) => Float
 > (Fin 3) => Float32
 
 -- The equals sign makes it a type-annotated top-level binding for foo

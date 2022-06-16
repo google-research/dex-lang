@@ -43,7 +43,7 @@ import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
 
 import Name
-import Parser
+import AbstractSyntax
 import Syntax
 import Core
 import Types.Core
@@ -161,7 +161,7 @@ catchLogsAndErrs m = do
 evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlock _ _ _ _ (ImportModule name) -> do
+    SourceBlockP _ _ _ _ (Misc (ImportModule name)) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
@@ -335,15 +335,17 @@ evalSourceBlock' mname block = case sbContents block of
           prependImplicit is ty = case is of
             REmpty -> ty
             RNest is' i -> prependImplicit is' $ Pi $ PiType i Pure ty
-  GetNameType v -> do
-    ty <- sourceNameType v
-    logTop $ TextOut $ pprintCanonicalized ty
-  ImportModule moduleName -> importModule moduleName
-  QueryEnv query -> void $ runEnvQuery query $> UnitE
-  ProseBlock _ -> return ()
-  CommentLine  -> return ()
-  EmptyLines   -> return ()
   UnParseable _ s -> throw ParseErr s
+  BadSyntax e -> throwErrs e
+  Misc m -> case m of
+    GetNameType v -> do
+      ty <- sourceNameType v
+      logTop $ TextOut $ pprintCanonicalized ty
+    ImportModule moduleName -> importModule moduleName
+    QueryEnv query -> void $ runEnvQuery query $> UnitE
+    ProseBlock _ -> return ()
+    CommentLine  -> return ()
+    EmptyLines   -> return ()
   where
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
     addTypeAnn e = WithSrcE Nothing . UTypeAnn e

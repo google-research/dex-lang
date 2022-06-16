@@ -20,7 +20,7 @@
 > 6
 
 :p
-   vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
+   vdot' : (n:Type) ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
    y = map n_to_f x
@@ -66,7 +66,7 @@ fun = \y. sum (map n_to_f arr) + y
 > 3.
 
 :p
-   f : a:Type ?-> b:Type ?-> (a -> b & a) -> b =
+   f : (a:Type) ?-> (b:Type) ?-> (a -> b & a) -> b =
      \(x, y). x y
    f (\x. x, 1)
 > 1
@@ -636,7 +636,7 @@ for i:(Fin (-3)). 1.0
 > This might be due to a failure to find a viable interface implementation for: (FromInteger Nat)
 >
 > for i:(Fin (-3)). 1.0
-> ^^^^
+> ^^^^^^^^^^^^^^^^^^^^^
 
 x = 2 - 4
 > Type error:Couldn't synthesize a class dictionary for: (Sub Nat)
@@ -834,7 +834,7 @@ s1 = "hello world"
   sum zs + sum zs
 > 12
 
-triLit : i:(Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
+triLit : (i:Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
 triLit
 > [ [0]@(..(0@Fin 4))
 > , [1, 2]@(..(1@Fin 4))

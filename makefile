@@ -193,12 +193,13 @@ dexrt-llvm: src/lib/dexrt.bc
 example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms ode-integrator fluidsim \
+                isomorphisms fluidsim \
                 sgd psd kernelregression nn \
                 quaternions manifold-gradients schrodinger tutorial \
                 latex linear-maps
 # TODO: re-enable
 # fft vega-plotting
+# TODO: enable levenshtein-distance (has timings in the outputs)
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \

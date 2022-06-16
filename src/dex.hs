@@ -27,7 +27,8 @@ import TopLevel
 import Err
 import Syntax
 import Name
-import Parser (parseTopDeclRepl, keyWordStrs, preludeImportBlock)
+import ConcreteSyntax (keyWordStrs)
+import AbstractSyntax (parseTopDeclRepl, preludeImportBlock)
 #ifdef DEX_LIVE
 import RenderHtml
 import Live.Terminal (runTerminal)

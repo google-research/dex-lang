@@ -334,10 +334,16 @@ def tuple_arg_string(names, name_to_ty):
   return f"({tuple_ref_string(names)} : {ty})"
 
 def tuple_ref_string(names):
-  return "(" + ", ".join(names) + ")"
+  if len(names) == 1:
+    return names[0]
+  else:
+    return "(" + ", ".join(names) + ")"
 
 def tuple_ty_ref_string(names):
-  return "(" + " & ".join(names) + ")"
+  if len(names) == 1:
+    return names[0]
+  else:
+    return "(" + " & ".join(names) + ")"
 
 # === transpose ===
 

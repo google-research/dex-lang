@@ -57,7 +57,7 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 > 0.5
 
 :p
-  f : n:Type ?-> n=>Float -> n=>Float =
+  f : (n:Type) ?-> n=>Float -> n=>Float =
    \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
@@ -156,13 +156,13 @@ tripleit : Float --o Float = \x. x + x + x
 > 3.
 
 :p
-  f : n:Type ?-> Ix n ?=> Float --o n=>Float = \x. for i. x
+  f : (n:Type) ?-> Ix n ?=> Float --o n=>Float = \x. for i. x
 
   transpose_linear f [1.0, 2.0]
 > 3.
 
 :p
-  f : n:Type ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
+  f : (n:Type) ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
 
   transpose_linear f [1.0, 2.0]
 > [2., 4.]
@@ -202,7 +202,7 @@ myOtherSquare : Float -> Float =
 > 10.
 
 :p
-  f : n:Type ?-> n=>Float -> n=>Float =
+  f : (n:Type) ?-> n=>Float -> n=>Float =
     \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
