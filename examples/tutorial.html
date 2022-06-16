@@ -732,18 +732,21 @@ interface. Whereas <code>(/)</code> maps <code>a -&gt; Float32 -&gt; a</code> wh
 </code></pre>
 </div></div><div class="cell"><div class="prose-block"><p><em>Interfaces</em> define <em>requirements</em>: the functions needed for a type to
 implement the interface (via an <em>instance</em>).</p>
-</div></div><div class="cell"><div class="prose-block"><p>Here is an <code>Add</code> instance for the float pair type.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (<span class="type-name">Float32</span> <span class="symbol">&amp;</span> <span class="type-name">Float32</span>)
-  add <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">+</span> y1<span class="symbol">,</span> x2 <span class="symbol">+</span> y2)
-  zero <span class="symbol">=</span> (0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> (<span class="type-name">Float32</span> <span class="symbol">&amp;</span> <span class="type-name">Float32</span>)
-  sub <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">-</span> y1<span class="symbol">,</span> x2 <span class="symbol">-</span> y2)
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Here is an <code>Add</code> instance for the float pair type.
+(Again, this will throw error because it mirrors the prelude, so we just quote it here.):</p>
+</div></div><div class="cell"><div class="prose-block"><pre><code>instance Add (Float32 &amp; Float32)
+ add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+ zero = (0.0, 0.0)
+
+instance Sub (Float32 &amp; Float32)
+ sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+
+</code></pre>
 </div></div><div class="cell"><div class="prose-block"><p>And here is a <code>VSpace</code> instance for the float pair type:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> (<span class="type-name">Float32</span> <span class="symbol">&amp;</span> <span class="type-name">Float32</span>)
-  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s (x<span class="symbol">,</span> y)<span class="symbol">.</span> (x <span class="symbol">*</span> s<span class="symbol">,</span> y <span class="symbol">*</span> s)
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><pre><code>instance VSpace (Float32 &amp; Float32)
+ scale_vec = \s (x, y). (x * s, y * s)
+
+</code></pre>
 </div></div><div class="cell"><div class="prose-block"><p>Once we have these two instance definitions, we can revisit our table sum
 function using them:</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tableMean&#39; {n v} [<span class="type-name">VSpace</span> v] (x <span class="symbol">:</span> n <span class="symbol">=&gt;</span> v) <span class="symbol">:</span> v <span class="symbol">=</span>
@@ -759,16 +762,17 @@ function using them:</p>
 </div></div><div class="cell"><div class="prose-block"><p>The instance values are hardcoded for the float pair type. To be more general,
 we can and should instead define <code>Add</code> and <code>VSpace</code> instances for generic
 ' tuple types.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {v w} [<span class="type-name">Add</span> v<span class="symbol">,</span> <span class="type-name">Add</span> w] <span class="type-name">Add</span> (v <span class="symbol">&amp;</span> w)
-  add <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">+</span> y1<span class="symbol">,</span> x2 <span class="symbol">+</span> y2)
-  zero <span class="symbol">=</span> (zero<span class="symbol">,</span> zero)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {v w} [<span class="type-name">Sub</span> v<span class="symbol">,</span> <span class="type-name">Sub</span> w] <span class="type-name">Sub</span> (v <span class="symbol">&amp;</span> w)
-  sub <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">-</span> y1<span class="symbol">,</span> x2 <span class="symbol">-</span> y2)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {v w} [<span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> w] <span class="type-name">VSpace</span> (v <span class="symbol">&amp;</span> w)
-  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s (x<span class="symbol">,</span> y)<span class="symbol">.</span> (scale_vec s x<span class="symbol">,</span> scale_vec s y)
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><pre><code>instance {v w} [Add v, Add w] Add (v &amp; w)
+ add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+ zero = (zero, zero)
+
+instance {v w} [Sub v, Sub w] Sub (v &amp; w)
+ sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+
+instance {v w} [VSpace v, VSpace w] VSpace (v &amp; w)
+ scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
+
+</code></pre>
 </div></div><div class="cell"><div class="prose-block"><h2>More Fashion MNist</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Now that we have more functions we can revisit some of the Fashion MNist examples.</p>
 </div></div><div class="cell"><div class="prose-block"><p>Function that uses state to produce a histogram:</p>

@@ -678,6 +678,13 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> snd {a b} ((_<span class="symbol">,</span> y)<span class="symbol">:</span> (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> b <span class="symbol">=</span> y
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap {a b} ((x<span class="symbol">,</span> y)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (b<span class="symbol">&amp;</span>a) <span class="symbol">=</span> (y<span class="symbol">,</span> x)
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Add</span> b] <span class="type-name">Add</span> (a <span class="symbol">&amp;</span> b)
+  add <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b) (c<span class="symbol">,</span> d)<span class="symbol">.</span> ( (a <span class="symbol">+</span> c)<span class="symbol">,</span> (b <span class="symbol">+</span> d))
+  zero <span class="symbol">=</span> (zero<span class="symbol">,</span> zero)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Sub</span> a<span class="symbol">,</span> <span class="type-name">Sub</span> b] <span class="type-name">Sub</span> (a <span class="symbol">&amp;</span> b)
+  sub <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b) (c<span class="symbol">,</span> d)<span class="symbol">.</span> ( (a <span class="symbol">-</span> c)<span class="symbol">,</span> (b <span class="symbol">-</span> d))
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a <span class="symbol">&amp;</span> b)
   size <span class="symbol">=</span> size a <span class="symbol">*</span> size b
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(i<span class="symbol">,</span> j)<span class="symbol">.</span> (ordinal i <span class="symbol">*</span> size b) <span class="symbol">+</span> ordinal j
@@ -706,6 +713,9 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (n<span class="symbol">=&gt;</span>a)
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">VSpace</span> b] <span class="type-name">VSpace</span> (a <span class="symbol">&amp;</span> b)
+  scale_vec <span class="symbol">=</span> <span class="symbol">\</span> s (a<span class="symbol">,</span> b) <span class="symbol">.</span> (scale_vec s a<span class="symbol">,</span> scale_vec s b)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (i<span class="command">:n</span> <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
@@ -1450,7 +1460,8 @@ It's a kind of <code>scan</code>.</p>
   atol <span class="symbol">:</span> a
   rtol <span class="symbol">:</span> a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">~~</span>) {a} [<span class="type-name">HasAllClose</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> a] <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span> allclose atol rtol
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">~~</span>) {a} [<span class="type-name">HasAllClose</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> a] <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  allclose atol rtol
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasAllClose</span> <span class="type-name">Float32</span>
   allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol x y<span class="symbol">.</span> abs (x <span class="symbol">-</span> y) <span class="symbol">&lt;=</span> (atol <span class="symbol">+</span> rtol <span class="symbol">*</span> abs y)
@@ -1465,6 +1476,14 @@ It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDefaultTolerance</span> <span class="type-name">Float64</span>
   atol <span class="symbol">=</span> f_to_f64 0<span class="symbol">.</span>00000001
   rtol <span class="symbol">=</span> f_to_f64 0<span class="symbol">.</span>00001
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">HasDefaultTolerance</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> b<span class="symbol">,</span>
+                <span class="type-name">HasAllClose</span> a<span class="symbol">,</span> <span class="type-name">HasAllClose</span> b] <span class="type-name">HasAllClose</span> (a <span class="symbol">&amp;</span> b)
+  allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol (a<span class="symbol">,</span> b) (c<span class="symbol">,</span> d)<span class="symbol">.</span> (a <span class="symbol">~~</span> c) <span class="symbol">&amp;&amp;</span> (b <span class="symbol">~~</span> d)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">HasDefaultTolerance</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> b] <span class="type-name">HasDefaultTolerance</span> (a <span class="symbol">&amp;</span> b)
+  atol <span class="symbol">=</span> (atol<span class="symbol">,</span> atol)
+  rtol <span class="symbol">=</span> (rtol<span class="symbol">,</span> rtol)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n t} [<span class="type-name">HasAllClose</span> t] <span class="type-name">HasAllClose</span> (n<span class="symbol">=&gt;</span>t)
   allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol a b<span class="symbol">.</span>
