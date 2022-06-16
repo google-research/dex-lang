@@ -23,8 +23,8 @@ q
 ' ## Quaternion magnitude
  A quaternion is basically a 4 dimensional vector.
 
-as_vec = \Q{x,y,z,w}. [x, y, z, w]
-from_vec = \[x, y, z, w]. Q{x,y,z,w}
+as_vec = \(Q{x,y,z,w}). [x, y, z, w]
+from_vec = \([x, y, z, w]). Q{x,y,z,w}
 
 ' It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
@@ -220,7 +220,7 @@ The *conjugate* of a quaternion \(q\) is:
 
 
 def conj ((Q {x, y, z, w}):Quaternion) : Quaternion =
-    Q {x=-x, y=-y, z=-z, w=w}
+    Q {x = -x, y = -y, z = -z, w = w}
 
 
 ' ## Quaternion Inverse

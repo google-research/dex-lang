@@ -210,7 +210,7 @@ def s1ToR2 (S{x=x, y=y}: S1) : (Fin 2 => Float) =
 
 -- Two arbitrary points on the circle, not normalized.
 circlePointOne = S{x=3.4, y=0.2}
-circlePointTwo = S{x=-1.0, y=1.8}
+circlePointTwo = S{x= -1.0, y=1.8}
 
 -- Applying tangent mappings at circlePointTwo, to circlePointOne
 intermediateLog: Float = tangentLogarithmMap circlePointTwo circlePointOne
@@ -310,7 +310,7 @@ instance Mul Quaternion
   one = quatIdent
 
 def quatConj ((Q {x, y, z, w}):Quaternion) : Quaternion =
-  Q {x=-x, y=-y, z=-z, w=w}
+  Q {x = -x, y = -y, z = -z, w = w}
 
 def quatInv (q:Quaternion) : Quaternion =
   m = magnitude $ quatAsVec q
@@ -405,8 +405,8 @@ quatLooseTolerance = quatFromVec $ for i. looseTolerance
 tangentLooseTolerance : R3 = for i. looseTolerance
 
 -- Just arbitrary quaternions.
-quatForTestOne = quatNormalize (Q{w=1.0, x=0.5, y=-0.2, z=0.4})
-quatForTestTwo = quatNormalize (Q{w=-0.4, x=0.5, y=0.8, z=-0.9})
+quatForTestOne = quatNormalize (Q{w =  1.0, x = 0.5, y = -0.2, z =  0.4})
+quatForTestTwo = quatNormalize (Q{w = -0.4, x = 0.5, y =  0.8, z = -0.9})
 
 allclose quatLooseTolerance rtol (quatExpAtIdent $ quatExpAtIdentInv quatForTestOne) (quatForTestOne)
 > True

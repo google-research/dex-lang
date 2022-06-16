@@ -62,7 +62,7 @@ instance Arbitrary ScalarMap
 '### Diagonal maps
 
 data DiagMap n [Ix n] =
-  MkDiagMap (i:n=>Float)
+  MkDiagMap (n=>Float)
 
 instance {n} HasDeterminant (DiagMap n)
   determinant' = \(MkDiagMap x). prod x
@@ -97,7 +97,7 @@ instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
 '### Lower-triangular maps
 
 data LowerTriMap n [Ix n] =
-  MkLowerTriMap (i:n=>(..i)=>Float)
+  MkLowerTriMap ((i:n)=>(..i)=>Float)
 
 instance {n} HasDeterminant (LowerTriMap n)
   determinant' = \(MkLowerTriMap x). prod $ lower_tri_diag x
@@ -117,7 +117,7 @@ instance {n} Arbitrary (LowerTriMap n)
 '### Upper-triangular maps
 
 data UpperTriMap n [Ix n] =
-  MkUpperTriMap (i:n=>(i..)=>Float)
+  MkUpperTriMap ((i:n)=>(i..)=>Float)
 
 instance {n} HasDeterminant (UpperTriMap n)
   determinant' = \(MkUpperTriMap x). prod $ upper_tri_diag x
@@ -137,7 +137,7 @@ instance {n} Arbitrary (UpperTriMap n)
 '### Skew-symmetric maps
 
 data SkewSymmetricMap n [Ix n] =
-  MkSkewSymMap (i:n=>(..<i)=>Float)
+  MkSkewSymMap ((i:n)=>(..<i)=>Float)
 
 instance {n} HasDeterminant (SkewSymmetricMap n)
   determinant' = case is_odd (size n) of
@@ -145,7 +145,7 @@ instance {n} HasDeterminant (SkewSymmetricMap n)
     False -> \(MkSkewSymMap a).
       dense_rep = skew_symmetric_prod a eye
       determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
-  transposeType = i:n=>(..<i)=>Float  -- 
+  transposeType = (i:n)=>(..<i)=>Float  -- 
   transpose' = \(MkSkewSymMap x). MkSkewSymMap (-x)
   identity' = error "Skew symmetric matrices can't represent the identity map."
 
@@ -352,7 +352,7 @@ if followed, will converge to a stationary distribution whose marginal
 def StationaryDiffusion (m:Type) (v:Type) [LinearEndo m v] : Type = v->m
 def NegEnergyFunc (v:Type) : Type = v->Float
 def SkewSymmetricFunc (n:Type) (v:Type) [Ix n] : Type =
-  v->(i:n=>(..<i)=>Float)
+  v->((i:n)=>(..<i)=>Float)
 def StationarySDEParts (n:Type) (v:Type)
     [Ix n, LinearEndo n v, VSpace v] : Type =
   (NegEnergyFunc v & SkewSymmetricFunc n v & StationaryDiffusion n v)

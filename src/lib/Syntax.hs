@@ -59,7 +59,7 @@ module Syntax (
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
-    SourceBlock (..), SourceBlock' (..), EnvQuery (..),
+    SourceBlock, SourceBlockP (..), SourceBlock' (..), SourceBlockMisc (..), EnvQuery (..),
     ModuleName, Module (..), UModule (..), UModulePartialParse (..),
     UMethodType(..), UEffectOpType(..), UResumePolicy(..), UEffectOpDef(..),
     UType, ExtLabeledItemsE (..),

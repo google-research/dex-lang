@@ -347,28 +347,28 @@ instance {a n} [Add a] Add (n=>a)
 instance {a n} [Sub a] Sub (n=>a)
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add (i:n => (i..) => a)  -- Upper triangular tables
+instance {a n} [Add a] Add ((i:n) => (i..) => a)  -- Upper triangular tables
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub (i:n => (i..) => a)  -- Upper triangular tables
+instance {a n} [Sub a] Sub ((i:n) => (i..) => a)  -- Upper triangular tables
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add (i:n => (..i) => a)  -- Lower triangular tables
+instance {a n} [Add a] Add ((i:n) => (..i) => a)  -- Lower triangular tables
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub (i:n => (..i) => a)  -- Lower triangular tables
+instance {a n} [Sub a] Sub ((i:n) => (..i) => a)  -- Lower triangular tables
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add (i:n => (..<i) => a)
+instance {a n} [Add a] Add ((i:n) => (..<i) => a)
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub (i:n => (..<i) => a)
+instance {a n} [Sub a] Sub ((i:n) => (..<i) => a)
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add (i:n => (i<..) => a)
+instance {a n} [Add a] Add ((i:n) => (i<..) => a)
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub (i:n => (i<..) => a)
+instance {a n} [Sub a] Sub ((i:n) => (i<..) => a)
   sub = \xs ys. for i. xs.i - ys.i
 
 instance {a n} [Mul a] Mul (n=>a)
@@ -423,16 +423,16 @@ instance {a n} [VSpace a] VSpace (n=>a)
 instance {a b} [VSpace a, VSpace b] VSpace (a & b)
   scale_vec = \ s (a, b) . (scale_vec s a, scale_vec s b)
 
-instance {a n} [VSpace a] VSpace (i:n => (..i) => a)
+instance {a n} [VSpace a] VSpace ((i:n) => (..i) => a)
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace (i:n => (i..) => a)
+instance {a n} [VSpace a] VSpace ((i:n) => (i..) => a)
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace (i:n => (..<i) => a)
+instance {a n} [VSpace a] VSpace ((i:n) => (..<i) => a)
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace (i:n => (i<..) => a)
+instance {a n} [VSpace a] VSpace ((i:n) => (i<..) => a)
   scale_vec = \s xs. for i. s .* xs.i
 
 instance {a n} [VSpace a] VSpace (n->a)
@@ -628,7 +628,7 @@ def snd_ref {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 def run_reader
       {r a eff}
       (init:r)
-      (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
+      (action: ((h:Type) ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
     def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
     %runReader init explicitAction
@@ -636,17 +636,17 @@ def run_reader
 def with_reader
       {r a eff}
       (init:r)
-      (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
+      (action: ((h:Type) ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
     run_reader init action
 
-def MonoidLifter (b:Type) (w:Type) : Type = h:Type ?-> AccumMonoid h b ?=> AccumMonoid h w
+def MonoidLifter (b:Type) (w:Type) : Type = (h:Type) ?-> AccumMonoid h b ?=> AccumMonoid h w
 
 def run_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (bm:Monoid b)
-      (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
+      (action: ((h:Type) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} (a & w) =
   empty = %projMethod0 bm
   combine = %projMethod1 bm
@@ -661,14 +661,14 @@ def yield_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (m:Monoid b)
-      (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
+      (action: ((h:Type) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} w =
   snd $ run_accum m action
 
 def run_state
       {a s eff}
       (init:s)
-      (action: h:Type ?-> Ref h s -> {State h |eff} a)
+      (action: (h:Type) ?-> Ref h s -> {State h |eff} a)
       : {|eff} (a & s) =
   def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
   %runState init explicitAction
@@ -676,13 +676,13 @@ def run_state
 def with_state
       {a s eff}
       (init:s)
-      (action: h:Type ?-> Ref h s -> {State h |eff} a)
+      (action: (h:Type) ?-> Ref h s -> {State h |eff} a)
       : {|eff} a = fst $ run_state init action
 
 def yield_state
       {a s eff}
       (init:s)
-      (action: h:Type ?-> Ref h s -> {State h |eff} a)
+      (action: (h:Type) ?-> Ref h s -> {State h |eff} a)
       : {|eff} s = snd $ run_state init action
 
 def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
@@ -1381,7 +1381,7 @@ Zipper isomorphisms to easily specify many record/variant fields:
 ' Convert a record zipper isomorphism to a normal lens-like isomorphism
 by using `splitR &>> iso`
 
-def split_r {a} : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
+def split_r {a} : Iso a ({&} & a) = MkIso {fwd = \x. ({}, x), bwd = \({}, x). x}
 
 def over_fields {a b c v} [Ix b, Ix c]
       (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
@@ -1390,10 +1390,10 @@ def over_fields {a b c v} [Ix b, Ix c]
 'Convert a variant zipper isomorphism to a normal prism-like isomorphism
 by using `splitV &>> iso`
 
-def split_v {a} : Iso a ({|} | a) =
-  MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
+def split_v {a} : Iso a ({ | } | a) =
+  MkIso {fwd = \x. Right x, bwd = \v. case v of Right x -> x}
 
-def slice_fields {a b c v} [Ix b] (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
+def slice_fields {a b c v} [Ix b] (iso: Iso ({ | } | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (build_with $ split_v &>> iso) tab
 
 -- TODO: replace `slice` with this?
@@ -1972,16 +1972,16 @@ instance Arbitrary Word32
 instance {n a} [Arbitrary a] Arbitrary (n=>a)
   arb = \key. for i. arb $ ixkey key i
 
-instance {n a} [Arbitrary a] Arbitrary (i:n=>(..<i) => a)
+instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(..<i) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {n a} [Arbitrary a] Arbitrary (i:n=>(..i) => a)
+instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(..i) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {n a} [Arbitrary a] Arbitrary (i:n=>(i..) => a)
+instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(i..) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {n a} [Arbitrary a] Arbitrary (i:n=>(i<..) => a)
+instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(i<..) => a)
   arb = \x. for i. arb $ new_key (ordinal i)
 
 instance {a b} [Arbitrary a, Arbitrary b] Arbitrary (a & b)
