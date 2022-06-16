@@ -73,7 +73,7 @@ instance ToMarkup Output where
 
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
-    ProseBlock s -> cdiv "prose-block" $ mdToHtml s
+    (Misc (ProseBlock s)) -> cdiv "prose-block" $ mdToHtml s
     _ -> cdiv "code-block" $ highlightSyntax (sbText block)
 
 mdToHtml :: T.Text -> Html

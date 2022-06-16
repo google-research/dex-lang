@@ -155,7 +155,7 @@ catchLogsAndErrs m = do
 evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlock _ _ _ _ (ImportModule name) -> do
+    SourceBlockP _ _ _ _ (Misc (ImportModule name)) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
@@ -231,15 +231,16 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
-  GetNameType v -> do
-    ty <- sourceNameType v
-    logTop $ TextOut $ pprintCanonicalized ty
-  ImportModule moduleName -> importModule moduleName
-  QueryEnv query -> void $ runEnvQuery query $> UnitE
-  ProseBlock _ -> return ()
-  CommentLine  -> return ()
-  EmptyLines   -> return ()
   UnParseable _ s -> throw ParseErr s
+  Misc m -> case m of
+    GetNameType v -> do
+      ty <- sourceNameType v
+      logTop $ TextOut $ pprintCanonicalized ty
+    ImportModule moduleName -> importModule moduleName
+    QueryEnv query -> void $ runEnvQuery query $> UnitE
+    ProseBlock _ -> return ()
+    CommentLine  -> return ()
+    EmptyLines   -> return ()
   where
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
     addTypeAnn e = WithSrcE Nothing . UTypeAnn e

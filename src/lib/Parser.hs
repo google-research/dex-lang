@@ -67,13 +67,13 @@ parseUModule name s = do
         then blocks
         else preludeImportBlock : blocks
   let imports = flip foldMap blocks' \b -> case sbContents b of
-                  ImportModule moduleName -> [moduleName]
+                  Misc (ImportModule moduleName) -> [moduleName]
                   _ -> []
   UModule name imports blocks'
 {-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule Prelude
+preludeImportBlock = SourceBlockP 0 0 LogNothing "" $ Misc $ ImportModule Prelude
 
 parseTopDeclRepl :: Text -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
@@ -93,7 +93,7 @@ mustParseit s p  = case parseit s p of
   Failure e -> error $ "This shouldn't happen:\n" ++ pprint e
 
 importModule :: Parser SourceBlock'
-importModule = ImportModule . OrdinaryModule <$> do
+importModule = Misc . ImportModule . OrdinaryModule <$> do
   keyWord ImportKW
   s <- anyCaseName
   eol
@@ -116,7 +116,7 @@ sourceBlock = do
     level <- logLevel <|> logTime <|> logBench <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
-  return $ SourceBlock (unPos (sourceLine pos)) offset level src b
+  return $ SourceBlockP (unPos (sourceLine pos)) offset level src b
 
 recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
 recover e = do
@@ -167,17 +167,17 @@ sourceBlock' =
   <|> liftM EvalUDecl (instanceDef False <* eolf)
   <|> liftM EvalUDecl (interfaceDef <* eolf)
   <|> liftM (Command (EvalExpr Printed)) (expr <* eolf)
-  <|> hidden (some eol >> return EmptyLines)
-  <|> hidden (sc >> eol >> return CommentLine)
+  <|> hidden (some eol >> return (Misc EmptyLines))
+  <|> hidden (sc >> eol >> return (Misc CommentLine))
 
 proseBlock :: Parser SourceBlock'
-proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSource consumeTillBreak)
+proseBlock = label "prose block" $ char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
   <|> declareForeign
-  <|> (QueryEnv <$> envQuery)
+  <|> (Misc . QueryEnv <$> envQuery)
   <|> explicitCommand
   <?> "top-level command"
 
@@ -202,7 +202,7 @@ explicitCommand = do
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
-    (WithSrcE _ (UVar (SourceName v)), GetType) -> GetNameType v
+    (WithSrcE _ (UVar (SourceName v)), GetType) -> Misc $ GetNameType v
     _ -> Command cmd e
 
 -- === uexpr ===
