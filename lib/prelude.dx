@@ -900,6 +900,14 @@ instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) q
       then Nothing
       else Just $ UnsafeMkRangeToExc j'
 
+instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) (RangeTo q i)
+  inject' = \(UnsafeMkRangeToExc j). unsafe_from_ordinal _ j
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' >= i'
+      then Nothing
+      else Just $ UnsafeMkRangeToExc j'
 
 '## Elementary/Special Functions
 This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).

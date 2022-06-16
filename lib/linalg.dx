@@ -33,7 +33,7 @@ def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v =
 def lower_tri_identity {a n} [Ix n, Add a, Mul a] : LowerTriMat n a =
   for i j. select (is_last j) one zero
 
--- TODO: Put these in an Isomorphism typeclass?
+-- TODO: Put these in instances of an Isomorphism interface?
 def transpose_upper_ix {n} [Ix n] (i:n) (j:(i..)) : LowerTriIx n =
   j' = inject n j
   i' = unsafe_cast i
@@ -83,8 +83,8 @@ def forward_substitute {n v} [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v 
   -- Solves lower triangular linear system (inverse a) **. b
   yield_state zero \sRef.
     for i:n.
-      s = sum for k:(..i).  -- dot product
-        a.i.k .* get sRef!(inject n k)
+      s = sum for k:(..<i).  -- dot product
+        a.i.(inject _ k) .* get sRef!(inject n k)
       sRef!i := (b.i - s) / (lower_tri_diag a).i
 
 def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
