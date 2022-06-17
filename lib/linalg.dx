@@ -103,22 +103,29 @@ def upper_tri_mat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h 
   d = %indexRef ref i
   d!j
 
+def dual_inject {m n} [Ix m, Ix n, Subset m n] (i:m) (j:(..<i)) : LowerTriIxExc n =
+  i' = inject n i
+  j' = from_just $ project _ $ inject n $ inject m j
+  MkLowerTriIxExc i' j'
+
 '### Cholesky decomposition
 
 def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
   yield_state zero \buf.
     mat = lower_tri_mat buf
-    for i:n. for j':(..i).
-      j = inject n j'
-      row_i = for k:(..<j'). get $ mat i (inject (..i) k)
-      row_j = for k:(..<j'). get $ mat j (unsafe_cast k)
-      a = x.i.j - vdot row_i row_j
+    for i:n. for j:(..i).
+      row_i = for k:(..<j). get $ mat i (inject (..i) k)
+      row_j = for k:(..<j).
+        (MkLowerTriIxExc j2 k2) = dual_inject j k
+        get $ mat j2 (inject _ k2)
+      j' = inject n j
+      a = x.i.j' - vdot row_i row_j
       if (ordinal j) == (ordinal i)
         then
-          mat i j' := sqrt a
+          mat i j := sqrt a
         else
-          b = get $ mat j (from_just $ project (..j) j)
-          mat i j' := a / b
+          b = get $ mat j' (from_just $ project (..j') j')
+          mat i j := a / b
 
 '### Permutations
 
