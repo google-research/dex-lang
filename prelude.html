@@ -1182,7 +1182,15 @@ i.e. things that can be compared to other things to find if larger, smaller or e
       <span class="keyword">then</span> <span class="type-name">Nothing</span>
       <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeMkRangeToExc</span> j&#39;
 </div></div><div class="cell"><div class="code-block">
-
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeToExc</span> q i) (<span class="type-name">RangeTo</span> q i)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeToExc</span> j)<span class="symbol">.</span> unsafe_from_ordinal _ j
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
+    j&#39; <span class="symbol">=</span> ordinal j
+    i&#39; <span class="symbol">=</span> ordinal i
+    <span class="keyword">if</span> j&#39; <span class="symbol">&gt;=</span> i&#39;
+      <span class="keyword">then</span> <span class="type-name">Nothing</span>
+      <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeMkRangeToExc</span> j&#39;
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Elementary/Special Functions</h2>
 <p>This is more or less the standard <a href="https://en.wikipedia.org/wiki/C_mathematical_functions">LibM fare</a>.
 Roughly it lines up with some definitions of the set of <a href="https://en.wikipedia.org/wiki/Elementary_function">Elementary</a> and/or <a href="https://en.wikipedia.org/wiki/Special_functions">Special</a>.
