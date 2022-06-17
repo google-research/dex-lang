@@ -40,3 +40,18 @@ grad (\x. snd $ pivotize [[x]]) 1.0
 
 grad (\x. snd $ sign_and_log_determinant [[x]]) 2.0
 > 0.5
+
+-- Check forward_substitute solve by comparing
+-- against zero-padding and doing the full solve.
+def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
+  for i j.
+    if (ordinal j)<=(ordinal i)
+      then mat.i.(unsafe_cast j)
+      else zero
+
+lower : LowerTriMat (Fin 4) Float = arb $ new_key 0
+lower_padded = padLowerTriMat lower
+vec : (Fin 4)=>Float = arb $ new_key 0
+
+forward_substitute lower vec ~~ solve lower_padded vec
+> True
