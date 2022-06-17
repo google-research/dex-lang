@@ -153,9 +153,9 @@ instance PrettyPrec (Expr n) where
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For ann _ (Lam lamExpr))) =
+  prettyPrec (Hof (For ann _ _ (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
-  prettyPrec (Hof (Seq ann _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
+  prettyPrec (Hof (Seq ann _ _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
     atPrec LowestPrec $ "seq" <+> pApp ann <+> pApp c <+> prettyLam (p (b:>ty) <> ".") effs body
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
@@ -266,7 +266,6 @@ instance PrettyPrec (Atom n) where
       _  -> atPrec LowestPrec $ pAppArg (p name) params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
-    IxTy ixTy -> atPrec LowestPrec $ p ixTy
     LabeledRow elems -> prettyRecordTyRow elems "?"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
@@ -371,7 +370,7 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyLam arr' ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      Abs Empty (Hof (For ann _ (Lam next)))
+      Abs Empty (Hof (For ann _ _ (Lam next)))
         | lamType == PrettyFor ann ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
@@ -639,7 +638,6 @@ instance PrettyPrec (UExpr' n) where
     UTabPi piType -> prettyPrec piType
     UDecl declExpr -> prettyPrec declExpr
     UHole -> atPrec ArgPrec "_"
-    UIndexType ty -> atPrec ArgPrec $ "IxTy" <+> p ty
     UTypeAnn v ty -> atPrec LowestPrec $
       group $ pApp v <> line <> ":" <+> pApp ty
     UTabCon xs -> atPrec ArgPrec $ p xs
@@ -870,7 +868,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     EffectRowKind -> atPrec ArgPrec "EffKind"
     LabeledRowKindTC -> atPrec ArgPrec "Fields"
     LabelType -> atPrec ArgPrec "Label"
-    _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimCon e) where
@@ -930,7 +927,7 @@ prettyExprDefault expr =
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For ann _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
+    For ann _ _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
 
 instance PrettyPrec Direction where

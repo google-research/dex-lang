@@ -774,13 +774,13 @@ buildForAnn
   => NameHint -> ForAnn -> IxType n
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildForAnn hint ann ixTy@(IxType ty _) body = do
+buildForAnn hint ann ixTy@(IxType iTy ixDict) body = do
   lam <- withFreshBinder hint ixTy \b -> do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
     effs <- getEffects body'
-    return $ Lam $ LamExpr (LamBinder b ty PlainArrow effs) body'
-  liftM Var $ emit $ Hof $ For ann (IxTy ixTy) lam
+    return $ Lam $ LamExpr (LamBinder b iTy PlainArrow effs) body'
+  liftM Var $ emit $ Hof $ For ann iTy ixDict lam
 
 buildFor :: (Emits n, ScopableBuilder m)
          => NameHint -> Direction -> IxType n

@@ -247,7 +247,6 @@ instance HasType Atom where
       params' <- mapM substM params
       checkArgTys paramBs params'
       return TyKind
-    IxTy ixTy -> checkE ixTy >> return (TC IxTypeKind)
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy elems -> checkFieldRowElems elems $> TyKind
@@ -476,7 +475,6 @@ typeCheckPrimTC tc = case tc of
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
   LabelType        -> return TyKind
-  IxTypeKind       -> return TyKind
 
 typeCheckPrimCon :: Typer m => PrimCon (Atom i) -> m i o (Type o)
 typeCheckPrimCon con = case con of
@@ -724,14 +722,13 @@ typeCheckPrimOp op = case op of
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ ixTyAtom f -> do
-    IxTy ixTy <- return ixTyAtom
-    ixTy' <- checkE ixTy
+  For _ iTy ixDict f -> do
+    ixTy <- checkE $ IxType iTy ixDict
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
-    checkAlphaEq (ixTypeType ixTy') argTy
+    checkAlphaEq (ixTypeType ixTy) argTy
     eff' <- liftHoistExcept $ hoist b eff
     declareEffs eff'
-    return $ TabTy (b:>ixTy') eltTy
+    return $ TabTy (b:>ixTy) eltTy
   While body -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
     PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy
@@ -773,12 +770,11 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
-  Seq _ ixTyAtom carry f -> do
-    IxTy ixTy <- return ixTyAtom
-    ixTy' <- checkE ixTy
+  Seq _ iTy ixDict carry f -> do
+    ixTy <- checkE $ IxType iTy ixDict
     carryTy' <- getTypeE carry
     Pi (PiType (PiBinder b argTy PlainArrow) eff UnitTy) <- getTypeE f
-    checkAlphaEq (PairTy (ixTypeType ixTy') carryTy') argTy
+    checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') argTy
     declareEffs =<< liftHoistExcept (hoist b eff)
     RawRefTy _ <- return carryTy'  -- We might need allow products of references too.
     return carryTy'

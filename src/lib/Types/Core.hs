@@ -60,7 +60,6 @@ data Atom (n::S) =
  | TypeCon SourceName (DataDefName n) (DataDefParams n)
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
- | IxTy    (IxType n)
  | LabeledRow (FieldRowElems n)
  | Record (LabeledItems (Atom n))
  | RecordTy  (FieldRowElems n)
@@ -953,13 +952,12 @@ instance GenericE Atom where
   {- TC -}         (ComposeE PrimTC  Atom)
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
-            ) (EitherE4
+            ) (EitherE3
   {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
   {- DataConRef -} ( DataDefName                    `PairE`
                      DataDefParams                  `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
-  {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType)
-  {- IxTy -}       IxType)
+  {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
 
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
@@ -994,7 +992,6 @@ instance GenericE Atom where
     DataConRef defName params bs -> Case5 $ Case1 $ defName `PairE` params `PairE` bs
     DepPairRef lhs rhs ty ->
       Case5 $ Case2 $ lhs `PairE` rhs `PairE` ty
-    IxTy ixTy -> Case5 $ Case3 ixTy
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1039,7 +1036,6 @@ instance GenericE Atom where
       Case0 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
       Case1 (defName `PairE` params `PairE` bs) -> DataConRef defName params bs
       Case2 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
-      Case3 ixTy -> IxTy ixTy
       _ -> error "impossible"
   {-# INLINE toE #-}
 

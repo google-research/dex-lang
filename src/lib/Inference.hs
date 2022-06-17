@@ -856,8 +856,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         checkULam uLamExpr lamPiTy
       Check _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
-    ixTy <- asIxType $ binderType b'
-    result <- liftM Var $ emit $ Hof $ For dir (IxTy ixTy) lam
+    IxType iTy ixDict <- asIxType $ binderType b'
+    result <- liftM Var $ emit $ Hof $ For dir iTy ixDict lam
     matchRequirement result
   UApp _ _ -> do
     let (f, args) = asNaryApp $ WithSrcE pos expr
@@ -930,7 +930,6 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
-  UIndexType ty -> IxTy <$> (checkUType ty >>= asIxType)
   UTypeAnn val ty -> do
     ty' <- zonk =<< checkUType ty
     val' <- checkSigma val ty'
@@ -2217,7 +2216,6 @@ instance Unifiable Atom where
         zipWithM_ unify (toList con) (toList con')
       (Eff eff, Eff eff') -> unify eff eff'
       (DictTy d, DictTy d') -> unify d d'
-      (IxTy ixTy, IxTy ixTy') -> unify ixTy ixTy'
       _ -> unifyEq e1 e2
 
 instance Unifiable DictType where

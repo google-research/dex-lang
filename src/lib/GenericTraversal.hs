@@ -90,7 +90,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   DictCon dictExpr -> DictCon <$> tge dictExpr
   DictTy (DictType sn cn params) ->
     DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
-  IxTy (IxType ty d) -> IxTy <$> (IxType <$> tge ty <*> tge d)
   LabeledRow elems -> LabeledRow <$> traverseGenericE elems
   Record items -> Record <$> mapM tge items
   RecordTy elems -> RecordTy <$> traverseGenericE elems

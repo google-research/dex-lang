@@ -675,9 +675,7 @@ uPrim = withSrc $ do
   s <- primName
   case strToPrimName s of
     Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
-    Nothing -> case s of
-      "IndexType" -> UIndexType <$> leafExpr
-      _ -> fail $ "Unrecognized primitive: " ++ s
+    Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 uVariantExpr :: Parser (UExpr VoidS)
 uVariantExpr = withSrc $ parseVariant expr UVariant UVariantLift

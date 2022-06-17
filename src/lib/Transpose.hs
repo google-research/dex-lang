@@ -286,7 +286,6 @@ transposeAtom atom ct = case atom of
   DictCon _       -> notTangent
   DictTy _        -> notTangent
   TypeCon _ _ _   -> notTangent
-  IxTy _          -> notTangent
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent
   VariantTy _     -> notTangent
@@ -310,9 +309,9 @@ transposeAtom atom ct = case atom of
 
 transposeHof :: Emits o => Hof i -> Atom o -> TransposeM i o ()
 transposeHof hof ct = case hof of
-  For ann ~(IxTy d) (Lam (LamExpr b  body)) -> do
-    ty <- substNonlin d
-    void $ buildForAnn (getNameHint b) (flipDir ann) ty \i -> do
+  For ann iTy d (Lam (LamExpr b  body)) -> do
+    ixTy <- substNonlin $ IxType iTy d
+    void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
       ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal

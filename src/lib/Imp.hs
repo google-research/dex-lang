@@ -548,8 +548,8 @@ toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (Atom i) -> SubstImpM i o (Atom
 toImpHof maybeDest hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
-    For d (IxTy ixTy) (Lam (LamExpr b body)) -> do
-      ixTy' <- substM ixTy
+    For d iTy ixDict (Lam (LamExpr b body)) -> do
+      ixTy' <- substM $ IxType iTy ixDict
       n <- indexSetSizeImp ixTy'
       dest <- allocDest maybeDest resultTy
       emitLoop (getNameHint b) d n \i -> do
@@ -591,8 +591,8 @@ toImpHof maybeDest hof = do
     RunIO (Lam (LamExpr b body)) ->
       extendSubst (b@>SubstVal UnitVal) $
         translateBlock maybeDest body
-    Seq d (IxTy ixTy) carry (Lam (LamExpr b body)) -> do
-      ixTy' <- substM ixTy
+    Seq d iTy ixDict carry (Lam (LamExpr b body)) -> do
+      ixTy' <- substM $ IxType iTy ixDict
       carry' <- substM carry
       n <- indexSetSizeImp ixTy'
       emitLoop (getNameHint b) d n \i -> do

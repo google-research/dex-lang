@@ -315,7 +315,6 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
                  <*> pure con <*> mapM simplifyAtom args
   DictCon d -> DictCon <$> substM d
   DictTy  t -> DictTy  <$> substM t
-  IxTy ixTy -> IxTy    <$> substM ixTy
   Record items -> Record <$> mapM simplifyAtom items
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
@@ -575,14 +574,14 @@ projectDictMethod d i = do
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
-  For d (IxTy ixTy) lam -> do
-    ixTy' <- substM ixTy
+  For d iTy ixDict lam -> do
+    ixTy@(IxType ixTy' ixDict') <- substM $ IxType iTy ixDict
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- liftM Var $ emit $ Hof $ For d (IxTy ixTy') lam'
+    ans <- liftM Var $ emit $ Hof $ For d ixTy' ixDict' lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
-        buildTabLam noHint ixTy' \i' -> do
+        buildTabLam noHint ixTy \i' -> do
           elt <- tabApp (sink ans) $ Var i'
           -- TODO Avoid substituting the body of `recon` twice (once
           -- for `applySubst` and once for `applyReconAbs`).  Maybe
@@ -669,9 +668,9 @@ exceptToMaybeExpr expr = case expr of
   Op (ThrowException _) -> do
     ty <- getTypeSubst expr
     return $ NothingAtom ty
-  Hof (For ann (IxTy ixTy) (Lam (LamExpr b body))) -> do
-    ixTy' <- substM ixTy
-    maybes <- buildForAnn (getNameHint b) ann ixTy' \i ->
+  Hof (For ann iTy d (Lam (LamExpr b body))) -> do
+    ixTy <- substM $ IxType iTy d
+    maybes <- buildForAnn (getNameHint b) ann ixTy \i ->
       extendSubst (b@>Rename i) $ exceptToMaybeBlock body
     catMaybesE maybes
   Hof (RunState s lam) -> do

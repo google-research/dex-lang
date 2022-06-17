@@ -263,7 +263,6 @@ linearizeAtom atom = case atom of
   DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
-  IxTy _    -> notImplemented
   DepPair _ _ _     -> notImplemented
   Record elems ->
     fmapLin (Record . fromComposeE) $ seqLin (fmap linearizeAtom elems)
@@ -500,13 +499,13 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom
 linearizeHof hof = case hof of
-  For d (IxTy ixTy) (Lam (LamExpr i body)) -> do
-    ixTy' <- substM ixTy
-    ansWithLinTab <- buildFor (getNameHint i) d ixTy' \i' ->
+  For d iTy ixDict (Lam (LamExpr i body)) -> do
+    ixTy <- substM $ IxType iTy ixDict
+    ansWithLinTab <- buildFor (getNameHint i) d ixTy \i' ->
       extendSubst (i@>i') $ withTangentFunAsLambda $ linearizeBlock body
     (ans, linTab) <- unzipTab ansWithLinTab
     return $ WithTangent ans do
-      buildFor (getNameHint i) d (sink ixTy') \i' ->
+      buildFor (getNameHint i) d (sink ixTy) \i' ->
         tabApp (sink linTab) (Var i') >>= applyLinToTangents
   RunReader r lam -> do
     WithTangent r' rLin <- linearizeAtom r
