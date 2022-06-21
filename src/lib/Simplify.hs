@@ -574,10 +574,10 @@ projectDictMethod d i = do
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
-  For d iTy ixDict lam -> do
-    ixTy@(IxType ixTy' ixDict') <- substM $ IxType iTy ixDict
+  For d ixDict lam -> do
+    ixTy@(IxType _ ixDict') <- ixTyFromDict =<< substM ixDict
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- liftM Var $ emit $ Hof $ For d ixTy' ixDict' lam'
+    ans <- liftM Var $ emit $ Hof $ For d ixDict' lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
@@ -668,8 +668,8 @@ exceptToMaybeExpr expr = case expr of
   Op (ThrowException _) -> do
     ty <- getTypeSubst expr
     return $ NothingAtom ty
-  Hof (For ann iTy d (Lam (LamExpr b body))) -> do
-    ixTy <- substM $ IxType iTy d
+  Hof (For ann d (Lam (LamExpr b body))) -> do
+    ixTy <- ixTyFromDict =<< substM d
     maybes <- buildForAnn (getNameHint b) ann ixTy \i ->
       extendSubst (b@>Rename i) $ exceptToMaybeBlock body
     catMaybesE maybes

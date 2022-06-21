@@ -15,7 +15,7 @@ module QueryType (
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
   oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts
+  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict
   ) where
 
 import Control.Category ((>>>))
@@ -644,9 +644,9 @@ labeledRowDifference' (Ext (LabeledItems items) rest)
 
 getTypePrimHof :: PrimHof (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ ty dict f -> do
+  For _ dict f -> do
     Pi (PiType (PiBinder b _ _) _ eltTy) <- getTypeE f
-    ixTy <- IxType <$> substM ty <*> substM dict
+    ixTy <- ixTyFromDict =<< substM dict
     return $ TabTy (b:>ixTy) eltTy
   While _ -> return UnitTy
   Linearize f -> do
@@ -672,7 +672,7 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   CatchException f -> do
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ MaybeTy $ ignoreHoistFailure $ hoist b resultTy
-  Seq _ _ _ cinit _ -> getTypeE cinit
+  Seq _ _ cinit _ -> getTypeE cinit
 
 getTypeRWSAction :: Atom i -> TypeQueryM i o (Type o, Type o)
 getTypeRWSAction f = do
@@ -693,6 +693,12 @@ getClassTy (ClassDef _ _ bs _ _) = go bs
     go :: Nest Binder n l -> Type n
     go Empty = TyKind
     go (Nest (b:>ty) rest) = Pi $ PiType (PiBinder b ty PlainArrow) Pure $ go rest
+
+ixTyFromDict :: EnvReader m => Atom n -> m n (IxType n)
+ixTyFromDict dict = do
+  getType dict >>= \case
+    DictTy (DictType "Ix" _ [iTy]) -> return $ IxType iTy dict
+    _ -> error $ "Not an Ix dict: " ++ pprint dict
 
 -- === querying effects implementation ===
 
@@ -738,7 +744,7 @@ exprEffects expr = case expr of
     PtrStore _ _  -> return $ oneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
-    For _ _ _ f   -> functionEffs f
+    For _ _ f     -> functionEffs f
     While body    -> functionEffs body
     Linearize _   -> return Pure  -- Body has to be a pure function
     Transpose _   -> return Pure  -- Body has to be a pure function
@@ -751,7 +757,7 @@ exprEffects expr = case expr of
     CatchException f -> do
       effs <- functionEffs f
       return $ deleteEff ExceptionEffect effs
-    Seq _ _ _ _ f -> functionEffs f
+    Seq _ _ _ f   -> functionEffs f
   Case _ _ _ effs -> substM effs
 
 instance HasEffectsE Block where

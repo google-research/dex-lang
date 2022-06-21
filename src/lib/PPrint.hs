@@ -153,9 +153,9 @@ instance PrettyPrec (Expr n) where
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For ann _ _ (Lam lamExpr))) =
+  prettyPrec (Hof (For ann _ (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
-  prettyPrec (Hof (Seq ann _ _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
+  prettyPrec (Hof (Seq ann _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
     atPrec LowestPrec $ "seq" <+> pApp ann <+> pApp c <+> prettyLam (p (b:>ty) <> ".") effs body
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
@@ -370,7 +370,7 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyLam arr' ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      Abs Empty (Hof (For ann _ _ (Lam next)))
+      Abs Empty (Hof (For ann _ (Lam next)))
         | lamType == PrettyFor ann ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
@@ -927,7 +927,7 @@ prettyExprDefault expr =
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For ann _ _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
+    For ann _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
 
 instance PrettyPrec Direction where

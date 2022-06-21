@@ -40,19 +40,18 @@ instance HoistableState LFS where
 
 instance GenericTraverser LFS where
   traverseExpr expr = case expr of
-    Hof (For dir iTy ixDict (Lam body)) -> traverseFor Nothing dir iTy ixDict body
+    Hof (For dir ixDict (Lam body)) -> traverseFor Nothing dir ixDict body
     _ -> traverseExprDefault expr
 
 type Dest = Atom
 
-traverseFor :: Emits o => Maybe (Dest o) -> ForAnn -> Atom i -> Atom i -> LamExpr i -> LowerM i o (Expr o)
-traverseFor maybeDest dir iTy ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = do
+traverseFor :: Emits o => Maybe (Dest o) -> ForAnn -> Atom i -> LamExpr i -> LowerM i o (Expr o)
+traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = do
   initDest <- case maybeDest of
     Just  d -> return d
-    Nothing -> emitOp . AllocDest =<< getTypeSubst (Hof $ For dir iTy ixDict (Lam lam))
+    Nothing -> emitOp . AllocDest =<< getTypeSubst (Hof $ For dir ixDict (Lam lam))
   destTy <- getType initDest
   ty' <- substM ty
-  iTy' <- substM iTy
   ixDict' <- substM ixDict
   eff' <- substM $ ignoreHoistFailure $ hoist ib eff
   body' <- buildLam noHint arr (PairTy ty' destTy) eff' \b' -> do
@@ -60,7 +59,7 @@ traverseFor maybeDest dir iTy ixDict lam@(LamExpr (LamBinder ib ty arr eff) body
     idest <- emitOp $ IndexRef dest i
     extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
     return UnitVal
-  let seqHof = Hof $ Seq dir iTy' ixDict' initDest body'
+  let seqHof = Hof $ Seq dir ixDict' initDest body'
   case maybeDest of
     Just _  -> return seqHof
     Nothing -> Op . Freeze . Var <$> emit seqHof
@@ -110,7 +109,7 @@ traverseDeclNestWithDestS destMap s = \case
 
 traverseExprWithDest :: Emits o => Maybe (Dest o) -> Expr i -> LowerM i o (Expr o)
 traverseExprWithDest dest expr = case expr of
-  Hof (For dir iTy ixDict (Lam body)) -> traverseFor dest dir iTy ixDict body
+  Hof (For dir ixDict (Lam body)) -> traverseFor dest dir ixDict body
   _ -> do
     expr' <- traverseExprDefault expr
     case dest of
@@ -163,13 +162,13 @@ vectorizeLoopsRec frag = \case
     let narrowestTypeByteWidth = 1  -- TODO: This is too conservative! Find the shortest type in the loop.
     let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
     v <- case expr of
-      Hof (Seq dir _ (DictCon (IxFin (IdxRepVal n))) dest (Lam body))
+      Hof (Seq dir (DictCon (IxFin (IdxRepVal n))) dest (Lam body))
         | n `mod` loopWidth == 0 -> do
           Distinct <- getDistinct
           let vn = IdxRepVal $ n `div` loopWidth
           body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
           dest' <- applySubst frag dest
-          emit $ Hof $ Seq dir (TC $ Fin vn) (DictCon $ IxFin vn) dest' body'
+          emit $ Hof $ Seq dir (DictCon $ IxFin vn) dest' body'
       _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
     vectorizeLoopsRec (frag <.> b @> v) rest
 

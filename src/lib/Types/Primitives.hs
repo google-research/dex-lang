@@ -150,7 +150,7 @@ traversePrimOp = inline traverse
 {-# INLINABLE traversePrimOp #-}
 
 data PrimHof e =
-        For ForAnn e e e        -- index type, ix dict, body lambda
+        For ForAnn e e        -- ix dict, body lambda
       | While e
       | RunReader e e
       | RunWriter (BaseMonoidP e) e
@@ -160,7 +160,7 @@ data PrimHof e =
       | Linearize e
       | Transpose e
       -- Dex abstract machine ops
-      | Seq Direction e e e e   -- index type, ix dict, carry dests, body lambda
+      | Seq Direction e e e   -- ix dict, carry dests, body lambda
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }

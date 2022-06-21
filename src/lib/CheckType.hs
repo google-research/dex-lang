@@ -722,8 +722,8 @@ typeCheckPrimOp op = case op of
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ iTy ixDict f -> do
-    ixTy <- checkE $ IxType iTy ixDict
+  For _ ixDict f -> do
+    ixTy <- ixTyFromDict =<< substM ixDict
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
     checkAlphaEq (ixTypeType ixTy) argTy
     eff' <- liftHoistExcept $ hoist b eff
@@ -770,8 +770,8 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
-  Seq _ iTy ixDict carry f -> do
-    ixTy <- checkE $ IxType iTy ixDict
+  Seq _ ixDict carry f -> do
+    ixTy <- ixTyFromDict =<< substM ixDict
     carryTy' <- getTypeE carry
     Pi (PiType (PiBinder b argTy PlainArrow) eff UnitTy) <- getTypeE f
     checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') argTy

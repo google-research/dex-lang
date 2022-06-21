@@ -45,15 +45,15 @@ isTrivialIndex = \case
 
 instance GenericTraverser UTLS where
   traverseExpr expr = case expr of
-    Hof (For _ iTy ixDict (Lam (LamExpr b body@(Block _ decls a)))) -> do
+    Hof (For _ ixDict (Lam (LamExpr b body@(Block _ decls a)))) -> do
       isTrivialIndex (binderType b) >>= \case
         UnknownIxSet     -> traverseExprDefault expr
         SingletonIxSet i -> do
-          ixTy <- substM $ IxType iTy ixDict
+          ixTy <- ixTyFromDict =<< substM ixDict
           ans <- extendSubst (b @> SubstVal i) $ traverseDeclNest decls $ traverseAtom a
           liftM Atom $ buildTabLam noHint ixTy $ const $ return $ sink ans
         EmptyIxSet -> do
-          ixTy <- substM $ IxType iTy ixDict
+          ixTy <- ixTyFromDict =<< substM ixDict
           liftM Atom $ buildTabLam noHint ixTy \i -> do
             resTy' <- extendSubst (b @> Rename i) $ getTypeSubst body
             emitOp $ ThrowError (sink resTy')

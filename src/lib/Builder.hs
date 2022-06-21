@@ -780,7 +780,7 @@ buildForAnn hint ann ixTy@(IxType iTy ixDict) body = do
     body' <- buildBlock $ body $ sink v
     effs <- getEffects body'
     return $ Lam $ LamExpr (LamBinder b iTy PlainArrow effs) body'
-  liftM Var $ emit $ Hof $ For ann iTy ixDict lam
+  liftM Var $ emit $ Hof $ For ann ixDict lam
 
 buildFor :: (Emits n, ScopableBuilder m)
          => NameHint -> Direction -> IxType n
