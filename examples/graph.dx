@@ -14,16 +14,16 @@ All can be paralellized by the compiler due to the use of the
 These first two functions start with an adjaceny matrix that has `False`,
 for every entry, and write a `True` for every edge in the list or lists.
 
-def edgeListToMatrix (AsList _ edges: List (n & n)) : n=>n=>Bool =
-  yieldAccum OrMonoid \adjmat.
+def edgeListToMatrix {n} [Ix n] (AsList _ edges: List (n & n)) : n=>n=>Bool =
+  yield_accum OrMonoid \adjmat.
     for i.
       (from, to) = edges.i
       adjmat!from!to += True
 
-def childListsToMatrix (lists:n=>List n) : n=>n=>Bool =
+def childListsToMatrix {n} (lists:n=>List n) : n=>n=>Bool =
   for i.
     (AsList _ children) = lists.i
-    yieldAccum OrMonoid \mRef.
+    yield_accum OrMonoid \mRef.
       for k.
         mRef!(children.k) += True
 
@@ -31,14 +31,14 @@ def childListsToMatrix (lists:n=>List n) : n=>n=>Bool =
 These next two functions use the `List` monoid, meaning they
 start with the empty list, and append an element for every edge.
 
-def matrixToEdgeList (mat:n=>n=>Bool) : List (n & n) =
-  yieldAccum (ListMonoid (n & n)) \list.
+def matrixToEdgeList {n} (mat:n=>n=>Bool) : List (n & n) =
+  yield_accum (ListMonoid (n & n)) \list.
     for i j.
       if mat.i.j then
         append list (i, j)
 
-def childListsToEdgeList (lists:n=>List n) : List (n & n) =
-  yieldAccum (ListMonoid (n & n)) \list.
+def childListsToEdgeList {n} (lists:n=>List n) : List (n & n) =
+  yield_accum (ListMonoid (n & n)) \list.
     for i.
       (AsList _ children) = lists.i
       for_ j.
@@ -49,9 +49,9 @@ def childListsToEdgeList (lists:n=>List n) : List (n & n) =
 This next function again uses the `List` monoid, once
 for each row of the adjacency matrix.
 
-def matrixToChildLists (mat: n=>n=>Bool) : n=>List n =
+def matrixToChildLists {n} (mat: n=>n=>Bool) : n=>List n =
   for i.
-    yieldAccum (ListMonoid n) \list.
+    yield_accum (ListMonoid n) \list.
       for j.
         if mat.i.j then
           append list j
@@ -64,8 +64,8 @@ Just like for the adjacency matrices, Dex only requires a monoid
 on the innermost type being accumulated, and can automatically lift
 that monoid to operate on tables of that type.
 
-def edgeListToChildLists ((AsList _ edges) : List (n & n)) : n=>List n =
-  yieldAccum (ListMonoid n) \lists.
+def edgeListToChildLists {n} [Ix n] ((AsList _ edges) : List (n & n)) : n=>List n =
+  yield_accum (ListMonoid n) \lists.
     for i.
       (from, to) = edges.i
       append lists!from to
@@ -73,23 +73,23 @@ def edgeListToChildLists ((AsList _ edges) : List (n & n)) : n=>List n =
 
 '# Graph Operations
 
-def neighborhoodMap (lists:n=>List n) (f:(List n)->a) : n=>a =
+def neighborhoodMap {n a} (lists:n=>List n) (f:(List n)->a) : n=>a =
   map f lists
 
-def reverseEdgeList (AsList _ edges: List (n & n)) : List (n & n) =
+def reverseEdgeList {n} (AsList _ edges: List (n & n)) : List (n & n) =
   AsList _ for i.
     (from, to) = edges.i
     (to, from)
 
-def reverseChildLists (lists:n=>List n) : n=>List n =
-  yieldAccum (ListMonoid n) \outlists.
+def reverseChildLists {n} (lists:n=>List n) : n=>List n =
+  yield_accum (ListMonoid n) \outlists.
     for from.
       (AsList _ children) = lists.from
       for_ j.
         to = children.j
         append outlists!to from -- todo: test
 
-def pass_messages
+def pass_messages {n in out}
   (edges:n=>List n)
   (params:in=>out=>Float)
   (nodes:n=>in=>Float) : n=>out=>Float =
@@ -99,7 +99,7 @@ def pass_messages
         sum for k. nodes.(children.j).k .* params.k
       sum messages
 
-def graph_convnet (edges:n=>List n)
+def graph_convnet {n layers d} (edges:n=>List n)
   (params:layers=>d=>d=>Float)
   (nodes:n=>d=>Float) : d=>Float =
     update = \i x. pass_messages edges params.i x
