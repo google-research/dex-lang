@@ -13,7 +13,7 @@ jobs:
         os: [ubuntu-20.04]
         include:
           - os: ubuntu-20.04
-            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config
+            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wamerican
             path_extension: /usr/lib/llvm-12/bin
 
     steps:
