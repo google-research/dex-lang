@@ -225,7 +225,7 @@ data Arrow =
  | ImplicitArrow
  | ClassArrow
  | LinArrow
-   deriving (Show, Eq, Generic)
+   deriving (Show, Eq, Ord, Generic)
 
 instance Pretty Arrow where
   pretty arr = case arr of

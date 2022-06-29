@@ -4,7 +4,14 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module ConcreteSyntax (mustParseit, sourceBlocks, sourceBlock) where
+module ConcreteSyntax (
+  mustParseit, sourceBlocks, sourceBlock, joinPos,
+  binOptL, binOptR, nary,
+  WithSrc (..), CSourceBlock, CSourceBlock' (..),
+  CTopDecl (..), CBlock (..), CDecl (..), Group, Group'(..),
+  Bin, Bin' (..), Bracket (..), LabelPrefix (..), ForKind (..),
+  pattern ExprBlock, pattern Bracketed,
+  pattern Binary, pattern Unary, pattern Identifier) where
 
 import Control.Monad.Combinators.Expr qualified as Expr
 import Control.Monad.Reader
@@ -12,10 +19,12 @@ import Data.Char
 import Data.Functor
 import Data.HashSet qualified as HS
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map qualified as M
 import qualified Data.Scientific as Scientific
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text          qualified as T
+import Data.Tuple
 import Data.Void
 import Data.Word
 import GHC.Generics (Generic (..))
@@ -27,7 +36,8 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Err
 import LabeledItems
 import Name
-import Types.Primitives (LetAnn (..))
+import Types.Primitives hiding (Equal)
+import Types.Primitives qualified as P
 import Types.Source
 
 parseit :: Text -> Parser a -> Except a
@@ -46,7 +56,7 @@ sourceBlocks = manyTill (sourceBlock <* outputLines) eof
 -- === Parsing target ADT ===
 
 data WithSrc a = WithSrc SrcPosCtx a
-  deriving (Show)
+  deriving (Show, Functor)
 
 type CSourceBlock = SourceBlockP CSourceBlock'
 
@@ -63,10 +73,10 @@ data CTopDecl
   | CData Group -- Type constructor name and arguments
       (Maybe Group) -- Optional class constraints
       [Group] -- Constructor names and argument sets
-  | CInterface [CNames] -- Superclasses
-      CNames -- Class name and arguments
+  | CInterface [Group] -- Superclasses
+      Group -- Class name and arguments
       -- Method declarations: name, arguments, type.  TODO: Allow operators?
-      [(CNames, Group)]
+      [(Group, Group)]
   deriving (Show, Generic)
 
 data CDecl
@@ -84,8 +94,12 @@ data CDecl
 
 type Group = WithSrc Group'
 data Group'
-  = CIdentifier SourceName
-  | CPrim SourceName
+  -- TODO(axch): Be able to parse empty groups where allowed, e.g. {}
+  -- for an empty record or record pattern, or () for the nullary pair
+  -- constructor (if I want to do that with an empty group)
+  = CEmpty
+  | CIdentifier SourceName
+  | CPrim (PrimExpr Group)
   | CNat Word64
   | CInt Int
   | CString String
@@ -100,7 +114,7 @@ data Group'
   -- level.  We will enforce correct structure in the translation to
   -- abstract syntax.
   | CBin Bin Group Group -- could encode whitespace-as-application here or add another constructor for it
-  | CUn Un Group -- covers unary - and unary +
+  | CUn SourceName Group -- covers unary - and unary + among others
   -- The dot `.` wants loose precedence as a delimiter between lambda
   -- arguments and the body, but tight precedence as indexing.
   | CLambda [Group] CBlock
@@ -113,17 +127,37 @@ data Group'
 type Bin = WithSrc Bin'
 data Bin'
   = Juxtapose
-  | EvaluatedBinOp String
+  | EvalBinOp String
+  | Ampersand
   | IndexingDot
   | Comma
   | Colon
-  | Arrow
+  | DoubleColon
+  | Dollar
+  | Arrow Arrow
   | FatArrow  -- =>
   | Question
-  deriving (Show, Generic)
+  | Pipe
+  | Equal
+  deriving (Eq, Ord, Show, Generic)
 
-data Un = EvaluatedUnOp String
-  deriving (Show, Generic)
+interp_operator :: String -> Bin'
+interp_operator = \case
+  "&"   -> Ampersand
+  "."   -> IndexingDot
+  ","   -> Comma
+  ":"   -> Colon
+  "::"  -> DoubleColon
+  "$"   -> Dollar
+  "->"  -> Arrow PlainArrow
+  "?->" -> Arrow ImplicitArrow
+  "?=>" -> Arrow ClassArrow
+  "=>"  -> FatArrow
+  "?"   -> Question
+  "|"   -> Pipe
+  "="   -> Equal
+  " "   -> Juxtapose  -- The parser in the precedence table canonicalizes already
+  name  -> EvalBinOp $ "(" <> name <> ")"
 
 -- We can add others, like @{ or [| or whatever
 data Bracket = Square | Curly | CurlyPipe
@@ -138,22 +172,60 @@ data LabelPrefix
   deriving (Show, Generic)
 
 data ForKind
-  = For
-  | For_
-  | Rof
-  | Rof_
-  | View
+  = KFor
+  | KFor_
+  | KRof
+  | KRof_
+  | KView
   deriving (Show, Generic)
 
 data CBlock = CBlock [CDecl] -- last decl should be a CExpr
   deriving (Show, Generic)
 
-data CNames = CNames [SourceName]
-  deriving (Show, Generic)
+pattern ExprBlock :: Group -> CBlock
+pattern ExprBlock g <- (CBlock [CExpr g]) where
+  ExprBlock g = CBlock [CExpr g]
 
--- canPair is used for the whitespace and . operators, which appear as
--- operators inside parens but as special separators in syntax for
--- def, for, and lambda.
+pattern Bracketed :: Bracket -> Group -> Group
+pattern Bracketed b g <- (WithSrc _ (CBracket b g)) where
+  Bracketed b g = WithSrc Nothing $ CBracket b g
+
+pattern Binary :: Bin' -> Group -> Group -> Group
+pattern Binary op lhs rhs <- (WithSrc _ (CBin (WithSrc _ op) lhs rhs)) where
+  Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc Nothing op) lhs rhs
+
+pattern Unary :: SourceName -> Group -> Group
+pattern Unary op g <- (WithSrc _ (CUn op g)) where
+  Unary op g = WithSrc Nothing $ CUn op g
+
+pattern Identifier :: SourceName -> Group
+pattern Identifier name <- (WithSrc _ (CIdentifier name)) where
+  Identifier name = WithSrc Nothing $ CIdentifier name
+
+binOptL :: Bin' -> Group -> (Maybe Group, Maybe Group)
+binOptL tag = \case
+  (Binary tag' lhs rhs) | tag == tag' -> (Just lhs, Just rhs)
+  rhs -> (Nothing, Just rhs)
+
+binOptR :: Bin' -> Group -> (Maybe Group, Maybe Group)
+binOptR tag = \case
+  (Binary tag' lhs rhs) | tag == tag' -> (Just lhs, Just rhs)
+  lhs -> (Just lhs, Nothing)
+
+-- Unroll a nest of binary applications of the given Bin' into a flat
+-- list.  If the top group is not such a binary application, return it
+-- as a singleton.
+nary :: Bin' -> Group -> [Group]
+nary op g = go g [] where
+  go (Binary binOp lhs rhs) rest | op == binOp = go lhs $ go rhs rest
+  go _ rest = rest
+
+-- Roll up a list of groups as binary applications.
+nary' :: Bin' -> [Group] -> Group
+nary' _ [] = WithSrc Nothing CEmpty
+nary' _ (lst:[]) = lst
+nary' op (g:rest) = Binary op g $ nary' op rest
+
 data ParseCtx = ParseCtx { curIndent :: Int
                          , canBreak  :: Bool }
 type Parser = ReaderT ParseCtx (Parsec Void Text)
@@ -288,7 +360,7 @@ interfaceDef :: Parser CTopDecl
 interfaceDef = do
   keyWord InterfaceKW
   superclasses <- superclassConstraints
-  className <- cNames  -- TODO Insist on a non-empty list of names?
+  className <- cNames  -- TODO(axch) Insist on a non-empty list of names?
   methodDecls <- onePerLine do
     methodName <- cNames
     void $ label "type annotation" $ sym ":"
@@ -296,7 +368,7 @@ interfaceDef = do
     return (methodName, ty)
   return $ CInterface superclasses className methodDecls
 
-superclassConstraints :: Parser [CNames]
+superclassConstraints :: Parser [Group]
 superclassConstraints = optionalMonoid $ brackets $ cNames `sepBy` sym ","
 
 topLet :: Parser CTopDecl
@@ -398,11 +470,11 @@ cFor = do
   sym "."
   body <- cBlock
   return $ CFor kw indices body
-  where forKW =     keyWord ForKW  $> For
-                <|> keyWord For_KW $> For_
-                <|> keyWord RofKW  $> Rof
-                <|> keyWord Rof_KW $> Rof_
-                <|> keyWord ViewKW $> View
+  where forKW =     keyWord ForKW  $> KFor
+                <|> keyWord For_KW $> KFor_
+                <|> keyWord RofKW  $> KRof
+                <|> keyWord Rof_KW $> KRof_
+                <|> keyWord ViewKW $> KView
 
 cCase :: Parser Group'
 cCase = do
@@ -440,7 +512,11 @@ leafGroupNoBrackets = do
                  _   -> braces $ CBracket Curly <$> cGroupPrefixAt
     '\"' -> CString <$> strLit
     '\'' -> CChar <$> charLit
-    '%'  -> CPrim <$> primName
+    '%'  -> do
+      name <- primName
+      case strToPrimName name of
+        Just prim -> CPrim <$> traverse (const cGroupNoJuxt) prim
+        Nothing   -> fail $ "Unrecognized primitive: " ++ name
     '#'  -> liftM2 CLabel labelPrefix fieldLabel
     _ | isDigit next -> (    CNat   <$> natLit
                          <|> CFloat <$> doubleLit)
@@ -555,6 +631,8 @@ leafGroupNoBrackets = do
 --     of taken literally.  In this capacity, the only requirement is
 --     that it bind tighter than the separator between the label and
 --     the value, namely, `:` or `=`.
+--   - At-ellipsis @... is used in such syntaxes as a prefix to
+--     denote that the field label refers to multiple fields.
 --
 -- - Special snowflakes that interact with almost nothing
 --   - Function composition >>> and <<< are logically the same
@@ -614,23 +692,24 @@ replaceOp name op tbl = map (map replace) tbl where
 ops :: PrecTable Group
 ops =
   [ [symOpL ".", symOpL "!"]
-  , [("space", Expr.InfixL $ opWithSrc $ sc $> (binApp " "))]
+  , [("space", Expr.InfixL $ opWithSrc $ sc $> (binApp Juxtapose))]
   , [unOpPre "-", unOpPre "+"]
   , [("other", anySymOp)] -- other ops with default fixity
   , [symOpL "+", symOpL "-", symOpL "||", symOpL "&&",
      symOpR "=>",
-     ("backquote", Expr.InfixL $ opWithSrc $ backquoteName >>= (return . binApp)),
+     ("backquote", Expr.InfixL $ opWithSrc $ backquoteName >>= (return . binApp . EvalBinOp)),
      symOpL "<<<", symOpL ">>>", symOpL "<<&", symOpL "&>>"]
   , [unOpPre "..", unOpPre "..<",
      unOpPost "..", unOpPost "<.."]
   , [symOpR "->", symOpR "--o", symOpR "?->", symOpR "?=>"]
   , [symOpL "@"]
+  , [unOpPre "@..."]
+  , [unOpPre "..."]
   , [symOpL "::"]
   , [symOpR "$"]
   , [symOpL "+=", symOpL ":="]
   , [symOpL ":"]
   , [symOpL "="]
-  , [unOpPre "..."]
   , [symOpL "?"]
   -- Weak decision to associate `,` and `&` to the right because n-ary
   -- tuples are internally represented curried, so this puts the new
@@ -657,7 +736,7 @@ opWithSrc p = do
 anySymOp :: Expr.Operator Parser Group
 anySymOp = Expr.InfixL $ opWithSrc $ do
   s <- label "infix operator" (mayBreak anySym)
-  return $ binApp s
+  return $ binApp $ interp_operator s
 
 infixSym :: SourceName -> Parser ()
 infixSym s = mayBreak $ sym $ T.pack s
@@ -671,7 +750,7 @@ symOpR s = (s, Expr.InfixR $ symOp s)
 symOp :: SourceName -> Parser (Group -> Group -> Group)
 symOp s = opWithSrc $ do
   label "infix operator" (infixSym s)
-  return $ binApp $ "(" <> s <> ")"
+  return $ binApp $ interp_operator s
 
 unOpPre :: SourceName -> (SourceName, Expr.Operator Parser Group)
 unOpPre s = (s, Expr.Prefix $ unOp s)
@@ -682,14 +761,14 @@ unOpPost s = (s, Expr.Postfix $ unOp s)
 unOp :: SourceName -> Parser (Group -> Group)
 unOp s = do
   ((), pos) <- withPos $ sym "-"
-  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (Just pos) grpPos) $ CUn (EvaluatedUnOp s) g
+  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (Just pos) grpPos) $ CUn s g
 
-binApp :: SourceName -> SrcPos -> Group -> Group -> Group
+binApp :: Bin' -> SrcPos -> Group -> Group -> Group
 binApp f pos x y = joinSrc3 f' x y $ CBin f' x y
-  where f' = WithSrc (Just pos) $ EvaluatedBinOp f
+  where f' = WithSrc (Just pos) f
 
-cNames :: Parser CNames
-cNames = CNames <$> many anyName
+cNames :: Parser Group
+cNames = nary' Juxtapose <$> map (fmap CIdentifier) <$> many (withSrc anyName)
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
@@ -965,3 +1044,102 @@ lexeme = L.lexeme sc
 symbol :: Text -> Parser ()
 symbol s = void $ L.symbol sc s
 
+-- === primitive constructors and operators ===
+
+type PrimName = PrimExpr ()
+
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s builtinNames
+
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
+  Just s  -> s
+  Nothing -> show prim
+
+showPrimName :: PrimExpr e -> String
+showPrimName prim = primNameToStr $ fmap (const ()) prim
+{-# NOINLINE showPrimName #-}
+
+-- TODO: Can we derive these generically? Or use Show/Read?
+--       (These prelude-only names don't have to be pretty.)
+builtinNames :: M.Map String PrimName
+builtinNames = M.fromList
+  [ ("iadd", binOp IAdd), ("isub", binOp ISub)
+  , ("imul", binOp IMul), ("fdiv", binOp FDiv)
+  , ("fadd", binOp FAdd), ("fsub", binOp FSub)
+  , ("fmul", binOp FMul), ("idiv", binOp IDiv)
+  , ("irem", binOp IRem)
+  , ("fpow", binOp FPow)
+  , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot), ("xor", binOp BXor)
+  , ("shl" , binOp BShL), ("shr" , binOp BShR)
+  , ("ieq" , binOp (ICmp P.Equal)), ("feq", binOp (FCmp P.Equal))
+  , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
+  , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
+  , ("fneg", unOp  FNeg)
+  , ("exp" , unOp  Exp), ("exp2"  , unOp  Exp2)
+  , ("log" , unOp Log), ("log2" , unOp Log2 ), ("log10" , unOp Log10)
+  , ("sin" , unOp  Sin), ("cos" , unOp Cos)
+  , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
+  , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
+  , ("log1p", unOp Log1p), ("lgamma", unOp LGamma)
+  , ("sumToVariant"   , OpExpr $ SumToVariant ())
+  , ("throwError"     , OpExpr $ ThrowError ())
+  , ("throwException" , OpExpr $ ThrowException ())
+  , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
+  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend (BaseMonoid () ()) ())
+  , ("get"        , OpExpr $ PrimEffect () $ MGet)
+  , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
+  , ("indexRef"   , OpExpr $ IndexRef () ())
+  , ("select"     , OpExpr $ Select () () ())
+  , ("while"           , HofExpr $ While ())
+  , ("linearize"       , HofExpr $ Linearize ())
+  , ("linearTranspose" , HofExpr $ Transpose ())
+  , ("runReader"       , HofExpr $ RunReader () ())
+  , ("runWriter"       , HofExpr $ RunWriter (BaseMonoid () ()) ())
+  , ("runState"        , HofExpr $ RunState  () ())
+  , ("runIO"           , HofExpr $ RunIO ())
+  , ("catchException"  , HofExpr $ CatchException ())
+  , ("TyKind"    , TCExpr $ TypeKind)
+  , ("Float64"   , TCExpr $ BaseType $ Scalar Float64Type)
+  , ("Float32"   , TCExpr $ BaseType $ Scalar Float32Type)
+  , ("Int64"     , TCExpr $ BaseType $ Scalar Int64Type)
+  , ("Int32"     , TCExpr $ BaseType $ Scalar Int32Type)
+  , ("Word8"     , TCExpr $ BaseType $ Scalar Word8Type)
+  , ("Word32"    , TCExpr $ BaseType $ Scalar Word32Type)
+  , ("Word64"    , TCExpr $ BaseType $ Scalar Word64Type)
+  , ("Int32Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Int32Type)
+  , ("Word8Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
+  , ("Word32Ptr" , TCExpr $ BaseType $ ptrTy $ Scalar Word32Type)
+  , ("Word64Ptr" , TCExpr $ BaseType $ ptrTy $ Scalar Word64Type)
+  , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
+  , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
+  , ("Fin"       , TCExpr $ Fin ())
+  , ("Label"     , TCExpr $ LabelType)
+  , ("Ref"       , TCExpr $ RefType (Just ()) ())
+  , ("PairType"  , TCExpr $ ProdType [(), ()])
+  , ("UnitType"  , TCExpr $ ProdType [])
+  , ("EffKind"   , TCExpr $ EffectRowKind)
+  , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
+  , ("pair", ConExpr $ ProdCon [(), ()])
+  , ("fstRef", OpExpr $ ProjRef 0 ())
+  , ("sndRef", OpExpr $ ProjRef 1 ())
+  , ("cast", OpExpr  $ CastOp () ())
+  , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
+  , ("free" , OpExpr $ IOFree ())
+  , ("ptrOffset", OpExpr $ PtrOffset () ())
+  , ("ptrLoad"  , OpExpr $ PtrLoad ())
+  , ("ptrStore" , OpExpr $ PtrStore () ())
+  , ("dataConTag", OpExpr $ DataConTag ())
+  , ("toEnum"    , OpExpr $ ToEnum () ())
+  , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
+  , ("projMethod0", OpExpr $ ProjMethod () 0)
+  , ("projMethod1", OpExpr $ ProjMethod () 1)
+  , ("projMethod2", OpExpr $ ProjMethod () 2)
+  , ("explicitDict", ConExpr $ ExplicitDict () ())
+  , ("explicitApply", OpExpr $ ExplicitApply () ())
+  , ("monoLit", OpExpr $ MonoLiteral ())
+  ]
+  where
+    binOp  op = OpExpr $ BinOp op () ()
+    unOp   op = OpExpr $ UnOp  op ()
+    ptrTy  ty = PtrType (Heap CPU, ty)
