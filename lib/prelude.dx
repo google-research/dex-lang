@@ -1158,16 +1158,23 @@ def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
 def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
   for i j. select (ordinal i == ordinal j) one zero
 
-'## cumSum
+'## cumulative sum
 TODO: Move this to be with reductions?
 It's a kind of `scan`.
 
-def cumsum {n} (xs: n=>Float) : n=>Float =
-  with_state 0.0 \total.
+def cumsum {n a} [Add a] (xs: n=>a) : n=>a =
+  with_state zero \total.
     for i.
       newTotal = get total + xs.i
       total := newTotal
       newTotal
+
+def cumsum_low {n a} [Add a] (xs: n=>a) : n=>a =
+  with_state zero \total.
+    for i.
+      oldTotal = get total
+      total := oldTotal + xs.i
+      oldTotal
 
 '## Automatic differentiation
 
@@ -2330,13 +2337,6 @@ def lines (source:String) : List String =
 
 
 '## Probability
-
-def cumsum_low {n} (xs: n=>Float) : n=>Float =
-  with_state 0.0 \total.
-    for i.
-      oldTotal = get total
-      total := oldTotal + xs.i
-      oldTotal
 
 -- cdf should include 0.0 but not 1.0
 def categorical_from_cdf {n} (cdf: n=>Float) (key: Key) : n =
