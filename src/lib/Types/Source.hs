@@ -59,6 +59,7 @@ data UVar (n::S) =
  | UTyConVar   (Name TyConNameC   n)
  | UDataConVar (Name DataConNameC n)
  | UClassVar   (Name ClassNameC   n)
+ | UEffectVar  (Name EffNameC     n)
  | UMethodVar  (Name MethodNameC  n)
    deriving (Eq, Ord, Show, Generic)
 
@@ -156,6 +157,11 @@ data UDecl (n::S) (l::S) where
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
+    -> UDecl n l
+  UEffectDecl
+    :: UBinder EffNameC n p            -- effect name
+    -> Nest (UBinder MethodNameC) p l  -- operation names
+    -> [UMethodType n]                 -- operation types
     -> UDecl n l
 
 type UType = UExpr
@@ -366,15 +372,16 @@ instance Pretty (SourceMap n) where
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
 instance GenericE UVar where
-  type RepE UVar = EitherE5 (Name AtomNameC)    (Name TyConNameC)
+  type RepE UVar = EitherE6 (Name AtomNameC)    (Name TyConNameC)
                             (Name DataConNameC) (Name ClassNameC)
-                            (Name MethodNameC)
+                            (Name MethodNameC)  (Name EffNameC)
   fromE name = case name of
     UAtomVar    v -> Case0 v
     UTyConVar   v -> Case1 v
     UDataConVar v -> Case2 v
     UClassVar   v -> Case3 v
     UMethodVar  v -> Case4 v
+    UEffectVar  v -> Case5 v
   {-# INLINE fromE #-}
 
   toE name = case name of
@@ -383,7 +390,7 @@ instance GenericE UVar where
     Case2 v -> UDataConVar v
     Case3 v -> UClassVar   v
     Case4 v -> UMethodVar  v
-    _ -> error "impossible"
+    Case5 v -> UEffectVar  v
   {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
@@ -393,6 +400,7 @@ instance Pretty (UVar n) where
     UDataConVar v -> "Data constructor name: " <> pretty v
     UClassVar   v -> "Class name: " <> pretty v
     UMethodVar  v -> "Method name: " <> pretty v
+    UEffectVar  v -> "Effect name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
 instance SinkableE      UVar

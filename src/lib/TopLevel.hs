@@ -266,6 +266,7 @@ runEnvQuery query = do
             UDataConVar v' -> pprint <$> lookupEnv v'
             UClassVar   v' -> pprint <$> lookupEnv v'
             UMethodVar  v' -> pprint <$> lookupEnv v'
+            UEffectVar  v' -> pprint <$> lookupEnv v'
           logTop $ TextOut $ "Binding:\n" ++ info
 
 blockRequiresBench :: SourceBlock -> Bool

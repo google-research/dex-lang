@@ -1809,7 +1809,8 @@ instance Color MethodNameC     where getColorRep = MethodNameC
 instance Color ImpFunNameC     where getColorRep = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep = ObjectFileNameC
 instance Color ModuleNameC     where getColorRep = ModuleNameC
-instance Color PtrNameC        where getColorRep = ModuleNameC
+instance Color PtrNameC        where getColorRep = PtrNameC
+instance Color EffNameC        where getColorRep = EffNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -2333,6 +2334,7 @@ data C =
   | ObjectFileNameC
   | ModuleNameC
   | PtrNameC
+  | EffNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 

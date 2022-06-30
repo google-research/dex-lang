@@ -166,6 +166,7 @@ sourceBlock' =
   <|> liftM EvalUDecl (instanceDef True  <* eolf)
   <|> liftM EvalUDecl (instanceDef False <* eolf)
   <|> liftM EvalUDecl (interfaceDef <* eolf)
+  <|> liftM EvalUDecl (effectDef <* eolf)
   <|> liftM (Command (EvalExpr Printed)) (expr <* eolf)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -282,21 +283,30 @@ topLet = do
 superclassConstraints :: Parser [(UType VoidS)]
 superclassConstraints = optionalMonoid $ brackets $ uType `sepBy` sym ","
 
-interfaceDef :: Parser (UDecl VoidS VoidS)
-interfaceDef = do
-  keyWord InterfaceKW
-  superclasses <- superclassConstraints
-  (tyConName, tyConParams) <- tyConDef
+methodSigList :: Parser (Nest (UBinder MethodNameC) VoidS VoidS, [UMethodType VoidS])
+methodSigList = do
   (methodNames, methodTys) <- unzip <$> onePerLine do
     v <- anyName
     explicit <- many anyName
     ty <- annot uType
     return (fromString v, UMethodType (Left $ explicit) ty)
-  let methodNames' :: Nest (UBinder MethodNameC) VoidS VoidS
-      methodNames' = toNest methodNames
-  let tyConParams' = tyConParams
-  return $ UInterface tyConParams' superclasses methodTys
-                      (fromString tyConName) methodNames'
+  return (toNest methodNames, methodTys)
+
+interfaceDef :: Parser (UDecl VoidS VoidS)
+interfaceDef = do
+  keyWord InterfaceKW
+  superclasses <- superclassConstraints
+  (tyConName, tyConParams) <- tyConDef
+  (methodNames, methodTys) <- methodSigList
+  return $ UInterface tyConParams superclasses methodTys
+                      (fromString tyConName) methodNames
+
+effectDef :: Parser (UDecl VoidS VoidS)
+effectDef = do
+  keyWord EffectKW
+  effName <- upperName <|> symName
+  (methodNames, methodTys) <- methodSigList
+  return $ UEffectDecl (fromString effName) methodNames methodTys
 
 toNest :: (IsString (a VoidS VoidS)) => [String] -> Nest a VoidS VoidS
 toNest = toNestParsed . map fromString
@@ -1095,6 +1105,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
+             | EffectKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1154,6 +1165,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ViewKW -> "view"
       ImportKW -> "import"
       ForeignKW -> "foreign"
+      EffectKW -> "effect"
 
 keyWordSet :: HS.HashSet String
 keyWordSet = HS.fromList keyWordStrs
@@ -1162,7 +1174,7 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
-               "do", "view", "import", "foreign"]
+               "do", "view", "import", "foreign", "effect"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $
