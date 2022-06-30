@@ -143,6 +143,13 @@ def cumsumplus {n} : n=>Float -> n=>Float =
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2., 4., 7.]
 
+def cumsum2d {n m a} [Add a] (xs:n=>m=>a) : n=>m=>a =
+  cumsum for i. cumsum xs.i
+
+xs : (Fin 4)=>(Fin 3)=>Float = arb $ new_key 0
+sum (sum xs) ~~ (cumsum2d xs).(3@_).(2@_)
+> True
+
 :p [False, False, True]
 > [False, False, True]
 
