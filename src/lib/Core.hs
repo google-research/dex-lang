@@ -253,6 +253,13 @@ instance (Monad m, ExtOutMap Env decls, OutFrag decls)
   unsafeGetEnv = getOutMapInplaceT
   {-# INLINE unsafeGetEnv #-}
 
+instance ( Monad m
+         , ExtOutMap Env d1, OutFrag d1
+         , ExtOutMap Env d2, OutFrag d2)
+         => EnvReader (DoubleInplaceT Env d1 d2 m) where
+  unsafeGetEnv = liftDoubleInplaceT $ getOutMapInplaceT
+  {-# INLINE unsafeGetEnv #-}
+
 instance (Monad m, ExtOutMap Env decls, OutFrag decls)
          => EnvExtender (InplaceT Env decls m) where
   refreshAbs ab cont = UnsafeMakeInplaceT \env decls ->

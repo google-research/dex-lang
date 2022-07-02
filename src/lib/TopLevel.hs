@@ -47,7 +47,7 @@ import Name
 import Parser
 import Syntax
 import Builder
-import CheckType (CheckableE (..), asFFIFunType, asFirstOrderFunction)
+import CheckType (CheckableE (..), asFFIFunType, asSpecializableFunction)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -227,7 +227,7 @@ evalSourceBlock' mname block = case sbContents block of
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
         vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
-        vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
+        vCore <- emitBinding hint (AtomNameBinding $ TopFunBound naryPiTy $ FFITopFun vImp)
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
@@ -434,7 +434,9 @@ evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBlock typed = do
   opt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock opt
-  SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
+  simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
+  evalRequiredSpecializations simplifiedBlock
+  SimplifiedBlock simp recon <- return simplifiedBlock
   lowered <- case useExperimentalLowering of
     False -> return simp
     True  -> do
@@ -445,6 +447,23 @@ evalBlock typed = do
   result <- evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
+
+evalRequiredSpecializations
+  :: (Topper m, Mut n, SinkableE e, SubstE Name e, HoistableE e)
+  => e n -> m n ()
+evalRequiredSpecializations e = do
+  forM_ (freeAtomVarsList e) \v -> do
+    lookupAtomName v >>= \case
+      TopFunBound _ (SpecializedTopFun _ _) ->
+        queryImpCache v >>= \case
+          Nothing -> evalSpecialization v
+          Just _ -> return ()
+      _ -> return ()
+
+evalSpecialization :: (Topper m, Mut n) => AtomName n -> m n ()
+evalSpecialization fname = do
+  TopFunBound fTy (SpecializedTopFun fDef args) <- lookupAtomName fname
+  compileTopLevelFun fname fTy fDef args
 
 useExperimentalLowering :: Bool
 useExperimentalLowering = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_LOWER"
@@ -461,30 +480,46 @@ execUDecl mname decl = do
     UDeclResultWorkRemaining block declAbs -> do
       result <- evalBlock block
       result' <- case declAbs of
-        Abs (ULet NoInlineLet (UPatAnn p _) _) _ ->
-          compileTopLevelFun (getNameHint p) result
+        Abs (ULet NoInlineLet (UPatAnn p _) _) _ -> do
+          ty <- getType result
+          asSpecializableFunction ty >>= \case
+            Just (n, fty) -> do
+              f <- emitBinding (getNameHint p) $
+                AtomNameBinding $ TopFunBound fty $ UnspecializedTopFun n result
+              -- warm up cache if it's already sufficiently specialized
+              when (n == 0) do
+                fSpecial <- emitSpecialization (getNameHint p) $ AppSpecialization f []
+                evalRequiredSpecializations (Var fSpecial)
+              return $ Var f
+            Nothing -> throw TypeErr $
+              "Not a valid @noinline function type: " ++ pprint ty
         _ -> return result
       emitSourceMap =<< applyUDeclAbs declAbs result'
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => NameHint -> Atom n -> m n (Atom n)
-compileTopLevelFun hint f = do
-  ty <- getType f
-  naryPi <- asFirstOrderFunction ty >>= \case
-    Nothing -> throw TypeErr "@noinline functions must be first-order"
-    Just naryPi -> return naryPi
-  fSimp <- simplifyTopFunction naryPi f
+compileTopLevelFun
+  :: (Topper m, Mut n)
+  => AtomName n -> NaryPiType n -> Atom n -> [Atom n] -> m n ()
+compileTopLevelFun fname naryPi f staticArgs = do
+  f' <- forceDeferredInlining f
+  fSimp <- simplifyTopFunction naryPi f' staticArgs
+  evalRequiredSpecializations fSimp
   fImp <- toImpStandaloneFunction fSimp
-  fSimpName <- emitBinding hint $ AtomNameBinding $ SimpLamBound naryPi fSimp
-  fImpName <- emitImpFunBinding hint fImp
-  extendImpCache fSimpName fImpName
+  fImpName <- emitImpFunBinding (getNameHint fname) fImp
+  extendImpCache fname fImpName
   -- TODO: this is a hack! We need a better story for C/LLVM names.
   let cFunName = pprint fImpName
   fObj <- toCFunction cFunName fImp
   extendObjCache fImpName fObj
-  return $ Var fSimpName
 {-# SCC compileTopLevelFun #-}
+
+forceDeferredInlining :: EnvReader m => Atom n -> m n (Atom n)
+forceDeferredInlining (Var v) =
+  lookupAtomName v >>= \case
+    TopFunBound _ (UnspecializedTopFun _ f) -> return f
+    _ -> return $ Var v
+forceDeferredInlining f = return f
 
 toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
 toCFunction fname f = do

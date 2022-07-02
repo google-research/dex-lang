@@ -11,7 +11,7 @@ module QueryType (
   caseAltsBinderTys, depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getBaseMonoidType, getReferentTy,
   getMethodIndex,
-  instantiateDataDef, instantiateDepPairTy, instantiatePi, instantiateTabPi,
+  instantiateDataDef, instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType,
   oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
@@ -125,6 +125,15 @@ instantiateDataDef :: ScopeReader m => DataDef n -> DataDefParams n -> m n [Data
 instantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons) (DataDefParams xs1 xs2) = do
   fromListE <$> applyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (map SubstVal $ xs1 <> xs2)
 {-# INLINE instantiateDataDef #-}
+
+instantiateNaryPi :: EnvReader m => NaryPiType n -> [Atom n] -> m n (NaryPiType n)
+instantiateNaryPi (NaryPiType bs eff resultTy) args = do
+  PairB bs1 bs2 <- return $ splitNestAt (length args) $ nonEmptyToNest bs
+  let bs2' = case bs2 of
+               Empty -> error "expected a nonempty list of runtime args"
+               Nest x y -> NonEmptyNest x y
+  applySubst (bs1 @@> map SubstVal args) (NaryPiType bs2' eff resultTy)
+{-# INLINE instantiateNaryPi #-}
 
 instantiateDepPairTy :: ScopeReader m => DepPairType n -> Atom n -> m n (Type n)
 instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)

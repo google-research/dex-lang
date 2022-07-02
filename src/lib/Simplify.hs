@@ -6,9 +6,11 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-                , liftSimplifyM, buildBlockSimplified, emitSimplified
-                , dceApproxBlock) where
+module Simplify
+  ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
+  , simplifyTopFunctionAssumeNoTopEmissions
+  , buildBlockSimplified, emitSimplified
+  , dceApproxBlock) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -25,7 +27,7 @@ import Name
 import Builder
 import Syntax
 import CheckType (CheckableE (..), isData)
-import Util (enumerate, foldMapM, restructure)
+import Util (enumerate, foldMapM, restructure, splitAtExact)
 import QueryType
 import CheapReduction
 import Linearize
@@ -38,21 +40,47 @@ import Types.Primitives
 class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
-  { runSimplifyM' :: SubstReaderT AtomSubstVal (BuilderT HardFailM) i o a }
+  { runSimplifyM'
+    :: SubstReaderT AtomSubstVal DoubleBuilder i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
-           , Builder, EnvReader, SubstReader AtomSubstVal, MonadFail )
+           , EnvReader, SubstReader AtomSubstVal, MonadFail
+           , Builder, HoistingTopBuilder)
 
-liftSimplifyM :: (SinkableE e, EnvReader m) => SimplifyM n n (e n) -> m n (e n)
-liftSimplifyM cont = do
-  liftBuilder $ runSubstReaderT idSubst $ runSimplifyM' cont
+liftSimplifyM
+  :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
+  => (forall l. DExt n l => SimplifyM n l (e l))
+  -> m n (e n)
+liftSimplifyM cont = liftDoubleBuilder $
+  runSubstReaderT (sink idSubst) $ runSimplifyM' cont
 {-# INLINE liftSimplifyM #-}
+
+liftSimplifyMAssumeNoTopEmissions
+  :: (SinkableE e, SubstE Name e, EnvReader m)
+  => (forall l. DExt n l => SimplifyM l l (e l))
+  -> m n (e n)
+liftSimplifyMAssumeNoTopEmissions cont = liftDoubleBuilderAssumeNoTopEmissions $
+  runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+{-# INLINE liftSimplifyMAssumeNoTopEmissions #-}
+
+liftDoubleBuilderAssumeNoTopEmissions
+  :: (EnvReader m, SinkableE e, SubstE Name e)
+  => (forall l. DExt n l => DoubleBuilder l (e l))
+  -> m n (e n)
+liftDoubleBuilderAssumeNoTopEmissions cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return $ runHardFail do
+    Abs frag e <- runTopBuilderT env $ localTopBuilder $ liftDoubleBuilder cont
+    case checkNoBinders frag of
+      Nothing -> error "there weren't supposed to be any emissions!"
+      Just UnitB -> return e
 
 buildBlockSimplified
   :: (EnvReader m)
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Block n)
-buildBlockSimplified m =
-  liftSimplifyM do
+buildBlockSimplified m = do
+  liftSimplifyMAssumeNoTopEmissions do
     block <- liftBuilder $ buildBlock m
     buildBlock $ simplifyBlock block
 
@@ -70,17 +98,43 @@ data SimplifiedBlock n = SimplifiedBlock (Block n) (ReconstructAtom n)
 
 -- TODO: extend this to work on functions instead of blocks (with blocks still
 -- accessible as nullary functions)
-simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
+simplifyTopBlock :: (TopBuilder m, Mut n) => Block n -> m n (SimplifiedBlock n)
 simplifyTopBlock block = liftSimplifyM do
   (Abs UnitB block', Abs UnitB recon) <- simplifyAbs $ Abs UnitB block
   return $ SimplifiedBlock block' recon
 {-# SCC simplifyTopBlock #-}
 
-simplifyTopFunction :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
-simplifyTopFunction ty f = liftSimplifyM $
-  buildNaryLamExpr ty \xs ->
-    dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
+simplifyTopFunction
+  :: (TopBuilder m, Mut n)
+  => NaryPiType n -> Atom n -> [Atom n]
+  -> m n (NaryLamExpr n)
+simplifyTopFunction ty f staticArgs = liftSimplifyM $
+  simplifyTopFunction' (sink ty) (sink f) (map sink staticArgs)
 {-# SCC simplifyTopFunction #-}
+
+simplifyTopFunction'
+  :: NaryPiType o -> Atom o -> [Atom o]
+  -> SimplifyM i o (NaryLamExpr o)
+simplifyTopFunction' ty f staticArgs = do
+  buildNaryLamExpr ty \xs -> do
+    let allArgs = prependList (map sink staticArgs) $ fmap Var xs
+    dropSubst $ simplifyExpr $ App (sink f) allArgs
+{-# SCC simplifyTopFunction' #-}
+
+simplifyTopFunctionAssumeNoTopEmissions
+  :: EnvReader m
+  => NaryPiType n -> Atom n -> [Atom n]
+  -> m n (NaryLamExpr n)
+simplifyTopFunctionAssumeNoTopEmissions ty f staticArgs =
+  liftSimplifyMAssumeNoTopEmissions $
+    simplifyTopFunction' (sink ty) (sink f) (map sink staticArgs)
+{-# SCC simplifyTopFunctionAssumeNoTopEmissions #-}
+
+-- TODO: use version from Base when we next bump our stack version
+prependList :: [a] -> NE.NonEmpty a -> NE.NonEmpty a
+prependList xs ys = case NE.nonEmpty (xs <> toList ys) of
+  Nothing -> error "impossible"
+  Just result -> result
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
@@ -91,6 +145,7 @@ instance GenericE SimplifiedBlock where
 
 instance SinkableE SimplifiedBlock
 instance SubstE Name SimplifiedBlock
+instance HoistableE SimplifiedBlock
 instance CheckableE SimplifiedBlock where
   checkE (SimplifiedBlock block recon) =
     -- TODO: CheckableE instance for the recon too
@@ -245,12 +300,34 @@ simplifyApp f xs =
             naryApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr caseExpr
-      _ -> naryApp atom $ toList xs
+      Var v ->
+        lookupAtomName v >>= \case
+          TopFunBound _ (UnspecializedTopFun numSpecializationArgs _) ->
+            case splitAtExact numSpecializationArgs (toList xs) of
+              Just (specializationArgs, runtimeArgs) -> do
+                specialized <- emitSpecializationName v specializationArgs
+                naryApp (Var specialized) runtimeArgs
+              Nothing -> error $ "Unexpected function: " ++ pprint atom
+          _ -> naryApp atom $ toList xs
+      _ -> error $ "Unexpected function: " ++ pprint atom
 
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       Lam lam -> return $ Left lam
       _ -> Right <$> simplifyAtom func
+
+emitSpecializationName
+  :: Mut o => AtomName o -> [Atom o] -> SimplifyM i o (AtomName o)
+emitSpecializationName fname args = do
+  let specialization = AppSpecialization fname args
+  querySpecializationCache specialization >>= \case
+    Just specializedName -> return specializedName
+    _ -> do
+      maybeSpecializedName <- liftTopBuilderHoisted $
+        emitSpecialization (getNameHint fname) $ sink specialization
+      case maybeSpecializedName of
+        Nothing -> error "couldn't hoist specialization"
+        Just specializedName -> return specializedName
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)

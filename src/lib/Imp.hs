@@ -340,12 +340,12 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     xs <- mapM substM xs'
     case f of
       Var v -> lookupAtomName v >>= \case
-        FFIFunBound _ v' -> do
+        TopFunBound _ (FFITopFun v') -> do
           resultTy <- getType $ App f xs
           scalarArgs <- liftM toList $ mapM fromScalarAtom xs
           results <- impCall v' scalarArgs
           restructureScalarOrPairType resultTy results
-        SimpLamBound piTy _ -> do
+        TopFunBound piTy (SpecializedTopFun _ _) -> do
           if length (toList xs') /= numNaryPiArgs piTy
             then notASimpExpr
             else do

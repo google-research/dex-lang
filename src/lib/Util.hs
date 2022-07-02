@@ -8,7 +8,7 @@
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated,
+             scanM, composeN, mapMaybe, uncons, repeated, splitAtExact,
              transitiveClosure, transitiveClosureM,
              showErr, listDiff, splitMap, enumerate, iota, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
@@ -95,6 +95,13 @@ pad v n xs = xs ++ replicate (n - length(xs)) v
 
 padLeft :: a -> Int -> [a] -> [a]
 padLeft v n xs = replicate (n - length(xs)) v ++ xs
+
+-- Nothing if the exact prefix isn't available
+splitAtExact :: Int -> [a] -> Maybe ([a], [a])
+splitAtExact n xs =
+  if n <= length xs
+    then Just $ splitAt n xs
+    else Nothing
 
 delIdx :: Int -> [a] -> [a]
 delIdx i xs = case splitAt i xs of

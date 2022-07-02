@@ -17,9 +17,12 @@ module Name (
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
+  DoubleInplaceT (..), liftDoubleInplaceT,
+  emitDoubleInplaceTHoisted, unsafeEmitDoubleInplaceTHoisted,
+  runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
-  lookupTerminalSubstFrag, noShadows,
+  lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
   Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..), nonEmptyToNest,
   PairB (..), UnitB (..),
@@ -75,7 +78,7 @@ module Name (
   freeVarsList, isFreeIn, anyFreeIn, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
-  Mut, fabricateDistinctEvidence,
+  Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
   ) where
 
@@ -890,6 +893,12 @@ noShadows (UnsafeMakeScopeFrag frag) = all isUnique frag
     isUnique item = case itemDistinctness item of
       DistinctName  -> True
       ShadowingName -> False
+
+checkNoBinders :: BindsNames b => b n l -> Maybe (UnitB n l)
+checkNoBinders b =
+  case nameSetRawNames $ toNameSet $ toScopeFrag b of
+    [] -> Just $ unsafeCoerceB UnitB
+    _ -> Nothing
 
 -- === versions of monad constraints with scope params ===
 
@@ -1770,6 +1779,86 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
   liftIO = lift1 . liftIO
   {-# INLINE liftIO #-}
 
+-- === DoubleInplaceT ===
+
+-- Allows emitting `d1` decls at the top level, if hoisting succeeds.
+
+-- The ScopeFrag in the StateT tracks the initial names in scope, plus the names
+-- introduced by the `d1` top decls. We use it for the hoisting check: if an
+-- E-kinded thing mentions those names and no others, then we can safely hoist
+-- it above the names introduced by `d2` and the names in `bindings` from use of
+-- `EnvExtender`. Alternatively, we could maintain a
+-- `ScopeFrag hidden_initial_scope n` to do the hoisting but then we couldn't
+-- safely implement `liftDoubleInplaceT` because it wouldn't be extended
+-- correctly.
+newtype DoubleInplaceT (bindings::E) (d1::B) (d2::B) (m::MonadKind) (n::S) (a :: *) =
+  UnsafeMakeDoubleInplaceT
+  { unsafeRunDoubleInplaceT
+    :: StateT (Scope UnsafeS, d1 UnsafeS UnsafeS) (InplaceT bindings d2 m n) a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , CtxReader, MonadWriter w, MonadIO, Catchable)
+
+liftDoubleInplaceT
+  :: (Monad m, ExtOutMap bindings d2, OutFrag d2)
+  => InplaceT bindings d2 m n a -> DoubleInplaceT bindings d1 d2 m n a
+liftDoubleInplaceT m = UnsafeMakeDoubleInplaceT $ lift m
+
+-- TODO: should we give this a distinctness constraint and avoid the refreshing?
+emitDoubleInplaceTHoisted
+  :: ( Monad m, ExtOutMap b d1, OutFrag d1
+     , ExtOutMap b d2, OutFrag d2
+     , HoistableE e, SubstE Name e, SubstB Name d1, HoistableB d1)
+  => Abs d1 e n -> DoubleInplaceT b d1 d2 m n (Maybe (e n))
+emitDoubleInplaceTHoisted emission = do
+  Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
+  if R.containedIn (freeVarsE emission) topScopeFrag
+    then do
+      scope <- unsafeGetScope
+      Distinct <- getDistinct
+      refreshAbsPure scope emission \_ d e -> do
+        unsafeEmitDoubleInplaceTHoisted $ unsafeCoerceB d
+        return $ Just $ unsafeCoerceE e
+    else
+      return Nothing
+
+unsafeEmitDoubleInplaceTHoisted
+  :: ( Monad m, ExtOutMap b d1, OutFrag d1
+     , ExtOutMap b d2, OutFrag d2
+     , SubstB Name d1, HoistableB d1)
+  => d1 UnsafeS UnsafeS -> DoubleInplaceT b d1 d2 m n ()
+unsafeEmitDoubleInplaceTHoisted d1 = do
+  UnsafeMakeDoubleInplaceT $ StateT \(topScope, d1Prev) ->
+    UnsafeMakeInplaceT \env d2 -> do
+      withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) do
+        let topScopeNew = extendOutMap topScope (toScopeFrag $ unsafeCoerceB d1)
+        let envNew = extendOutMap env (unsafeCoerceB d1)
+        let d1New = catOutFrags (toScope envNew) d1Prev d1
+        return (((), (topScopeNew, d1New)), d2, envNew)
+
+data DoubleInplaceTResult (d::B) (e::E) (n::S) =
+  DoubleInplaceTResult (d n n) (e n)
+
+runDoubleInplaceT
+  :: (ExtOutMap b d1, ExtOutMap b d2, OutFrag d1, OutFrag d2, Monad m)
+  => Distinct n
+  => b n
+  -> (forall l. DExt n l => DoubleInplaceT b d1 d2 m l (e l))
+  -> m (Abs d1 (DoubleInplaceTResult d2 e) n)
+runDoubleInplaceT env cont = do
+  let scope = unsafeCoerceE $ (toScope env) :: Scope UnsafeS
+  (d2, (result, (_, d1))) <- runInplaceT env $
+    runStateT (unsafeRunDoubleInplaceT cont) (scope, emptyOutFrag)
+  return $ Abs (unsafeCoerceB d1) $ unsafeCoerceE $ DoubleInplaceTResult d2 result
+
+instance ( ExtOutMap b d1, OutFrag d1
+         , ExtOutMap b d2, OutFrag d2
+         , Monad m)
+          => ScopeReader (DoubleInplaceT b d1 d2 m) where
+  getDistinct = liftDoubleInplaceT getDistinct
+  {-# INLINE getDistinct #-}
+  unsafeGetScope = liftDoubleInplaceT unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
+
 -- === name hints ===
 
 instance Color c => HasNameHint (BinderP c ann n l) where
@@ -2381,7 +2470,7 @@ instance Color c => BindsNames (NameBinder c) where
       (TrulyUnsafe.unsafeCoerce UnitV :: GHC.Exts.Any c VoidS)
 
 absurdNameFunction :: Name v VoidS -> a
-absurdNameFunction _ = error "Void names shouldn't exist"
+absurdNameFunction v = error $ "Void names shouldn't exist: " ++ show v
 
 scopeFragToSubstFrag :: forall v i i' o
                       . (forall c. Color c => Name c (i:=>:i') -> v c o)
