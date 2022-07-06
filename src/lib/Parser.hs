@@ -299,12 +299,18 @@ interfaceDef = do
   return $ UInterface tyConParams' superclasses methodTys
                       (fromString tyConName) methodNames'
 
-opSigList :: Parser (Nest (UBinder EffectOpNameC) VoidS VoidS, [UType VoidS])
+resumePolicy :: Parser UResumePolicy
+resumePolicy =  (keyWord JmpKW $> UNoResume)
+            <|> (keyWord DefKW $> ULinearResume)
+            <|> (keyWord CtlKW $> UAnyResume)
+
+opSigList :: Parser (Nest (UBinder EffectOpNameC) VoidS VoidS, [UEffectOpType VoidS])
 opSigList = do
   (methodNames, methodTys) <- unzip <$> onePerLine do
+    policy <- resumePolicy
     v <- anyName
     ty <- annot uType
-    return (fromString v, ty)
+    return (fromString v, UEffectOpType policy ty)
   return (toNest methodNames, methodTys)
 
 effectDef :: Parser (UDecl VoidS VoidS)
@@ -1111,7 +1117,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
-             | EffectKW
+             | EffectKW | JmpKW | CtlKW | ReturnKW | ReturningKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1172,6 +1178,10 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ImportKW -> "import"
       ForeignKW -> "foreign"
       EffectKW -> "effect"
+      JmpKW -> "jmp"
+      CtlKW -> "ctl"
+      ReturnKW -> "return"
+      ReturningKW -> "returning"
 
 keyWordSet :: HS.HashSet String
 keyWordSet = HS.fromList keyWordStrs
@@ -1180,7 +1190,8 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
-               "do", "view", "import", "foreign", "effect"]
+               "do", "view", "import", "foreign", "effect", "jmp", "ctl",
+               "return", "returning"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

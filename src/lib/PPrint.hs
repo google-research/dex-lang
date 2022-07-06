@@ -694,8 +694,13 @@ instance Pretty (UDecl n l) where
         <> prettyLines methods
   pretty (UEffectDecl opTys effName opNames) =
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
-    where ops = [ p (UAnnBinder b (unsafeCoerceE ty))
-                 | (b, ty) <- zip (toList $ fromNest opNames) opTys]
+    where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
+                 | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
+
+instance Pretty UResumePolicy where
+  pretty UNoResume = "jmp"
+  pretty ULinearResume = "def"
+  pretty UAnyResume = "ctl"
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)

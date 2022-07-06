@@ -60,7 +60,7 @@ module Syntax (
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..), EnvQuery (..),
     ModuleName, Module (..), UModule (..), UModulePartialParse (..),
-    UMethodType(..), UType, ExtLabeledItemsE (..),
+    UMethodType(..), UEffectOpType(..), UResumePolicy(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), OutFormat (..),
     EnvReader (..), EnvReaderI (..), EnvReaderIT (..), runEnvReaderIT,
     extendI, liftEnvReaderI, refreshAbsI, refreshLamI,

@@ -160,7 +160,7 @@ data UDecl (n::S) (l::S) where
     -> MaybeB (UBinder AtomNameC) n l    -- optional instance name
     -> UDecl n l
   UEffectDecl
-    :: [UType n]                          -- operation types
+    :: [UEffectOpType n]                  -- operation types
     -> UBinder EffectNameC n l'           -- effect name
     -> Nest (UBinder EffectOpNameC) l' l  -- operation names
     -> UDecl n l
@@ -170,6 +170,16 @@ type UType = UExpr
 data UMethodType (n::S) where
   UMethodType :: Either [SourceName] [Bool] -> UType s -> UMethodType s
   deriving (Show, Generic)
+
+data UEffectOpType (n::S) where
+  UEffectOpType :: UResumePolicy -> UType s -> UEffectOpType s
+  deriving (Show, Generic)
+
+data UResumePolicy =
+    UNoResume
+  | ULinearResume
+  | UAnyResume
+  deriving (Show, Eq)
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n

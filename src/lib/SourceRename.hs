@@ -270,7 +270,7 @@ instance SourceRenamableB UDecl where
       sourceRenameB instanceName \instanceName' ->
         cont $ UInstance className' conditions' params' methodDefs' instanceName'
     UEffectDecl opTypes effName opNames -> do
-      opTypes' <- mapM sourceRenameE opTypes
+      opTypes' <- mapM (\(UEffectOpType p ty) -> (UEffectOpType p) <$> sourceRenameE ty) opTypes
       sourceRenameUBinder UEffectVar effName \effName' ->
         sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
           cont $ UEffectDecl opTypes' effName' opNames'

@@ -2,14 +2,15 @@
 Prelude to the tests
 ''''''''''''''''''''
 
-%passes rename
+%passes
 effect Exn
-  raise : a: Type ?-> Unit -> a
+  ctl raise : a: Type ?-> Unit -> a
 
--- handler {r} catch_ : Exn returning (Maybe r)
---   def-handle raise {a} (_:Unit) = Nothing
---   def-return (x: r) = Just x
---
+%passes
+handler {r} catch_ : Exn returning (Maybe r)
+  ctl raise {a} (_:Unit) = Nothing
+  return (x: r) = Just x
+
 -- def assert_ (b: Bool) : {Exn} Unit =
 --   if not b then raise ()
 --
