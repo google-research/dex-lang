@@ -283,23 +283,21 @@ topLet = do
 superclassConstraints :: Parser [(UType VoidS)]
 superclassConstraints = optionalMonoid $ brackets $ uType `sepBy` sym ","
 
-methodSigList :: Parser (Nest (UBinder MethodNameC) VoidS VoidS, [UMethodType VoidS])
-methodSigList = do
-  (methodNames, methodTys) <- unzip <$> onePerLine do
-    v <- anyName
-    explicit <- many anyName
-    ty <- annot uType
-    return (fromString v, UMethodType (Left $ explicit) ty)
-  return (toNest methodNames, methodTys)
-
 interfaceDef :: Parser (UDecl VoidS VoidS)
 interfaceDef = do
   keyWord InterfaceKW
   superclasses <- superclassConstraints
   (tyConName, tyConParams) <- tyConDef
-  (methodNames, methodTys) <- methodSigList
-  return $ UInterface tyConParams superclasses methodTys
-                      (fromString tyConName) methodNames
+  (methodNames, methodTys) <- unzip <$> onePerLine do
+    v <- anyName
+    explicit <- many anyName
+    ty <- annot uType
+    return (fromString v, UMethodType (Left $ explicit) ty)
+  let methodNames' :: Nest (UBinder MethodNameC) VoidS VoidS
+      methodNames' = toNest methodNames
+  let tyConParams' = tyConParams
+  return $ UInterface tyConParams' superclasses methodTys
+                      (fromString tyConName) methodNames'
 
 opSigList :: Parser (Nest (UBinder EffectOpNameC) VoidS VoidS, [UType VoidS])
 opSigList = do
