@@ -64,7 +64,7 @@ import QueryType
 
 data EvalConfig = EvalConfig
   { backendName   :: Backend
-  , libPath       :: Maybe FilePath
+  , libPaths      :: Maybe [FilePath]
   , preludeFile   :: Maybe FilePath
   , logFileName   :: Maybe FilePath
   , logFile       :: Maybe Handle }
@@ -571,7 +571,7 @@ logPass passName cont = do
   {-# SCC logPassPrinting #-} logTop $ PassInfo passName $ "=== Result ===\n" <> pprint result
   return result
 
-loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m File
+loadModuleSource :: (MonadIO m, Fallible m) => EvalConfig -> ModuleSourceName -> m File
 loadModuleSource config moduleName = do
   fullPath <- case moduleName of
     OrdinaryModule moduleName' -> findFullPath $ moduleName' ++ ".dx"
@@ -581,10 +581,16 @@ loadModuleSource config moduleName = do
     Main -> error "shouldn't be trying to load the source for main"
   readFileWithHash fullPath
   where
-    findFullPath :: MonadIO m => FilePath -> m FilePath
-    findFullPath fname = case libPath config of
-      Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
-      Just path -> return $ path </> fname
+    findFullPath :: (MonadIO m, Fallible m) => String -> m FilePath
+    findFullPath fname = case libPaths config of
+      Nothing    -> liftIO $ getDataFileName $ "lib/" ++ fname
+      Just paths -> liftIO (findFile paths fname) >>= \case
+        Just fpath -> return fpath
+        Nothing    -> throw ModuleImportErr $ unlines
+          [ "Couldn't find a source file for module " ++
+            (case moduleName of OrdinaryModule n -> n; Prelude -> "prelude"; Main -> error "")
+          , "Hint: Consider extending --lib-path?"
+          ]
 {-# SCC loadModuleSource #-}
 
 -- === saving cache to disk ===
