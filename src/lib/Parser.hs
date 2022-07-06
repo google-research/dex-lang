@@ -301,12 +301,20 @@ interfaceDef = do
   return $ UInterface tyConParams superclasses methodTys
                       (fromString tyConName) methodNames
 
+opSigList :: Parser (Nest (UBinder EffOpNameC) VoidS VoidS, [UType VoidS])
+opSigList = do
+  (methodNames, methodTys) <- unzip <$> onePerLine do
+    v <- anyName
+    ty <- annot uType
+    return (fromString v, ty)
+  return (toNest methodNames, methodTys)
+
 effectDef :: Parser (UDecl VoidS VoidS)
 effectDef = do
   keyWord EffectKW
   effName <- upperName <|> symName
-  (methodNames, methodTys) <- methodSigList
-  return $ UEffectDecl (fromString effName) methodNames methodTys
+  (methodNames, methodTys) <- opSigList
+  return $ UEffectDecl methodTys (fromString effName) methodNames
 
 toNest :: (IsString (a VoidS VoidS)) => [String] -> Nest a VoidS VoidS
 toNest = toNestParsed . map fromString

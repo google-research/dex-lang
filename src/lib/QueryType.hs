@@ -196,6 +196,8 @@ sourceNameType v = do
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
       UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
+      UEffectVar   _ -> error "not implemented"
+      UEffectOpVar _ -> error "not implemented"
 
 typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
 typeAsBinderNest ty = do

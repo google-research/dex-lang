@@ -55,12 +55,13 @@ type UEffect = EffectP (SourceNameOr (Name AtomNameC))
 type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
 
 data UVar (n::S) =
-   UAtomVar    (Name AtomNameC    n)
- | UTyConVar   (Name TyConNameC   n)
- | UDataConVar (Name DataConNameC n)
- | UClassVar   (Name ClassNameC   n)
- | UEffectVar  (Name EffNameC     n)
- | UMethodVar  (Name MethodNameC  n)
+   UAtomVar     (Name AtomNameC    n)
+ | UTyConVar    (Name TyConNameC   n)
+ | UDataConVar  (Name DataConNameC n)
+ | UClassVar    (Name ClassNameC   n)
+ | UEffectVar   (Name EffNameC     n)
+ | UMethodVar   (Name MethodNameC  n)
+ | UEffectOpVar (Name EffOpNameC   n)
    deriving (Eq, Ord, Show, Generic)
 
 data UBinder (c::C) (n::S) (l::S) where
@@ -156,12 +157,12 @@ data UDecl (n::S) (l::S) where
     ->   [UExpr l']                      -- class parameters
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
-    -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
+    -> MaybeB (UBinder AtomNameC) n l    -- optional instance name
     -> UDecl n l
   UEffectDecl
-    :: UBinder EffNameC n p            -- effect name  TODO(alex): reorder last, prevent leaking into method decls
-    -> Nest (UBinder MethodNameC) p l  -- operation names  TODO(alex): MethodNameC ~> EffOpNameC
-    -> [UMethodType n]                 -- operation types  TODO(alex): change to UType
+    :: [UType n]                       -- operation types
+    -> UBinder EffNameC n l'           -- effect name
+    -> Nest (UBinder EffOpNameC) l' l  -- operation names
     -> UDecl n l
 
 type UType = UExpr
@@ -372,35 +373,40 @@ instance Pretty (SourceMap n) where
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
 instance GenericE UVar where
-  type RepE UVar = EitherE6 (Name AtomNameC)    (Name TyConNameC)
+  type RepE UVar = EitherE7 (Name AtomNameC)    (Name TyConNameC)
                             (Name DataConNameC) (Name ClassNameC)
                             (Name MethodNameC)  (Name EffNameC)
+                            (Name EffOpNameC)
   fromE name = case name of
-    UAtomVar    v -> Case0 v
-    UTyConVar   v -> Case1 v
-    UDataConVar v -> Case2 v
-    UClassVar   v -> Case3 v
-    UMethodVar  v -> Case4 v
-    UEffectVar  v -> Case5 v
+    UAtomVar     v -> Case0 v
+    UTyConVar    v -> Case1 v
+    UDataConVar  v -> Case2 v
+    UClassVar    v -> Case3 v
+    UMethodVar   v -> Case4 v
+    UEffectVar   v -> Case5 v
+    UEffectOpVar v -> Case6 v
   {-# INLINE fromE #-}
 
   toE name = case name of
-    Case0 v -> UAtomVar    v
-    Case1 v -> UTyConVar   v
-    Case2 v -> UDataConVar v
-    Case3 v -> UClassVar   v
-    Case4 v -> UMethodVar  v
-    Case5 v -> UEffectVar  v
+    Case0 v -> UAtomVar     v
+    Case1 v -> UTyConVar    v
+    Case2 v -> UDataConVar  v
+    Case3 v -> UClassVar    v
+    Case4 v -> UMethodVar   v
+    Case5 v -> UEffectVar   v
+    Case6 v -> UEffectOpVar v
+    _ -> error "invalid case"
   {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
   pretty name = case name of
-    UAtomVar    v -> "Atom name: " <> pretty v
-    UTyConVar   v -> "Type constructor name: " <> pretty v
-    UDataConVar v -> "Data constructor name: " <> pretty v
-    UClassVar   v -> "Class name: " <> pretty v
-    UMethodVar  v -> "Method name: " <> pretty v
-    UEffectVar  v -> "Effect name: " <> pretty v
+    UAtomVar     v -> "Atom name: " <> pretty v
+    UTyConVar    v -> "Type constructor name: " <> pretty v
+    UDataConVar  v -> "Data constructor name: " <> pretty v
+    UClassVar    v -> "Class name: " <> pretty v
+    UMethodVar   v -> "Method name: " <> pretty v
+    UEffectVar   v -> "Effect name: " <> pretty v
+    UEffectOpVar v -> "Effect operation name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
 instance SinkableE      UVar

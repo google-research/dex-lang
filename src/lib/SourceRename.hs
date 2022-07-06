@@ -269,12 +269,11 @@ instance SourceRenamableB UDecl where
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       sourceRenameB instanceName \instanceName' ->
         cont $ UInstance className' conditions' params' methodDefs' instanceName'
-    UEffectDecl effName opNames opTypes -> do
-      let opSrcNames = nestToList (\(UBindSource n) -> n) opNames
-      opTypes' <- zipWithM (renameMethodType Empty) opTypes opSrcNames
+    UEffectDecl opTypes effName opNames -> do
+      opTypes' <- mapM sourceRenameE opTypes
       sourceRenameUBinder UEffectVar effName \effName' ->
-        sourceRenameUBinderNest UMethodVar opNames \opNames' ->
-          cont $ UEffectDecl effName' opNames' opTypes'
+        sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
+          cont $ UEffectDecl opTypes' effName' opNames'
 
 renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
                  => Nest (UAnnBinder AtomNameC) i' i
@@ -499,7 +498,7 @@ instance HasSourceNames UDecl where
     UInterface _ _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName -> sourceNames instanceName
-    UEffectDecl ~(UBindSource effName) opNames _ -> do
+    UEffectDecl _ ~(UBindSource effName) opNames -> do
       S.singleton effName <> sourceNames opNames
 
 instance HasSourceNames UPat where

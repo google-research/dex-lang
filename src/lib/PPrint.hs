@@ -692,11 +692,10 @@ instance Pretty (UDecl n l) where
   pretty (UInstance bs className params methods (LeftB v)) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
         <> prettyLines methods
-  pretty (UEffectDecl effName opNames opTys) =
+  pretty (UEffectDecl opTys effName opNames) =
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
-    where ops = [ hsep (case e of Left e' -> p <$> e'; Right e' -> p <$> e') <+>
-                   p (UAnnBinder b (unsafeCoerceE ty))
-                 | (b, UMethodType e ty) <- zip (toList $ fromNest opNames) opTys]
+    where ops = [ p (UAnnBinder b (unsafeCoerceE ty))
+                 | (b, ty) <- zip (toList $ fromNest opNames) opTys]
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
