@@ -377,6 +377,11 @@ lookupAtomName :: EnvReader m => AtomName n -> m n (AtomBinding n)
 lookupAtomName name = lookupEnv name >>= \case AtomNameBinding x -> return x
 {-# INLINE lookupAtomName #-}
 
+lookupCustomRules :: EnvReader m => AtomName n -> m n (Maybe (AtomRules n))
+lookupCustomRules name = liftM fromMaybeE $ withEnv $
+  toMaybeE . M.lookup name . customRulesMap . envCustomRules . topEnv
+{-# INLINE lookupCustomRules #-}
+
 lookupImpFun :: EnvReader m => ImpFunName n -> m n (ImpFunction n)
 lookupImpFun name = lookupEnv name >>= \case ImpFunBinding f -> return f
 {-# INLINE lookupImpFun #-}

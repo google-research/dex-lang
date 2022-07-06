@@ -46,8 +46,10 @@ import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restor
 import Name
 import Parser
 import Syntax
+import Core
+import Types.Core
 import Builder
-import CheckType (CheckableE (..), asFFIFunType, asFirstOrderFunction)
+import CheckType (CheckableE (..), asFFIFunType, asFirstOrderFunction, checkHasType)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -233,6 +235,51 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
+  DeclareCustomLinearization fname expr -> do
+    lookupSourceMap fname >>= \case
+      Nothing -> throw UnboundVarErr $ pprint fname
+      Just (UAtomVar fname') -> do
+        lookupCustomRules fname' >>= \case
+          Nothing -> return ()
+          Just _  -> throw TypeErr $ pprint fname ++ " already has a custom linearization"
+        impl <- evalUExpr expr
+        fType <- getType fname'
+        let but = ", but " ++ pprint fname ++ " has type " ++ pprint fType
+        case fType of
+          Pi (PiType (PiBinder binder a arr) eff b') -> do
+            unless (arr == PlainArrow) $ throw TypeErr $
+              "Custom linearization can only be defined for regular functions" ++ but
+            unless (eff == Pure) $ throw TypeErr $
+              "Custom linearization can only be defined for pure functions" ++ but
+            b <- case hoist binder b' of
+              HoistSuccess b -> return b
+              HoistFailure _ -> throw TypeErr $
+                "Custom linearization cannot be defined for dependent functions" ++ but
+            at <- maybeTangentType a >>= \case
+              Just at -> return at
+              Nothing -> throw TypeErr $
+                "The type of argument of " ++ pprint fname ++ " does not have a well-defined tangent space"
+            bt <- maybeTangentType b >>= \case
+              Just bt -> return bt
+              Nothing -> throw TypeErr $
+                "The type of result of " ++ pprint fname ++ " does not have a well-defined tangent space." ++
+                " Is it a unary function?"
+            tanFunTy <- at --> bt
+            linFunTy <- a --> PairTy b tanFunTy
+            impl `checkHasType` linFunTy >>= \case
+              Failure _ -> do
+                implTy <- getType impl
+                throw TypeErr $ unlines
+                  [ "Expected the custom linearization to have type:"
+                  , pprint linFunTy
+                  , "but it has type:"
+                  , pprint implTy
+                  ]
+              Success () -> return ()
+            emitCustomLinearization fname' impl
+          _ -> throw TypeErr $
+            "Custom linearization can only be defined for functions" ++ but
+      Just _ -> throw TypeErr $ "Custom linearization can only be defined for functions"
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty
@@ -359,9 +406,9 @@ evalPartiallyParsedUModule partiallyParsed = do
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
-  TopEnvFrag envFrag (PartialTopEnvFrag cache loadedModules moduleEnv) <- return topFrag
+  TopEnvFrag envFrag (PartialTopEnvFrag cache rules loadedModules moduleEnv) <- return topFrag
   ModuleEnv (ImportStatus directDeps transDeps) sm scs objs _ <- return moduleEnv
-  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache loadedModules mempty
+  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache rules loadedModules mempty
   let evaluatedModule = Module name directDeps transDeps sm scs objs
   emitEnv $ Abs fragToReEmit evaluatedModule
 
@@ -641,9 +688,15 @@ clearCache = liftIO do
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
 stripEnvForSerialization :: TopStateEx -> TopStateEx
-stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) cache _) _)) =
-  collectGarbage (RecSubstFrag defs) cache \(RecSubstFrag defs') cache' -> do
-    TopStateEx $ Env (TopEnv (RecSubst defs') cache' mempty) emptyModuleEnv
+stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _) _)) =
+  collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
+    let liveNames = toNameSet $ toScopeFrag defsFrag'
+    let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
+    TopStateEx $ Env (TopEnv (RecSubst defs') rules' cache' mempty) emptyModuleEnv
+  where
+    ruleFreeVars v = case M.lookup v rules of
+      Nothing -> mempty
+      Just r  -> freeVarsE r
 
 snapshotPtrs :: MonadIO m => TopStateEx -> m TopStateEx
 snapshotPtrs s = traverseBindingsTopStateEx s \case

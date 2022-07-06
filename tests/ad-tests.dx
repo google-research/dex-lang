@@ -69,8 +69,9 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 :p jvp sum' [1., 2.] [10.0, 20.0]
 > 30.
 
-f : Float -> Float = \x. yield_accum (AddMonoid Float) \ref. ref += x
-:p jvp f 1.0 1.0
+:p
+  f : Float -> Float = \x. yield_accum (AddMonoid Float) \ref. ref += x
+  jvp f 1.0 1.0
 > 1.
 
 :p
@@ -369,3 +370,52 @@ grad (\x . (min' x (x+1))) 1.0
 
 grad (\x . [x].(argmin [x])) 1.0
 > 1.
+
+-------------------- Custom linearization --------------------
+
+f = \x:Float. x * 2
+fLin = \x:Float. (f x, \xt:Float. xt * 4)
+
+custom-linearization f fLin
+
+deriv (\x. f (x * 2) * 5) 1.0
+> 40.
+
+deriv f 1.0
+> 4.
+
+-- Custom derivative is preserved even when we defunctionalize for
+flip deriv 1.0 \x:Float.
+  farr = for i:(Fin 5). f
+  farr.(unsafe_from_ordinal _ 1) x
+> 4.
+
+-- Custom derivative is preserved even when we defunctionalize case
+flip deriv 1.0 \x:Float.
+  total = sum $ for i:(Fin 10). ordinal i
+  f2 = case total > 10 of
+    True  -> f
+    False -> \x:Float. x
+  f2 x
+> 4.
+
+g = \x:(Float & Float). 4 .* x
+
+custom-linearization g \x. (g x, g x)
+> Type error:Expected the custom linearization to have type:
+> ((Float32 & Float32)
+>  -> ((Float32 & Float32) & ((Float32 & Float32) -> (Float32 & Float32))))
+> but it has type:
+> ((Float32 & Float32) -> ((Float32 & Float32) & (Float32 & Float32)))
+
+data IHaveNoTangentType = MkIHaveNoTangentType
+
+noInputTangent = \x:IHaveNoTangentType. 2.0
+
+custom-linearization noInputTangent \x. (noInputTangent x, 0.0)
+> Type error:The type of argument of noInputTangent does not have a well-defined tangent space
+
+noOutputTangent = \x:Float. MkIHaveNoTangentType
+
+custom-linearization noOutputTangent \x. (noOutputTangent x, 0.0)
+> Type error:The type of result of noOutputTangent does not have a well-defined tangent space. Is it a unary function?
