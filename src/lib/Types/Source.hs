@@ -55,13 +55,13 @@ type UEffect = EffectP (SourceNameOr (Name AtomNameC))
 type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
 
 data UVar (n::S) =
-   UAtomVar     (Name AtomNameC    n)
- | UTyConVar    (Name TyConNameC   n)
- | UDataConVar  (Name DataConNameC n)
- | UClassVar    (Name ClassNameC   n)
- | UEffectVar   (Name EffNameC     n)
- | UMethodVar   (Name MethodNameC  n)
- | UEffectOpVar (Name EffOpNameC   n)
+   UAtomVar     (Name AtomNameC     n)
+ | UTyConVar    (Name TyConNameC    n)
+ | UDataConVar  (Name DataConNameC  n)
+ | UClassVar    (Name ClassNameC    n)
+ | UEffectVar   (Name EffectNameC   n)
+ | UMethodVar   (Name MethodNameC   n)
+ | UEffectOpVar (Name EffectOpNameC n)
    deriving (Eq, Ord, Show, Generic)
 
 data UBinder (c::C) (n::S) (l::S) where
@@ -160,9 +160,9 @@ data UDecl (n::S) (l::S) where
     -> MaybeB (UBinder AtomNameC) n l    -- optional instance name
     -> UDecl n l
   UEffectDecl
-    :: [UType n]                       -- operation types
-    -> UBinder EffNameC n l'           -- effect name
-    -> Nest (UBinder EffOpNameC) l' l  -- operation names
+    :: [UType n]                          -- operation types
+    -> UBinder EffectNameC n l'           -- effect name
+    -> Nest (UBinder EffectOpNameC) l' l  -- operation names
     -> UDecl n l
 
 type UType = UExpr
@@ -375,8 +375,8 @@ instance Pretty (SourceMap n) where
 instance GenericE UVar where
   type RepE UVar = EitherE7 (Name AtomNameC)    (Name TyConNameC)
                             (Name DataConNameC) (Name ClassNameC)
-                            (Name MethodNameC)  (Name EffNameC)
-                            (Name EffOpNameC)
+                            (Name MethodNameC)  (Name EffectNameC)
+                            (Name EffectOpNameC)
   fromE name = case name of
     UAtomVar     v -> Case0 v
     UTyConVar    v -> Case1 v

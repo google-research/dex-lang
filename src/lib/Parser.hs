@@ -301,7 +301,7 @@ interfaceDef = do
   return $ UInterface tyConParams superclasses methodTys
                       (fromString tyConName) methodNames
 
-opSigList :: Parser (Nest (UBinder EffOpNameC) VoidS VoidS, [UType VoidS])
+opSigList :: Parser (Nest (UBinder EffectOpNameC) VoidS VoidS, [UType VoidS])
 opSigList = do
   (methodNames, methodTys) <- unzip <$> onePerLine do
     v <- anyName
