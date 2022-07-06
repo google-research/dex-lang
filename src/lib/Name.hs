@@ -72,7 +72,7 @@ module Name (
   newName, newNameM, newNames,
   unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
-  freeVarsList, isFreeIn, anyFreeIn, todoSinkableProof,
+  freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence,
@@ -2665,6 +2665,9 @@ toNameSet (UnsafeMakeScopeFrag s) = s
 nameSetRawNames :: NameSet n -> [RawName]
 nameSetRawNames m = R.keys m
 
+isInNameSet :: Name c n -> NameSet n -> Bool
+isInNameSet v ns = getRawName v `R.member` ns
+
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
 isFreeIn v e = getRawName v `R.member` freeVarsE e
 
@@ -2838,10 +2841,10 @@ substFragAsScope m = UnsafeMakeScopeFrag $ TrulyUnsafe.unsafeCoerce m
 -- === garbage collection ===
 
 collectGarbage :: (HoistableV v, HoistableE e)
-               => Distinct l => RecSubstFrag v n l -> e l
+               => Distinct l => RecSubstFrag v n l -> (Name c l -> NameSet l) -> e l
                -> (forall l'. Distinct l' => RecSubstFrag v n l' -> e l' -> a)
                -> a
-collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
+collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) extraDeps e cont = do
   let seedNames = R.keys $ freeVarsE e
   let accessibleNames = transitiveClosure getParents seedNames
   let env' = RecSubstFrag $ UnsafeMakeSubst $ R.restrictKeys env accessibleNames
@@ -2854,7 +2857,7 @@ collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
       Just item | itemDistinctness item == ShadowingName ->
         error "shouldn't be possible, due to Distinct constraint"
 #endif
-      Just item -> R.keys $ fromSubstItemPoly item freeVarsE
+      Just item -> (R.keys $ fromSubstItemPoly item freeVarsE) <> (R.keys $ extraDeps $ UnsafeMakeName name)
 
 -- === iterating through env pairs ===
 

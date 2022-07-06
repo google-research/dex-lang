@@ -20,6 +20,8 @@ import MTL1
 import QueryType
 import Util (bindM2)
 import PPrint
+import Types.Core
+import Core
 
 -- === linearization monad ===
 
@@ -319,6 +321,14 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
 linearizeExpr :: Emits o => Expr i -> LinM i o Atom Atom
 linearizeExpr expr = case expr of
   Atom x -> linearizeAtom x
+  App (Var f) xs -> do
+    f' <- substM f
+    lookupCustomRules f' >>= \case
+      Nothing -> error "not implemented"
+      Just (CustomLinearize cl) -> do
+        wts <- forM (toList xs) linearizeAtom
+        (ans, flin) <- fromPair =<< naryApp cl (wts <&> \(WithTangent p _) -> p)
+        return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
   App _ _ -> error "not implemented"
   TabApp x idxs -> do
     zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
