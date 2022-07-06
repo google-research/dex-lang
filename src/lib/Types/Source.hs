@@ -292,7 +292,7 @@ data CmdName = GetType | EvalExpr OutFormat | ExportFun String
                deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
-              | LogPasses [PassName] | LogAll | LogAndHalt PassName
+              | LogPasses [PassName] | LogAll
                 deriving  (Show, Generic)
 
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
