@@ -200,7 +200,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
 # TODO: re-enable
 # fft vega-plotting
 
-test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
+test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
@@ -239,7 +239,7 @@ $(tutorial-data):
 .PHONY: tutorial-data
 tutorial-data: $(tutorial-data)
 
-run-examples/tutorial: tutorial-data 
+run-examples/tutorial: tutorial-data
 
 tests: unit-tests lower-tests quine-tests repl-test module-tests
 
