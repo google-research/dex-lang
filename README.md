@@ -42,16 +42,19 @@ development. Expect monstrous bugs and razor-sharp edges!**
     * Ubuntu/Debian: `apt-get install libpng-dev`
     * macOS: `brew install libpng`
 
-## Building
+## Installing
 
- * Build Dex in development mode: `make`
- * Run tests in development mode: `make tests`
- * Install a release version of Dex: `make install`
+To build and install a release version of Dex run `make install`.
 
 The default installation directory is `$HOME/.local/bin`, so make sure to add
 that directory to `$PATH` after installing Dex. To install Dex somewhere else,
 set the `PREFIX` environment variable before running `make install`. For
 example, `PREFIX=$HOME make install` installs `dex` in `$HOME/bin`.
+
+## Building
+
+ * Build Dex in development (unoptimized) mode: `make`
+ * Run tests in development mode: `make tests`
 
 It is convenient to set up a `dex` alias (e.g. in `.bashrc`) for running Dex in
 development mode:
@@ -63,6 +66,15 @@ alias dex="stack exec dex -- --lib-path lib"
 # macOS:
 alias dex="stack exec --stack-yaml=stack-macos.yaml dex -- --lib-path lib"
 ```
+
+You might also want to consider other development build targets:
+  * `build-opt` for local optimized builds,
+  * `build-dbg` for local debug builds,
+  * `build-prof` for local optimized builds with profiling enabled.
+
+Those non-standard targets require different aliases. Please consult the documentation
+at the top of the [`makefile`](https://github.com/google-research/dex-lang/blob/main/makefile)
+for detailed instructions.
 
 ### Haskell Language Server
 
