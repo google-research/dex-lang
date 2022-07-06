@@ -2,6 +2,7 @@
 Prelude to the tests
 ''''''''''''''''''''
 
+%passes rename
 effect Exn
   raise : a: Type ?-> Unit -> a
 
