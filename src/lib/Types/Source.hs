@@ -159,9 +159,9 @@ data UDecl (n::S) (l::S) where
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
     -> UDecl n l
   UEffectDecl
-    :: UBinder EffNameC n p            -- effect name
-    -> Nest (UBinder MethodNameC) p l  -- operation names
-    -> [UMethodType n]                 -- operation types
+    :: UBinder EffNameC n p            -- effect name  TODO(alex): reorder last, prevent leaking into method decls
+    -> Nest (UBinder MethodNameC) p l  -- operation names  TODO(alex): MethodNameC ~> EffOpNameC
+    -> [UMethodType n]                 -- operation types  TODO(alex): change to UType
     -> UDecl n l
 
 type UType = UExpr
@@ -292,7 +292,7 @@ data CmdName = GetType | EvalExpr OutFormat | ExportFun String
                deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
-              | LogPasses [PassName] | LogAll
+              | LogPasses [PassName] | LogAll | LogAndHalt PassName
                 deriving  (Show, Generic)
 
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
