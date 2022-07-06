@@ -1461,6 +1461,12 @@ def string_from_char_ptr (n:Nat) (ptr:Ptr Char) : {IO} String =
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = w8_to_i c
 
+data CString = MkCString RawPtr
+-- TODO: check the string contains no nulls
+def with_c_string {a} (s:String) (action: CString -> {IO} a) : {IO} a =
+  (AsList n s') = s <> "\NUL"
+  with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
+
 '### Show interface
 For things that can be shown.
 `show` gives a string representation of its input.
@@ -1512,6 +1518,25 @@ instance Show Float64
 instance {a b} [Show a, Show b] Show (a & b)
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
 
+'### Parse interface
+For types that can be parsed from a `String`.
+
+interface Parse a
+  parseString : String -> Maybe a
+
+foreign "strtof" strtofFFI : RawPtr -> RawPtr -> {IO} Float
+
+instance Parse Float
+  parseString = \str. unsafe_io do
+    (AsList str_len _) = str
+    with_c_string str \(MkCString str_ptr).
+      with_alloc 1 \end_ptr:(Ptr (Ptr Char)).
+        (MkPtr raw_end_ptr) = end_ptr
+        result = strtofFFI str_ptr raw_end_ptr
+        (MkPtr str_end_ptr) = load end_ptr
+        consumed = raw_ptr_to_i64 str_end_ptr - raw_ptr_to_i64 str_ptr
+        if consumed == (n_to_i64 str_len) then Just result else Nothing
+
 '## pipe-like reverse function application
 TODO: move this
 
@@ -1548,7 +1573,6 @@ def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 '## File system operations
 
 FilePath : Type = String
-data CString = MkCString RawPtr
 
 def null_raw_ptr : RawPtr = i64_to_raw_ptr $ i_to_i64 0
 
@@ -1566,11 +1590,6 @@ data StreamMode =
   WriteMode
 
 data Stream mode:StreamMode = MkStream RawPtr
-
--- TODO: check the string contains no nulls
-def with_c_string {a} (s:String) (action: CString -> {IO} a) : {IO} a =
-  (AsList n s') = s <> "\NUL"
-  with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
 
 '### Stream IO
 

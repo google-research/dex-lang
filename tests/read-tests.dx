@@ -1,0 +1,8 @@
+parseString "123"   :: Maybe Float
+> (Just 123.)
+parseString "123.4" :: Maybe Float
+> (Just 123.4)
+parseString "123x"  :: Maybe Float
+> Nothing
+parseString "x123"  :: Maybe Float
+> Nothing
