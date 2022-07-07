@@ -58,7 +58,7 @@ toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
 toImpStandaloneFunction' :: NaryLamExpr o -> SubstImpM i o (ImpFunction o)
 toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
   ty <- naryLamExprType lam
-  AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty
+  AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty Unmanaged
   let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
   dropSubst $ buildImpFunction CInternalFun ptrHintTys \vs -> do
     argResultDest' <- applySubst (ptrBinders@@>vs) argResultDest
@@ -931,9 +931,9 @@ sinkDestIdxs (idxsTy, idxs) = (sink idxsTy, map sink idxs)
 -- TODO: de-dup some of the plumbing stuff here with the ordinary makeDest path
 type NaryLamDest = Abs (Nest (BinderP AtomNameC Dest)) Dest
 
-makeNaryLamDest :: NaryPiType n -> SubstImpM i n (AbsPtrs NaryLamDest n)
-makeNaryLamDest piTy = do
-  let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
+makeNaryLamDest :: NaryPiType n -> AllocType -> SubstImpM i n (AbsPtrs NaryLamDest n)
+makeNaryLamDest piTy mgmt = do
+  let allocInfo = (LLVM, CPU, mgmt) -- TODO! This is just a placeholder
   liftDestM allocInfo $ buildLocalDest do
     Abs decls dest <- buildDeclsDest $
                         makeNaryLamDestRec (Abs Empty UnitE, []) [] (sink piTy)
@@ -1485,7 +1485,7 @@ withFreshIBinder hint ty cont = do
 emitCall :: Emits n
          => NaryPiType n -> ImpFunName n -> [Atom n] -> SubstImpM i n (Atom n)
 emitCall piTy f xs = do
-  AbsPtrs absDest ptrDefs <- makeNaryLamDest piTy
+  AbsPtrs absDest ptrDefs <- makeNaryLamDest piTy Managed
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
     Distinct <- getDistinct
     size <- dropSubst $ translateBlock Nothing sizeBlock
