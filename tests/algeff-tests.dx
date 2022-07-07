@@ -8,8 +8,8 @@ effect Exn
 
 %passes
 handler {r} catch_ : Exn returning (Maybe r)
-  ctl raise {a} (_:Unit) = Nothing
-  return (x: r) = Just x
+  ctl raise = \_. Nothing
+  return = \x. Just x
 
 -- def assert_ (b: Bool) : {Exn} Unit =
 --   if not b then raise ()

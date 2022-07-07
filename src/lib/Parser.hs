@@ -167,6 +167,7 @@ sourceBlock' =
   <|> liftM EvalUDecl (instanceDef False <* eolf)
   <|> liftM EvalUDecl (interfaceDef <* eolf)
   <|> liftM EvalUDecl (effectDef <* eolf)
+  <|> liftM EvalUDecl (handlerDef <* eolf)
   <|> liftM (Command (EvalExpr Printed)) (expr <* eolf)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -388,6 +389,27 @@ instanceMethod = do
   sym "="
   rhs <- blockOrExpr
   return $ UMethodDef (fromString v) rhs
+
+handlerDef :: Parser (UDecl VoidS VoidS)
+handlerDef = do
+  keyWord HandlerKW
+  binders <- concat <$> many (argInParens [parensImplicitArg])
+  handlerName <- anyName
+  sym ":"
+  effectName <- anyName
+  keyWord ReturningKW
+  returnType <- uType
+  methods <- onePerLine effectOpDef
+  return $ UHandlerDecl (fromString effectName) (toNestParsed binders)
+    returnType methods (fromString handlerName)
+
+effectOpDef :: Parser (UEffectOpDef VoidS)
+effectOpDef = do
+  (rp, v) <- (keyWord ReturnKW $> (UReturn, "return"))
+         <|> ((,) <$> resumePolicy <*> anyName)
+  sym "="
+  rhs <- blockOrExpr
+  return $ UEffectOpDef (fromString v) rp rhs
 
 simpleLet :: Parser (UExpr VoidS -> UDecl VoidS VoidS)
 simpleLet = label "let binding" $ do
@@ -1117,7 +1139,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
-             | EffectKW | JmpKW | CtlKW | ReturnKW | ReturningKW
+             | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ReturningKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1178,6 +1200,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ImportKW -> "import"
       ForeignKW -> "foreign"
       EffectKW -> "effect"
+      HandlerKW -> "handler"
       JmpKW -> "jmp"
       CtlKW -> "ctl"
       ReturnKW -> "return"

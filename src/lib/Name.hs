@@ -1812,6 +1812,7 @@ instance Color ModuleNameC     where getColorRep = ModuleNameC
 instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
+instance Color HandlerNameC    where getColorRep = HandlerNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -2359,6 +2360,7 @@ data C =
   | PtrNameC
   | EffectNameC
   | EffectOpNameC
+  | HandlerNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 

@@ -696,11 +696,17 @@ instance Pretty (UDecl n l) where
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
     where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
                  | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
+  pretty (UHandlerDecl effName tyArgs retTy opDefs name) =
+    "handler" <+> prettyBinderNest tyArgs <+> p name <+> ":" <+> p effName
+      <+> "returning" <+> p retTy <> hardline <> foldMap (<>hardline) ops
+    where ops = [ p rp <+> p n <+> "=" <+> p body
+                 | UEffectOpDef n rp body <- opDefs ]
 
 instance Pretty UResumePolicy where
   pretty UNoResume = "jmp"
   pretty ULinearResume = "def"
   pretty UAnyResume = "ctl"
+  pretty UReturn = ""
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)

@@ -62,6 +62,7 @@ data UVar (n::S) =
  | UEffectVar   (Name EffectNameC   n)
  | UMethodVar   (Name MethodNameC   n)
  | UEffectOpVar (Name EffectOpNameC n)
+ | UHandlerVar  (Name HandlerNameC  n)
    deriving (Eq, Ord, Show, Generic)
 
 data UBinder (c::C) (n::S) (l::S) where
@@ -164,6 +165,13 @@ data UDecl (n::S) (l::S) where
     -> UBinder EffectNameC n l'           -- effect name
     -> Nest (UBinder EffectOpNameC) l' l  -- operation names
     -> UDecl n l
+  UHandlerDecl
+    :: SourceNameOr (Name EffectNameC) n  -- effect name
+    -> Nest UPatAnnArrow n l'             -- type args
+    ->   UType l'                         -- returning type
+    ->   [UEffectOpDef l']                -- operation definitions
+    -> UBinder HandlerNameC n l           -- handler name
+    -> UDecl n l
 
 type UType = UExpr
 
@@ -179,12 +187,16 @@ data UResumePolicy =
     UNoResume
   | ULinearResume
   | UAnyResume
+  | UReturn
   deriving (Show, Eq)
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
 
 data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (UExpr n)
+  deriving (Show, Generic)
+
+data UEffectOpDef (n::S) = UEffectOpDef (SourceNameOr (Name EffectOpNameC) n) UResumePolicy (UExpr n)
   deriving (Show, Generic)
 
 data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
@@ -383,10 +395,10 @@ instance Pretty (SourceMap n) where
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
 instance GenericE UVar where
-  type RepE UVar = EitherE7 (Name AtomNameC)    (Name TyConNameC)
-                            (Name DataConNameC) (Name ClassNameC)
-                            (Name MethodNameC)  (Name EffectNameC)
-                            (Name EffectOpNameC)
+  type RepE UVar = EitherE8 (Name AtomNameC)     (Name TyConNameC)
+                            (Name DataConNameC)  (Name ClassNameC)
+                            (Name MethodNameC)   (Name EffectNameC)
+                            (Name EffectOpNameC) (Name HandlerNameC)
   fromE name = case name of
     UAtomVar     v -> Case0 v
     UTyConVar    v -> Case1 v
@@ -395,6 +407,7 @@ instance GenericE UVar where
     UMethodVar   v -> Case4 v
     UEffectVar   v -> Case5 v
     UEffectOpVar v -> Case6 v
+    UHandlerVar  v -> Case7 v
   {-# INLINE fromE #-}
 
   toE name = case name of
@@ -405,7 +418,7 @@ instance GenericE UVar where
     Case4 v -> UMethodVar   v
     Case5 v -> UEffectVar   v
     Case6 v -> UEffectOpVar v
-    _ -> error "invalid case"
+    Case7 v -> UHandlerVar  v
   {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
@@ -417,6 +430,7 @@ instance Pretty (UVar n) where
     UMethodVar   v -> "Method name: " <> pretty v
     UEffectVar   v -> "Effect name: " <> pretty v
     UEffectOpVar v -> "Effect operation name: " <> pretty v
+    UHandlerVar  v -> "Handler name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
 instance SinkableE      UVar
