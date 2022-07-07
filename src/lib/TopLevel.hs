@@ -9,7 +9,7 @@
 module TopLevel (
   EvalConfig (..), Topper, runTopperM,
   evalSourceBlock, evalSourceBlockRepl,
-  evalSourceText, initTopState, TopStateEx (..),
+  evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
 import Data.Maybe
@@ -62,9 +62,11 @@ import QueryType
 
 -- === top-level monad ===
 
+data LibPath = LibDirectory FilePath | LibBuiltinPath
+
 data EvalConfig = EvalConfig
   { backendName   :: Backend
-  , libPaths      :: Maybe [FilePath]
+  , libPaths      :: [LibPath]
   , preludeFile   :: Maybe FilePath
   , logFileName   :: Maybe FilePath
   , logFile       :: Maybe Handle }
@@ -582,15 +584,19 @@ loadModuleSource config moduleName = do
   readFileWithHash fullPath
   where
     findFullPath :: (MonadIO m, Fallible m) => String -> m FilePath
-    findFullPath fname = case libPaths config of
-      Nothing    -> liftIO $ getDataFileName $ "lib/" ++ fname
-      Just paths -> liftIO (findFile paths fname) >>= \case
+    findFullPath fname = do
+      fsPaths <- liftIO $ traverse resolveBuiltinPath $ libPaths config
+      liftIO (findFile fsPaths fname) >>= \case
         Just fpath -> return fpath
         Nothing    -> throw ModuleImportErr $ unlines
           [ "Couldn't find a source file for module " ++
             (case moduleName of OrdinaryModule n -> n; Prelude -> "prelude"; Main -> error "")
           , "Hint: Consider extending --lib-path?"
           ]
+
+    resolveBuiltinPath = \case
+      LibBuiltinPath   -> liftIO $ getDataFileName "lib"
+      LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
 -- === saving cache to disk ===
