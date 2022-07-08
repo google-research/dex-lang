@@ -325,9 +325,17 @@ linearizeExpr expr = case expr of
     f' <- substM f
     lookupCustomRules f' >>= \case
       Nothing -> error "not implemented"
-      Just (CustomLinearize cl) -> do
-        wts <- forM (toList xs) linearizeAtom
-        (ans, flin) <- fromPair =<< naryApp cl (wts <&> \(WithTangent p _) -> p)
+      Just (CustomLinearize n cl) -> do
+        let (polyXs, argXs) = splitAt n $ toList xs
+        polyXs' <- mapM substM polyXs
+        (any id <$> mapM isActive polyXs') >>= \case
+          True -> error $
+            "Polymorphic arguments of custom linearization rules are " ++
+            "expected to be inactive (i.e. independent of any differentiated " ++
+            "function argument)"
+          False -> return ()
+        wts <- forM (toList argXs) linearizeAtom
+        (ans, flin) <- fromPair =<< naryApp cl (polyXs' ++ (wts <&> \(WithTangent p _) -> p))
         return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
   App _ _ -> error "not implemented"
   TabApp x idxs -> do
