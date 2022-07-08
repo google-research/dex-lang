@@ -403,9 +403,12 @@ g = \x:(Float & Float). 4 .* x
 
 custom-linearization g \x. (g x, g x)
 > Type error:Expected the custom linearization to have type:
+>
 > ((Float32 & Float32)
 >  -> ((Float32 & Float32) & ((Float32 & Float32) -> (Float32 & Float32))))
+>
 > but it has type:
+>
 > ((Float32 & Float32) -> ((Float32 & Float32) & (Float32 & Float32)))
 
 data IHaveNoTangentType = MkIHaveNoTangentType
@@ -413,9 +416,26 @@ data IHaveNoTangentType = MkIHaveNoTangentType
 noInputTangent = \x:IHaveNoTangentType. 2.0
 
 custom-linearization noInputTangent \x. (noInputTangent x, 0.0)
-> Type error:The type of argument of noInputTangent does not have a well-defined tangent space
+> Type error:The type of one of the arguments of noInputTangent is:
+>
+>   IHaveNoTangentType
+>
+> but it doesn't have a well-defined tangent space.
 
 noOutputTangent = \x:Float. MkIHaveNoTangentType
 
 custom-linearization noOutputTangent \x. (noOutputTangent x, 0.0)
-> Type error:The type of result of noOutputTangent does not have a well-defined tangent space. Is it a unary function?
+> Type error:The type of the result of noOutputTangent is:
+>
+>   IHaveNoTangentType
+>
+> but it does not have a well-defined tangent space.
+
+-- Functions of multiple arguments should be supported
+h = \x:Float y:Float. x * 2 + y
+hLin = \x y. (h x y, \xt:Float yt:Float. xt + yt)
+
+custom-linearization h hLin
+
+deriv (\x. h x x) 1.0 == deriv (\x. x + x) 1.0
+> True
