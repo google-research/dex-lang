@@ -150,9 +150,9 @@ addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m 
 addInstanceSynthCandidate className instanceName =
   emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
 
-emitCustomLinearization :: TopBuilder m => AtomName n -> Atom n -> m n ()
-emitCustomLinearization v f = emitNamelessEnv $
-  TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v (CustomLinearize f) }
+emitCustomLinearization :: TopBuilder m => AtomName n -> Int -> Atom n -> m n ()
+emitCustomLinearization v ni f = emitNamelessEnv $
+  TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v (CustomLinearize ni f) }
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do

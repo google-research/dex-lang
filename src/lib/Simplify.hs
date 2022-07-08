@@ -287,7 +287,7 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
       ask >>= \case
         WillLinearize -> do
           lookupCustomRules v >>= \case
-            Just (CustomLinearize _) -> return $ Var v
+            Just (CustomLinearize _ _) -> return $ Var v
             Nothing -> doInline
         NoLinearize -> doInline
       where

@@ -242,9 +242,16 @@ evalSourceBlock' mname block = case sbContents block of
         lookupCustomRules fname' >>= \case
           Nothing -> return ()
           Just _  -> throw TypeErr $ pprint fname ++ " already has a custom linearization"
-        impl <- evalUExpr expr
+        -- We do some special casing to avoid instantiating polymorphic functions.
+        impl <- case expr of
+          WithSrcE _ (UVar _) ->
+            renameSourceNamesUExpr expr >>= \case
+              WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> return $ Var v
+              _ -> error "Expected a variable"
+          _ -> evalUExpr expr
         fType <- getType fname'
-        linFunTy <- getLinearizationType fType [] fType
+        (nimplicit, linFunTy) <- liftExcept . runFallibleM =<< liftEnvReaderT
+          (getLinearizationType fType REmpty [] fType)
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
             implTy <- getType impl
@@ -258,21 +265,32 @@ evalSourceBlock' mname block = case sbContents block of
               , pprint implTy
               ]
           Success () -> return ()
-        emitCustomLinearization fname' impl
+        emitCustomLinearization fname' nimplicit impl
       Just _ -> throw TypeErr $ "Custom linearization can only be defined for functions"
     where
-      getLinearizationType :: Topper m => Type n -> [Type n] -> Type n -> m n (Type n)
-      getLinearizationType fullTy revArgTys = \case
-        Pi (PiType (PiBinder binder a arr) eff b') -> do
-          unless (arr == PlainArrow) $ throw TypeErr $
-            "Custom linearization can only be defined for regular functions" ++ but
+      getLinearizationType :: Type n -> RNest PiBinder n l
+                           -> [Type l] -> Type l -> EnvReaderT FallibleM l (Int, Type n)
+      getLinearizationType fullTy implicitArgs revArgTys = \case
+        Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
           unless (eff == Pure) $ throw TypeErr $
             "Custom linearization can only be defined for pure functions" ++ but
-          b <- case hoist binder b' of
-            HoistSuccess b -> return b
-            HoistFailure _ -> throw TypeErr $
-              "Custom linearization cannot be defined for dependent functions" ++ but
-          getLinearizationType fullTy (a:revArgTys) b
+          let implicit = do
+                unless (null revArgTys) $ throw TypeErr $
+                  "To define a custom linearization, all implicit and class arguments of " ++
+                  "a function have to precede all explicit arguments. However, the " ++
+                  "type of " ++ pprint fname ++ "is:\n\n" ++ pprint fullTy
+                refreshAbs (Abs pbinder b') \pbinder' b'' ->
+                  getLinearizationType fullTy (RNest implicitArgs pbinder') [] b''
+          case arr of
+            ClassArrow -> implicit
+            ImplicitArrow -> implicit
+            PlainArrow -> do
+              b <- case hoist binder b' of
+                HoistSuccess b -> return b
+                HoistFailure _ -> throw TypeErr $
+                  "Custom linearization cannot be defined for dependent functions" ++ but
+              getLinearizationType fullTy implicitArgs (a:revArgTys) b
+            LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
         resultTy -> do
           when (null revArgTys) $ throw TypeErr $
             "Custom linearization can only be defined for functions" ++ but
@@ -296,8 +314,14 @@ evalSourceBlock' mname block = case sbContents block of
                     , "but it doesn't have a well-defined tangent space."
                     ]
           tanFunTy <- foldM prependTangent resultTyTan revArgTys
-          foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
-        where but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+          (nestLength $ unRNest implicitArgs,) . prependImplicit implicitArgs <$>
+            foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+        where
+          but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+          prependImplicit :: RNest PiBinder n l -> Type l -> Type n
+          prependImplicit is ty = case is of
+            REmpty -> ty
+            RNest is' i -> prependImplicit is' $ Pi $ PiType i Pure ty
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty

@@ -287,8 +287,17 @@ data DictExpr (n::S) =
 -- TODO: Use an IntMap
 newtype CustomRules (n::S) = CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
                              deriving (Semigroup, Monoid, Store)
-newtype AtomRules (n::S) = CustomLinearize (Atom n)
-                           deriving (Store, SinkableE, HoistableE, AlphaEqE, SubstE Name)
+data AtomRules (n::S) = CustomLinearize Int (Atom n)  -- number of implicit args, linearization function
+                        deriving (Generic)
+
+instance GenericE AtomRules where
+  type RepE AtomRules = (LiftE Int) `PairE` Atom
+  fromE (CustomLinearize ni a) = LiftE ni `PairE` a
+  toE (LiftE ni `PairE` a) = CustomLinearize ni a
+instance SinkableE AtomRules
+instance HoistableE AtomRules
+instance AlphaEqE AtomRules
+instance SubstE Name AtomRules
 
 instance GenericE CustomRules where
   type RepE CustomRules = ListE (PairE AtomName AtomRules)
@@ -1988,6 +1997,7 @@ instance Store (PiType n)
 instance Store (TabPiType n)
 instance Store (DepPairType  n)
 instance Store (SuperclassBinders n l)
+instance Store (AtomRules n)
 instance Store (ClassDef     n)
 instance Store (InstanceDef  n)
 instance Store (InstanceBody n)
