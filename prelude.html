@@ -2068,8 +2068,7 @@ Dex's PRNG system is modelled directly after <a href="https://github.com/google/
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: newtype
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Key</span> <span class="symbol">=</span> <span class="type-name">Word64</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> threefry_2x32 (k<span class="symbol">:</span><span class="type-name">Word64</span>) (count<span class="symbol">:</span><span class="type-name">Word64</span>) <span class="symbol">:</span> <span class="type-name">Word64</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> threefry_2x32 (k<span class="symbol">:</span><span class="type-name">Word64</span>) (count<span class="symbol">:</span><span class="type-name">Word64</span>) <span class="symbol">:</span> <span class="type-name">Word64</span> <span class="symbol">=</span>
   <span class="comment">-- Based on jax&#39;s threefry_2x32 by Matt Johnson and Peter Hawkins
 </span>  rotations1 <span class="symbol">=</span> [13<span class="symbol">,</span> 15<span class="symbol">,</span> 26<span class="symbol">,</span> 6]
   rotations2 <span class="symbol">=</span> [17<span class="symbol">,</span> 29<span class="symbol">,</span> 16<span class="symbol">,</span> 24]
