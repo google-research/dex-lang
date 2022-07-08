@@ -907,7 +907,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
   (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod0 am
   empty <span class="symbol">=</span> %projMethod0 bm
   combine <span class="symbol">=</span> %projMethod1 bm
-  %mextend ref empty combine x
+  %mextend ref empty (<span class="symbol">\</span>x y<span class="symbol">.</span> combine x y) x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">!</span>) {h n a} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %indexRef ref i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fst_ref {h a b} (ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %fstRef ref
@@ -943,7 +943,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
     accumBaseMonoid <span class="symbol">=</span> %explicitDict (<span class="type-name">AccumMonoid</span> h&#39; b) accumMonoidData
     action&#39; <span class="symbol">=</span> %explicitApply (%explicitApply action h&#39;) accumBaseMonoid
     action&#39; ref
-  %runWriter empty combine explicitAction
+  %runWriter empty (<span class="symbol">\</span>x y<span class="symbol">.</span> combine x y) explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yield_accum
       {a b w eff}
@@ -1452,9 +1452,11 @@ It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Automatic differentiation</h2>
 </div></div><div class="cell"><div class="prose-block"><h3>AD operations</h3>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: add vector space constraints
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> %linearize f x
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> %linearize (<span class="symbol">\</span>x<span class="symbol">.</span> f x) x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> jvp {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">--</span>o b <span class="symbol">=</span> snd (linearize f x)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_linear {a b} (f<span class="command">:a</span> <span class="symbol">--</span>o b) <span class="symbol">:</span> b <span class="symbol">--</span>o a <span class="symbol">=</span> %linearTranspose f
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_linear {a b} (f<span class="command">:a</span> <span class="symbol">--</span>o b) <span class="symbol">:</span> b <span class="symbol">--</span>o a <span class="symbol">=</span>
+  f&#39; <span class="symbol">:</span> a <span class="symbol">--</span>o b <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> f x
+  %linearTranspose f&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> vjp {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> b <span class="symbol">--</span>o a) <span class="symbol">=</span>
   (y<span class="symbol">,</span> df) <span class="symbol">=</span> linearize f x
@@ -2068,7 +2070,8 @@ Dex's PRNG system is modelled directly after <a href="https://github.com/google/
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: newtype
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Key</span> <span class="symbol">=</span> <span class="type-name">Word64</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> threefry_2x32 (k<span class="symbol">:</span><span class="type-name">Word64</span>) (count<span class="symbol">:</span><span class="type-name">Word64</span>) <span class="symbol">:</span> <span class="type-name">Word64</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> threefry_2x32 (k<span class="symbol">:</span><span class="type-name">Word64</span>) (count<span class="symbol">:</span><span class="type-name">Word64</span>) <span class="symbol">:</span> <span class="type-name">Word64</span> <span class="symbol">=</span>
   <span class="comment">-- Based on jax&#39;s threefry_2x32 by Matt Johnson and Peter Hawkins
 </span>  rotations1 <span class="symbol">=</span> [13<span class="symbol">,</span> 15<span class="symbol">,</span> 26<span class="symbol">,</span> 6]
   rotations2 <span class="symbol">=</span> [17<span class="symbol">,</span> 29<span class="symbol">,</span> 16<span class="symbol">,</span> 24]
