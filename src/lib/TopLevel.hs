@@ -244,42 +244,60 @@ evalSourceBlock' mname block = case sbContents block of
           Just _  -> throw TypeErr $ pprint fname ++ " already has a custom linearization"
         impl <- evalUExpr expr
         fType <- getType fname'
-        let but = ", but " ++ pprint fname ++ " has type " ++ pprint fType
-        case fType of
-          Pi (PiType (PiBinder binder a arr) eff b') -> do
-            unless (arr == PlainArrow) $ throw TypeErr $
-              "Custom linearization can only be defined for regular functions" ++ but
-            unless (eff == Pure) $ throw TypeErr $
-              "Custom linearization can only be defined for pure functions" ++ but
-            b <- case hoist binder b' of
-              HoistSuccess b -> return b
-              HoistFailure _ -> throw TypeErr $
-                "Custom linearization cannot be defined for dependent functions" ++ but
-            at <- maybeTangentType a >>= \case
-              Just at -> return at
-              Nothing -> throw TypeErr $
-                "The type of argument of " ++ pprint fname ++ " does not have a well-defined tangent space"
-            bt <- maybeTangentType b >>= \case
-              Just bt -> return bt
-              Nothing -> throw TypeErr $
-                "The type of result of " ++ pprint fname ++ " does not have a well-defined tangent space." ++
-                " Is it a unary function?"
-            tanFunTy <- at --> bt
-            linFunTy <- a --> PairTy b tanFunTy
-            impl `checkHasType` linFunTy >>= \case
-              Failure _ -> do
-                implTy <- getType impl
-                throw TypeErr $ unlines
-                  [ "Expected the custom linearization to have type:"
-                  , pprint linFunTy
-                  , "but it has type:"
-                  , pprint implTy
-                  ]
-              Success () -> return ()
-            emitCustomLinearization fname' impl
-          _ -> throw TypeErr $
-            "Custom linearization can only be defined for functions" ++ but
+        linFunTy <- getLinearizationType fType [] fType
+        impl `checkHasType` linFunTy >>= \case
+          Failure _ -> do
+            implTy <- getType impl
+            throw TypeErr $ unlines
+              [ "Expected the custom linearization to have type:"
+              , ""
+              , pprint linFunTy
+              , ""
+              , "but it has type:"
+              , ""
+              , pprint implTy
+              ]
+          Success () -> return ()
+        emitCustomLinearization fname' impl
       Just _ -> throw TypeErr $ "Custom linearization can only be defined for functions"
+    where
+      getLinearizationType :: Topper m => Type n -> [Type n] -> Type n -> m n (Type n)
+      getLinearizationType fullTy revArgTys = \case
+        Pi (PiType (PiBinder binder a arr) eff b') -> do
+          unless (arr == PlainArrow) $ throw TypeErr $
+            "Custom linearization can only be defined for regular functions" ++ but
+          unless (eff == Pure) $ throw TypeErr $
+            "Custom linearization can only be defined for pure functions" ++ but
+          b <- case hoist binder b' of
+            HoistSuccess b -> return b
+            HoistFailure _ -> throw TypeErr $
+              "Custom linearization cannot be defined for dependent functions" ++ but
+          getLinearizationType fullTy (a:revArgTys) b
+        resultTy -> do
+          when (null revArgTys) $ throw TypeErr $
+            "Custom linearization can only be defined for functions" ++ but
+          resultTyTan <- maybeTangentType resultTy >>= \case
+            Just rtt -> return rtt
+            Nothing  -> throw TypeErr $ unlines
+              [ "The type of the result of " ++ pprint fname ++ " is:"
+              , ""
+              , "  " ++ pprint resultTy
+              , ""
+              , "but it does not have a well-defined tangent space."
+              ]
+          let prependTangent linTail ty =
+                maybeTangentType ty >>= \case
+                  Just tty -> tty --> linTail
+                  Nothing  -> throw TypeErr $ unlines
+                    [ "The type of one of the arguments of " ++ pprint fname ++ " is:"
+                    , ""
+                    , "  " ++ pprint ty
+                    , ""
+                    , "but it doesn't have a well-defined tangent space."
+                    ]
+          tanFunTy <- foldM prependTangent resultTyTan revArgTys
+          foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+        where but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty
