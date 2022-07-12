@@ -317,7 +317,7 @@ opSigList = do
 effectDef :: Parser (UDecl VoidS VoidS)
 effectDef = do
   keyWord EffectKW
-  effName <- upperName <|> symName
+  effName <- anyName
   (methodNames, methodTys) <- opSigList
   return $ UEffectDecl methodTys (fromString effName) methodNames
 
@@ -393,7 +393,8 @@ instanceMethod = do
 handlerDef :: Parser (UDecl VoidS VoidS)
 handlerDef = do
   keyWord HandlerKW
-  binders <- concat <$> many (argInParens [parensImplicitArg])
+  binders <- concat <$> many (
+    argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg])
   handlerName <- anyName
   sym ":"
   effectName <- anyName
