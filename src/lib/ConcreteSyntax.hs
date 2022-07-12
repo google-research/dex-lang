@@ -6,6 +6,7 @@
 
 module ConcreteSyntax (
   mustParseit, sourceBlocks, sourceBlock, joinPos,
+  keyWordStrs, showPrimName,
   binOptL, binOptR, nary,
   WithSrc (..), CSourceBlock, CSourceBlock' (..),
   CTopDecl (..), CBlock (..), CDecl (..), Group, Group'(..),

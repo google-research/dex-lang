@@ -37,7 +37,7 @@ import LabeledItems
 import Err
 import Name
 import Syntax
-import Parser (showPrimName)
+import ConcreteSyntax (showPrimName)
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,

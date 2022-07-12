@@ -29,7 +29,7 @@ import TopLevel
 import Name
 import PPrint
 import Err
-import Parser
+import AbstractSyntax
 import Builder
 
 import Dex.Foreign.Util

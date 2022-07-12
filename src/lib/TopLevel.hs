@@ -44,7 +44,7 @@ import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
 
 import Name
-import Parser
+import AbstractSyntax
 import Syntax
 import Builder
 import CheckType (CheckableE (..), asFFIFunType, asFirstOrderFunction)
