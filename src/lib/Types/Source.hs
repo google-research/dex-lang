@@ -302,6 +302,7 @@ data SourceBlock' =
    EvalUDecl (UDecl VoidS VoidS)
  | Command CmdName (UExpr VoidS)
  | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
+ | DeclareCustomLinearization SourceName (UExpr VoidS)
  | GetNameType SourceName
  | ImportModule ModuleSourceName
  | QueryEnv EnvQuery

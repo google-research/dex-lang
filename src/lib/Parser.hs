@@ -108,6 +108,11 @@ declareForeign = do
   eol
   return $ DeclareForeign foreignName $ UAnnBinder (fromString b) ty
 
+declareCustomLinearization :: Parser SourceBlock'
+declareCustomLinearization = do
+  keyWord CustomLinearizationKW
+  (DeclareCustomLinearization <$> anyCaseName <*> expr) <* eol
+
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
@@ -179,6 +184,7 @@ topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
   <|> declareForeign
+  <|> declareCustomLinearization
   <|> (QueryEnv <$> envQuery)
   <|> explicitCommand
   <?> "top-level command"
@@ -1141,6 +1147,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ReturningKW
+             | CustomLinearizationKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1206,6 +1213,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       CtlKW -> "ctl"
       ReturnKW -> "return"
       ReturningKW -> "returning"
+      CustomLinearizationKW -> "custom-linearization"
 
 keyWordSet :: HS.HashSet String
 keyWordSet = HS.fromList keyWordStrs
@@ -1214,8 +1222,8 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
-               "do", "view", "import", "foreign", "effect", "jmp", "ctl",
-               "return", "returning"]
+               "do", "view", "import", "foreign", "custom-linearization",
+               "effect", "jmp", "ctl", "return", "returning"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

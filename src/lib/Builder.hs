@@ -29,7 +29,7 @@ module Builder (
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
-  emitTopLet, emitImpFunBinding,
+  emitTopLet, emitImpFunBinding, emitCustomLinearization,
   lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
@@ -72,6 +72,7 @@ import {-# SOURCE #-} Interpreter
 import LabeledItems
 import Util (enumerate, restructure, transitiveClosureM, bindM2, iota)
 import Err
+import Types.Core
 import Core
 
 -- === Ordinary (local) builder class ===
@@ -148,6 +149,10 @@ emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
 addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
 addInstanceSynthCandidate className instanceName =
   emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
+
+emitCustomLinearization :: TopBuilder m => AtomName n -> Atom n -> m n ()
+emitCustomLinearization v f = emitNamelessEnv $
+  TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v (CustomLinearize f) }
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do
