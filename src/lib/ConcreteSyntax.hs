@@ -392,8 +392,9 @@ pattern SingletonBlock g = CBlock [CExpr g]
 -- === Groups ===
 
 cBlock :: Parser CBlock
-cBlock = withIndent $
-  CBlock <$> (mayNotBreak $ cDecl `sepBy1` (semicolon <|> try nextLine))
+cBlock = realBlock <|> ExprBlock <$> cGroup where
+  realBlock = withIndent $
+    CBlock <$> (mayNotBreak $ cDecl `sepBy1` (semicolon <|> try nextLine))
 
 cDecl :: Parser CDecl
 cDecl = instanceDef True <|> (do
@@ -506,7 +507,7 @@ leafGroupNoBrackets = do
   next <- nextChar
   case next of
     '_'  -> underscore $> CHole
-    '('  -> parens $ CParens <$> cBlock
+    '('  -> parens $ CParens . ExprBlock <$> cGroupNoEqual
     '{'  -> do next2 <- nextChar
                case next2 of
                  '|' -> bracketed (symbol "{|") (symbol "|}") $ CBracket CurlyPipe <$> cGroup

@@ -26,6 +26,7 @@ import Name
 import Types.Primitives hiding (Equal)
 import Types.Source
 import Util
+import Debug.Trace qualified as Tr
 
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
@@ -40,7 +41,7 @@ finishUModuleParse (UModulePartialParse name _ file) =
 
 parseUModule :: ModuleSourceName -> Text -> UModule
 parseUModule name s = do
-  let blocks = mustParseit s C.sourceBlocks
+  let blocks = Tr.traceShow (mustParseit s C.sourceBlocks) (mustParseit s C.sourceBlocks)
   let blocks' = map sourceBlock blocks
   let blocks'' = if name == Prelude
         then blocks'
