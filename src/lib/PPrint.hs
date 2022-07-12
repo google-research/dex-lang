@@ -37,7 +37,8 @@ import LabeledItems
 import Err
 import Name
 import Syntax
-import ConcreteSyntax (showPrimName)
+import ConcreteSyntax hiding (Equal)
+import ConcreteSyntax qualified as C
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -1011,3 +1012,75 @@ instance ToJSON Result where
           , "compile_time" .= toJSON compileTime
           , "run_time"     .= toJSON runTime ]
         out -> ["result" .= String (fromString $ pprint out)]
+
+instance Pretty SourceBlock' where
+  pretty (EvalUDecl d) = fromString $ show d
+  pretty b = fromString $ show b
+
+-- === Concrete syntax rendering ===
+
+instance Pretty CSourceBlock' where
+  pretty (CTopDecl decl) = p decl
+  pretty d = fromString $ show d
+
+instance Pretty CTopDecl where
+  pretty (CDecl ann decl) = annDoc <> p decl
+    where annDoc = case ann of
+            PlainLet -> mempty
+            _ -> p ann <> " "
+  pretty d = fromString $ show d
+
+instance Pretty CDecl where
+  pretty (CDef name args blk) =
+    "def " <> fromString name <> " " <> pArg args <> " ="
+      <> nest 2 (hardline <> p blk)
+  pretty (CLet pat blk) = pArg pat <> "=" <> p blk
+  pretty d = fromString $ show d
+
+instance Pretty CBlock where
+  pretty (ExprBlock g) = pArg g
+  pretty (CBlock decls) = nest 2 $ prettyLines decls
+
+instance PrettyPrec Group where
+  prettyPrec (WithSrc _ g) = prettyPrec g
+
+instance Pretty Group where
+  pretty = prettyFromPrettyPrec
+
+instance PrettyPrec Group' where
+  prettyPrec (CIdentifier n) = atPrec ArgPrec $ fromString n
+  prettyPrec (CParens blk)  =
+    atPrec ArgPrec $ "(" <> p blk <> ")"
+  prettyPrec (CBracket b g) =
+    atPrec ArgPrec $ open_bracket b <> pLowest g <> close_bracket b
+  prettyPrec (CBin op lhs rhs) =
+    atPrec ArgPrec $ pArg lhs <> p op <> pArg rhs
+  prettyPrec g = atPrec ArgPrec $ fromString $ show g
+
+open_bracket :: Bracket -> Doc a
+open_bracket Square = "["
+open_bracket Curly  = "{"
+open_bracket CurlyPipe = "{|"
+
+close_bracket :: Bracket -> Doc a
+close_bracket Square = "]"
+close_bracket Curly  = "}"
+close_bracket CurlyPipe = "|}"
+
+instance Pretty Bin where
+  pretty (WithSrc _ b) = p b
+
+instance Pretty Bin' where
+  pretty (EvalBinOp name) = fromString name
+  pretty Juxtapose = " "
+  pretty Ampersand = "&"
+  pretty IndexingDot = "."
+  pretty Comma = ","
+  pretty Colon = ":"
+  pretty DoubleColon = "::"
+  pretty Dollar = "$"
+  pretty (Arrow arr) = p arr
+  pretty FatArrow = "=>"
+  pretty Question = "?"
+  pretty Pipe = "|"
+  pretty C.Equal = "="

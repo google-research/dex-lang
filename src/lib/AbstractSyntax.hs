@@ -28,6 +28,8 @@ import Types.Source
 import Util
 import Debug.Trace qualified as Tr
 
+import PPrint (pprint)
+
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
 parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
@@ -41,8 +43,12 @@ finishUModuleParse (UModulePartialParse name _ file) =
 
 parseUModule :: ModuleSourceName -> Text -> UModule
 parseUModule name s = do
-  let blocks = Tr.traceShow (mustParseit s C.sourceBlocks) (mustParseit s C.sourceBlocks)
-  let blocks' = map sourceBlock blocks
+  let blocks = -- (Tr.trace
+        -- (pprint $ map sbContents $ mustParseit s C.sourceBlocks)
+        (mustParseit s C.sourceBlocks)
+  let blocks' = -- (Tr.trace
+        -- (pprint $ map sbContents $ map sourceBlock blocks)
+        (map sourceBlock blocks)
   let blocks'' = if name == Prelude
         then blocks'
         else preludeImportBlock : blocks'
@@ -172,14 +178,19 @@ decl ann (CDef name header body) = do
         (effs, ty) <- optEffects typeAnn
         return (args, effs, ty)
       _ -> fail "def requires a :-delimited type annotation"
-decl _ (CInstance supers clName args methods instName) = do
+decl _ (CInstance header methods instName) = do
   supers' <- concat <$> mapM argument supers
+  clName' <- identifier clName -- TODO(axch) Enforce capitalization?
   args' <- mapM expr args
   methods' <- mapM method methods
   let instName' = case instName of
         Nothing  -> NothingB
         (Just n) -> JustB $ fromString n
-  return $ UInstance (fromString clName) (toNest supers') args' methods' instName'
+  return $ UInstance (fromString clName') (toNest supers') args' methods' instName'
+  where
+    (supers, (clName:args)) = span isBracketed $ nary Juxtapose header
+    isBracketed (Bracketed _ _) = True
+    isBracketed _ = False
 decl ann (CExpr g) = ULet ann (UPatAnn (nsB UPatIgnore) Nothing) <$> expr g
 
 patOptAnn :: Group -> Except (UPatAnn VoidS VoidS)
@@ -257,10 +268,12 @@ argument (Bracketed Square g) = case g of
     return $ map (\ty -> UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow) tys
 argument (WithSrc _ (CParens (ExprBlock g))) = case g of
   (Binary Colon name typ) -> singleArgument PlainArrow name typ
-  -- TODO(axch): Allow un-annotated arguments (Issue 955)
-  _ -> fail "Explicit argument must be type annotated"
--- TODO(axch): Allow bare arguments (Issue 955)
-argument _ = fail "Arguments must be enclosed in round, curly, or square brackets"
+  _ -> do
+    x <- pat g
+    return $ [UPatAnnArrow (UPatAnn x Nothing) PlainArrow]
+argument g = do
+  x <- pat g
+  return $ [UPatAnnArrow (UPatAnn x Nothing) PlainArrow]
 
 singleArgument :: Arrow -> Group -> Group -> Except [UPatAnnArrow VoidS VoidS]
 singleArgument arr name typ = do
@@ -331,6 +344,7 @@ expr = propagateSrcE expr' where
   expr' (CFloat num)        = return $ UFloatLit num
   expr' CHole               = return   UHole
   expr' (CLabel prefix str) = return $ labelExpr prefix str
+  expr' (CParens (ExprBlock (WithSrc _ CEmpty))) = return unitExpr
   expr' (CParens blk)       = dropSrcE <$> block blk
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
@@ -384,7 +398,7 @@ expr = propagateSrcE expr' where
         UIntLit   i -> UIntLit   (-i)
         UFloatLit i -> UFloatLit (-i)
         e -> dropSrcE $ mkApp (ns "neg") $ ns e -- TODO(axch) propagate source info
-      _ -> error $ "Do not expect unary (" ++ name ++ ") as a bare expression"
+      _ -> fail $ "Do not expect unary (" ++ name ++ ") as a bare expression"
     where
       range :: SourceName -> UExpr VoidS -> UExpr' VoidS
       range rangeName lim =

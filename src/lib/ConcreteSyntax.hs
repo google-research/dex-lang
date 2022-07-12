@@ -33,6 +33,7 @@ import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
 import qualified Text.Megaparsec.Char.Lexer as L
+import Debug.Trace qualified as Tr
 
 import Err
 import LabeledItems
@@ -85,9 +86,9 @@ data CDecl
   -- name, header, body.  The header should contain the parameters,
   -- optional effects, and return type
   | CDef SourceName Group CBlock
-  | CInstance [Group] -- Prerequisites
-      SourceName -- Name of class
-      [Group] -- Arguments
+  -- header, methods, optional name.  The header should contain
+  -- the prerequisites, class name, and class arguments.
+  | CInstance Group
       [(SourceName, CBlock)] -- Method definitions
       (Maybe SourceName) -- Optional name of instance
   | CExpr Group
@@ -219,7 +220,7 @@ binOptR tag = \case
 nary :: Bin' -> Group -> [Group]
 nary op g = go g [] where
   go (Binary binOp lhs rhs) rest | op == binOp = go lhs $ go rhs rest
-  go _ rest = rest
+  go grp rest = grp:rest
 
 -- Roll up a list of groups as binary applications.
 nary' :: Bin' -> [Group] -> Group
@@ -407,11 +408,9 @@ instanceDef isNamed = do
   name <- case isNamed of
     False -> keyWord InstanceKW $> Nothing
     True  -> keyWord NamedInstanceKW *> (Just . fromString <$> anyName) <* sym ":"
-  argBinders <- many (cGroupNoJuxt <?> "instance arg")
-  className <- upperName
-  params <- many cGroupNoJuxt
+  header <- cGroup
   methods <- onePerLine instanceMethod
-  return $ CInstance argBinders (fromString className) params methods name
+  return $ CInstance header methods name
 
 instanceMethod :: Parser (SourceName, CBlock)
 instanceMethod = do
@@ -440,9 +439,10 @@ cGroupNoJuxt :: Parser Group
 cGroupNoJuxt = makeExprParser (withSrc leafGroup) $
   withoutOp "space" $ withoutOp "." ops
 
--- Like cGroup but does not allow square brackets `[]` at the top level
+-- Like cGroup but does not allow square brackets `[]` or `=` at the top level
 cGroupNoBrackets :: Parser Group
-cGroupNoBrackets = makeExprParser (withSrc leafGroupNoBrackets) ops
+cGroupNoBrackets = makeExprParser (withSrc leafGroupNoBrackets) $
+  withoutOp "=" ops
 
 -- Like cGroup but does not allow =
 cGroupNoEqual :: Parser Group
@@ -507,7 +507,8 @@ leafGroupNoBrackets = do
   next <- nextChar
   case next of
     '_'  -> underscore $> CHole
-    '('  -> parens $ CParens . ExprBlock <$> cGroupNoEqual
+    '('  -> (symbol "()" $> (CParens $ ExprBlock $ WithSrc Nothing CEmpty))
+            <|> parens (CParens . ExprBlock <$> cGroupNoEqual)
     '{'  -> do next2 <- nextChar
                case next2 of
                  '|' -> bracketed (symbol "{|") (symbol "|}") $ CBracket CurlyPipe <$> cGroup
@@ -910,7 +911,7 @@ anySym :: Lexer String
 anySym = lexeme $ try $ do
   s <- some symChar
   failIf (s `HS.member` knownSymStrs) ""
-  return $ "(" <> s <> ")"
+  return s
 
 symName :: Lexer SourceName
 symName = label "symbol name" $ lexeme $ try $ do
