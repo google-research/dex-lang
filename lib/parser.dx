@@ -54,7 +54,7 @@ def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
       parse h p2
     Just ans -> ans
 
-def return {a} (x:a) : Parser a = MkParser \_. x
+def returnP {a} (x:a) : Parser a = MkParser \_. x
 
 def run_parser {a} (s:String) (parser:Parser a) : Maybe a =
   run_parser_partial s $ MkParser \h.
@@ -88,7 +88,7 @@ def parse_digit : Parser Int = try $ MkParser \h.
   i
 
 def optional {a} (p:Parser a) : Parser (Maybe a) =
-  (MkParser \h. Just (parse h p)) <|> return Nothing
+  (MkParser \h. Just (parse h p)) <|> returnP Nothing
 
 def parse_many {a} (parser:Parser a) : Parser (List a) = MkParser \h.
   yield_state (AsList _ []) \results.
