@@ -29,7 +29,7 @@ module Builder (
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
-  emitTopLet, emitImpFunBinding, emitSpecialization,
+  emitTopLet, emitImpFunBinding, emitSpecialization, emitCustomLinearization,
   lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
   extendImpCache, queryImpCache,
   extendSpecializationCache, querySpecializationCache,
@@ -48,7 +48,7 @@ module Builder (
   buildEffLam, catMaybesE, runMaybeWhile,
   ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
   HoistingTopBuilder (..), liftTopBuilderHoisted,
-  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilder,
+  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT, runDoubleBuilderT,
   ) where
 
 import Control.Applicative
@@ -76,6 +76,7 @@ import {-# SOURCE #-} Interpreter
 import LabeledItems
 import Util (enumerate, restructure, transitiveClosureM, bindM2, iota)
 import Err
+import Types.Core
 import Core
 
 -- === Ordinary (local) builder class ===
@@ -141,21 +142,29 @@ liftTopBuilderHoisted cont = do
 newtype DoubleBuilderT (m::MonadKind) (n::S) (a:: *) =
   DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env TopEnvFrag BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader, MonadIO, Catchable)
+           , CtxReader, ScopeReader, MonadIO, Catchable, MonadReader r)
 
 type DoubleBuilder = DoubleBuilderT HardFailM
 
 -- TODO: do we really need to play these rank-2 games here?
-liftDoubleBuilder
-  :: (TopBuilder m, Mut n, SinkableE e, SubstE Name e)
-  => (forall l. DExt n l => DoubleBuilder l (e l))
-  -> m n (e n)
-liftDoubleBuilder cont = do
+liftDoubleBuilderT
+  :: (EnvReader m, Fallible m', SinkableE e, SubstE Name e)
+  => (forall l. DExt n l => DoubleBuilderT m' l (e l))
+  -> m n (m' (Abs TopEnvFrag e n))
+liftDoubleBuilderT cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  Abs envFrag (DoubleInplaceTResult REmpty e) <- return $ runHardFail $
+  return $ runDoubleBuilderT env cont
+
+runDoubleBuilderT
+  :: (Distinct n, Fallible m, SinkableE e, SubstE Name e)
+  => Env n
+  -> (forall l. DExt n l => DoubleBuilderT m l (e l))
+  -> m (Abs TopEnvFrag e n)
+runDoubleBuilderT env cont = do
+  Abs envFrag (DoubleInplaceTResult REmpty e) <-
     runDoubleInplaceT env $ runDoubleBuilderT' cont
-  emitEnv $ Abs envFrag e
+  return $ Abs envFrag e
 
 instance Fallible m => HoistingTopBuilder (DoubleBuilderT m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
@@ -228,6 +237,10 @@ emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
 addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
 addInstanceSynthCandidate className instanceName =
   emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
+
+emitCustomLinearization :: TopBuilder m => AtomName n -> Atom n -> m n ()
+emitCustomLinearization v f = emitNamelessEnv $
+  TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v (CustomLinearize f) }
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do

@@ -6,7 +6,7 @@
 
 module CheckType (
   CheckableE (..), CheckableB (..),
-  checkTypes, checkTypesM,
+  checkTypes, checkTypesM, checkHasType,
   checkExtends, checkedApplyClassParams,
   tryGetType,
   checkUnOp, checkBinOp,
@@ -48,6 +48,10 @@ checkTypesM e = liftExcept =<< checkTypes e
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftExcept =<< liftTyperT (getTypeE e)
 {-# INLINE tryGetType #-}
+
+checkHasType :: (EnvReader m, HasType e) => e n -> Type n -> m n (Except ())
+checkHasType e ty = liftM void $ liftTyperT $ checkTypeE ty e
+{-# INLINE checkHasType #-}
 
 -- === the type checking/querying monad ===
 

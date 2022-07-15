@@ -619,7 +619,7 @@ def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
   (UnsafeMkAccumMonoidData b bm) = %projMethod0 am
   empty = %projMethod0 bm
   combine = %projMethod1 bm
-  %mextend ref empty combine x
+  %mextend ref empty (\x y. combine x y) x
 
 def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 def fst_ref {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
@@ -655,7 +655,7 @@ def run_accum
     accumBaseMonoid = %explicitDict (AccumMonoid h' b) accumMonoidData
     action' = %explicitApply (%explicitApply action h') accumBaseMonoid
     action' ref
-  %runWriter empty combine explicitAction
+  %runWriter empty (\x y. combine x y) explicitAction
 
 def yield_accum
       {a b w eff}
@@ -1181,9 +1181,11 @@ def cumsum_low {n a} [Add a] (xs: n=>a) : n=>a =
 '### AD operations
 
 -- TODO: add vector space constraints
-def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = %linearize f x
+def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = %linearize (\x. f x) x
 def jvp {a b} (f:a->b) (x:a) : a --o b = snd (linearize f x)
-def transpose_linear {a b} (f:a --o b) : b --o a = %linearTranspose f
+def transpose_linear {a b} (f:a --o b) : b --o a =
+  f' : a --o b = \x. f x
+  %linearTranspose f'
 
 def vjp {a b} (f:a->b) (x:a) : (b & b --o a) =
   (y, df) = linearize f x
@@ -1461,6 +1463,12 @@ def string_from_char_ptr (n:Nat) (ptr:Ptr Char) : {IO} String =
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = w8_to_i c
 
+data CString = MkCString RawPtr
+-- TODO: check the string contains no nulls
+def with_c_string {a} (s:String) (action: CString -> {IO} a) : {IO} a =
+  (AsList n s') = s <> "\NUL"
+  with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
+
 '### Show interface
 For things that can be shown.
 `show` gives a string representation of its input.
@@ -1512,6 +1520,25 @@ instance Show Float64
 instance {a b} [Show a, Show b] Show (a & b)
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
 
+'### Parse interface
+For types that can be parsed from a `String`.
+
+interface Parse a
+  parseString : String -> Maybe a
+
+foreign "strtof" strtofFFI : RawPtr -> RawPtr -> {IO} Float
+
+instance Parse Float
+  parseString = \str. unsafe_io do
+    (AsList str_len _) = str
+    with_c_string str \(MkCString str_ptr).
+      with_alloc 1 \end_ptr:(Ptr (Ptr Char)).
+        (MkPtr raw_end_ptr) = end_ptr
+        result = strtofFFI str_ptr raw_end_ptr
+        (MkPtr str_end_ptr) = load end_ptr
+        consumed = raw_ptr_to_i64 str_end_ptr - raw_ptr_to_i64 str_ptr
+        if consumed == (n_to_i64 str_len) then Just result else Nothing
+
 '## pipe-like reverse function application
 TODO: move this
 
@@ -1548,7 +1575,6 @@ def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 '## File system operations
 
 FilePath : Type = String
-data CString = MkCString RawPtr
 
 def null_raw_ptr : RawPtr = i64_to_raw_ptr $ i_to_i64 0
 
@@ -1566,11 +1592,6 @@ data StreamMode =
   WriteMode
 
 data Stream mode:StreamMode = MkStream RawPtr
-
--- TODO: check the string contains no nulls
-def with_c_string {a} (s:String) (action: CString -> {IO} a) : {IO} a =
-  (AsList n s') = s <> "\NUL"
-  with_table_ptr s' \(MkPtr ptr). action $ MkCString ptr
 
 '### Stream IO
 
@@ -1810,6 +1831,7 @@ Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/j
 -- TODO: newtype
 Key = Word64
 
+@noinline
 def threefry_2x32 (k:Word64) (count:Word64) : Word64 =
   -- Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
   rotations1 = [13, 15, 26, 6]

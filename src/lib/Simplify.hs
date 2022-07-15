@@ -24,6 +24,7 @@ import GHC.Exts (inline)
 
 import Err
 import Name
+import Core
 import Builder
 import Syntax
 import CheckType (CheckableE (..), isData)
@@ -34,14 +35,22 @@ import Linearize
 import Transpose
 import LabeledItems
 import Types.Primitives
+import Types.Core
 
 -- === simplification monad ===
 
 class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
+data WillLinearize = WillLinearize | NoLinearize
+
+-- Note that the substitution carried in this monad generally maps AtomName i to
+-- simplified Atom o, but with one notable exception: top-level function names.
+-- This is because top-level functions can have special (AD) rules associated with
+-- them, and we try to preserve their identity for as long as we can. Since the only
+-- elimination form for function is application, we do some extra handling in simplifyApp.
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM'
-    :: SubstReaderT AtomSubstVal DoubleBuilder i o a }
+    :: SubstReaderT AtomSubstVal (DoubleBuilderT  (ReaderT WillLinearize HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader AtomSubstVal, MonadFail
            , Builder, HoistingTopBuilder)
@@ -50,27 +59,31 @@ liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
   => (forall l. DExt n l => SimplifyM n l (e l))
   -> m n (e n)
-liftSimplifyM cont = liftDoubleBuilder $
-  runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+liftSimplifyM cont = do
+  Abs envFrag e <- liftM (runHardFail . flip runReaderT NoLinearize) $
+    liftDoubleBuilderT $ runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+  emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
 
 liftSimplifyMAssumeNoTopEmissions
   :: (SinkableE e, SubstE Name e, EnvReader m)
   => (forall l. DExt n l => SimplifyM l l (e l))
   -> m n (e n)
-liftSimplifyMAssumeNoTopEmissions cont = liftDoubleBuilderAssumeNoTopEmissions $
-  runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+liftSimplifyMAssumeNoTopEmissions cont =
+  liftM (runHardFail . flip runReaderT NoLinearize) $
+    liftDoubleBuilderTAssumeNoTopEmissions $
+      runSubstReaderT (sink idSubst) $ runSimplifyM' cont
 {-# INLINE liftSimplifyMAssumeNoTopEmissions #-}
 
-liftDoubleBuilderAssumeNoTopEmissions
-  :: (EnvReader m, SinkableE e, SubstE Name e)
-  => (forall l. DExt n l => DoubleBuilder l (e l))
-  -> m n (e n)
-liftDoubleBuilderAssumeNoTopEmissions cont = do
+liftDoubleBuilderTAssumeNoTopEmissions
+  :: (Fallible m', EnvReader m, SinkableE e, SubstE Name e)
+  => (forall l. DExt n l => DoubleBuilderT m' l (e l))
+  -> m n (m' (e n))
+liftDoubleBuilderTAssumeNoTopEmissions cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  return $ runHardFail do
-    Abs frag e <- runTopBuilderT env $ localTopBuilder $ liftDoubleBuilder cont
+  return do
+    Abs frag e <- runDoubleBuilderT env cont
     case checkNoBinders frag of
       Nothing -> error "there weren't supposed to be any emissions!"
       Just UnitB -> return e
@@ -85,6 +98,10 @@ buildBlockSimplified m = do
     buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
+
+instance MonadReader WillLinearize (SimplifyM i o) where
+  ask = SimplifyM $ SubstReaderT $ ReaderT \_ -> ask
+  local f m = SimplifyM $ SubstReaderT $ ReaderT \s -> local f $ runSubstReaderT s $ runSimplifyM' m
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance ScopableBuilder (SimplifyM i) where
@@ -289,7 +306,7 @@ simplifyApp f xs =
 
     slow :: Atom o -> SimplifyM i o (Atom o)
     slow atom = case atom of
-      Lam   lam       -> dropSubst $ fast lam
+      Lam lam -> dropSubst $ fast lam
       ACase e alts ty -> do
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
@@ -314,7 +331,38 @@ simplifyApp f xs =
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
       Lam lam -> return $ Left lam
-      _ -> Right <$> simplifyAtom func
+      _ -> Right <$> simplifyAtomAndInline func
+
+-- | Like `simplifyAtom`, but will try to inline function definitions found
+-- in the environment. The only exception is when we're going to differentiate
+-- and the function has a custom derivative rule defined.
+simplifyAtomAndInline :: Atom i -> SimplifyM i o (Atom o)
+simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
+  Var v -> do
+    env <- getSubst
+    case env ! v of
+      Rename v' -> inlineVar v'
+      SubstVal (Var v') -> inlineVar v'
+      SubstVal x -> return x
+  _ -> simplifyAtom atom >>= \case
+    Var v -> inlineVar v
+    ans -> return ans
+  where
+    inlineVar :: AtomName o -> SimplifyM i o (Atom o)
+    inlineVar v = do
+      -- We simplify all applications, except those that have custom linearizations
+      -- and are inside a linearization operation.
+      ask >>= \case
+        WillLinearize -> do
+          lookupCustomRules v >>= \case
+            Just (CustomLinearize _) -> return $ Var v
+            Nothing -> doInline
+        NoLinearize -> doInline
+      where
+        doInline = do
+          lookupAtomName v >>= \case
+            LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtomAndInline x
+            _ -> return $ Var v
 
 emitSpecializationName
   :: Mut o => AtomName o -> [Atom o] -> SimplifyM i o (AtomName o)
@@ -437,6 +485,8 @@ simplifyVar v = do
     Rename v' -> do
       AtomNameBinding bindingInfo <- lookupEnv v'
       case bindingInfo of
+        -- Functions get inlined only at application sites
+        LetBound (DeclBinding _ (Pi _) _) -> return $ Var v'
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
 
@@ -697,7 +747,7 @@ simplifyHof hof = case hof of
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
   Linearize lam -> do
-    (lam', IdentityReconAbs) <- simplifyLam lam
+    (lam', IdentityReconAbs) <- local (const WillLinearize) $ simplifyLam lam
     linearize lam'
   Transpose lam -> do
     (lam', IdentityReconAbs) <- simplifyLam lam
@@ -705,7 +755,7 @@ simplifyHof hof = case hof of
   CatchException lam -> do
     (Lam (LamExpr b body), IdentityReconAbs) <- simplifyLam lam
     dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
-  _ -> error $ "not implemented: " ++ pprint hof
+  Seq _ _ _ _ -> error "Shouldn't ever see a Seq in Simplify"
 
 simplifyBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result

@@ -198,7 +198,8 @@ parseEvalOpts = EvalConfig
          (optionList backends)
          (long "backend" <> value LLVM <>
           helpOption "Backend" (intercalate " | " $ fst <$> backends))
-  <*> optional (strOption $ long "lib-path" <> metavar "PATH" <> help "Library path")
+  <*> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
+    <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
@@ -214,6 +215,19 @@ parseEvalOpts = EvalConfig
                , ("mlir", MLIR)
 #endif
                , ("interpreter", Interpreter)]
+
+pathOption :: ReadM [LibPath]
+pathOption = splitPaths [] <$> str
+  where
+    splitPaths :: [LibPath] -> String -> [LibPath]
+    splitPaths revAcc = \case
+      []  -> reverse revAcc
+      str -> let (p,t) = break (==':') str in
+             splitPaths (parseLibPath p:revAcc) (dropWhile (==':') t)
+
+    parseLibPath = \case
+      "BUILTIN_LIBRARIES" -> LibBuiltinPath
+      path -> LibDirectory path
 
 openLogFile :: EvalConfig -> IO EvalConfig
 openLogFile EvalConfig {..} = do

@@ -284,6 +284,21 @@ data DictExpr (n::S) =
  | IxFin (Atom n)
    deriving (Show, Generic)
 
+-- TODO: Use an IntMap
+newtype CustomRules (n::S) = CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
+                             deriving (Semigroup, Monoid, Store)
+newtype AtomRules (n::S) = CustomLinearize (Atom n)
+                           deriving (Store, SinkableE, HoistableE, AlphaEqE, SubstE Name)
+
+instance GenericE CustomRules where
+  type RepE CustomRules = ListE (PairE AtomName AtomRules)
+  fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
+  toE (ListE l) = CustomRules $ M.fromList $ fromPairE <$> l
+instance SinkableE CustomRules
+instance HoistableE CustomRules
+instance AlphaEqE CustomRules
+instance SubstE Name CustomRules
+
 -- === envs and modules ===
 
 -- `ModuleEnv` contains data that only makes sense in the context of evaluating
@@ -296,6 +311,7 @@ data Env n = Env
 
 data TopEnv (n::S) = TopEnv
   { envDefs  :: RecSubst Binding n
+  , envCustomRules :: CustomRules n
   , envCache :: Cache n
   , envLoadedModules :: LoadedModules n }
   deriving (Generic)
@@ -350,6 +366,7 @@ data TopEnvFrag n l = TopEnvFrag (EnvFrag n l) (PartialTopEnvFrag l)
 -- names to reflect that.
 data PartialTopEnvFrag n = PartialTopEnvFrag
   { fragCache           :: Cache n
+  , fragCustomRules     :: CustomRules n
   , fragLoadedModules   :: LoadedModules n
   , fragLocalModuleEnv  :: ModuleEnv n }
 
@@ -482,18 +499,19 @@ instance OutFrag EnvFrag where
 
 instance OutMap Env where
   emptyOutMap =
-    Env (TopEnv (RecSubst emptyInFrag) mempty emptyLoadedModules)
+    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules)
         emptyModuleEnv
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv defs cache loaded)
+  extendOutMap (Env (TopEnv defs rules cache loaded)
                     (ModuleEnv imports sm scs objs effs)) frag =
     withExtEvidence frag $ Env
       (TopEnv
         (defs  `extendRecSubst` frag)
+        (sink rules)
         (sink cache)
         (sink loaded))
       (ModuleEnv
@@ -1784,11 +1802,12 @@ instance SubstB Name EnvFrag
 
 instance GenericE PartialTopEnvFrag where
   type RepE PartialTopEnvFrag = Cache
+                              `PairE` CustomRules
                               `PairE` LoadedModules
                               `PairE` ModuleEnv
-  fromE (PartialTopEnvFrag cache loaded env) = cache `PairE` loaded `PairE` env
+  fromE (PartialTopEnvFrag cache rules loaded env) = cache `PairE` rules `PairE` loaded `PairE` env
   {-# INLINE fromE #-}
-  toE (cache `PairE` loaded `PairE` env) = PartialTopEnvFrag cache loaded env
+  toE (cache `PairE` rules `PairE` loaded `PairE` env) = PartialTopEnvFrag cache rules loaded env
   {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
@@ -1797,11 +1816,11 @@ instance AlphaEqE       PartialTopEnvFrag
 instance SubstE Name    PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 <> PartialTopEnvFrag y1 y2 y3 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3)
+  PartialTopEnvFrag x1 x2 x3 x4 <> PartialTopEnvFrag y1 y2 y3 y4=
+    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4)
 
 instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty
+  mempty = PartialTopEnvFrag mempty mempty mempty mempty
   mappend = (<>)
 
 instance GenericB TopEnvFrag where
@@ -1830,13 +1849,14 @@ instance OutFrag TopEnvFrag where
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap env (TopEnvFrag (EnvFrag frag _) (PartialTopEnvFrag cache' loaded' mEnv')) = result
+  extendOutMap env (TopEnvFrag (EnvFrag frag _) (PartialTopEnvFrag cache' rules' loaded' mEnv')) = result
     where
-      Env (TopEnv defs cache loaded) mEnv = env
+      Env (TopEnv defs rules cache loaded) mEnv = env
       result = Env newTopEnv newModuleEnv
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
+        (sink rules <> rules')
         (sink cache <> cache')
         (sink loaded <> loaded')
 

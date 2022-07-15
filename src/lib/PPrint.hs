@@ -37,6 +37,7 @@ import LabeledItems
 import Err
 import Name
 import Syntax
+import Types.Core
 import Parser (showPrimName)
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
@@ -509,10 +510,14 @@ instance Pretty (MethodType n) where
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance Pretty (TopEnv n) where
-  pretty (TopEnv defs cache ms) =
+  pretty (TopEnv defs rules cache ms) =
     prettyRecord [ ("Defs"          , p defs)
+                 , ("Rules"         , p rules)
                  , ("Cache"         , p cache)
                  , ("Loaded modules", p ms)]
+
+instance Pretty (CustomRules n) where
+  pretty _ = "TODO: Rule printing"
 
 instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports

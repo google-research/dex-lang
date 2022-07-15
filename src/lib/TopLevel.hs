@@ -9,7 +9,7 @@
 module TopLevel (
   EvalConfig (..), Topper, runTopperM,
   evalSourceBlock, evalSourceBlockRepl,
-  evalSourceText, initTopState, TopStateEx (..),
+  evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
 import Data.Maybe
@@ -46,8 +46,10 @@ import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restor
 import Name
 import Parser
 import Syntax
+import Core
+import Types.Core
 import Builder
-import CheckType (CheckableE (..), asFFIFunType, asSpecializableFunction)
+import CheckType ( CheckableE (..), asFFIFunType, checkHasType, asSpecializableFunction)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -62,9 +64,11 @@ import QueryType
 
 -- === top-level monad ===
 
+data LibPath = LibDirectory FilePath | LibBuiltinPath
+
 data EvalConfig = EvalConfig
   { backendName   :: Backend
-  , libPath       :: Maybe FilePath
+  , libPaths      :: [LibPath]
   , preludeFile   :: Maybe FilePath
   , logFileName   :: Maybe FilePath
   , logFile       :: Maybe Handle }
@@ -231,6 +235,69 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
+  DeclareCustomLinearization fname expr -> do
+    lookupSourceMap fname >>= \case
+      Nothing -> throw UnboundVarErr $ pprint fname
+      Just (UAtomVar fname') -> do
+        lookupCustomRules fname' >>= \case
+          Nothing -> return ()
+          Just _  -> throw TypeErr $ pprint fname ++ " already has a custom linearization"
+        impl <- evalUExpr expr
+        fType <- getType fname'
+        linFunTy <- getLinearizationType fType [] fType
+        impl `checkHasType` linFunTy >>= \case
+          Failure _ -> do
+            implTy <- getType impl
+            throw TypeErr $ unlines
+              [ "Expected the custom linearization to have type:"
+              , ""
+              , pprint linFunTy
+              , ""
+              , "but it has type:"
+              , ""
+              , pprint implTy
+              ]
+          Success () -> return ()
+        emitCustomLinearization fname' impl
+      Just _ -> throw TypeErr $ "Custom linearization can only be defined for functions"
+    where
+      getLinearizationType :: Topper m => Type n -> [Type n] -> Type n -> m n (Type n)
+      getLinearizationType fullTy revArgTys = \case
+        Pi (PiType (PiBinder binder a arr) eff b') -> do
+          unless (arr == PlainArrow) $ throw TypeErr $
+            "Custom linearization can only be defined for regular functions" ++ but
+          unless (eff == Pure) $ throw TypeErr $
+            "Custom linearization can only be defined for pure functions" ++ but
+          b <- case hoist binder b' of
+            HoistSuccess b -> return b
+            HoistFailure _ -> throw TypeErr $
+              "Custom linearization cannot be defined for dependent functions" ++ but
+          getLinearizationType fullTy (a:revArgTys) b
+        resultTy -> do
+          when (null revArgTys) $ throw TypeErr $
+            "Custom linearization can only be defined for functions" ++ but
+          resultTyTan <- maybeTangentType resultTy >>= \case
+            Just rtt -> return rtt
+            Nothing  -> throw TypeErr $ unlines
+              [ "The type of the result of " ++ pprint fname ++ " is:"
+              , ""
+              , "  " ++ pprint resultTy
+              , ""
+              , "but it does not have a well-defined tangent space."
+              ]
+          let prependTangent linTail ty =
+                maybeTangentType ty >>= \case
+                  Just tty -> tty --> linTail
+                  Nothing  -> throw TypeErr $ unlines
+                    [ "The type of one of the arguments of " ++ pprint fname ++ " is:"
+                    , ""
+                    , "  " ++ pprint ty
+                    , ""
+                    , "but it doesn't have a well-defined tangent space."
+                    ]
+          tanFunTy <- foldM prependTangent resultTyTan revArgTys
+          foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+        where but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty
@@ -357,9 +424,9 @@ evalPartiallyParsedUModule partiallyParsed = do
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
-  TopEnvFrag envFrag (PartialTopEnvFrag cache loadedModules moduleEnv) <- return topFrag
+  TopEnvFrag envFrag (PartialTopEnvFrag cache rules loadedModules moduleEnv) <- return topFrag
   ModuleEnv (ImportStatus directDeps transDeps) sm scs objs _ <- return moduleEnv
-  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache loadedModules mempty
+  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache rules loadedModules mempty
   let evaluatedModule = Module name directDeps transDeps sm scs objs
   emitEnv $ Abs fragToReEmit evaluatedModule
 
@@ -606,7 +673,7 @@ logPass passName cont = do
   {-# SCC logPassPrinting #-} logTop $ PassInfo passName $ "=== Result ===\n" <> pprint result
   return result
 
-loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m File
+loadModuleSource :: (MonadIO m, Fallible m) => EvalConfig -> ModuleSourceName -> m File
 loadModuleSource config moduleName = do
   fullPath <- case moduleName of
     OrdinaryModule moduleName' -> findFullPath $ moduleName' ++ ".dx"
@@ -616,10 +683,20 @@ loadModuleSource config moduleName = do
     Main -> error "shouldn't be trying to load the source for main"
   readFileWithHash fullPath
   where
-    findFullPath :: MonadIO m => FilePath -> m FilePath
-    findFullPath fname = case libPath config of
-      Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
-      Just path -> return $ path </> fname
+    findFullPath :: (MonadIO m, Fallible m) => String -> m FilePath
+    findFullPath fname = do
+      fsPaths <- liftIO $ traverse resolveBuiltinPath $ libPaths config
+      liftIO (findFile fsPaths fname) >>= \case
+        Just fpath -> return fpath
+        Nothing    -> throw ModuleImportErr $ unlines
+          [ "Couldn't find a source file for module " ++
+            (case moduleName of OrdinaryModule n -> n; Prelude -> "prelude"; Main -> error "")
+          , "Hint: Consider extending --lib-path?"
+          ]
+
+    resolveBuiltinPath = \case
+      LibBuiltinPath   -> liftIO $ getDataFileName "lib"
+      LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
 -- === saving cache to disk ===
@@ -664,9 +741,15 @@ clearCache = liftIO do
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
 stripEnvForSerialization :: TopStateEx -> TopStateEx
-stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) cache _) _)) =
-  collectGarbage (RecSubstFrag defs) cache \(RecSubstFrag defs') cache' -> do
-    TopStateEx $ Env (TopEnv (RecSubst defs') cache' mempty) emptyModuleEnv
+stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _) _)) =
+  collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
+    let liveNames = toNameSet $ toScopeFrag defsFrag'
+    let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
+    TopStateEx $ Env (TopEnv (RecSubst defs') rules' cache' mempty) emptyModuleEnv
+  where
+    ruleFreeVars v = case M.lookup v rules of
+      Nothing -> mempty
+      Just r  -> freeVarsE r
 
 snapshotPtrs :: MonadIO m => TopStateEx -> m TopStateEx
 snapshotPtrs s = traverseBindingsTopStateEx s \case
