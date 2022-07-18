@@ -126,6 +126,10 @@ emitAtomToName x = emit (Atom x)
 
 -- === "Hoisting" top-level builder class ===
 
+-- `emitHoistedEnv` lets you emit top env fragments, like cache entries or
+-- top-level function definitions, from within a local context. The operation
+-- may fail, returning `Nothing`, because the emission might mention local
+-- variables that can't be hoisted the top level.
 class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
   emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
                  => Abs TopEnvFrag e n -> m n (Maybe (e n))

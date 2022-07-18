@@ -65,6 +65,8 @@ liftSimplifyM cont = do
   emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
 
+-- Used in `Imp`, which calls back into simplification but can't emit top level
+-- emissions itself. That whole pathway is a hack and we should fix it.
 liftSimplifyMAssumeNoTopEmissions
   :: (SinkableE e, SubstE Name e, EnvReader m)
   => (forall l. DExt n l => SimplifyM l l (e l))

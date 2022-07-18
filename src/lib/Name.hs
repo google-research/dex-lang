@@ -1803,6 +1803,9 @@ liftDoubleInplaceT
   => InplaceT bindings d2 m n a -> DoubleInplaceT bindings d1 d2 m n a
 liftDoubleInplaceT m = UnsafeMakeDoubleInplaceT $ lift m
 
+-- Emits top-level bindings, `d1`, failing if it can't be hoisted to the top,
+-- and sinks an expression, `e`, that may mention those bindings, back to the
+-- local scope (often `e` is just a name that the `d1` defines).
 -- TODO: should we give this a distinctness constraint and avoid the refreshing?
 emitDoubleInplaceTHoisted
   :: ( Monad m, ExtOutMap b d1, OutFrag d1

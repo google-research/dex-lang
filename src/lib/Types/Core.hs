@@ -445,8 +445,8 @@ data AtomBinding (n::S) =
    deriving (Show, Generic)
 
 data TopFunBinding (n::S) =
-   UnspecializedTopFun Int (Atom n)   -- num static args, definition
- | SpecializedTopFun (Atom n) [Atom n]
+   UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
+ | SpecializedTopFun (Atom n) [Atom n] -- original (unspecialized) function, specialization args
  | SimpTopFun          (NaryLamExpr n)
  | FFITopFun           (ImpFunName n)
    deriving (Show, Generic)
