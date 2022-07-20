@@ -476,7 +476,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
               simplifyAtom body
         return $ ACase e' alts' rTy'
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
-  BoxedRef _ _     -> error "Should only occur in Imp lowering"
+  BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
 

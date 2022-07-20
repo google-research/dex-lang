@@ -1,0 +1,13 @@
+@noinline
+def id' (x:Int) : Int = x
+
+-- CHECK-LABEL: dce-dead-app
+"dce-dead-app"
+
+%passes opt
+:p
+  x = id' 1
+  5 + 1
+-- CHECK: === Result ===
+-- CHECK-NEXT: 6
+

@@ -74,8 +74,7 @@ data Atom (n::S) =
  | DataConRef (DataDefName n) (DataDefParams n) (EmptyAbs (Nest DataConRefBinding) n)
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
  | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
- | BoxedRef [(Atom n, Block n)]        -- ptrptrs/sizes
-            (NaryAbs AtomNameC Atom n) -- abstracted dest
+ | BoxedRef (Abs (NonDepNest BoxPtr) Atom n)
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
@@ -234,6 +233,16 @@ instance GenericB EffectBinder where
   type RepB EffectBinder = LiftB EffectRow
   fromB (EffectBinder effs) = LiftB effs
   toB   (LiftB effs) = EffectBinder effs
+
+data BoxPtr n = BoxPtr (Atom n) (Block n)  -- ptrptr, size
+                deriving (Show, Generic)
+
+-- A nest where the annotation of a binder cannot depend on the binders
+-- introduced before it. You can think of it as introducing a bunch of
+-- names into the scope in parallel, but since safer names only reasons
+-- about sequential scope extensions, we encode it differently.
+data NonDepNest ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
+                          deriving (Generic)
 
 -- === type classes ===
 
@@ -615,6 +624,11 @@ instance ToBinding SolverBinding AtomNameC where
 instance ToBinding IxType AtomNameC where
   toBinding = toBinding . IxBound
 
+-- We don't need this for now and it seems a little annoying to implement.
+-- If you ever hit this, add a Type n to BoxPtr and return it here.
+instance ToBinding BoxPtr AtomNameC where
+  toBinding = error "not implemented!"
+
 instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (LeftE  e) = toBinding e
   toBinding (RightE e) = toBinding e
@@ -992,7 +1006,7 @@ instance GenericE Atom where
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
             ) (EitherE3
-  {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
+  {- BoxedRef -}   ( Abs (NonDepNest BoxPtr) Atom )
   {- DataConRef -} ( DataDefName                    `PairE`
                      DataDefParams                  `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
@@ -1026,8 +1040,7 @@ instance GenericE Atom where
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
-    BoxedRef ptrsAndSizes ab ->
-      Case5 $ Case0 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
+    BoxedRef ab -> Case5 $ Case0 ab
     DataConRef defName params bs -> Case5 $ Case1 $ defName `PairE` params `PairE` bs
     DepPairRef lhs rhs ty ->
       Case5 $ Case2 $ lhs `PairE` rhs `PairE` ty
@@ -1073,7 +1086,7 @@ instance GenericE Atom where
       Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       _ -> error "impossible"
     Case5 val -> case val of
-      Case0 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
+      Case0 ab -> BoxedRef ab
       Case1 (defName `PairE` params `PairE` bs) -> DataConRef defName params bs
       Case2 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
@@ -1216,6 +1229,35 @@ instance SubstE Name Block
 instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
 deriving via WrapE Block n instance Generic (Block n)
+
+instance GenericE BoxPtr where
+  type RepE BoxPtr = Atom `PairE` Block
+  fromE (BoxPtr p s) = p `PairE` s
+  {-# INLINE fromE #-}
+  toE (p `PairE` s) = BoxPtr p s
+  {-# INLINE toE #-}
+instance SinkableE BoxPtr
+instance HoistableE BoxPtr
+instance AlphaEqE BoxPtr
+instance AlphaHashableE BoxPtr
+instance SubstE Name BoxPtr
+instance SubstE AtomSubstVal BoxPtr
+
+instance GenericB (NonDepNest ann) where
+  type RepB (NonDepNest ann) = (LiftB (ListE ann)) `PairB` Nest AtomNameBinder
+  fromB (NonDepNest bs anns) = LiftB (ListE anns) `PairB` bs
+  {-# INLINE fromB #-}
+  toB (LiftB (ListE anns) `PairB` bs) = NonDepNest bs anns
+  {-# INLINE toB #-}
+instance ProvesExt (NonDepNest ann)
+instance BindsNames (NonDepNest ann)
+instance SinkableE ann => SinkableB (NonDepNest ann)
+instance HoistableE ann => HoistableB (NonDepNest ann)
+instance (SubstE Name ann, SinkableE ann) => SubstB Name (NonDepNest ann)
+instance (SubstE AtomSubstVal ann, SinkableE ann) => SubstB AtomSubstVal (NonDepNest ann)
+instance AlphaEqE ann => AlphaEqB (NonDepNest ann)
+instance AlphaHashableE ann => AlphaHashableB (NonDepNest ann)
+deriving instance (Show (ann n)) => Show (NonDepNest ann n l)
 
 instance GenericB SuperclassBinders where
   type RepB SuperclassBinders = PairB (LiftB (ListE Type)) (Nest AtomNameBinder)
@@ -2073,6 +2115,8 @@ instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
 instance Store (TopEnv n)
 instance Store (Env n)
+instance Store (BoxPtr n)
+instance (Store (ann n)) => Store (NonDepNest ann n l)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

@@ -32,6 +32,7 @@ import QueryType hiding (HasType)
 
 import CheapReduction
 import {-# SOURCE #-} Interpreter
+import Types.Core
 import Syntax
 import Name
 import PPrint ()
@@ -294,8 +295,8 @@ instance HasType Atom where
         rTy <- instantiateDepPairTy ty'' $ Var (binderName b')
         r |: RawRefTy rTy
       return $ RawRefTy $ DepPairTy ty'
-    BoxedRef ptrsAndSizes (Abs bs body) -> do
-      ptrTys <- forM ptrsAndSizes \(ptr, numel) -> do
+    BoxedRef (Abs (NonDepNest bs ptrsAndSizes) body) -> do
+      ptrTys <- forM ptrsAndSizes \(BoxPtr ptr numel) -> do
         numel |: IdxRepTy
         ty@(PtrTy _) <- getTypeE ptr
         return ty

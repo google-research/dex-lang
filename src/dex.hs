@@ -17,6 +17,7 @@ import System.Posix.IO (stdOutput)
 import System.IO (openFile, IOMode (..))
 
 import Data.List
+import Data.Functor
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
@@ -205,6 +206,7 @@ parseEvalOpts = EvalConfig
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
   <*> pure Nothing
+  <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
   where
     backends = [ ("llvm", LLVM)
                , ("llvm-mc", LLVMMC)

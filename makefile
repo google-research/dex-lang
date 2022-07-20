@@ -241,12 +241,15 @@ tutorial-data: $(tutorial-data)
 
 run-examples/tutorial: tutorial-data
 
-tests: unit-tests lower-tests quine-tests repl-test module-tests
+tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests
 
 # Keep the unit tests in their own working directory too, due to
 # https://github.com/commercialhaskell/stack/issues/4977
 unit-tests:
 	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS)
+
+opt-tests: just-build
+	misc/file-check tests/opt-tests.dx $(dex) -O script
 
 quine-tests: $(quine-test-targets)
 
@@ -254,11 +257,11 @@ run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t
 
 run-tests/%: tests/%.dx just-build
-	misc/check-quine $< $(dex) script
+	misc/check-quine $< $(dex) -O script
 run-doc/%: doc/%.dx just-build
 	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
-	misc/check-quine $< $(dex) script
+	misc/check-quine $< $(dex) -O script
 
 lower-tests: export DEX_LOWER=1
 lower-tests: export DEX_ALLOW_CONTRACTIONS=0

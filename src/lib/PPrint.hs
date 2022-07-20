@@ -278,12 +278,15 @@ instance PrettyPrec (Atom n) where
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
     DataConRef _ params args -> atPrec LowestPrec $
       "DataConRef" <+> p params <+> p args
-    BoxedRef ptrsSizes (Abs b body) -> atPrec LowestPrec $
+    BoxedRef (Abs (NonDepNest b ptrsSizes) body) -> atPrec LowestPrec $
       "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
       "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
+
+instance Pretty (BoxPtr n) where
+  pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
 
 prettyRecordTyRow :: FieldRowElems n -> Doc ann -> DocPrec ann
 prettyRecordTyRow elems separator = do

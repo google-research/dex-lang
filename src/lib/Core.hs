@@ -287,6 +287,15 @@ instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) w
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann')) Nothing
     where ann' = withExtEvidence b $ sink ann
 
+instance (SinkableE ann, ToBinding ann AtomNameC) => BindsEnv (NonDepNest ann) where
+  toEnvFrag (NonDepNest topBs topAnns) = toEnvFrag $ zipNest topBs topAnns
+    where
+      zipNest :: Distinct l => Nest AtomNameBinder n l -> [ann n] -> Nest (BinderP AtomNameC ann) n l
+      zipNest Empty [] = Empty
+      zipNest (Nest b bs) (a:anns) = withExtEvidence b $ withSubscopeDistinct bs $
+        Nest (b:>a) $ zipNest bs $ sinkList anns
+      zipNest _ _ = error "Mismatched lengths in NonDepNest"
+
 instance BindsEnv EffectBinder where
   toEnvFrag (EffectBinder effs) = EnvFrag emptyOutFrag $ Just effs
 
@@ -316,6 +325,12 @@ instance BindsEnv EnvFrag where
 
 instance BindsEnv (RecSubstFrag Binding) where
   toEnvFrag frag = EnvFrag frag mempty
+
+-- This is needed to be able to derive generic traversals over Atoms, and is
+-- ok to be left unimplemented for as long as it's _dynamically_ unreachable.
+-- Since references are only used in Imp lowering, we're generally ok.
+instance BindsEnv DataConRefBinding where
+  toEnvFrag = error "not implemented"
 
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (PairB b1 b2)) where
