@@ -110,8 +110,9 @@ declareForeign = do
 
 declareCustomLinearization :: Parser SourceBlock'
 declareCustomLinearization = do
-  keyWord CustomLinearizationKW
-  (DeclareCustomLinearization <$> anyCaseName <*> expr) <* eol
+  zeros <- (keyWord CustomLinearizationSymbolicKW $> SymbolicZeros)
+       <|> (keyWord CustomLinearizationKW $> InstantiateZeros)
+  (DeclareCustomLinearization <$> anyCaseName <*> pure zeros <*> expr) <* eol
 
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
@@ -1101,7 +1102,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
-             | CustomLinearizationKW
+             | CustomLinearizationKW | CustomLinearizationSymbolicKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1162,6 +1163,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ImportKW -> "import"
       ForeignKW -> "foreign"
       CustomLinearizationKW -> "custom-linearization"
+      CustomLinearizationSymbolicKW -> "custom-linearization-symbolic"
 
 keyWordSet :: HS.HashSet String
 keyWordSet = HS.fromList keyWordStrs
@@ -1170,7 +1172,8 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
-               "do", "view", "import", "foreign", "custom-linearization"]
+               "do", "view", "import", "foreign",
+               "custom-linearization", "custom-linearization-symbolic"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

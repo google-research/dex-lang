@@ -269,11 +269,14 @@ data SourceBlock = SourceBlock
 
 type ReachedEOF = Bool
 
+data SymbolicZeros = SymbolicZeros | InstantiateZeros
+                     deriving (Generic, Eq, Show)
+
 data SourceBlock' =
    EvalUDecl (UDecl VoidS VoidS)
  | Command CmdName (UExpr VoidS)
  | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
- | DeclareCustomLinearization SourceName (UExpr VoidS)
+ | DeclareCustomLinearization SourceName SymbolicZeros (UExpr VoidS)
  | GetNameType SourceName
  | ImportModule ModuleSourceName
  | QueryEnv EnvQuery
@@ -464,6 +467,7 @@ instance Eq SourceBlock where
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
 
+instance Store SymbolicZeros
 instance Store LogLevel
 instance Store PassName
 instance Store ModuleSourceName

@@ -18,7 +18,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DefaultSignatures #-}
 
-module Types.Core where
+module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
 import Control.Applicative
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
@@ -287,26 +287,8 @@ data DictExpr (n::S) =
 -- TODO: Use an IntMap
 newtype CustomRules (n::S) = CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
                              deriving (Semigroup, Monoid, Store)
-data AtomRules (n::S) = CustomLinearize Int (Atom n)  -- number of implicit args, linearization function
+data AtomRules (n::S) = CustomLinearize Int SymbolicZeros (Atom n)  -- number of implicit args, linearization function
                         deriving (Generic)
-
-instance GenericE AtomRules where
-  type RepE AtomRules = (LiftE Int) `PairE` Atom
-  fromE (CustomLinearize ni a) = LiftE ni `PairE` a
-  toE (LiftE ni `PairE` a) = CustomLinearize ni a
-instance SinkableE AtomRules
-instance HoistableE AtomRules
-instance AlphaEqE AtomRules
-instance SubstE Name AtomRules
-
-instance GenericE CustomRules where
-  type RepE CustomRules = ListE (PairE AtomName AtomRules)
-  fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
-  toE (ListE l) = CustomRules $ M.fromList $ fromPairE <$> l
-instance SinkableE CustomRules
-instance HoistableE CustomRules
-instance AlphaEqE CustomRules
-instance SubstE Name CustomRules
 
 -- === envs and modules ===
 
@@ -804,6 +786,24 @@ pattern RecordTyWithElems elems <- RecordTy (UnsafeFieldRowElems elems)
   where RecordTyWithElems elems = RecordTy $ fieldRowElemsFromList elems
 
 -- === Typeclass instances for Name and other Haskell libraries ===
+
+instance GenericE AtomRules where
+  type RepE AtomRules = (LiftE (Int, SymbolicZeros)) `PairE` Atom
+  fromE (CustomLinearize ni sz a) = LiftE (ni, sz) `PairE` a
+  toE (LiftE (ni, sz) `PairE` a) = CustomLinearize ni sz a
+instance SinkableE AtomRules
+instance HoistableE AtomRules
+instance AlphaEqE AtomRules
+instance SubstE Name AtomRules
+
+instance GenericE CustomRules where
+  type RepE CustomRules = ListE (PairE AtomName AtomRules)
+  fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
+  toE (ListE l) = CustomRules $ M.fromList $ fromPairE <$> l
+instance SinkableE CustomRules
+instance HoistableE CustomRules
+instance AlphaEqE CustomRules
+instance SubstE Name CustomRules
 
 instance SinkableB EffectBinder
 instance HoistableB EffectBinder
