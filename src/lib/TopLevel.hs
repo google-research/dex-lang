@@ -8,7 +8,7 @@
 
 module TopLevel (
   EvalConfig (..), Topper, runTopperM,
-  evalSourceBlock, evalSourceBlockRepl,
+  evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
@@ -65,13 +65,15 @@ import QueryType
 -- === top-level monad ===
 
 data LibPath = LibDirectory FilePath | LibBuiltinPath
+data OptLevel = NoOptimize | Optimize
 
 data EvalConfig = EvalConfig
   { backendName   :: Backend
   , libPaths      :: [LibPath]
   , preludeFile   :: Maybe FilePath
   , logFileName   :: Maybe FilePath
-  , logFile       :: Maybe Handle }
+  , logFile       :: Maybe Handle
+  , optLevel      :: OptLevel }
 
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
@@ -537,18 +539,21 @@ evalUExpr expr = do
 
 evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBlock typed = do
-  opt <- checkPass EarlyOptPass $ earlyOptimize typed
-  synthed <- checkPass SynthPass $ synthTopBlock opt
+  eopt <- checkPass EarlyOptPass $ earlyOptimize typed
+  synthed <- checkPass SynthPass $ synthTopBlock eopt
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   evalRequiredSpecializations simplifiedBlock
   SimplifiedBlock simp recon <- return simplifiedBlock
+  opt <- (fmap optLevel getConfig) >>= \case
+    Optimize   -> checkPass OptPass $ optimize simp
+    NoOptimize -> return simp
   lowered <- case useExperimentalLowering of
-    False -> return simp
+    False -> return opt
     True  -> do
-      simp' <- lowerFullySequential simp
+      lowered <- lowerFullySequential opt
       case useExperimentalVectorization of
-        True -> vectorizeLoops (512 `div` 8) simp'
-        False -> return simp'
+        True -> vectorizeLoops (512 `div` 8) lowered
+        False -> return lowered
   result <- evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}

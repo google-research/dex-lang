@@ -34,6 +34,7 @@ import LabeledItems
 import QueryType
 import Util (enumerate)
 import Types.Primitives
+import Types.Core
 import Types.Imp
 import Algebra
 import RawName qualified as R
@@ -981,11 +982,11 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
   TabTy (b:>iTy) bodyTy -> do
     if depVars `anyFreeIn` iTy
       then do
-        AbsPtrs absDest ptrsInfo <- buildLocalDest $ makeSingleDest [] $ sink ty
+        AbsPtrs (Abs bs dest) ptrsInfo <- buildLocalDest $ makeSingleDest [] $ sink ty
         ptrs <- forM ptrsInfo \(DestPtrInfo ptrTy size) -> do
                   ptr <- makeBaseTypePtr idxs (PtrType ptrTy)
-                  return (ptr, size)
-        return $ BoxedRef ptrs absDest
+                  return $ BoxPtr ptr size
+        return $ BoxedRef $ Abs (NonDepNest bs ptrs) dest
       else do
         Distinct <- getDistinct
         idxsTy <- extendIdxsTy idxs iTy
@@ -1065,16 +1066,16 @@ copyAtom topDest topSrc = copyRec topDest topSrc
   where
     copyRec :: Emits n => Dest n -> Atom n -> SubstImpM i n ()
     copyRec dest src = confuseGHC >>= \_ -> case (dest, src) of
-      (BoxedRef ptrsSizes absDest, _) -> do
+      (BoxedRef (Abs (NonDepNest bs ptrsSizes) boxedDest), _) -> do
         -- TODO: load old ptr and free (recursively)
-        ptrs <- forM ptrsSizes \(ptrPtr, sizeBlock) -> do
+        ptrs <- forM ptrsSizes \(BoxPtr ptrPtr sizeBlock) -> do
           PtrTy (_, (PtrType ptrTy)) <- getType ptrPtr
           size <- dropSubst $ translateBlock Nothing sizeBlock
           ptr <- emitAlloc ptrTy =<< fromScalarAtom size
           ptrPtr' <- fromScalarAtom ptrPtr
           storeAnywhere ptrPtr' ptr
           toScalarAtom ptr
-        dest' <- applyNaryAbs absDest (map SubstVal ptrs)
+        dest' <- applySubst (bs @@> map SubstVal ptrs) boxedDest
         copyRec dest' src
       (DepPairRef lRef rRefAbs _, DepPair l r _) -> do
         copyAtom lRef l
@@ -1172,9 +1173,9 @@ loadDest (DepPairRef lr rra a) = do
   l <- loadDest lr
   r <- loadDest =<< applyAbs rra (SubstVal l)
   return $ DepPair l r a
-loadDest (BoxedRef ptrsSizes absDest) = do
-  ptrs <- forM ptrsSizes \(ptrPtr, _) -> unsafePtrLoad ptrPtr
-  dest <- applyNaryAbs absDest (map SubstVal ptrs)
+loadDest (BoxedRef (Abs (NonDepNest bs ptrsSizes) boxedDest)) = do
+  ptrs <- forM ptrsSizes \(BoxPtr ptrPtr _) -> unsafePtrLoad ptrPtr
+  dest <- applySubst (bs @@> map SubstVal ptrs) boxedDest
   loadDest dest
 loadDest (Con dest) = do
  case dest of

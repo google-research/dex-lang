@@ -28,11 +28,14 @@ import qualified Data.Map.Strict as M
 import Data.Maybe (isJust)
 import qualified Data.Set        as S
 
+import Types.Primitives
+import Types.Core
+import Types.Source
+import Core
 import CheapReduction (cheapNormalize)
 import Err
 import LabeledItems
 import Name
-import Syntax
 import Util
 import PPrint ()
 
@@ -95,7 +98,7 @@ getAppType f xs = liftTypeQueryM idSubst $ typeApp f xs
 {-# INLINE getAppType #-}
 
 getTabAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
-getTabAppType f xs = case nonEmpty xs of
+getTabAppType f xs = case NE.nonEmpty xs of
   Nothing -> getType f
   Just xs' -> liftTypeQueryM idSubst $ typeTabApp f xs'
 {-# INLINE getTabAppType #-}
@@ -328,8 +331,8 @@ instance HasType Atom where
     DepPairRef _ _ ty -> do
       ty' <- substM ty
       return $ RawRefTy $ DepPairTy ty'
-    BoxedRef ptrsAndSizes (Abs bs body) -> do
-      ptrTys <- forM ptrsAndSizes \(ptr, _) -> getTypeE ptr
+    BoxedRef (Abs (NonDepNest bs ptrsAndSizes) body) -> do
+      ptrTys <- forM ptrsAndSizes \(BoxPtr ptr _) -> getTypeE ptr
       withFreshBinders ptrTys \bs' vs -> do
         extendSubst (bs @@> map Rename vs) do
           bodyTy <- getTypeE body
@@ -456,7 +459,7 @@ typeApp fTy xs = case fromNaryPiType (length xs) fTy of
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
-typeTabApp :: Type o -> NonEmpty (Atom i) -> TypeQueryM i o (Type o)
+typeTabApp :: Type o -> NE.NonEmpty (Atom i) -> TypeQueryM i o (Type o)
 typeTabApp tabTy xs = go tabTy $ toList xs
   where
     go :: Type o -> [Atom i] -> TypeQueryM i o (Type o)
