@@ -29,9 +29,11 @@ module Builder (
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
-  emitTopLet, emitImpFunBinding, emitCustomLinearization,
+  emitTopLet, emitImpFunBinding, emitSpecialization, emitCustomLinearization,
   lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
-  extendImpCache, queryImpCache, extendObjCache, queryObjCache, getCache, emitObjFile,
+  extendImpCache, queryImpCache,
+  extendSpecializationCache, querySpecializationCache,
+  extendObjCache, queryObjCache, getCache, emitObjFile,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
@@ -44,14 +46,16 @@ module Builder (
   zeroAt, zeroLike, maybeTangentType, tangentType,
   addTangent, updateAddAt, tangentBaseMonoidFor,
   buildEffLam, catMaybesE, runMaybeWhile,
-  ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi
+  ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
+  HoistingTopBuilder (..), liftTopBuilderHoisted,
+  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT, runDoubleBuilderT,
   ) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
-import Control.Monad.State.Strict (MonadState)
+import Control.Monad.State.Strict (MonadState, StateT (..), runStateT)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
@@ -120,6 +124,94 @@ emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
 emitAtomToName (Var v) = return v
 emitAtomToName x = emit (Atom x)
 
+-- === "Hoisting" top-level builder class ===
+
+-- `emitHoistedEnv` lets you emit top env fragments, like cache entries or
+-- top-level function definitions, from within a local context. The operation
+-- may fail, returning `Nothing`, because the emission might mention local
+-- variables that can't be hoisted the top level.
+class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
+  emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
+                 => Abs TopEnvFrag e n -> m n (Maybe (e n))
+
+liftTopBuilderHoisted
+  :: (HoistingTopBuilder m, SubstE Name e, SinkableE e, HoistableE e)
+  => (forall l. (Mut l, DExt n l) => TopBuilderM l (e l))
+  -> m n (Maybe (e n))
+liftTopBuilderHoisted cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  emitHoistedEnv $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
+
+newtype DoubleBuilderT (m::MonadKind) (n::S) (a:: *) =
+  DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env TopEnvFrag BuilderEmissions m n a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , CtxReader, ScopeReader, MonadIO, Catchable, MonadReader r)
+
+type DoubleBuilder = DoubleBuilderT HardFailM
+
+-- TODO: do we really need to play these rank-2 games here?
+liftDoubleBuilderT
+  :: (EnvReader m, Fallible m', SinkableE e, SubstE Name e)
+  => (forall l. DExt n l => DoubleBuilderT m' l (e l))
+  -> m n (m' (Abs TopEnvFrag e n))
+liftDoubleBuilderT cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return $ runDoubleBuilderT env cont
+
+runDoubleBuilderT
+  :: (Distinct n, Fallible m, SinkableE e, SubstE Name e)
+  => Env n
+  -> (forall l. DExt n l => DoubleBuilderT m l (e l))
+  -> m (Abs TopEnvFrag e n)
+runDoubleBuilderT env cont = do
+  Abs envFrag (DoubleInplaceTResult REmpty e) <-
+    runDoubleInplaceT env $ runDoubleBuilderT' cont
+  return $ Abs envFrag e
+
+instance Fallible m => HoistingTopBuilder (DoubleBuilderT m) where
+  emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
+
+instance Monad m => EnvReader (DoubleBuilderT m) where
+  unsafeGetEnv = DoubleBuilderT $ liftDoubleInplaceT $ unsafeGetEnv
+
+instance Fallible m => Builder (DoubleBuilderT m) where
+  emitDecl hint ann e = DoubleBuilderT $ liftDoubleInplaceT $ runBuilderT' $ emitDecl hint ann e
+
+instance Fallible m => ScopableBuilder (DoubleBuilderT m) where
+  -- TODO: find a safe API for DoubleInplaceT sufficient to implement this
+  buildScoped cont = DoubleBuilderT do
+    (ans, decls) <- UnsafeMakeDoubleInplaceT $
+      StateT \s@(topScope, _) -> do
+        Abs rdecls (PairE e (LiftE topDecls)) <-
+          locallyMutableInplaceT do
+            (e, (_, topDecls)) <- flip runStateT (topScope, emptyOutFrag) $
+               unsafeRunDoubleInplaceT $ runDoubleBuilderT' do
+                 Emits <- fabricateEmitsEvidenceM
+                 Distinct <- getDistinct
+                 cont
+            return $ PairE e $ LiftE topDecls
+        return ((Abs (unRNest rdecls) e, topDecls), s)
+    unsafeEmitDoubleInplaceTHoisted decls
+    return ans
+  {-# INLINE buildScoped #-}
+
+instance Fallible m => EnvExtender (DoubleBuilderT m) where
+  refreshAbs ab cont = DoubleBuilderT do
+    (ans, decls) <- UnsafeMakeDoubleInplaceT do
+      StateT \s@(topScope, _) -> do
+        (ans, (_, decls)) <- refreshAbs ab \b e -> do
+          flip runStateT (topScope, emptyOutFrag) $
+            unsafeRunDoubleInplaceT $ runDoubleBuilderT' $ cont b e
+        return ((ans, decls), s)
+    unsafeEmitDoubleInplaceTHoisted decls
+    return ans
+  {-# INLINE refreshAbs #-}
+
+instance (SinkableV v, HoistingTopBuilder m) => HoistingTopBuilder (SubstReaderT v m i) where
+  emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
+
 -- === Top-level builder class ===
 
 class (EnvReader m, MonadFail1 m)
@@ -162,6 +254,19 @@ emitTopLet hint letAnn expr = do
 emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
 emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
+emitSpecialization
+  :: (Mut n, TopBuilder m)
+  => NameHint -> SpecializationSpec n -> m n (AtomName n)
+emitSpecialization hint specialization = do
+ case specialization of
+  AppSpecialization fname args -> do
+    TopFunBound unspecializedTy _ <- lookupAtomName fname
+    specializedTy <- instantiateNaryPi unspecializedTy args
+    let binding = TopFunBound specializedTy $ SpecializedTopFun (Var fname) args
+    name <- emitBinding hint $ toBinding binding
+    extendSpecializationCache specialization name
+    return name
+
 bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
 bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName
@@ -190,6 +295,15 @@ queryImpCache v = do
   cache <- impCache <$> getCache
   return $ lookupEMap cache v
 
+extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> AtomName n -> m n ()
+extendSpecializationCache specialization f =
+  extendCache $ mempty { specializationCache = eMapSingleton specialization f }
+
+querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (AtomName n))
+querySpecializationCache specialization = do
+  cache <- specializationCache <$> getCache
+  return $ lookupEMap cache specialization
+
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
 extendObjCache fImp cfun =
   extendCache $ mempty { objCache = eMapSingleton fImp cfun }
@@ -213,6 +327,8 @@ newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , CtxReader, ScopeReader, MonadTrans1, MonadReader r
            , MonadWriter w, MonadState s, MonadIO, Catchable)
+
+type TopBuilderM = TopBuilderT HardFailM
 
 -- We use this to implement things that look like `local` from `MonadReader`.
 -- Does it make sense to but it in a transformer-like class, like we do with

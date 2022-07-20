@@ -10,7 +10,7 @@ module CheckType (
   checkExtends, checkedApplyClassParams,
   tryGetType,
   checkUnOp, checkBinOp,
-  isData, asFirstOrderFunction, asFFIFunType,
+  isData, asFirstOrderFunction, asSpecializableFunction, asFFIFunType,
   asNaryPiType,
   ) where
 
@@ -177,15 +177,25 @@ instance CheckableE AtomBinding where
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
     PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
-    -- TODO: check the type actually matches the lambda term
-    SimpLamBound ty lam -> do
-      lam' <- substM lam
+    TopFunBound ty f -> do
       ty' <- substM ty
-      dropSubst $ checkNaryLamExpr lam' ty'
-      return $ SimpLamBound ty' lam'
-    FFIFunBound ty name -> do
-      _ <- checkFFIFunTypeM ty
-      FFIFunBound <$> substM ty <*> substM name
+      TopFunBound ty' <$> case f of
+        UnspecializedTopFun n f' -> do
+          f'' <- checkTypeE (naryPiTypeAsType ty') f'
+          return $ UnspecializedTopFun n f''
+        SpecializedTopFun f' args -> do
+           unspecializedTy <- getTypeE f'
+           specializedTy <- checkApp unspecializedTy args
+           matches <- alphaEq (naryPiTypeAsType ty') specializedTy
+           unless matches $ throw TypeErr "Specialization args don't match function type"
+           substM f
+        SimpTopFun lam -> do
+          lam' <- substM lam
+          dropSubst $ checkNaryLamExpr lam' ty'
+          return $ SimpTopFun lam'
+        FFITopFun name -> do
+          _ <- checkFFIFunTypeM ty'
+          FFITopFun <$> substM name
 
 instance CheckableE SolverBinding where
   checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
@@ -1191,6 +1201,30 @@ checkScalarOrPairType (PairTy a b) = do
   return $ tys1 ++ tys2
 checkScalarOrPairType (BaseTy ty) = return [ty]
 checkScalarOrPairType ty = throw TypeErr $ pprint ty
+
+-- TODO: consider effects
+-- TODO: check that the remaining args and result are "data"
+-- TODO: determine the static args lazily, at the use sites
+asSpecializableFunction :: EnvReader m => Type n -> m n (Maybe (Int, NaryPiType n))
+asSpecializableFunction ty =
+  case asNaryPiType ty of
+    Just piTy@(NaryPiType bs _ _) -> do
+      let n = numStaticArgs $ nonEmptyToNest bs
+      return $ Just (n, piTy)
+    Nothing -> return Nothing
+  where
+    numStaticArgs :: Nest PiBinder n l -> Int
+    numStaticArgs Empty = 0
+    numStaticArgs (Nest b rest) =
+      if isStaticArg b
+        then 1 + numStaticArgs rest
+        else 0
+
+    isStaticArg :: PiBinder n l -> Bool
+    isStaticArg b = case binderType b of
+      TyKind   -> True
+      DictTy _ -> True
+      _        -> False
 
 -- TODO: consider effects
 asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))

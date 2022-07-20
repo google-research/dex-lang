@@ -392,7 +392,7 @@ emptyImportStatus = ImportStatus mempty mempty
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
 data Cache (n::S) = Cache
-  { simpCache :: EMap AtomName AtomName n
+  { specializationCache :: EMap SpecializationSpec AtomName n
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName CFun n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -450,9 +450,22 @@ data AtomBinding (n::S) =
  | MiscBound   (Type          n)
  | SolverBound (SolverBinding n)
  | PtrLitBound PtrType (PtrName n)
- | SimpLamBound (NaryPiType n) (NaryLamExpr n)  -- first-order functions only
- | FFIFunBound  (NaryPiType n) (ImpFunName n)
+ | TopFunBound (NaryPiType n) (TopFunBinding n)
    deriving (Show, Generic)
+
+data TopFunBinding (n::S) =
+   UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
+ -- XXX: the `Atom n` is actually always a `Var n`, but we can't use
+ -- `AtomName n` because inference needs a `SubstE AtomSubstVal` instance for zonking
+ | SpecializedTopFun (Atom n) [Atom n] -- Original (unspecialized) function, specialization args
+ | SimpTopFun          (NaryLamExpr n)
+ | FFITopFun           (ImpFunName n)
+   deriving (Show, Generic)
+
+-- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
+data SpecializationSpec (n::S) =
+  AppSpecialization (AtomName n) [Type n]
+  deriving (Show, Generic)
 
 atomBindingType :: Binding AtomNameC n -> Type n
 atomBindingType (AtomNameBinding b) = case b of
@@ -464,8 +477,7 @@ atomBindingType (AtomNameBinding b) = case b of
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
   PtrLitBound ty _ -> BaseTy (PtrType ty)
-  SimpLamBound ty _ -> naryPiTypeAsType ty
-  FFIFunBound  ty _ -> naryPiTypeAsType ty
+  TopFunBound ty _ -> naryPiTypeAsType ty
 
 -- TODO: Move this to Inference!
 data SolverBinding (n::S) =
@@ -1320,7 +1332,7 @@ instance SubstE AtomSubstVal DictExpr
 
 instance GenericE Cache where
   type RepE Cache =
-            EMap AtomName AtomName
+            EMap SpecializationSpec AtomName
     `PairE` EMap AtomName ImpFunName
     `PairE` EMap ImpFunName CFun
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
@@ -1595,10 +1607,9 @@ instance GenericE AtomBinding where
           IxType          -- IxBound
           Type            -- MiscBound
           SolverBinding)  -- SolverBound
-       (EitherE3
-          (PairE (LiftE PtrType) PtrName) -- PtrLitBound
-          (PairE NaryPiType NaryLamExpr)  -- SimpLamBound
-          (PairE NaryPiType ImpFunName))  -- FFIFunBound
+       (EitherE2
+          (PairE (LiftE PtrType) PtrName)   -- PtrLitBound
+          (PairE NaryPiType TopFunBinding)) -- TopFunBound
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
@@ -1608,8 +1619,7 @@ instance GenericE AtomBinding where
     MiscBound   x -> Case0 $ Case4 x
     SolverBound x -> Case0 $ Case5 x
     PtrLitBound x y -> Case1 (Case0 (LiftE x `PairE` y))
-    SimpLamBound x y  -> Case1 (Case1 (PairE x y))
-    FFIFunBound x y   -> Case1 (Case2 (PairE x y))
+    TopFunBound ty f ->  Case1 (Case1 (ty `PairE` f))
   {-# INLINE fromE #-}
 
   toE = \case
@@ -1622,8 +1632,7 @@ instance GenericE AtomBinding where
       Case5 x -> SolverBound x
     Case1 x' -> case x' of
       Case0 (LiftE x `PairE` y) -> PtrLitBound x y
-      Case1 (PairE x y) -> SimpLamBound x y
-      Case2 (PairE x y) -> FFIFunBound x y
+      Case1 (ty `PairE` f) -> TopFunBound ty f
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1634,6 +1643,48 @@ instance SubstE Name AtomBinding
 instance SubstE AtomSubstVal AtomBinding
 instance AlphaEqE AtomBinding
 instance AlphaHashableE AtomBinding
+
+instance GenericE TopFunBinding where
+  type RepE TopFunBinding = EitherE4
+    (LiftE Int `PairE` Atom)  -- UnspecializedTopFun
+    (Atom `PairE` ListE Atom) -- SpecializedTopFun
+    NaryLamExpr               -- SimpTopFun
+    ImpFunName                -- FFITopFun
+  fromE = \case
+    UnspecializedTopFun n x  -> Case0 $ PairE (LiftE n) x
+    SpecializedTopFun f args -> Case1 $ PairE f (ListE args)
+    SimpTopFun        x -> Case2 x
+    FFITopFun         x -> Case3 x
+  {-# INLINE fromE #-}
+
+  toE = \case
+    Case0 (PairE (LiftE n) x)    -> UnspecializedTopFun n x
+    Case1 (PairE f (ListE args)) -> SpecializedTopFun f args
+    Case2 x                   -> SimpTopFun        x
+    Case3 x                   -> FFITopFun         x
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+
+instance SinkableE TopFunBinding
+instance HoistableE  TopFunBinding
+instance SubstE Name TopFunBinding
+instance SubstE AtomSubstVal TopFunBinding
+instance AlphaEqE TopFunBinding
+instance AlphaHashableE TopFunBinding
+
+instance GenericE SpecializationSpec where
+  type RepE SpecializationSpec = PairE AtomName (ListE Type)
+  fromE (AppSpecialization fname args) = PairE fname (ListE args)
+  {-# INLINE fromE #-}
+  toE   (PairE fname (ListE args)) = AppSpecialization fname args
+  {-# INLINE toE #-}
+
+instance SinkableE SpecializationSpec
+instance HoistableE  SpecializationSpec
+instance SubstE Name SpecializationSpec
+instance AlphaEqE SpecializationSpec
+instance AlphaHashableE SpecializationSpec
 
 instance GenericE SolverBinding where
   type RepE SolverBinding = EitherE2
@@ -1977,6 +2028,8 @@ instance Store (Atom n)
 instance Store (Expr n)
 instance Store (SolverBinding n)
 instance Store (AtomBinding n)
+instance Store (SpecializationSpec n)
+instance Store (TopFunBinding n)
 instance Store (LamBinding  n)
 instance Store (DeclBinding n)
 instance Store (FieldRowElem  n)

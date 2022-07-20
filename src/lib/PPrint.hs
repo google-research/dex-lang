@@ -428,8 +428,14 @@ instance Pretty (AtomBinding n) where
     MiscBound   t -> p t
     SolverBound b -> p b
     PtrLitBound _ ptr -> p ptr
-    SimpLamBound ty f -> p ty <> hardline <> p f
-    FFIFunBound _ f -> p f
+    TopFunBound _ f -> p f
+
+instance Pretty (TopFunBinding n) where
+  pretty = \case
+    UnspecializedTopFun _ f -> p f
+    SpecializedTopFun f args -> p f <+> spaced args
+    SimpTopFun f -> p f
+    FFITopFun  f -> p f
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
