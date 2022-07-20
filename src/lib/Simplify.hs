@@ -326,7 +326,8 @@ simplifyApp f xs =
               Just (specializationArgs, runtimeArgs) -> do
                 specialized <- emitSpecializationName v specializationArgs
                 naryApp (Var specialized) runtimeArgs
-              Nothing -> error $ "Unexpected function: " ++ pprint atom
+              Nothing -> error $ "Specialization of " ++ pprint atom ++
+                " requires saturated application of specialization args."
           _ -> naryApp atom $ toList xs
       _ -> error $ "Unexpected function: " ++ pprint atom
 

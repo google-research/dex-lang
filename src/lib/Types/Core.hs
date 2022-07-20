@@ -446,7 +446,9 @@ data AtomBinding (n::S) =
 
 data TopFunBinding (n::S) =
    UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
- | SpecializedTopFun (Atom n) [Atom n] -- original (unspecialized) function, specialization args
+ -- XXX: the `Atom n` is actually always a `Var n`, but we can't use
+ -- `AtomName n` because inference needs a `SubstE AtomSubstVal` instance for zonking
+ | SpecializedTopFun (Atom n) [Atom n] -- Original (unspecialized) function, specialization args
  | SimpTopFun          (NaryLamExpr n)
  | FFITopFun           (ImpFunName n)
    deriving (Show, Generic)

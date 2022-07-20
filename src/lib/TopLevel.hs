@@ -554,6 +554,8 @@ execUDecl mname decl = do
               f <- emitBinding (getNameHint p) $
                 AtomNameBinding $ TopFunBound fty $ UnspecializedTopFun n result
               -- warm up cache if it's already sufficiently specialized
+              -- (this is actually here as a workaround for some sort of
+              -- caching/linking bug that occurs when we deserialize compilation artifacts).
               when (n == 0) do
                 fSpecial <- emitSpecialization (getNameHint p) $ AppSpecialization f []
                 evalRequiredSpecializations (Var fSpecial)
@@ -581,6 +583,9 @@ compileTopLevelFun fname naryPi f staticArgs = do
   extendObjCache fImpName fObj
 {-# SCC compileTopLevelFun #-}
 
+-- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
+-- where we eta-expand and try to simplify `App f args`, we would see `f` as a
+-- "noinline" function and defer its simplification.
 forceDeferredInlining :: EnvReader m => Atom n -> m n (Atom n)
 forceDeferredInlining (Var v) =
   lookupAtomName v >>= \case
