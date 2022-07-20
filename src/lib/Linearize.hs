@@ -325,7 +325,7 @@ linearizeExpr expr = case expr of
     f' <- substM f
     lookupCustomRules f' >>= \case
       Nothing -> error "not implemented"
-      Just (CustomLinearize n cl) -> do
+      Just (CustomLinearize n zeros cl) -> do
         let (polyXs, argXs) = splitAt n $ toList xs
         polyXs' <- mapM substM polyXs
         (any id <$> mapM isActive polyXs') >>= \case
@@ -334,7 +334,28 @@ linearizeExpr expr = case expr of
             "expected to be inactive (i.e. independent of any differentiated " ++
             "function argument)"
           False -> return ()
-        wts <- forM (toList argXs) linearizeAtom
+        wts <- case zeros of
+          InstantiateZeros -> forM (toList argXs) linearizeAtom
+          SymbolicZeros -> do
+            stDefName <- lookupSourceMap "ZeroTangent" >>= \case
+              Just (UDataConVar conName) -> do
+                DataConBinding dataDefName zeroConIx _ <- lookupEnv conName
+                unless (zeroConIx == 0) $ error "Ill-defined SymbolicTangent?"
+                return dataDefName
+              _ -> error "Ill-defined SymbolicTangent?"
+            forM (toList argXs) \arg -> do
+              arg' <- substM arg
+              argTy' <- getType arg'
+              isActive arg' >>= \case
+                False -> -- Pass in ZeroTangent as the tangent
+                  return $ WithTangent arg' $
+                    return $ sink $ DataCon "SymbolicTangent" stDefName
+                                    (DataDefParams [argTy'] []) 0 []
+                True -> do  -- Wrap tangent in SomeTangent
+                  WithTangent arg'' argLin <- dropSubst $ linearizeAtom arg'
+                  return $ WithTangent arg'' $ argLin <&> \argTan ->
+                    DataCon "SymbolicTangent" (sink stDefName)
+                    (DataDefParams [sink argTy'] []) 1 [argTan]
         (ans, flin) <- fromPair =<< naryApp cl (polyXs' ++ (wts <&> \(WithTangent p _) -> p))
         return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
   App _ _ -> error "not implemented"

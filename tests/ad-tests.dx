@@ -454,3 +454,37 @@ jvp (\x. w x) [1.0, 1.0] [1.0, 0.0]
 -- a partial application of w to some inference holes.
 jvp w [1.0, 1.0] [1.0, 0.0]
 > [2., 0.]
+
+------ Symbolic tangents ------
+
+ST = SymbolicTangent
+
+def q (x:Float) (y:Float) : Float = x * 2 + y
+def qLin (x:Float) (y:Float) : _ =
+  def lin (xt:ST Float) (yt: ST Float) : Float =
+    case yt of
+      ZeroTangent     -> someTangent xt * 4
+      SomeTangent yt' -> someTangent xt * 2 + yt'
+  (q x y, lin)
+
+custom-linearization q qLin
+> Type error:Expected the custom linearization to have type:
+>
+> (Float32 -> Float32 -> (Float32 & (Float32 -> Float32 -> Float32)))
+>
+> but it has type:
+>
+> (Float32
+>  -> Float32
+>  -> (Float32
+>      & ((SymbolicTangent Float32) -> (SymbolicTangent Float32) -> Float32)))
+
+custom-linearization-symbolic q qLin
+
+-- Incorrect derivative, based on the ZeroTangent branch
+deriv (\x. q x 1.0) 1.0
+> 4.
+
+-- Correct derivative, based on the SomeTangent branch
+deriv (\x. q x x) 1.0
+> 3.
