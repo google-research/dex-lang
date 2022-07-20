@@ -41,7 +41,7 @@ module Syntax (
     ModuleSourceName (..), LoadedModules (..), Cache (..), ObjectFiles (..),
     BindsEnv (..), BindsOneAtomName (..), AtomNameBinder,
     DataConRefBinding (..), AltP, Alt, AtomBinding (..),
-    SolverBinding (..), TopFunBinding (..), Specialization (..),
+    SolverBinding (..), TopFunBinding (..), SpecializationSpec (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..),
     Direction (..), DataDefParams (..), DataDefBinders (..),

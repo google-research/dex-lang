@@ -383,7 +383,7 @@ emptyImportStatus = ImportStatus mempty mempty
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
 data Cache (n::S) = Cache
-  { specializationCache :: EMap Specialization AtomName n
+  { specializationCache :: EMap SpecializationSpec AtomName n
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName CFun n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -452,7 +452,7 @@ data TopFunBinding (n::S) =
    deriving (Show, Generic)
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
-data Specialization (n::S) =
+data SpecializationSpec (n::S) =
   AppSpecialization (AtomName n) [Type n]
   deriving (Show, Generic)
 
@@ -1321,7 +1321,7 @@ instance SubstE AtomSubstVal DictExpr
 
 instance GenericE Cache where
   type RepE Cache =
-            EMap Specialization AtomName
+            EMap SpecializationSpec AtomName
     `PairE` EMap AtomName ImpFunName
     `PairE` EMap ImpFunName CFun
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
@@ -1662,18 +1662,18 @@ instance SubstE AtomSubstVal TopFunBinding
 instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
-instance GenericE Specialization where
-  type RepE Specialization = PairE AtomName (ListE Type)
+instance GenericE SpecializationSpec where
+  type RepE SpecializationSpec = PairE AtomName (ListE Type)
   fromE (AppSpecialization fname args) = PairE fname (ListE args)
   {-# INLINE fromE #-}
   toE   (PairE fname (ListE args)) = AppSpecialization fname args
   {-# INLINE toE #-}
 
-instance SinkableE Specialization
-instance HoistableE  Specialization
-instance SubstE Name Specialization
-instance AlphaEqE Specialization
-instance AlphaHashableE Specialization
+instance SinkableE SpecializationSpec
+instance HoistableE  SpecializationSpec
+instance SubstE Name SpecializationSpec
+instance AlphaEqE SpecializationSpec
+instance AlphaHashableE SpecializationSpec
 
 instance GenericE SolverBinding where
   type RepE SolverBinding = EitherE2
@@ -2017,7 +2017,7 @@ instance Store (Atom n)
 instance Store (Expr n)
 instance Store (SolverBinding n)
 instance Store (AtomBinding n)
-instance Store (Specialization n)
+instance Store (SpecializationSpec n)
 instance Store (TopFunBinding n)
 instance Store (LamBinding  n)
 instance Store (DeclBinding n)

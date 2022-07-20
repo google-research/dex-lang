@@ -256,7 +256,7 @@ emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
 emitSpecialization
   :: (Mut n, TopBuilder m)
-  => NameHint -> Specialization n -> m n (AtomName n)
+  => NameHint -> SpecializationSpec n -> m n (AtomName n)
 emitSpecialization hint specialization = do
  case specialization of
   AppSpecialization fname args -> do
@@ -295,11 +295,11 @@ queryImpCache v = do
   cache <- impCache <$> getCache
   return $ lookupEMap cache v
 
-extendSpecializationCache :: TopBuilder m => Specialization n -> AtomName n -> m n ()
+extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> AtomName n -> m n ()
 extendSpecializationCache specialization f =
   extendCache $ mempty { specializationCache = eMapSingleton specialization f }
 
-querySpecializationCache :: EnvReader m => Specialization n -> m n (Maybe (AtomName n))
+querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (AtomName n))
 querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
