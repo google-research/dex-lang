@@ -1056,6 +1056,7 @@ instance GenericE Atom where
         TypeCon sourceName defName params
       Case4 d -> DictCon d
       Case5 d -> DictTy  d
+      _ -> error "impossible"
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
       Case1 (ComposeE items) -> Record items
@@ -1076,6 +1077,7 @@ instance GenericE Atom where
       Case1 (defName `PairE` params `PairE` bs) -> DataConRef defName params bs
       Case2 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
+    _ -> error "impossible"
   {-# INLINE toE #-}
 
 instance SinkableE   Atom
@@ -1105,6 +1107,8 @@ instance SubstE AtomSubstVal Atom where
     Case3 rest -> (toE . Case3) $ substE (scope, env) rest
     Case4 rest -> (toE . Case4) $ substE (scope, env) rest
     Case5 rest -> (toE . Case5) $ substE (scope, env) rest
+    Case6 rest -> (toE . Case6) $ substE (scope, env) rest
+    Case7 rest -> (toE . Case7) $ substE (scope, env) rest
 
 getProjection :: HasCallStack => [Int] -> Atom n -> Atom n
 getProjection [] a = a
@@ -1151,6 +1155,7 @@ instance GenericE Expr where
     Case3 (x)                               -> Atom x
     Case4 (ComposeE op)                     -> Op op
     Case5 (ComposeE hof)                    -> Hof hof
+    _ -> error "impossible"
   {-# INLINE toE #-}
 
 instance SinkableE Expr
@@ -1630,6 +1635,7 @@ instance GenericE AtomBinding where
       Case3 x -> IxBound  x
       Case4 x -> MiscBound x
       Case5 x -> SolverBound x
+      _ -> error "impossible"
     Case1 x' -> case x' of
       Case0 (LiftE x `PairE` y) -> PtrLitBound x y
       Case1 (ty `PairE` f) -> TopFunBound ty f

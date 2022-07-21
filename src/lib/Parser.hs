@@ -172,6 +172,8 @@ sourceBlock' =
   <|> liftM EvalUDecl (instanceDef True  <* eolf)
   <|> liftM EvalUDecl (instanceDef False <* eolf)
   <|> liftM EvalUDecl (interfaceDef <* eolf)
+  <|> liftM EvalUDecl (effectDef <* eolf)
+  <|> liftM EvalUDecl (handlerDef <* eolf)
   <|> liftM (Command (EvalExpr Printed)) (expr <* eolf)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -305,6 +307,27 @@ interfaceDef = do
   return $ UInterface tyConParams' superclasses methodTys
                       (fromString tyConName) methodNames'
 
+resumePolicy :: Parser UResumePolicy
+resumePolicy =  (keyWord JmpKW $> UNoResume)
+            <|> (keyWord DefKW $> ULinearResume)
+            <|> (keyWord CtlKW $> UAnyResume)
+
+opSigList :: Parser (Nest (UBinder EffectOpNameC) VoidS VoidS, [UEffectOpType VoidS])
+opSigList = do
+  (methodNames, methodTys) <- unzip <$> onePerLine do
+    policy <- resumePolicy
+    v <- anyName
+    ty <- annot uType
+    return (fromString v, UEffectOpType policy ty)
+  return (toNest methodNames, methodTys)
+
+effectDef :: Parser (UDecl VoidS VoidS)
+effectDef = do
+  keyWord EffectKW
+  effName <- anyName
+  (methodNames, methodTys) <- opSigList
+  return $ UEffectDecl methodTys (fromString effName) methodNames
+
 toNest :: (IsString (a VoidS VoidS)) => [String] -> Nest a VoidS VoidS
 toNest = toNestParsed . map fromString
 
@@ -373,6 +396,27 @@ instanceMethod = do
   sym "="
   rhs <- blockOrExpr
   return $ UMethodDef (fromString v) rhs
+
+handlerDef :: Parser (UDecl VoidS VoidS)
+handlerDef = do
+  keyWord HandlerKW
+  handlerName <- anyName
+  keyWord OfKW
+  effectName <- anyName
+  binders <- concat <$> many (
+    argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg])
+  (eff, ty) <- label "result type annotation" $ annot effectiveType
+  methods <- onePerLine effectOpDef
+  return $ UHandlerDecl (fromString effectName) (toNestParsed binders)
+    eff ty methods (fromString handlerName)
+
+effectOpDef :: Parser (UEffectOpDef VoidS)
+effectOpDef = do
+  (rp, v) <- (keyWord ReturnKW $> (UReturn, "return"))
+         <|> ((,) <$> resumePolicy <*> anyName)
+  sym "="
+  rhs <- blockOrExpr
+  return $ UEffectOpDef (fromString v) rp rhs
 
 simpleLet :: Parser (UExpr VoidS -> UDecl VoidS VoidS)
 simpleLet = label "let binding" $ do
@@ -969,7 +1013,7 @@ fallBackTo optionA optionB = do
 ops :: [[Operator Parser (UExpr VoidS)]]
 ops =
   [ [InfixL $ sym "." $> mkTabApp , symOp "!"]
-  , [InfixL $ sc $> mkApp]
+  , [InfixL $ sc $> mkApp, resumeOp]
   , [prefixNegOp, prefixPosOp]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
@@ -1012,6 +1056,15 @@ pairingSymOpP s = opWithSrc $ do
   if allowed
     then infixSym s >> return (binApp (fromString $ "("<>s<>")"))
     else fail $ "Unexpected delimiter " <> s
+
+resumeOp :: Operator Parser (UExpr VoidS)
+resumeOp = Prefix $ label "resume" $ do
+  ((), pos) <- withPos $ keyWord ResumeKW
+  return \(WithSrcE litpos e) -> do
+    let pos' = joinPos (Just pos) litpos
+    let ty = WithSrcE (Just pos) UHole
+    let arg = WithSrcE litpos e
+    WithSrcE pos' $ UPrimExpr $ OpExpr $ Resume ty arg
 
 prefixNegOp :: Operator Parser (UExpr VoidS)
 prefixNegOp = Prefix $ label "negation" $ do
@@ -1102,6 +1155,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
+             | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
              | CustomLinearizationKW | CustomLinearizationSymbolicKW
 
 nextChar :: Lexer Char
@@ -1162,6 +1216,12 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ViewKW -> "view"
       ImportKW -> "import"
       ForeignKW -> "foreign"
+      EffectKW -> "effect"
+      HandlerKW -> "handler"
+      JmpKW -> "jmp"
+      CtlKW -> "ctl"
+      ReturnKW -> "return"
+      ResumeKW -> "resume"
       CustomLinearizationKW -> "custom-linearization"
       CustomLinearizationSymbolicKW -> "custom-linearization-symbolic"
 
@@ -1172,8 +1232,9 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
-               "do", "view", "import", "foreign",
-               "custom-linearization", "custom-linearization-symbolic"]
+               "do", "view", "import", "foreign", "effect", "jmp", "ctl",
+               "return", "resume", "custom-linearization",
+               "custom-linearization-symbolic"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

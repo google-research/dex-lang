@@ -733,6 +733,7 @@ typeCheckPrimOp op = case op of
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
     return ty'
+  Resume _ _ -> throw NotImplementedErr "typeCheckPrimOp.Resume"
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

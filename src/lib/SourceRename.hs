@@ -148,6 +148,20 @@ instance SourceRenamableE (SourceNameOr (Name ClassNameC)) where
       _ -> throw TypeErr $ "Not a class name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
+instance SourceRenamableE (SourceNameOr (Name EffectNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UEffectVar v -> return $ InternalName sourceName v
+      _ -> throw TypeErr $ "Not an effect name: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
+instance SourceRenamableE (SourceNameOr (Name HandlerNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UHandlerVar v -> return $ InternalName sourceName v
+      _ -> throw TypeErr $ "Not a handler name: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
@@ -269,6 +283,17 @@ instance SourceRenamableB UDecl where
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       sourceRenameB instanceName \instanceName' ->
         cont $ UInstance className' conditions' params' methodDefs' instanceName'
+    UEffectDecl opTypes effName opNames -> do
+      opTypes' <- mapM (\(UEffectOpType p ty) -> (UEffectOpType p) <$> sourceRenameE ty) opTypes
+      sourceRenameUBinder UEffectVar effName \effName' ->
+        sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
+          cont $ UEffectDecl opTypes' effName' opNames'
+    UHandlerDecl effName tyArgs retEff retTy ops handlerName -> do
+      effName' <- sourceRenameE effName
+      Abs tyArgs' (ListE ops' `PairE` retEff' `PairE` retTy') <-
+        sourceRenameE (Abs tyArgs (ListE ops `PairE` retEff `PairE` retTy))
+      sourceRenameUBinder UHandlerVar handlerName \handlerName' -> do
+        cont $ UHandlerDecl effName' tyArgs' retEff' retTy' ops' handlerName'
 
 renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
                  => Nest (UAnnBinder AtomNameC) i' i
@@ -364,6 +389,12 @@ instance SourceRenamableE UMethodDef where
     lookupSourceName v >>= \case
       UMethodVar v' -> UMethodDef (InternalName v v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
+
+instance SourceRenamableE UEffectOpDef where
+  sourceRenameE (UEffectOpDef ~(SourceName v) rp expr) = do
+    lookupSourceName v >>= \case
+      UEffectOpVar v' -> UEffectOpDef (InternalName v v') rp <$> sourceRenameE expr
+      _ -> throw TypeErr $ "not an effect operation name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
   sourceRenameB (Nest b bs) cont =
@@ -493,6 +524,9 @@ instance HasSourceNames UDecl where
     UInterface _ _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName -> sourceNames instanceName
+    UEffectDecl _ ~(UBindSource effName) opNames -> do
+      S.singleton effName <> sourceNames opNames
+    UHandlerDecl _ _ _ _ _ handlerName -> sourceNames handlerName
 
 instance HasSourceNames UPat where
   sourceNames (WithSrcB _ pat) = case pat of

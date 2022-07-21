@@ -1,0 +1,19 @@
+%passes
+effect Exn
+  ctl raise : a: Type ?-> Unit -> a
+
+%passes
+handler catch_ of Exn {r} : Maybe r
+  ctl raise = \_. Nothing
+  return = \x. Just x
+
+%passes
+effect Counter
+  def inc : Unit -> Unit
+
+%passes
+handler runCounter of Counter {r h} (ref : Ref h Nat) : {State h} (r & Nat)
+  def inc = \_.
+    ref := (1 + get ref)
+    resume ()
+  return = \x. (x, get ref)

@@ -58,7 +58,7 @@ module Name (
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), NameHint, noHint, Color (..),
   GenericE (..), GenericB (..),
-  EitherE2, EitherE3, EitherE4, EitherE5, EitherE6 (..),
+  EitherE2, EitherE3, EitherE4, EitherE5, EitherE6, EitherE7, EitherE8 (..),
   splitNestAt, joinNest, joinRNest, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT,
   ExtWitness (..),
@@ -1901,7 +1901,10 @@ instance Color MethodNameC     where getColorRep = MethodNameC
 instance Color ImpFunNameC     where getColorRep = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep = ObjectFileNameC
 instance Color ModuleNameC     where getColorRep = ModuleNameC
-instance Color PtrNameC        where getColorRep = ModuleNameC
+instance Color PtrNameC        where getColorRep = PtrNameC
+instance Color EffectNameC     where getColorRep = EffectNameC
+instance Color EffectOpNameC   where getColorRep = EffectOpNameC
+instance Color HandlerNameC    where getColorRep = HandlerNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -2293,25 +2296,32 @@ deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
 -- why here we define an n-way sum type, so that the different cases can be
 -- encoded compactly just by changing the constructor tag.
 --
--- There's nothing special about the number 6. We can always change the width
--- as we see fit. But it did seem to balance the amount of boilerplate well.
-data EitherE6 (e0::E) (e1::E) (e2::E) (e3::E) (e4::E) (e5::E) (n::S)
+-- There's nothing special about the number 8 (other than that it is a small
+-- power of two). We can always change the width as we see fit. But it did seem
+-- to balance the amount of boilerplate well.
+data EitherE8 (e0::E) (e1::E) (e2::E) (e3::E) (e4::E) (e5::E) (e6::E) (e7::E) (n::S)
   = Case0 (e0 n)
   | Case1 (e1 n)
   | Case2 (e2 n)
   | Case3 (e3 n)
   | Case4 (e4 n)
   | Case5 (e5 n)
+  | Case6 (e6 n)
+  | Case7 (e7 n)
   deriving (Generic)
 
-type EitherE2 e0 e1          = EitherE6 e0 e1 VoidE VoidE VoidE VoidE
-type EitherE3 e0 e1 e2       = EitherE6 e0 e1 e2    VoidE VoidE VoidE
-type EitherE4 e0 e1 e2 e3    = EitherE6 e0 e1 e2    e3    VoidE VoidE
-type EitherE5 e0 e1 e2 e3 e4 = EitherE6 e0 e1 e2    e3    e4    VoidE
+type EitherE2 e0 e1                = EitherE8 e0 e1 VoidE VoidE VoidE VoidE VoidE VoidE
+type EitherE3 e0 e1 e2             = EitherE8 e0 e1 e2    VoidE VoidE VoidE VoidE VoidE
+type EitherE4 e0 e1 e2 e3          = EitherE8 e0 e1 e2    e3    VoidE VoidE VoidE VoidE
+type EitherE5 e0 e1 e2 e3 e4       = EitherE8 e0 e1 e2    e3    e4    VoidE VoidE VoidE
+type EitherE6 e0 e1 e2 e3 e4 e5    = EitherE8 e0 e1 e2    e3    e4    e5    VoidE VoidE
+type EitherE7 e0 e1 e2 e3 e4 e5 e6 = EitherE8 e0 e1 e2    e3    e4    e5    e6    VoidE
+
 
 instance (AlphaHashableE e0, AlphaHashableE e1, AlphaHashableE e2,
-          AlphaHashableE e3, AlphaHashableE e4, AlphaHashableE e5)
-            => AlphaHashableE (EitherE6 e0 e1 e2 e3 e4 e5) where
+          AlphaHashableE e3, AlphaHashableE e4, AlphaHashableE e5,
+          AlphaHashableE e6, AlphaHashableE e7)
+            => AlphaHashableE (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
   hashWithSaltE env salt = \case
     Case0 e -> hashWithSaltE env (hashWithSalt salt (0::Int)) e
     Case1 e -> hashWithSaltE env (hashWithSalt salt (1::Int)) e
@@ -2319,11 +2329,14 @@ instance (AlphaHashableE e0, AlphaHashableE e1, AlphaHashableE e2,
     Case3 e -> hashWithSaltE env (hashWithSalt salt (3::Int)) e
     Case4 e -> hashWithSaltE env (hashWithSalt salt (4::Int)) e
     Case5 e -> hashWithSaltE env (hashWithSalt salt (5::Int)) e
+    Case6 e -> hashWithSaltE env (hashWithSalt salt (6::Int)) e
+    Case7 e -> hashWithSaltE env (hashWithSalt salt (7::Int)) e
   {-# INLINE hashWithSaltE #-}
 
 instance (SinkableE e0, SinkableE e1, SinkableE e2,
-          SinkableE e3, SinkableE e4, SinkableE e5)
-            => SinkableE (EitherE6 e0 e1 e2 e3 e4 e5) where
+          SinkableE e3, SinkableE e4, SinkableE e5,
+          SinkableE e6, SinkableE e7)
+            => SinkableE (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
   sinkingProofE fresh = \case
     Case0 e -> Case0 $ sinkingProofE fresh e
     Case1 e -> Case1 $ sinkingProofE fresh e
@@ -2331,10 +2344,13 @@ instance (SinkableE e0, SinkableE e1, SinkableE e2,
     Case3 e -> Case3 $ sinkingProofE fresh e
     Case4 e -> Case4 $ sinkingProofE fresh e
     Case5 e -> Case5 $ sinkingProofE fresh e
+    Case6 e -> Case6 $ sinkingProofE fresh e
+    Case7 e -> Case7 $ sinkingProofE fresh e
 
 instance (HoistableE e0, HoistableE e1, HoistableE e2,
-          HoistableE e3, HoistableE e4, HoistableE e5)
-            => HoistableE (EitherE6 e0 e1 e2 e3 e4 e5) where
+          HoistableE e3, HoistableE e4, HoistableE e5,
+          HoistableE e6, HoistableE e7)
+            => HoistableE (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
   freeVarsE = \case
     Case0 e -> freeVarsE e
     Case1 e -> freeVarsE e
@@ -2342,11 +2358,14 @@ instance (HoistableE e0, HoistableE e1, HoistableE e2,
     Case3 e -> freeVarsE e
     Case4 e -> freeVarsE e
     Case5 e -> freeVarsE e
+    Case6 e -> freeVarsE e
+    Case7 e -> freeVarsE e
   {-# INLINE freeVarsE #-}
 
 instance (SubstE v e0, SubstE v e1, SubstE v e2,
-          SubstE v e3, SubstE v e4, SubstE v e5)
-            => SubstE v (EitherE6 e0 e1 e2 e3 e4 e5) where
+          SubstE v e3, SubstE v e4, SubstE v e5,
+          SubstE v e6, SubstE v e7)
+            => SubstE v (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
   substE env = \case
     Case0 e -> Case0 $ substE env e
     Case1 e -> Case1 $ substE env e
@@ -2354,22 +2373,28 @@ instance (SubstE v e0, SubstE v e1, SubstE v e2,
     Case3 e -> Case3 $ substE env e
     Case4 e -> Case4 $ substE env e
     Case5 e -> Case5 $ substE env e
+    Case6 e -> Case6 $ substE env e
+    Case7 e -> Case7 $ substE env e
   {-# INLINE substE #-}
 
 instance (AlphaEqE e0, AlphaEqE e1, AlphaEqE e2,
-          AlphaEqE e3, AlphaEqE e4, AlphaEqE e5)
-            => AlphaEqE (EitherE6 e0 e1 e2 e3 e4 e5) where
+          AlphaEqE e3, AlphaEqE e4, AlphaEqE e5,
+          AlphaEqE e6, AlphaEqE e7)
+            => AlphaEqE (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
   alphaEqE (Case0 e1) (Case0 e2) = alphaEqE e1 e2
   alphaEqE (Case1 e1) (Case1 e2) = alphaEqE e1 e2
   alphaEqE (Case2 e1) (Case2 e2) = alphaEqE e1 e2
   alphaEqE (Case3 e1) (Case3 e2) = alphaEqE e1 e2
   alphaEqE (Case4 e1) (Case4 e2) = alphaEqE e1 e2
   alphaEqE (Case5 e1) (Case5 e2) = alphaEqE e1 e2
+  alphaEqE (Case6 e1) (Case6 e2) = alphaEqE e1 e2
+  alphaEqE (Case7 e1) (Case7 e2) = alphaEqE e1 e2
   alphaEqE _          _          = zipErr
 
 instance (Store (e0 n), Store (e1 n), Store (e2 n),
-          Store (e3 n), Store (e4 n), Store (e5 n))
-            => Store (EitherE6 e0 e1 e2 e3 e4 e5 n)
+          Store (e3 n), Store (e4 n), Store (e5 n),
+          Store (e6 n), Store (e7 n))
+            => Store (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7 n)
 
 -- ============================================================================
 -- ==============================  UNSAFE CORE  ===============================
@@ -2425,6 +2450,9 @@ data C =
   | ObjectFileNameC
   | ModuleNameC
   | PtrNameC
+  | EffectNameC
+  | EffectOpNameC
+  | HandlerNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 

@@ -109,4 +109,4 @@ def frob (x:Int) (y:Int) : + =
 > 105 | def frob (x:Int) (y:Int) : + =
 >     |                              ^
 > unexpected '='
-> expecting expression
+> expecting expression or resume

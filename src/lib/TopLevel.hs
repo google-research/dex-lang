@@ -363,11 +363,14 @@ runEnvQuery query = do
         Just uvar -> do
           logTop $ TextOut $ pprint uvar
           info <- case uvar of
-            UAtomVar    v' -> pprint <$> lookupEnv v'
-            UTyConVar   v' -> pprint <$> lookupEnv v'
-            UDataConVar v' -> pprint <$> lookupEnv v'
-            UClassVar   v' -> pprint <$> lookupEnv v'
-            UMethodVar  v' -> pprint <$> lookupEnv v'
+            UAtomVar     v' -> pprint <$> lookupEnv v'
+            UTyConVar    v' -> pprint <$> lookupEnv v'
+            UDataConVar  v' -> pprint <$> lookupEnv v'
+            UClassVar    v' -> pprint <$> lookupEnv v'
+            UMethodVar   v' -> pprint <$> lookupEnv v'
+            UEffectVar   v' -> pprint <$> lookupEnv v'
+            UEffectOpVar v' -> pprint <$> lookupEnv v'
+            UHandlerVar  v' -> pprint <$> lookupEnv v'
           logTop $ TextOut $ "Binding:\n" ++ info
 
 blockRequiresBench :: SourceBlock -> Bool

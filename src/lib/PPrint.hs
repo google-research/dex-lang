@@ -703,6 +703,22 @@ instance Pretty (UDecl n l) where
   pretty (UInstance bs className params methods (LeftB v)) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
         <> prettyLines methods
+  pretty (UEffectDecl opTys effName opNames) =
+    "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
+    where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
+                 | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
+  pretty (UHandlerDecl effName tyArgs _retEff retTy opDefs name) =
+    "handler" <+> p name <+> "of" <+> p effName <+> prettyBinderNest tyArgs
+    <+> ":" <+> "{todo: pretty effects}" <+> p retTy <> hardline
+    <> foldMap (<>hardline) ops
+    where ops = [ p rp <+> p n <+> "=" <+> p body
+                 | UEffectOpDef n rp body <- opDefs ]
+
+instance Pretty UResumePolicy where
+  pretty UNoResume = "jmp"
+  pretty ULinearResume = "def"
+  pretty UAnyResume = "ctl"
+  pretty UReturn = ""
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)

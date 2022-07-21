@@ -205,6 +205,9 @@ sourceNameType v = do
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
       UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
+      UEffectVar   _ -> error "not implemented: sourceNameType::UEffectVar"
+      UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"
+      UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"
 
 typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
 typeAsBinderNest ty = do
@@ -623,6 +626,7 @@ getTypePrimOp op = case op of
   VectorSubref ref _ vty -> getTypeE ref >>= \case
     TC (RefType h _) -> TC . RefType h <$> substM vty
     ty -> error $ "Not a reference type: " ++ pprint ty
+  Resume _ _ -> throw NotImplementedErr "getTypePrimOp.Resume"
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =

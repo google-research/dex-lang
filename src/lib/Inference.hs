@@ -123,6 +123,8 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     applyDefaults
     return val
   return $ UDeclResultWorkRemaining block $ Abs decl result
+inferTopUDecl (UEffectDecl _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UEffectDecl"
+inferTopUDecl (UHandlerDecl _ _ _ _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UHandlerDecl"
 {-# SCC inferTopUDecl #-}
 
 -- We use this to finish the processing the decl after we've completely
@@ -1291,6 +1293,9 @@ inferUVar = \case
   UMethodVar v -> do
     MethodBinding _ _ f <- lookupEnv v
     return f
+  UEffectVar _ -> throw NotImplementedErr "inferUVar::UEffectVar"
+  UEffectOpVar _ -> throw NotImplementedErr "inferUVar::UEffectOpVar"
+  UHandlerVar _ -> throw NotImplementedErr "inferUVar::UHandlerVar"
 
 buildForTypeFromTabType :: EffectRow n -> TabPiType n -> InfererM i n (PiType n)
 buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do

@@ -257,6 +257,7 @@ transposeOp op ct = case op of
   VectorBroadcast _ _   -> unreachable
   VectorIota _          -> unreachable
   VectorSubref _ _ _    -> unreachable
+  Resume _ _            -> notLinear
   where
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
     unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
