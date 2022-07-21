@@ -1468,6 +1468,17 @@ It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> deriv_rev (f<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">-&gt;</span><span class="type-name">Float</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> snd (vjp f x) 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- XXX: Watch out when editing this data type! We depend on its structure
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- deep inside the compiler (mostly in linearization and during rule registration).
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">SymbolicTangent</span> a <span class="symbol">=</span>
+  <span class="type-name">ZeroTangent</span>
+  <span class="type-name">SomeTangent</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> someTangent {a} [<span class="type-name">VSpace</span> a] (x<span class="symbol">:</span><span class="type-name">SymbolicTangent</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
+  <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">ZeroTangent</span>    <span class="symbol">-&gt;</span> zero
+    <span class="type-name">SomeTangent</span> x&#39; <span class="symbol">-&gt;</span> x&#39;
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Approximate Equality</h3>
 <p>TODO: move this outside the AD section to be with equality?</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasAllClose</span> a
