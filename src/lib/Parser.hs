@@ -1156,7 +1156,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
              | CustomLinearizationKW | EffectKW | HandlerKW | JmpKW | CtlKW
-             | ReturnKW | ReturningKW | ResumeKW
+             | ReturnKW | ResumeKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1221,7 +1221,6 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       JmpKW -> "jmp"
       CtlKW -> "ctl"
       ReturnKW -> "return"
-      ReturningKW -> "returning"
       ResumeKW -> "resume"
       CustomLinearizationKW -> "custom-linearization"
 
@@ -1233,7 +1232,7 @@ keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
                "do", "view", "import", "foreign", "custom-linearization",
-               "effect", "jmp", "ctl", "return", "returning", "resume"]
+               "effect", "jmp", "ctl", "return", "resume"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $
