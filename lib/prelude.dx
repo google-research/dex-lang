@@ -1197,6 +1197,17 @@ def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def deriv_rev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
+-- XXX: Watch out when editing this data type! We depend on its structure
+-- deep inside the compiler (mostly in linearization and during rule registration).
+data SymbolicTangent a =
+  ZeroTangent
+  SomeTangent a
+
+def someTangent {a} [VSpace a] (x:SymbolicTangent a) : a =
+  case x of
+    ZeroTangent    -> zero
+    SomeTangent x' -> x'
+
 '### Approximate Equality
 TODO: move this outside the AD section to be with equality?
 

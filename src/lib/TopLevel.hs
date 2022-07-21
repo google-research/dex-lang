@@ -235,7 +235,7 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
-  DeclareCustomLinearization fname expr -> do
+  DeclareCustomLinearization fname zeros expr -> do
     lookupSourceMap fname >>= \case
       Nothing -> throw UnboundVarErr $ pprint fname
       Just (UAtomVar fname') -> do
@@ -265,7 +265,7 @@ evalSourceBlock' mname block = case sbContents block of
               , pprint implTy
               ]
           Success () -> return ()
-        emitCustomLinearization fname' nimplicit impl
+        emitAtomRules fname' $ CustomLinearize nimplicit zeros impl
       Just _ -> throw TypeErr $ "Custom linearization can only be defined for functions"
     where
       getLinearizationType :: Type n -> RNest PiBinder n l
@@ -303,9 +303,20 @@ evalSourceBlock' mname block = case sbContents block of
               , ""
               , "but it does not have a well-defined tangent space."
               ]
+          tangentWrapper <- case zeros of
+            InstantiateZeros -> return id
+            SymbolicZeros -> do
+              lookupSourceMap "SymbolicTangent" >>= \case
+                Nothing -> throw UnboundVarErr $
+                  "Can't define a custom linearization with symbolic zeros: the " ++
+                  "SymbolicTangent type is not in scope."
+                Just (UTyConVar symTanName) -> do
+                  TyConBinding dataDefName _ <- lookupEnv symTanName
+                  return \elTy -> TypeCon "SymbolicTangent" dataDefName $ DataDefParams [elTy] []
+                Just _ -> throw TypeErr "SymbolicTangent should name a `data` type"
           let prependTangent linTail ty =
                 maybeTangentType ty >>= \case
-                  Just tty -> tty --> linTail
+                  Just tty -> tangentWrapper tty --> linTail
                   Nothing  -> throw TypeErr $ unlines
                     [ "The type of one of the arguments of " ++ pprint fname ++ " is:"
                     , ""
