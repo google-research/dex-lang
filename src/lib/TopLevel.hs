@@ -49,7 +49,7 @@ import Syntax
 import Core
 import Types.Core
 import Builder
-import CheckType (CheckableE (..), asFFIFunType, asFirstOrderFunction, checkHasType)
+import CheckType ( CheckableE (..), asFFIFunType, checkHasType, asSpecializableFunction)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -231,7 +231,7 @@ evalSourceBlock' mname block = case sbContents block of
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
         vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
-        vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
+        vCore <- emitBinding hint (AtomNameBinding $ TopFunBound naryPiTy $ FFITopFun vImp)
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
@@ -242,9 +242,16 @@ evalSourceBlock' mname block = case sbContents block of
         lookupCustomRules fname' >>= \case
           Nothing -> return ()
           Just _  -> throw TypeErr $ pprint fname ++ " already has a custom linearization"
-        impl <- evalUExpr expr
+        -- We do some special casing to avoid instantiating polymorphic functions.
+        impl <- case expr of
+          WithSrcE _ (UVar _) ->
+            renameSourceNamesUExpr expr >>= \case
+              WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> return $ Var v
+              _ -> error "Expected a variable"
+          _ -> evalUExpr expr
         fType <- getType fname'
-        linFunTy <- getLinearizationType fType [] fType
+        (nimplicit, linFunTy) <- liftExcept . runFallibleM =<< liftEnvReaderT
+          (getLinearizationType fType REmpty [] fType)
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
             implTy <- getType impl
@@ -258,21 +265,32 @@ evalSourceBlock' mname block = case sbContents block of
               , pprint implTy
               ]
           Success () -> return ()
-        emitCustomLinearization fname' impl
+        emitCustomLinearization fname' nimplicit impl
       Just _ -> throw TypeErr $ "Custom linearization can only be defined for functions"
     where
-      getLinearizationType :: Topper m => Type n -> [Type n] -> Type n -> m n (Type n)
-      getLinearizationType fullTy revArgTys = \case
-        Pi (PiType (PiBinder binder a arr) eff b') -> do
-          unless (arr == PlainArrow) $ throw TypeErr $
-            "Custom linearization can only be defined for regular functions" ++ but
+      getLinearizationType :: Type n -> RNest PiBinder n l
+                           -> [Type l] -> Type l -> EnvReaderT FallibleM l (Int, Type n)
+      getLinearizationType fullTy implicitArgs revArgTys = \case
+        Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
           unless (eff == Pure) $ throw TypeErr $
             "Custom linearization can only be defined for pure functions" ++ but
-          b <- case hoist binder b' of
-            HoistSuccess b -> return b
-            HoistFailure _ -> throw TypeErr $
-              "Custom linearization cannot be defined for dependent functions" ++ but
-          getLinearizationType fullTy (a:revArgTys) b
+          let implicit = do
+                unless (null revArgTys) $ throw TypeErr $
+                  "To define a custom linearization, all implicit and class arguments of " ++
+                  "a function have to precede all explicit arguments. However, the " ++
+                  "type of " ++ pprint fname ++ "is:\n\n" ++ pprint fullTy
+                refreshAbs (Abs pbinder b') \pbinder' b'' ->
+                  getLinearizationType fullTy (RNest implicitArgs pbinder') [] b''
+          case arr of
+            ClassArrow -> implicit
+            ImplicitArrow -> implicit
+            PlainArrow -> do
+              b <- case hoist binder b' of
+                HoistSuccess b -> return b
+                HoistFailure _ -> throw TypeErr $
+                  "Custom linearization cannot be defined for dependent functions" ++ but
+              getLinearizationType fullTy implicitArgs (a:revArgTys) b
+            LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
         resultTy -> do
           when (null revArgTys) $ throw TypeErr $
             "Custom linearization can only be defined for functions" ++ but
@@ -296,8 +314,14 @@ evalSourceBlock' mname block = case sbContents block of
                     , "but it doesn't have a well-defined tangent space."
                     ]
           tanFunTy <- foldM prependTangent resultTyTan revArgTys
-          foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
-        where but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+          (nestLength $ unRNest implicitArgs,) . prependImplicit implicitArgs <$>
+            foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+        where
+          but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+          prependImplicit :: RNest PiBinder n l -> Type l -> Type n
+          prependImplicit is ty = case is of
+            REmpty -> ty
+            RNest is' i -> prependImplicit is' $ Pi $ PiType i Pure ty
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty
@@ -504,7 +528,9 @@ evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBlock typed = do
   opt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock opt
-  SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
+  simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
+  evalRequiredSpecializations simplifiedBlock
+  SimplifiedBlock simp recon <- return simplifiedBlock
   lowered <- case useExperimentalLowering of
     False -> return simp
     True  -> do
@@ -515,6 +541,23 @@ evalBlock typed = do
   result <- evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
+
+evalRequiredSpecializations
+  :: (Topper m, Mut n, SinkableE e, SubstE Name e, HoistableE e)
+  => e n -> m n ()
+evalRequiredSpecializations e = do
+  forM_ (freeAtomVarsList e) \v -> do
+    lookupAtomName v >>= \case
+      TopFunBound _ (SpecializedTopFun _ _) ->
+        queryImpCache v >>= \case
+          Nothing -> evalSpecialization v
+          Just _ -> return ()
+      _ -> return ()
+
+evalSpecialization :: (Topper m, Mut n) => AtomName n -> m n ()
+evalSpecialization fname = do
+  TopFunBound fTy (SpecializedTopFun fDef args) <- lookupAtomName fname
+  compileTopLevelFun fname fTy fDef args
 
 useExperimentalLowering :: Bool
 useExperimentalLowering = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_LOWER"
@@ -531,30 +574,51 @@ execUDecl mname decl = do
     UDeclResultWorkRemaining block declAbs -> do
       result <- evalBlock block
       result' <- case declAbs of
-        Abs (ULet NoInlineLet (UPatAnn p _) _) _ ->
-          compileTopLevelFun (getNameHint p) result
+        Abs (ULet NoInlineLet (UPatAnn p _) _) _ -> do
+          ty <- getType result
+          asSpecializableFunction ty >>= \case
+            Just (n, fty) -> do
+              f <- emitBinding (getNameHint p) $
+                AtomNameBinding $ TopFunBound fty $ UnspecializedTopFun n result
+              -- warm up cache if it's already sufficiently specialized
+              -- (this is actually here as a workaround for some sort of
+              -- caching/linking bug that occurs when we deserialize compilation artifacts).
+              when (n == 0) do
+                fSpecial <- emitSpecialization (getNameHint p) $ AppSpecialization f []
+                evalRequiredSpecializations (Var fSpecial)
+              return $ Var f
+            Nothing -> throw TypeErr $
+              "Not a valid @noinline function type: " ++ pprint ty
         _ -> return result
       emitSourceMap =<< applyUDeclAbs declAbs result'
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => NameHint -> Atom n -> m n (Atom n)
-compileTopLevelFun hint f = do
-  ty <- getType f
-  naryPi <- asFirstOrderFunction ty >>= \case
-    Nothing -> throw TypeErr "@noinline functions must be first-order"
-    Just naryPi -> return naryPi
-  fSimp <- simplifyTopFunction naryPi f
+compileTopLevelFun
+  :: (Topper m, Mut n)
+  => AtomName n -> NaryPiType n -> Atom n -> [Atom n] -> m n ()
+compileTopLevelFun fname naryPi f staticArgs = do
+  f' <- forceDeferredInlining f
+  fSimp <- simplifyTopFunction naryPi f' staticArgs
+  evalRequiredSpecializations fSimp
   fImp <- toImpStandaloneFunction fSimp
-  fSimpName <- emitBinding hint $ AtomNameBinding $ SimpLamBound naryPi fSimp
-  fImpName <- emitImpFunBinding hint fImp
-  extendImpCache fSimpName fImpName
+  fImpName <- emitImpFunBinding (getNameHint fname) fImp
+  extendImpCache fname fImpName
   -- TODO: this is a hack! We need a better story for C/LLVM names.
   let cFunName = pprint fImpName
   fObj <- toCFunction cFunName fImp
   extendObjCache fImpName fObj
-  return $ Var fSimpName
 {-# SCC compileTopLevelFun #-}
+
+-- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
+-- where we eta-expand and try to simplify `App f args`, we would see `f` as a
+-- "noinline" function and defer its simplification.
+forceDeferredInlining :: EnvReader m => Atom n -> m n (Atom n)
+forceDeferredInlining (Var v) =
+  lookupAtomName v >>= \case
+    TopFunBound _ (UnspecializedTopFun _ f) -> return f
+    _ -> return $ Var v
+forceDeferredInlining f = return f
 
 toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
 toCFunction fname f = do

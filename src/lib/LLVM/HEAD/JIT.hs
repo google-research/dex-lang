@@ -114,9 +114,10 @@ withNativeModule jit objs m p = bracket (compileModule jit objs m p) unloadNativ
 getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
 getFunctionPtr NativeModule{..} funcName = do
   let JIT{..} = moduleJIT
-  Right (OrcJIT.JITSymbol funcAddr _) <-
-    OrcJIT.lookupSymbol session compileLayer moduleDylib (fromString funcName)
-  return $ castPtrToFunPtr $ wordPtrToPtr funcAddr
+  OrcJIT.lookupSymbol session compileLayer moduleDylib (fromString funcName) >>= \case
+    Right (OrcJIT.JITSymbol funcAddr _) ->
+      return $ castPtrToFunPtr $ wordPtrToPtr funcAddr
+    Left _ -> error $ "Couldn't find function: " ++ funcName
 
 newDylib :: JIT -> IO OrcJIT.JITDylib
 newDylib jit = do

@@ -13,7 +13,7 @@ module RawName
   , rawNameFromHint, rawNames, freshRawName, lookup, singleton, restrictKeys
   , keys, elems, mapWithKey, unionWith, difference, intersection
   , fromList, toList, RawName.null, insert, traverseWithKey
-  , member, disjoint, adjust) where
+  , member, disjoint, containedIn, adjust) where
 
 import Prelude hiding (lookup)
 import qualified Data.IntMap.Lazy as M
@@ -240,6 +240,9 @@ member i m = M.member (coerce i) m
 
 disjoint :: RawNameMap a -> RawNameMap b -> Bool
 disjoint m1 m2 = M.disjoint m1 m2
+
+containedIn :: RawNameMap a -> RawNameMap b -> Bool
+containedIn m1 m2 = M.null $ M.difference m1 m2
 
 adjust :: (a -> a) -> RawName -> RawNameMap a -> RawNameMap a
 adjust f i m = M.adjust f (coerce i) m
