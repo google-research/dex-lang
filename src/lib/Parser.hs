@@ -404,7 +404,6 @@ handlerDef = do
   effectName <- anyName
   binders <- concat <$> many (
     argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg])
-  sym ":"
   (eff, ty) <- label "result type annotation" $ annot effectiveType
   methods <- onePerLine effectOpDef
   return $ UHandlerDecl (fromString effectName) (toNestParsed binders)
