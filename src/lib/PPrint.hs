@@ -707,9 +707,10 @@ instance Pretty (UDecl n l) where
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
     where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
                  | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
-  pretty (UHandlerDecl effName tyArgs retTy opDefs name) =
-    "handler" <+> prettyBinderNest tyArgs <+> p name <+> ":" <+> p effName
-      <+> "returning" <+> p retTy <> hardline <> foldMap (<>hardline) ops
+  pretty (UHandlerDecl effName tyArgs _retEff retTy opDefs name) =
+    "handler" <+> p name <+> "of" <+> p effName <+> prettyBinderNest tyArgs
+    <+> ":" <+> "{todo: pretty effects}" <+> p retTy <> hardline
+    <> foldMap (<>hardline) ops
     where ops = [ p rp <+> p n <+> "=" <+> p body
                  | UEffectOpDef n rp body <- opDefs ]
 

@@ -96,6 +96,7 @@ data PrimOp e =
       | PrimEffect e (PrimEffect e)
       | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
+      | Resume e e                   -- Resume from effect handler (type, arg)
       -- References
       | IndexRef e e
       | ProjRef Int e

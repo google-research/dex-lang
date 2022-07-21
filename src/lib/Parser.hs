@@ -399,16 +399,16 @@ instanceMethod = do
 handlerDef :: Parser (UDecl VoidS VoidS)
 handlerDef = do
   keyWord HandlerKW
+  handlerName <- anyName
+  keyWord OfKW
+  effectName <- anyName
   binders <- concat <$> many (
     argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg])
-  handlerName <- anyName
   sym ":"
-  effectName <- anyName
-  keyWord ReturningKW
-  returnType <- uType
+  (eff, ty) <- label "result type annotation" $ annot effectiveType
   methods <- onePerLine effectOpDef
   return $ UHandlerDecl (fromString effectName) (toNestParsed binders)
-    returnType methods (fromString handlerName)
+    eff ty methods (fromString handlerName)
 
 effectOpDef :: Parser (UEffectOpDef VoidS)
 effectOpDef = do
@@ -1013,7 +1013,7 @@ fallBackTo optionA optionB = do
 ops :: [[Operator Parser (UExpr VoidS)]]
 ops =
   [ [InfixL $ sym "." $> mkTabApp , symOp "!"]
-  , [InfixL $ sc $> mkApp]
+  , [InfixL $ sc $> mkApp, resumeOp]
   , [prefixNegOp, prefixPosOp]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
@@ -1056,6 +1056,15 @@ pairingSymOpP s = opWithSrc $ do
   if allowed
     then infixSym s >> return (binApp (fromString $ "("<>s<>")"))
     else fail $ "Unexpected delimiter " <> s
+
+resumeOp :: Operator Parser (UExpr VoidS)
+resumeOp = Prefix $ label "resume" $ do
+  ((), pos) <- withPos $ keyWord ResumeKW
+  return \(WithSrcE litpos e) -> do
+    let pos' = joinPos (Just pos) litpos
+    let ty = WithSrcE (Just pos) UHole
+    let arg = WithSrcE litpos e
+    WithSrcE pos' $ UPrimExpr $ OpExpr $ Resume ty arg
 
 prefixNegOp :: Operator Parser (UExpr VoidS)
 prefixNegOp = Prefix $ label "negation" $ do
@@ -1146,8 +1155,8 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
              | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
-             | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ReturningKW
-             | CustomLinearizationKW
+             | CustomLinearizationKW | EffectKW | HandlerKW | JmpKW | CtlKW
+             | ReturnKW | ReturningKW | ResumeKW
 
 nextChar :: Lexer Char
 nextChar = do
@@ -1213,6 +1222,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       CtlKW -> "ctl"
       ReturnKW -> "return"
       ReturningKW -> "returning"
+      ResumeKW -> "resume"
       CustomLinearizationKW -> "custom-linearization"
 
 keyWordSet :: HS.HashSet String
@@ -1223,7 +1233,7 @@ keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "named-instance", "where", "if", "then", "else",
                "do", "view", "import", "foreign", "custom-linearization",
-               "effect", "jmp", "ctl", "return", "returning"]
+               "effect", "jmp", "ctl", "return", "returning", "resume"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

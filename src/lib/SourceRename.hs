@@ -288,11 +288,12 @@ instance SourceRenamableB UDecl where
       sourceRenameUBinder UEffectVar effName \effName' ->
         sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
           cont $ UEffectDecl opTypes' effName' opNames'
-    UHandlerDecl effName tyArgs retTy ops handlerName -> do
+    UHandlerDecl effName tyArgs retEff retTy ops handlerName -> do
       effName' <- sourceRenameE effName
-      Abs tyArgs' (PairE (ListE ops') retTy') <- sourceRenameE (Abs tyArgs (PairE (ListE ops) retTy))
+      Abs tyArgs' (ListE ops' `PairE` retEff' `PairE` retTy') <-
+        sourceRenameE (Abs tyArgs (ListE ops `PairE` retEff `PairE` retTy))
       sourceRenameUBinder UHandlerVar handlerName \handlerName' -> do
-        cont $ UHandlerDecl effName' tyArgs' retTy' ops' handlerName'
+        cont $ UHandlerDecl effName' tyArgs' retEff' retTy' ops' handlerName'
 
 renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
                  => Nest (UAnnBinder AtomNameC) i' i
@@ -525,7 +526,7 @@ instance HasSourceNames UDecl where
     UInstance _ _ _ _ instanceName -> sourceNames instanceName
     UEffectDecl _ ~(UBindSource effName) opNames -> do
       S.singleton effName <> sourceNames opNames
-    UHandlerDecl _ _ _ _ handlerName -> sourceNames handlerName
+    UHandlerDecl _ _ _ _ _ handlerName -> sourceNames handlerName
 
 instance HasSourceNames UPat where
   sourceNames (WithSrcB _ pat) = case pat of

@@ -124,7 +124,7 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     return val
   return $ UDeclResultWorkRemaining block $ Abs decl result
 inferTopUDecl (UEffectDecl _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UEffectDecl"
-inferTopUDecl (UHandlerDecl _ _ _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UHandlerDecl"
+inferTopUDecl (UHandlerDecl _ _ _ _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UHandlerDecl"
 {-# SCC inferTopUDecl #-}
 
 -- We use this to finish the processing the decl after we've completely
