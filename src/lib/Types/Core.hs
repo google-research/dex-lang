@@ -455,16 +455,19 @@ data AtomBinding (n::S) =
 
 data TopFunBinding (n::S) =
    UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
- -- XXX: the `Atom n` is actually always a `Var n`, but we can't use
- -- `AtomName n` because inference needs a `SubstE AtomSubstVal` instance for zonking
- | SpecializedTopFun (Atom n) [Atom n] -- Original (unspecialized) function, specialization args
+ | SpecializedTopFun (SpecializationSpec n) -- Original (unspecialized) function, specialization args
  | SimpTopFun          (NaryLamExpr n)
  | FFITopFun           (ImpFunName n)
    deriving (Show, Generic)
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-  AppSpecialization (AtomName n) [Type n]
+  -- The additional binders are for "data" components of the specialization types, like
+  -- `n` in `Fin n`.
+  -- XXX: the `Atom n` is actually always a `Var n`, but we can't use `AtomName
+  -- n` because inference needs a `SubstE AtomSubstVal` instance for zonking. We
+  -- should fix this!
+  AppSpecialization (Atom n) (Abs (Nest Binder) (ListE Type) n)
   deriving (Show, Generic)
 
 atomBindingType :: Binding AtomNameC n -> Type n
@@ -1647,19 +1650,19 @@ instance AlphaHashableE AtomBinding
 instance GenericE TopFunBinding where
   type RepE TopFunBinding = EitherE4
     (LiftE Int `PairE` Atom)  -- UnspecializedTopFun
-    (Atom `PairE` ListE Atom) -- SpecializedTopFun
+    SpecializationSpec        -- SpecializedTopFun
     NaryLamExpr               -- SimpTopFun
     ImpFunName                -- FFITopFun
   fromE = \case
     UnspecializedTopFun n x  -> Case0 $ PairE (LiftE n) x
-    SpecializedTopFun f args -> Case1 $ PairE f (ListE args)
+    SpecializedTopFun x -> Case1 x
     SimpTopFun        x -> Case2 x
     FFITopFun         x -> Case3 x
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (PairE (LiftE n) x)    -> UnspecializedTopFun n x
-    Case1 (PairE f (ListE args)) -> SpecializedTopFun f args
+    Case0 (PairE (LiftE n) x) -> UnspecializedTopFun n x
+    Case1 x                   -> SpecializedTopFun x
     Case2 x                   -> SimpTopFun        x
     Case3 x                   -> FFITopFun         x
     _ -> error "impossible"
@@ -1674,15 +1677,20 @@ instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
-  type RepE SpecializationSpec = PairE AtomName (ListE Type)
-  fromE (AppSpecialization fname args) = PairE fname (ListE args)
+  type RepE SpecializationSpec = PairE Atom (Abs (Nest Binder) (ListE Type))
+  fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
-  toE   (PairE fname (ListE args)) = AppSpecialization fname args
+  toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
   {-# INLINE toE #-}
+
+instance HasNameHint (SpecializationSpec n) where
+  getNameHint (AppSpecialization (Var f) _) = getNameHint f
+  getNameHint (AppSpecialization _ _) = noHint
 
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
 instance SubstE Name SpecializationSpec
+instance SubstE AtomSubstVal SpecializationSpec
 instance AlphaEqE SpecializationSpec
 instance AlphaHashableE SpecializationSpec
 

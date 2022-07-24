@@ -345,7 +345,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
           scalarArgs <- liftM toList $ mapM fromScalarAtom xs
           results <- impCall v' scalarArgs
           restructureScalarOrPairType resultTy results
-        TopFunBound piTy (SpecializedTopFun _ _) -> do
+        TopFunBound piTy (SpecializedTopFun _) -> do
           if length (toList xs') /= numNaryPiArgs piTy
             then notASimpExpr
             else do

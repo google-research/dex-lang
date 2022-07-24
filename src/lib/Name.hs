@@ -24,7 +24,8 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..), nonEmptyToNest,
+  Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..),
+  nonEmptyToNest, nestToNonEmpty,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
@@ -366,6 +367,10 @@ data NonEmptyNest (b::B) (n::S) (l::S) where
 
 nonEmptyToNest :: NonEmptyNest b n l -> Nest b n l
 nonEmptyToNest (NonEmptyNest b bs) = Nest b bs
+
+nestToNonEmpty :: Nest b n l -> Maybe (NonEmptyNest b n l)
+nestToNonEmpty Empty = Nothing
+nestToNonEmpty (Nest b bs) = Just $ NonEmptyNest b bs
 
 -- === Sinkings and projections ===
 

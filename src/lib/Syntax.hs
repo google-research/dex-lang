@@ -69,7 +69,7 @@ module Syntax (
     TopEnvFrag (..), ToBinding (..), PartialTopEnvFrag (..), withFreshBinders,
     refreshBinders, substBinders, withFreshBinder,
     withFreshLamBinder, withFreshPureLamBinder,
-    withFreshPiBinder, catEnvFrags,
+    withFreshPiBinder, catEnvFrags, plainPiBinder,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupClassDef, lookupInstanceDef,
     lookupAtomName, lookupImpFun, lookupModule,
     lookupEnvPure, lookupSourceMap, lookupSourceMapPure,

@@ -13,6 +13,7 @@ module TopLevel (
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
 import Data.Maybe
+import Data.Foldable (toList)
 import Data.Functor
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
@@ -545,16 +546,11 @@ evalRequiredSpecializations
 evalRequiredSpecializations e = do
   forM_ (freeAtomVarsList e) \v -> do
     lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun _ _) ->
+      TopFunBound _ (SpecializedTopFun _) ->
         queryImpCache v >>= \case
-          Nothing -> evalSpecialization v
+          Nothing -> compileTopLevelFun v
           Just _ -> return ()
       _ -> return ()
-
-evalSpecialization :: (Topper m, Mut n) => AtomName n -> m n ()
-evalSpecialization fname = do
-  TopFunBound fTy (SpecializedTopFun fDef args) <- lookupAtomName fname
-  compileTopLevelFun fname fTy fDef args
 
 useExperimentalLowering :: Bool
 useExperimentalLowering = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_LOWER"
@@ -581,7 +577,8 @@ execUDecl mname decl = do
               -- (this is actually here as a workaround for some sort of
               -- caching/linking bug that occurs when we deserialize compilation artifacts).
               when (n == 0) do
-                fSpecial <- emitSpecialization (getNameHint p) $ AppSpecialization f []
+                let s = AppSpecialization (Var f) (Abs Empty (ListE []))
+                fSpecial <- emitSpecialization s
                 evalRequiredSpecializations (Var fSpecial)
               return $ Var f
             Nothing -> throw TypeErr $
@@ -593,10 +590,11 @@ execUDecl mname decl = do
 
 compileTopLevelFun
   :: (Topper m, Mut n)
-  => AtomName n -> NaryPiType n -> Atom n -> [Atom n] -> m n ()
-compileTopLevelFun fname naryPi f staticArgs = do
-  f' <- forceDeferredInlining f
-  fSimp <- simplifyTopFunction naryPi f' staticArgs
+  => AtomName n -> m n ()
+compileTopLevelFun fname = do
+  TopFunBound fTy (SpecializedTopFun s) <- lookupAtomName fname
+  fPreSimp <- specializedFunPreSimpDefinition fTy s
+  fSimp <- simplifyTopFunction fPreSimp
   evalRequiredSpecializations fSimp
   fImp <- toImpStandaloneFunction fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
@@ -606,6 +604,17 @@ compileTopLevelFun fname naryPi f staticArgs = do
   fObj <- toCFunction cFunName fImp
   extendObjCache fImpName fObj
 {-# SCC compileTopLevelFun #-}
+
+specializedFunPreSimpDefinition
+  :: EnvReader m
+  => NaryPiType n -> SpecializationSpec n -> m n (NaryLamExpr n)
+specializedFunPreSimpDefinition ty (AppSpecialization f abStaticArgs@(Abs bs _)) = do
+  f' <- forceDeferredInlining f
+  liftBuilder do
+    buildNaryLamExpr ty \allArgs -> do
+      let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
+      ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
+      naryApp (sink f') $ staticArgs' <> map Var originalArgs
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a

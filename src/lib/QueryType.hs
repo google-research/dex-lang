@@ -13,7 +13,7 @@ module QueryType (
   getMethodIndex,
   instantiateDataDef, instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
-  numNaryPiArgs, naryLamExprType,
+  numNaryPiArgs, naryLamExprType, specializedFunType,
   oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict
   ) where
@@ -25,7 +25,7 @@ import Data.Functor ((<&>))
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromJust)
 import qualified Data.Set        as S
 
 import CheapReduction (cheapNormalize)
@@ -180,6 +180,17 @@ naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftTypeQueryM idSu
   where
     binderToPiBinder :: Binder n l -> PiBinder n l
     binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
+
+specializedFunType :: EnvReader m => SpecializationSpec n -> m n (NaryPiType n)
+specializedFunType (AppSpecialization ~(Var f) ab) = liftEnvReaderM $
+  refreshAbs ab \extraArgBs (ListE staticArgs) -> do
+    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    lookupAtomName (sink f) >>= \case
+      TopFunBound fTy _ -> do
+        NaryPiType dynArgBs effs resultTy <- instantiateNaryPi fTy staticArgs
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> nonEmptyToNest dynArgBs
+        return $ NaryPiType allBs effs resultTy
+      _ -> error "should only be specializing top-level functions"
 
 oneEffect :: Effect n -> EffectRow n
 oneEffect eff = EffectRow (S.singleton eff) Nothing
