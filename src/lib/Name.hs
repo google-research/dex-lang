@@ -2577,9 +2577,11 @@ class ExtEnd (n::S)
 
 getExtEvidence :: Ext n l => ExtEvidence n l
 getExtEvidence = ExtEvidence
+{-# INLINE getExtEvidence #-}
 
 absurdExtEvidence :: ExtEvidence VoidS n
 absurdExtEvidence = fabricateExtEvidence
+{-# INLINE absurdExtEvidence #-}
 
 -- We give this one a ' because the more general one defined in Name is the
 -- version we usually want to use.
@@ -2606,8 +2608,6 @@ data ExtEvidence (n::S) (l::S) where
 instance Category ExtEvidence where
   id = ExtEvidence
   {-# INLINE id #-}
-  -- Unfortunately, we can't write the class version of this transitivity axiom
-  -- because the intermediate type would be ambiguous.
   ExtEvidence . ExtEvidence = ExtEvidence
   {-# INLINE (.) #-}
 

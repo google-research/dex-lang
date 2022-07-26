@@ -571,8 +571,8 @@ class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
 bindersTypes :: (Distinct l, ProvesExt b, BindsNames b, BindsOneAtomName b)
              => Nest b n l -> [Type l]
 bindersTypes Empty = []
-bindersTypes (Nest b bs) = ty : bindersTypes bs
-  where ty = withExtEvidence (Nest b bs) $ sink (binderType b)
+bindersTypes n@(Nest b bs) = ty : bindersTypes bs
+  where ty = withExtEvidence n $ sink (binderType b)
 
 instance BindsOneAtomName (BinderP AtomNameC Type) where
   binderType (_ :> ty) = ty
