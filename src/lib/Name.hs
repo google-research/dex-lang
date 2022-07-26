@@ -1614,7 +1614,7 @@ locallyMutableInplaceT
   -> InplaceT b d m n (Abs d e n)
 locallyMutableInplaceT cont = do
   UnsafeMakeInplaceT \env decls -> do
-    (e, d, _) <- withMutEvidence (fabricateMutEvidence @n) $
+    (e, d, _) <- withFabricatedMut @n $
       unsafeRunInplaceT cont env emptyOutFrag
     return (Abs (unsafeCoerceB d) e, decls, unsafeCoerceE env)
 {-# INLINE locallyMutableInplaceT #-}
@@ -1638,20 +1638,13 @@ liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
 -- === predicates for mutable and immutable scope parameters ===
 
 class Mut (n::S)
-data MutEvidence (n::S) where
-  Mut :: Mut n => MutEvidence n
 instance Mut UnsafeS
 
-fabricateMutEvidence :: forall n. MutEvidence n
-fabricateMutEvidence =
-  withMutEvidence (error "pure fabrication" :: MutEvidence n) Mut
-{-# INLINE fabricateMutEvidence #-}
-
-withMutEvidence :: forall n a. MutEvidence n -> (Mut n => a) -> a
-withMutEvidence _ cont = fromWrapWithMut
+withFabricatedMut :: forall n a. (Mut n => a) -> a
+withFabricatedMut cont = fromWrapWithMut
  ( TrulyUnsafe.unsafeCoerce ( WrapWithMut cont :: WrapWithMut n       a
                                              ) :: WrapWithMut UnsafeS a)
-{-# INLINE withMutEvidence #-}
+{-# INLINE withFabricatedMut #-}
 
 newtype WrapWithMut n r =
   WrapWithMut { fromWrapWithMut :: Mut n => r }
