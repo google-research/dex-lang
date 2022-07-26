@@ -4,6 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Inference
@@ -2766,14 +2767,13 @@ data EmitsInfEvidence (n::S) where
 instance EmitsInf UnsafeS
 
 fabricateEmitsInfEvidence :: forall n. EmitsInfEvidence n
-fabricateEmitsInfEvidence =
-  withEmitsInfEvidence (error "pure fabrication" :: EmitsInfEvidence n) EmitsInf
+fabricateEmitsInfEvidence = withFabricatedEmitsInf @n EmitsInf
 
 fabricateEmitsInfEvidenceM :: forall m n. Monad1 m => m n (EmitsInfEvidence n)
 fabricateEmitsInfEvidenceM = return fabricateEmitsInfEvidence
 
-withEmitsInfEvidence :: forall n a. EmitsInfEvidence n -> (EmitsInf n => a) -> a
-withEmitsInfEvidence _ cont = fromWrapWithEmitsInf
+withFabricatedEmitsInf :: forall n a. (EmitsInf n => a) -> a
+withFabricatedEmitsInf cont = fromWrapWithEmitsInf
  ( TrulyUnsafe.unsafeCoerce ( WrapWithEmitsInf cont :: WrapWithEmitsInf n       a
                                                   ) :: WrapWithEmitsInf UnsafeS a)
 newtype WrapWithEmitsInf n r =
