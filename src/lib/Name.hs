@@ -387,7 +387,9 @@ class ProvesExt b => BindsNames (b :: B) where
 instance ProvesExt ExtEvidence where
   toExtEvidence = id
 
-instance ProvesExt ScopeFrag
+instance ProvesExt ScopeFrag where
+  toExtEvidence _ = fabricateExtEvidence
+
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
 
@@ -2543,7 +2545,7 @@ withFresh :: forall n c a. (Distinct n, Color c)
           -> (forall l. DExt n l => NameBinder c n l -> a) -> a
 withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
   withFabricatedDistinct @UnsafeS $
-    withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
+    withFabricatedExt @n @UnsafeS $
       cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder c n UnsafeS)
 {-# INLINE withFresh #-}
 
@@ -2600,30 +2602,39 @@ instance (ExtEnd n => ExtEnd l) => Ext n l
 class ExtEnd (n::S)
 
 getExtEvidence :: Ext n l => ExtEvidence n l
-getExtEvidence = FabricateExtEvidence
+getExtEvidence = ExtEvidence
 
 absurdExtEvidence :: ExtEvidence VoidS n
-absurdExtEvidence = FabricateExtEvidence
+absurdExtEvidence = fabricateExtEvidence
 
 -- We give this one a ' because the more general one defined in Name is the
 -- version we usually want to use.
 withExtEvidence' :: forall n l a. ExtEvidence n l -> (Ext n l => a) -> a
-withExtEvidence' _ cont = fromWrapWithExt
+withExtEvidence' ExtEvidence cont = cont
+{-# INLINE withExtEvidence' #-}
+
+withFabricatedExt :: forall n l a. (Ext n l => a) -> a
+withFabricatedExt cont = fromWrapWithExt
  ( TrulyUnsafe.unsafeCoerce ( WrapWithExt cont :: WrapWithExt n     l     a
                                              ) :: WrapWithExt VoidS VoidS a)
-{-# INLINE withExtEvidence' #-}
+{-# INLINE withFabricatedExt #-}
+
+fabricateExtEvidence :: forall n l. ExtEvidence n l
+fabricateExtEvidence = withFabricatedExt @n @l ExtEvidence
+{-# INLINE fabricateExtEvidence #-}
 
 newtype WrapWithExt n l r =
   WrapWithExt { fromWrapWithExt :: Ext n l => r }
 
-data ExtEvidence (n::S) (l::S) = FabricateExtEvidence
+data ExtEvidence (n::S) (l::S) where
+  ExtEvidence :: (Ext n l) => ExtEvidence n l
 
 instance Category ExtEvidence where
-  id = FabricateExtEvidence
+  id = ExtEvidence
   {-# INLINE id #-}
   -- Unfortunately, we can't write the class version of this transitivity axiom
   -- because the intermediate type would be ambiguous.
-  FabricateExtEvidence . FabricateExtEvidence = FabricateExtEvidence
+  ExtEvidence . ExtEvidence = ExtEvidence
   {-# INLINE (.) #-}
 
 sink :: (SinkableE e, DExt n l) => e n -> e l
@@ -2692,7 +2703,7 @@ instance SinkableE DistinctEvidence where
   sinkingProofE _ _ = fabricateDistinctEvidence
 
 instance SinkableE (ExtEvidence n) where
-  sinkingProofE _ _ = FabricateExtEvidence
+  sinkingProofE _ _ = fabricateExtEvidence
 
 -- === projections ===
 
