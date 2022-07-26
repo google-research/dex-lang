@@ -1551,7 +1551,7 @@ extendTrivialInplaceT
 extendTrivialInplaceT d =
   UnsafeMakeInplaceT \env decls -> do
     let env' = unsafeCoerceE $ extendOutMap env d
-    withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+    withFabricatedDistinct @UnsafeS $
       return ((), catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
 {-# INLINE extendTrivialInplaceT #-}
 
@@ -1562,7 +1562,7 @@ extendTrivialSubInplaceT
 extendTrivialSubInplaceT d =
   UnsafeMakeInplaceT \env decls -> do
     let env' = extendOutMap env d
-    withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+    withFabricatedDistinct @UnsafeS $
       return ((), extendOutFrag decls $ unsafeCoerceB d, unsafeCoerceE env')
 {-# INLINE extendTrivialSubInplaceT #-}
 
@@ -1597,7 +1597,7 @@ extendInplaceT ab = do
   UnsafeMakeInplaceT \env decls ->
     refreshAbsPure (toScope env) ab \_ d result -> do
       let env' = unsafeCoerceE $ extendOutMap env d
-      withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+      withFabricatedDistinct @UnsafeS $
         return (unsafeCoerceE result, catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
 {-# INLINE extendInplaceT #-}
 
@@ -1608,7 +1608,7 @@ extendSubInplaceT ab = do
   UnsafeMakeInplaceT \env decls ->
     refreshAbsPure (toScope env) ab \_ d result -> do
       let env' = unsafeCoerceE $ extendOutMap env d
-      withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+      withFabricatedDistinct @UnsafeS $
         return (unsafeCoerceE result, extendOutFrag decls $ unsafeCoerceB d, env')
 {-# INLINE extendSubInplaceT #-}
 
@@ -1620,7 +1620,7 @@ freshExtendSubInplaceT hint build =
      withFresh hint (toScope env) \b -> do
        let (d, result) = build b
        let env' = unsafeCoerceE $ extendOutMap env d
-       withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) $
+       withFabricatedDistinct @UnsafeS $
          return (unsafeCoerceE result, extendOutFrag decls $ unsafeCoerceB d, env')
 {-# INLINE freshExtendSubInplaceT #-}
 
@@ -1646,7 +1646,7 @@ liftBetweenInplaceTs
 liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
   UnsafeMakeInplaceT \envOuter declsOuter -> do
     (result, dInner, _) <- liftInner $ f (lowerBindings envOuter) emptyOutFrag
-    withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) do
+    withFabricatedDistinct @UnsafeS do
       let dOuter = liftDecls dInner
       let envOuter' = extendOutMap (unsafeCoerceE envOuter) dOuter
       return (result, catOutFrags (toScope envOuter') declsOuter dOuter, envOuter')
@@ -1832,7 +1832,7 @@ unsafeEmitDoubleInplaceTHoisted
 unsafeEmitDoubleInplaceTHoisted d1 = do
   UnsafeMakeDoubleInplaceT $ StateT \(topScope, d1Prev) ->
     UnsafeMakeInplaceT \env d2 -> do
-      withDistinctEvidence (fabricateDistinctEvidence @UnsafeS) do
+      withFabricatedDistinct @UnsafeS do
         let topScopeNew = extendOutMap topScope (toScopeFrag $ unsafeCoerceB d1)
         let envNew = extendOutMap env (unsafeCoerceB d1)
         let d1New = catOutFrags (toScope envNew) d1Prev d1
@@ -2542,7 +2542,7 @@ withFresh :: forall n c a. (Distinct n, Color c)
           => NameHint -> Scope n
           -> (forall l. DExt n l => NameBinder c n l -> a) -> a
 withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
-  withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+  withFabricatedDistinct @UnsafeS $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
       cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder c n UnsafeS)
 {-# INLINE withFresh #-}
@@ -2553,7 +2553,7 @@ type DExt n l = (Distinct l, Ext n l)
 
 fabricateDistinctEvidence :: forall n. DistinctEvidence n
 fabricateDistinctEvidence =
-  withDistinctEvidence (error "pure fabrication" :: DistinctEvidence n) Distinct
+  withFabricatedDistinct @n Distinct
 {-# INLINE fabricateDistinctEvidence #-}
 
 data DistinctEvidence (n::S) where
@@ -2561,11 +2561,11 @@ data DistinctEvidence (n::S) where
 
 instance Distinct VoidS
 
-withDistinctEvidence :: forall n a. DistinctEvidence n -> (Distinct n => a) -> a
-withDistinctEvidence _ cont = fromWrapWithDistinct
+withFabricatedDistinct :: forall n a. (Distinct n => a) -> a
+withFabricatedDistinct cont = fromWrapWithDistinct
  ( TrulyUnsafe.unsafeCoerce ( WrapWithDistinct cont :: WrapWithDistinct n     a
                                                   ) :: WrapWithDistinct VoidS a)
-{-# INLINE withDistinctEvidence #-}
+{-# INLINE withFabricatedDistinct #-}
 
 newtype WrapWithDistinct n r =
   WrapWithDistinct { fromWrapWithDistinct :: Distinct n => r }
@@ -2576,7 +2576,7 @@ withSubscopeDistinct :: forall n l b a.
                      => b n l -> ((Ext n l, Distinct n) => a) -> a
 withSubscopeDistinct b cont =
   withExtEvidence' (toExtEvidence b) $
-    withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence n) $
+    withFabricatedDistinct @n $
       cont
 {-# INLINE withSubscopeDistinct #-}
 
@@ -2723,7 +2723,7 @@ data ClosedWithScope (e::E) where
 
 withScopeFromFreeVars :: HoistableE e => e n -> ClosedWithScope e
 withScopeFromFreeVars e =
-  withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+  withFabricatedDistinct @UnsafeS $
     ClosedWithScope scope $ unsafeCoerceE e
   where scope = (Scope $ UnsafeMakeScopeFrag $ freeVarsE e) :: Scope UnsafeS
 
