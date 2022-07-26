@@ -4,6 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
@@ -528,19 +529,18 @@ data EmitsEvidence (n::S) where
 instance Emits UnsafeS
 
 fabricateEmitsEvidence :: forall n. EmitsEvidence n
-fabricateEmitsEvidence =
-  withEmitsEvidence (error "pure fabrication" :: EmitsEvidence n) Emits
+fabricateEmitsEvidence = withFabricatedEmits @n Emits
 {-# INLINE fabricateEmitsEvidence #-}
 
 fabricateEmitsEvidenceM :: forall m n. Monad1 m => m n (EmitsEvidence n)
 fabricateEmitsEvidenceM = return fabricateEmitsEvidence
 {-# INLINE fabricateEmitsEvidenceM #-}
 
-withEmitsEvidence :: forall n a. EmitsEvidence n -> (Emits n => a) -> a
-withEmitsEvidence _ cont = fromWrapWithEmits
+withFabricatedEmits :: forall n a. (Emits n => a) -> a
+withFabricatedEmits cont = fromWrapWithEmits
  ( TrulyUnsafe.unsafeCoerce ( WrapWithEmits cont :: WrapWithEmits n       a
                                                ) :: WrapWithEmits UnsafeS a)
-{-# INLINE withEmitsEvidence #-}
+{-# INLINE withFabricatedEmits #-}
 
 newtype WrapWithEmits n r =
   WrapWithEmits { fromWrapWithEmits :: Emits n => r }
