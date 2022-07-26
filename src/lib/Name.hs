@@ -61,7 +61,6 @@ module Name (
   EitherE2, EitherE3, EitherE4, EitherE5, EitherE6, EitherE7, EitherE8 (..),
   splitNestAt, joinNest, joinRNest, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT,
-  ExtWitness (..),
   toSubstPairs, fromSubstPairs, SubstPair (..),
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..), ExtOutFrag (..),
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
@@ -76,7 +75,7 @@ module Name (
   unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
-  locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
+  locallyMutableInplaceT, liftBetweenInplaceTs,
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
@@ -375,9 +374,6 @@ class ProvesExt (b :: B) where
   default toExtEvidence :: BindsNames b => b n l -> ExtEvidence n l
   toExtEvidence b = toExtEvidence $ toScopeFrag b
 
-toExtWitness :: ProvesExt b => b n l -> ExtWitness n l
-toExtWitness b = withExtEvidence (toExtEvidence b) ExtW
-
 class ProvesExt b => BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
 
@@ -410,21 +406,6 @@ sinkM e = do
   Distinct <- getDistinct
   return $ sink e
 {-# INLINE sinkM #-}
-
-data ExtWitness (n::S) (l::S) where
-  ExtW :: Ext n l => ExtWitness n l
-
-instance ProvesExt ExtWitness where
-  toExtEvidence ExtW = getExtEvidence
-
-instance SinkableE (ExtWitness n) where
-  sinkingProofE :: forall l l'. SinkingCoercion l l' -> ExtWitness n l -> ExtWitness n l'
-  sinkingProofE fresh ExtW =
-    withExtEvidence (sinkingProofE fresh (getExtEvidence :: ExtEvidence n l)) ExtW
-
-instance Category ExtWitness where
-  id = ExtW
-  ExtW . ExtW = ExtW
 
 -- XXX: this only (monadically) visits each name once, even if a name has
 -- multiple occurrences. So don't use it to count occurrences or anything like
