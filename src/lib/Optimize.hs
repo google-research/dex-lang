@@ -25,7 +25,7 @@ earlyOptimize :: EnvReader m => Block n -> m n (Block n)
 earlyOptimize = unrollTrivialLoops
 
 optimize :: EnvReader m => Block n -> m n (Block n)
-optimize = dceBlock
+optimize = dceBlock >=> unrollLoops
 
 -- === Trivial loop unrolling ===
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
@@ -68,6 +68,57 @@ instance GenericTraverser UTLS where
 
 unrollTrivialLoops :: EnvReader m => Block n -> m n (Block n)
 unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE b
+
+-- === Loop unrolling ===
+
+unrollLoops :: EnvReader m => Block n -> m n (Block n)
+unrollLoops b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
+
+newtype ULS n = ULS Int deriving Show
+type ULM = GenericTraverserM ULS
+instance SinkableE ULS where
+  sinkingProofE _ (ULS c) = ULS c
+instance HoistableState ULS where
+  hoistState _ _ (ULS c) = (ULS c)
+  {-# INLINE hoistState #-}
+
+instance GenericTraverser ULS where
+  traverseExpr expr = case expr of
+    Hof (For Fwd ixDict body@(Lam (LamExpr b _))) -> do
+      case binderType b of
+        FinConst n -> do
+          (body', bodyCost) <- withLocalAccounting $ traverseAtom body
+          case bodyCost * (fromIntegral n) < unrollBlowupThreshold of
+            True -> case body' of
+              Lam (LamExpr b' block') -> do
+                vals <- dropSubst $ forM [0..(fromIntegral n :: Int) - 1] \ord -> do
+                  let i = Con $ FinVal (IdxRepVal n) (IdxRepVal $ fromIntegral ord)
+                  extendSubst (b' @> SubstVal i) $ emitSubstBlock block'
+                getType body' >>= \case
+                  Pi (PiType (PiBinder tb _ _) _ valTy) -> do
+                    let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ IdxRepVal n))) valTy
+                    return $ Op $ TabCon tabTy vals
+                  _ -> error "Expected for body to have a Pi type"
+              _ -> error "Expected for body to be a lambda expression"
+            False -> do
+              inc bodyCost
+              ixDict' <- traverseGenericE ixDict
+              return $ Hof $ For Fwd ixDict' body'
+        _ -> nothingSpecial
+    _ -> nothingSpecial
+    where
+      inc i = modify \(ULS n) -> ULS (n + i)
+      nothingSpecial = inc 1 >> traverseExprDefault expr
+      unrollBlowupThreshold = 10
+      withLocalAccounting m = do
+        oldCost <- get
+        ans <- put (ULS 0) *> m
+        ULS newCost <- get
+        put oldCost $> (ans, newCost)
+      {-# INLINE withLocalAccounting #-}
+
+emitSubstBlock :: Emits o => Block i -> ULM i o (Atom o)
+emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 
 -- === Dead code elimination ===
 
