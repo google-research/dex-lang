@@ -58,6 +58,7 @@ import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState, StateT (..), runStateT)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
+import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
@@ -769,7 +770,9 @@ buildNaryLam binderNest body = do
           naryAbsToNaryLam $ Abs bs block
 
 asNaryLam :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
-asNaryLam = undefined
+asNaryLam ty f = liftBuilder do
+  buildNaryLamExpr ty \xs ->
+    naryApp (sink f) (map Var $ toList xs)
 
 buildNaryLamExpr
   :: ScopableBuilder m
