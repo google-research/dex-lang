@@ -364,23 +364,37 @@ determineSpecializationSpec fname staticArgs = do
 type Generalized (e::E) (n::S) = (Abs (Nest Binder) e n, [Atom n])
 
 generalizeDataComponentsNest
-  :: Nest PiBinder n l
+  :: Nest PiBinder n l  -- fully-general argument types expected
+  -> [Atom n]           -- current specialization requested
+  -> EnvReaderM n (Generalized (ListE Atom) n)  -- slightly more general specialization proposed
+generalizeDataComponentsNest bs xs = do
+  Distinct <- getDistinct
+  runSubstReaderT idSubst $ generalizeDataComponentsNestRec (Abs bs UnitE) xs Empty
+
+generalizeDataComponentsNestRec
+  :: DExt n l
+  => EmptyAbs (Nest PiBinder) i
   -> [Atom n]
-  -> EnvReaderM n (Generalized (ListE Atom) n)
-generalizeDataComponentsNest Empty [] = return (Abs Empty (ListE []), [])
-generalizeDataComponentsNest (Nest b bs) (x:xs) = do
-  (ab, newArgs) <- case binderType b of
-    TyKind -> generalizeType x
-    DictTy dTy -> do
-      x' <- generalizeInstance dTy x
-      return (Abs Empty x', [])
-    _ -> error "not implemented"
-  refreshAbs ab \newBs x' -> do
-    Abs bs' UnitE <- applySubst (b @> SubstVal x') $ Abs bs UnitE
-    (abRest, newArgsRest) <- generalizeDataComponentsNest bs' (map sink xs)
-    ListE newArgsRest' <- return $ ignoreHoistFailure $ hoist newBs $ ListE newArgsRest
-    refreshAbs abRest \newBsRest (ListE xs') -> do
-      return (Abs (newBs >>> newBsRest) (ListE (sink x':xs')), (newArgs ++ newArgsRest'))
+  -> Nest Binder n l
+  -> SubstReaderT AtomSubstVal EnvReaderM i l (Generalized (ListE Atom) n)
+generalizeDataComponentsNestRec (Abs Empty UnitE) [] newBs =
+  return (Abs newBs (ListE []), [])
+generalizeDataComponentsNestRec (Abs (Nest b bs) UnitE) (x:xs) newBs = do
+  ty <- substM (binderType b)
+  (ab, newArgs) <- liftSubstReaderT do
+    x' <- sinkM x
+    case ty of
+      TyKind -> generalizeType x'
+      DictTy dTy -> do
+        xGeneral <- generalizeInstance dTy x'
+        return (Abs Empty xGeneral, [])
+      _ -> error "not implemented"
+  ListE newArgs' <- return $ ignoreHoistFailure $ hoist newBs $ ListE newArgs
+  (ab', newerArgs) <- refreshAbs ab \newerBs x' -> do
+    extendSubst (b @> SubstVal x') $
+      generalizeDataComponentsNestRec (Abs bs UnitE) xs (newBs >>> newerBs)
+  return (ab', newArgs' ++ newerArgs)
+generalizeDataComponentsNestRec _ _ _ = error "length mismatch"
 
 generalizeType :: Type n -> EnvReaderM n (Generalized Type n)
 generalizeType (TC (Fin n)) = do
