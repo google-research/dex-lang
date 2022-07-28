@@ -15,8 +15,9 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              measureSeconds, sameConstructor,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
-             whenM, unsnoc, anyM,
-             File (..), FileHash, FileContents, addHash, readFileWithHash) where
+             whenM, unsnocNonempty, anyM,
+             File (..), FileHash, FileContents, addHash, readFileWithHash,
+             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList) where
 
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
@@ -51,8 +52,8 @@ onFst f (x, y) = (f x, y)
 onSnd :: (a -> b) -> (c, a) -> (c, b)
 onSnd f (x, y) = (x, f y)
 
-unsnoc :: NonEmpty a -> ([a], a)
-unsnoc (x:|xs) = case reverse (x:xs) of
+unsnocNonempty :: NonEmpty a -> ([a], a)
+unsnocNonempty (x:|xs) = case reverse (x:xs) of
   (y:ys) -> (reverse ys, y)
   _ -> error "impossible"
 
@@ -281,6 +282,30 @@ forMZipped_ xs ys f = void $ forMZipped xs ys f
 getAlternative :: Alternative m => [a] -> m a
 getAlternative xs = asum $ map pure xs
 {-# INLINE getAlternative #-}
+
+newtype SnocList a = ReversedList { fromReversedList :: [a] }
+        deriving Functor -- XXX: NOT deriving order-sensitive things like Monoid, Applicative etc
+
+instance Semigroup (SnocList a) where
+  (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
+
+instance Monoid (SnocList a) where
+  mempty = ReversedList []
+
+instance Foldable SnocList where
+  foldMap f (ReversedList xs) = foldMap f (reverse xs)
+
+snoc :: SnocList a -> a -> SnocList a
+snoc (ReversedList xs) x = ReversedList (x:xs)
+
+emptySnocList :: SnocList a
+emptySnocList = ReversedList []
+
+unsnoc :: SnocList a -> [a]
+unsnoc (ReversedList x) = reverse x
+
+toSnocList :: [a] -> SnocList a
+toSnocList xs = ReversedList $ reverse xs
 
 -- === bytestrings paired with their hash digest ===
 

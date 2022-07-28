@@ -24,7 +24,7 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..),
+  Abs (..), Nest (..), RNest (..), unRNest, toRNest, NonEmptyNest (..),
   nonEmptyToNest, nestToNonEmpty,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
@@ -347,6 +347,14 @@ unRNest rn = go Empty rn
     go acc = \case
       REmpty     -> acc
       RNest bs b -> go (Nest b acc) bs
+
+toRNest :: Nest b n l -> RNest b n l
+toRNest n = go REmpty n
+  where
+    go :: RNest b n h -> Nest b h l -> RNest b n l
+    go acc = \case
+      Empty     -> acc
+      Nest b bs -> go (RNest acc b) bs
 
 data BinderP (c::C) (ann::E) (n::S) (l::S) =
   (:>) (NameBinder c n l) (ann n)

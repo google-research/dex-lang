@@ -182,7 +182,7 @@ naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftTypeQueryM idSu
     binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
 
 specializedFunType :: EnvReader m => SpecializationSpec n -> m n (NaryPiType n)
-specializedFunType (AppSpecialization ~(Var f) ab) = liftEnvReaderM $
+specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
   refreshAbs ab \extraArgBs (ListE staticArgs) -> do
     let extraArgBs' = fmapNest plainPiBinder extraArgBs
     lookupAtomName (sink f) >>= \case

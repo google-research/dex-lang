@@ -28,7 +28,8 @@ import Core
 import Builder
 import Syntax
 import CheckType (CheckableE (..), isData)
-import Util (enumerate, foldMapM, restructure, splitAtExact)
+import Util ( enumerate, foldMapM, restructure, toSnocList
+            , splitAtExact, SnocList, snoc, emptySnocList)
 import QueryType
 import CheapReduction
 import Linearize
@@ -358,7 +359,7 @@ determineSpecializationSpec fname staticArgs = do
       (PairB staticArgBinders _) <- return $
         splitNestAt (length staticArgs) (nonEmptyToNest bs)
       (ab, extraArgs) <- liftEnvReaderM $ generalizeDataComponentsNest staticArgBinders staticArgs
-      return (AppSpecialization (Var fname) ab, extraArgs)
+      return (AppSpecialization fname ab, extraArgs)
     _ -> error "should only be specializing top functions"
 
 type Generalized (e::E) (n::S) = (Abs (Nest Binder) e n, [Atom n])
@@ -369,19 +370,26 @@ generalizeDataComponentsNest
   -> EnvReaderM n (Generalized (ListE Atom) n)  -- slightly more general specialization proposed
 generalizeDataComponentsNest bs xs = do
   Distinct <- getDistinct
-  runSubstReaderT idSubst $ generalizeDataComponentsNestRec (Abs bs UnitE) xs Empty
+  runSubstReaderT idSubst $ generalizeDataComponentsNestRec (Abs bs UnitE) xs emptyGeneralizationAccum
+
+-- Generalization binders, generalized types, new args. The new args match the binders.
+type GeneralizationAccum n l = (RNest Binder n l, SnocList (Type l), SnocList (Atom n))
+
+emptyGeneralizationAccum :: GeneralizationAccum n n
+emptyGeneralizationAccum = (REmpty, emptySnocList, emptySnocList)
 
 generalizeDataComponentsNestRec
   :: DExt n l
   => EmptyAbs (Nest PiBinder) i
-  -> [Atom n]
-  -> Nest Binder n l
-  -> SubstReaderT AtomSubstVal EnvReaderM i l (Generalized (ListE Atom) n)
-generalizeDataComponentsNestRec (Abs Empty UnitE) [] newBs =
-  return (Abs newBs (ListE []), [])
-generalizeDataComponentsNestRec (Abs (Nest b bs) UnitE) (x:xs) newBs = do
+  -> [Type n]
+  -> GeneralizationAccum n l
+  -> SubstReaderT AtomSubstVal EnvReaderM i l (Generalized (ListE Type) n)
+generalizeDataComponentsNestRec (Abs Empty UnitE) [] (newBs, generalizedArgs, newArgs) =
+  return (Abs (unRNest newBs) (ListE (toList generalizedArgs)), toList newArgs)
+generalizeDataComponentsNestRec (Abs (Nest b bs) UnitE) (x:xs) accum = do
+  let (newBs, generalizedArgs, newArgs) = accum
   ty <- substM (binderType b)
-  (ab, newArgs) <- liftSubstReaderT do
+  (ab, newerArgs) <- liftSubstReaderT do
     x' <- sinkM x
     case ty of
       TyKind -> generalizeType x'
@@ -389,11 +397,13 @@ generalizeDataComponentsNestRec (Abs (Nest b bs) UnitE) (x:xs) newBs = do
         xGeneral <- generalizeInstance dTy x'
         return (Abs Empty xGeneral, [])
       _ -> error "not implemented"
-  ListE newArgs' <- return $ ignoreHoistFailure $ hoist newBs $ ListE newArgs
-  (ab', newerArgs) <- refreshAbs ab \newerBs x' -> do
-    extendSubst (b @> SubstVal x') $
-      generalizeDataComponentsNestRec (Abs bs UnitE) xs (newBs >>> newerBs)
-  return (ab', newArgs' ++ newerArgs)
+  ListE newerArgs' <- return $ ignoreHoistFailure $ hoist newBs $ ListE newerArgs
+  refreshAbs ab \newerBs x' -> do
+    extendSubst (b @> SubstVal x') do
+      let newAccum = ( newBs >>> toRNest newerBs
+                     , fmap sink generalizedArgs `snoc` x'
+                     , newArgs <> toSnocList newerArgs')
+      generalizeDataComponentsNestRec (Abs bs UnitE) xs newAccum
 generalizeDataComponentsNestRec _ _ _ = error "length mismatch"
 
 generalizeType :: Type n -> EnvReaderM n (Generalized Type n)

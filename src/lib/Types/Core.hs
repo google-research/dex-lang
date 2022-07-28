@@ -464,10 +464,7 @@ data TopFunBinding (n::S) =
 data SpecializationSpec (n::S) =
   -- The additional binders are for "data" components of the specialization types, like
   -- `n` in `Fin n`.
-  -- XXX: the `Atom n` is actually always a `Var n`, but we can't use `AtomName
-  -- n` because inference needs a `SubstE AtomSubstVal` instance for zonking. We
-  -- should fix this!
-  AppSpecialization (Atom n) (Abs (Nest Binder) (ListE Type) n)
+  AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
   deriving (Show, Generic)
 
 atomBindingType :: Binding AtomNameC n -> Type n
@@ -1677,20 +1674,26 @@ instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
-  type RepE SpecializationSpec = PairE Atom (Abs (Nest Binder) (ListE Type))
+  type RepE SpecializationSpec = PairE AtomName (Abs (Nest Binder) (ListE Type))
   fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
   toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
   {-# INLINE toE #-}
 
 instance HasNameHint (SpecializationSpec n) where
-  getNameHint (AppSpecialization (Var f) _) = getNameHint f
-  getNameHint (AppSpecialization _ _) = noHint
+  getNameHint (AppSpecialization f _) = getNameHint f
+
+instance SubstE AtomSubstVal SpecializationSpec where
+  substE env (AppSpecialization f ab) = do
+    let f' = case snd env ! f of
+               Rename v -> v
+               SubstVal (Var v) -> v
+               _ -> error "bad substitution"
+    AppSpecialization f' (substE env ab)
 
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
 instance SubstE Name SpecializationSpec
-instance SubstE AtomSubstVal SpecializationSpec
 instance AlphaEqE SpecializationSpec
 instance AlphaHashableE SpecializationSpec
 

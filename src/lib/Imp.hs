@@ -32,7 +32,7 @@ import CheckType (CheckableE (..))
 import Simplify (buildBlockSimplified, dceApproxBlock, emitSimplified)
 import LabeledItems
 import QueryType
-import Util (enumerate)
+import Util (enumerate, SnocList (..), unsnoc)
 import Types.Primitives
 import Types.Imp
 import Algebra
@@ -693,14 +693,6 @@ instance ExtOutMap Env DestDeclEmissions where
 instance ExtOutFrag DestEmissions DestDeclEmissions where
   extendOutFrag (DestEmissions p d) (DestDeclEmissions d') = DestEmissions p $ RNest d d'
   {-# INLINE extendOutFrag #-}
-
-newtype SnocList a = ReversedList { fromReversedList :: [a] }
-instance Semigroup (SnocList a) where
-  (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
-instance Monoid (SnocList a) where
-  mempty = ReversedList []
-unsnoc :: SnocList a -> [a]
-unsnoc (ReversedList x) = reverse x
 
 data DestPtrEmissions (n::S) (l::S)
   = DestPtrEmissions (SnocList (DestPtrInfo n))  -- pointer types and allocation sizes

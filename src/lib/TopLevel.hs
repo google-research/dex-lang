@@ -577,7 +577,7 @@ execUDecl mname decl = do
               -- (this is actually here as a workaround for some sort of
               -- caching/linking bug that occurs when we deserialize compilation artifacts).
               when (n == 0) do
-                let s = AppSpecialization (Var f) (Abs Empty (ListE []))
+                let s = AppSpecialization f (Abs Empty (ListE []))
                 fSpecial <- emitSpecialization s
                 evalRequiredSpecializations (Var fSpecial)
               return $ Var f
@@ -592,8 +592,7 @@ compileTopLevelFun
   :: (Topper m, Mut n)
   => AtomName n -> m n ()
 compileTopLevelFun fname = do
-  TopFunBound fTy (SpecializedTopFun s) <- lookupAtomName fname
-  fPreSimp <- specializedFunPreSimpDefinition fTy s
+  fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
   evalRequiredSpecializations fSimp
   fImp <- toImpStandaloneFunction fSimp
@@ -605,10 +604,12 @@ compileTopLevelFun fname = do
   extendObjCache fImpName fObj
 {-# SCC compileTopLevelFun #-}
 
+-- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
-  :: EnvReader m
-  => NaryPiType n -> SpecializationSpec n -> m n (NaryLamExpr n)
-specializedFunPreSimpDefinition ty (AppSpecialization f abStaticArgs@(Abs bs _)) = do
+  :: (MonadFail1 m, EnvReader m) => AtomName n -> m n (NaryLamExpr n)
+specializedFunPreSimpDefinition fname = do
+  TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
+  AppSpecialization f abStaticArgs@(Abs bs _) <- return s
   f' <- forceDeferredInlining f
   liftBuilder do
     buildNaryLamExpr ty \allArgs -> do
@@ -619,12 +620,11 @@ specializedFunPreSimpDefinition ty (AppSpecialization f abStaticArgs@(Abs bs _))
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
 -- "noinline" function and defer its simplification.
-forceDeferredInlining :: EnvReader m => Atom n -> m n (Atom n)
-forceDeferredInlining (Var v) =
+forceDeferredInlining :: EnvReader m => AtomName n -> m n (Atom n)
+forceDeferredInlining v =
   lookupAtomName v >>= \case
     TopFunBound _ (UnspecializedTopFun _ f) -> return f
     _ -> return $ Var v
-forceDeferredInlining f = return f
 
 toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
 toCFunction fname f = do
