@@ -397,10 +397,11 @@ generalizeDataComponentsNestRec (Abs (Nest b bs) UnitE) (x:xs) accum = do
         xGeneral <- generalizeInstance dTy x'
         return (Abs Empty xGeneral, [])
       _ -> error "not implemented"
-  ListE newerArgs' <- return $ ignoreHoistFailure $ hoist newBs $ ListE newerArgs
+  let ListE newerArgs' = ignoreHoistFailure $ hoist newBs $ ListE newerArgs
   refreshAbs ab \newerBs x' -> do
     extendSubst (b @> SubstVal x') do
       let newAccum = ( newBs >>> toRNest newerBs
+                     -- TODO: avoid mapping `sink` over the full list of args here
                      , fmap sink generalizedArgs `snoc` x'
                      , newArgs <> toSnocList newerArgs')
       generalizeDataComponentsNestRec (Abs bs UnitE) xs newAccum

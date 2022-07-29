@@ -288,24 +288,31 @@ newtype SnocList a = ReversedList { fromReversedList :: [a] }
 
 instance Semigroup (SnocList a) where
   (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
+  {-# INLINE (<>) #-}
 
 instance Monoid (SnocList a) where
   mempty = ReversedList []
+  {-# INLINE mempty #-}
 
 instance Foldable SnocList where
   foldMap f (ReversedList xs) = foldMap f (reverse xs)
+  {-# INLINE foldMap #-}
 
 snoc :: SnocList a -> a -> SnocList a
 snoc (ReversedList xs) x = ReversedList (x:xs)
+{-# INLINE snoc #-}
 
 emptySnocList :: SnocList a
 emptySnocList = ReversedList []
+{-# INLINE emptySnocList #-}
 
 unsnoc :: SnocList a -> [a]
 unsnoc (ReversedList x) = reverse x
+{-# INLINE unsnoc #-}
 
 toSnocList :: [a] -> SnocList a
 toSnocList xs = ReversedList $ reverse xs
+{-# INLINE toSnocList #-}
 
 -- === bytestrings paired with their hash digest ===
 
