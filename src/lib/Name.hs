@@ -24,7 +24,8 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unRNest, NonEmptyNest (..), nonEmptyToNest,
+  Abs (..), Nest (..), RNest (..), unRNest, toRNest, NonEmptyNest (..),
+  nonEmptyToNest, nestToNonEmpty,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
@@ -346,6 +347,14 @@ unRNest rn = go Empty rn
       REmpty     -> acc
       RNest bs b -> go (Nest b acc) bs
 
+toRNest :: Nest b n l -> RNest b n l
+toRNest n = go REmpty n
+  where
+    go :: RNest b n h -> Nest b h l -> RNest b n l
+    go acc = \case
+      Empty     -> acc
+      Nest b bs -> go (RNest acc b) bs
+
 data BinderP (c::C) (ann::E) (n::S) (l::S) =
   (:>) (NameBinder c n l) (ann n)
   deriving (Show, Generic)
@@ -365,6 +374,10 @@ data NonEmptyNest (b::B) (n::S) (l::S) where
 
 nonEmptyToNest :: NonEmptyNest b n l -> Nest b n l
 nonEmptyToNest (NonEmptyNest b bs) = Nest b bs
+
+nestToNonEmpty :: Nest b n l -> Maybe (NonEmptyNest b n l)
+nestToNonEmpty Empty = Nothing
+nestToNonEmpty (Nest b bs) = Just $ NonEmptyNest b bs
 
 -- === Sinkings and projections ===
 

@@ -184,10 +184,9 @@ instance CheckableE AtomBinding where
         UnspecializedTopFun n f' -> do
           f'' <- checkTypeE (naryPiTypeAsType ty') f'
           return $ UnspecializedTopFun n f''
-        SpecializedTopFun f' args -> do
-           unspecializedTy <- getTypeE f'
-           specializedTy <- checkApp unspecializedTy args
-           matches <- alphaEq (naryPiTypeAsType ty') specializedTy
+        SpecializedTopFun s -> do
+           specializedTy <- specializedFunType =<< substM s
+           matches <- alphaEq ty' specializedTy
            unless matches $ throw TypeErr "Specialization args don't match function type"
            substM f
         SimpTopFun lam -> do

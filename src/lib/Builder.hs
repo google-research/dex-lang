@@ -22,7 +22,7 @@ module Builder (
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
   buildLam, buildTabLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr,
+  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr, asNaryLam,
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
@@ -59,6 +59,7 @@ import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState, StateT (..), runStateT)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
+import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
@@ -257,16 +258,14 @@ emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
 emitSpecialization
   :: (Mut n, TopBuilder m)
-  => NameHint -> SpecializationSpec n -> m n (AtomName n)
-emitSpecialization hint specialization = do
- case specialization of
-  AppSpecialization fname args -> do
-    TopFunBound unspecializedTy _ <- lookupAtomName fname
-    specializedTy <- instantiateNaryPi unspecializedTy args
-    let binding = TopFunBound specializedTy $ SpecializedTopFun (Var fname) args
-    name <- emitBinding hint $ toBinding binding
-    extendSpecializationCache specialization name
-    return name
+  => SpecializationSpec n -> m n (AtomName n)
+emitSpecialization s = do
+  let hint = getNameHint s
+  specializedTy <- specializedFunType s
+  let binding = TopFunBound specializedTy $ SpecializedTopFun s
+  name <- emitBinding hint $ toBinding binding
+  extendSpecializationCache s name
+  return name
 
 bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
 bindModule sourceName internalName = do
@@ -769,6 +768,11 @@ buildNaryLam binderNest body = do
       Nest (b:>ty) bs ->
         AtomicBlock $ Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
           naryAbsToNaryLam $ Abs bs block
+
+asNaryLam :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
+asNaryLam ty f = liftBuilder do
+  buildNaryLamExpr ty \xs ->
+    naryApp (sink f) (map Var $ toList xs)
 
 buildNaryLamExpr
   :: ScopableBuilder m

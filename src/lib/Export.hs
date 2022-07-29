@@ -49,8 +49,9 @@ prepareFunctionForExport' cc f = do
     ExportedSignature argSig _ _ -> do
       case sinkFromTop $ EmptyAbs argSig of
         Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon argSig'
+  f' <- asNaryLam naryPi f
   -- TODO: figure out how to handle specialization cache emissions when compiling for export
-  fSimp <- simplifyTopFunctionAssumeNoTopEmissions naryPi f []
+  fSimp <- simplifyTopFunctionAssumeNoTopEmissions f'
   fImp <- toImpExportedFunction cc fSimp argRecon
   return (fImp, sig)
   where

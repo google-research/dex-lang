@@ -28,7 +28,8 @@ import Core
 import Builder
 import Syntax
 import CheckType (CheckableE (..), isData)
-import Util (enumerate, foldMapM, restructure, splitAtExact)
+import Util ( enumerate, foldMapM, restructure, toSnocList
+            , splitAtExact, SnocList, snoc, emptySnocList)
 import QueryType
 import CheapReduction
 import Linearize
@@ -125,35 +126,17 @@ simplifyTopBlock block = liftSimplifyM do
 
 simplifyTopFunction
   :: (TopBuilder m, Mut n)
-  => NaryPiType n -> Atom n -> [Atom n]
-  -> m n (NaryLamExpr n)
-simplifyTopFunction ty f staticArgs = liftSimplifyM $
-  simplifyTopFunction' (sink ty) (sink f) (map sink staticArgs)
+  => NaryLamExpr n -> m n (NaryLamExpr n)
+simplifyTopFunction f = do
+  liftSimplifyM $ dropSubst $ simplifyNaryLam $ sink f
 {-# SCC simplifyTopFunction #-}
-
-simplifyTopFunction'
-  :: NaryPiType o -> Atom o -> [Atom o]
-  -> SimplifyM i o (NaryLamExpr o)
-simplifyTopFunction' ty f staticArgs = do
-  buildNaryLamExpr ty \xs -> do
-    let allArgs = prependList (map sink staticArgs) $ fmap Var xs
-    dropSubst $ simplifyExpr $ App (sink f) allArgs
-{-# SCC simplifyTopFunction' #-}
 
 simplifyTopFunctionAssumeNoTopEmissions
   :: EnvReader m
-  => NaryPiType n -> Atom n -> [Atom n]
-  -> m n (NaryLamExpr n)
-simplifyTopFunctionAssumeNoTopEmissions ty f staticArgs =
-  liftSimplifyMAssumeNoTopEmissions $
-    simplifyTopFunction' (sink ty) (sink f) (map sink staticArgs)
+  => NaryLamExpr n -> m n (NaryLamExpr n)
+simplifyTopFunctionAssumeNoTopEmissions f = do
+  liftSimplifyMAssumeNoTopEmissions $ simplifyNaryLam $ sink f
 {-# SCC simplifyTopFunctionAssumeNoTopEmissions #-}
-
--- TODO: use version from Base when we next bump our stack version
-prependList :: [a] -> NE.NonEmpty a -> NE.NonEmpty a
-prependList xs ys = case NE.nonEmpty (xs <> toList ys) of
-  Nothing -> error "impossible"
-  Just result -> result
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
@@ -324,8 +307,9 @@ simplifyApp f xs =
           TopFunBound _ (UnspecializedTopFun numSpecializationArgs _) ->
             case splitAtExact numSpecializationArgs (toList xs) of
               Just (specializationArgs, runtimeArgs) -> do
-                specialized <- emitSpecializationName v specializationArgs
-                naryApp (Var specialized) runtimeArgs
+                (spec, extraArgs) <- determineSpecializationSpec v specializationArgs
+                specializedFunction <- getSpecializedFunction spec
+                naryApp (Var specializedFunction) (extraArgs ++ runtimeArgs)
               Nothing -> error $ "Specialization of " ++ pprint atom ++
                 " requires saturated application of specialization args."
           _ -> naryApp atom $ toList xs
@@ -367,18 +351,86 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
             LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtomAndInline x
             _ -> return $ Var v
 
-emitSpecializationName
-  :: Mut o => AtomName o -> [Atom o] -> SimplifyM i o (AtomName o)
-emitSpecializationName fname args = do
-  let specialization = AppSpecialization fname args
-  querySpecializationCache specialization >>= \case
-    Just specializedName -> return specializedName
+determineSpecializationSpec
+  :: EnvReader m => AtomName n -> [Atom n] -> m n (SpecializationSpec n, [Atom n])
+determineSpecializationSpec fname staticArgs = do
+  lookupAtomName fname >>= \case
+    TopFunBound (NaryPiType bs _ _) _ -> do
+      (PairB staticArgBinders _) <- return $
+        splitNestAt (length staticArgs) (nonEmptyToNest bs)
+      (ab, extraArgs) <- liftEnvReaderM $ generalizeDataComponentsNest staticArgBinders staticArgs
+      return (AppSpecialization fname ab, extraArgs)
+    _ -> error "should only be specializing top functions"
+
+type Generalized (e::E) (n::S) = (Abs (Nest Binder) e n, [Atom n])
+
+generalizeDataComponentsNest
+  :: Nest PiBinder n l  -- fully-general argument types expected
+  -> [Atom n]           -- current specialization requested
+  -> EnvReaderM n (Generalized (ListE Atom) n)  -- slightly more general specialization proposed
+generalizeDataComponentsNest bs xs = do
+  Distinct <- getDistinct
+  runSubstReaderT idSubst $ generalizeDataComponentsNestRec (Abs bs UnitE) xs emptyGeneralizationAccum
+
+-- Generalization binders, generalized types, new args. The new args match the binders.
+type GeneralizationAccum n l = (RNest Binder n l, SnocList (Type l), SnocList (Atom n))
+
+emptyGeneralizationAccum :: GeneralizationAccum n n
+emptyGeneralizationAccum = (REmpty, emptySnocList, emptySnocList)
+
+generalizeDataComponentsNestRec
+  :: DExt n l
+  => EmptyAbs (Nest PiBinder) i
+  -> [Type n]
+  -> GeneralizationAccum n l
+  -> SubstReaderT AtomSubstVal EnvReaderM i l (Generalized (ListE Type) n)
+generalizeDataComponentsNestRec (Abs Empty UnitE) [] (newBs, generalizedArgs, newArgs) =
+  return (Abs (unRNest newBs) (ListE (toList generalizedArgs)), toList newArgs)
+generalizeDataComponentsNestRec (Abs (Nest b bs) UnitE) (x:xs) accum = do
+  let (newBs, generalizedArgs, newArgs) = accum
+  ty <- substM (binderType b)
+  (ab, newerArgs) <- liftSubstReaderT do
+    x' <- sinkM x
+    case ty of
+      TyKind -> generalizeType x'
+      DictTy dTy -> do
+        xGeneral <- generalizeInstance dTy x'
+        return (Abs Empty xGeneral, [])
+      _ -> error "not implemented"
+  let ListE newerArgs' = ignoreHoistFailure $ hoist newBs $ ListE newerArgs
+  refreshAbs ab \newerBs x' -> do
+    extendSubst (b @> SubstVal x') do
+      let newAccum = ( newBs >>> toRNest newerBs
+                     -- TODO: avoid mapping `sink` over the full list of args here
+                     , fmap sink generalizedArgs `snoc` x'
+                     , newArgs <> toSnocList newerArgs')
+      generalizeDataComponentsNestRec (Abs bs UnitE) xs newAccum
+generalizeDataComponentsNestRec _ _ _ = error "length mismatch"
+
+generalizeType :: Type n -> EnvReaderM n (Generalized Type n)
+generalizeType (TC (Fin n)) = do
+  withFreshBinder noHint IdxRepTy \b -> do
+    let bs = Nest (b:>IdxRepTy) Empty
+    let generalizedTy = TC $ Fin $ Var $ binderName b
+    let args = [n]
+    return (Abs bs generalizedTy, args)
+generalizeType ty = return (Abs Empty ty, [])
+
+generalizeInstance :: DictType n -> Atom n -> EnvReaderM n (Atom n)
+generalizeInstance (DictType "Ix" _ [TC (Fin n)]) (DictCon (IxFin _)) =
+  return $ DictCon (IxFin n)
+generalizeInstance _ x = return x
+
+getSpecializedFunction
+  :: (HoistingTopBuilder m, Mut n) => SpecializationSpec n -> m n (AtomName n)
+getSpecializedFunction s = do
+  querySpecializationCache s >>= \case
+    Just name -> return name
     _ -> do
-      maybeSpecializedName <- liftTopBuilderHoisted $
-        emitSpecialization (getNameHint fname) $ sink specialization
-      case maybeSpecializedName of
+      maybeName <- liftTopBuilderHoisted $ emitSpecialization (sink s)
+      case maybeName of
         Nothing -> error "couldn't hoist specialization"
-        Just specializedName -> return specializedName
+        Just name -> return name
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
@@ -492,6 +544,13 @@ simplifyVar v = do
         LetBound (DeclBinding _ (Pi _) _) -> return $ Var v'
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
+
+-- Assumes first order, monormophic
+simplifyNaryLam :: NaryLamExpr i -> SimplifyM i o (NaryLamExpr o)
+simplifyNaryLam (NaryLamExpr bs effs body) = do
+  (Abs (PairB bs' (LiftB effs')) block, IdentityReconAbs) <-
+     simplifyAbs $ Abs (PairB bs (LiftB effs)) body
+  return $ NaryLamExpr bs' effs' block
 
 simplifyLam :: Atom i -> SimplifyM i o (Atom o, Abs LamBinder ReconstructAtom o)
 simplifyLam atom = case atom of

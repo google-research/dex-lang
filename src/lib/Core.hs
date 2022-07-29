@@ -344,6 +344,10 @@ instance BindsEnv b => (BindsEnv (Nest b)) where
   toEnvFrag = nestToEnvFrag
   {-# INLINE toEnvFrag #-}
 
+instance BindsEnv (LiftB e) where
+  toEnvFrag (LiftB _) = EnvFrag emptyOutFrag mempty
+  {-# INLINE toEnvFrag #-}
+
 nestToEnvFragRec :: (BindsEnv b, Distinct l) => EnvFrag n h -> Nest b h l -> EnvFrag n l
 nestToEnvFragRec f = \case
   Empty       -> f
@@ -517,6 +521,9 @@ withFreshPiBinder hint binding@(PiBinding arr ty) cont = do
   withFreshBinder hint binding \b ->
     withAllowedEffects Pure $
       cont $ PiBinder b ty arr
+
+plainPiBinder :: Binder n l -> PiBinder n l
+plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
 
 withAllowedEffects :: EnvExtender m => EffectRow n -> m n a -> m n a
 withAllowedEffects effs cont =

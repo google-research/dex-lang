@@ -1,0 +1,30 @@
+
+@noinline
+def standalone_sum {n v} [Add v] (xs:n=>v) : v =
+  sum xs
+
+vec3 = [1,2,3]
+vec2 = [4,5]
+
+-- TODO: test that we only get one copy inlined (hard to without dumping IR
+-- until we have logging for that sort of thing)
+:p standalone_sum vec2 + standalone_sum vec3
+> 15
+
+mat23 = [[1,2,3],[4,5,6]]
+mat32 = [[1,2],[3,4],[5,6]]
+
+@noinline
+def standalone_transpose {n m a} (x:n=>m=>a) : m=>n=>a =
+  view i j. x.j.i
+
+:p (standalone_transpose mat23, standalone_transpose mat32)
+> ([[1, 4], [2, 5], [3, 6]], [[1, 3, 5], [2, 4, 6]])
+
+-- This crashes because the standalone function needs access to a data pointer
+-- xs = [1,2,3]
+
+-- @noinline
+-- def foo (_:Unit) : Nat = sum xs
+
+-- foo 1
