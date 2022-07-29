@@ -36,6 +36,9 @@ class (SinkableE s, HoistableState s) => GenericTraverser s where
   traverseExpr :: Emits o => Expr i -> GenericTraverserM s i o (Expr o)
   traverseExpr = traverseExprDefault
 
+  traverseInlineExpr :: Emits o => Expr i -> GenericTraverserM s i o (Either (Atom o) (Expr o))
+  traverseInlineExpr e = Right <$> traverseExpr e
+
   traverseAtom :: Atom i -> GenericTraverserM s i o (Atom o)
   traverseAtom = traverseAtomDefault
 
@@ -163,9 +166,11 @@ traverseDeclNestS :: (GenericTraverser s, Emits o)
 traverseDeclNestS !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
-    expr' <- withSubst s $ traverseExpr expr
-    v <- emitDecl (getNameHint b) ann expr'
-    traverseDeclNestS (s <>> (b @> Rename v)) rest
+    expr' <- withSubst s $ traverseInlineExpr expr
+    sExt <- case expr' of
+      Left a  -> return $ b @> SubstVal a
+      Right e -> (b @>) . Rename <$> emitDecl (getNameHint b) ann e
+    traverseDeclNestS (s <>> sExt) rest
 
 traverseAlt
   :: GenericTraverser s

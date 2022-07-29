@@ -9,6 +9,7 @@
 module Optimize (earlyOptimize, optimize) where
 
 import Data.Functor
+import Data.List.NonEmpty qualified as NE
 import Control.Monad
 import Control.Monad.State.Strict
 
@@ -25,7 +26,9 @@ earlyOptimize :: EnvReader m => Block n -> m n (Block n)
 earlyOptimize = unrollTrivialLoops
 
 optimize :: EnvReader m => Block n -> m n (Block n)
-optimize = dceBlock >=> unrollLoops
+optimize = dceBlock     -- Clean up user code
+       >=> unrollLoops
+       >=> dceBlock     -- Clean up peephole-optimized code after unrolling
 
 -- === Trivial loop unrolling ===
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
@@ -69,6 +72,27 @@ instance GenericTraverser UTLS where
 unrollTrivialLoops :: EnvReader m => Block n -> m n (Block n)
 unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE b
 
+-- === Peephole optimizations ===
+
+peepholeExpr :: GenericTraverser s => Expr o -> GenericTraverserM s i o (Either (Atom o) (Expr o))
+peepholeExpr expr = case expr of
+  -- TODO: Support more casts!
+  Op (CastOp IdxRepTy (Con (FinVal _ i))) -> return $ Left i
+  Op (CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Word32Lit x)))) ->
+    return $ Left $ Con $ Lit $ Int32Lit $ fromIntegral x
+  Op (CastOp (BaseTy (Scalar Word64Type)) (Con (Lit (Word32Lit x)))) ->
+    return $ Left $ Con $ Lit $ Word64Lit $ fromIntegral x
+  -- TODO: Support more unary and binary ops!
+  Op (BinOp IAdd (IdxRepVal a) (IdxRepVal b)) -> return $ Left $ IdxRepVal $ a + b
+  TabApp (Var t) ((Con (FinVal _ (IdxRepVal ord))) NE.:| []) -> do
+    lookupAtomName t >>= \case
+      LetBound (DeclBinding PlainLet _ (Op (TabCon _ elems))) ->
+        return $ Left $ elems !! (fromIntegral ord)
+      _ -> return $ Right expr
+  -- TODO: Apply a function to literals when it has a cheap body?
+  -- Think, partial evaluation of threefry.
+  _ -> return $ Right expr
+
 -- === Loop unrolling ===
 
 unrollLoops :: EnvReader m => Block n -> m n (Block n)
@@ -82,13 +106,15 @@ instance HoistableState ULS where
   hoistState _ _ (ULS c) = (ULS c)
   {-# INLINE hoistState #-}
 
+-- TODO: Refine the cost accounting so that operations that will become
+-- constant-foldable after inlining don't count towards it.
 instance GenericTraverser ULS where
-  traverseExpr expr = case expr of
+  traverseInlineExpr expr = case expr of
     Hof (For Fwd ixDict body@(Lam (LamExpr b _))) -> do
       case binderType b of
         FinConst n -> do
           (body', bodyCost) <- withLocalAccounting $ traverseAtom body
-          case bodyCost * (fromIntegral n) < unrollBlowupThreshold of
+          case bodyCost * (fromIntegral n) <= unrollBlowupThreshold of
             True -> case body' of
               Lam (LamExpr b' block') -> do
                 vals <- dropSubst $ forM [0..(fromIntegral n :: Int) - 1] \ord -> do
@@ -97,19 +123,19 @@ instance GenericTraverser ULS where
                 getType body' >>= \case
                   Pi (PiType (PiBinder tb _ _) _ valTy) -> do
                     let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ IdxRepVal n))) valTy
-                    return $ Op $ TabCon tabTy vals
+                    return $ Right $ Op $ TabCon tabTy vals
                   _ -> error "Expected for body to have a Pi type"
               _ -> error "Expected for body to be a lambda expression"
             False -> do
               inc bodyCost
               ixDict' <- traverseGenericE ixDict
-              return $ Hof $ For Fwd ixDict' body'
+              return $ Right $ Hof $ For Fwd ixDict' body'
         _ -> nothingSpecial
     _ -> nothingSpecial
     where
       inc i = modify \(ULS n) -> ULS (n + i)
-      nothingSpecial = inc 1 >> traverseExprDefault expr
-      unrollBlowupThreshold = 10
+      nothingSpecial = inc 1 >> (traverseExprDefault expr >>= peepholeExpr)
+      unrollBlowupThreshold = 12
       withLocalAccounting m = do
         oldCost <- get
         ans <- put (ULS 0) *> m

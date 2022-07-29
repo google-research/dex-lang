@@ -11,3 +11,16 @@ def id' (x:Int) : Int = x
 -- CHECK: === Result ===
 -- CHECK-NEXT: 6
 
+def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + off)
+
+-- CHECK-LABEL: unroll-eliminate-table
+"unroll-eliminate-table"
+
+%passes opt
+:p
+  [x0, x1, x2] = arange_f 2
+  (x0, x2)
+-- CHECK: === Result ===
+-- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
+-- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
+-- CHECK-NEXT: ([[x0]], [[x2]])
