@@ -14,7 +14,7 @@ if [[ -z "$FILECHECK" ]]; then
   exit 1
 fi
 
-if ${@:2} $1 | $FILECHECK $1 ; then
+if ${@:2} $1 --outfmt result-only | $FILECHECK $1 ; then
   echo "OK"
   exit 0
 else
