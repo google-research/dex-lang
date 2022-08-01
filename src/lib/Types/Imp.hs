@@ -97,6 +97,7 @@ data ImpInstr n =
  | Free (IExpr n)
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
+ | IBitcastOp IType (IExpr n)
  | IPrimOp (IPrimOp n)
  | IVectorBroadcast (IExpr n) IVectorType
  | IVectorIota                IVectorType
@@ -128,9 +129,10 @@ instance GenericE ImpInstr where
   {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
   {- Free -}    (IExpr)
   {- IThrowE -} (UnitE)
-    ) (EitherE2
-  {- ICastOp -} (LiftE IType `PairE` IExpr)
-  {- IPrimOp -} (ComposeE PrimOp IExpr)
+    ) (EitherE3
+  {- ICastOp    -} (LiftE IType `PairE` IExpr)
+  {- IBitcastOp -} (LiftE IType `PairE` IExpr)
+  {- IPrimOp    -} (ComposeE PrimOp IExpr)
     ) (EitherE2
   {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
   {- IVectorIota      -} (              LiftE IVectorType)
@@ -154,7 +156,8 @@ instance GenericE ImpInstr where
     IThrowError            -> Case2 $ Case3 UnitE
 
     ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
-    IPrimOp op     -> Case3 $ Case1 $ ComposeE op
+    IBitcastOp idt ix -> Case3 $ Case1 $ LiftE idt `PairE` ix
+    IPrimOp op     -> Case3 $ Case2 $ ComposeE op
     IVectorBroadcast v vty -> Case4 $ Case0 $ v `PairE` LiftE vty
     IVectorIota vty        -> Case4 $ Case1 $ LiftE vty
   {-# INLINE fromE #-}
@@ -183,7 +186,8 @@ instance GenericE ImpInstr where
 
     Case3 instr' -> case instr' of
       Case0 (LiftE idt `PairE` ix ) -> ICastOp idt ix
-      Case1 (ComposeE op )          -> IPrimOp op
+      Case1 (LiftE idt `PairE` ix ) -> IBitcastOp idt ix
+      Case2 (ComposeE op )          -> IPrimOp op
       _ -> error "impossible"
 
     Case4 instr' -> case instr' of

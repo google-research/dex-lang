@@ -231,6 +231,7 @@ transposeOp op ct = case op of
   ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
   CastOp       _ _      -> notImplemented
+  BitcastOp    _ _      -> notImplemented
   RecordCons   _ _      -> unreachable
   RecordConsDynamic _ _ _ -> unreachable
   RecordSplitDynamic _ _  -> unreachable

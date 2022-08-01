@@ -1513,6 +1513,7 @@ builtinNames = M.fromList
   , ("fstRef", OpExpr $ ProjRef 0 ())
   , ("sndRef", OpExpr $ ProjRef 1 ())
   , ("cast", OpExpr  $ CastOp () ())
+  , ("bitcast", OpExpr  $ BitcastOp () ())
   , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
   , ("free" , OpExpr $ IOFree ())
   , ("ptrOffset", OpExpr $ PtrOffset () ())

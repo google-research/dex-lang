@@ -91,7 +91,8 @@ data PrimOp e =
       | BinOp BinOp e e
       | UnOp  UnOp  e
       | Select e e e                 -- predicate, val-if-true, val-if-false
-      | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
+      | CastOp e e                   -- Type, then value. See CheckType.hs for valid coercions.
+      | BitcastOp e e                -- Type, then value. See CheckType.hs for valid coercions.
       -- Effects
       | PrimEffect e (PrimEffect e)
       | ThrowError e                 -- Hard error (parameterized by result type)

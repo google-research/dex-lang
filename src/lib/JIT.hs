@@ -400,6 +400,10 @@ compileInstr instr = case instr of
        (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
 #endif
        _ -> error $ "Unsupported cast"
+  IBitcastOp idt ix -> (:[]) <$> do
+    x <- compileExpr ix
+    let dt = scalarTy idt
+    emitInstr dt $ L.BitCast x dt []
   ICall f args -> do
     fImpName <- substM f
     f' <- lookupImpFun fImpName

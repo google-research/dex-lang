@@ -534,6 +534,7 @@ getTypePrimOp op = case op of
   ThrowError ty -> substM ty
   ThrowException ty -> substM ty
   CastOp t _ -> substM t
+  BitcastOp t _ -> substM t
   RecordCons l r -> do
     lty <- getTypeE l
     rty <- getTypeE r
