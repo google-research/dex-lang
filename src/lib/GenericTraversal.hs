@@ -102,7 +102,13 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
     return $ Variant ext' label i value'
   VariantTy ext -> VariantTy <$> traverseExtLabeledItems ext
   ProjectElt _ _ -> substM atom
-  _ -> error $ "not implemented: " ++ pprint atom
+  DepPairTy dty -> DepPairTy <$> tge dty
+  DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
+  ACase _ _ _ -> nyi
+  DataConRef _ _ _ -> nyi
+  DepPairRef _ _ _ -> nyi
+  BoxedRef _ -> nyi
+  where nyi = error $ "not implemented: " ++ pprint atom
 
 traverseExtLabeledItems :: GenericTraverser s => ExtLabeledItems (Atom i) (AtomName i)
                         -> GenericTraverserM s i o (ExtLabeledItems (Atom o) (AtomName o))
@@ -138,6 +144,12 @@ instance GenericallyTraversableE FieldRowElems where
 instance GenericallyTraversableE DataDefParams where
   traverseGenericE (DataDefParams params dicts) =
     DataDefParams <$> mapM tge params <*> mapM tge dicts
+
+instance GenericallyTraversableE DepPairType where
+  traverseGenericE (DepPairType (b:>lty) rty) = do
+    lty' <- tge lty
+    withFreshBinder (getNameHint b) lty' \b' -> do
+      extendRenamer (b@>binderName b') $ DepPairType (b':>lty') <$> tge rty
 
 instance GenericallyTraversableE IxType where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
