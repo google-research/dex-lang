@@ -43,7 +43,7 @@ def randBounded {d} : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
 :p randBounded (new_key 4) [1.0,  -2.0] [-1.0,  2.0]
-> [-0.35101, 1.49355]
+> [-0.73701, 1.433697]
 
 ' ## The Optimizer itself.
 We have **arguments**:
@@ -103,13 +103,13 @@ Run it for more iterations and result should improve.
 Which it indeed does.
 
 :p optimize 50 10 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [0.076986, 0.232818]
+> [4.584775, 21.173801]
 
 :p optimize 50 20 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [0.90125, 0.750447]
+> [3.05381, 9.366863]
 
 :p optimize 50 100 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [0.999069, 0.998192]
+> [0.996963, 0.994117]
 
 :p optimize 50 1000 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1., 1.]

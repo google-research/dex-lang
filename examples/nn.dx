@@ -8,7 +8,7 @@ import plot
 def relu (input : Float) : Float =
   select (input > 0.0) input 0.0
 
-instance [Add a, Add b] Add (a & b)
+instance {a b} [Add a, Add b] Add (a & b)
   add = \(a, b) (c, d). ( (a + c), (b + d))
   sub = \(a, b) (c, d). ( (a - c), (b - d))
   zero = (zero, zero)
@@ -18,7 +18,7 @@ instance [VSpace a, VSpace b] VSpace (a & b)
 
 data Layer inp:Type out:Type params:Type =
   AsLayer {forward:(params -> inp -> out) & init:(Key -> params)}
-  
+
 
 def forward (l:Layer i o p) (p : p) (x : i): o =
   (AsLayer l' ) = l
@@ -29,7 +29,7 @@ def init (l:Layer i o p) (k:Key)  : p  =
   (get_at #init l') k
 
 
-' ## Layers 
+' ## Layers
 
 ' Dense layer
 
@@ -73,11 +73,11 @@ def cnn (h:Int) ?-> (w:Int) ?-> (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
     init = arb
   }
 
-' Pooling 
+' Pooling
 
 def split (x: m=>v) : n=>o=>v =
   for i j. x.((ordinal (i,j))@m)
-            
+
 def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
   for kw kh w h. (split (split x).w.kw).h.kh
 
@@ -128,7 +128,7 @@ def trainClass [VSpace p]
   ys : minibatches => minibatch => b = split y
   unzip $ with_state (init model $ new_key 0) $ \params .
      for _ : epochs.
-       loss = sum $ for b : minibatches. 
+       loss = sum $ for b : minibatches.
               (loss, gradfn) =  vjp (\ params.
                             -sum for j.
                                        result = forward model params xs.b.j
@@ -146,7 +146,7 @@ span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
     r = forward simple_model all_params.((ordinal h * 10)@_) [span.i, span.j]
     [exp r.(1@_), exp r.(0@_), 0.0]
-        
+
 
 :html imseqshow tests
 
@@ -154,7 +154,7 @@ tests = for h : (Fin 50). for i . for j.
 
 H = 28
 W = 28
-Image = Fin 1 => Fin H => Fin W => Float 
+Image = Fin 1 => Fin H => Fin W => Float
 Class = Fin 10
 
 lenet = \h1 h2 h3 .
@@ -171,7 +171,7 @@ lenet = \h1 h2 h3 .
          x2' = forward ncnn2 cnn2 x1
          x2 = for i j k. relu x2'.i.j.k
          x3 : (h2 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
-         x4' = forward ndense1 dense1 for (i,j,k). x3.i.j.k     
+         x4' = forward ndense1 dense1 for (i,j,k). x3.i.j.k
          x4 = for i. relu x4'.i
          logsoftmax $ forward ndense2 dense2 x4),
     init = (\key.
@@ -195,7 +195,7 @@ def pixel (x:Char) : Float32 =
                True -> (abs r) + 128
                False -> r
 
-def getIm : Batch => Image = 
+def getIm : Batch => Image =
     (AsList _ im) = unsafe_io do read_file "examples/mnist.bin"
     raw = unsafe_cast_table Full im
     for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
@@ -232,7 +232,7 @@ Minibatch = (Fin 10)
 
 :t ims.(2@_)
 
-model = lenet (Fin 1) (Fin 1) (Fin 20) 
+model = lenet (Fin 1) (Fin 1) (Fin 20)
 init_param = (init model  $ new_key 0)
 :p forward model init_param (ims.(2@Batch))
 

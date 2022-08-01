@@ -429,6 +429,7 @@ linearizeOp op = case op of
           _                -> error "Expected at least one side of the CastOp to have a trivial tangent type"
         y <- emitOp $ CastOp t' x
         return $ WithTangent y do xt >> return (sink yt)
+  BitcastOp _ _ -> notImplemented
   RecordCons l r ->
     zipLin (la l) (la r) `bindLin` \(PairE l' r') ->
       emitOp $ RecordCons l' r'

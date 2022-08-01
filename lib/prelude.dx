@@ -1889,9 +1889,12 @@ def split_key {n} (k:Key) : Fin n => Key = for i. ixkey k i
 These functions generate samples taken from, different distributions.
 Such as `rand_mat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
 
-foreign "randunif" randunifFFI : Word64 -> {IO} Float64
+def rand (k:Key) : Float =
+  exponent_bits = 1065353216 -- 1065353216 = 127 << 23
+  mantissa_bits = (high_word k .&. 8388607)  -- 8388607 == (1 << 23) - 1
+  bits = exponent_bits .|. mantissa_bits
+  (%bitcast Float bits) - 1.0
 
-def rand (k:Key) : Float =  unsafe_io do f64_to_f $ randunifFFI k
 def rand_vec {a} (n:Nat) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
@@ -1935,7 +1938,7 @@ interface Arbitrary a
   arb : Key -> a
 
 instance Arbitrary Bool
-  arb = \key. rand key < 0.5
+  arb = \key. key .&. 1 == 0
 
 instance Arbitrary Float32
   arb = randn

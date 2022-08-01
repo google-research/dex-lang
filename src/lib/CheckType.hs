@@ -605,6 +605,13 @@ typeCheckPrimOp op = case op of
     destTy' <- substM destTy
     checkValidCast sourceTy' destTy'
     return $ destTy'
+  BitcastOp t@(Var _) _ -> t |: TyKind >> substM t
+  BitcastOp destTy e -> do
+    sourceTy <- getTypeE e
+    case (destTy, sourceTy) of
+      (BaseTy dbt@(Scalar _), BaseTy sbt@(Scalar _)) | sizeOf sbt == sizeOf dbt ->
+        return $ BaseTy dbt
+      _ -> throw TypeErr $ "Invalid bitcast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   RecordCons l r -> do
     lty <- getTypeE l
     rty <- getTypeE r

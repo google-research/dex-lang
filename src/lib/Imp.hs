@@ -479,6 +479,13 @@ toImpOp maybeDest op = case op of
       (IdxRepTy, TC (Fin n)) ->
         returnVal $ Con $ FinVal n x
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
+  BitcastOp destTy x -> do
+    case destTy of
+      BaseTy bt -> do
+        x' <- fromScalarAtom x
+        ans <- emitInstr $ IBitcastOp bt x'
+        returnVal =<< toScalarAtom ans
+      _ -> error "Invalid bitcast"
   Select p x y -> do
     xTy <- getType x
     case xTy of
@@ -1621,6 +1628,7 @@ impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of
   IPrimOp op      -> return [impOpType op]
   ICastOp t _     -> return [t]
+  IBitcastOp t _  -> return [t]
   Alloc a ty _    -> return [PtrType (a, ty)]
   Store _ _       -> return []
   Free _          -> return []

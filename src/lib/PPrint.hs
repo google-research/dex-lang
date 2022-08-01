@@ -847,6 +847,7 @@ instance Pretty (ImpInstr n)  where
     "launch" <+> p f <+> p size <+> spaced args
   pretty (IPrimOp op)     = pLowest op
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
+  pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
   pretty (Alloc Stack t s) = "alloca" <+> p t <> "[" <> p s <> "]"
   pretty (Alloc _ t s)     = "alloc"  <+> p t <> "[" <> p s <> "]"
