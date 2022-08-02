@@ -80,6 +80,7 @@ module Name (
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
+  NameMap, hoistFilterNameMap, insertNameMap, lookupNameMap, singletonNameMap, toListNameMap
   ) where
 
 import Prelude hiding (id, (.))
@@ -3184,6 +3185,33 @@ instance Monad HoistExcept where
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
   {-# INLINE (>>=) #-}
+
+-- === extra data structures ===
+
+newtype NameMap (c::C) (a:: *) (n::S) = UnsafeNameMap (RawNameMap a)
+                                 deriving (Eq, Semigroup, Monoid)
+
+hoistFilterNameMap :: BindsNames b => b n l -> NameMap c a l -> NameMap c a n
+hoistFilterNameMap b (UnsafeNameMap raw) =
+  UnsafeNameMap $ raw `R.difference` frag
+  where UnsafeMakeScopeFrag frag = toScopeFrag b
+{-# INLINE hoistFilterNameMap #-}
+
+insertNameMap :: Name c n -> a -> NameMap c a n -> NameMap c a n
+insertNameMap (UnsafeMakeName n) x (UnsafeNameMap raw) = UnsafeNameMap $ R.insert n x raw
+{-# INLINE insertNameMap #-}
+
+lookupNameMap :: Name c n -> NameMap c a n -> Maybe a
+lookupNameMap (UnsafeMakeName n) (UnsafeNameMap raw) = R.lookup n raw
+{-# INLINE lookupNameMap #-}
+
+singletonNameMap :: Name c n -> a -> NameMap c a n
+singletonNameMap (UnsafeMakeName n) x = UnsafeNameMap $ R.singleton n x
+{-# INLINE singletonNameMap #-}
+
+toListNameMap :: NameMap c a n -> [(Name c n, a)]
+toListNameMap (UnsafeNameMap raw) = R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
+{-# INLINE toListNameMap #-}
 
 -- === notes ===
 

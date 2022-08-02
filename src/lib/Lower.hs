@@ -9,7 +9,6 @@ module Lower (lowerFullySequential, vectorizeLoops) where
 import Control.Monad.Reader
 import Data.Word
 import Data.Functor
-import Data.Map.Strict qualified as M
 import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
 import Unsafe.Coerce
@@ -60,17 +59,14 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
     extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
     return UnitVal
   let seqHof = Hof $ Seq dir ixDict' initDest body'
-  case maybeDest of
-    Just _  -> return seqHof
-    Nothing -> Op . Freeze . Var <$> emit seqHof
+  Op . Freeze . Var <$> emit seqHof
 
 -- Destination-passing traversals
 
-type AtomNameMap (i'::S) (o::S) = M.Map (AtomName i') (Dest o)
-type DestAssignment (i'::S) (o::S) = AtomNameMap i' o
+type DestAssignment (i'::S) (o::S) = AtomNameMap (Dest o) i'
 
 lookupDest :: DestAssignment i' o -> AtomName i' -> Maybe (Dest o)
-lookupDest = flip M.lookup
+lookupDest = flip lookupNameMap
 
 -- Matches up the free variables of the atom, with the given dest. For example, if the
 -- atom is a pair of two variables, the dest might be split into per-component dests,
@@ -79,7 +75,7 @@ lookupDest = flip M.lookup
 -- as much as possible, but it can lead to unnecessary copies being done at run-time.
 decomposeDest :: Emits o => Dest o -> Atom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
-  Var v -> return $ Just $ M.singleton v dest
+  Var v -> return $ Just $ singletonNameMap v dest
   _ -> return Nothing
 
 traverseBlockWithDest :: Emits o => Dest o -> Block i -> LowerM i o ()
@@ -92,8 +88,12 @@ traverseBlockWithDest dest (Block _ decls ans) = do
       s <- getSubst
       case isDistinctNest decls of
         Nothing -> error "Non-distinct decls?"
-        Just DistinctBetween -> traverseDeclNestWithDestS destMap s decls
-        -- Note that we ignore ans! Its components are written inplace through destMap.
+        Just DistinctBetween -> do
+          -- Note that we ignore ans! Its components are written inplace through destMap.
+          traverseDeclNestWithDestS destMap s decls
+          -- But we have to emit explicit writes, for all the vars that are not defined in decls!
+          forM_ (toListNameMap $ hoistFilterNameMap decls destMap) \(n, d) ->
+            void $ emitOp $ Place d $ case s ! n of Rename v -> Var v; SubstVal a -> a
 
 traverseDeclNestWithDestS
   :: forall i i' l o. (Emits o, DistinctBetween l i')
