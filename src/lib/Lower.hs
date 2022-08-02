@@ -6,11 +6,12 @@
 
 module Lower (lowerFullySequential, vectorizeLoops) where
 
-import Control.Monad.Reader
 import Data.Word
 import Data.Functor
+import Data.Set qualified as S
 import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
+import Control.Monad.Reader
 import Unsafe.Coerce
 import GHC.Exts (inline)
 
@@ -25,9 +26,11 @@ import Builder
 import PPrint
 import QueryType
 import GenericTraversal
+import Util (foldMapM)
 
 lowerFullySequential :: EnvReader m => Block n -> m n (Block n)
-lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS $ traverseGenericE b
+lowerFullySequential (Block _ decls result) = liftM fst $ liftGenericTraverserM LFS $
+    buildBlock $ traverseDeclNest decls $ substM result
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM LFS
@@ -37,10 +40,24 @@ instance HoistableState LFS where
   hoistState _ _ LFS = LFS
   {-# INLINE hoistState #-}
 
+-- It would be nice to figure out a way to not have to update the effect
+-- annotations manually... The only interesting case below is really the For.
 instance GenericTraverser LFS where
   traverseExpr expr = case expr of
     Hof (For dir ixDict (Lam body)) -> traverseFor Nothing dir ixDict body
+    Case _ _ _ _ -> do
+      Case e alts ty _ <- traverseExprDefault expr
+      eff' <- foldMapM getEffects alts
+      return $ Case e alts ty eff'
     _ -> traverseExprDefault expr
+  traverseAtom atom = case atom of
+    Lam _ -> do
+      traverseAtomDefault atom >>= \case
+        Lam (LamExpr (LamBinder b ty arr _) body@(Block ann _ _)) -> do
+          let eff' = case ann of BlockAnn _ e -> e; NoBlockAnn -> Pure
+          return $ Lam $ LamExpr (LamBinder b ty arr eff') body
+        _ -> error "Expected a lambda"
+    _ -> traverseAtomDefault atom
 
 type Dest = Atom
 
@@ -53,7 +70,8 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
   ty' <- substM ty
   ixDict' <- substM ixDict
   eff' <- substM $ ignoreHoistFailure $ hoist ib eff
-  body' <- buildLam noHint arr (PairTy ty' destTy) eff' \b' -> do
+  let eff'' = extendEffRow (S.singleton IOEffect) eff'
+  body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
     (i, dest) <- fromPair $ Var b'
     idest <- emitOp $ IndexRef dest i
     extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
@@ -83,7 +101,7 @@ traverseBlockWithDest dest (Block _ decls ans) = do
   decomposeDest dest ans >>= \case
     Nothing -> do
       ans' <- traverseDeclNest decls $ traverseAtom ans
-      void $ emitOp $ Place dest ans'
+      place dest ans'
     Just destMap -> do
       s <- getSubst
       case isDistinctNest decls of
@@ -93,7 +111,7 @@ traverseBlockWithDest dest (Block _ decls ans) = do
           traverseDeclNestWithDestS destMap s decls
           -- But we have to emit explicit writes, for all the vars that are not defined in decls!
           forM_ (toListNameMap $ hoistFilterNameMap decls destMap) \(n, d) ->
-            void $ emitOp $ Place d $ case s ! n of Rename v -> Var v; SubstVal a -> a
+            place d $ case s ! n of Rename v -> Var v; SubstVal a -> a
 
 traverseDeclNestWithDestS
   :: forall i i' l o. (Emits o, DistinctBetween l i')
@@ -116,8 +134,12 @@ traverseExprWithDest dest expr = case expr of
       Nothing -> return expr'
       Just d  -> do
         ans <- Var <$> emit expr'
-        void $ emitOp $ Place d ans
+        place d ans
         return $ Atom ans
+
+place :: Emits o => Atom o -> Atom o -> LowerM i o ()
+place d x = void $ emitOp $ Place d x
+{-# INLINE place #-}
 
 -- === Vectorization ===
 

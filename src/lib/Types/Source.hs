@@ -326,7 +326,7 @@ data LogLevel = LogNothing | PrintEvalTime | PrintBench String
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
 
 data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
-              | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval
+              | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerPass
               | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass
                 deriving (Ord, Eq, Bounded, Enum, Generic)
 
@@ -338,6 +338,7 @@ instance Show PassName where
     LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
     LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
+    LowerPass -> "lower" ;
     EarlyOptPass -> "early-opt"; OptPass -> "opt"
 
 data EnvQuery =

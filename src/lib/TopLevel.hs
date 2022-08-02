@@ -29,8 +29,6 @@ import qualified Data.Set        as S
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
-import System.Environment qualified
-import System.IO.Unsafe (unsafePerformIO)
 import System.IO (stderr, hPutStrLn, Handle)
 import System.IO.Error (isDoesNotExistError)
 
@@ -52,6 +50,7 @@ import Types.Core
 import Builder
 import CheckType ( CheckableE (..), asFFIFunType, checkHasType, asSpecializableFunction)
 #ifdef DEX_DEBUG
+import Types.Primitives
 import CheckType (checkTypesM)
 #endif
 import SourceRename
@@ -548,13 +547,7 @@ evalBlock typed = do
   opt <- (fmap optLevel getConfig) >>= \case
     Optimize   -> checkPass OptPass $ optimize simp
     NoOptimize -> return simp
-  lowered <- case useExperimentalLowering of
-    False -> return opt
-    True  -> do
-      lowered <- lowerFullySequential opt
-      case useExperimentalVectorization of
-        True -> vectorizeLoops (512 `div` 8) lowered
-        False -> return lowered
+  lowered <- checkPass LowerPass $ lowerFullySequential opt
   result <- evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
@@ -570,12 +563,6 @@ evalRequiredSpecializations e = do
           Nothing -> compileTopLevelFun v
           Just _ -> return ()
       _ -> return ()
-
-useExperimentalLowering :: Bool
-useExperimentalLowering = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_LOWER"
-
-useExperimentalVectorization :: Bool
-useExperimentalVectorization = unsafePerformIO $ (Just "1"==) <$> System.Environment.lookupEnv "DEX_VECTORIZE"
 
 execUDecl :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do
@@ -708,7 +695,9 @@ checkPass name cont = do
     return result
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
-  {-# SCC afterPassTypecheck #-} checkTypesM result
+  let allowedEffs = case name of LowerPass -> singletonEffRow IOEffect; _ -> mempty
+  {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
+    withAllowedEffects allowedEffs $ checkTypesM result
   logTop $ MiscLog $ "Checks passed"
 #else
   logTop $ MiscLog $ "Checks skipped (not a debug build)"
