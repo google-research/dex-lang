@@ -221,6 +221,9 @@ extendEffRow :: Ord (name n) => S.Set (EffectP name n) -> EffectRowP name n -> E
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 {-# INLINE extendEffRow #-}
 
+singletonEffRow :: EffectP name n -> EffectRowP name n
+singletonEffRow eff = EffectRow (S.singleton eff) Nothing
+
 data Arrow =
    PlainArrow
  | ImplicitArrow
