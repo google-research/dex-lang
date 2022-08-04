@@ -24,3 +24,16 @@ def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + o
 -- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
 -- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
 -- CHECK-NEXT: ([[x0]], [[x2]])
+
+-- CHECK-LABEL: matmul-single-alloc
+"matmul-single-alloc"
+m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
+
+%passes imp
+m' = m ** m
+-- There's an extra alloca for the accumulator, but we should get rid of it
+-- once we have better destination passing
+-- CHECK: alloc Float32[10000]
+-- CHECK-NOT: alloc
+-- CHECK: alloca Float32[1]
+-- CHECK-NOT: alloc

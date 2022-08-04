@@ -818,6 +818,7 @@ simplifyHof hof = case hof of
     (Lam (LamExpr b body), IdentityReconAbs) <- simplifyLam lam
     dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
   Seq _ _ _ _ -> error "Shouldn't ever see a Seq in Simplify"
+  RememberDest _ _ -> error "Shouldn't ever see a RememberDest in Simplify"
 
 simplifyBlock :: Emits o => Block i -> SimplifyM i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result

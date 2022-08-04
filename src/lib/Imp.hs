@@ -29,6 +29,7 @@ import Name
 import Builder
 import Syntax
 import CheckType (CheckableE (..))
+import Lower (DestBlock)
 import Simplify (buildBlockSimplified, dceApproxBlock, emitSimplified)
 import LabeledItems
 import QueryType
@@ -46,10 +47,10 @@ type PtrBinder = IBinder
 -- TODO: make it purely a function of the type and avoid the AtomRecon
 toImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> Abs (Nest PtrBinder) Block n
+              -> Abs (Nest PtrBinder) DestBlock n
               -> m n (ImpFunctionWithRecon n)
 toImpFunction _ cc absBlock = liftImpM $
-  translateTopLevel cc Nothing absBlock
+  translateTopLevel cc absBlock
 {-# SCC toImpFunction #-}
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
@@ -286,18 +287,16 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> MaybeDest o
-                  -> Abs (Nest PtrBinder) Block i
+                  -> Abs (Nest PtrBinder) DestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc maybeDest (Abs bs body) = do
+translateTopLevel cc (Abs bs (Abs (destb:>destTy) body)) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
   ab  <- buildImpNaryAbs argTys \vs ->
     extendSubst (bs @@> map Rename vs) do
-      outDest <- case maybeDest of
-        Nothing   -> makeAllocDest Unmanaged =<< getTypeSubst body
-        Just dest -> sinkM dest
-      void $ translateBlock (Just outDest) body
-      destToAtom outDest
+      dest <- case destTy of
+        RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
+        _ -> error "Expected a reference type for body destination"
+      extendSubst (destb @> SubstVal dest) $ translateBlock Nothing body
   refreshAbs ab \bs' ab' -> refreshAbs ab' \decls resultAtom -> do
     (results, recon) <- buildRecon (PairB bs' decls) resultAtom
     let funImpl = Abs bs' $ ImpBlock decls results
@@ -603,6 +602,10 @@ toImpHof maybeDest hof = do
       case maybeDest of
         Nothing -> return carry'
         Just _  -> error "Unexpected dest"
+    RememberDest d (Lam (LamExpr b body)) -> do
+      d' <- substM d
+      void $ extendSubst (b @> SubstVal d') $ translateBlock Nothing body
+      return d'
     _ -> error $ "not implemented: " ++ pprint hof
     where
       liftMonoidEmpty :: Type n -> Atom n -> BuilderM n (Atom n)
