@@ -129,6 +129,8 @@ pArg a = prettyPrec a ArgPrec
 
 instance Pretty (Block n) where
   pretty (Block _ decls expr) = prettyBlock decls expr
+instance PrettyPrec (Block n) where
+  prettyPrec (Block _ decls expr) = atPrec LowestPrec $ prettyBlock decls expr
 
 prettyBlock :: (PrettyPrec (e l)) => Nest Decl n l -> e l -> Doc ann
 prettyBlock Empty expr = group $ line <> pLowest expr
@@ -158,6 +160,8 @@ instance PrettyPrec (Expr n) where
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof (Seq ann _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
     atPrec LowestPrec $ "seq" <+> pApp ann <+> pApp c <+> prettyLam (p (b:>ty) <> ".") effs body
+  prettyPrec (Hof (RememberDest d (Lam (LamExpr (LamBinder b _ _ effs) body)))) =
+    atPrec LowestPrec $ "remember" <+> pApp d <+> prettyLam ("\\" <> p b <> ".") effs body
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
 

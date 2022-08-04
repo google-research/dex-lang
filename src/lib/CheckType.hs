@@ -794,6 +794,11 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     declareEffs =<< liftHoistExcept (hoist b eff)
     RawRefTy _ <- return carryTy'  -- We might need allow products of references too.
     return carryTy'
+  RememberDest d body -> do
+    dTy@(RawRefTy _) <- getTypeE d
+    Pi (PiType b _ UnitTy) <- getTypeE body
+    checkAlphaEq (binderType b) dTy
+    return dTy
 
 checkRWSAction :: Typer m => RWS -> Atom i -> m i o (Type o, Type o)
 checkRWSAction rws f = do

@@ -162,6 +162,7 @@ data PrimHof e =
       | Transpose e
       -- Dex abstract machine ops
       | Seq Direction e e e   -- ix dict, carry dests, body lambda
+      | RememberDest e e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }

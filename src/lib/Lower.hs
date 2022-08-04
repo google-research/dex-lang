@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Lower (lowerFullySequential, vectorizeLoops) where
+module Lower (lowerFullySequential, DestBlock, vectorizeLoops) where
 
 import Data.Word
 import Data.Functor
@@ -28,9 +28,19 @@ import QueryType
 import GenericTraversal
 import Util (foldMapM)
 
-lowerFullySequential :: EnvReader m => Block n -> m n (Block n)
-lowerFullySequential (Block _ decls result) = liftM fst $ liftGenericTraverserM LFS $
-    buildBlock $ traverseDeclNest decls $ substM result
+type DestBlock = Abs Binder Block
+
+lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
+lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
+  effs <- extendEffRow (S.singleton IOEffect) <$> getEffects b
+  resultDestTy <- RawRefTy <$> getType b
+  withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
+    Abs (destBinder:>resultDestTy) <$> buildBlock do
+      let dest = Var $ sink $ binderName destBinder
+      dest' <- emit . Hof . RememberDest dest =<<
+        buildLam noHint PlainArrow (sink resultDestTy) (sink effs) \dest' ->
+          traverseBlockWithDest (Var dest') b $> UnitVal
+      emitOp $ Freeze $ Var dest'
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM LFS

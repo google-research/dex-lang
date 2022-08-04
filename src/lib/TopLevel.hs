@@ -547,8 +547,11 @@ evalBlock typed = do
   opt <- (fmap optLevel getConfig) >>= \case
     Optimize   -> checkPass OptPass $ optimize simp
     NoOptimize -> return simp
-  lowered <- checkPass LowerPass $ lowerFullySequential opt
-  result <- evalBackend lowered
+  result <- case opt of
+    AtomicBlock result -> return result
+    _ -> do
+      lowered <- checkPass LowerPass $ lowerFullySequential opt
+      evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
 
@@ -646,7 +649,7 @@ toCFunction fname f = do
 mainFuncName :: SourceName
 mainFuncName = "entryFun"
 
-evalLLVM :: (Topper m, Mut n) => Block n -> m n (Atom n)
+evalLLVM :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   PassCtx{..} <- getPassCtx
@@ -670,8 +673,7 @@ evalLLVM block = do
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
 
-evalBackend :: (Topper m, Mut n) => Block n -> m n (Atom n)
-evalBackend (AtomicBlock result) = return result
+evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of

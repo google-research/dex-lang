@@ -700,6 +700,7 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ MaybeTy $ ignoreHoistFailure $ hoist b resultTy
   Seq _ _ cinit _ -> getTypeE cinit
+  RememberDest d _ -> getTypeE d
 
 getTypeRWSAction :: Atom i -> TypeQueryM i o (Type o, Type o)
 getTypeRWSAction f = do
@@ -785,6 +786,7 @@ exprEffects expr = case expr of
       effs <- functionEffs f
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
+    RememberDest _ f -> functionEffs f
   Case _ _ _ effs -> substM effs
 
 instance HasEffectsE Block where
