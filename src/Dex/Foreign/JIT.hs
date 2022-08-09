@@ -84,7 +84,7 @@ dexDestroyJIT jitPtr = do
 intAsCC :: CInt -> ExportCC
 intAsCC 0 = FlatExportCC
 intAsCC 1 = XLAExportCC
-intAsCC _ = error "Unregognized calling convention"
+intAsCC _ = error "Unrecognized calling convention"
 
 dexCompile :: Ptr JIT -> CInt -> Ptr Context -> Ptr AtomEx -> IO NativeFunctionAddr
 dexCompile jitPtr ccInt ctxPtr funcAtomPtr = catchErrors $ do

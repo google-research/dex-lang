@@ -45,29 +45,8 @@ def dex_call_abstract_eval_with_shape(*args, func_atom):
   native_func = get_compiled(func_atom)
   arg_sig = native_func.explicit_argument_signature
   res_sig = native_func.result_signature
-  if len(args) != len(arg_sig):
-    raise RuntimeError(f"Dex function expects {len(arg_sig)} arguments, but was given {len(args)}")
-  if not all(isinstance(arg, jax.core.ShapedArray) for arg in args):
-    raise RuntimeError("Cannot perform evaluation of Dex functions without known shapes")
-  # Check arguments and infer shape parameters
-  shape_vars = {}
-  for i, (arg, b) in enumerate(zip(args, arg_sig)):
-    expected_dtype = np.dtype(b.type.ctype)
-    if arg.dtype != expected_dtype:
-      raise RuntimeError(f"dtype mismatch in arg {i}: expected {expected_dtype}, got {arg.dtype}")
-    if isinstance(b.type, ScalarType):
-      expected_shape = ()
-    elif isinstance(b.type, RectContArrayType):
-      expected_shape = b.type.shape
-    else:
-      raise AssertionError("Unhandled case!")
-    if len(arg.shape) != len(expected_shape):
-      raise RuntimeError(f"rank mismatch in arg {i}: expected {len(expected_shape)}, got {len(arg.shape)}")
-    inferred_shape = tuple(
-      size if isinstance(size, int) else shape_vars.setdefault(size, real_size)
-      for size, real_size in zip(expected_shape, arg.shape))
-    if arg.shape != inferred_shape:
-      raise RuntimeError(f"shape mismatch in arg {i}: expected {inferred_shape}, got {arg.shape}")
+  # Unify argument types with argument signature
+  shape_vars = unify_jax_and_dex_types(args, arg_sig)
   # Infer result types
   result_avals = []
   for b in res_sig:
@@ -79,6 +58,32 @@ def dex_call_abstract_eval_with_shape(*args, func_atom):
     result_avals.append(jax.core.ShapedArray(shape, dtype))
   assert len(result_avals) == 1  # TODO: Make dex_call a multiple_results primitive
   return result_avals[0], shape_vars
+
+def unify_jax_and_dex_types(jax_types, dex_binders):
+  if len(jax_types) != len(dex_binders):
+    raise RuntimeError(f"Dex function expects {len(dex_binders)} arguments, but was given {len(jax_types)}")
+  if not all(isinstance(arg, jax.core.ShapedArray) for arg in jax_types):
+    raise RuntimeError("Cannot perform evaluation of Dex functions without known shapes")
+  # Check arguments and infer shape parameters
+  shape_vars = {}
+  for i, (jax_ty, b) in enumerate(zip(jax_types, dex_binders)):
+    expected_dtype = np.dtype(b.type.ctype)
+    if jax_ty.dtype != expected_dtype:
+      raise RuntimeError(f"dtype mismatch in arg {i}: expected {expected_dtype}, got {jax_ty.dtype}")
+    if isinstance(b.type, ScalarType):
+      expected_shape = ()
+    elif isinstance(b.type, RectContArrayType):
+      expected_shape = b.type.shape
+    else:
+      raise AssertionError("Unhandled case of Dex type!")
+    if len(jax_ty.shape) != len(expected_shape):
+      raise RuntimeError(f"rank mismatch in arg {i}: expected {len(expected_shape)}, got {len(jax_ty.shape)}")
+    inferred_shape = tuple(
+      size if isinstance(size, int) else shape_vars.setdefault(size, real_size)
+      for size, real_size in zip(expected_shape, jax_ty.shape))
+    if jax_ty.shape != inferred_shape:
+      raise RuntimeError(f"shape mismatch in arg {i}: expected {inferred_shape}, got {jax_ty.shape}")
+  return shape_vars
 
 @dex_apply_p.def_abstract_eval
 def dex_call_abstract_eval(*args, **kwargs):
@@ -110,10 +115,23 @@ def dex_apply_lowering(ctx, *args, func_atom):
   custom_call_name = get_trampoline()
   ctx.module_context.add_keepalive(native)
 
-  # TODO: Support inference of implicit arguments. Abstract eval already does inference!
-  if len(native.argument_signature) != len(native.explicit_argument_signature):
-    raise NotImplementedError("Inference of implicit arguments")
   assert len(args) == len(native.explicit_argument_signature)
+
+  # TODO Cache this from dex_call_abstract_eval_with_shape instead of
+  # recomputing here
+  shape_vars = unify_jax_and_dex_types(
+      ctx.avals_in, native.explicit_argument_signature)
+
+  name_to_mlir_arg = {}
+  for arg, binder in zip(args, native.explicit_argument_signature):
+    name_to_mlir_arg[binder.name] = arg
+  for name, val in shape_vars.items():
+    name_to_mlir_arg[name] = mlir.ir_constant(
+            IdxRepTy(val).value,
+            canonicalize_types=False)
+
+  mlir_args = [name_to_mlir_arg[binder.name]
+               for binder in native.argument_signature]
 
   native_ptr = mlir.ir_constant(
       ctypes.cast(native._as_parameter_, ctypes.c_void_p).value,
@@ -124,7 +142,7 @@ def dex_apply_lowering(ctx, *args, func_atom):
     result_type = [mlir.ir.TupleType.get_tuple(result_type)]
   custom_call = mlir.mhlo.CustomCallOp(
       result_type,
-      (native_ptr, *args),
+      (native_ptr, *mlir_args),
       call_target_name=mlir.ir.StringAttr.get(custom_call_name),
       has_side_effect=mlir.ir.BoolAttr.get(False),
       api_version=mlir.i32_attr(2),
