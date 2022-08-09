@@ -8,6 +8,7 @@ import unittest
 import numpy as np
 from functools import partial
 from contextlib import contextmanager
+from textwrap import dedent
 
 import jax
 import jax.numpy as jnp
@@ -208,6 +209,24 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(
         jax.jit(grad_dex)(x, y),
         jax.jit(grad_jax)(x, y))
+
+  def test_dex_not_knowing_shape(self):
+    m = dex.Module(dedent("""
+    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
+      for i. x.i * x.i
+    """))
+    dex_sqr = primitive(m.sqr)
+    x = jnp.linspace(-0.2, 0.5, num=10)
+    np.testing.assert_allclose(dex_sqr(x), x * x)
+
+  def test_dex_not_knowing_shape_jit(self):
+    m = dex.Module(dedent("""
+    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
+      for i. x.i * x.i
+    """))
+    dex_sqr = primitive(m.sqr)
+    x = jnp.linspace(-0.2, 0.5, num=10)
+    np.testing.assert_allclose(jax.jit(dex_sqr)(x), x * x)
 
 def lax_test(prim, arg_thunk, **kwargs):
   def test(self):

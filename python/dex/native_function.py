@@ -40,6 +40,22 @@ class ScalarType:
 
 @dataclass(frozen=True)
 class RectContArrayType:
+  """A rectangular contiguous array with potentially dynamic shape.
+
+  Specifically, the `shape` field is a list of the dimensions.  Each
+  dimension may be a Python `int`, which represents a static size.  It
+  may also be a Python `str`, which represents a dynamic size (a shape
+  variable) with that name.  All dimension sizes with the same name in
+  a given function signature are the same.
+
+  For example, `RectContArrayType(..., ["n", "n"])` means a square
+  matrix, and a function that accepts a `RectContArrayType(..., ["n",
+  "n"])` and produces a `RectContArrayType(..., ["n"])` consumes a
+  square matrix and produces a vector of the same size.
+
+  `RectContArrayType` does not support any computation on array sizes,
+  limiting the constraints that it can represent.
+  """
   ctype: ScalarType
   shape: List[Union[str, int]]
 
@@ -56,6 +72,17 @@ class RectContArrayType:
     return ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(self.ctype))
 
   def to_ctype(self, array, name_cvalue):
+    """Unify the given array's type with `self` and return a C pointer to it.
+
+    If the given array's shape is not compatible with the type
+    represented by `self`, raises an error.
+
+    Notably, if the type represented by `self` is dynamic, the
+    `name_cvalue` map serves as the type variable environment.
+    Previously determined sizes are filled in from the environment,
+    and previously undetermined sizes are determined from the input
+    array and *written back into* the environment.
+    """
     if not isinstance(array, np.ndarray):
       array = np.asarray(array)
     if array.ndim != len(self.shape):
