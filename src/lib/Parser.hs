@@ -433,11 +433,14 @@ funDefLet = label "function definition" $ mayBreak $ do
   v <- letPat
   argBinders <- concat <$> many
     (argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg] <?> "def arg")
-  (eff, ty) <- label "result type annotation" $ annot effectiveType
-  when (null argBinders && eff /= Pure) $ fail "Nullary def can't have effects"
-  let funTy = buildPiType argBinders eff ty
-  let lamBinders = argBinders <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
-  return \body -> ULet PlainLet (UPatAnn v (Just funTy)) $ buildLam lamBinders body
+  (label "result type annotation" $ optional $ annot effectiveType) >>= \case
+    Nothing ->
+      return \body -> ULet PlainLet (UPatAnn v Nothing) $ buildLam argBinders body
+    Just (eff, ty) -> do
+      when (null argBinders && eff /= Pure) $ fail "Nullary def can't have effects"
+      let funTy = buildPiType argBinders eff ty
+      let lamBinders = argBinders <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
+      return \body -> ULet PlainLet (UPatAnn v (Just funTy)) $ buildLam lamBinders body
 
 argInParens :: [(Lexer (), Parser a)] -> Parser a
 argInParens argParsers = mayNotPair $ asum $ argParsers <&> \(paren, p) -> lookAhead paren >> p
