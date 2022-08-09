@@ -194,7 +194,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd psd kernelregression \
+                sgd psd kernelregression nn \
                 quaternions manifold-gradients schrodinger tutorial \
                 latex linear-maps
 # TODO: re-enable
