@@ -332,10 +332,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">l <span class="symbol">=</span> chol psd
 </div></div><div class="cell"><div class="code-block">l_full <span class="symbol">=</span> padLowerTriMat l
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> l_full
-</div><div class="result-block">[ [2.021765, 0., 0., 0.]
-, [-1.795018, 1.990174, 0., 0.]
-, [-0.897886, 0.186757, 1.980266, 0.]
-, [1.445752, -0.296448, 0.724586, 2.230807] ]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[ [3.220772, 0., 0., 0.]
+, [-0.462207, 1.043325, 0., 0.]
+, [0.176507, -0.273588, 1.709453, 0.]
+, [-0.260148, 0.120994, 0.244608, 1.52529] ]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">psdReconstructed <span class="symbol">=</span> l_full <span class="symbol">**</span> transpose l_full
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> sq (psd<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> psdReconstructed<span class="symbol">.</span>i<span class="symbol">.</span>j)
@@ -343,5 +343,5 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">vec <span class="symbol">:</span> <span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> arb k2
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (vec<span class="symbol">,</span> psd <span class="symbol">**.</span> psdsolve psd vec)
-</div><div class="result-block">( [1.211277, 0.23285, -0.741911, 0.883351]
-, [1.211277, 0.23285, -0.741911, 0.883351] )</div></div></div></body></html>
+</div><div class="result-block">( [-1.035494, -1.713369, 1.600502, 0.975181]
+, [-1.035495, -1.713369, 1.600502, 0.975181] )</div></div></div></body></html>
