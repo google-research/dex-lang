@@ -19,6 +19,17 @@ ScalarCType = Union[
 ]
 IdxRepTy = ctypes.c_uint32
 
+dex_types = {
+    ctypes.c_int64: 'Int64',
+    ctypes.c_int32: 'Int32',
+    ctypes.c_uint8: 'Word8',
+    ctypes.c_uint32: 'Word32',
+    ctypes.c_uint64: 'Word64',
+    ctypes.c_double: 'Float64',
+    ctypes.c_float: 'Float32',
+}
+
+
 @dataclass(frozen=True)
 class ScalarType:
   ctype: Any
@@ -37,6 +48,8 @@ class ScalarType:
     instance = self.ctype()
     return ctypes.pointer(instance), lambda: self.from_ctype(instance)
 
+  def dex_annotation(self):
+    return dex_types[self.ctype]
 
 @dataclass(frozen=True)
 class RectContArrayType:
@@ -56,7 +69,7 @@ class RectContArrayType:
   `RectContArrayType` does not support any computation on array sizes,
   limiting the constraints that it can represent.
   """
-  ctype: ScalarType
+  ctype: Any
   shape: List[Union[str, int]]
 
   @property
@@ -104,6 +117,11 @@ class RectContArrayType:
              for size in self.shape]
     result = np.empty(shape, dtype=self.ctype)
     return self.unsafe_array_ptr(result), lambda: result
+
+  def dex_annotation(self):
+    """Return a string in Dex syntax representing the same type as self."""
+    prefix = " => ".join([f"(Fin {str(dim)})" for dim in self.shape])
+    return f"{prefix} => {dex_types[self.ctype]}"
 
 NativeType = Union[ScalarType, RectContArrayType]
 

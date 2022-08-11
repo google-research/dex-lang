@@ -192,16 +192,33 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
   func_name = func_atom.name
   assert func_name is not None
 
+  # TODO: Make it possible to get the signature without compiling the function
+  native = get_compiled(func_atom)
+  expl_args = native.explicit_argument_signature
+  if len(batched_args) != len(expl_args):
+    raise RuntimeError(f"Dex function expects {len(expl_args)} arguments, but was given {len(batched_args)}")
+
+  batched_args = []
+  batched_dims_it = iter(batched_dims)
+  for binder in native.argument_signature:
+    if binder.implicit:
+      batched_args.append("{" + binder.name + "}")
+    else:
+      ty = binder.type.dex_annotation()
+      if next(batched_dims_it) is not batching.not_mapped:
+        ty = f"(Fin {batch_size}) => {ty}"
+      batched_args.append(f"({binder.name} : {ty})")
+
   # Only index into the arguments which are batched. `i` is the index used for
   # the Dex for loop constructor.
   batched_fn_params = [
-      f"x{param_idx}" if dim is batching.not_mapped else f"x{param_idx}.i"
-      for param_idx, dim in enumerate(batched_dims)
+      binder.name if dim is batching.not_mapped else f"{binder.name}.i"
+      for dim, binder in zip(batched_dims, expl_args)
   ]
 
   # This is the actual batching expression
   batched_fn = module.eval(
-      r"\ " + " ".join(f"x{i}" for i in range(len(batched_args))) + ". "
+      r"\ " + " ".join(batched_args) + ". "
       + f"for i:(Fin {batch_size}). {func_name} "
       + " ".join(batched_fn_params))
 

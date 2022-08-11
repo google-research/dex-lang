@@ -228,6 +228,17 @@ class JAXTest(unittest.TestCase):
     x = jnp.linspace(-0.2, 0.5, num=10)
     np.testing.assert_allclose(jax.jit(dex_sqr)(x), x * x)
 
+  def test_dex_not_knowing_shape_vmap(self):
+    m = dex.Module(dedent("""
+    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
+      for i. x.i * x.i
+    """))
+    dex_sqr = primitive(m.sqr)
+    x = jnp.linspace(jnp.array([1.0, -0.2]),
+                     jnp.array([1.1, 0.5]), num=10, dtype=jnp.float32)
+    np.testing.assert_allclose(
+        jax.vmap(dex_sqr, in_axes=1, out_axes=1)(x), x * x)
+
 def lax_test(prim, arg_thunk, **kwargs):
   def test(self):
     f = dexjit(partial(prim, **kwargs))
