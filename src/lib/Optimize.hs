@@ -131,6 +131,8 @@ instance GenericTraverser ULS where
               ixDict' <- traverseGenericE ixDict
               return $ Right $ Hof $ For Fwd ixDict' body'
         _ -> nothingSpecial
+    -- Avoid unrolling loops with large table literals
+    Op (TabCon _ els) -> inc (length els) >> nothingSpecial
     _ -> nothingSpecial
     where
       inc i = modify \(ULS n) -> ULS (n + i)

@@ -37,3 +37,11 @@ m' = m ** m
 -- CHECK-NOT: alloc
 -- CHECK: alloca Float32[1]
 -- CHECK-NOT: alloc
+
+"don't unroll large table literals"
+-- CHECK-LABEL: don't unroll large table literals
+
+%passes opt
+x = for i:(Fin 4). [0, 0, 0, ordinal i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+-- CHECK: [0, {{.*}}, 0]
+-- CHECK-NOT: [0, {{.*}}, 0]
