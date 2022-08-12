@@ -272,23 +272,6 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
       tangents.append(t_name)
       name_to_ty[t_name] = annot
 
-  def juxt_string(names):
-    return " ".join(names)
-
-  def juxt_arg_string(names):
-    annotated = [f"({name} : {name_to_ty[name]})" for name in names]
-    return juxt_string(annotated)
-
-  def tuple_arg_string(names):
-    ty = tuple_ty_ref_string([name_to_ty[name] for name in names])
-    return f"({tuple_ref_string(names)} : {ty})"
-
-  def tuple_ref_string(names):
-    return "(" + ", ".join(names) + ")"
-
-  def tuple_ty_ref_string(names):
-    return "(" + " & ".join(names) + ")"
-
   # Add the current function atom as a variable in the context, so that we can
   # use it to apply jvp.
 
@@ -303,7 +286,7 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   # \ {n1} {n2} {n3} ((p1, p2, p3):(ty1 & ty2 & ty3)). func p1 p2 p3
   # ```
   uncurried = module.eval(
-      f"\\ {juxt_string(implicit_args)} {tuple_arg_string(primals)}. {func_name} {juxt_string(primals)}")
+      f"\\ {juxt_string(implicit_args)} {tuple_arg_string(primals, name_to_ty)}. {func_name} {juxt_string(primals)}")
   func_uncurried_name = uncurried.name
   assert func_uncurried_name is not None
 
@@ -318,7 +301,7 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   #   snd linearized (t1, t2, t3)
   # ```
   evaluate_linearized = module.eval(
-      f"\\ {juxt_string(implicit_args)} {juxt_arg_string(primals)} {juxt_arg_string(tangents)}." +
+      f"\\ {juxt_string(implicit_args)} {juxt_arg_string(primals, name_to_ty)} {juxt_arg_string(tangents, name_to_ty)}." +
       f"\n  linearized = linearize {func_uncurried_name} {tuple_ref_string(primals)}" +
       f"\n  snd linearized {tuple_ref_string(tangents)}")
 
@@ -338,6 +321,23 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   )
 
 jax.interpreters.ad.primitive_jvps[dex_apply_p] = dex_call_jvp
+
+def juxt_string(names):
+  return " ".join(names)
+
+def juxt_arg_string(names, name_to_ty):
+  annotated = [f"({name} : {name_to_ty[name]})" for name in names]
+  return juxt_string(annotated)
+
+def tuple_arg_string(names, name_to_ty):
+  ty = tuple_ty_ref_string([name_to_ty[name] for name in names])
+  return f"({tuple_ref_string(names)} : {ty})"
+
+def tuple_ref_string(names):
+  return "(" + ", ".join(names) + ")"
+
+def tuple_ty_ref_string(names):
+  return "(" + " & ".join(names) + ")"
 
 # === transpose ===
 
@@ -361,16 +361,22 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
 
   assert len(args) % 2 == 0
   num_primals = len(args) // 2
+  # TODO: Make it possible to get the signature without compiling the function
+  native = get_compiled(func_atom)
+  assert len(args) == len(native.explicit_argument_signature)
   module = func_atom.module.copy()
 
+  implicit_args = []
+  name_to_ty = {}
+  for binder in native.argument_signature:
+    if binder.implicit:
+      implicit_args.append("{" + binder.name + "}")
+    else:
+      name_to_ty[binder.name] = binder.type.dex_annotation()
+
   primals, tangents = args[:num_primals], args[num_primals:]
-
-  # Helper functions to build strings of primal and tangent inputs.
-  def arg_string(prefix, index_set):
-    return " ".join(f"{prefix}{i}" for i in index_set)
-
-  def tuple_string(prefix, index_set):
-    return "(" + ", ".join(f"{prefix}{i}" for i in index_set) + ")"
+  primal_params = [binder.name for binder in native.explicit_argument_signature[:num_primals]]
+  tangent_params = [binder.name for binder in native.explicit_argument_signature[num_primals:]]
 
   # JAX uses `UndefinedPrimal` instances to mark input variables which the
   # function needs to be transposed with respect to, and (consequently) for
@@ -411,38 +417,34 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   # For a three-input primal function with constant input for the tangent
   # parameter at index 1, the evaluated string should look like:
   # ```
-  # \ x0 x1 x2 u1 ct.
-  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
+  # \ {n0} {n1} {n2} x0 x1 x2 t1 ct.
+  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 t1 t2) ct
   # ```
   # - The `x` variables are the (constant) inputs to the primal function. These
   #   should always be supplied by JAX.
-  # - The `u` variables are the constant tangent inputs, i.e. those which JAX
-  #   does not need us to include in the transpose.
-  # - The `t` variables are the linear inputs which we are transposing with
-  #   respect to. These are tangent inputs to `linearized`.
+  # - The `t` variables are the tangent inputs.  Which one goes where is
+  #   determined by which are constant and which are not.
+  # - Note that we use the original names for the parameters, and include
+  #   their type annotations.  (TODO Include a type annotation for `ct` as well?)
 
-  # x0 x1 x2 u1 ct
+  # {n0} {n1} {n2} x0 x1 x2 t1 ct
   transposed_atom_params = (
-      arg_string("x", range(num_primals)) + " " +
-      arg_string("u", tangent_constant_indices) + " ct")
+      juxt_string(implicit_args) + " " +
+      juxt_arg_string(primal_params, name_to_ty) + " " +
+      juxt_arg_string([tangent_params[i] for i in tangent_constant_indices], name_to_ty) + " ct")
 
   # (t0, t2)
-  linear_lambda_params = tuple_string("t", tangent_input_indices)
+  linear_lambda_params = tuple_arg_string(
+      [tangent_params[i] for i in tangent_input_indices], name_to_ty)
 
-  # t0 u1 t2
-  linearized_tangent_inputs = (" ".join(
-      f"t{i}" if jax.ad.is_undefined_primal(t) else f"u{i}"
-      for i, t in enumerate(tangents)))
+  # x0 x1 x2 t0 t1 t2
+  linearized_inputs = juxt_string(primal_params + tangent_params)
 
-  # x0 x1 x2 t0 u1 t2
-  linearized_inputs = (
-      arg_string("x", range(num_primals)) + " " + linearized_tangent_inputs)
-
-  # \ x0 x1 x2 u1 ct.
-  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
+  # \ {n0} {n1} {n2} x0 x1 x2 t1 ct.
+  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 t1 t2) ct
   transposed = module.eval(
       f"\\ {transposed_atom_params}. transpose_linear " +
-      f"(\ {linear_lambda_params}. {linearized_name} {linearized_inputs}) ct"
+      f"(\\ {linear_lambda_params}. {linearized_name} {linearized_inputs}) ct"
   )
 
   # Tuple of cotangents relating to linear tangent inputs. In the given
