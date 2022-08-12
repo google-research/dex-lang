@@ -245,33 +245,67 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   Returns:
      A pair of the primal output and the tangent.
   """
-  assert len(func_atom.compile().result_signature) == 1
+  # TODO: Make it possible to get the signature without compiling the function
+  native = get_compiled(func_atom)
+  assert len(native.result_signature) == 1
   num_args = len(arg_values)
   module = func_atom.module.copy()
 
-  # Helper functions to build strings of primal and tangent inputs.
-  def arg_string(prefix):
-    return " ".join(f"{prefix}{i}" for i in range(num_args))
+  # TODO: Support explicit arguments that are not being differentiated wrt
+  # TODO: What if some explicit primal argument occurs in the type annotation of later one?
+  # - If this happens, I have to either retain the name of the primal, or rename the annotation.
+  # - Retaining the name of the primal is a problem, though, because then a constructed tangent name
+  #   might clash with it.  (Solvable by maintaining an explicit name mapping.)
+  implicit_args = []
+  primals = []
+  tangents = []
+  name_to_ty = {}
+  for binder in native.argument_signature:
+    if binder.implicit:
+      implicit_args.append("{" + binder.name + "}")
+    else:
+      annot = binder.type.dex_annotation()
+      p_name = f"p{binder.name}"
+      primals.append(p_name)
+      name_to_ty[p_name] = annot
+      t_name = f"t{binder.name}"
+      tangents.append(t_name)
+      name_to_ty[t_name] = annot
 
-  def tuple_string(prefix):
-    return "(" + ", ".join(f"{prefix}{i}" for i in range(num_args)) + ")"
+  def juxt_string(names):
+    return " ".join(names)
+
+  def juxt_arg_string(names):
+    annotated = [f"({name} : {name_to_ty[name]})" for name in names]
+    return juxt_string(annotated)
+
+  def tuple_arg_string(names):
+    ty = tuple_ty_ref_string([name_to_ty[name] for name in names])
+    return f"({tuple_ref_string(names)} : {ty})"
+
+  def tuple_ref_string(names):
+    return "(" + ", ".join(names) + ")"
+
+  def tuple_ty_ref_string(names):
+    return "(" + " & ".join(names) + ")"
 
   # Add the current function atom as a variable in the context, so that we can
-  # use it to apply batching.
+  # use it to apply jvp.
 
-  jax_func_name = func_atom.name
-  assert jax_func_name is not None
+  func_name = func_atom.name
+  assert func_name is not None
 
-  # `linearize` only seems to work properly for functions which take a single
-  # input argument, so we uncurry `func_atom` to make it into this form. The
-  # evaluated string for three function arguments should look like:
+  # `linearize` only seems to work properly for functions which take a
+  # single input argument, so we uncurry `func_atom` to make it into
+  # this form. The evaluated string for three function arguments (and
+  # three implicit arguments) should look like:
   # ```
-  # \ (x0, x1, x2). jax_func x0 x1 x2
+  # \ {n1} {n2} {n3} ((p1, p2, p3):(ty1 & ty2 & ty3)). func p1 p2 p3
   # ```
   uncurried = module.eval(
-      f"\\ {tuple_string('x')}. {jax_func_name} {arg_string('x')}")
-  jax_func_uncurried_name = uncurried.name
-  assert jax_func_uncurried_name is not None
+      f"\\ {juxt_string(implicit_args)} {tuple_arg_string(primals)}. {func_name} {juxt_string(primals)}")
+  func_uncurried_name = uncurried.name
+  assert func_uncurried_name is not None
 
   # We create separate primitives for the primal and tangent evaluations, since
   # we only want to apply tranposition to the tangent evaluation function.
@@ -279,14 +313,14 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   # Here we write out the tangent evaluation expression in pointful style.
   # The evaluated string for three function arguments should look like:
   # ```
-  # \ x0 x1 x2 u0 u1 u2.
-  #   linearized = linearize jax_func_uncurried (x0, x1, x2)
-  #   snd linearized (u0 u1 u2)
+  # \ {n1} {n2} {n3} (p1:ty1) (p2:ty2) (p3:ty3) (t1:ty1) (t2:ty2) (t3:ty3).
+  #   linearized = linearize func_uncurried (p1, p2, p3)
+  #   snd linearized (t1, t2, t3)
   # ```
   evaluate_linearized = module.eval(
-      f"\\ {arg_string('x')} {arg_string('u')}." +
-      f"\n  linearized = linearize {jax_func_uncurried_name} {tuple_string('x')}" +
-      f"\n  snd linearized {tuple_string('u')}")
+      f"\\ {juxt_string(implicit_args)} {juxt_arg_string(primals)} {juxt_arg_string(tangents)}." +
+      f"\n  linearized = linearize {func_uncurried_name} {tuple_ref_string(primals)}" +
+      f"\n  snd linearized {tuple_ref_string(tangents)}")
 
   # Materialize jax.ad.Zero values into actual arrays of zeros.
   # TODO: Make the handling of Zeros more efficient by omitting them from the
