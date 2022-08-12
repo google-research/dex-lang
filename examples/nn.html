@@ -1,0 +1,548 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX, if available.
+    // Skip rendering if KaTeX is unavailable.
+    if (typeof renderMathInElement == &#39;undefined&#39;) {
+        return;
+    }
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Neural Networks</h1>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>NN Prelude</h2>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu (input <span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  select (input <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) input 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Layer</span> inp<span class="symbol">:</span><span class="type-name">Type</span> out<span class="symbol">:</span><span class="type-name">Type</span> params<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="type-name">AsLayer</span> {forward<span class="symbol">:</span>(params <span class="symbol">-&gt;</span> inp <span class="symbol">-&gt;</span> out) <span class="symbol">&amp;</span> init<span class="symbol">:</span>(<span class="type-name">Key</span> <span class="symbol">-&gt;</span> params)}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> forward {i o p} (l<span class="symbol">:</span><span class="type-name">Layer</span> i o p) (p <span class="symbol">:</span> p) (x <span class="symbol">:</span> i) <span class="symbol">:</span> o <span class="symbol">=</span>
+  (<span class="type-name">AsLayer</span> l&#39; ) <span class="symbol">=</span> l
+  (get_at <span class="iso-sugar">#forward</span> l&#39;) p x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> init {i o p} (l<span class="symbol">:</span><span class="type-name">Layer</span> i o p) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> p  <span class="symbol">=</span>
+  (<span class="type-name">AsLayer</span> l&#39;) <span class="symbol">=</span> l
+  (get_at <span class="iso-sugar">#init</span> l&#39;) k
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Layers</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Dense layer</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">DenseParams</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+   ((a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">&amp;</span> (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dense (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="symbol">:</span> <span class="type-name">Layer</span> (a<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (<span class="type-name">DenseParams</span> a b) <span class="symbol">=</span>
+  <span class="type-name">AsLayer</span> {
+    forward <span class="symbol">=</span> (<span class="symbol">\</span> ((weight<span class="symbol">,</span> bias)) x <span class="symbol">.</span>
+               <span class="keyword">for</span> j<span class="symbol">.</span> (bias<span class="symbol">.</span>j <span class="symbol">+</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> weight<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> x<span class="symbol">.</span>i))<span class="symbol">,</span>
+    init <span class="symbol">=</span> arb
+  }
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>CNN layer</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">CNNParams</span> (inc<span class="symbol">:</span><span class="type-name">Type</span>) (outc<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> inc<span class="symbol">,</span> <span class="type-name">Ix</span> outc] (kw<span class="symbol">:</span><span class="type-name">Nat</span>) (kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  ((outc<span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kh<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kw<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">&amp;</span>
+   (outc<span class="symbol">=&gt;</span><span class="type-name">Float</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> conv2d
+      {inc outc h w kh kw}
+      (x<span class="command">:inc</span><span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+      (kernel<span class="command">:outc</span><span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> kh)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> kw)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+      <span class="symbol">:</span> outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="keyword">for</span> o i j<span class="symbol">.</span>
+    (i&#39;<span class="symbol">,</span> j&#39;) <span class="symbol">=</span> (ordinal i<span class="symbol">,</span> ordinal j)
+    <span class="keyword">case</span> (i&#39; <span class="symbol">+</span> kh) <span class="symbol">&lt;=</span> h <span class="symbol">&amp;&amp;</span> (j&#39; <span class="symbol">+</span> kw) <span class="symbol">&lt;=</span> w <span class="keyword">of</span>
+      <span class="type-name">True</span> <span class="symbol">-&gt;</span>
+        sum <span class="keyword">for</span> (ki<span class="symbol">,</span> kj<span class="symbol">,</span> inp)<span class="symbol">.</span>
+          (di<span class="symbol">,</span> dj) <span class="symbol">=</span> (from_ordinal (<span class="type-name">Fin</span> h) (i&#39; <span class="symbol">+</span> (ordinal ki))<span class="symbol">,</span>
+                      from_ordinal (<span class="type-name">Fin</span> w) (j&#39; <span class="symbol">+</span> (ordinal kj)))
+          x<span class="symbol">.</span>inp<span class="symbol">.</span>di<span class="symbol">.</span>dj <span class="symbol">*</span> kernel<span class="symbol">.</span>o<span class="symbol">.</span>inp<span class="symbol">.</span>ki<span class="symbol">.</span>kj
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span> zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cnn {h w} (inc<span class="symbol">:</span><span class="type-name">Type</span>) (outc<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> inc<span class="symbol">,</span> <span class="type-name">Ix</span> outc] (kw<span class="symbol">:</span><span class="type-name">Nat</span>) (kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span>
+    <span class="type-name">Layer</span> (inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+          (outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+          (<span class="type-name">CNNParams</span> inc outc kw kh) <span class="symbol">=</span>
+  <span class="type-name">AsLayer</span> {
+    forward <span class="symbol">=</span> (<span class="symbol">\</span> (weight<span class="symbol">,</span> bias) x<span class="symbol">.</span> <span class="keyword">for</span> o i j <span class="symbol">.</span> (conv2d x weight)<span class="symbol">.</span>o<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> bias<span class="symbol">.</span>o)<span class="symbol">,</span>
+    init <span class="symbol">=</span> arb
+  }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Pooling</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split {m n o v} [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> o] (x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>((ordinal (i<span class="symbol">,</span>j))<span class="symbol">@</span>m)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imtile {a b n o p q v} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> o<span class="symbol">,</span> <span class="type-name">Ix</span> p<span class="symbol">,</span> <span class="type-name">Ix</span> q]
+           (x<span class="symbol">:</span> a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>p<span class="symbol">=&gt;</span>q<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="keyword">for</span> kw kh w h<span class="symbol">.</span> (split (split x)<span class="symbol">.</span>w<span class="symbol">.</span>kw)<span class="symbol">.</span>h<span class="symbol">.</span>kh
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanpool {m n h w} (kh<span class="symbol">:</span> <span class="type-name">Type</span>) (kw<span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> h<span class="symbol">,</span> <span class="type-name">Ix</span> w<span class="symbol">,</span> <span class="type-name">Ix</span> kh<span class="symbol">,</span> <span class="type-name">Ix</span> kw]
+             (x <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">:</span> ( h<span class="symbol">=&gt;</span>w<span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+  out <span class="symbol">:</span> (kh <span class="symbol">=&gt;</span> kw <span class="symbol">=&gt;</span> h <span class="symbol">=&gt;</span> w <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> imtile x
+  mean <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> out<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Simple point classifier</h2>
+</div></div><div class="cell"><div class="code-block">[k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key <span class="symbol">$</span> new_key 1
+</div></div><div class="cell"><div class="code-block">x1 <span class="symbol">:</span> <span class="type-name">Fin</span> 100 <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb k1
+</div></div><div class="cell"><div class="code-block">x2 <span class="symbol">:</span> <span class="type-name">Fin</span> 100 <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb k2
+</div></div><div class="cell"><div class="code-block">y <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> ((x1<span class="symbol">.</span>i <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) <span class="symbol">&amp;&amp;</span> (x2<span class="symbol">.</span>i <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0)) <span class="symbol">||</span> ((x1<span class="symbol">.</span>i <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) <span class="symbol">&amp;&amp;</span> (x2<span class="symbol">.</span>i <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0)) <span class="keyword">of</span>
+  <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
+  <span class="type-name">False</span> <span class="symbol">-&gt;</span> 0
+</div></div><div class="cell"><div class="code-block">xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> [x1<span class="symbol">.</span>i<span class="symbol">,</span> x2<span class="symbol">.</span>i]
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show_plot <span class="symbol">$</span> xyc_plot x1 x2 <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> n_to_f y<span class="symbol">.</span>i
+</div><svg width="400" height="400" viewBox="0 -400 400 400"><g stroke="#000000" fill="none" stroke-width="1"><rect width="400"height="400"x="0"y="-400"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="178.585419"cy="-120.120132"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="303.894653"cy="-352.972748"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="235.845779"cy="-246.812469"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="184.013077"cy="-194.522308"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="233.769012"cy="-265.648163"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="358.004608"cy="-277.93457"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="249.346512"cy="-186.62796"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="159.862488"cy="-69.5832214"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="228.834839"cy="-188.414795"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="282.768524"cy="-194.606293"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="156.297775"cy="-183.749695"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="187.913773"cy="-236.483902"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="39.6731873"cy="-249.938629"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="141.077362"cy="-115.309906"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="339.202057"cy="-285.596741"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="362.581085"cy="-225.890396"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="281.19928"cy="-369.841797"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="297.637787"cy="-63.631176"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="184.049469"cy="-289.368134"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="159.886383"cy="-83.4709244"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="172.525757"cy="-214.171936"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="273.038391"cy="-219.171982"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="181.642151"cy="-177.177811"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="304.564117"cy="-206.208725"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="187.659042"cy="-108.868073"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="280.252563"cy="-178.101761"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="142.727829"cy="-208.229309"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="172.427017"cy="-236.711029"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="218.980789"cy="-259.351562"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="238.843918"cy="-87.4558182"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="100.41436"cy="-164.629547"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="153.781387"cy="-339.22229"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="144.192459"cy="-60.9220581"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="103.487488"cy="-166.130478"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="243.115356"cy="-76.9371872"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="359.292206"cy="-163.773636"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="282.579559"cy="-251.446228"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="363.05188"cy="-199.415787"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="181.358185"cy="-227.200317"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="263.990417"cy="-321.479065"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="278.059113"cy="-187.035507"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="263.046692"cy="-50.3394051"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="233.598038"cy="-223.611115"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="295.19223"cy="-178.60228"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="205.815292"cy="-239.2901"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="361.478607"cy="-198.588821"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="88.7222672"cy="-157.242661"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="148.723755"cy="-248.37825"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="224.707169"cy="-36.3885765"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="276.191528"cy="-176.625748"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="219.315475"cy="-19.385294"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="163.941422"cy="-170.940506"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="132.999527"cy="-93.3152771"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="182.662888"cy="-238.484879"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="181.490692"cy="-214.582108"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="137.268417"cy="-81.2613144"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="198.509491"cy="-198.915192"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="313.693695"cy="-18.1818218"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="318.612091"cy="-139.587509"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="213.238144"cy="-229.280212"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="270.498718"cy="-74.6611786"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="260.18576"cy="-162.388474"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="181.048447"cy="-183.27507"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="67.5293655"cy="-197.74939"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="381.818146"cy="-151.161438"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="183.314835"cy="-119.388351"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="281.619049"cy="-169.127579"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="198.516937"cy="-71.0904312"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="201.638443"cy="-135.052841"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="206.884735"cy="-202.345703"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="89.9045181"cy="-45.3499336"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="288.673706"cy="-211.740845"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="225.574036"cy="-156.227966"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="18.1818275"cy="-213.854645"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="310.286896"cy="-157.888275"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="81.0914612"cy="-381.818176"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="177.579834"cy="-219.482635"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="255.72023"cy="-270.447266"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="212.267639"cy="-154.854172"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="304.319305"cy="-269.935791"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="188.338089"cy="-153.541855"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="332.335052"cy="-353.913422"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="212.178635"cy="-287.874146"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="243.072678"cy="-98.6699982"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="171.667816"cy="-189.264328"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="279.316071"cy="-215.972824"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="258.285248"cy="-66.207695"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="286.115265"cy="-317.090179"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="342.554626"cy="-122.038338"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="281.458313"cy="-260.448822"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="291.789398"cy="-243.764282"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="289.363678"cy="-22.8010406"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="316.896362"cy="-104.744377"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="214.286514"cy="-344.996887"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="132.471008"cy="-178.256531"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="194.905685"cy="-304.901611"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="177.725098"cy="-324.160156"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="99.934021"cy="-319.127045"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="324.546875"cy="-176.067001"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="236.49884"cy="-345.241913"r="1"/></g></svg></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simple (h1<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> h1] <span class="symbol">=</span>
+  ndense1 <span class="symbol">=</span> dense (<span class="type-name">Fin</span> 2) h1
+  ndense2 <span class="symbol">=</span> dense h1 (<span class="type-name">Fin</span> 2)
+  <span class="type-name">AsLayer</span> {
+    forward <span class="symbol">=</span> (<span class="symbol">\</span> (dense1<span class="symbol">,</span> dense2) x<span class="symbol">.</span>
+         x1&#39; <span class="symbol">=</span> forward ndense1 dense1 x
+         x1 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i
+         logsoftmax <span class="symbol">$</span> forward ndense2 dense2 x1)<span class="symbol">,</span>
+    init <span class="symbol">=</span> (<span class="symbol">\</span>key<span class="symbol">.</span>
+         [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key key
+         (init ndense1 k1<span class="symbol">,</span> init ndense2 k2))
+  }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> simple
+</div><div class="result-block">((h1:Type)
+ -&gt; (v#0:(Ix h1))
+ ?=&gt; Layer
+       ((Fin 2) =&gt; Float32)
+       ((Fin 2) =&gt; Float32)
+       ((((Fin 2) =&gt; h1 =&gt; Float32) &amp; (h1 =&gt; Float32))
+        &amp; ((h1 =&gt; (Fin 2) =&gt; Float32) &amp; ((Fin 2) =&gt; Float32))))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Train a multiclass classifier with minibatch SGD
+' <code>minibatch * minibatches = batch</code></p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trainClass {a b p batch} [<span class="type-name">VSpace</span> p<span class="symbol">,</span> <span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> batch]
+      (model<span class="symbol">:</span> <span class="type-name">Layer</span> a (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) p)
+      (x<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>a)
+      (y<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>b)
+      (epochs <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> epochs]
+      (minibatch <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> minibatch]
+      (minibatches <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> minibatches]
+      <span class="symbol">:</span> (epochs <span class="symbol">=&gt;</span> p <span class="symbol">&amp;</span> epochs <span class="symbol">=&gt;</span> <span class="type-name">Float</span> ) <span class="symbol">=</span>
+  xs <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> a <span class="symbol">=</span> split x
+  ys <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> b <span class="symbol">=</span> split y
+  unzip <span class="symbol">$</span> with_state (init model <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
+     <span class="keyword">for</span> _ <span class="symbol">:</span> epochs<span class="symbol">.</span>
+       loss <span class="symbol">=</span> sum <span class="symbol">$</span> <span class="keyword">for</span> b <span class="symbol">:</span> minibatches<span class="symbol">.</span>
+              (loss<span class="symbol">,</span> gradfn) <span class="symbol">=</span>  vjp (<span class="symbol">\</span> params<span class="symbol">.</span>
+                            <span class="symbol">-</span>sum <span class="keyword">for</span> j<span class="symbol">.</span>
+                                       result <span class="symbol">=</span> forward model params xs<span class="symbol">.</span>b<span class="symbol">.</span>j
+                                       result<span class="symbol">.</span>(ys<span class="symbol">.</span>b<span class="symbol">.</span>j)) (get params)
+              gparams <span class="symbol">=</span> gradfn 1<span class="symbol">.</span>0
+              params <span class="symbol">:=</span> (get params) <span class="symbol">-</span> scale_vec (0<span class="symbol">.</span>05 <span class="symbol">/</span> (i_to_f 100)) gparams
+              loss
+       (get params<span class="symbol">,</span> loss)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- todo : Do I have to give minibatches as a param?
+</span></div></div><div class="cell"><div class="code-block">simple_model <span class="symbol">=</span> simple (<span class="type-name">Fin</span> 10)
+</div></div><div class="cell"><div class="code-block">(all_params<span class="symbol">,</span>losses) <span class="symbol">=</span> trainClass simple_model xs (<span class="keyword">for</span> i<span class="symbol">.</span> (y<span class="symbol">.</span>i <span class="symbol">@</span> (<span class="type-name">Fin</span> 2))) (<span class="type-name">Fin</span> 500) (<span class="type-name">Fin</span> 100) (<span class="type-name">Fin</span> 1)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">span <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 10) (<span class="symbol">-</span>1<span class="symbol">.</span>0) (1<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">tests <span class="symbol">=</span> <span class="keyword">for</span> h <span class="symbol">:</span> (<span class="type-name">Fin</span> 50)<span class="symbol">.</span> <span class="keyword">for</span> i <span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span>
+    r <span class="symbol">=</span> forward simple_model all_params<span class="symbol">.</span>((ordinal h <span class="symbol">*</span> 10)<span class="symbol">@</span>_) [span<span class="symbol">.</span>i<span class="symbol">,</span> span<span class="symbol">.</span>j]
+    [exp r<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> exp r<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imseqshow tests
+</div><img class="plot-img" src="data:image/png;base64, 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"></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>LeNet for image classification</h2>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">H</span> <span class="symbol">=</span> 28
+</div></div><div class="cell"><div class="code-block"><span class="type-name">W</span> <span class="symbol">=</span> 28
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Image</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 1 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> <span class="type-name">H</span> <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> <span class="type-name">W</span> <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Class</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 10
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lenet (h1<span class="symbol">:</span><span class="type-name">Type</span>) (h2<span class="symbol">:</span><span class="type-name">Type</span>) (h3<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> h1<span class="symbol">,</span> <span class="type-name">Ix</span> h2<span class="symbol">,</span> <span class="type-name">Ix</span> h3] <span class="symbol">=</span>
+  ncnn1 <span class="symbol">=</span> cnn (<span class="type-name">Fin</span> 1) h1 3 3
+  ncnn2 <span class="symbol">=</span> cnn h1 h2 3 3
+  <span class="type-name">Pooled</span> <span class="symbol">=</span> (h2 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 7 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 7)
+  ndense1 <span class="symbol">=</span> dense <span class="type-name">Pooled</span> h3
+  ndense2 <span class="symbol">=</span> dense h3 <span class="type-name">Class</span>
+  <span class="type-name">AsLayer</span> {
+    forward <span class="symbol">=</span> (<span class="symbol">\</span> (cnn1<span class="symbol">,</span> cnn2<span class="symbol">,</span> dense1<span class="symbol">,</span> dense2) inp<span class="symbol">.</span>
+         x<span class="symbol">:</span><span class="type-name">Image</span> <span class="symbol">=</span> inp
+         x1&#39; <span class="symbol">=</span> forward ncnn1 cnn1 x
+         x1 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+         x2&#39; <span class="symbol">=</span> forward ncnn2 cnn2 x1
+         x2 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x2&#39;<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+         x3 <span class="symbol">:</span> (h2 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> c<span class="symbol">.</span> meanpool (<span class="type-name">Fin</span> 4) (<span class="type-name">Fin</span> 4) x2<span class="symbol">.</span>c
+         x4&#39; <span class="symbol">=</span> forward ndense1 dense1 <span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> x3<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+         x4 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x4&#39;<span class="symbol">.</span>i
+         logsoftmax <span class="symbol">$</span> forward ndense2 dense2 x4)<span class="symbol">,</span>
+    init <span class="symbol">=</span> (<span class="symbol">\</span>key<span class="symbol">.</span>
+         [k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3<span class="symbol">,</span> k4] <span class="symbol">=</span> split_key key
+         (init ncnn1 k1<span class="symbol">,</span> init ncnn2 k2<span class="symbol">,</span>
+         init ndense1 k3<span class="symbol">,</span> init ndense2 k4))
+  }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> lenet
+</div><div class="result-block">((h1:Type)
+ -&gt; (h2:Type)
+ -&gt; (h3:Type)
+ -&gt; (v#0:(Ix h1))
+ ?=&gt; (v#1:(Ix h2))
+ ?=&gt; (v#2:(Ix h3))
+ ?=&gt; Layer
+       ((Fin 1) =&gt; (Fin 28) =&gt; (Fin 28) =&gt; Float32)
+       ((Fin 10) =&gt; Float32)
+       (((h1 =&gt; (Fin 1) =&gt; (Fin 3) =&gt; (Fin 3) =&gt; Float32) &amp; (h1 =&gt; Float32))
+        &amp; (((h2 =&gt; h1 =&gt; (Fin 3) =&gt; (Fin 3) =&gt; Float32) &amp; (h2 =&gt; Float32))
+           &amp; ((((h2 &amp; (Fin 7 &amp; Fin 7)) =&gt; h3 =&gt; Float32) &amp; (h3 =&gt; Float32))
+              &amp; ((h3 =&gt; (Fin 10) =&gt; Float32) &amp; ((Fin 10) =&gt; Float32))))))</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Data Loading</h2>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Batch</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 5000
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Full</span> <span class="symbol">=</span> <span class="type-name">Fin</span> ((size <span class="type-name">Batch</span>) <span class="symbol">*</span> <span class="type-name">H</span> <span class="symbol">*</span> <span class="type-name">W</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pixel (x<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+     r <span class="symbol">=</span> w8_to_i x
+     i_to_f <span class="keyword">case</span> r <span class="symbol">&lt;</span> 0 <span class="keyword">of</span>
+               <span class="type-name">True</span> <span class="symbol">-&gt;</span> (abs r) <span class="symbol">+</span> 128
+               <span class="type-name">False</span> <span class="symbol">-&gt;</span> r
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Training loop</h2>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Comment out these lines once you get the binary files from:</p>
+</div></div><div class="cell"><div class="prose-block"><p><code>wget https://github.com/srush/learns-dex/raw/main/mnist.bin</code></p>
+</div></div><div class="cell"><div class="prose-block"><p><code>wget https://github.com/srush/learns-dex/raw/main/labels.bin</code></p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- def getIm : Batch =&gt; Image =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     (AsList _ im) = unsafe_io do read_file &quot;examples/mnist.bin&quot;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     raw = unsafe_cast_table Full im
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--         pixel raw.((ordinal (b, i, j)) @ Full)
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- def getLabel : Batch =&gt; Class =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     (AsList _ im2) = unsafe_io do read_file &quot;examples/labels.bin&quot;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     r = unsafe_cast_table Batch im2
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     for i. (w8_to_i r.i @ Class)
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- ims = getIm
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- labels = getLabel
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- small_ims = for i: (Fin 10). ims.((ordinal i)@_)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- small_labels = for i: (Fin 10). labels.((ordinal i)@_)
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p small_labels
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Epochs = (Fin 5)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Minibatches = (Fin 1)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Minibatch = (Fin 10)
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :t ims.(2@_)
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- model = lenet (Fin 1) (Fin 1) (Fin 20)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- init_param = (init model  $ new_key 0)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :p forward model init_param (ims.(2@Batch))
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Sanity check</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- (all_params&#39;, losses&#39;) = trainClass model small_ims small_labels Epochs Minibatch Minibatches
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p losses&#39;
+</span></div></div></div></body></html>
