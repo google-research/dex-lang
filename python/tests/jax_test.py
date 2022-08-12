@@ -239,6 +239,43 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(
         jax.vmap(dex_sqr, in_axes=1, out_axes=1)(x), x * x)
 
+  def test_dex_not_knowing_shape_jvp(self):
+    m = dex.Module(dedent("""
+    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
+      for i. x.i * x.i
+    """))
+    dex_sqr = primitive(m.sqr)
+
+    def jax_sqr(x):
+      return x * x
+
+    x = jnp.linspace(-0.2, 1.1, num=10, dtype=jnp.float32)
+    xt = jnp.linspace(2.4, 7.1, num=10, dtype=jnp.float32)
+
+    output_dex, tangent_dex = jax.jvp(dex_sqr, (x,), (xt,))
+    output_jax, tangent_jax = jax.jvp(jax_sqr, (x,), (xt,))
+    np.testing.assert_allclose(output_dex, output_jax)
+    np.testing.assert_allclose(tangent_dex, tangent_jax)
+
+  def test_dex_not_knowing_shape_jvp_binary(self):
+    f_dex = primitive(dex.eval(
+        r'\{n} x:((Fin n) => Float) y:((Fin n) => Float). '
+        'for i. x.i * x.i + 2.0 * y.i'))
+
+    def f_jax(x, y):
+      return x**2 + 2 * y
+
+    x  = jnp.arange(10.)
+    y = jnp.linspace(-0.2, 0.5, num=10)
+    u = jnp.linspace(0.1, 0.3, num=10)
+    v = jnp.linspace(2.0, -5.0, num=10)
+
+    output_dex, tangent_dex = jax.jvp(f_dex, (x, y), (u, v))
+    output_jax, tangent_jax = jax.jvp(f_jax, (x, y), (u, v))
+
+    np.testing.assert_allclose(output_dex, output_jax)
+    np.testing.assert_allclose(tangent_dex, tangent_jax)
+
 def lax_test(prim, arg_thunk, **kwargs):
   def test(self):
     f = dexjit(partial(prim, **kwargs))
