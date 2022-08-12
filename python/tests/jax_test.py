@@ -276,6 +276,70 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(output_dex, output_jax)
     np.testing.assert_allclose(tangent_dex, tangent_jax)
 
+  def test_dex_not_knowing_shape_grad(self):
+    f_dex = primitive(dex.eval(
+        r'\{n} x:((Fin n) => Float). '
+        'sum $ for i. (n_to_f $ ordinal i) * x.i * x.i'))
+
+    def f_jax(x):
+      return jnp.sum(jnp.arange(10.) * x**2)
+
+    x = jnp.linspace(-0.2, 0.5, num=10)
+
+    grad_dex = jax.grad(f_dex)(x)
+    grad_jax = jax.grad(f_jax)(x)
+
+    np.testing.assert_allclose(grad_dex, grad_jax)
+
+  def test_dex_not_knowing_shape_grad_binary_function(self):
+    f_dex = primitive(dex.eval(
+        r'\{n} x:((Fin n) => Float) y:((Fin n) => Float). '
+        'sum $ for i. x.i * x.i + 2.0 * y.i'))
+
+    def f_jax(x, y):
+      return jnp.sum(x**2 + 2 * y)
+
+    x = jnp.arange(10.)
+    y = jnp.linspace(-0.2, 0.5, num=10)
+
+    np.testing.assert_allclose(
+        jax.grad(f_dex, argnums=1)(x, y),
+        jax.grad(f_jax, argnums=1)(x, y))
+
+    np.testing.assert_allclose(
+        jax.grad(f_dex, argnums=0)(x, y),
+        jax.grad(f_jax, argnums=0)(x, y))
+
+    np.testing.assert_allclose(
+        jax.grad(f_dex, argnums=(0, 1))(x, y),
+        jax.grad(f_jax, argnums=(0, 1))(x, y))
+
+  def test_dex_not_knowing_shape_of_cotangent(self):
+    f_dex = primitive(dex.eval(
+        r'\{n} x:((Fin n) => Float) y:((Fin n) => Float). '
+        'for i. x.i * x.i + 2.0 * y.i'))
+
+    def f_with_dex(x, y):
+      return jnp.sum(f_dex(x, y))
+
+    def f_jax(x, y):
+      return jnp.sum(x**2 + 2 * y)
+
+    x = jnp.arange(10.)
+    y = jnp.linspace(-0.2, 0.5, num=10)
+
+    np.testing.assert_allclose(
+        jax.grad(f_with_dex, argnums=1)(x, y),
+        jax.grad(f_jax, argnums=1)(x, y))
+
+    np.testing.assert_allclose(
+        jax.grad(f_with_dex, argnums=0)(x, y),
+        jax.grad(f_jax, argnums=0)(x, y))
+
+    np.testing.assert_allclose(
+        jax.grad(f_with_dex, argnums=(0, 1))(x, y),
+        jax.grad(f_jax, argnums=(0, 1))(x, y))
+
 def lax_test(prim, arg_thunk, **kwargs):
   def test(self):
     f = dexjit(partial(prim, **kwargs))
