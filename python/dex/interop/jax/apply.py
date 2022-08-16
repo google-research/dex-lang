@@ -345,6 +345,10 @@ def tuple_ty_ref_string(names):
 _is_linear_input = jax.ad.is_undefined_primal
 
 
+def hoistable(ty, bound_names):
+  """Is this type hoistable past these names?"""
+  return not ty.free_vars().intersection(set(bound_names))
+
 def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   """Evaluates the transpose of a function atom.  """
 
@@ -352,12 +356,13 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   # `dex_call_jvp`, applied to a some function atom, called `f`, say.
   # Concretely, if `f` has three primal arguments, `func_atom` should look like:
   # ```
-  # \ x0 x1 x2 u0 u1 u2.
+  # \ {n0} {n1} {n2} x0 x1 x2 t0 t1 t2.
   #   intermediate_linearized = linearize f (x0, x1, x2)
-  #   snd intermediate_linearized (u0 u1 u2)
+  #   snd intermediate_linearized (t0, t1, t2)
   # ```
-  # In particular, its arguments are assumed to be `num_primals` primal inputs,
-  # followed by `num_primals` tangent inputs.
+  # In particular, its explicit arguments are assumed to be
+  # `num_primals` primal inputs, followed by `num_primals` tangent
+  # inputs.
 
   assert len(args) % 2 == 0
   num_primals = len(args) // 2
@@ -366,11 +371,24 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   assert len(args) == len(native.explicit_argument_signature)
   module = func_atom.module.copy()
 
+  # This argument handling sorts all implicit arguments ahead of the
+  # explicit ones when constructing the lambda expression to be
+  # transposed.  This should be fine because (i) the Dex compiler will
+  # automatically reverse the permutation when inferring the implicit
+  # arguments of `func_atom`, and (ii) the implicit argument binders'
+  # types have no dependencies on the explicit arguments (or any
+  # arguments) because they are all array sizes and therefore of Nat
+  # type (which is the only thing the Python interop knows how to
+  # infer anyway).  As a defensive measure, we perform explicit
+  # hoisting checks when doing the reordering.
   implicit_args = []
   name_to_ty = {}
   for binder in native.argument_signature:
     if binder.implicit:
-      implicit_args.append("{" + binder.name + "}")
+      if hoistable(binder.type, name_to_ty.keys()):
+        implicit_args.append("{" + binder.name + "}")
+      else:
+        raise RuntimeError(f"Hoist check failed: implicit {binder.name} of type {binder.type} depends on a previous explicit binder")
     else:
       name_to_ty[binder.name] = binder.type.dex_annotation()
 
