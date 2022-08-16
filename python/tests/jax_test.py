@@ -340,6 +340,29 @@ class JAXTest(unittest.TestCase):
         jax.grad(f_with_dex, argnums=(0, 1))(x, y),
         jax.grad(f_jax, argnums=(0, 1))(x, y))
 
+  def test_interleave_implicit_args_vjp(self):
+    f_dex = primitive(dex.eval(
+        r'\{n} x:((Fin n) => Float) {m} y:((Fin n) => (Fin m) => Float). '
+        'for i. x.i * x.i + 2.0 * sum(y.i)'))
+
+    def f_with_dex(x, y):
+      return jnp.sum(f_dex(x, y))
+
+    def f_jax(x, y):
+      return jnp.sum(x**2 + 2 * jnp.sum(y, axis=1))
+
+    x = jnp.arange(10.)
+    y = jnp.linspace(jnp.array([1.0, -0.2]),
+                     jnp.array([1.1, 0.5]), num=10, dtype=jnp.float32)
+
+    np.testing.assert_allclose(
+        jax.grad(f_with_dex, argnums=1)(x, y),
+        jax.grad(f_jax, argnums=1)(x, y))
+
+    np.testing.assert_allclose(
+        jax.grad(f_with_dex, argnums=0)(x, y),
+        jax.grad(f_jax, argnums=0)(x, y))
+
 def lax_test(prim, arg_thunk, **kwargs):
   def test(self):
     f = dexjit(partial(prim, **kwargs))

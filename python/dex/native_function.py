@@ -51,6 +51,9 @@ class ScalarType:
   def dex_annotation(self):
     return dex_types[self.ctype]
 
+  def free_vars(self):
+    return frozenset()
+
 @dataclass(frozen=True)
 class RectContArrayType:
   """A rectangular contiguous array with potentially dynamic shape.
@@ -122,6 +125,10 @@ class RectContArrayType:
     """Return a string in Dex syntax representing the same type as self."""
     prefix = " => ".join([f"(Fin {str(dim)})" for dim in self.shape])
     return f"{prefix} => {dex_types[self.ctype]}"
+
+  def free_vars(self):
+    return frozenset([dim for dim in self.shape if isinstance(dim, str)])
+
 
 NativeType = Union[ScalarType, RectContArrayType]
 
