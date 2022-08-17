@@ -21,9 +21,9 @@ import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
 import Paths_dex  (getDataFileName)
+import Lexing (Parser, symChar, keyWordStrs, symbol, parseit, withSource)
 import Syntax
 import PPrint
-import Parser
 import Serialize ()
 import Err
 
