@@ -351,9 +351,11 @@ transposeCon con ct = case con of
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
+  Newtype ty _      -> case ty of
+    TC (Fin _) -> notTangent
+    _          -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  FinVal _ _        -> notTangent
   LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent

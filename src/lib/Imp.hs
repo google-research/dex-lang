@@ -473,11 +473,6 @@ toImpOp maybeDest op = case op of
       (BaseTy _, BaseTy bt) -> do
         x' <- fromScalarAtom x
         returnVal =<< toScalarAtom =<< cast x' bt
-      (TC (Fin _), IdxRepTy) -> do
-        let Con (FinVal _ xord) = x
-        returnVal xord
-      (IdxRepTy, TC (Fin n)) ->
-        returnVal $ Con $ FinVal n x
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   BitcastOp destTy x -> do
     case destTy of
@@ -1045,7 +1040,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
     Fin n -> do
       x <- rec IdxRepTy
-      return $ Con $ ConRef $ FinVal n x
+      return $ Con $ ConRef $ Newtype (TC $ Fin n) x
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
@@ -1121,7 +1116,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
-          (FinVal _ iRef, FinVal _ i) -> copyRec iRef i
+          (Newtype _ eRef, Newtype _ e) -> copyRec eRef e
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
         _ -> error "unexpected src/dest pair"
       _ -> error "unexpected src/dest pair"
@@ -1195,7 +1190,7 @@ loadDest (Con dest) = do
    ConRef con -> Con <$> case con of
      ProdCon ds -> ProdCon <$> traverse loadDest ds
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
-     FinVal n iRef -> FinVal n <$> loadDest iRef
+     Newtype ty eRef -> Newtype ty <$> loadDest eRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest

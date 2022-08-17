@@ -39,5 +39,6 @@ m' = m ** m
 
 %passes opt
 x = for i:(Fin 4). [0, 0, 0, ordinal i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
--- CHECK: [0, {{.*}}, 0]
--- CHECK-NOT: [0, {{.*}}, 0]
+-- CHECK: [ 0
+-- CHECK: , 0 ]
+-- CHECK-NOT: [0

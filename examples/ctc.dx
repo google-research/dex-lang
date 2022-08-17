@@ -117,7 +117,7 @@ logits : Time => Vocab => Float = arb $ new_key 0
 -- Create random labels
 labels = for i:position. randIdxNoZero Vocab (new_key (ordinal i))
 :p labels
-> [(3@Fin 6), (4@Fin 6), (1@Fin 6)]
+> [(3@(Fin 6)), (4@(Fin 6)), (1@(Fin 6))]
 
 -- Evaluate marginal probability of labels given logits
 :p exp $ ctc blank logits labels

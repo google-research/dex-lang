@@ -62,6 +62,7 @@ import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
+import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import GHC.Stack
 
@@ -1293,11 +1294,11 @@ projectIxFinMethod methodIx n = liftBuilder do
     -- size
     0 -> return n
     -- ordinal
-    1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-           emitOp $ CastOp IdxRepTy $ Var ix
+    1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
+           return $ ProjectElt (0 NE.:| []) ix
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-           return $ Con $ FinVal (sink n) $ Var ix
+           return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
     _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===

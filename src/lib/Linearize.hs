@@ -527,7 +527,9 @@ linearizePrimCon con = case con of
       elemsT <- forM elemsWithT \elemsWithT' ->
                   forM elemsWithT' \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
-  FinVal _ _            -> emitZeroT
+  Newtype ty _    -> case ty of
+    TC (Fin _) -> emitZeroT
+    _ -> error $ "Unsupported newtype: " ++ pprint ty
   LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"

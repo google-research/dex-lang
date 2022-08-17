@@ -374,6 +374,8 @@ instance HasType Atom where
                                      (Var v') -> return v'
                                      _ -> error "!?"
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
+        -- Newtypes
+        TC (Fin _) | i == 0 -> return IdxRepTy
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -407,7 +409,7 @@ getTypePrimCon con = case con of
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
   SumCon ty _ _ -> substM ty
   SumAsProd ty _ _ -> substM ty
-  FinVal n _ -> substM $ TC $ Fin n
+  Newtype ty _ -> substM ty
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -416,7 +418,7 @@ getTypePrimCon con = case con of
     return $ RawRefTy $ TabTy binder a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM getTypeRef xs)
-    FinVal n _ -> substM $ RawRefTy $ TC $ Fin n
+    Newtype ty _ -> RawRefTy <$> substM ty
     SumAsProd ty _ _ -> do
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef

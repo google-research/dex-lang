@@ -48,9 +48,9 @@ data IndexSetKind n
 
 isTrivialIndex :: Type i -> UTLM i o (IndexSetKind o)
 isTrivialIndex = \case
-  TC (Fin     (IdxRepVal n)) | n <= 0 -> return EmptyIxSet
-  TC (Fin  nv@(IdxRepVal n)) | n == 1 ->
-    liftM (SingletonIxSet . Con) $ FinVal <$> substM nv <*> pure (IdxRepVal 0)
+  TC (Fin (IdxRepVal n)) | n <= 0 -> return EmptyIxSet
+  TC (Fin (IdxRepVal n)) | n == 1 ->
+    return $ SingletonIxSet $ Con $ Newtype (FinConst n) (IdxRepVal 0)
   _ -> return UnknownIxSet
 
 instance GenericTraverser UTLS where
@@ -77,18 +77,22 @@ unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE
 peepholeExpr :: GenericTraverser s => Expr o -> GenericTraverserM s i o (Either (Atom o) (Expr o))
 peepholeExpr expr = case expr of
   -- TODO: Support more casts!
-  Op (CastOp IdxRepTy (Con (FinVal _ i))) -> return $ Left i
   Op (CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Word32Lit x)))) ->
     return $ Left $ Con $ Lit $ Int32Lit $ fromIntegral x
   Op (CastOp (BaseTy (Scalar Word64Type)) (Con (Lit (Word32Lit x)))) ->
     return $ Left $ Con $ Lit $ Word64Lit $ fromIntegral x
   -- TODO: Support more unary and binary ops!
   Op (BinOp IAdd (IdxRepVal a) (IdxRepVal b)) -> return $ Left $ IdxRepVal $ a + b
-  TabApp (Var t) ((Con (FinVal _ (IdxRepVal ord))) NE.:| []) -> do
-    lookupAtomName t >>= \case
+  TabApp (Var t) ((Con (Newtype (TC (Fin _)) (IdxRepVal ord))) NE.:| []) ->
+    lookupAtomName t <&> \case
       LetBound (DeclBinding PlainLet _ (Op (TabCon _ elems))) ->
-        return $ Left $ elems !! (fromIntegral ord)
-      _ -> return $ Right expr
+        -- It is not safe to assume that this index can always be simplified!
+        -- For example, it might be coming from an unsafe_from_ordinal that is
+        -- under a case branch that would be dead for all invalid indices.
+        if 0 <= ord && fromIntegral ord < length elems
+          then Left $ elems !! fromIntegral ord
+          else Right expr
+      _ -> Right expr
   -- TODO: Apply a function to literals when it has a cheap body?
   -- Think, partial evaluation of threefry.
   _ -> return $ Right expr
@@ -118,7 +122,7 @@ instance GenericTraverser ULS where
             True -> case body' of
               Lam (LamExpr b' block') -> do
                 vals <- dropSubst $ forM [0..(fromIntegral n :: Int) - 1] \ord -> do
-                  let i = Con $ FinVal (IdxRepVal n) (IdxRepVal $ fromIntegral ord)
+                  let i = Con $ Newtype (FinConst n) (IdxRepVal $ fromIntegral ord)
                   extendSubst (b' @> SubstVal i) $ emitSubstBlock block'
                 getType body' >>= \case
                   Pi (PiType (PiBinder tb _ _) _ valTy) -> do

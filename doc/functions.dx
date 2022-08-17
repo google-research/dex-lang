@@ -193,7 +193,7 @@ is actually why `from_ordinal` takes the type as an explicit argument,
 so that it _can_ be supplied when it would not be inferrable.
 
 from_ordinal (Fin 2) 0
-> (0@Fin 2)
+> (0@(Fin 2))
 
 '## Standalone function types
 

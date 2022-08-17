@@ -209,10 +209,6 @@ evalOp expr = mapM evalAtom expr >>= \case
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
                              " -> " ++ pprint destTy
     case (sourceTy, destTy) of
-      (IdxRepTy, TC (Fin n)) -> return $ Con $ FinVal n x
-      (TC (Fin _), IdxRepTy) -> do
-        let Con (FinVal _ ord) = x
-        return ord
       (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x
