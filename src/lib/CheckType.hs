@@ -325,6 +325,7 @@ instance HasType Atom where
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM v
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
+        TC (Fin _) | i == 0 -> return IdxRepTy
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -500,7 +501,9 @@ typeCheckPrimCon con = case con of
     payload |: (caseTys !! tag)
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
-  FinVal n i -> i|:IdxRepTy >> substM (TC $ Fin n)
+  Newtype ty e -> case ty of
+    TC (Fin _) -> e|:IdxRepTy >> substM ty
+    _ -> error $ "Unsupported newtype: " ++ pprint ty
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -509,9 +512,9 @@ typeCheckPrimCon con = case con of
     return $ RawRefTy $ TabTy binder a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM typeCheckRef xs)
-    FinVal n i -> do
-      n' <- substM n
-      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ Fin n')
+    Newtype ty e -> case ty of
+      TC (Fin _) -> e|:(RawRefTy IdxRepTy) >> (RawRefTy <$> substM ty)
+      _ -> error $ "Unsupported newtype: " ++ pprint ty
     SumAsProd ty tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
       RawRefTy <$> substM ty

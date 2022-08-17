@@ -916,14 +916,14 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
-  Lit l       -> prettyPrec l
+  Lit l        -> prettyPrec l
   ProdCon xs  -> atPrec ArgPrec $ align $ group $
     encloseSep "(" ")" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  FinVal n i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (Fin n)
+  Newtype ty e -> atPrec LowestPrec $ pArg e <> "@" <> (parens $ pLowest ty)
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef

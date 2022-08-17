@@ -66,7 +66,7 @@ data PrimCon e =
       | SumCon    e Int e     -- type, tag, payload
       | SumAsProd e e   [[e]] -- type, tag, payload
       | LabelCon String
-      | FinVal e e
+      | Newtype e e           -- type, payload
       -- References
       | BaseTypeRef e
       | TabRef e

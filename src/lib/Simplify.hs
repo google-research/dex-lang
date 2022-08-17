@@ -729,7 +729,6 @@ simplifyOp op = case op of
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
   CastOp (BaseTy (Scalar Word32Type)) (Con (Lit (Word64Lit val))) ->
     return $ Con $ Lit $ Word32Lit $ fromIntegral val
-  CastOp IdxRepTy (Con (FinVal _ i)) -> return i
   -- Those are not no-ops! Builder methods do algebraic simplification!
   BinOp ISub x y -> isub x y
   BinOp IAdd x y -> iadd x y

@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.ByteString as BS
 import Data.Functor ((<&>))
+import Data.List.NonEmpty qualified as NE
 import Data.ByteString.Internal (memcpy)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Foldable
@@ -64,11 +65,9 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
       TC (Fin (IdxRepVal n)) <- return $ binderType i
-      Block _ (Nest castDecl (Nest offDecl (Nest loadDecl Empty))) (Var result) <- return body
-      Let v (DeclBinding _ _ (Op (CastOp IdxRepTy (Var i')))) <- return castDecl
+      Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
+      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (0 NE.:| []) i')))) <- return offDecl
       guard $ binderName i == i'
-      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (Var v')))) <- return offDecl
-      guard $ binderName v == v'
       Let r (DeclBinding _ _ loadExpr) <- return loadDecl
       guard $ binderName r == result
       Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
@@ -76,7 +75,7 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
       Let ioR (DeclBinding _ _ (Op (PtrLoad (Var v1')))) <- return ioDecl
       guard $ binderName ioR == ioResult
       guard $ binderName v1 == v1'
-      HoistSuccess ptrAtomTop <- return $ hoist (PairB i v) ptrName
+      HoistSuccess ptrAtomTop <- return $ hoist i ptrName
       return (ptrAtomTop, n)
 getDexString x = error $ "Not a string: " ++ pprint x
 {-# SCC getDexString #-}

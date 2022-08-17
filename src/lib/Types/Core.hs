@@ -68,7 +68,6 @@ data Atom (n::S) =
  | Con (Con n)
  | TC  (TC  n)
  | Eff (EffectRow n)
-   -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
  | DataConRef (DataDefName n) (DataDefParams n) (EmptyAbs (Nest DataConRefBinding) n)
@@ -1131,6 +1130,7 @@ getProjection (i:is) a = case getProjection is a of
   DataCon _ _ _ _ xs -> xs !! i
   Record items -> toList items !! i
   Con (ProdCon xs) -> xs !! i
+  Con (Newtype _ x) | i == 0 -> x
   DepPair l _ _ | i == 0 -> l
   DepPair _ r _ | i == 1 -> r
   ACase scrut alts resultTy -> ACase scrut alts' resultTy'
