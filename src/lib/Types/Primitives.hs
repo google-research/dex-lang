@@ -155,8 +155,8 @@ data PrimHof e =
         For ForAnn e e        -- ix dict, body lambda
       | While e
       | RunReader e e
-      | RunWriter (BaseMonoidP e) e
-      | RunState  e e
+      | RunWriter (Maybe e) (BaseMonoidP e) e
+      | RunState  (Maybe e) e e
       | RunIO e
       | CatchException e
       | Linearize e

@@ -689,9 +689,9 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunReader _ f -> do
     (resultTy, _) <- getTypeRWSAction f
     return resultTy
-  RunWriter _ f -> do
+  RunWriter _ _ f -> do
     uncurry PairTy <$> getTypeRWSAction f
-  RunState _ f -> do
+  RunState _ _ f -> do
     (resultTy, stateTy) <- getTypeRWSAction f
     return $ PairTy resultTy stateTy
   RunIO f -> do
@@ -771,15 +771,16 @@ exprEffects expr = case expr of
     IOFree   _    -> return $ oneEffect IOEffect
     PtrLoad  _    -> return $ oneEffect IOEffect
     PtrStore _ _  -> return $ oneEffect IOEffect
+    Place    _ _  -> return $ oneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
     While body    -> functionEffs body
     Linearize _   -> return Pure  -- Body has to be a pure function
     Transpose _   -> return Pure  -- Body has to be a pure function
-    RunWriter _ f -> rwsFunEffects Writer f
     RunReader _ f -> rwsFunEffects Reader f
-    RunState  _ f -> rwsFunEffects State  f
+    RunWriter d _ f -> rwsFunEffects Writer f <&> maybeIO d
+    RunState  d _ f -> rwsFunEffects State  f <&> maybeIO d
     RunIO f -> do
       effs <- functionEffs f
       return $ deleteEff IOEffect effs
@@ -788,6 +789,7 @@ exprEffects expr = case expr of
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
     RememberDest _ f -> functionEffs f
+    where maybeIO d = case d of Just _ -> (<>oneEffect IOEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
 
 instance HasEffectsE Block where
