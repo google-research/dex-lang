@@ -317,7 +317,7 @@ transposeHof hof ct = case hof of
       ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal
-  RunState s (Lam (BinaryLamExpr hB refB body)) -> do
+  RunState Nothing s (Lam (BinaryLamExpr hB refB body)) -> do
     (ctBody, ctState) <- fromPair ct
     (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
@@ -334,7 +334,7 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ct)
       return UnitVal
     transposeAtom r ct'
-  RunWriter _ (Lam (BinaryLamExpr hB refB body))-> do
+  RunWriter Nothing _ (Lam (BinaryLamExpr hB refB body))-> do
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader noHint ctEff \h ref -> do

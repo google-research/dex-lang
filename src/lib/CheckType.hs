@@ -771,17 +771,28 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     (resultTy, readTy) <- checkRWSAction Reader f
     r |: readTy
     return resultTy
-  RunWriter _ f -> do
+  RunWriter d _ f -> do
     -- XXX: We can't verify compatibility between the base monoid and f, because
     --      the only way in which they are related in the runAccum definition is via
     --      the AccumMonoid typeclass. The frontend constraints should be sufficient
     --      to ensure that only well typed programs are accepted, but it is a bit
     --      disappointing that we cannot verify that internally. We might want to consider
     --      e.g. only disabling this check for prelude.
-    uncurry PairTy <$> checkRWSAction Writer f
-  RunState s f -> do
+    (resultTy, accTy) <- checkRWSAction Writer f
+    case d of
+      Nothing -> return ()
+      Just dest -> do
+        dest |: RawRefTy accTy
+        declareEff IOEffect
+    return $ PairTy resultTy accTy
+  RunState d s f -> do
     (resultTy, stateTy) <- checkRWSAction State f
     s |: stateTy
+    case d of
+      Nothing -> return ()
+      Just dest -> do
+        dest |: RawRefTy stateTy
+        declareEff IOEffect
     return $ PairTy resultTy stateTy
   RunIO f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f

@@ -556,25 +556,25 @@ linearizeHof hof = case hof of
       rLin' <- rLin
       tanEffectLam <- applyLinToTangents $ sink tangentLam
       liftM Var $ emit $ Hof $ RunReader rLin' tanEffectLam
-  RunState sInit lam -> do
+  RunState Nothing sInit lam -> do
     WithTangent sInit' sLin <- linearizeAtom sInit
     lam' <- linearizeEffectFun State lam
-    (result, sFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunState sInit' lam')
+    (result, sFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunState Nothing sInit' lam')
     (primalResult, tangentLam) <- fromPair result
     return $ WithTangent (PairVal primalResult sFinal) do
       sLin' <- sLin
       tanEffectLam <- applyLinToTangents $ sink tangentLam
-      liftM Var $ emit $ Hof $ RunState sLin' tanEffectLam
-  RunWriter bm lam -> do
+      liftM Var $ emit $ Hof $ RunState Nothing sLin' tanEffectLam
+  RunWriter Nothing bm lam -> do
     -- TODO: check it's actually the 0/+ monoid (or should we just build that in?)
     ComposeE bm' <- substM (ComposeE bm)
     lam' <- linearizeEffectFun Writer lam
-    (result, wFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunWriter bm' lam')
+    (result, wFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunWriter Nothing bm' lam')
     (primalResult, tangentLam) <- fromPair result
     return $ WithTangent (PairVal primalResult wFinal) do
       ComposeE bm'' <- sinkM $ ComposeE bm'
       tanEffectLam <- applyLinToTangents $ sink tangentLam
-      liftM Var $ emit $ Hof $ RunWriter bm'' tanEffectLam
+      liftM Var $ emit $ Hof $ RunWriter Nothing bm'' tanEffectLam
   RunIO (Lam (LamExpr b@(LamBinder _ _ _ effs) body)) -> do
     effs' <- substM $ ignoreHoistFailure $ hoist b effs
     -- TODO: consider the possibility of other effects here besides IO

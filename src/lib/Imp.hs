@@ -577,9 +577,11 @@ toImpHof maybeDest hof = do
       copyAtom rDest r'
       extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal rDest) $
         translateBlock maybeDest body
-    RunWriter (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
-      let PairTy _ accTy = resultTy
-      (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+    RunWriter d (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
+      let PairTy ansTy accTy = resultTy
+      (aDest, wDest) <- case d of
+        Nothing -> destPairUnpack <$> allocDest maybeDest resultTy
+        Just d' -> (,) <$> allocDest Nothing ansTy <*> substM d'
       e' <- substM e
       emptyVal <- liftBuilderImp do
         PairE accTy' e'' <- sinkM $ PairE accTy e'
@@ -588,10 +590,12 @@ toImpHof maybeDest hof = do
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal wDest) $
         translateBlock (Just aDest) body
       PairVal <$> destToAtom aDest <*> destToAtom wDest
-    RunState s (Lam (BinaryLamExpr h ref body)) -> do
-      s' <- substM s
-      (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
-      copyAtom sDest s'
+    RunState d s (Lam (BinaryLamExpr h ref body)) -> do
+      let PairTy ansTy _ = resultTy
+      (aDest, sDest) <- case d of
+        Nothing -> destPairUnpack <$> allocDest maybeDest resultTy
+        Just d' -> (,) <$> allocDest Nothing ansTy <*> substM d'
+      copyAtom sDest =<< substM s
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal sDest) $
         translateBlock (Just aDest) body
       PairVal <$> destToAtom aDest <*> destToAtom sDest

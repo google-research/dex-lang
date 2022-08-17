@@ -31,11 +31,7 @@ m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
 
 %passes imp
 m' = m ** m
--- There's an extra alloca for the accumulator, but we should get rid of it
--- once we have better destination passing
 -- CHECK: alloc Float32[10000]
--- CHECK-NOT: alloc
--- CHECK: alloca Float32[1]
 -- CHECK-NOT: alloc
 
 "don't unroll large table literals"

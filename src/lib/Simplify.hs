@@ -786,23 +786,25 @@ simplifyHof hof = case hof of
     ans <- emit $ Hof $ RunReader r' lam'
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
-  RunWriter (BaseMonoid e combine) lam -> do
+  RunWriter Nothing (BaseMonoid e combine) lam -> do
     e' <- simplifyAtom e
     (combine', IdentityReconAbs) <- simplifyBinaryLam combine
     (lam', Abs b recon) <- simplifyBinaryLam lam
-    let hof' = Hof $ RunWriter (BaseMonoid e' combine') lam'
+    let hof' = Hof $ RunWriter Nothing (BaseMonoid e' combine') lam'
     (ans, w) <- fromPair =<< liftM Var (emit hof')
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
     return $ PairVal ans' w
-  RunState s lam -> do
+  RunWriter _ _ _ -> error "Shouldn't see a RunWriter with a dest in Simplify"
+  RunState Nothing s lam -> do
     s' <- simplifyAtom s
     (lam', Abs b recon) <- simplifyBinaryLam lam
-    resultPair <- emit $ Hof $ RunState s' lam'
+    resultPair <- emit $ Hof $ RunState Nothing s' lam'
     (ans, sOut) <- fromPair $ Var resultPair
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
     return $ PairVal ans' sOut
+  RunState _ _ _ -> error "Shouldn't see a RunState with a dest in Simplify"
   RunIO lam -> do
     (lam', Abs b recon) <- simplifyLam lam
     ans <- emit $ Hof $ RunIO lam'
@@ -863,7 +865,7 @@ exceptToMaybeExpr expr = case expr of
     maybes <- buildForAnn (getNameHint b) ann ixTy \i ->
       extendSubst (b@>Rename i) $ exceptToMaybeBlock body
     catMaybesE maybes
-  Hof (RunState s lam) -> do
+  Hof (RunState Nothing s lam) -> do
     s' <- substM s
     Lam (BinaryLamExpr h ref body) <- return lam
     result  <- emitRunState noHint s' \h' ref' ->
@@ -874,7 +876,7 @@ exceptToMaybeExpr expr = case expr of
     emitMaybeCase maybeAns (MaybeTy a)
        (return $ NothingAtom $ sink a)
        (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink newState))
-  Hof (RunWriter monoid (Lam (BinaryLamExpr h ref body))) -> do
+  Hof (RunWriter Nothing monoid (Lam (BinaryLamExpr h ref body))) -> do
     monoid' <- mapM substM monoid
     accumTy <- substM =<< (getReferentTy $ EmptyAbs $ PairB h ref)
     result <- emitRunWriter noHint accumTy monoid' \h' ref' ->

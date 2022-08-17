@@ -929,7 +929,7 @@ emitRunWriter
   -> m n (Atom n)
 emitRunWriter hint accTy bm body = do
   lam <- buildEffLam Writer hint accTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunWriter bm lam
+  liftM Var $ emit $ Hof $ RunWriter Nothing bm lam
 
 mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
 mCombine monoidDict x y = do
@@ -944,7 +944,7 @@ emitRunState
 emitRunState hint initVal body = do
   stateTy <- getType initVal
   lam <- buildEffLam State hint stateTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunState initVal lam
+  liftM Var $ emit $ Hof $ RunState Nothing initVal lam
 
 emitRunReader
   :: (Emits n, ScopableBuilder m)
