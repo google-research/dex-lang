@@ -73,7 +73,6 @@ library
                      , Name
                      , Optimize
                      , PPrint
-                     , Parser
                      , RawName
                      , Serialize
                      , Simplify
