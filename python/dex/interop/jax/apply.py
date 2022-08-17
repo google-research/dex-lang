@@ -388,7 +388,7 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
       if hoistable(binder.type, name_to_ty.keys()):
         implicit_args.append("{" + binder.name + "}")
       else:
-        raise RuntimeError(f"Hoist check failed: implicit {binder.name} of type {binder.type} depends on a previous explicit binder")
+        raise NotImplementedError(f"Hoist check failed: implicit {binder.name} of type {binder.type} depends on a previous explicit binder")
     else:
       name_to_ty[binder.name] = binder.type.dex_annotation()
 
