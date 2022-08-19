@@ -245,13 +245,9 @@ map (\(a:Float). a + 1) [1., 2., 3.]
 'Also like `def`, we can specify implicit parameters with curly braces:
 
 \{a} (x:a). x
-> \a:Type ?-> \x:a. x
+> \{a:Type} x:a. x
 
 'and class parameters with square brackets:
 
-\{n} [Ix n] (xs:n=>Float). sum xs
-> \n:Type ?->
->   \v#0:(Ix n) ?=>
->     \xs:(n => Float32).
->       v#1:Float32 = sum n Float32 (Instance Add.2 []) v#0 xs
->       v#1
+:t \{n} [Ix n] (xs:n=>Float). sum xs
+> ((n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32)
