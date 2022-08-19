@@ -675,8 +675,8 @@ oneField bind = \case
   (WithSrc _ (CParens (ExprBlock g'))) -> oneField bind g'
   (WithSrc src (CIdentifier field')) -> return $ fieldPun src field'
   (WithSrc src _) -> addSrcContext src $ throw SyntaxErr
-    $ "Bad field.  Expected `label " ++ pprint bind ++ " expr`,"
-    ++ "`... expr`, or a single `label`."
+    $ "Bad field spec.  Expected an explicit field `label " ++ pprint bind ++ " expr`, "
+    ++ "a remaining fields expression `... expr`, or a label-field pun `label`."
 
 fieldPun :: SrcPosCtx -> String -> UFieldRowElem VoidS
 fieldPun src field = UStaticField (fromString field) (WithSrcE src $ fromString field)

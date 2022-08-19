@@ -310,10 +310,13 @@ data SourceBlock' =
  | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
  | DeclareCustomLinearization SourceName SymbolicZeros (UExpr VoidS)
  | Misc SourceBlockMisc
- | UnParseable ReachedEOF String
- | BadSyntax Errs
+ | UnParseable ReachedEOF String  -- Grouping failure like `x + * y`.
+ | BadSyntax Errs  -- Well-grouped nonsense like `x : Int : Float`.
   deriving (Show, Generic)
 
+-- This stuff is done when successfully parsed as concrete syntax, and
+-- does not participate in the concrete->abstract interpretation in
+-- AbstractSyntax.hs.
 data SourceBlockMisc
   = GetNameType SourceName
   | ImportModule ModuleSourceName
