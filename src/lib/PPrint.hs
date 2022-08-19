@@ -212,10 +212,8 @@ instance Pretty (PiBinder n l) where
 
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
-  prettyPrec lamExpr = case lamExpr of
-    LamExpr (LamBinder _ _ arr _) _ ->
-      atPrec LowestPrec $ "\\"
-      <> prettyLamHelper lamExpr (PrettyLam arr)
+  prettyPrec lamExpr =
+    atPrec LowestPrec $ "\\" <> prettyLamHelper lamExpr PrettyLam
 
 instance Pretty (IxType n) where
   pretty (IxType ty _) = parens $ "IxType" <+> pretty ty
@@ -367,27 +365,30 @@ prettyBinderHelper (b:>ty) body =
     then parens $ p (b:>ty)
     else p ty
 
-data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
+data PrettyLamType = PrettyLam | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: LamExpr n -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
+  wrap :: Arrow -> Doc ann -> Doc ann
+  wrap arr arg = case lamType of
+    PrettyLam -> case arr of
+      PlainArrow    -> arg
+      LinArrow      -> arg
+      ImplicitArrow -> "{" <> arg <> "}"
+      ClassArrow    -> "[" <> arg <> "]"
+    PrettyFor _ -> arg
   rec :: LamExpr n -> Bool -> (Doc ann, EffectRow n, Block n)
-  rec (LamExpr (LamBinder b ty _ effs') body') first =
-    let thisOne = (if first then "" else line) <> p (b:>ty)
+  rec (LamExpr (LamBinder b ty arr effs') body') first =
+    let thisOne = (if first then "" else line) <> wrap arr (p (b:>ty))
     in case inlineLastDeclBlock body' of
-      Abs Empty (Atom (Lam next@(LamExpr (LamBinder _ _ arr' _) _)))
-        | lamType == PrettyLam arr' ->
-            let (binders', effs'', block) = rec next False
-            in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
+      Abs Empty (Atom (Lam next@(LamExpr _ _))) ->
+        let (binders', effs'', block) = rec next False
+        in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
       Abs Empty (Hof (For ann _ (Lam next)))
         | lamType == PrettyFor ann ->
             let (binders', effs'', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      _ -> (thisOne <> punctuation, unsafeCoerceE effs', unsafeCoerceE body')
-        where punctuation = case lamType of
-                PrettyFor _ -> "."
-                PrettyLam PlainArrow -> "."
-                PrettyLam arr -> " " <> p arr
+      _ -> (thisOne <> ".", unsafeCoerceE effs', unsafeCoerceE body')
   (binders, effs, body) = rec lamExpr True
   in prettyLam binders effs body
 
