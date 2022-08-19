@@ -92,19 +92,19 @@ Syntax for records, variants, and their types.
 'Parse errors
 
 :p {a:Int & b:Float | c:Int }
-> Syntax error: Bad field.  Expected `label : expr`,`... expr`, or a single `label`.
+> Syntax error: Bad field spec.  Expected an explicit field `label : expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
 >
 > :p {a:Int & b:Float | c:Int }
 >     ^^^^^^^^^^^^^^^^
 
 :p {a:Int,}
-> Syntax error: Bad field.  Expected `label = expr`,`... expr`, or a single `label`.
+> Syntax error: Bad field spec.  Expected an explicit field `label = expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
 >
 > :p {a:Int,}
 >     ^^^^^
 
 :p {|3}
-> Syntax error: Bad field.  Expected `label : expr`,`... expr`, or a single `label`.
+> Syntax error: Bad field spec.  Expected an explicit field `label : expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
 >
 > :p {|3}
 >      ^
