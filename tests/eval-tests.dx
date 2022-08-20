@@ -241,6 +241,12 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (new_key 11) i j
 > [[0.605554, 0.066924], [0.836212, 0.139031], [0.944918, 0.910604]]
 
+:p rand_vec 5 (poisson 4.0) (new_key 0)
+> [3, 2, 1, 1, 5]
+
+:p rand_vec 5 (binom 10 0.7) (new_key 0)
+> [7, 4, 9, 9, 8]
+
 :p
   x = for i:(Fin 3). 0
   x
