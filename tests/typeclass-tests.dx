@@ -202,7 +202,7 @@ data MyData a5       = MkMyData (MyPairOfXs a5)
 > Type error:Couldn't synthesize a class dictionary for: (X a5)
 >
 > data MyData a5       = MkMyData (MyPairOfXs a5)
->                                 ^^^^^^^^^^^^^^^
+>                                  ^^^^^^^^^^^^^
 
 data MyDataBetter a [X a] = MkMyDataBetter (MyPairOfXs a)
 

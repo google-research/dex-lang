@@ -212,11 +212,13 @@ pattern Identifier name <- (WithSrc _ (CIdentifier name)) where
 
 binOptL :: Bin' -> Group -> (Maybe Group, Maybe Group)
 binOptL tag = \case
+  (WithSrc _ (CParens (ExprBlock content))) -> binOptL tag content
   (Binary tag' lhs rhs) | tag == tag' -> (Just lhs, Just rhs)
   rhs -> (Nothing, Just rhs)
 
 binOptR :: Bin' -> Group -> (Maybe Group, Maybe Group)
 binOptR tag = \case
+  (WithSrc _ (CParens (ExprBlock content))) -> binOptR tag content
   (Binary tag' lhs rhs) | tag == tag' -> (Just lhs, Just rhs)
   lhs -> (Just lhs, Nothing)
 
