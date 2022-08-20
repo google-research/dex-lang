@@ -160,23 +160,21 @@ if True
     x = 6
     x else 5
 
-> Parse error:161:7:
+> Parse error:161:12:
 >     |
 > 161 |     x else 5
->     |       ^^
-> unexpected "el"
-> expecting "..", "<..", ';', backquoted name, end of input, end of line, or infix operator
+>     |            ^
+> Same-line `else` may not follow indented consequent; put the `else` on the next line.
 -- No inline `else` after inline `then` and indented consequent
 if True then
   x = 6
   x else 5
 
-> Parse error:172:5:
+> Parse error:171:10:
 >     |
-> 172 |   x else 5
->     |     ^^
-> unexpected "el"
-> expecting "..", "<..", ';', backquoted name, end of input, end of line, or infix operator
+> 171 |   x else 5
+>     |          ^
+> No `else` may follow same-line `then` and indented consequent; indent and align both `then` and `else`, or write the whole `if` on one line.
 -- No indented `else` after inline `then` and indented consequent either
 :p
  if True then
@@ -184,20 +182,19 @@ if True then
    x
   else 5
 
-> Parse error:185:2:
+> Parse error:183:8:
 >     |
-> 185 |   else 5
->     |  ^^^^^^^^
-> unexpected " else 5<newline><newline>> Par"
-> expecting "..", "...", "..<", "@...", "named-instance", '+', '-', function definition, name, or symbol name
+> 183 |   else 5
+>     |        ^
+> No `else` may follow same-line `then` and indented consequent; indent and align both `then` and `else`, or write the whole `if` on one line.
 
 -- Check that a syntax error in a funDefLet doesn't try to reparse the
 -- whole definition as something it's not.
 def frob (x:Int) (y:Int) : + =
 
-> Parse error:196:30:
+> Parse error:193:30:
 >     |
-> 196 | def frob (x:Int) (y:Int) : + =
+> 193 | def frob (x:Int) (y:Int) : + =
 >     |                              ^
 > unexpected '='
 > expecting name or symbol name
@@ -206,17 +203,17 @@ def frob (x:Int) (y:Int) : + =
 for i.
 i
 
-> Parse error:207:1:
+> Parse error:204:1:
 >     |
-> 207 | i
+> 204 | i
 >     | ^
 > expecting end of line or space
 
 def (foo + bar) : Int = 6
 
-> Parse error:215:6:
+> Parse error:212:6:
 >     |
-> 215 | def (foo + bar) : Int = 6
+> 212 | def (foo + bar) : Int = 6
 >     |      ^
 > unexpected 'f'
 > expecting symbol name

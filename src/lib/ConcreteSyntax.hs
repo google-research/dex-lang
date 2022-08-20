@@ -627,7 +627,12 @@ thenSameLine :: Parser (CBlock, Maybe CBlock)
 thenSameLine = do
   keyWord ThenKW
   cBlock' >>= \case
-    (Left blk) -> return (blk, Nothing)
+    (Left blk) -> do
+      let msg = ("No `else` may follow same-line `then` and indented consequent"
+                  ++ "; indent and align both `then` and `else`, or write the "
+                  ++ "whole `if` on one line.")
+      mayBreak $ noElse msg
+      return (blk, Nothing)
     (Right ex) -> do
       alt <- optional
         $ (keyWord ElseKW >> cBlock)
@@ -640,14 +645,23 @@ thenNewLine = withIndent $ mayNotBreak $ do
   keyWord ThenKW
   cBlock' >>= \case
     (Left blk) -> do
-      alt <- optional $ do
-        try $ nextLine >> keyWord ElseKW
-        cBlock
+      alt <- do
+        -- With `mayNotBreak`, this just forbids inline else
+        noElse ("Same-line `else` may not follow indented consequent;"
+                ++ " put the `else` on the next line.")
+        optional $ do
+          try $ nextLine >> keyWord ElseKW
+          cBlock
       return (blk, alt)
     (Right ex) -> do
       void $ optional $ try nextLine
       alt <- optional $ keyWord ElseKW >> cBlock
       return (ExprBlock ex, alt)
+
+noElse :: String -> Parser ()
+noElse msg = (optional $ try $ sc >> keyWord ElseKW) >>= \case
+  Just () -> fail msg
+  Nothing -> return ()
 
 leafGroupTrailingEmpty :: Parser Group'
 leafGroupTrailingEmpty = do
