@@ -220,3 +220,13 @@ def (foo + bar) : Int = 6
 >     |      ^
 > unexpected 'f'
 > expecting symbol name
+
+'Data definitions allow but do not require type / kind annotations
+
+data MyPair1 a b = MkPair1 a b
+
+data MyPair2 a:Type b:Type = MkPair2 x:a y:b
+
+'which may be grouped with parentheses
+
+data MyPair3 (a:Type) (b:Type) = MkPair3 (x:a) (y:b)
