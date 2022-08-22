@@ -362,7 +362,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 
 </div></div><div class="cell"><div class="prose-block"><h3>Diagonal maps</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DiagMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkDiagMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  <span class="type-name">MkDiagMap</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">DiagMap</span> n)
   determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> x)<span class="symbol">.</span> prod x
@@ -395,7 +395,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 
 </div></div><div class="cell"><div class="prose-block"><h3>Lower-triangular maps</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LowerTriMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkLowerTriMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  <span class="type-name">MkLowerTriMap</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">LowerTriMap</span> n)
   determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> lower_tri_diag x
@@ -414,7 +414,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 
 </div></div><div class="cell"><div class="prose-block"><h3>Upper-triangular maps</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">UpperTriMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkUpperTriMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  <span class="type-name">MkUpperTriMap</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">UpperTriMap</span> n)
   determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> upper_tri_diag x
@@ -433,7 +433,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 
 </div></div><div class="cell"><div class="prose-block"><h3>Skew-symmetric maps</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">SkewSymmetricMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkSkewSymMap</span> (i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  <span class="type-name">MkSkewSymMap</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">HasDeterminant</span> (<span class="type-name">SkewSymmetricMap</span> n)
   determinant&#39; <span class="symbol">=</span> <span class="keyword">case</span> is_odd (size n) <span class="keyword">of</span>
@@ -441,7 +441,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> a)<span class="symbol">.</span>
       dense_rep <span class="symbol">=</span> skew_symmetric_prod a eye
       determinant dense_rep  <span class="comment">-- Naive algorithm, could be done with Pfaffian
-</span>  transposeType <span class="symbol">=</span> i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>  <span class="comment">-- 
+</span>  transposeType <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>  <span class="comment">-- 
 </span>  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x)<span class="symbol">.</span> <span class="type-name">MkSkewSymMap</span> (<span class="symbol">-</span>x)
   identity&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Skew</span> symmetric matrices can&#39;t represent the identity map<span class="symbol">.</span>&quot;
 </div></div><div class="cell"><div class="code-block">
@@ -623,7 +623,7 @@ log-density is equal to the negative energy function (plus a constant).</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationaryDiffusion</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span>m
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NegEnergyFunc</span> (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span><span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SkewSymmetricFunc</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  v<span class="symbol">-&gt;</span>(i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  v<span class="symbol">-&gt;</span>((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationarySDEParts</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>)
     [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">LinearEndo</span> n v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
   (<span class="type-name">NegEnergyFunc</span> v <span class="symbol">&amp;</span> <span class="type-name">SkewSymmetricFunc</span> n v <span class="symbol">&amp;</span> <span class="type-name">StationaryDiffusion</span> n v)

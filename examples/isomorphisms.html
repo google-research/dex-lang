@@ -455,7 +455,7 @@ when using a record type as an index set:</p>
 </div></div><div class="cell"><div class="prose-block"><p><code>overLens</code> alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> abcToTuple {a b c} <span class="symbol">:</span> <span class="type-name">Iso</span> {a<span class="command">:a</span> <span class="symbol">&amp;</span> b<span class="command">:b</span> <span class="symbol">&amp;</span> c<span class="command">:c</span>} (c<span class="symbol">&amp;</span>b<span class="symbol">&amp;</span>a) <span class="symbol">=</span>
-  fwd <span class="symbol">=</span> <span class="symbol">\</span>{a<span class="symbol">,</span> b<span class="symbol">,</span> c}<span class="symbol">.</span> (c<span class="symbol">,</span> b<span class="symbol">,</span> a)
+  fwd <span class="symbol">=</span> <span class="symbol">\</span>({a<span class="symbol">,</span> b<span class="symbol">,</span> c})<span class="symbol">.</span> (c<span class="symbol">,</span> b<span class="symbol">,</span> a)
   bwd <span class="symbol">=</span> <span class="symbol">\</span>(c<span class="symbol">,</span> b<span class="symbol">,</span> a)<span class="symbol">.</span> {a<span class="symbol">,</span> b<span class="symbol">,</span> c}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">&amp;</span> b<span class="command">:m</span> <span class="symbol">&amp;</span> c<span class="command">:q</span>}
@@ -464,7 +464,7 @@ ordinary record accessor lens.</p>
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abcToTuple
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bcToPair {b c} <span class="symbol">:</span> <span class="type-name">Iso</span> {b<span class="command">:b</span> <span class="symbol">&amp;</span> c<span class="command">:c</span>} (c<span class="symbol">&amp;</span>b) <span class="symbol">=</span>
-  fwd <span class="symbol">=</span> <span class="symbol">\</span>{b<span class="symbol">,</span> c}<span class="symbol">.</span> (c<span class="symbol">,</span> b)
+  fwd <span class="symbol">=</span> <span class="symbol">\</span>({b<span class="symbol">,</span> c})<span class="symbol">.</span> (c<span class="symbol">,</span> b)
   bwd <span class="symbol">=</span> <span class="symbol">\</span>(c<span class="symbol">,</span> b)<span class="symbol">.</span> {b<span class="symbol">,</span> c}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {b<span class="command">:n</span> <span class="symbol">&amp;</span> c<span class="command">:m</span>}
@@ -485,7 +485,7 @@ ordinary record accessor lens.</p>
 <p>Just as there are record zipper isomorphisms, there are also variant
 zipper isomorphisms:</p>
 </div></div><div class="cell"><div class="code-block">%passes parse
-<span class="command">:t</span> <span class="iso-sugar">#|a</span> <span class="symbol">::</span> <span class="type-name">Iso</span> ({<span class="symbol">|</span>} <span class="symbol">|</span> {a<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> b<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">|</span> c<span class="symbol">:</span><span class="type-name">Unit</span>}) _
+<span class="command">:t</span> <span class="iso-sugar">#|a</span> <span class="symbol">::</span> <span class="type-name">Iso</span> ({<span class="symbol">|</span> } <span class="symbol">|</span> {a<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> b<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">|</span> c<span class="symbol">:</span><span class="type-name">Unit</span>}) _
 </div><div class="result-block">(Iso
    ({ |} | {a: Int32 | b: Float32 | c: Unit})
    ({a: Int32} | {b: Float32 | c: Unit}))</div><div class="result-block">(MkIso

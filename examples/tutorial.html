@@ -404,7 +404,7 @@ Expected: (Fin 3)
   Actual: Int32
 
 r = x.(2 :: Int)
-         ^^^
+      ^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Instead, it is necessary to cast the integer into the index type of the
 current shape. This type annotation is done with the <code>@</code> operator.</p>
@@ -521,7 +521,7 @@ Expected: ((Fin 3) =&gt; (Fin 8) =&gt; Float32)
   Actual: ((Fin 8) =&gt; (Fin 3) =&gt; Float32)
 
 :t tableAdd&#39; x (trans x)
-                ^^^^^^^
+               ^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The type system checked for us that the input tables indeed have the same shape.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Case Study: Fashion MNist</h2>
@@ -706,7 +706,7 @@ Expected: Float32
   Actual: (Float32 &amp; Float32)
 
 tableMean (for (i, j). (x.i.j, x.i.j))
-                        ^^^^^^^^^^^^
+                       ^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Intuitively, supporting this seems possible. We just need to be able to
 add and divide pair types. Let's look closer at the exact types of the

@@ -317,15 +317,21 @@ load dxbo &quot;scratch/mnist.dxbo&quot; as mnist
 </div><div class="err-block">Error: variable not in scope: mnist</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these should come from the data set itself
 </span></div></div><div class="cell"><div class="code-block">type <span class="type-name">Img</span> <span class="symbol">=</span> 28<span class="symbol">=&gt;</span>28<span class="symbol">=&gt;</span><span class="type-name">Float</span>
-type <span class="type-name">NTrain</span> <span class="symbol">=</span> 60000
-type <span class="type-name">NTest</span>  <span class="symbol">=</span> 10000
+</div><div class="err-block">Error: variable not in scope: type
 
-</div><div class="err-block">Parse error:10:10:
-   |
-10 | type Img = 28=&gt;28=&gt;Float
-   |          ^^
-unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, infix operator, or resume
+type Img = 28=&gt;28=&gt;Float
+^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">type <span class="type-name">NTrain</span> <span class="symbol">=</span> 60000
+</div><div class="err-block">Error: variable not in scope: type
+
+type NTrain = 60000
+^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">type <span class="type-name">NTest</span>  <span class="symbol">=</span> 10000
+</div><div class="err-block">Error: variable not in scope: type
+
+type NTest  = 10000
+^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">(xsTrain<span class="symbol">,</span> ysTrain<span class="symbol">,</span> xsTest<span class="symbol">,</span> ysTest) <span class="symbol">=</span> mnist
 </div><div class="err-block">Error: variable not in scope: mnist
 
@@ -333,48 +339,45 @@ expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;,
                                      ^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">findNearestNeighbor <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> n
-</div><div class="err-block">Error: variable not in scope: a
+</div><div class="err-block">Syntax error: Colon separates binders from their type annotations, is not a standalone operator.
+If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 findNearestNeighbor : (a -&gt; a -&gt; Float) -&gt; n=&gt;a -&gt; a -&gt; n
-                       ^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">findNearestNeighbor metric xs x <span class="symbol">=</span>
   distances<span class="symbol">.</span>i <span class="symbol">=</span> metric xs<span class="symbol">.</span>i x
   argmin distances
+</div><div class="err-block">Syntax error: Illegal pattern
 
-</div><div class="err-block">Parse error:17:33:
-   |
-17 | findNearestNeighbor metric xs x =
-   |                                 ^^
-unexpected &quot;=&lt;newline&gt;&quot;
-expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, infix operator, or resume
+  distances.i = metric xs.i x
+  ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">imgDistance <span class="symbol">:</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
-</div><div class="err-block">Error: variable not in scope: Img
+</div><div class="err-block">Syntax error: Colon separates binders from their type annotations, is not a standalone operator.
+If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 imgDistance : Img -&gt; Img -&gt; Float
-              ^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> sq (x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j)
+</div><div class="err-block">Error: variable not in scope: x
 
-</div><div class="err-block">Parse error:22:17:
-   |
-22 | imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
-   |                 ^^
-unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, infix operator, or resume
+imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
+                                     ^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">fracTrue <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Bool</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
-</div><div class="err-block">Error: variable not in scope: n
+</div><div class="err-block">Syntax error: Colon separates binders from their type annotations, is not a standalone operator.
+If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 fracTrue : n=&gt;Bool -&gt; Float
-           ^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> i<span class="symbol">.</span> float (b2i xs<span class="symbol">.</span>i)
+</div><div class="err-block">Error: variable not in scope: float
 
-</div><div class="err-block">Parse error:25:13:
-   |
-25 | fracTrue xs = mean for i. float (b2i xs.i)
-   |             ^^
-unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, infix operator, or resume
+fracTrue xs = mean for i. float (b2i xs.i)
+                          ^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx <span class="symbol">@</span><span class="type-name">NTest</span> 123
-</div><div class="err-block">Error: variable not in scope: NTest
+</div><div class="err-block">Error in (earlier) definition of variable: NTest
 
 example = asidx @NTest 123
                  ^^^^^^
@@ -400,28 +403,33 @@ closest = findNearestNeighbor imgDistance xsTrain (xsTest.example)
 unrecognized command: &quot;plotmat&quot;
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Make a subset of the test set (evaluating a single test example takes ~80ms)
 </span></div></div><div class="cell"><div class="code-block">type <span class="type-name">NTestSmall</span> <span class="symbol">=</span> 1000
-xsTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> xsTest 0
-ysTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> ysTest 0
+</div><div class="err-block">Error: variable not in scope: type
 
-</div><div class="err-block">Parse error:35:17:
-   |
-35 | type NTestSmall = 1000
-   |                 ^^
-unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, infix operator, or resume
+type NTestSmall = 1000
+^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">xsTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> xsTest 0
+</div><div class="err-block">Error in (earlier) definition of variable: NTestSmall
+
+xsTest&#39; = slice @NTestSmall xsTest 0
+                 ^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">ysTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> ysTest 0
+</div><div class="err-block">Error in (earlier) definition of variable: NTestSmall
+
+ysTest&#39; = slice @NTestSmall ysTest 0
+                 ^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">closestTrainExample <span class="symbol">:</span> <span class="type-name">NTestSmall</span> <span class="symbol">=&gt;</span> <span class="type-name">NTrain</span>
-</div><div class="err-block">Error: variable not in scope: NTestSmall
+</div><div class="err-block">Syntax error: Colon separates binders from their type annotations, is not a standalone operator.
+If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 closestTrainExample : NTestSmall =&gt; NTrain
-                      ^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">closestTrainExample<span class="symbol">.</span>i <span class="symbol">=</span> findNearestNeighbor imgDistance xsTrain xsTest&#39;<span class="symbol">.</span>i
+</div><div class="err-block">Syntax error: Illegal pattern
 
-</div><div class="err-block">Parse error:40:23:
-   |
-40 | closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest&#39;.i
-   |                       ^^
-unexpected &quot;= &quot;
-expecting &quot;..&quot;, &quot;::&quot;, &quot;&lt;..&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of input, end of line, expression, infix operator, or resume
+closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest&#39;.i
+^^^^^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fracTrue <span class="keyword">for</span> i<span class="symbol">.</span> ysTrain<span class="symbol">.</span>(closestTrainExample<span class="symbol">.</span>i) <span class="symbol">==</span> ysTest&#39;<span class="symbol">.</span>i
 </div><div class="err-block">Error: variable not in scope: fracTrue
 
