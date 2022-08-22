@@ -40,6 +40,7 @@ newtype Errs = Errs [Err]  deriving (Eq, Semigroup, Monoid)
 
 data ErrType = NoErr
              | ParseErr
+             | SyntaxErr
              | TypeErr
              | KindErr
              | LinErr
@@ -454,6 +455,7 @@ instance Pretty ErrType where
     -- by appending Results.
     NoErr             -> ""
     ParseErr          -> "Parse error:"
+    SyntaxErr         -> "Syntax error: "
     TypeErr           -> "Type error:"
     KindErr           -> "Kind error:"
     LinErr            -> "Linearity error: "

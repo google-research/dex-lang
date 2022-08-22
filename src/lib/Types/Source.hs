@@ -289,13 +289,15 @@ data UModule = UModule
 
 type SourceName = String
 
-data SourceBlock = SourceBlock
+data SourceBlockP a = SourceBlockP
   { sbLine     :: Int
   , sbOffset   :: Int
   , sbLogLevel :: LogLevel
   , sbText     :: Text
-  , sbContents :: SourceBlock' }
+  , sbContents :: a }
   deriving (Show, Generic)
+
+type SourceBlock = SourceBlockP SourceBlock'
 
 type ReachedEOF = Bool
 
@@ -307,13 +309,21 @@ data SourceBlock' =
  | Command CmdName (UExpr VoidS)
  | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
  | DeclareCustomLinearization SourceName SymbolicZeros (UExpr VoidS)
- | GetNameType SourceName
- | ImportModule ModuleSourceName
- | QueryEnv EnvQuery
- | ProseBlock Text
- | CommentLine
- | EmptyLines
- | UnParseable ReachedEOF String
+ | Misc SourceBlockMisc
+ | UnParseable ReachedEOF String  -- Grouping failure like `x + * y`.
+ | BadSyntax Errs  -- Well-grouped nonsense like `x : Int : Float`.
+  deriving (Show, Generic)
+
+-- This stuff is done when successfully parsed as concrete syntax, and
+-- does not participate in the concrete->abstract interpretation in
+-- AbstractSyntax.hs.
+data SourceBlockMisc
+  = GetNameType SourceName
+  | ImportModule ModuleSourceName
+  | QueryEnv EnvQuery
+  | ProseBlock Text
+  | CommentLine
+  | EmptyLines
   deriving (Show, Generic)
 
 data CmdName = GetType | EvalExpr OutFormat | ExportFun String

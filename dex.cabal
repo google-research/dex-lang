@@ -44,12 +44,14 @@ flag debug
   default:             False
 
 library
-  exposed-modules:     Algebra
+  exposed-modules:     AbstractSyntax
+                     , Algebra
                      , Builder
                      , CUDA
                      , Cat
                      , CheapReduction
                      , CheckType
+                     , ConcreteSyntax
                      , Core
                      , Err
                      , Export
@@ -63,6 +65,7 @@ library
                      , LLVM.Shims
                      , LLVMExec
                      , LabeledItems
+                     , Lexing
                      , Linearize
                      , Logging
                      , Lower
@@ -70,7 +73,6 @@ library
                      , Name
                      , Optimize
                      , PPrint
-                     , Parser
                      , RawName
                      , Serialize
                      , Simplify

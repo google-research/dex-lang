@@ -131,7 +131,7 @@ r = x.(2 :: Int)
 >   Actual: Int32
 >
 > r = x.(2 :: Int)
->          ^^^
+>       ^^^^^^^^^^
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator.
@@ -286,7 +286,7 @@ def tableAdd' {m n} (x : m => n => Float32) (y : m => n => Float32) : m => n => 
 >   Actual: ((Fin 8) => (Fin 3) => Float32)
 >
 > :t tableAdd' x (trans x)
->                 ^^^^^^^
+>                ^^^^^^^^^
 
 ' The type system checked for us that the input tables indeed have the same shape.
 
@@ -516,7 +516,7 @@ tableMean (for (i, j). (x.i.j, x.i.j))
 >   Actual: (Float32 & Float32)
 >
 > tableMean (for (i, j). (x.i.j, x.i.j))
->                         ^^^^^^^^^^^^
+>                        ^^^^^^^^^^^^^^
 
 ' Intuitively, supporting this seems possible. We just need to be able to
   add and divide pair types. Let's look closer at the exact types of the

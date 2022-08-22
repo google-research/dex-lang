@@ -46,7 +46,7 @@ arr = 20
 >    ^^^
 
 -- testing top-level shadowing
-f : a:Type ?-> a -> a = \x. x
+f : (a:Type) ?-> a -> a = \x. x
 
 x = 1
 

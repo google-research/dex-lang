@@ -1,6 +1,6 @@
 %passes
 effect Exn
-  ctl raise : a: Type ?-> Unit -> a
+  ctl raise : (a: Type) ?-> Unit -> a
 
 %passes
 handler catch_ of Exn {r} : Maybe r

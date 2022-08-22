@@ -46,7 +46,7 @@ Syntax for records, variants, and their types.
 
 :p
   x = {a=5.0, b=2}
-  y : {a:Int & b:Int & ..._} = {a=3, a=4, ...x}
+  y : {a:Int & b:Int & ...} = {a=3, a=4, ...x}
   y
 > {a = 3, a = 4, a = 5., b = 2}
 
@@ -57,13 +57,13 @@ Syntax for records, variants, and their types.
 
 'Variant (enum) types
 
-:p {|}
+:p {| }
 > { |}
 
 :p {a:Int | b:Float}
 > {a: Int32 | b: Float32}
 
-:p {a:Int | b:Float |}
+:p {a:Int | b:Float | }
 > {a: Int32 | b: Float32}
 
 :p {a:Int | a:Float}
@@ -84,7 +84,7 @@ Syntax for records, variants, and their types.
 
 :p
   x : {a:Int | b:Float} = {| a=3 |}
-  y : {a:Float | a:Int | ..._} = {| a | ...x |}
+  y : {a:Float | a:Int | ...} = {| a | ...x |}
   y
 > {|a| a = 3 |}
 
@@ -92,31 +92,23 @@ Syntax for records, variants, and their types.
 'Parse errors
 
 :p {a:Int & b:Float | c:Int }
-
-> Parse error:94:21:
->    |
-> 94 | :p {a:Int & b:Float | c:Int }
->    |                     ^
-> unexpected '|'
-> expecting "..", "::", "<..", "=>", "{|", '$', '&', '.', '}', arrow, backquoted name, expression, infix operator, or resume
+> Syntax error: Bad field spec.  Expected an explicit field `label : expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
+>
+> :p {a:Int & b:Float | c:Int }
+>     ^^^^^^^^^^^^^^^^
 
 :p {a:Int,}
-
-> Parse error:103:10:
->     |
-> 103 | :p {a:Int,}
->     |          ^
-> unexpected ','
-> expecting "..", "::", "<..", "=>", "{|", '$', '&', '.', '?', '|', '}', arrow, backquoted name, expression, infix operator, or resume
+> Syntax error: Bad field spec.  Expected an explicit field `label = expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
+>
+> :p {a:Int,}
+>     ^^^^^
 
 :p {|3}
+> Syntax error: Bad field spec.  Expected an explicit field `label : expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
+>
+> :p {|3}
+>      ^
 
-> Parse error:112:6:
->     |
-> 112 | :p {|3}
->     |      ^
-> unexpected '3'
-> expecting "...", '}', or field label
 
 
 'Unpacking
@@ -132,16 +124,16 @@ Syntax for records, variants, and their types.
 > (1, (3, 2))
 
 :p
-  ({foo=foo, ..._}) = {foo=1, bar=2, baz=3}
+  ({foo=foo, ...}) = {foo=1, bar=2, baz=3}
   foo
 > 1
 
-({foo=foo, ..._}) = {foo=1, bar=2, baz=3}
+({foo=foo, ...}) = {foo=1, bar=2, baz=3}
 :p foo
 > 1
 
 def getFoo {a} {rest : Fields} (x : {foo:a & ...rest}) : a =
-  ({foo=foo, ..._}) = x
+  ({foo=foo, ...}) = x
   foo
 
 :p getFoo {foo=1, foo=0.0, bar=2, baz=3}
@@ -149,7 +141,7 @@ def getFoo {a} {rest : Fields} (x : {foo:a & ...rest}) : a =
 
 def getTwoFoosAndABar {a b c} {rest : Fields}
                       (x : {foo:a & foo:b & bar:c & ...rest}) : (a&b&c) =
-  ({foo=f1, foo=f2, bar=b, ..._}) = x
+  ({foo=f1, foo=f2, bar=b, ...}) = x
   (f1, f2, b)
 
 :p getTwoFoosAndABar {foo=1, bar=2, foo=0.0, foo=4, baz=3.0, bar=7}
@@ -292,7 +284,7 @@ myVal =
 
 def splitTwoFoosOrABar {a b c} {rest:Fields}
                        (x : {foo:a | foo:b | bar:c | ...rest})
-                       : ({x:a | y:b | z:c} | {|...rest}) =
+                       : ({x:a | y:b | z:c} | {| ...rest}) =
   case x of
     {| foo=x |}                 -> Left {| x=x |}
     {| foo | foo=y |}           -> Left {| y=y |}
@@ -318,7 +310,7 @@ myStuff :(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_}) =
 
 -- Use a non-standard iteration order by putting b before a!
 def abToPair {a b} : Iso {a:a & b:b} (b&a) =
-  fwd = \{a, b}. (b, a)
+  fwd = \({a, b}). (b, a)
   bwd = \(b, a). {a, b}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n & b:m}
@@ -431,7 +423,7 @@ def badProject (l: Label) (x: {@l:Int & l:Float}) : Float =
 >   {l=lv, ...} = x
 >   ^^^^^^^^^^^^
 
-def concatRecords {f f'} (x: {&...f}) (y: {&...f'}) : ({...f & ...f'}) =
+def concatRecords {f f'} (x: {& ...f}) (y: {& ...f'}) : ({...f & ...f'}) =
   {...x, ...y}
 
 concatRecords {a=1} {b=2}
@@ -444,7 +436,7 @@ def projectTwo {f a b} (l1: Label) (l2: Label) (x: {@l1:a & @l2:b & ...f}) : (a 
 projectTwo ##a ##b {c=1, b=2, a=4}
 > (4, 2)
 
-def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({&...f}) =
+def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({& ...f}) =
   {@...f=v, ...} = x
   v
 

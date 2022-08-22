@@ -191,7 +191,7 @@ when using a record type as an index set:
 ordinary record accessor lens.
 
 def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
-  fwd = \{a, b, c}. (c, b, a)
+  fwd = \({a, b, c}). (c, b, a)
   bwd = \(c, b, a). {a, b, c}
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
@@ -200,7 +200,7 @@ instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToTuple
 
 def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
-  fwd = \{b, c}. (c, b)
+  fwd = \({b, c}). (c, b)
   bwd = \(c, b). {b, c}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
@@ -225,7 +225,7 @@ Just as there are record zipper isomorphisms, there are also variant
 zipper isomorphisms:
 
 %passes parse
-:t #|a :: Iso ({|} | {a:Int | b:Float | c:Unit}) _
+:t #|a :: Iso ({| } | {a:Int | b:Float | c:Unit}) _
 > (Iso
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))

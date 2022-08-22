@@ -29,12 +29,12 @@ def idImplicit {a:Type} (x:a) : a = x
 :p idImplicit 1
 > 1
 
-idImplicit2 : (a:Type ?-> a -> a) = \x. x
+idImplicit2 : ((a:Type) ?-> a -> a) = \x. x
 :p idImplicit2 1
 > 1
 
 :p
-  idImplicit3 : (a:Type ?-> a -> a) = \x. x
+  idImplicit3 : ((a:Type) ?-> a -> a) = \x. x
   idImplicit3 1
 > 1
 
@@ -194,12 +194,12 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   myId = fst (\x. x, 2)
-  f : aa:Type -> aa -> aa = \bb. \x. myId x
+  f : (aa:Type) -> aa -> aa = \bb. \x. myId x
   f Int 1
 > Leaked local variables:[bb]
 >
->   f : aa:Type -> aa -> aa = \bb. \x. myId x
->                              ^^^^^^^^^^^^^^
+>   f : (aa:Type) -> aa -> aa = \bb. \x. myId x
+>                               ^^^^^^^^^^^^^^^
 
 def myFst {a b} (p:(a&b)) : a =
   (x, _) = p
@@ -242,7 +242,7 @@ def myOtherFst {a b} ((x, _):(a&b)) : a = x
    transpose_linear f [1.0, 2.0, 3.0]
 > 12.
 
-id'' : b:Type ?-> b -> b = id
+id'' : (b:Type) ?-> b -> b = id
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left  i -> i
@@ -316,7 +316,7 @@ def bug (n : Type) : Unit =
 > With effects: {}
 >
 >   for w':n.
->   ^^^^
+>   ^^^^^^^^^^
 
 badDefinition = oops_there_is_a_problem
 > Error: variable not in scope: oops_there_is_a_problem

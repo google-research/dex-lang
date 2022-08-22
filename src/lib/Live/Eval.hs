@@ -19,7 +19,7 @@ import Data.Text.Prettyprint.Doc
 import System.Directory (getModificationTime)
 
 import Actor
-import Parser
+import AbstractSyntax
 import RenderHtml (ToMarkup, pprintHtml)
 import Syntax
 import TopLevel
