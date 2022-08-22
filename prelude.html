@@ -2150,6 +2150,26 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bern (p<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> rand k <span class="symbol">&lt;</span> p
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> binom (n<span class="symbol">:</span><span class="type-name">Nat</span>) (p<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+  sum <span class="symbol">$</span> map b_to_n (rand_vec n (bern p) k)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> poisson (rate<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+  <span class="symbol">--</span><span class="type-name">After</span> <span class="type-name">Knuth</span><span class="symbol">:</span> <span class="type-name">Seminumerical</span> <span class="type-name">Algorithms</span><span class="symbol">.</span> <span class="type-name">Art</span> <span class="keyword">of</span> <span class="type-name">Computer</span> <span class="type-name">Programming</span><span class="symbol">,</span> <span class="type-name">Volume</span> 2<span class="symbol">.</span>
+  exp_neg_rate <span class="symbol">=</span> exp(<span class="symbol">-</span>rate)
+  [current_k<span class="symbol">,</span> next_k] <span class="symbol">=</span> split_key k
+  yield_state 0 <span class="symbol">\</span>ans<span class="symbol">.</span>
+    with_state (rand current_k) <span class="symbol">\</span>p<span class="symbol">.</span> with_state next_k <span class="symbol">\</span>k&#39;<span class="symbol">.</span>
+      while <span class="keyword">do</span>
+        <span class="keyword">if</span> get p <span class="symbol">&gt;</span> exp_neg_rate
+          <span class="keyword">then</span>
+            [ck<span class="symbol">,</span> nk] <span class="symbol">=</span> split_key (get k&#39;)
+            p <span class="symbol">:=</span> (get p) <span class="symbol">*</span> rand ck
+            ans <span class="symbol">:=</span> (get ans) <span class="symbol">+</span> 1
+            k&#39; <span class="symbol">:=</span> nk
+            <span class="type-name">True</span>
+          <span class="keyword">else</span>
+            <span class="type-name">False</span>
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randn_vec {n} [<span class="type-name">Ix</span> n] (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> randn (ixkey k i)
 </div></div><div class="cell"><div class="code-block">
