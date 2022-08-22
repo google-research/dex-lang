@@ -1903,6 +1903,8 @@ def rand_mat {a} (n:Nat) (m:Nat) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
 
 def randn (k:Key) : Float =
   [k1, k2] = split_key k
+  -- rand is uniform between 0 and 1, but implemented such that it rounds to 0
+  -- (in float32) once every few million draws, but never rounds to 1.
   u1 = 1.0 - (rand k1)
   u2 = rand k2
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
