@@ -422,7 +422,7 @@ most implementations.</p>
 </div><div class="result-block">[(3@Fin 6), (4@Fin 6), (1@Fin 6)]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Evaluate marginal probability of labels given logits
 </span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> exp <span class="symbol">$</span> ctc blank logits labels
-</div><div class="result-block">0.008863</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.00209</div></div><div class="cell"><div class="code-block">
 
 
 </div></div><div class="cell"><div class="prose-block"><h3>Test</h3>
@@ -432,10 +432,10 @@ most implementations.</p>
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- e.g. the summed-over labels should include blanks.
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">sum <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Vocab</span><span class="symbol">.</span> exp <span class="symbol">$</span> ctc blank logits [i]
-</div><div class="result-block">0.024464</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.031206</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- (Fin N)=&gt;Vocab is all combinations of N tokens.
 </span></div></div><div class="cell"><div class="code-block">sum <span class="keyword">for</span> i<span class="symbol">:</span>((<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Vocab</span>)<span class="symbol">.</span> exp <span class="symbol">$</span> ctc blank logits i
-</div><div class="result-block">0.32822</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.245855</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">sum <span class="keyword">for</span> i<span class="symbol">:</span>((<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Vocab</span>)<span class="symbol">.</span> exp <span class="symbol">$</span> ctc blank logits i
-</div><div class="result-block">0.650282</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.565388</div></div><div class="cell"><div class="code-block">
 </div></div></div></body></html>
