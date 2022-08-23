@@ -210,7 +210,7 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
 
 lib-names = diagram plot png
 
-doc-names = functions
+doc-names = conditionals functions
 
 all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(doc-names:%=doc/%)
 
