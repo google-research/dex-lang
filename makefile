@@ -314,6 +314,9 @@ repl-test: just-build
 	misc/check-no-diff \
 	  tests/repl-multiline-test-expected-output \
 	  <($(dex) repl < tests/repl-multiline-test.dx)
+	misc/check-no-diff \
+	  tests/repl-regression-528-test-expected-output \
+	  <($(dex) repl < tests/repl-regression-528-test.dx)
 
 module-tests: just-build
 	misc/check-quine tests/module-tests.dx \
