@@ -1,0 +1,129 @@
+'# Syntax of if expressions
+
+'The basic syntax of `if` in Dex is
+```
+if <condition> then <consequent> [else <alternate>]
+```
+
+'It can be a bit confusing, though, because of all the tokens it may make sense to indent.
+
+'The main rules are:
+- The `else` clause is optional (regardless of indentation)
+- The `then` and `else` keywords can be inline with the preceding
+  code, or indented relative to the `if`.
+- The code for each arm of the `if` can be either an inline expression
+  or start a new indentation level (relative to its keyword if that is
+  indented, or relative to the whole `if` otherwise).
+
+'This produces four combinations for one-armed `if`, all of which are legal:
+
+:p
+  yield_accum (AddMonoid Float) \ref.
+    if True then ref += 3.
+    if True then
+      ref += 1.
+      ref += 2.
+    if True
+      then ref += 3.
+    if False
+      then
+        ref += 1.
+        ref += 2.
+> 9.
+
+'However, not every one of the 16 concievable combinations makes sense for two-armed `if`.
+To wit:
+- If the consequent is indented, it makes no sense to have the `else`
+  inline (eliminating 4 combinations).
+- If `then` is inline, there can be no indented `else` either, because
+  there is no readable level at which to indent it (elimintaing 2 more
+  combinations).
+
+'The following contrived code block shows all the acceptable configurations:
+
+:p
+  yield_accum (AddMonoid Float) \ref.
+    -- Two-armed `if` with `then` and the consequent both inline.
+    x = if False then 1. else 3.
+    if False then ref += 100. else
+      ref += 1.
+      ref += 2.
+    if False then ref += 200.
+      else ref += x
+    if False then ref += 300.
+      else
+        ref += 1.
+        ref += 2.
+
+    -- Two-armed `if` with `then` indented but the consequent inline.
+    y = if False
+          then 1. else 3.
+    if False
+      then ref += 100. else
+        ref += 1.
+        ref += 2.
+    if False
+      then ref += 200.
+      else ref += y
+    if False
+      then ref += 300.
+      else
+        ref += 1.
+        ref += 2.
+
+    -- Two-armed `if` with `then` and the consequent both indented.
+    if False
+      then
+        ref += 100.
+        ref += 200.
+      else ref += 3.
+    if False
+      then
+        ref += 100.
+        ref += 200.
+      else
+        ref += 2.
+        ref += 4.
+> 27.
+
+'And here are expample configurations that don't work, showing the resulting parse errors.
+
+'Inline `else` is not allowed after indented consequent, whether the
+`then` keyword is indented or not:
+
+if True
+  then
+    x = 6
+    x else 5
+
+> Parse error:97:12:
+>    |
+> 97 |     x else 5
+>    |            ^
+> Same-line `else` may not follow indented consequent; put the `else` on the next line.
+
+if True then
+  x = 6
+  x else 5
+
+> Parse error:107:10:
+>     |
+> 107 |   x else 5
+>     |          ^
+> No `else` may follow same-line `then` and indented consequent; indent and align both `then` and `else`, or write the whole `if` on one line.
+
+'Indented `else` is not allowed after inline `then` and indented
+consequent either, because there is no indentation level for it to match.
+
+:p
+ if True then
+   x = 6
+   x
+  else 5
+
+> Parse error:122:8:
+>     |
+> 122 |   else 5
+>     |        ^
+> No `else` may follow same-line `then` and indented consequent; indent and align both `then` and `else`, or write the whole `if` on one line.
+
