@@ -359,6 +359,17 @@ class JAXTest(unittest.TestCase):
         jax.grad(f_with_dex, argnums=0)(x, y),
         jax.grad(f_jax, argnums=0)(x, y))
 
+  def test_underscore_name(self):
+    # Regression test for Issue 1024 (underscores in function argument names)
+    dex_sqr = primitive(dex.eval(
+        r"\{n} foo_b'ar:((Fin n) => Float). for i. foo_b'ar.i * foo_b'ar.i"))
+
+    def jax_sqr(x):
+      return x * x
+
+    x = jnp.linspace(-0.2, 1.1, num=10, dtype=jnp.float32)
+    np.testing.assert_allclose(dex_sqr(x), x * x)
+
 
 if __name__ == "__main__":
   unittest.main()
