@@ -235,6 +235,7 @@ $(tutorial-data):
 tutorial-data: $(tutorial-data)
 
 run-examples/tutorial: tutorial-data
+update-examples/tutorial: tutorial-data
 
 tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests
 
