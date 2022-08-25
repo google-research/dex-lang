@@ -1,15 +1,13 @@
 '# Fast Fourier Transform
 For arrays whose size is a power of 2, we use a radix-2 algorithm based
-on the [Fhutark demo](https://github.com/diku-dk/fft/blob/master/lib/github.com/diku-dk/fft/stockham-radix-2.fut#L30).
-This demo also uses types to enforce internally that the array sizes are powers of 2.
+on the [Futhark demo](https://github.com/diku-dk/fft/blob/master/lib/github.com/diku-dk/fft/stockham-radix-2.fut#L30).
+That demo also uses types to enforce internally that the array sizes are powers of 2.
 
 'For non-power-of-2 sized arrays, it uses
 [Bluestein's Algorithm](https://en.wikipedia.org/wiki/Chirp_Z-transform),
 which calls the power-of-2 FFT as a subroutine.
 
-
-
-'### Helper functions
+'## Helper functions
 
 def odd_sized_palindrome {a n} (mid:a) (seq:n=>a) : ((n|Unit|n)=>a) =
   -- Turns sequence 12345 into 543212345.
@@ -51,7 +49,7 @@ def power_of_2_fft {log2_n}
   (direction: FTDirection)
   (x: ((Fin log2_n)=>(Fin 2))=>Complex) :
       ((Fin log2_n)=>(Fin 2))=>Complex =
-  -- (Fin n)=>(Fin 2) has 2^n elements, so (Fin log2_n)=>(Fin n) has exactly n.
+  -- (Fin n)=>(Fin 2) has 2^n elements, so (Fin log2_n)=>(Fin 2) has exactly n.
 
   dir_const = case direction of
     ForwardFT -> -pi
