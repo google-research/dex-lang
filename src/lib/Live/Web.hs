@@ -26,7 +26,7 @@ import TopLevel
 runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runWeb fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
-  putStrLn "Streaming output to localhost:8000"
+  putStrLn "Streaming output to http://localhost:8000/"
   run 8000 $ serveResults resultsChan
 
 serveResults :: ToJSON a => PChan (PChan a) -> Application
