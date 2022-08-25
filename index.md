@@ -12,7 +12,7 @@
 - [examples/sierpinski.dx](examples/sierpinski.html): Sierpinski Triangle ("Chaos Game")
 - [examples/rejection-sampler.dx](examples/rejection-sampler.html): Rejection Sampler for a Binomial Distribution
 - [examples/regression.dx](examples/regression.html): Basis Function Regression
-- [examples/brownian_motion.dx](examples/brownian_motion.html): Brownian Motion
+- [examples/brownian_motion.dx](examples/brownian_motion.html): Virtual Brownian Motion and Sheet samplers
 - [examples/particle-swarm-optimizer.dx](examples/particle-swarm-optimizer.html): Particle Swarm Optimizer
 - [examples/ode-integrator.dx](examples/ode-integrator.html): ODE Integrator
 - [examples/mcmc.dx](examples/mcmc.html): Markov Chain Monte Carlo
