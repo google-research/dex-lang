@@ -208,8 +208,6 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
              linalg-tests set-tests fft-tests
 
-lib-names = diagram plot png
-
 doc-names = conditionals functions
 
 all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(doc-names:%=doc/%)
@@ -219,11 +217,6 @@ quine-test-targets = $(all-names:%=run-%)
 update-test-targets    = $(test-names:%=update-tests/%)
 update-doc-targets     = $(doc-names:%=update-doc/%)
 update-example-targets = $(example-names:%=update-examples/%)
-
-pages-doc-names = $(doc-names:%=pages/%.html)
-pages-example-names = $(example-names:%=pages/examples/%.html)
-
-pages-lib-names = $(lib-names:%=pages/lib/%.html)
 
 t10k-images-idx3-ubyte-sha256 = 346e55b948d973a97e58d2351dde16a484bd415d4595297633bb08f03db6a073
 t10k-labels-idx1-ubyte-sha256 = 67da17c76eaffca5446c3361aaab5c3cd6d1c2608764d35dfb1850b086bf8dd5
@@ -344,7 +337,15 @@ slow-pages = pages/examples/mnist-nearest-neighbors.html
 # https://github.com/google-research/dex-lang/issues/910
 slow-pages += pages/examples/levenshtein-distance.html
 
-docs: pages-prelude $(pages-doc-names) $(pages-example-names) $(pages-lib-names) $(slow-pages)
+doc-files = $(doc-names:%=doc/%.dx)
+pages-doc-files = $(doc-names:%=pages/%.html)
+example-files = $(example-names:%=examples/%.dx)
+pages-example-files = $(example-names:%=pages/examples/%.html)
+
+lib-files = $(filter-out lib/prelude.dx,$(wildcard lib/*.dx))
+pages-lib-files = $(patsubst %.dx,pages/%.html,$(lib-files))
+
+docs: pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/index.md
 
 pages-prelude: lib/prelude.dx
 	mkdir -p pages
@@ -358,7 +359,10 @@ pages/lib/%.html: lib/%.dx
 	mkdir -p pages/lib
 	$(dex) script $^ --outfmt html > $@
 
-${pages-doc-names}:pages/%.html: doc/%.dx
+pages/index.md: $(doc-files) $(example-files) $(lib-files)
+	misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > $@
+
+${pages-doc-files}:pages/%.html: doc/%.dx
 	mkdir -p pages
 	$(dex) script $^ --outfmt html > $@
 
