@@ -1,4 +1,4 @@
-'# Sierpinski triangle ("chaos game")
+'# Sierpinski Triangle ("Chaos Game")
 
 import diagram
 import plot

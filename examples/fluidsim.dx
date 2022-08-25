@@ -1,4 +1,4 @@
-'## Fluid sim
+'# Fluid Simulation
 Fluid simulation code based on
 [Real-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
 
@@ -107,7 +107,7 @@ def fluidsim {n m a} [VSpace a] (num_steps: Nat) (color_init: n=>m=>a)
       state := (color', v)
       color
 
-'### Demo
+'## Demo
 
 N = Fin 50
 M = Fin 50

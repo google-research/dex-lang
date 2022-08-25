@@ -1,4 +1,4 @@
-'## Connectionist Temporal Classification
+'# Connectionist Temporal Classification
 By Alex Graves et alia.
 
 '[Link to paper](https://www.cs.toronto.edu/~graves/icml_2006.pdf).
@@ -99,7 +99,7 @@ def ctc {vocab time position} [Eq vocab, Eq position, Eq time]
   logaddexp endlabel endspace
 
 
-'### Demo
+'## Demo
 
 def randIdxNoZero (n:Type) [Ix n] (k:Key) : n =
   unif = rand k

@@ -1,10 +1,9 @@
-' # Neural Networks
+'# Neural Networks
 
 import plot
 import png
 
-' ## NN Prelude
-
+'## NN Prelude
 
 def relu (input : Float) : Float =
   select (input > 0.0) input 0.0
@@ -21,9 +20,9 @@ def init {i o p} (l:Layer i o p) (k:Key) : p  =
   (get_at #init l') k
 
 
-' ## Layers
+'## Layers
 
-' Dense layer
+'Dense layer
 
 def DenseParams (a:Type) (b:Type) [Ix a, Ix b] : Type =
    ((a=>b=>Float) & (b=>Float))
@@ -35,8 +34,7 @@ def dense (a:Type) (b:Type) [Ix a, Ix b] : Layer (a=>Float) (b=>Float) (DensePar
     init = arb
   }
 
-
-' CNN layer
+'CNN layer
 
 def CNNParams (inc:Type) (outc:Type) [Ix inc, Ix outc] (kw:Nat) (kh:Nat) : Type =
   ((outc=>inc=>Fin kh=>Fin kw=>Float) &
@@ -66,7 +64,7 @@ def cnn {h w} (inc:Type) (outc:Type) [Ix inc, Ix outc] (kw:Nat) (kh:Nat) :
     init = arb
   }
 
-' Pooling
+'Pooling
 
 def split {m n o v} [Ix m, Ix n, Ix o] (x: m=>v) : n=>o=>v =
   for i j. x.((ordinal (i,j))@m)
@@ -80,7 +78,7 @@ def meanpool {m n h w} (kh: Type) (kw: Type) [Ix m, Ix n, Ix h, Ix w, Ix kh, Ix 
   out : (kh => kw => h => w => Float) = imtile x
   mean for (i,j). out.i.j
 
-' ## Simple point classifier
+'## Simple point classifier
 
 [k1, k2] = split_key $ new_key 1
 x1 : Fin 100 => Float = arb k1
@@ -116,8 +114,8 @@ def simple (h1:Type) [Ix h1] =
 >        ((((Fin 2) => h1 => Float32) & (h1 => Float32))
 >         & ((h1 => (Fin 2) => Float32) & ((Fin 2) => Float32))))
 
-' Train a multiclass classifier with minibatch SGD
-' `minibatch * minibatches = batch`
+'Train a multiclass classifier with minibatch SGD
+'`minibatch * minibatches = batch`
 
 def trainClass {a b p batch} [VSpace p, Ix b, Ix batch]
       (model: Layer a (b=>Float) p)
@@ -154,7 +152,7 @@ tests = for h : (Fin 50). for i . for j.
 :html imseqshow tests
 > <html output>
 
-' ## LeNet for image classification
+'## LeNet for image classification
 
 H = 28
 W = 28
@@ -200,8 +198,7 @@ def lenet (h1:Type) (h2:Type) (h3:Type) [Ix h1, Ix h2, Ix h3] =
 >               & ((h3 => (Fin 10) => Float32) & ((Fin 10) => Float32))))))
 
 
-' ## Data Loading
-
+'## Data Loading
 
 Batch = Fin 5000
 Full = Fin ((size Batch) * H * W)
@@ -212,10 +209,9 @@ def pixel (x:Char) : Float32 =
                True -> (abs r) + 128
                False -> r
 
-' ## Training loop
+'## Training loop
 
-
-' Comment out these lines once you get the binary files from:
+'Comment out these lines once you get the binary files from:
 
 ' `wget https://github.com/srush/learns-dex/raw/main/mnist.bin`
 

@@ -1,4 +1,4 @@
-' ### PSD solver based on Cholesky decomposition
+'# PSD Solver Based on Cholesky Decomposition
 
 import linalg
 

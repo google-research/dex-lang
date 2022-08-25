@@ -1,8 +1,8 @@
-' ## Gradients on manifolds
+'# Gradients on manifolds
 An example of how to generalize the Dex `linearize` and `grad` functions to take
 derivatives and gradients of functions on manifolds.
 
-' ### Tangent space
+'## Tangent space
 The difference between differentiating on $\mathbb{R}^n$ and on general
 manifolds is that in the general case, the manifold tangent space type may be
 different to the manifold representation type. The tangent space at a single
@@ -90,7 +90,7 @@ def manifoldGrad
   transpose_linear (snd linearized) 1.0
 
 
-' ### Equivalence to standard differentiation
+'## Equivalence to standard differentiation
 As a sense check we make sure that these functions give the same output as the
 non-manifold versions on functions which are defined on $\mathbb{R}^n$.
 
@@ -110,7 +110,7 @@ snd original x ~~ snd new x
 > True
 
 
-' ### Simple example: Circle
+'## Simple example: Circle
 For a simple demonstration of this framework, consider the manifold $S^1$, i.e.
 the circle. This can be defined as the set of points in $\mathbb{R}^2$ at unit
 distance from the origin:
@@ -238,7 +238,7 @@ s1ManifoldGrad getX (S{x=sqrt 0.5, y=sqrt 0.5}) ~~ - (sqrt 0.5)
 > True
 
 
-' ### Further example: Quaternions
+'## Further example: Quaternions
 For a more complex use-case, we consider the SO3 manifold of 3D rotations, with
 the usual 4D quaternion representation. Again, the full definition of
 quaternions has a few subtleties, but a simple intuition is that a rotation by
