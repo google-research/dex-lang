@@ -1,11 +1,11 @@
-' # Particle Swarm Optimizer
+'# Particle Swarm Optimizer
 
-' ## Fitness function
+'## Fitness function
 
 rosenbrock : Float -> Float -> Float =
   \x y. sq (1.0 - x) + 80.0*sq (y - x*x)
 
-' We write one that uses vector for input
+'We write one that uses vector for input
 
 rosenbrock2 : ((Fin 2)=>Float) -> Float =
   \xs.
@@ -13,7 +13,7 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
     y = xs.(from_ordinal _ 1)
     rosenbrock x y
 
-' Min should be at 1.0, 1.0
+'Min should be at 1.0, 1.0
 
 :p rosenbrock 1.0 1.000
 > 0.
@@ -28,15 +28,15 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
 > 0.032
 
 
-' ## Helper functions
+'## Helper functions
 
 def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = min_by fst
 
 def minimumbyfst {n a} : (n=>(Float & a)) -> (Float & a) = minimum_by fst
 
-' ### Rand helpers
+'### Rand helpers
 
-' make a random vector uniformly distributed between `lb` and `ub`
+'make a random vector uniformly distributed between `lb` and `ub`
 
 def randBounded {d} : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
   \key lb ub.
@@ -45,7 +45,7 @@ def randBounded {d} : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
 :p randBounded (new_key 4) [1.0,  -2.0] [-1.0,  2.0]
 > [-0.73701, 1.433697]
 
-' ## The Optimizer itself.
+'## The Optimizer itself.
 We have **arguments**:
  - type explicit, `np:Ix`: number of particles
  - type explicit, `niter:Ix`: number of iterations
@@ -54,7 +54,7 @@ We have **arguments**:
  - `(lb,ub):(d=>Float,d=>Float)`: boundries of the space being searched
  - `(momentum,gRate,pRate):(Float,Float,Float)`: PSO hyper-parameters to control exploration vs exploitation.
 
-' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
+'**Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
 def optimize
       {d}
@@ -97,9 +97,9 @@ def optimize
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
-' ---
-Lets see how it goes.
-Run it for more iterations and result should improve.
+'---
+Let's see how it goes.
+Run it for more iterations and the result should improve.
 Which it indeed does.
 
 :p optimize 50 10 (new_key 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)

@@ -1,32 +1,32 @@
-' # Rotations with quaternions
+'# Rotations with quaternions
 
 
-' (This is a Dex reimplementation of the @imadr's lovely little blog post [Rotation with Quaternions](https://imadr.github.io/rotations-with-quaternions/) that includes an example front-end in three.js.)
+'(This is a Dex reimplementation of the @imadr's lovely little blog post [Rotation with Quaternions](https://imadr.github.io/rotations-with-quaternions/) that includes an example front-end in three.js.)
 
-' A quaternion is a 4 dimensional complex-like number, it has four components, three of which are the "imaginary" part.
+'A quaternion is a 4 dimensional complex-like number, it has four components, three of which are the "imaginary" part.
 
 ' $$ q = a+b\textrm{i}+c\textrm{j}+d\textrm{k} $$
   $$ q = (b,c,d, a) $$
   $$ \textrm{i}^{2}=\textrm{j}^{2}=\textrm{k}^{2}=\textrm{i}\textrm{j}\textrm{k}=-1 $$
 
-' We represent a quaternion with this data structure:
+'We represent a quaternion with this data structure:
 
 data Quaternion = Q {x:Float & y:Float & z:Float & w:Float}
 
-' The four components are usually ordered \(w,x,y,z\) but I like to put \(w\) at the end.
+'The four components are usually ordered \(w,x,y,z\) but I like to put \(w\) at the end.
  Initializing a quaternion:
 
 q = Q {x=1.0, y=2.0, z=3.0, w=4.0}
 q
 > (Q {w = 4., x = 1., y = 2., z = 3.})
 
-' ## Quaternion magnitude
+'## Quaternion magnitude
  A quaternion is basically a 4 dimensional vector.
 
 as_vec = \(Q{x,y,z,w}). [x, y, z, w]
 from_vec = \([x, y, z, w]). Q{x,y,z,w}
 
-' It has a vector magnitude (or norm, or length):
+'It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
 
 
@@ -34,14 +34,14 @@ $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
 def magnitude {a} (x:a=>Float) : Float = sqrt $ sum $ for i. x.i * x.i
 
 
-' ## Quaternion normalization
+'## Quaternion normalization
 Like vectors a quaternion can be normalized by dividing each component by the magnitude:
 
 def normalize {a} (x:a=>Float) : a=> Float = 1.0 / (magnitude x) .* x
 
-' A special property of quaternions is that a unit quaternion (a quaternion with magnitude \(1\)) represents a rotation in 3D space.
+'A special property of quaternions is that a unit quaternion (a quaternion with magnitude \(1\)) represents a rotation in 3D space.
 
-' ## Scaling a quaternion
+'## Scaling a quaternion
 Scaling a quaternion is multiplying each of its components by a real number (the scalar):
 
 instance Add Quaternion
@@ -55,21 +55,21 @@ instance VSpace Quaternion
   scale_vec = \ s x. from_vec (s .* as_vec x)
 
 
-' ## Identity quaternion
+'## Identity quaternion
 
-' There is a special quaternion called the *identity quaternion* which corresponds to no rotation:
+'There is a special quaternion called the *identity quaternion* which corresponds to no rotation:
 
 ident = Q{x=0.0, y=0.0, z=0.0, w=1.0}
 
-' Geometrically, we can also consider \((0, 0, 0, -1)\) to be an identity quaternion since it corresponds to no rotation.
+'Geometrically, we can also consider \((0, 0, 0, -1)\) to be an identity quaternion since it corresponds to no rotation.
 
-' ## Quaternion multiplication
+'## Quaternion multiplication
 Multiplying two unit quaternions represents a *composition of two rotations*.
 
-' Quaternion multiplication isn't commutative . If we want to apply a rotation \(q_{1}\) then a rotation \(q_{2}\), the resulting rotation \(q_{3}\) is:
+'Quaternion multiplication isn't commutative . If we want to apply a rotation \(q_{1}\) then a rotation \(q_{2}\), the resulting rotation \(q_{3}\) is:
 $$q_{3}=q_{2}.q_{1}$$
 
-' Quaternion multiplication looks like this:
+'Quaternion multiplication looks like this:
 $$q_{1} = a+b\textrm{i}+c\textrm{j}+d\textrm{k}$$
 $$q_{2} = e+f\textrm{i}+g\textrm{j}+h\textrm{k}$$
 
@@ -88,24 +88,24 @@ instance Mul Quaternion
   }
   one = ident
 
-' We will make this into a Monoid in Dex.
+'We will make this into a Monoid in Dex.
 
 instance Monoid Quaternion
   mempty = one
   mcombine = \a b. a * b
 
 
-' ## Quaternion vs Euler angles
+'## Quaternion vs Euler angles
 
-' We use quaternions instead of Euler angles to represent rotations for a couple of reasons:
+'We use quaternions instead of Euler angles to represent rotations for a couple of reasons:
   * Euler angles suffer from gimbal lock
   * Interpolating between two Euler angles lead to weird results
 
-' We represent the orientation of an object using only a quaternion, then we multiply that orientation by another quaternion to rotate it.
+'We represent the orientation of an object using only a quaternion, then we multiply that orientation by another quaternion to rotate it.
 
-' However writing a rotation directly in quaternion form isn't really intuitive, what we do instead is *convert an Euler angle to a quaternion then use it for rotating.
+'However writing a rotation directly in quaternion form isn't really intuitive, what we do instead is *convert an Euler angle to a quaternion then use it for rotating.
 
-' If we have an Euler angle rotation in the order ZYX (Yaw -> Pitch -> Roll, we can chose any order but must stay consistent), we can convert it to a quaternion like this:
+'If we have an Euler angle rotation in the order ZYX (Yaw -> Pitch -> Roll, we can chose any order but must stay consistent), we can convert it to a quaternion like this:
 
 
 
@@ -132,11 +132,11 @@ def euler_to_quat ((E v):Euler) : Quaternion =
 
 
 
-' ## Drawing with Quaternions
+'## Drawing with Quaternions
 
-' Libraries like three.js allow us to use quaternions directly for rotations.
+'Libraries like three.js allow us to use quaternions directly for rotations.
 
-' This script implements a simple 3D box positioned based on a quaternion.
+'This script implements a simple 3D box positioned based on a quaternion.
 
 
 def show3D ((Q {x, y, z, w}): Quaternion) : String =
@@ -205,7 +205,7 @@ rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0])
 :html show3D $ one <> rot <> rot <> rot <> rot
 > <html output>
 
-' All the way around!
+'All the way around!
 
 
 rot2 = euler_to_quat (E [pi / 16.0, pi/8.0, 0.0])
@@ -213,7 +213,7 @@ rot2 = euler_to_quat (E [pi / 16.0, pi/8.0, 0.0])
 :html show3D $ one * rot2
 > <html output>
 
-' ## Quaternion Conjugate
+'## Quaternion Conjugate
 The *conjugate* of a quaternion \(q\) is:
 
 ' $$q^{*} = a-b\textrm{i}-c\textrm{j}-d\textrm{k}$$
@@ -223,9 +223,9 @@ def conj ((Q {x, y, z, w}):Quaternion) : Quaternion =
     Q {x = -x, y = -y, z = -z, w = w}
 
 
-' ## Quaternion Inverse
+'## Quaternion Inverse
 
-' The *inverse* of a quaternion \(q\), is the conjugate divided by the magnitude squared:
+'The *inverse* of a quaternion \(q\), is the conjugate divided by the magnitude squared:
 $$q^{-1} = \frac{q^{*}}{||q||^{2}}$$
 
 
@@ -233,13 +233,13 @@ def inv (q:Quaternion) : Quaternion =
     m = magnitude $ as_vec q
     1.0 / (m * m) .* conj q
 
-' For unit quaternions, the conjugate is equal to the inverse.
+'For unit quaternions, the conjugate is equal to the inverse.
 Multiplying a quaternion by its inverse results in the identity quaternion:
 
 ' $$q.q^{-1} = (0, 0, 0, 1)$$
 
 
-' Let's try it out
+'Let's try it out
 
 q' = from_vec $ normalize $ as_vec $ Q { x=1.0, y=2.0, z=0.5, w=10.0}
 
@@ -260,9 +260,9 @@ q' = from_vec $ normalize $ as_vec $ Q { x=1.0, y=2.0, z=0.5, w=10.0}
 
 
 
-' ## Quaternion difference
+'## Quaternion difference
 
-' The difference of two quaternions \(q_{1}\) and \(q_{2}\) is another quaternion \(q_{3}\) that rotates from \(q_{1}\) to \(q_{2}\):
+'The difference of two quaternions \(q_{1}\) and \(q_{2}\) is another quaternion \(q_{3}\) that rotates from \(q_{1}\) to \(q_{2}\):
 
 ' $$q_{3} = q_{1}^{-1}.q_{2}$$
 
@@ -282,11 +282,11 @@ rot_down = difference rot_right_down rot_right
 > <html output>
 
 
-' ## Quaternion Exp and Log
+'## Quaternion Exp and Log
 
-' The exponential and the logarithm of a quaternion won't be very useful by themselves, but we will use them to compute other functions later.
+'The exponential and the logarithm of a quaternion won't be very useful by themselves, but we will use them to compute other functions later.
 
-' Given a quaternion \(q = (x,y,z,w)\) and its vector part \(v = (x,y,z)\), the exponential of that quaternion is also a quaternion, and it's given by this formula:
+'Given a quaternion \(q = (x,y,z,w)\) and its vector part \(v = (x,y,z)\), the exponential of that quaternion is also a quaternion, and it's given by this formula:
 
 ' $$\exp(q) = \exp(w)\begin{pmatrix}
 \frac{v_{x}}{||v||}\sin(||v||)\\\\
@@ -309,10 +309,10 @@ def q_exp (q:Quaternion) : Quaternion =
        w = cos(m) * exp_w
     }
 
-' Tangent: to implement quaternion logs we need arccos. We don't have this yet in Dex
+'Tangent: to implement quaternion logs we need arccos. We don't have this yet in Dex
   so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
 
-' NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit
+'NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit
 
 def acos (x:Float) : Float =
   negate = select (x < 0.0) 1.0 0.0
@@ -325,7 +325,7 @@ def acos (x:Float) : Float =
   negate * pi + ret5
 
 
-' The logarithm of a quaternion is also a quaternion and is given by this formula:
+'The logarithm of a quaternion is also a quaternion and is given by this formula:
 
 ' $$\log(q) = \begin{pmatrix}
 \frac{v_{x}}{||v||}\arccos(\frac{w}{||q||})\\\\
@@ -351,9 +351,9 @@ def q_log (q:Quaternion) : Quaternion =
     }
 
 
-' ## Quaternion exponentiation
+'## Quaternion exponentiation
 
-' Raising a quaternion to a power results in either a fraction or a multiple of that quaternion. \(q^{2}\) represents twice the rotation of \(q\), and \(q^{0.5}\) represents half of that rotation.
+'Raising a quaternion to a power results in either a fraction or a multiple of that quaternion. \(q^{2}\) represents twice the rotation of \(q\), and \(q^{0.5}\) represents half of that rotation.
 
 ' $$q^{n} = \exp(n\log(q))$$
 
@@ -369,9 +369,9 @@ def q_pow (q:Quaternion) (n:Float) : Quaternion =
 :html show3D (q_pow rot_right 15.0)
 > <html output>
 
-' ## Quaternion slerping
+'## Quaternion slerping
 
-' Arguably one of the most important advantages of quaternions, "Slerp" stands for spherical linear interpolation. It's a function thats takes three parameters: a quaternion \(q_{1}\), a quaternion \(q_{2}\) and an interpolation parameter \(t\) that goes from \(0\) to \(1\). It gives us an intermediate rotation depending on the value of \(t\).
+'Arguably one of the most important advantages of quaternions, "Slerp" stands for spherical linear interpolation. It's a function thats takes three parameters: a quaternion \(q_{1}\), a quaternion \(q_{2}\) and an interpolation parameter \(t\) that goes from \(0\) to \(1\). It gives us an intermediate rotation depending on the value of \(t\).
 
 ' $$\textrm{slerp}(q_{1}, q_{2}, t) = q_{1}(q_{1}^{-1}q_{2})^{t}$$
 
@@ -388,7 +388,7 @@ goal = rot_right_down <> rot_right_down
 > <html output>
 
 
-' Here's what it looks like each step of the way
+'Here's what it looks like each step of the way
 
 :html show3D $ one
 > <html output>

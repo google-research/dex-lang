@@ -1,5 +1,4 @@
-
-'## Stochastic Gradient Descent with Momentum
+'# Stochastic Gradient Descent with Momentum
 
 def sgd_step {a} [VSpace a] (step_size: Float) (decay: Float) (gradfunc: a -> Nat -> a) (x: a) (m: a) (iter:Nat) : (a & a) =
   g = gradfunc x iter
@@ -17,14 +16,14 @@ def sgd {a} [VSpace a] (step_size:Float) (decay:Float) (num_steps:Nat) (gradient
   x_final
 
 
-'### Example quadratic optimization problem
+'## Example quadratic optimization problem
 
 D = Fin 4
 optimum = for i:D. 1.1
 def objective (x:D=>Float) : Float = 0.5 * sum for i. sq (optimum.i - x.i)
 def gradfunc (x:D=>Float) (iter:Nat) : D=>Float = grad objective x
 
-'### Run optimizer
+'## Run optimizer
 
 x_init = for i:D. 0.0
 stepsize = 0.01

@@ -1,4 +1,4 @@
-' ## Multi-step Ray Tracer
+'# Multi-step Ray Tracer
 
 ' Based on Eric Jang's
 [JAX implementation](https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb),
@@ -8,7 +8,7 @@ described
 import png
 import plot
 
-' ### Generic Helper Functions
+'## Generic Helper Functions
 Some of these should probably go in prelude.
 
 def Vec (n:Nat) : Type = Fin n => Float
@@ -32,7 +32,7 @@ def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Nat) (k:Key) : a =
 
 def positiveProjection {n} (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
-' ### 3D Helper Functions
+'## 3D Helper Functions
 
 def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
   [a1, a2, a3] = a
@@ -80,7 +80,7 @@ def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
   rr = (rx .* uu) + (ry .* vv) + (rz .* normal)
   normalize rr
 
-' ### Raytracer
+'## Raytracer
 
 Distance = Float
 
@@ -280,7 +280,7 @@ def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
     sampleAveraged sampleRayColor (get_at #numSamples params) pixKey
   MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
 
-' ### Define the scene and render it
+'## Define the scene and render it
 
 lightColor = [0.2, 0.2, 0.2]
 leftWallColor  = 1.5 .* [0.611, 0.0555, 0.062]
