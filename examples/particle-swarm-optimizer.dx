@@ -76,11 +76,11 @@ def optimize
         (gscore, gloc) = gbest
         plocs = map snd pbests
         gVel:(np=>d=>Float) = for p i.
-            weight = rand $ (ixkey2 keyG p i)
+            weight = rand $ (ixkey keyG (p, i))
             dir = gloc.i - positions.p.i
             weight * dir
         pVel:(np=>d=>Float) = for p i.
-            weight = rand $ (ixkey2 keyP p i)
+            weight = rand $ (ixkey keyP (p, i))
             dir = plocs.p.i - positions.p.i
             weight * dir
         newVelocities:(np=>d=>Float) = momentum .* velocities + gRate .* gVel + pRate .* gVel

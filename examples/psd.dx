@@ -14,7 +14,7 @@ N = Fin 4
 [k1, k2] = split_key $ new_key 0
 
 psd : N=>N=>Float =
-  a = for i:N j:N. randn $ ixkey2 k1 i j
+  a = for i:N j:N. randn $ ixkey k1 (i, j)
   x = a ** transpose a
   x + eye
 
