@@ -305,7 +305,8 @@ function render(renderMode) {
         };
     }
 }
-render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><p>Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>ODE Integrator</h1>
+</div></div><div class="cell"><div class="prose-block"><p>Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
 stepsize calculation.
 This version is a port of the <a href="https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py">Jax implementation</a>.
 One difference is that it uses a lower-triangular
@@ -472,7 +473,7 @@ matrix type for the Butcher tableau, and so avoids zero-padding everywhere.</p>
 </span>  init_carry <span class="symbol">=</span> (z0<span class="symbol">,</span> f0<span class="symbol">,</span> t0<span class="symbol">,</span> init_step<span class="symbol">,</span> t0<span class="symbol">,</span> init_interp_coeff)
   snd <span class="symbol">$</span> scan init_carry integrate_to_next_time
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h4>Example: Linear dynamics</h4>
+</div></div><div class="cell"><div class="prose-block"><h2>Example: Linear dynamics</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> myDyn {a} (z <span class="symbol">:</span> a) (t<span class="symbol">:</span><span class="type-name">Time</span>) <span class="symbol">:</span> a <span class="symbol">=</span> z
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">z0 <span class="symbol">=</span> [1<span class="symbol">.</span>0]

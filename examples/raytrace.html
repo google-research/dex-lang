@@ -305,7 +305,7 @@ function render(renderMode) {
         };
     }
 }
-render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h2>Multi-step Ray Tracer</h2>
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Multi-step Ray Tracer</h1>
 </div></div><div class="cell"><div class="prose-block"><p>Based on Eric Jang's
 <a href="https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb">JAX implementation</a>,
 described
@@ -313,7 +313,7 @@ described
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Generic Helper Functions</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Generic Helper Functions</h2>
 <p>Some of these should probably go in prelude.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Vec</span> (n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Mat</span> (n<span class="symbol">:</span><span class="type-name">Nat</span>) (m<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> m <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
@@ -336,7 +336,7 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> positiveProjection {n} (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> dot x y <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>3D Helper Functions</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>3D Helper Functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cross (a<span class="symbol">:</span><span class="type-name">Vec</span> 3) (b<span class="symbol">:</span><span class="type-name">Vec</span> 3) <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span>
   [a1<span class="symbol">,</span> a2<span class="symbol">,</span> a3] <span class="symbol">=</span> a
   [b1<span class="symbol">,</span> b2<span class="symbol">,</span> b3] <span class="symbol">=</span> b
@@ -383,7 +383,7 @@ described
   rr <span class="symbol">=</span> (rx <span class="symbol">.*</span> uu) <span class="symbol">+</span> (ry <span class="symbol">.*</span> vv) <span class="symbol">+</span> (rz <span class="symbol">.*</span> normal)
   normalize rr
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Raytracer</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Raytracer</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Distance</span> <span class="symbol">=</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Position</span>  <span class="symbol">=</span> <span class="type-name">Vec</span> 3
@@ -582,7 +582,7 @@ described
     sampleAveraged sampleRayColor (get_at <span class="iso-sugar">#numSamples</span> params) pixKey
   <span class="type-name">MkImage</span> _ _ <span class="symbol">$</span> image <span class="symbol">/</span> mean (<span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> image<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Define the scene and render it</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Define the scene and render it</h2>
 </div></div><div class="cell"><div class="code-block">lightColor <span class="symbol">=</span> [0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>2]
 </div></div><div class="cell"><div class="code-block">leftWallColor  <span class="symbol">=</span> 1<span class="symbol">.</span>5 <span class="symbol">.*</span> [0<span class="symbol">.</span>611<span class="symbol">,</span> 0<span class="symbol">.</span>0555<span class="symbol">,</span> 0<span class="symbol">.</span>062]
 </div></div><div class="cell"><div class="code-block">rightWallColor <span class="symbol">=</span> 1<span class="symbol">.</span>5 <span class="symbol">.*</span> [0<span class="symbol">.</span>117<span class="symbol">,</span> 0<span class="symbol">.</span>4125<span class="symbol">,</span> 0<span class="symbol">.</span>115]

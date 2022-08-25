@@ -1,0 +1,634 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX, if available.
+    // Skip rendering if KaTeX is unavailable.
+    if (typeof renderMathInElement == &#39;undefined&#39;) {
+        return;
+    }
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Linear Algebra</h1>
+<ul>
+<li>Cholesky Decomposition</li>
+<li>LU Decomposition</li>
+<li>Matrix Inversion</li>
+</ul>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_cast {a m} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> m] (d<span class="command">:a</span>) <span class="symbol">:</span> m <span class="symbol">=</span> unsafe_from_ordinal m (ordinal d)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The three functions below are safe because one can't produce an element of type n
+if there isn't at least one possible value in its type. So being able
+to produce x to call this function is proof that <code>n</code> is non-empty,
+even though we don't use the <code>NonEmpty</code> constraint.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> first_ix_<span class="keyword">of</span> {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> n <span class="symbol">=</span> unsafe_from_ordinal n 0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> last_ix_<span class="keyword">of</span>  {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> n <span class="symbol">=</span> unsafe_from_ordinal n (unsafe_nat_diff (size n) 1)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_last {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> ((ordinal x) <span class="symbol">+</span> 1) <span class="symbol">==</span> size n
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Triangular matrices</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">LowerTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span>v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">UpperTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span>v
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> refl_less {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> (<span class="symbol">..</span>i) <span class="symbol">=</span>
+  from_just <span class="symbol">$</span> project _ i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> refl_more {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> (i<span class="symbol">..</span>) <span class="symbol">=</span>
+  from_just <span class="symbol">$</span> project _ i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upper_tri_diag {n v} (u<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="keyword">view</span> i<span class="symbol">.</span> u<span class="symbol">.</span>i<span class="symbol">.</span>(refl_more i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_diag {n v} (l<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="keyword">view</span> i<span class="symbol">.</span> l<span class="symbol">.</span>i<span class="symbol">.</span>(refl_less i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_identity {a n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] <span class="symbol">:</span> <span class="type-name">LowerTriMat</span> n a <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span> select (is_last j) one zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Representing inequalities between indices</h2>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- These would be unnecessary if there were syntax for dependent pairs.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LowerTriIx</span> n    <span class="symbol">=</span> <span class="type-name">MkLowerTriIx</span>    i<span class="command">:n</span> j<span class="symbol">:</span>(<span class="symbol">..</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">UpperTriIx</span> n    <span class="symbol">=</span> <span class="type-name">MkUpperTriIx</span>    i<span class="command">:n</span> j<span class="symbol">:</span>(i<span class="symbol">..</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span> <span class="type-name">MkLowerTriIxExc</span> i<span class="command">:n</span> j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">UpperTriIxExc</span> n <span class="symbol">=</span> <span class="type-name">MkUpperTriIxExc</span> i<span class="command">:n</span> j<span class="symbol">:</span>(i<span class="symbol">&lt;..</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Flipping inequalities between indices</h2>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Put these in instances of an Isomorphism interface?
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_upper_ix {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(i<span class="symbol">..</span>)) <span class="symbol">:</span> <span class="type-name">LowerTriIx</span> n <span class="symbol">=</span>
+  j&#39; <span class="symbol">=</span> inject n j
+  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  <span class="type-name">MkLowerTriIx</span> j&#39; i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_ix {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(<span class="symbol">..</span>i)) <span class="symbol">:</span> <span class="type-name">UpperTriIx</span> n <span class="symbol">=</span>
+  j&#39; <span class="symbol">=</span> inject n j
+  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  <span class="type-name">MkUpperTriIx</span> j&#39; i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_upper_ix_exc {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(i<span class="symbol">&lt;..</span>)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
+  j&#39; <span class="symbol">=</span> inject n j
+  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  <span class="type-name">MkLowerTriIxExc</span> j&#39; i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_ix_exc {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)) <span class="symbol">:</span> <span class="type-name">UpperTriIxExc</span> n <span class="symbol">=</span>
+  j&#39; <span class="symbol">=</span> inject n j
+  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  <span class="type-name">MkUpperTriIxExc</span> j&#39; i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_to_upper {n v} (lower<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> <span class="type-name">UpperTriMat</span> n v <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span>
+    (<span class="type-name">MkLowerTriIx</span> j&#39; i&#39;) <span class="symbol">=</span> transpose_upper_ix i j
+    lower<span class="symbol">.</span>j&#39;<span class="symbol">.</span>i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_upper_to_lower {n v} (upper<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n v) <span class="symbol">:</span> <span class="type-name">LowerTriMat</span> n v <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span>
+    (<span class="type-name">MkUpperTriIx</span> j&#39; i&#39;) <span class="symbol">=</span> transpose_lower_ix i j
+    upper<span class="symbol">.</span>j&#39;<span class="symbol">.</span>i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_to_upper_no_diag {n v}
+    (lower<span class="symbol">:</span>(i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span>v) <span class="symbol">:</span>
+           (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">&lt;..</span>)<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span>
+    (<span class="type-name">MkLowerTriIxExc</span> j&#39; i&#39;) <span class="symbol">=</span> transpose_upper_ix_exc i j
+    lower<span class="symbol">.</span>j&#39;<span class="symbol">.</span>i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Type-shifting inequalities between indices</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">LowerTriIx</span> m) (<span class="type-name">LowerTriIx</span> n)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> inject n i
+    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    <span class="type-name">MkLowerTriIx</span> i&#39; j&#39;
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span> 
+    <span class="keyword">case</span> project m i <span class="keyword">of</span>
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+      (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
+        j&#39; <span class="symbol">=</span> inject n j
+        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">UpperTriIx</span> m) (<span class="type-name">UpperTriIx</span> n)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> inject n i
+    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    <span class="type-name">MkUpperTriIx</span> i&#39; j&#39;
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span> 
+    <span class="keyword">case</span> project m i <span class="keyword">of</span>
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+      (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
+        j&#39; <span class="symbol">=</span> inject n j
+        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkUpperTriIx</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">LowerTriIxExc</span> m) (<span class="type-name">LowerTriIxExc</span> n)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> inject n i
+    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    <span class="type-name">MkLowerTriIxExc</span> i&#39; j&#39;
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span> 
+    <span class="keyword">case</span> project m i <span class="keyword">of</span>
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+      (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
+        j&#39; <span class="symbol">=</span> inject n j
+        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">UpperTriIxExc</span> m) (<span class="type-name">UpperTriIxExc</span> n)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> inject n i
+    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    <span class="type-name">MkUpperTriIxExc</span> i&#39; j&#39;
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span> 
+    <span class="keyword">case</span> project m i <span class="keyword">of</span>
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+      (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
+        j&#39; <span class="symbol">=</span> inject n j
+        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkUpperTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Chaining inequalities between indices</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ii {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p <span class="symbol">..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..</span> p)) <span class="symbol">:</span> <span class="type-name">LowerTriIx</span> n <span class="symbol">=</span>
+  i&#39; <span class="symbol">=</span> inject n i
+  j&#39; <span class="symbol">=</span> inject n j
+  <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ei {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p<span class="symbol">&lt;..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..</span> p)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
+  i&#39; <span class="symbol">=</span> inject n i
+  j&#39; <span class="symbol">=</span> inject n j
+  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ie {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p <span class="symbol">..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>p)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
+  i&#39; <span class="symbol">=</span> inject n i
+  j&#39; <span class="symbol">=</span> inject n j
+  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ee {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p<span class="symbol">&lt;..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>p)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
+  i&#39; <span class="symbol">=</span> inject n i
+  j&#39; <span class="symbol">=</span> inject n j
+  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Linalg helpers</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> skew_symmetric_prod {v n} [<span class="type-name">VSpace</span> v]
+    (lower<span class="symbol">:</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="symbol">:</span> n<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  upper <span class="symbol">=</span> transpose_lower_to_upper_no_diag lower
+  <span class="comment">-- We could probably fuse these two for loops.
+</span>  lower_prod <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> lower<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> (y<span class="symbol">.</span>(inject n j))
+  upper_prod <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> upper<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> (y<span class="symbol">.</span>(inject n j))
+  lower_prod <span class="symbol">-</span> upper_prod
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> forward_substitute {n v} [<span class="type-name">VSpace</span> v] (a<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="comment">-- Solves lower triangular linear system (inverse a) **. b
+</span>  yield_state zero <span class="symbol">\</span>sRef<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span>
+      s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>  <span class="comment">-- dot product
+</span>        a<span class="symbol">.</span>i<span class="symbol">.</span>k <span class="symbol">.*</span> get sRef<span class="symbol">!</span>(inject n k)
+      sRef<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> s) <span class="symbol">/</span> (lower_tri_diag a)<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> backward_substitute {n v} [<span class="type-name">VSpace</span> v] (a<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="comment">-- Solves upper triangular linear system (inverse a) **. b
+</span>  yield_state zero <span class="symbol">\</span>sRef<span class="symbol">.</span>
+    <span class="keyword">rof</span> i<span class="command">:n</span><span class="symbol">.</span>
+      s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span>  <span class="comment">-- dot product
+</span>        a<span class="symbol">.</span>i<span class="symbol">.</span>k <span class="symbol">.*</span> get sRef<span class="symbol">!</span>(inject n k)
+      sRef<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> s) <span class="symbol">/</span> (upper_tri_diag a)<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: get rid of these by writing a dependent indexing (!) operator.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_mat {a b h} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">LowerTriMat</span> a b)) (i<span class="command">:a</span>) (j<span class="symbol">:</span>(<span class="symbol">..</span>i)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span>
+  d <span class="symbol">=</span> %indexRef ref i
+  d<span class="symbol">!</span>j
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upper_tri_mat {a b h} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">UpperTriMat</span> a b)) (i<span class="command">:a</span>) (j<span class="symbol">:</span>(i<span class="symbol">..</span>)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span>
+  d <span class="symbol">=</span> %indexRef ref i
+  d<span class="symbol">!</span>j
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Cholesky decomposition</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chol {n} (x<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span> <span class="symbol">=</span>
+  yield_state zero <span class="symbol">\</span>buf<span class="symbol">.</span>
+    mat <span class="symbol">=</span> lower_tri_mat buf
+    <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>
+      row_i <span class="symbol">=</span> <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..&lt;</span>j)<span class="symbol">.</span> get <span class="symbol">$</span> mat i (inject (<span class="symbol">..</span>i) k)
+      row_j <span class="symbol">=</span> <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..&lt;</span>j)<span class="symbol">.</span>
+        (<span class="type-name">MkLowerTriIxExc</span> j2 k2) <span class="symbol">=</span> inject _ <span class="symbol">$</span> <span class="type-name">MkLowerTriIxExc</span> j k
+        get <span class="symbol">$</span> mat j2 (inject _ k2)
+      j&#39; <span class="symbol">=</span> inject n j
+      a <span class="symbol">=</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j&#39; <span class="symbol">-</span> vdot row_i row_j
+      <span class="keyword">if</span> (ordinal j) <span class="symbol">==</span> (ordinal i)
+        <span class="keyword">then</span>
+          mat i j <span class="symbol">:=</span> sqrt a
+        <span class="keyword">else</span>
+          b <span class="symbol">=</span> get <span class="symbol">$</span> mat j&#39; (from_just <span class="symbol">$</span> project (<span class="symbol">..</span>j&#39;) j&#39;)
+          mat i j <span class="symbol">:=</span> a <span class="symbol">/</span> b
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Permutations</h2>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- The sign of the determinant of a permutation is either 1.0 or -1.0
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">PermutationSign</span> <span class="symbol">=</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Permutation</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (n<span class="symbol">=&gt;</span>n <span class="symbol">&amp;</span> <span class="type-name">PermutationSign</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_permutation {n t} ((perm<span class="symbol">,</span> _)<span class="symbol">:</span><span class="type-name">Permutation</span> n) (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>t) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>t <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(perm<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_permutation {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Permutation</span> n <span class="symbol">=</span>
+  (<span class="keyword">for</span> i<span class="symbol">.</span> i<span class="symbol">,</span> 1<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_in_place {n h} (pRef<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Permutation</span> n)) (i<span class="command">:n</span>) (j<span class="command">:n</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (permRef<span class="symbol">,</span> signRef) <span class="symbol">=</span> (fst_ref pRef<span class="symbol">,</span> snd_ref pRef)
+  tempj <span class="symbol">=</span> get permRef<span class="symbol">!</span>j
+  permRef<span class="symbol">!</span>j <span class="symbol">:=</span> get permRef<span class="symbol">!</span>i
+  permRef<span class="symbol">!</span>i <span class="symbol">:=</span> tempj
+  signRef <span class="symbol">:=</span> <span class="symbol">-</span>(get signRef)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_to_table {n} ((perm<span class="symbol">,</span> _)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n <span class="symbol">=</span> perm
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_sign    {n} ((_<span class="symbol">,</span> sign)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> <span class="type-name">PermutationSign</span> <span class="symbol">=</span> sign
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>LU decomposition functions</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pivotize {n} (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Permutation</span> n <span class="symbol">=</span>
+  <span class="comment">-- Gives a row permutation that makes Gaussian elimination more stable.
+</span>  yield_state identity_permutation <span class="symbol">\</span>permRef<span class="symbol">.</span>
+    <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span>
+      row_with_largest <span class="symbol">=</span> argmin <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> (<span class="symbol">-</span>(abs a<span class="symbol">.</span>(inject n i)<span class="symbol">.</span>j))
+      <span class="keyword">if</span> (ordinal j) <span class="symbol">/=</span> (ordinal row_with_largest) <span class="keyword">then</span>
+        swap_in_place permRef j (inject n row_with_largest)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lu {n} (a<span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span>
+       (<span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Permutation</span> n) <span class="symbol">=</span>
+  <span class="comment">-- Computes lower, upper, and permuntation matrices from a square matrix,
+</span>  <span class="comment">-- such that apply_permutation permutation a == lower ** upper.
+</span>  permutation <span class="symbol">=</span> pivotize a
+  a <span class="symbol">=</span> apply_permutation permutation a
+
+  <span class="comment">-- TODO Why is this type annotation needed?
+</span>  init_lower <span class="symbol">:</span> (<span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>) <span class="symbol">=</span> lower_tri_identity
+  init_upper <span class="symbol">=</span> zero
+
+  (lower<span class="symbol">,</span> upper) <span class="symbol">=</span> yield_state (init_lower<span class="symbol">,</span> init_upper) <span class="symbol">\</span>stateRef<span class="symbol">.</span>
+    lRef <span class="symbol">=</span> fst_ref stateRef
+    uRef <span class="symbol">=</span> snd_ref stateRef
+
+  <span class="comment">-- For reference, here&#39;s code to compute the LU decomposition
+</span>  <span class="comment">-- without dependent tables (i.e. with standard flat matrices):
+</span>  <span class="comment">--  for j:n.
+</span>  <span class="comment">--    for i:(..j).
+</span>  <span class="comment">--      i = inject _ i
+</span>  <span class="comment">--      s = sum for k&#39;:(..i).
+</span>  <span class="comment">--        k = inject _ k&#39;
+</span>  <span class="comment">--        (get uRef!k!j) * (get lRef!i!k)
+</span>  <span class="comment">--      uRef!i!j := a.i.j - s
+</span>
+  <span class="comment">--    for i&#39;:(j&lt;..).
+</span>  <span class="comment">--      i = inject _ i&#39;
+</span>  <span class="comment">--      s = sum for k&#39;:(..j).
+</span>  <span class="comment">--        k = inject _ k&#39;
+</span>  <span class="comment">--        (get uRef!k!j) * (get lRef!i!k)
+</span>  <span class="comment">--      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
+</span>  <span class="comment">--    for i:n. ()
+</span>
+    <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span>
+      <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="symbol">..</span>j)<span class="symbol">.</span>
+        s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>
+          (<span class="type-name">MkUpperTriIx</span> k2 _) <span class="symbol">=</span> transpose_lower_ix i k
+          (<span class="type-name">MkUpperTriIx</span> k3 j3) <span class="symbol">=</span> transpose_lower_ix j k2
+          ukj <span class="symbol">=</span> get <span class="symbol">$</span> upper_tri_mat uRef k3 j3
+          (<span class="type-name">MkLowerTriIx</span> i4 k4) <span class="symbol">=</span> inject _ <span class="symbol">$</span> <span class="type-name">MkLowerTriIx</span> i k
+          lik <span class="symbol">=</span> get <span class="symbol">$</span> lower_tri_mat lRef i4 k4
+          ukj <span class="symbol">*</span> lik
+
+        (<span class="type-name">MkUpperTriIx</span> i&#39; j&#39;) <span class="symbol">=</span> transpose_lower_ix j i
+        upper_tri_mat uRef i&#39; j&#39; <span class="symbol">:=</span> a<span class="symbol">.</span>(inject _ i)<span class="symbol">.</span>j <span class="symbol">-</span> s
+
+      <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">&lt;..</span>)<span class="symbol">.</span>
+        s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..</span>j)<span class="symbol">.</span>
+          (<span class="type-name">MkUpperTriIx</span> k2 j2) <span class="symbol">=</span> transpose_lower_ix j k
+          ukj <span class="symbol">=</span> get <span class="symbol">$</span> upper_tri_mat uRef k2 j2
+          (<span class="type-name">MkLowerTriIxExc</span> i3 k3) <span class="symbol">=</span> relax_ei i k
+          lik <span class="symbol">=</span> get <span class="symbol">$</span> lower_tri_mat lRef i3 <span class="symbol">$</span> inject _ k3
+          ukj <span class="symbol">*</span> lik
+
+        ujj <span class="symbol">=</span> get <span class="symbol">$</span> upper_tri_mat uRef j (refl_more j)
+        (<span class="type-name">MkLowerTriIxExc</span> i&#39; j&#39;) <span class="symbol">=</span> transpose_upper_ix_exc j i
+        lower_tri_mat lRef i&#39; (inject _ j&#39;) <span class="symbol">:=</span> (a<span class="symbol">.</span>i&#39;<span class="symbol">.</span>j <span class="symbol">-</span> s) <span class="symbol">/</span> ujj
+  (lower<span class="symbol">,</span> upper<span class="symbol">,</span> permutation)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>General linear algebra functions</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> solve {n v} [<span class="type-name">VSpace</span> v] (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+  <span class="comment">-- There&#39;s a small speedup possible by exploiting the fact
+</span>  <span class="comment">-- that l always has ones on the diagonal.  It would just require a
+</span>  <span class="comment">-- custom forward_substitute routine that doesn&#39;t divide
+</span>  <span class="comment">-- by the diagonal entries.
+</span>  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
+  b&#39; <span class="symbol">=</span> apply_permutation perm b
+  y <span class="symbol">=</span> forward_substitute l b&#39;
+  backward_substitute u y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> invert {n} (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  solve a eye
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> determinant {n} (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
+  prod (<span class="keyword">for</span> i<span class="symbol">.</span> (upper_tri_diag u)<span class="symbol">.</span>i <span class="symbol">*</span> (lower_tri_diag l)<span class="symbol">.</span>i) <span class="symbol">*</span> perm_sign perm
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sign_and_log_determinant {n} (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
+  diags <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (upper_tri_diag u)<span class="symbol">.</span>i <span class="symbol">*</span> (lower_tri_diag l)<span class="symbol">.</span>i
+  sign <span class="symbol">=</span> (perm_sign perm) <span class="symbol">*</span> prod <span class="keyword">for</span> i<span class="symbol">.</span> sign diags<span class="symbol">.</span>i
+  sum_<span class="keyword">of</span>_log_abs <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> log (abs diags<span class="symbol">.</span>i)
+  (sign<span class="symbol">,</span> sum_<span class="keyword">of</span>_log_abs)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> matrix_power {n} (base<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  general_integer_power (<span class="symbol">**</span>) eye base power
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trace {n a} [<span class="type-name">Add</span> a] (x<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+  sum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>i
+</div></div></div></body></html>

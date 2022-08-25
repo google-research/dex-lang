@@ -310,7 +310,6 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>NN Prelude</h2>
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu (input <span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   select (input <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) input 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
@@ -338,7 +337,6 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     init <span class="symbol">=</span> arb
   }
 </div></div><div class="cell"><div class="code-block">
-
 </div></div><div class="cell"><div class="prose-block"><p>CNN layer</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">CNNParams</span> (inc<span class="symbol">:</span><span class="type-name">Type</span>) (outc<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> inc<span class="symbol">,</span> <span class="type-name">Ix</span> outc] (kw<span class="symbol">:</span><span class="type-name">Nat</span>) (kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
   ((outc<span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kh<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kw<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">&amp;</span>
@@ -415,7 +413,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
        ((((Fin 2) =&gt; h1 =&gt; Float32) &amp; (h1 =&gt; Float32))
         &amp; ((h1 =&gt; (Fin 2) =&gt; Float32) &amp; ((Fin 2) =&gt; Float32))))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Train a multiclass classifier with minibatch SGD
-' <code>minibatch * minibatches = batch</code></p>
+'<code>minibatch * minibatches = batch</code></p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trainClass {a b p batch} [<span class="type-name">VSpace</span> p<span class="symbol">,</span> <span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> batch]
       (model<span class="symbol">:</span> <span class="type-name">Layer</span> a (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) p)
       (x<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>a)
@@ -495,7 +493,6 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
               &amp; ((h3 =&gt; (Fin 10) =&gt; Float32) &amp; ((Fin 10) =&gt; Float32))))))</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Data Loading</h2>
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Batch</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 5000
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Full</span> <span class="symbol">=</span> <span class="type-name">Fin</span> ((size <span class="type-name">Batch</span>) <span class="symbol">*</span> <span class="type-name">H</span> <span class="symbol">*</span> <span class="type-name">W</span>)
 </div></div><div class="cell"><div class="code-block">
@@ -506,7 +503,6 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
                <span class="type-name">False</span> <span class="symbol">-&gt;</span> r
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Training loop</h2>
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Comment out these lines once you get the binary files from:</p>
 </div></div><div class="cell"><div class="prose-block"><p><code>wget https://github.com/srush/learns-dex/raw/main/mnist.bin</code></p>
 </div></div><div class="cell"><div class="prose-block"><p><code>wget https://github.com/srush/learns-dex/raw/main/labels.bin</code></p>

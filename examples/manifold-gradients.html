@@ -305,10 +305,10 @@ function render(renderMode) {
         };
     }
 }
-render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h2>Gradients on manifolds</h2>
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Gradients on manifolds</h1>
 <p>An example of how to generalize the Dex <code>linearize</code> and <code>grad</code> functions to take
 derivatives and gradients of functions on manifolds.</p>
-</div></div><div class="cell"><div class="prose-block"><h3>Tangent space</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Tangent space</h2>
 <p>The difference between differentiating on $\mathbb{R}^n$ and on general
 manifolds is that in the general case, the manifold tangent space type may be
 different to the manifold representation type. The tangent space at a single
@@ -388,7 +388,7 @@ manifolds.</p>
   transpose_linear (snd linearized) 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="prose-block"><h3>Equivalence to standard differentiation</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Equivalence to standard differentiation</h2>
 <p>As a sense check we make sure that these functions give the same output as the
 non-manifold versions on functions which are defined on $\mathbb{R}^n$.</p>
 </div></div><div class="cell"><div class="code-block">x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span> n_to_f (ordinal i) <span class="symbol">/</span> 10<span class="symbol">.</span>
@@ -405,7 +405,7 @@ non-manifold versions on functions which are defined on $\mathbb{R}^n$.</p>
 </div></div><div class="cell"><div class="code-block">snd original x <span class="symbol">~~</span> snd new x
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="prose-block"><h3>Simple example: Circle</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Simple example: Circle</h2>
 <p>For a simple demonstration of this framework, consider the manifold $S^1$, i.e.
 the circle. This can be defined as the set of points in $\mathbb{R}^2$ at unit
 distance from the origin:
@@ -515,7 +515,7 @@ $- \sin \theta = -y$.</p>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">s1ManifoldGrad getX (<span class="type-name">S</span>{x<span class="symbol">=</span>sqrt 0<span class="symbol">.</span>5<span class="symbol">,</span> y<span class="symbol">=</span>sqrt 0<span class="symbol">.</span>5}) <span class="symbol">~~</span> <span class="symbol">-</span> (sqrt 0<span class="symbol">.</span>5)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="prose-block"><h3>Further example: Quaternions</h3>
+</div></div><div class="cell"><div class="prose-block"><h2>Further example: Quaternions</h2>
 <p>For a more complex use-case, we consider the SO3 manifold of 3D rotations, with
 the usual 4D quaternion representation. Again, the full definition of
 quaternions has a few subtleties, but a simple intuition is that a rotation by
