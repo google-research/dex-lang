@@ -106,12 +106,14 @@ xs = linspace pixels 0.3 2.1
 tolerance = xs.(1@_) - xs.(0@_)
 fs = map (sample_brownian_motion tolerance randn (new_key 0)) xs
 :html show_plot $ xy_plot xs fs
+> <html output>
 
 '#### Check that the finite differences look like white noise
 
 fdiffs = for i.
   (fs.(((ordinal i) -| 1)@_) - fs.i) / sqrt tolerance
 :html show_plot $ xy_plot xs fdiffs
+> <html output>
 
 '### Generalize the output type to any dimension
 This typeclass lets the output type of the Brownian sheet
@@ -162,3 +164,5 @@ samp : pixels=>pixels=>(Fin 3)=>Float = for i j.
   sample_brownian_sheet tolerance (new_key 0) (xs.i, xs.j)
 
 :html imshow samp
+> <html output>
+
