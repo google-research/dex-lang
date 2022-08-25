@@ -54,13 +54,15 @@ def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
 -- Useful for cutting out animation frames for a faster GIF.
 def cut {n m a} [Ix m] (x:n=>a) : m=>a =
   s = idiv (size n) (size m)
-  for i:m. x.(unsafe_from_ordinal _ $ s * ordinal i)
+  for i:m. x.(from_ordinal _ $ s * ordinal i)
 
 -- Converts a given 2D matrix to a greyscale image.
 def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
   scale = 1. / maximum (map maximum xs)
   for h.
     for w c. scale * xs.h.w
+
+def sqr {a} [Mul a] (x:a) : a = x * x
 
 '## Computing $\psi_{t+\Delta t}$
 
@@ -87,7 +89,7 @@ def step {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
         psi_l = psi.i.(j -! 1)
         psi_r = psi.i.(j +! 1)
         (psi.i.j
-         + ((i_ / 2.) * (fToC $ dt / pow dx 2.)
+         + ((i_ / 2.) * (fToC $ dt / sqr dx)
              * (psi_l + psi_u + (fToC 4. * psi.i.j) + psi_r + psi_d))
          - (i_ * (fToC $ dt * v.i.j) * psi.i.j))
 
@@ -97,7 +99,7 @@ def evolve {m n} (psi:m=>n=>Complex) (v:m=>n=>Float): Steps=>m=>n=>Complex =
 
 -- Compute the Born rule probability distribution by |psi|**2
 def pdf {n m} (psi:n=>m=>Complex) : n=>m=>Float =
-  pdf = for i j. complex_mag (pow psi.i.j (fToC 2.))
+  pdf = for i j. complex_mag (sqr psi.i.j)
   scale = sum (map sum pdf)
   for i j. divide pdf.i.j scale
 
@@ -107,35 +109,44 @@ def pdf {n m} (psi:n=>m=>Complex) : n=>m=>Float =
 def gaussian {n m} [Ix n, Ix m] ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
   for i:n.
     for j:m.
-      y2 = pow (ixToF i - uy) 2.
-      x2 = pow (ixToF j - ux) 2.
+      y2 = sqr (ixToF i - uy)
+      x2 = sqr (ixToF j - ux)
       if atBounds i j
         then fToC 0.
-        else fToC $ exp (-0.5 * ((x2 / (pow ox 2.)) + (y2 / (pow oy 2.))))
+        else fToC $ exp $ -0.5 * (x2 / sqr ox + y2 / sqr oy)
 
 -- Create an animation of the evolution of the given wavefunction under the given potential.
 def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
   animate (map toImg (cut (map pdf (evolve psi v)))::(Fin gifFrames=>_))
 
+' Initial state representing a centered particle
+
+centered = (gaussian (0.5, 0.5) (0.1, 0.1) :: D=>D=>_)
+
+pdf_centered = pdf centered
+
+all for i. all for j. pdf_centered.i.j >= 0
+> True
+
+:html
+  img_to_html $ img_to_png $ toImg $ pdf_centered
+> <html output>
+
 ' Centred particle in a zero-potential box.
 
-:html (run
-        ((gaussian (0.5, 0.5) (0.1, 0.1))::(D=>D=>_))
-        (for i j. 0.))
+:html (run centered (for i j. 0.))
 > <html output>
 
 ' Off-centre particle tunnelling through a high-potential barrier
 
 :html (run
-        ((gaussian (0.25, 0.5) (0.1, 0.1))::(D=>D=>_))
+        (gaussian (0.25, 0.5) (0.1, 0.1) :: D=>D=>_)
         (for i j. if (ordinal j) == 20 then 1000. else 0.))
 > <html output>
 
 ' Ramp potential confining a particle to a corner over time
 
-:html (run
-        ((gaussian (0.5, 0.5) (0.1, 0.1))::(D=>D=>_))
-        (for i j. n_to_f $ ordinal i + ordinal j))
+:html (run centered (for i j. n_to_f $ ordinal i + ordinal j))
 > <html output>
 
 ' Square wavefunction
