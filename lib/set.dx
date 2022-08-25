@@ -1,7 +1,8 @@
+'# Sets and Set-Indexed Arrays
+
 import sort
 
-
-'### Monoidal enforcement of uniqueness in sorted lists
+'## Monoidal enforcement of uniqueness in sorted lists
 
 def last {n a} (xs:n=>a) : Maybe a =
   s = size n
@@ -41,7 +42,7 @@ def remove_duplicates_from_sorted {n a} [Eq a] (xs:n=>a) : List a =
   reduce (AsList 0 []) merge_unique_sorted_lists xlists
 
 
-'### Sets
+'## Sets
 
 data Set a [Ord a] =
   -- Guaranteed to be in sorted order with unique elements,
@@ -78,7 +79,7 @@ def set_intersect {a}
   UnsafeAsSet _ intersection
 
 
-'### Index set for sets of strings
+'## Index set for sets of strings
 
 -- Todo: Make polymorphic in type.  Waiting on a bugfix.
 -- data SetIx a l:(Set a) [Ord a] =

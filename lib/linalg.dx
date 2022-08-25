@@ -1,4 +1,4 @@
-'## Linear Algebra
+'# Linear Algebra
 - Cholesky Decomposition
 - LU Decomposition
 - Matrix Inversion
@@ -14,7 +14,7 @@ def first_ix_of {n} [Ix n] (x:n) : n = unsafe_from_ordinal n 0
 def last_ix_of  {n} [Ix n] (x:n) : n = unsafe_from_ordinal n (unsafe_nat_diff (size n) 1)
 def is_last {n} [Ix n] (x:n) : Bool = ((ordinal x) + 1) == size n
 
-'### Triangular matrices
+'## Triangular matrices
 
 def LowerTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(..i)=>v
 def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(i..)=>v
@@ -33,7 +33,7 @@ def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v =
 def lower_tri_identity {a n} [Ix n, Add a, Mul a] : LowerTriMat n a =
   for i j. select (is_last j) one zero
 
-'### Representing inequalities between indices
+'## Representing inequalities between indices
 
 -- These would be unnecessary if there were syntax for dependent pairs.
 data LowerTriIx n    = MkLowerTriIx    i:n j:(..i)
@@ -41,7 +41,7 @@ data UpperTriIx n    = MkUpperTriIx    i:n j:(i..)
 data LowerTriIxExc n = MkLowerTriIxExc i:n j:(..<i)
 data UpperTriIxExc n = MkUpperTriIxExc i:n j:(i<..)
 
-'### Flipping inequalities between indices
+'## Flipping inequalities between indices
 
 -- TODO: Put these in instances of an Isomorphism interface?
 def transpose_upper_ix {n} [Ix n] (i:n) (j:(i..)) : LowerTriIx n =
@@ -81,7 +81,7 @@ def transpose_lower_to_upper_no_diag {n v}
     (MkLowerTriIxExc j' i') = transpose_upper_ix_exc i j
     lower.j'.i'
 
-'### Type-shifting inequalities between indices
+'## Type-shifting inequalities between indices
 
 instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIx m) (LowerTriIx n)
   inject' = \(MkLowerTriIx i j).
@@ -135,7 +135,7 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIxExc m) (UpperTriIxExc 
         j'' = from_just $ project m j'
         Just $ MkUpperTriIxExc i' $ from_just $ project _ j''
 
-'### Chaining inequalities between indices
+'## Chaining inequalities between indices
 
 def relax_ii {n} {p:n} [Ix n] (i:(p ..)) (j:(.. p)) : LowerTriIx n =
   i' = inject n i
@@ -157,7 +157,7 @@ def relax_ee {n} {p:n} [Ix n] (i:(p<..)) (j:(..<p)) : LowerTriIxExc n =
   j' = inject n j
   MkLowerTriIxExc i' $ from_just $ project _ j'
 
-'### Linalg helpers
+'## Linalg helpers
 
 def skew_symmetric_prod {v n} [VSpace v]
     (lower: (i:n)=>(..<i)=>Float) (y: n=>v) : n=>v =
@@ -191,7 +191,7 @@ def upper_tri_mat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h 
   d = %indexRef ref i
   d!j
 
-'### Cholesky decomposition
+'## Cholesky decomposition
 
 def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
   yield_state zero \buf.
@@ -210,7 +210,7 @@ def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
           b = get $ mat j' (from_just $ project (..j') j')
           mat i j := a / b
 
-'### Permutations
+'## Permutations
 
 -- The sign of the determinant of a permutation is either 1.0 or -1.0
 PermutationSign = Float
@@ -234,7 +234,7 @@ def perm_to_table {n} ((perm, _):Permutation n) : n=>n = perm
 def perm_sign    {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 
-'### LU decomposition functions
+'## LU decomposition functions
 
 def pivotize {n} (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
@@ -303,7 +303,7 @@ def lu {n} (a: n=>n=>Float) :
         lower_tri_mat lRef i' (inject _ j') := (a.i'.j - s) / ujj
   (lower, upper, permutation)
 
-'### General linear algebra functions.
+'## General linear algebra functions
 
 def solve {n v} [VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   -- There's a small speedup possible by exploiting the fact

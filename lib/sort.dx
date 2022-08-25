@@ -1,14 +1,16 @@
-'## Monoidal Merge Sort
-Warning: Very slow for now!!
-Because merging sorted lists is associative, we can expose the
+'# Monoidal Merge Sort
+
+'Warning: Very slow for now!!
+
+'Because merging sorted lists is associative, we can expose the
 parallelism of merge sort to the Dex compiler by making a monoid
-and using reduce or yield_accum.
+and using `reduce` or `yield_accum`.
 However, this approach puts a lot of pressure on the compiler.
 As noted on [StackOverflow](https://stackoverflow.com/questions/21877572/can-you-formulate-the-bubble-sort-as-a-monoid-or-semigroup),
 if the compiler does the reduction one element at a time,
 it's doing bubble / insertion sort with quadratic time cost.
-However, if breaks the list in half recursively, it'll be doing parallel mergesort.
-Currently it'll do the quadratic time version.
+However, if it breaks the list in half recursively, it'll be doing parallel mergesort.
+Currently the Dex compiler will do the quadratic-time version.
 
 def concat_table {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
   for idx. case idx of

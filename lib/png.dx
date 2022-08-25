@@ -1,3 +1,8 @@
+'# PNG Rendering
+
+'This is a wrapper around a foreign PNG encoding function.  The main
+purpose is to be able to render images in Dex notebooks.
+
 '## Base 64 encoder
 
 encoding_table =

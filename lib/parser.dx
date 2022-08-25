@@ -1,6 +1,8 @@
+'# Parser Combinators
 
+'Basic combinator-based parser in Dex (as opposed of Dex).
 
-'Utilities unrelated to parsing
+'## Utilities unrelated to parsing
 
 def from_ordinal_exc (n:Type) [Ix n] (i:Nat) : {Except} n =
   if (0 <= i) && (i < size n)
@@ -17,7 +19,7 @@ def index_list {a} (l:List a) (i:Nat) : {Except} a =
   (AsList n xs) = l
   xs.(from_ordinal_exc _ i)
 
-'The Parser type
+'## The Parser type
 
 def ParserHandle (h:Type) : Type = (String & Ref h Nat)
 
@@ -34,7 +36,7 @@ def run_parser_partial {a} (s:String) (parser:Parser a) : Maybe a =
     catch $ do
       f (s, pos)
 
-'Primitive combinators
+'## Primitive combinators
 
 def p_char (c:Char) : Parser Unit = MkParser \(s, posRef).
   i = get posRef
@@ -79,7 +81,7 @@ def try {a} (parser:Parser a) : Parser a = MkParser \h.
       throw ()
     Just x -> x
 
-'Derived combinators
+'## Derived combinators
 
 def parse_digit : Parser Int = try $ MkParser \h.
   c = parse h $ parse_any
