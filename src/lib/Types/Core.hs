@@ -99,17 +99,18 @@ data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
 type Decls = Nest Decl
 
 type AtomName     = Name AtomNameC
-type DataDefName  = Name DataDefNameC
 type ClassName    = Name ClassNameC
-type MethodName   = Name MethodNameC
+type DataDefName  = Name DataDefNameC
+type EffectName   = Name EffectNameC
 type InstanceName = Name InstanceNameC
+type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
 type PtrName      = Name PtrNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
-type Effect    = EffectP    AtomName
-type EffectRow = EffectRowP AtomName
+type Effect    = EffectP    Name
+type EffectRow = EffectRowP Name
 type BaseMonoid n = BaseMonoidP (Atom n)
 
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
@@ -967,7 +968,7 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
 instance GenericE Atom where
   -- As tempting as it might be to reorder cases here, the current permutation
   -- was chosen as to make GHC inliner confident enough to simplify through
-  -- toE/fromE entirely. If you wish to modify the order, please consuly the
+  -- toE/fromE entirely. If you wish to modify the order, please consult the
   -- GHC Core dump to make sure you haven't regressed this optimization.
   type RepE Atom =
       EitherE6
@@ -2132,7 +2133,7 @@ instance (Store (ann n)) => Store (NonDepNest ann n l)
 -- === Orphan instances ===
 -- TODO: Resolve this!
 
-instance SubstE AtomSubstVal (EffectRowP AtomName) where
+instance SubstE AtomSubstVal (EffectRowP Name) where
   substE env (EffectRow effs tailVar) = do
     let effs' = S.fromList $ map (substE env) (S.toList effs)
     let tailEffRow = case tailVar of
@@ -2144,7 +2145,7 @@ instance SubstE AtomSubstVal (EffectRowP AtomName) where
             _ -> error "Not a valid effect substitution"
     extendEffRow effs' tailEffRow
 
-instance SubstE AtomSubstVal (EffectP AtomName) where
+instance SubstE AtomSubstVal (EffectP Name) where
   substE (_, env) eff = case eff of
     RWSEffect rws Nothing -> RWSEffect rws Nothing
     RWSEffect rws (Just v) -> do
@@ -2156,3 +2157,6 @@ instance SubstE AtomSubstVal (EffectP AtomName) where
       RWSEffect rws v'
     ExceptionEffect -> ExceptionEffect
     IOEffect        -> IOEffect
+    UserEffect v    ->
+      let (Rename v') = env ! v
+       in UserEffect v'

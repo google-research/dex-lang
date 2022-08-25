@@ -162,6 +162,9 @@ instance SourceRenamableE (SourceNameOr (Name HandlerNameC)) where
       _ -> throw TypeErr $ "Not a handler name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
+instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceNameOrV c) where
+  sourceRenameE (SourceNameOrV x) = SourceNameOrV <$> sourceRenameE x
+
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
@@ -237,16 +240,17 @@ instance SourceRenamableE UAlt where
     sourceRenameB pat \pat' ->
       UAlt pat' <$> sourceRenameE body
 
-instance ((forall n. Ord (a n)), SourceRenamableE a) => SourceRenamableE (EffectRowP a) where
+instance ((forall c n. Ord (a c n)), SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => SourceRenamableE (EffectRowP a) where
   sourceRenameE (EffectRow row tailVar) =
     EffectRow <$> row' <*> mapM sourceRenameE tailVar
     where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
 
-instance SourceRenamableE a => SourceRenamableE (EffectP a) where
+instance (SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => SourceRenamableE (EffectP a) where
   sourceRenameE (RWSEffect rws (Just name)) = RWSEffect rws <$> Just <$> sourceRenameE name
   sourceRenameE (RWSEffect rws Nothing) = return $ RWSEffect rws Nothing
   sourceRenameE ExceptionEffect = return ExceptionEffect
   sourceRenameE IOEffect = return IOEffect
+  sourceRenameE (UserEffect name) = UserEffect <$> sourceRenameE name
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $
@@ -391,9 +395,11 @@ instance SourceRenamableE UMethodDef where
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableE UEffectOpDef where
-  sourceRenameE (UEffectOpDef ~(SourceName v) rp expr) = do
+  sourceRenameE (UReturnOpDef expr) = do
+    UReturnOpDef <$> sourceRenameE expr
+  sourceRenameE (UEffectOpDef rp ~(SourceName v) expr) = do
     lookupSourceName v >>= \case
-      UEffectOpVar v' -> UEffectOpDef (InternalName v v') rp <$> sourceRenameE expr
+      UEffectOpVar v' -> UEffectOpDef rp (InternalName v v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not an effect operation name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where

@@ -193,20 +193,27 @@ type ForAnn = Direction
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data EffectP (name::E) (n::S) =
-  RWSEffect RWS (Maybe (name n)) | ExceptionEffect | IOEffect
-  deriving (Show, Eq, Ord, Generic)
+data EffectP (name::V) (n::S) =
+  RWSEffect RWS (Maybe (name AtomNameC n)) | ExceptionEffect | IOEffect | UserEffect (name EffectNameC n)
+  deriving (Generic)
 
+deriving instance ShowV name => Show (EffectP name n)
+deriving instance EqV name => Eq (EffectP name n)
+deriving instance OrdV name => Ord (EffectP name n)
 
-data EffectRowP (name::E) (n::S) =
-  EffectRow (S.Set (EffectP name n)) (Maybe (name n))
-  deriving (Show, Eq, Ord, Generic)
+data EffectRowP (name::V) (n::S) =
+  EffectRow (S.Set (EffectP name n)) (Maybe (name AtomNameC n))
+  deriving (Generic)
 
-pattern Pure :: Ord (name n) => EffectRowP name n
+deriving instance ShowV name => Show (EffectRowP name n)
+deriving instance EqV name => Eq (EffectRowP name n)
+deriving instance OrdV name => Ord (EffectRowP name n)
+
+pattern Pure :: OrdV name => EffectRowP name n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
- where  Pure = EffectRow mempty Nothing
+  where Pure = EffectRow mempty Nothing
 
-instance OrdE name => Semigroup (EffectRowP name n) where
+instance OrdV name => Semigroup (EffectRowP name n) where
   EffectRow effs t <> EffectRow effs' t' =
     EffectRow (S.union effs effs') newTail
     where
@@ -216,10 +223,10 @@ instance OrdE name => Semigroup (EffectRowP name n) where
         _ | t == t' -> t
           | otherwise -> error "Can't combine effect rows with mismatched tails"
 
-instance OrdE name => Monoid (EffectRowP name n) where
+instance OrdV name => Monoid (EffectRowP name n) where
   mempty = EffectRow mempty Nothing
 
-extendEffRow :: Ord (name n) => S.Set (EffectP name n) -> EffectRowP name n -> EffectRowP name n
+extendEffRow :: OrdV name => S.Set (EffectP name n) -> EffectRowP name n -> EffectRowP name n
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 {-# INLINE extendEffRow #-}
 
@@ -334,27 +341,31 @@ getFloatLit l = case l of
 
 instance GenericE (EffectP name) where
   type RepE (EffectP name) =
-    EitherE (PairE (LiftE RWS) (MaybeE name))
-            (LiftE (Either () ()))
+    EitherE3 (PairE (LiftE RWS) (MaybeE (name AtomNameC)))
+             (LiftE (Either () ()))
+             (name EffectNameC)
   fromE = \case
-    RWSEffect rws name -> LeftE  (PairE (LiftE rws) $ toMaybeE name)
-    ExceptionEffect -> RightE (LiftE (Left  ()))
-    IOEffect        -> RightE (LiftE (Right ()))
+    RWSEffect rws name -> Case0 (PairE (LiftE rws) $ toMaybeE name)
+    ExceptionEffect    -> Case1 (LiftE (Left  ()))
+    IOEffect           -> Case1 (LiftE (Right ()))
+    UserEffect name    -> Case2 name
   {-# INLINE fromE #-}
   toE = \case
-    LeftE  (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
-    RightE (LiftE (Left  ())) -> ExceptionEffect
-    RightE (LiftE (Right ())) -> IOEffect
+    Case0 (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
+    Case1 (LiftE (Left  ())) -> ExceptionEffect
+    Case1 (LiftE (Right ())) -> IOEffect
+    Case2 name -> UserEffect name
+    _ -> error "unreachable"
   {-# INLINE toE #-}
 
-instance Color c => SinkableE      (EffectP (Name c))
-instance Color c => HoistableE     (EffectP (Name c))
-instance Color c => AlphaEqE       (EffectP (Name c))
-instance Color c => AlphaHashableE (EffectP (Name c))
-instance Color c => SubstE Name    (EffectP (Name c))
+instance SinkableE      (EffectP Name)
+instance HoistableE     (EffectP Name)
+instance AlphaEqE       (EffectP Name)
+instance AlphaHashableE (EffectP Name)
+instance SubstE Name    (EffectP Name)
 
-instance OrdE name => GenericE (EffectRowP name) where
-  type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE name)
+instance OrdV name => GenericE (EffectRowP name) where
+  type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE (name AtomNameC))
   fromE (EffectRow effs ext) = ListE (S.toList effs) `PairE` ext'
     where ext' = case ext of Just v  -> JustE v
                              Nothing -> NothingE
@@ -365,11 +376,11 @@ instance OrdE name => GenericE (EffectRowP name) where
                              _ -> error "impossible"
   {-# INLINE toE #-}
 
-instance Color c => SinkableE         (EffectRowP (Name c))
-instance Color c => HoistableE        (EffectRowP (Name c))
-instance Color c => SubstE Name       (EffectRowP (Name c))
-instance Color c => AlphaEqE          (EffectRowP (Name c))
-instance Color c => AlphaHashableE    (EffectRowP (Name c))
+instance SinkableE         (EffectRowP Name)
+instance HoistableE        (EffectRowP Name)
+instance SubstE Name       (EffectRowP Name)
+instance AlphaEqE          (EffectRowP Name)
+instance AlphaHashableE    (EffectRowP Name)
 
 instance Store Arrow
 instance Store LetAnn
@@ -384,8 +395,8 @@ instance Store LitVal
 instance Store ScalarBaseType
 instance Store Device
 
-instance Color c => Store (EffectRowP (Name c) n)
-instance Color c => Store (EffectP    (Name c) n)
+instance Store (EffectRowP Name n)
+instance Store (EffectP    Name n)
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)

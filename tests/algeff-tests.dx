@@ -8,6 +8,15 @@ handler catch_ of Exn {r} : Maybe r
   return = \x. Just x
 
 %passes
+def check (b:Bool) : {Exn} Unit =
+  if not b then raise ()
+
+%passes
+def checkFloatInUnitInterval (x:Float) : {Exn} Float =
+  check $ x >= 0.0
+  x
+
+%passes
 effect Counter
   def inc : Unit -> Unit
 

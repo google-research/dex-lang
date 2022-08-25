@@ -207,8 +207,12 @@ multiIfaceBinder = dropSrc \case
   g@(CBin (WithSrc _ Juxtapose) _ _) -> concat <$> mapM multiIfaceBinder (nary Juxtapose $ WithSrc Nothing g)
   _ -> fail "Invalid class constraint list; expecting one or more bracketed groups"
 
-effectOpDef :: (SourceName, UResumePolicy, CBlock) -> SyntaxM (UEffectOpDef VoidS)
-effectOpDef (v, rp, rhs) = UEffectOpDef (fromString v) rp <$> block rhs
+effectOpDef :: (SourceName, Maybe UResumePolicy, CBlock) -> SyntaxM (UEffectOpDef VoidS)
+effectOpDef (v, Nothing, rhs) =
+  case v of
+    "return" -> UReturnOpDef <$> block rhs
+    _ -> error "impossible"
+effectOpDef (v, Just rp, rhs) = UEffectOpDef rp (fromString v) <$> block rhs
 
 decl :: LetAnn -> CDecl -> SyntaxM (UDecl VoidS VoidS)
 decl ann = dropSrc decl' where
@@ -391,6 +395,7 @@ effect (Binary Juxtapose (Identifier "State") (Identifier h)) =
   return $ RWSEffect State $ (Just $ fromString h)
 effect (Identifier "Except") = return ExceptionEffect
 effect (Identifier "IO") = return IOEffect
+effect (Identifier effName) = return $ UserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, or `IO`."
 
 method :: (SourceName, CBlock) -> SyntaxM (UMethodDef VoidS)

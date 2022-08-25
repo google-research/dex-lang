@@ -1106,6 +1106,7 @@ instance CheckableE EffectRow where
       RWSEffect _ Nothing -> return ()
       ExceptionEffect -> return ()
       IOEffect        -> return ()
+      UserEffect _    -> return ()
     forM_ effTail \v -> do
       v' <- substM v
       ty <- atomBindingType <$> lookupEnv v'

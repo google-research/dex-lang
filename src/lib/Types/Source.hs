@@ -48,11 +48,20 @@ deriving instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S))
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
 
+newtype SourceNameOrV (c::C) (n::S) = SourceNameOrV (SourceNameOr (Name c) n)
+  deriving (Eq, Ord, Show)
+
+pattern SourceNameV :: (n ~ VoidS) => SourceName -> SourceNameOrV c n
+pattern SourceNameV n = SourceNameOrV (SourceName n)
+
+pattern InternalNameV :: SourceName -> Name c n -> SourceNameOrV c n
+pattern InternalNameV n a = SourceNameOrV (InternalName n a)
+
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
-type UEffect = EffectP (SourceNameOr (Name AtomNameC))
-type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
+type UEffect = EffectP SourceNameOrV
+type UEffectRow = EffectRowP SourceNameOrV
 
 data UVar (n::S) =
    UAtomVar     (Name AtomNameC     n)
@@ -188,8 +197,10 @@ data UResumePolicy =
     UNoResume
   | ULinearResume
   | UAnyResume
-  | UReturn
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance Hashable UResumePolicy
+instance Store UResumePolicy
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
@@ -197,7 +208,9 @@ data UForExpr (n::S) where
 data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (UExpr n)
   deriving (Show, Generic)
 
-data UEffectOpDef (n::S) = UEffectOpDef (SourceNameOr (Name EffectOpNameC) n) UResumePolicy (UExpr n)
+data UEffectOpDef (n::S) =
+    UEffectOpDef UResumePolicy (SourceNameOr (Name EffectOpNameC) n) (UExpr n)
+  | UReturnOpDef (UExpr n)
   deriving (Show, Generic)
 
 data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
@@ -529,6 +542,9 @@ instance Hashable ModuleSourceName
 
 instance IsString (SourceNameOr a VoidS) where
   fromString = SourceName
+
+instance IsString (SourceNameOrV c VoidS) where
+  fromString = SourceNameV
 
 instance IsString (UBinder s VoidS VoidS) where
   fromString = UBindSource
