@@ -30,6 +30,35 @@ import Util (foldMapM)
 
 type DestBlock = Abs Binder Block
 
+-- === For loop resolution ===
+
+-- The `lowerFullySequential` pass makes two related changes:
+-- - All `for` loops become `seq` loops
+-- - Arrays are now explicily allocated as `Dest`s (whither the
+--   content is written in due course)
+--
+-- We also perform destination passing here, to elide as many copies
+-- as possible.
+--
+-- The idea for multithreading parallelism is to add IR elements that
+-- specify parallelization strategy (`Seq` specifies sequential
+-- execution) and add lowerings similar to lowerFullySequential that
+-- choose which one(s) to use.
+
+-- The `For` constructor of `PrimHof` disappears from the IR due to
+-- this pass, and the `Seq`, `AllocDest`, `Place`, `RememberDest`, and
+-- `Freeze` constructors appear.
+--
+-- All the `Place`s in the resulting IR are non-conflicting: every
+-- array element is only written to once.
+--
+-- The traversal for a block or subexpression returns an `Atom`
+-- representing the returned value.  If a destination was passed in,
+-- the traversal is also responsible for arranging to write that value
+-- into that destination (possibly by forwarding (a part of) the
+-- destination to a sub-block or sub-expression, hence "desintation
+-- passing style").
+
 lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   effs <- extendEffRow (S.singleton IOEffect) <$> getEffects b
@@ -37,6 +66,9 @@ lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     Abs (destBinder:>resultDestTy) <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
+      -- TODO(apaszke): Do we still need to indirect through this
+      -- RememberDest?  `traverseBlockWithDest` returns an atom for
+      -- the answer now.
       dest' <- emit . Hof . RememberDest dest =<<
         buildLam noHint PlainArrow (sink resultDestTy) (sink effs) \dest' ->
           traverseBlockWithDest (Var dest') b $> UnitVal
