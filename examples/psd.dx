@@ -39,5 +39,5 @@ psdReconstructed = l_full ** transpose l_full
 
 vec : N=>Float = arb k2
 
-vec ~~ psd **. psdsolve psd vec
+vec ~~ (psd **. psdsolve psd vec)
 > True
