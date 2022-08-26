@@ -55,7 +55,7 @@ type DestBlock = Abs Binder Block
 -- The traversal for a block or subexpression returns an `Atom`
 -- representing the returned value.  If a destination was passed in,
 -- the traversal is also responsible for arranging to write that value
--- into that destination (possibly by forwaring (a part of) the
+-- into that destination (possibly by forwarding (a part of) the
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
