@@ -426,14 +426,14 @@ instance Pretty (Effect n) where
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
-    UserEffect name -> "(UserEffect" <+> p name <> ")"
+    UserEffect name -> p name
 
 instance Pretty (UEffect n) where
   pretty eff = case eff of
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
-    UserEffect name -> "(UserEffect" <+> p name <> ")"
+    UserEffect name -> p name
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
