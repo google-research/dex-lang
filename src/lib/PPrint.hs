@@ -632,8 +632,8 @@ instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName   v) = p v
   pretty (InternalName v _) = p v
 
-instance (Color c) => Pretty (SourceNameOrV c n) where
-  pretty (SourceNameOrV sn) = p sn
+instance (Color c) => Pretty (SourceOrInternalName c n) where
+  pretty (SourceOrInternalName sn) = p sn
 
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where

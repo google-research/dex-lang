@@ -48,20 +48,20 @@ deriving instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S))
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
 
-newtype SourceNameOrV (c::C) (n::S) = SourceNameOrV (SourceNameOr (Name c) n)
+newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr (Name c) n)
   deriving (Eq, Ord, Show)
 
-pattern SourceNameV :: (n ~ VoidS) => SourceName -> SourceNameOrV c n
-pattern SourceNameV n = SourceNameOrV (SourceName n)
+pattern SISourceName :: (n ~ VoidS) => SourceName -> SourceOrInternalName c n
+pattern SISourceName n = SourceOrInternalName (SourceName n)
 
-pattern InternalNameV :: SourceName -> Name c n -> SourceNameOrV c n
-pattern InternalNameV n a = SourceNameOrV (InternalName n a)
+pattern SIInternalName :: SourceName -> Name c n -> SourceOrInternalName c n
+pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
 
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
-type UEffect = EffectP SourceNameOrV
-type UEffectRow = EffectRowP SourceNameOrV
+type UEffect = EffectP SourceOrInternalName
+type UEffectRow = EffectRowP SourceOrInternalName
 
 data UVar (n::S) =
    UAtomVar     (Name AtomNameC     n)
@@ -543,8 +543,8 @@ instance Hashable ModuleSourceName
 instance IsString (SourceNameOr a VoidS) where
   fromString = SourceName
 
-instance IsString (SourceNameOrV c VoidS) where
-  fromString = SourceNameV
+instance IsString (SourceOrInternalName c VoidS) where
+  fromString = SISourceName
 
 instance IsString (UBinder s VoidS VoidS) where
   fromString = UBindSource

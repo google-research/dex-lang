@@ -52,7 +52,7 @@ module Syntax (
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize,
     SubstVal (..), AtomName, DataDefName, ClassName, MethodName, InstanceName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
-    SourceNameOrV (..),
+    SourceOrInternalName (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
     ULamExpr (..), UPiExpr (..), UTabLamExpr (..), UTabPiExpr (..), IxBinder,
@@ -117,7 +117,7 @@ module Syntax (
     pattern BinaryLamExpr,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
-    pattern SourceNameV, pattern InternalNameV,
+    pattern SISourceName, pattern SIInternalName,
     (-->), (?-->), (--@), (==>)) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)

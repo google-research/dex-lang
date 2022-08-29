@@ -162,8 +162,8 @@ instance SourceRenamableE (SourceNameOr (Name HandlerNameC)) where
       _ -> throw TypeErr $ "Not a handler name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceNameOrV c) where
-  sourceRenameE (SourceNameOrV x) = SourceNameOrV <$> sourceRenameE x
+instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceOrInternalName c) where
+  sourceRenameE (SourceOrInternalName x) = SourceOrInternalName <$> sourceRenameE x
 
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
