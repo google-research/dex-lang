@@ -2158,5 +2158,8 @@ instance SubstE AtomSubstVal (EffectP Name) where
     ExceptionEffect -> ExceptionEffect
     IOEffect        -> IOEffect
     UserEffect v    ->
-      let (Rename v') = env ! v
-       in UserEffect v'
+      case env ! v of
+        Rename v' -> UserEffect v'
+        -- other cases are proven unreachable by type system
+        -- v' is an EffectNameC but other cases apply only to
+        -- AtomNameC
