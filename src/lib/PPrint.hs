@@ -473,28 +473,17 @@ instance Pretty (SolverBinding n) where
 
 instance Pretty (Binding s n) where
   pretty b = case b of
-    AtomNameBinding   info
-      -> "Atom name:" <+> pretty info
-    DataDefBinding    dataDef
-      -> pretty dataDef
-    TyConBinding      dataDefName e
-      -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
-    DataConBinding    dataDefName idx e
-      -> "Data constructor:" <+> pretty dataDefName <+> "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
-    ClassBinding    classDef
-      -> pretty classDef
-    InstanceBinding instanceDef
-      -> pretty instanceDef
-    MethodBinding className idx _
-      -> "Method" <+> pretty idx <+> "of" <+> pretty className
-    ImpFunBinding f
-      -> pretty f
-    ObjectFileBinding _
-      -> "<object file>"
-    ModuleBinding  _
-      -> "<module>"
-    PtrBinding     _
-      -> "<ptr>"
+    AtomNameBinding   info -> "Atom name:" <+> pretty info
+    DataDefBinding    dataDef -> pretty dataDef
+    TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
+    DataConBinding    dataDefName idx e -> "Data constructor:" <+> pretty dataDefName <+> "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
+    ClassBinding    classDef -> pretty classDef
+    InstanceBinding instanceDef -> pretty instanceDef
+    MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
+    ImpFunBinding f -> pretty f
+    ObjectFileBinding _ -> "<object file>"
+    ModuleBinding  _ -> "<module>"
+    PtrBinding     _ -> "<ptr>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
