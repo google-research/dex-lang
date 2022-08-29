@@ -371,11 +371,11 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
         (gscore<span class="symbol">,</span> gloc) <span class="symbol">=</span> gbest
         plocs <span class="symbol">=</span> map snd pbests
         gVel<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> p i<span class="symbol">.</span>
-            weight <span class="symbol">=</span> rand <span class="symbol">$</span> (ixkey2 keyG p i)
+            weight <span class="symbol">=</span> rand <span class="symbol">$</span> (ixkey keyG (p<span class="symbol">,</span> i))
             dir <span class="symbol">=</span> gloc<span class="symbol">.</span>i <span class="symbol">-</span> positions<span class="symbol">.</span>p<span class="symbol">.</span>i
             weight <span class="symbol">*</span> dir
         pVel<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> p i<span class="symbol">.</span>
-            weight <span class="symbol">=</span> rand <span class="symbol">$</span> (ixkey2 keyP p i)
+            weight <span class="symbol">=</span> rand <span class="symbol">$</span> (ixkey keyP (p<span class="symbol">,</span> i))
             dir <span class="symbol">=</span> plocs<span class="symbol">.</span>p<span class="symbol">.</span>i <span class="symbol">-</span> positions<span class="symbol">.</span>p<span class="symbol">.</span>i
             weight <span class="symbol">*</span> dir
         newVelocities<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> momentum <span class="symbol">.*</span> velocities <span class="symbol">+</span> gRate <span class="symbol">.*</span> gVel <span class="symbol">+</span> pRate <span class="symbol">.*</span> gVel
@@ -397,10 +397,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 Run it for more iterations and the result should improve.
 Which it indeed does.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 10 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[4.584771, 21.173801]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.191434, -0.03098]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 20 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[3.053808, 9.366863]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.191434, -0.03098]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 100 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[0.996964, 0.994117]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.994075, 0.989096]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 1000 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[1., 1.]</div></div></div></body></html>
