@@ -396,7 +396,7 @@ effect (Binary Juxtapose (Identifier "State") (Identifier h)) =
 effect (Identifier "Except") = return ExceptionEffect
 effect (Identifier "IO") = return IOEffect
 effect (Identifier effName) = return $ UserEffect (fromString effName)
-effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, or `IO`."
+effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
 method :: (SourceName, CBlock) -> SyntaxM (UMethodDef VoidS)
 method (name, body) = UMethodDef (fromString name) <$> block body
