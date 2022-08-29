@@ -756,7 +756,7 @@ instance Pretty UResumePolicy where
 
 instance Pretty (UEffectRow n) where
   pretty (EffectRow x Nothing) = encloseSep "<" ">" "," $ (p <$> toList x)
-  pretty (EffectRow x (Just y)) = "<" <> (hsep $ punctuate "," (p <$> toList x)) <+> "|" <+> p y <> ">"
+  pretty (EffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (p <$> toList x)) <+> "|" <+> p y <> "}"
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
