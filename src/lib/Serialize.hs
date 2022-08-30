@@ -35,9 +35,11 @@ import Err
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 
 import Syntax
+import Types.Core
 import QueryType
 import Name
 import PPrint ()
+import Util (restructure)
 
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
@@ -113,6 +115,17 @@ prettyVal val = case val of
     mapM prettyVal args <&> \case
       []    -> pretty name
       args' -> parens $ pretty name <+> hsep args'
+  Record tys vals -> do
+    let LabeledItems row = restructure vals tys
+    let separator = line' <> ","
+    let bindwith = " ="
+    let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
+    let fmElem = \(label, v) -> ((pretty label <> bindwith) <+>) <$> prettyVal v
+    docs <- mapM fmElem elems
+    let innerDoc = "{" <> flatAlt " " ""
+          <> concatWith (surround (separator <> " ")) docs
+          <> "}"
+    return $ align $ group innerDoc
   Con con -> case con of
     ProdCon [] -> return $ pretty ()
     ProdCon [x, y] -> do
@@ -136,16 +149,6 @@ prettyVal val = case val of
             variant = Variant (NoExt types) theLabel repeatNum value
         _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
-  Record (LabeledItems row) -> do
-    let separator = line' <> ","
-    let bindwith = " ="
-    let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
-    let fmElem = \(label, v) -> ((pretty label <> bindwith) <+>) <$> prettyVal v
-    docs <- mapM fmElem elems
-    let innerDoc = "{" <> flatAlt " " ""
-          <> concatWith (surround (separator <> " ")) docs
-          <> "}"
-    return $ align $ group innerDoc
   atom -> return $ prettyPrec atom LowestPrec
 
 -- === taking memory snapshots for serializing heap-backed dex values ===

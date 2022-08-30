@@ -262,7 +262,6 @@ instance HasType Atom where
       checkArgTys paramBs params'
       return TyKind
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
-    Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     Variant vtys@(Ext (LabeledItems types) _) label i arg -> do
       let ty = VariantTy vtys
@@ -319,13 +318,14 @@ instance HasType Atom where
             applyNaryAbs (Abs bsInit bTy)
               [ SubstVal (ProjectElt (j NE.:| is) v')
               | j <- iota $ nestLength bsInit]
-        StaticRecordTy types -> return $ toList types !! i
-        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         ProdTy xs -> return $ xs !! i
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM v
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
+        -- Newtypes
         TC (Fin _) | i == 0 -> return IdxRepTy
+        StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
+        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -501,9 +501,13 @@ typeCheckPrimCon con = case con of
     payload |: (caseTys !! tag)
     return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
-  Newtype ty e -> case ty of
-    TC (Fin _) -> e|:IdxRepTy >> substM ty
-    _ -> error $ "Unsupported newtype: " ++ pprint ty
+  Newtype ty e -> do
+    ty' <- substM ty
+    case ty' of
+      TC (Fin _) -> e|:IdxRepTy
+      StaticRecordTy tys -> e|:ProdTy (toList tys)
+      _ -> error $ "Unsupported newtype: " ++ pprint ty
+    return ty'
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
@@ -512,14 +516,17 @@ typeCheckPrimCon con = case con of
     return $ RawRefTy $ TabTy binder a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM typeCheckRef xs)
-    Newtype ty e -> case ty of
-      TC (Fin _) -> e|:(RawRefTy IdxRepTy) >> (RawRefTy <$> substM ty)
-      _ -> error $ "Unsupported newtype: " ++ pprint ty
+    Newtype ty e -> do
+      ty' <- substM ty
+      case ty' of
+        TC (Fin _) -> e|:(RawRefTy IdxRepTy)
+        StaticRecordTy tys -> e|:(RawRefTy $ ProdTy $ toList tys)
+        _ -> error $ "Unsupported newtype: " ++ pprint ty
+      return $ RawRefTy ty'
     SumAsProd ty tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
-  RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse typeCheckRef xs
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy method  -> do
     dictTy'@(DictTy (DictType _ className params)) <- checkTypeE TyKind dictTy
@@ -653,12 +660,10 @@ typeCheckPrimOp op = case op of
     case (fields', fullty) of
       (LabeledRow els, RecordTyWithElems els') ->
         stripPrefix (fromFieldRowElems els) els' >>= \case
-          Just rest -> return $ StaticRecordTy $ Unlabeled
-            [ RecordTy els, RecordTyWithElems rest ]
+          Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
           Nothing -> splitFailed
       (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
-        return $ StaticRecordTy $ Unlabeled
-          [ RecordTyWithElems [DynFields v'], RecordTyWithElems rest ]
+        return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
       _ -> splitFailed
     where
       stripPrefix = curry \case

@@ -14,7 +14,7 @@ module Builder (
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
-  select, getUnpacked, emitUnpacked,
+  select, getUnpacked, emitUnpacked, unwrapNewtype,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
   indexRef, naryIndexRef,
@@ -77,7 +77,7 @@ import CheapReduction
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
-import Util (enumerate, restructure, transitiveClosureM, bindM2, iota)
+import Util (enumerate, transitiveClosureM, bindM2, iota)
 import Err
 import Types.Core
 import Core
@@ -959,11 +959,11 @@ emitRunReader hint r body = do
 
 -- === vector space (ish) type class ===
 
-zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n )
+zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n)
 zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
   ProdTy tys -> ProdVal <$> mapM zeroAt tys
-  StaticRecordTy tys -> Record <$> mapM zeroAt tys
+  StaticRecordTy tys -> Record tys <$> mapM zeroAt (toList tys)
   TabTy (b:>ixTy) bodyTy ->
     liftEmitBuilder $ buildTabLam (getNameHint b) ixTy \i ->
       zeroAt =<< applySubst (b@>i) bodyTy
@@ -1024,7 +1024,7 @@ addTangent x y = do
   getType x >>= \case
     StaticRecordTy tys -> do
       elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
-      return $ Record $ restructure elems tys
+      return $ Record tys elems
     TabTy (b:>ixTy) _  ->
       liftEmitBuilder $ buildFor (getNameHint b) Fwd ixTy \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
@@ -1218,14 +1218,18 @@ getUnpacked :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
 getUnpacked atom = do
   atom' <- cheapNormalize atom
   ty <- getType atom'
-  len <- projectLength ty
-  return $ map (\i -> getProjection [i] atom') (iota len)
+  (len, suffix) <- projectLength ty
+  return $ map (\i -> getProjection (i:suffix) atom') (iota len)
 {-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
 emitUnpacked tup = do
   xs <- getUnpacked tup
   forM xs \x -> emit $ Atom x
+
+unwrapNewtype :: Atom n -> Atom n
+unwrapNewtype = getProjection [0]
+{-# INLINE unwrapNewtype #-}
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x (i:|[]))

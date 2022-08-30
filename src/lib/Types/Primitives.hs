@@ -71,7 +71,6 @@ data PrimCon e =
       | BaseTypeRef e
       | TabRef e
       | ConRef (PrimCon e)
-      | RecordRef (LabeledItems e)
       -- Misc hacks
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
       | DictHole (AlwaysEqual SrcPosCtx) e -- Only used during type inference
