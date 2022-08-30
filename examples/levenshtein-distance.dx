@@ -90,9 +90,6 @@ distance function on words:
 
 (AsList ct words) = lines $ unsafe_io do read_file "/usr/share/dict/words"
 
-ct
-> 104334
-
 def closest_word (s:String) : String =
   (AsList _ s') = s
   fst $ minimum_by snd for i.
