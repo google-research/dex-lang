@@ -24,7 +24,7 @@ jobs:
             install_deps: brew install llvm@12 pkg-config wget gzip coreutils
             path_extension: $(brew --prefix llvm@12)/bin
           - os: ubuntu-20.04
-            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip
+            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip wamerican
             path_extension: /usr/lib/llvm-12/bin
 
     steps:
