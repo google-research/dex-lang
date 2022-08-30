@@ -8,8 +8,7 @@ module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
   , withLabels, lookupLabelHead, lookupLabel, ExtLabeledItems (..), prefixExtLabeledItems
   , unzipExtLabeledItems, splitLabeledItems, popLabeledItems
-  , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
-  , pattern Unlabeled ) where
+  , pattern NoLabeledItems, pattern NoExt ) where
 
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -89,25 +88,6 @@ pattern NoLabeledItems <- ((\(LabeledItems items) -> M.null items) -> True)
 
 pattern NoExt :: LabeledItems a -> ExtLabeledItems a b
 pattern NoExt a = Ext a Nothing
-
--- An internal label that we can use to treat records and variants as unlabeled
--- internal sum and product types. Note that this is not a valid label in the
--- concrete syntax and will be rejected by the parser (although there wouldn't
--- be any serious problems with overloading a user-written label).
-pattern InternalSingletonLabel :: Label
-pattern InternalSingletonLabel = "%UNLABELED%"
-
-_getUnlabeled :: LabeledItems a -> Maybe [a]
-_getUnlabeled (LabeledItems items) = case length items of
-  0 -> Just []
-  1 -> NE.toList <$> M.lookup InternalSingletonLabel items
-  _ -> Nothing
-
-pattern Unlabeled :: [a] -> LabeledItems a
-pattern Unlabeled as <- (_getUnlabeled -> Just as)
-  where Unlabeled as = case NE.nonEmpty as of
-          Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
-          Nothing -> NoLabeledItems
 
 splitLabeledItems :: LabeledItems a -> LabeledItems b -> (LabeledItems b, LabeledItems b)
 splitLabeledItems (LabeledItems litems) (LabeledItems fullItems) =

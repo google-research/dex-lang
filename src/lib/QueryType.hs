@@ -612,8 +612,7 @@ getTypePrimOp op = case op of
                           <> pprint variant <> " (of type " <> pprint fullty
                           <> ")"
     diff <- labeledRowDifference' full (NoExt types')
-    return $ VariantTy $ NoExt $
-      Unlabeled [ VariantTy $ NoExt types', VariantTy diff ]
+    return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
   DataConTag _ -> return TagRepTy
   ToEnum t _ -> substM t
   SumToVariant x -> getTypeE x >>= \case
