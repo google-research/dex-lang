@@ -19,8 +19,6 @@ import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
 import GHC.Exts (inline)
 
 import Err
@@ -373,15 +371,18 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         Abs bs body <- return $ alts !! con
         extendSubst (bs @@> map SubstVal args) $ translateBlock maybeDest body
       Nothing -> case e' of
-        Con (SumAsProd _ tag xss) -> do
-          tag' <- fromScalarAtom tag
-          dest <- allocDest maybeDest =<< substM ty
-          emitSwitch tag' (zip xss alts) $
-            \(xs, Abs bs body) ->
-               void $ extendSubst (bs @@> map (SubstVal . sink) xs) $
-                 translateBlock (Just $ sink dest) body
-          destToAtom dest
-        _ -> error "not possible"
+        Con (Newtype (VariantTy _) (Con (SumAsProd _ tag xss))) -> go tag xss
+        Con (SumAsProd _ tag xss) -> go tag xss
+        _ -> error $ "unexpected case scrutinee: " ++ pprint e'
+        where
+          go tag xss = do
+            tag' <- fromScalarAtom tag
+            dest <- allocDest maybeDest =<< substM ty
+            emitSwitch tag' (zip xss alts) $
+              \(xs, Abs bs body) ->
+                 void $ extendSubst (bs @@> map (SubstVal . sink) xs) $
+                   translateBlock (Just $ sink dest) body
+            destToAtom dest
   where
     notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of
@@ -504,12 +505,9 @@ toImpOp maybeDest op = case op of
     SumTy cases ->
       return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
-  SumToVariant ~(Con c) -> do
-    ~resultTy@(VariantTy labs) <- resultTyM
-    returnVal $ case c of
-      SumCon    _ tag payload -> Variant labs "c" tag payload
-      SumAsProd _ tag payload -> Con $ SumAsProd resultTy tag payload
-      _ -> error $ "Not a sum type: " ++ pprint (Con c)
+  SumToVariant c -> do
+    resultTy <- resultTyM
+    return $ Con $ Newtype resultTy $ c
   AllocDest ty  -> returnVal =<< alloc ty
   Place ref val -> copyAtom ref val >> returnVal UnitVal
   Freeze ref -> destToAtom ref
@@ -1031,7 +1029,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
       makeDestRec idxs' depVars' rTy'
     return $ DepPairRef lDest rDestAbs depPairTy
   StaticRecordTy types -> Con . ConRef . Newtype ty <$> rec (ProdTy $ toList types)
-  VariantTy (NoExt types) -> recSumType $ toList types
+  VariantTy (NoExt types) -> Con . ConRef . Newtype ty <$> recSumType (toList types)
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs b
@@ -1049,7 +1047,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     recSumType cases = do
       tag <- rec TagRepTy
       contents <- forM cases rec
-      return $ Con $ ConRef $ SumAsProd ty tag $ map (\x->[x]) contents
+      return $ Con $ ConRef $ SumAsProd (SumTy cases) tag $ map (\x->[x]) contents
 
 makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr (idxsTy, idxs) ty = do
@@ -1105,11 +1103,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
             case payload !! con of
               [xDest] -> copyRec xDest x
               _       -> error "Expected singleton payload in SumAsProd"
-          Variant (NoExt types) label i x -> do
-            let LabeledItems ixtypes = enumerate types
-            let index = fst $ (ixtypes M.! label) NE.!! i
-            copyRec tag (TagRepVal $ fromIntegral index)
-            zipWithM_ copyRec (payload !! index) [x]
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss

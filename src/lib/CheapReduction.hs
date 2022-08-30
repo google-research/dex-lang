@@ -215,9 +215,6 @@ instance CheaplyReducibleE Atom Atom where
     DataCon sourceName dataDefName params con args ->
       DataCon sourceName <$> substM dataDefName <*> cheapReduceE params
                          <*> pure con <*> mapM cheapReduceE args
-    Variant ty l c p -> do
-      ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
-      Variant ty' l c <$> cheapReduceE p
     DictCon d -> cheapReduceE d
     -- Do recursive reduction via substitution
     -- TODO: we don't collect the dict holes here, so there's a danger of

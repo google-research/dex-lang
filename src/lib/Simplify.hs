@@ -15,9 +15,10 @@ module Simplify
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
+import Data.Maybe
+import Data.List (elemIndex)
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
-import qualified Data.Map.Strict as M
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 import GHC.Exts (inline)
@@ -498,10 +499,6 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
     _ -> error $ "Failed to simplify a record with a dynamic label: " ++ pprint atom'
-  Variant types label i value -> do
-    types' <- fromExtLabeledItemsE <$> substM (ExtLabeledItemsE types)
-    value' <- simplifyAtom value
-    return $ Variant types' label i value'
   VariantTy (Ext items ext) -> VariantTy <$> do
     items' <- mapM simplifyAtom items
     ext' <- liftM fromExtLabeledItemsE $ substM $ ExtLabeledItemsE $ Ext NoLabeledItems ext
@@ -698,38 +695,49 @@ simplifyOp op = case op of
         return $ PairVal (head $ toList val) $
           Record otherItemTys $ toList rest
       _ -> error "not a record"
-  VariantLift leftTys@(LabeledItems litems) right -> getType right >>= \case
+  VariantLift leftTys right -> getType right >>= \case
     VariantTy (NoExt rightTys) -> do
-      let fullRow = NoExt $ leftTys <> rightTys
+      let fullTys = leftTys <> rightTys
+      let fullRow = NoExt fullTys
+      let fullLabels = toList $ reflectLabels fullTys
       let labels = toList $ reflectLabels rightTys
       -- Emit a case statement (ordered by the arg type) that lifts the type.
       buildCase right (VariantTy fullRow) \caseIdx [v] -> do
-          let (label, i) = labels !! caseIdx
-          let idx = case M.lookup label litems of Nothing  -> i
-                                                  Just tys -> i + length tys
-          let fullRow' = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
-          return $ Variant fullRow' label idx v
+        -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
+        let (label, i) = labels !! caseIdx
+        let idx = fromJust $ elemIndex (label, i + length (lookupLabel leftTys label)) fullLabels
+        let fullRow'@(NoExt fullRowItems') = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
+        return $ Con $ Newtype (VariantTy fullRow') $ SumVal (SumTy $ toList fullRowItems') idx v
     _ -> error "not a variant"
-  VariantSplit leftTys@(LabeledItems litems) full -> getType full >>= \case
-    VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
+  VariantSplit leftTys full -> getType full >>= \case
+    VariantTy (NoExt fullTys) -> do
+      -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
       -- Emit a case statement (ordered by the arg type) that splits into the
       -- appropriate piece, changing indices as needed.
       resTy <- getType $ Op op
-      let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
-      let rightTys = LabeledItems $ M.differenceWith splitRight fullItems litems
-      let labels = toList $ reflectLabels fullTys
+      let (_, rightTys) = splitLabeledItems leftTys fullTys
+      let fullLabels = toList $ reflectLabels fullTys
+      let leftLabels = toList $ reflectLabels leftTys
+      let rightLabels = toList $ reflectLabels rightTys
       buildCase full resTy \caseIdx [v] -> do
-        let (label, i) = labels !! caseIdx
+        let (label, i) = fullLabels !! caseIdx
+        let labelIx labs li = fromJust $ elemIndex li labs
         let resTy' = sink resTy
-        case M.lookup label litems of
-          Just tys -> if i < length tys
-            then return $ SumVal resTy' 0 $
-              Variant (NoExt $ fmap sink leftTys) label i v
-            else return $ SumVal resTy' 1 $
-              Variant (NoExt $ fmap sink rightTys) label (i - length tys) $ v
-          Nothing -> return $ SumVal resTy' 1 $
-            Variant (NoExt $ fmap sink rightTys) label i $ v
+        let lTy = sink $ VariantTy $ NoExt leftTys
+        let rTy = sink $ VariantTy $ NoExt rightTys
+        case leftTys `lookupLabel` label of
+          [] -> return $ SumVal resTy' 1 $ Con $ Newtype rTy $
+            SumVal (SumTy $ sinkList $ toList rightTys) (labelIx rightLabels (label, i)) v
+          tys -> if i < length tys
+            then return $ SumVal resTy' 0 $ Con $ Newtype lTy $
+              SumVal (SumTy $ sinkList $ toList leftTys) (labelIx leftLabels (label, i)) v
+            else return $ SumVal resTy' 1 $ Con $ Newtype rTy $
+              SumVal (SumTy $ sinkList $ toList rightTys)
+                     (labelIx rightLabels (label, i - length tys)) v
     _ -> error "Not a variant type"
+  VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
+    let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
+    return $ Con $ Newtype ty $ SumVal (SumTy $ toList tys) ix v
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
   CastOp (BaseTy (Scalar Word32Type)) (Con (Lit (Word64Lit val))) ->

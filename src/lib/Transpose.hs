@@ -238,6 +238,7 @@ transposeOp op ct = case op of
   RecordSplit  _ _      -> unreachable
   VariantLift  _ _      -> unreachable
   VariantSplit _ _      -> unreachable
+  VariantMake  _ _ _ _  -> unreachable
   SumToVariant _        -> notImplemented
   PtrStore _ _          -> notLinear
   PtrLoad    _          -> notLinear
@@ -275,7 +276,6 @@ transposeAtom atom ct = case atom of
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
   DataCon _ _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
-  Variant _ _ _ _ -> notImplemented
   TabVal b body   -> do
     ty <- substNonlin $ binderAnn b
     void $ buildFor noHint Fwd ty \i -> do

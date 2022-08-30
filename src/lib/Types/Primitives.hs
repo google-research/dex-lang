@@ -131,6 +131,8 @@ data PrimOp e =
       -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
       -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
       | VariantSplit (LabeledItems e) e
+      -- type, label, how deeply shadowed, payload
+      | VariantMake e Label Int e
       -- Ask which constructor was used, as its Word8 index
       | DataConTag e
       -- Create an enum (payload-free ADT) from a Word8
