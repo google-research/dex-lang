@@ -714,20 +714,20 @@ simplifyOp op = case op of
     VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
       -- Emit a case statement (ordered by the arg type) that splits into the
       -- appropriate piece, changing indices as needed.
-      VariantTy resultRow <- getType $ Op op
+      resTy <- getType $ Op op
       let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
       let rightTys = LabeledItems $ M.differenceWith splitRight fullItems litems
       let labels = toList $ reflectLabels fullTys
-      buildCase full (VariantTy resultRow) \caseIdx [v] -> do
+      buildCase full resTy \caseIdx [v] -> do
         let (label, i) = labels !! caseIdx
-        let resultRow' = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE resultRow
+        let resTy' = sink resTy
         case M.lookup label litems of
           Just tys -> if i < length tys
-            then return $ Variant resultRow' InternalSingletonLabel 0 $
+            then return $ SumVal resTy' 0 $
               Variant (NoExt $ fmap sink leftTys) label i v
-            else return $ Variant resultRow' InternalSingletonLabel 1 $
+            else return $ SumVal resTy' 1 $
               Variant (NoExt $ fmap sink rightTys) label (i - length tys) $ v
-          Nothing -> return $ Variant resultRow' InternalSingletonLabel 1 $
+          Nothing -> return $ SumVal resTy' 1 $
             Variant (NoExt $ fmap sink rightTys) label i $ v
     _ -> error "Not a variant type"
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
