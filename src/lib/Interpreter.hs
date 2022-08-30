@@ -14,6 +14,8 @@ module Interpreter (
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe (fromJust)
+import Data.List (elemIndex)
 import Data.Foldable (toList)
 import Data.Word
 import Foreign.Ptr
@@ -102,10 +104,6 @@ traverseSurfaceAtomNames atom doWithName = case atom of
       <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
       <*> pure con <*> mapM rec args
   RecordTy _ -> substM atom
-  Variant ty l con payload ->
-    Variant
-       <$> (fromExtLabeledItemsE <$> substM (ExtLabeledItemsE ty))
-       <*> return l <*> return con <*> rec payload
   VariantTy _      -> substM atom
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
@@ -226,6 +224,9 @@ evalOp expr = mapM evalAtom expr >>= \case
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ SumAsProd ty i (map (const []) cons)
   ProjMethod dict i -> evalProjectDictMethod dict i
+  VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
+    let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
+    return $ Con $ Newtype ty $ SumVal (SumTy $ toList tys) ix v
   _ -> error $ "Not implemented: " ++ pprint expr
 
 evalProjectDictMethod :: Interp m => Atom o -> Int -> m i o (Atom o)

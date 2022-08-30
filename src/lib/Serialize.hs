@@ -133,21 +133,17 @@ prettyVal val = case val of
       yStr <- pprintVal y
       return $ pretty (xStr, yStr)
     ProdCon _ -> error "Unexpected product type: only binary products available in surface language."
-    SumAsProd ty (TagRepVal trep) payload -> do
+    Newtype vty@(VariantTy (NoExt types)) (Con (SumAsProd _ (TagRepVal trep) payload)) ->
+      return $ pretty $ Newtype vty $ SumVal (SumTy $ toList types) t value
+      where t = fromIntegral trep; [value] = payload !! t
+    SumAsProd (TypeCon _ dataDefName _) (TagRepVal trep) payload -> do
       let t = fromIntegral trep
-      case ty of
-        TypeCon _ dataDefName _ -> do
-          DataDef _ _ dataCons <- lookupDataDef dataDefName
-          DataConDef conName _ <- return $ dataCons !! t
-          mapM prettyVal (payload !! t) <&> \case
-            []   -> pretty conName
-            args -> parens $ pretty conName <+> hsep args
-        VariantTy (NoExt types) -> return $ pretty variant
-          where
-            [value] = payload !! t
-            (theLabel, repeatNum) = toList (reflectLabels types) !! t
-            variant = Variant (NoExt types) theLabel repeatNum value
-        _ -> error "SumAsProd with an unsupported type"
+      DataDef _ _ dataCons <- lookupDataDef dataDefName
+      DataConDef conName _ <- return $ dataCons !! t
+      mapM prettyVal (payload !! t) <&> \case
+        []   -> pretty conName
+        args -> parens $ pretty conName <+> hsep args
+    SumAsProd _ _ _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
   atom -> return $ prettyPrec atom LowestPrec
 

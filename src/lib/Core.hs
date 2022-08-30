@@ -27,13 +27,10 @@ import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State
-import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 
 import Name
 import Err
-import LabeledItems
-import Util (enumerate)
 
 import Types.Core
 import Types.Imp
@@ -735,14 +732,11 @@ mkBundle = bundleFold UnitVal PairVal
 trySelectBranch :: Atom n -> Maybe (Int, [Atom n])
 trySelectBranch e = case e of
   DataCon _ _ _ con args -> return (con, args)
-  Variant (NoExt types) label i value -> do
-    let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) NE.!! i
-    return (index, [value])
   SumVal _ i value -> Just (i, [value])
   Con (SumAsProd _ (TagRepVal tag) vals) -> do
     let i = fromIntegral tag
     return (i , vals !! i)
+  Con (Newtype _ e') -> trySelectBranch e'
   _ -> Nothing
 
 freeAtomVarsList :: HoistableE e => e n -> [AtomName n]

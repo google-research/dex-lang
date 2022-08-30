@@ -61,7 +61,6 @@ data Atom (n::S) =
  | DictTy  (DictType n)
  | LabeledRow (FieldRowElems n)
  | RecordTy  (FieldRowElems n)
- | Variant   (ExtLabeledItems (Type n) (AtomName n)) Label Int (Atom n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
  | Con (Con n)
  | TC  (TC  n)
@@ -994,11 +993,9 @@ instance GenericE Atom where
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
-            ) (EitherE4
+            ) (EitherE3
   {- LabeledRow -} ( FieldRowElems )
   {- RecordTy -}   ( FieldRowElems )
-  {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
-                     LiftE (Label, Int) `PairE` Atom )
   {- VariantTy -}  ( ExtLabeledItemsE Type AtomName )
             ) (EitherE4
   {- Con -}        (ComposeE PrimCon Atom)
@@ -1032,9 +1029,7 @@ instance GenericE Atom where
     DictTy  d -> Case2 $ Case5 d
     LabeledRow elems    -> Case3 $ Case0 $ elems
     RecordTy elems -> Case3 $ Case1 elems
-    Variant extItems l con payload -> Case3 $ Case2 $
-      ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
-    VariantTy extItems  -> Case3 $ Case3 $ ExtLabeledItemsE extItems
+    VariantTy extItems  -> Case3 $ Case2 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
@@ -1072,10 +1067,7 @@ instance GenericE Atom where
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
       Case1 elems -> RecordTy elems
-      Case2 ( (ExtLabeledItemsE extItems) `PairE`
-              LiftE (l, con)              `PairE`
-              payload) -> Variant extItems l con payload
-      Case3 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case2 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
