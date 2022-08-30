@@ -419,7 +419,7 @@ most implementations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Create random labels
 </span></div></div><div class="cell"><div class="code-block">labels <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:position</span><span class="symbol">.</span> randIdxNoZero <span class="type-name">Vocab</span> (new_key (ordinal i))
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> labels
-</div><div class="result-block">[(3@Fin 6), (4@Fin 6), (1@Fin 6)]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[(3@(Fin 6)), (4@(Fin 6)), (1@(Fin 6))]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Evaluate marginal probability of labels given logits
 </span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> exp <span class="symbol">$</span> ctc blank logits labels
 </div><div class="result-block">0.00209</div></div><div class="cell"><div class="code-block">
