@@ -1584,7 +1584,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs)
 checkUEffRow :: EmitsInf o => UEffectRow i -> InfererM i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
-   t' <- forM t \(InternalName _ v) -> do
+   t' <- forM t \(SIInternalName _ v) -> do
             v' <- substM v
             constrainVarTy v' EffKind
             return v'
@@ -1592,13 +1592,14 @@ checkUEffRow (EffectRow effs t) = do
 
 checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect o)
 checkUEff eff = case eff of
-  RWSEffect rws (Just ~(InternalName _ region)) -> do
+  RWSEffect rws (Just ~(SIInternalName _ region)) -> do
     region' <- substM region
     constrainVarTy region' TyKind
     return $ RWSEffect rws $ Just region'
   RWSEffect rws Nothing -> return $ RWSEffect rws Nothing
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
+  UserEffect ~(SIInternalName _ name) -> UserEffect <$> substM name
 
 constrainVarTy :: EmitsInf o => AtomName o -> Type o -> InfererM i o ()
 constrainVarTy v tyReq = do
@@ -2237,7 +2238,7 @@ instance Unifiable DataDefParams where
   -- We ignore the dictionaries because we assume coherence
   unifyZonked (DataDefParams xs _) (DataDefParams xs' _) = zipWithM_ unify xs xs'
 
-instance Unifiable (EffectRowP AtomName) where
+instance Unifiable (EffectRowP Name) where
   unifyZonked x1 x2 =
         unifyDirect x1 x2
     <|> unifyDirect x2 x1

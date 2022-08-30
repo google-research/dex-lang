@@ -36,6 +36,7 @@ module Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), SourceNameDef (..), LitProg,
     ForAnn, Val, Op, Con, Hof, TC, SuperclassBinders (..),
     ClassDef (..), InstanceDef (..), InstanceBody (..), MethodType (..),
+    EffectName,
     SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..),
     ImportStatus (..), emptyModuleEnv,
     ModuleSourceName (..), LoadedModules (..), Cache (..), ObjectFiles (..),
@@ -51,6 +52,7 @@ module Syntax (
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize,
     SubstVal (..), AtomName, DataDefName, ClassName, MethodName, InstanceName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
+    SourceOrInternalName (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
     ULamExpr (..), UPiExpr (..), UTabLamExpr (..), UTabPiExpr (..), IxBinder,
@@ -115,6 +117,7 @@ module Syntax (
     pattern BinaryLamExpr,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
+    pattern SISourceName, pattern SIInternalName,
     (-->), (?-->), (--@), (==>)) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)

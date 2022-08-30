@@ -29,13 +29,13 @@ module Name (
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
-  EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
+  EitherE (..), LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
   HashMapE (..), HashableE, nestToNames,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
-  toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowB,
+  toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowV, ShowB,
   runScopeReaderT, runScopeReaderM, runSubstReaderT, liftSubstReaderT,
   liftScopeReaderT, liftScopeReaderM,
   ScopeReaderT (..), SubstReaderT (..),
@@ -546,12 +546,15 @@ type PrettyE e = (forall (n::S)       . Pretty (e n  )) :: Constraint
 type PrettyB b = (forall (n::S) (l::S). Pretty (b n l)) :: Constraint
 
 type ShowE e = (forall (n::S)       . Show (e n  )) :: Constraint
+type ShowV v = (forall (c::C) (n::S). Show (v c n)) :: Constraint
 type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
+type EqV v = (forall (c::C) (n::S). Eq (v c n)) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
 type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
+type OrdV v = (forall (c::C) (n::S). Ord (v c n)) :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
 
 type HashableE (e::E) = forall n. Hashable (e n)
@@ -1912,7 +1915,10 @@ interpretColor c cont = case c of
   ObjectFileNameC -> cont $ ColorProxy @ObjectFileNameC
   ModuleNameC     -> cont $ ColorProxy @ModuleNameC
   PtrNameC        -> cont $ ColorProxy @PtrNameC
-  _               -> error "shouldn't reflect over Unsafe colors!"
+  EffectNameC     -> cont $ ColorProxy @EffectNameC
+  EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
+  HandlerNameC    -> cont $ ColorProxy @HandlerNameC
+  UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
 

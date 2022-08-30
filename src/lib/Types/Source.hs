@@ -48,11 +48,20 @@ deriving instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S))
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
 
+newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr (Name c) n)
+  deriving (Eq, Ord, Show)
+
+pattern SISourceName :: (n ~ VoidS) => SourceName -> SourceOrInternalName c n
+pattern SISourceName n = SourceOrInternalName (SourceName n)
+
+pattern SIInternalName :: SourceName -> Name c n -> SourceOrInternalName c n
+pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
+
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
-type UEffect = EffectP (SourceNameOr (Name AtomNameC))
-type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
+type UEffect = EffectP SourceOrInternalName
+type UEffectRow = EffectRowP SourceOrInternalName
 
 data UVar (n::S) =
    UAtomVar     (Name AtomNameC     n)
@@ -188,8 +197,10 @@ data UResumePolicy =
     UNoResume
   | ULinearResume
   | UAnyResume
-  | UReturn
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance Hashable UResumePolicy
+instance Store UResumePolicy
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
@@ -197,7 +208,9 @@ data UForExpr (n::S) where
 data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (UExpr n)
   deriving (Show, Generic)
 
-data UEffectOpDef (n::S) = UEffectOpDef (SourceNameOr (Name EffectOpNameC) n) UResumePolicy (UExpr n)
+data UEffectOpDef (n::S) =
+    UEffectOpDef UResumePolicy (SourceNameOr (Name EffectOpNameC) n) (UExpr n)
+  | UReturnOpDef (UExpr n)
   deriving (Show, Generic)
 
 data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
@@ -529,6 +542,9 @@ instance Hashable ModuleSourceName
 
 instance IsString (SourceNameOr a VoidS) where
   fromString = SourceName
+
+instance IsString (SourceOrInternalName c VoidS) where
+  fromString = SISourceName
 
 instance IsString (UBinder s VoidS VoidS) where
   fromString = UBindSource

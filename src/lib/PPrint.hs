@@ -172,6 +172,7 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
   nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
           <> effectLine effs)
   where
+    effectLine :: EffectRowP Name n -> Doc ann
     effectLine Pure = ""
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
@@ -425,6 +426,14 @@ instance Pretty (Effect n) where
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
+    UserEffect name -> p name
+
+instance Pretty (UEffect n) where
+  pretty eff = case eff of
+    RWSEffect rws h -> p rws <+> p h
+    ExceptionEffect -> "Except"
+    IOEffect        -> "IO"
+    UserEffect name -> p name
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
@@ -467,13 +476,10 @@ instance Pretty (Binding s n) where
     AtomNameBinding   info -> "Atom name:" <+> pretty info
     DataDefBinding    dataDef -> pretty dataDef
     TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
-    DataConBinding    dataDefName idx e ->
-      "Data constructor:" <+> pretty dataDefName <+>
-      "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
-    ClassBinding    classDef    -> pretty classDef
+    DataConBinding    dataDefName idx e -> "Data constructor:" <+> pretty dataDefName <+> "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
+    ClassBinding    classDef -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
-    MethodBinding className idx _ ->
-      "Method" <+> pretty idx <+> "of" <+> pretty className
+    MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
     ObjectFileBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
@@ -615,6 +621,9 @@ instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName   v) = p v
   pretty (InternalName v _) = p v
 
+instance (Color c) => Pretty (SourceOrInternalName c n) where
+  pretty (SourceOrInternalName sn) = p sn
+
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
   prettyPrec (ULamExpr arr pat body) = atPrec LowestPrec $ align $
@@ -632,8 +641,8 @@ instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
   prettyPrec (UPiExpr arr pat Pure ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> pLowest ty
-  prettyPrec (UPiExpr arr pat _ ty) = atPrec LowestPrec $ align $
-    p pat <+> pretty arr <+> "{todo: pretty effects}" <+> pLowest ty
+  prettyPrec (UPiExpr arr pat eff ty) = atPrec LowestPrec $ align $
+    p pat <+> pretty arr <+> p eff <+> pLowest ty
 
 instance Pretty (UTabPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UTabPiExpr n) where
@@ -720,18 +729,23 @@ instance Pretty (UDecl n l) where
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
     where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
                  | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
-  pretty (UHandlerDecl effName tyArgs _retEff retTy opDefs name) =
+  pretty (UHandlerDecl effName tyArgs retEff retTy opDefs name) =
     "handler" <+> p name <+> "of" <+> p effName <+> prettyBinderNest tyArgs
-    <+> ":" <+> "{todo: pretty effects}" <+> p retTy <> hardline
-    <> foldMap (<>hardline) ops
-    where ops = [ p rp <+> p n <+> "=" <+> p body
-                 | UEffectOpDef n rp body <- opDefs ]
+    <+> ":" <+> p retEff <+> p retTy <> hardline
+    <> foldMap ((<>hardline) . p) opDefs
+
+instance Pretty (UEffectOpDef n) where
+  pretty (UEffectOpDef rp n body) = p rp <+> p n <+> "=" <+> p body
+  pretty (UReturnOpDef body) = "return =" <+> p body
 
 instance Pretty UResumePolicy where
   pretty UNoResume = "jmp"
   pretty ULinearResume = "def"
   pretty UAnyResume = "ctl"
-  pretty UReturn = ""
+
+instance Pretty (UEffectRow n) where
+  pretty (EffectRow x Nothing) = encloseSep "<" ">" "," $ (p <$> toList x)
+  pretty (EffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (p <$> toList x)) <+> "|" <+> p y <> "}"
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)

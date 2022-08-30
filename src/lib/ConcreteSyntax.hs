@@ -72,7 +72,7 @@ data CTopDecl'
       SourceName -- Effect name
       Group -- Handler arguments
       Group -- Handler type annotation
-      [(SourceName, UResumePolicy, CBlock)] -- Handler methods
+      [(SourceName, Maybe UResumePolicy, CBlock)] -- Handler methods
   deriving (Show, Generic)
 
 type NameAndArgs = (SourceName, [Group])
@@ -422,10 +422,10 @@ handlerDef = withSrc do
   return $ CHandlerDecl (fromString handlerName) (fromString effectName)
     args typeAnn methods
 
-effectOpDef :: Parser (SourceName, UResumePolicy, CBlock)
+effectOpDef :: Parser (SourceName, Maybe UResumePolicy, CBlock)
 effectOpDef = do
-  (rp, v) <- (keyWord ReturnKW $> (UReturn, "return"))
-         <|> ((,) <$> resumePolicy <*> anyName)
+  (rp, v) <- (keyWord ReturnKW $> (Nothing, "return"))
+         <|> ((,) <$> (Just <$> resumePolicy) <*> anyName)
   sym "="
   rhs <- cBlock
   return ((fromString v), rp, rhs)
