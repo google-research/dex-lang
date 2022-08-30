@@ -198,14 +198,17 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
 oneEffect :: Effect n -> EffectRow n
 oneEffect eff = EffectRow (S.singleton eff) Nothing
 
-projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n Int
+-- Returns the number of components available for projection in the first
+-- result, and the suffix of ProjectElt that has to be used to reach them
+-- (we might need to unwrap newtypes to uncover them).
+projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n (Int, [Int])
 projectLength ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     [DataConDef _ (Abs bs UnitE)] <- instantiateDataDef def params
-    return $ nestLength bs
-  StaticRecordTy types -> return $ length types
-  ProdTy tys -> return $ length tys
+    return $ (nestLength bs, [])
+  StaticRecordTy types -> return $ (length types, [0])
+  ProdTy tys -> return $ (length tys, [])
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
 sourceNameType :: (EnvReader m, Fallible1 m)
@@ -329,7 +332,6 @@ instance HasType Atom where
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
     LabeledRow _ -> return LabeledRowKind
-    Record items -> StaticRecordTy <$> mapM getTypeE items
     RecordTy _ -> return TyKind
     Variant vtys _ _ _ -> substM $ VariantTy vtys
     VariantTy _ -> return TyKind
@@ -366,8 +368,6 @@ instance HasType Atom where
             applyNaryAbs (Abs bsInit bTy)
               [ SubstVal (ProjectElt (j NE.:| is) v')
               | j <- iota $ nestLength bsInit]
-        StaticRecordTy types -> return $ toList types !! i
-        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         ProdTy xs -> return $ xs !! i
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM (Var v) >>= \case
@@ -376,9 +376,11 @@ instance HasType Atom where
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
         -- Newtypes
         TC (Fin _) | i == 0 -> return IdxRepTy
+        StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
+        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
-              "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
+              "Only single-member ADTs and record types can be projected. Got " <> pprint ty
 
 getTypeRef :: HasType e => e i -> TypeQueryM i o (Type o)
 getTypeRef x = do
@@ -422,7 +424,6 @@ getTypePrimCon con = case con of
     SumAsProd ty _ _ -> do
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
-  RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse getTypeRef xs
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
@@ -578,12 +579,10 @@ getTypePrimOp op = case op of
     case (fields', fullty) of
       (LabeledRow els, RecordTyWithElems els') ->
         stripPrefix (fromFieldRowElems els) els' >>= \case
-          Just rest -> return $ StaticRecordTy $ Unlabeled
-            [ RecordTy els, RecordTyWithElems rest ]
+          Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
           Nothing -> splitFailed
       (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
-        return $ StaticRecordTy $ Unlabeled
-          [ RecordTyWithElems [DynFields v'], RecordTyWithElems rest ]
+        return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
       _ -> splitFailed
     where
       stripPrefix = curry \case
@@ -863,7 +862,9 @@ singletonTypeValRec ty = case ty of
     substBinders b \b' -> do
       body' <- singletonTypeValRec body
       return $ TabLam $ TabLamExpr b' $ AtomicBlock body'
-  StaticRecordTy items -> Record <$> traverse singletonTypeValRec items
+  StaticRecordTy items -> do
+    StaticRecordTy items' <- substM ty
+    Record items' <$> traverse singletonTypeValRec (toList items)
   TC con -> case con of
     ProdType tys -> ProdVal <$> traverse singletonTypeValRec tys
     _            -> notASingleton

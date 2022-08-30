@@ -266,8 +266,6 @@ linearizeAtom atom = case atom of
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
-  Record elems ->
-    fmapLin (Record . fromComposeE) $ seqLin (fmap linearizeAtom elems)
   Variant t l i e -> do
     t' <- substM $ ExtLabeledItemsE t
     linearizeAtom e `bindLin` \e' ->
@@ -527,14 +525,18 @@ linearizePrimCon con = case con of
       elemsT <- forM elemsWithT \elemsWithT' ->
                   forM elemsWithT' \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
-  Newtype ty _    -> case ty of
+  Newtype ty x    -> case ty of
     TC (Fin _) -> emitZeroT
+    StaticRecordTy _ -> do
+      ty' <- substM ty
+      tanTy' <- tangentType ty'
+      WithTangent prims lins <- linearizeAtom x
+      return $ WithTangent (Con $ Newtype ty' prims) (Con . Newtype (sink tanTy') <$> lins)
     _ -> error $ "Unsupported newtype: " ++ pprint ty
   LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"
-  RecordRef _    -> error "Unexpected ref"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
   where emitZeroT = withZeroT $ substM $ Con con

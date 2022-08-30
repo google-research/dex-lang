@@ -37,6 +37,7 @@ import GHC.Generics (Generic (..))
 import Name
 import Builder
 import Syntax hiding (State)
+import Types.Core
 import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType)
 import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
@@ -988,10 +989,16 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       resolveDelay :: EmitsInf o
                    => (Maybe (Atom o), LabeledItems (Atom o)) -> InfererM i o (Atom o)
       resolveDelay = \case
-        (Nothing , delayedItems) -> return $ Record delayedItems
+        (Nothing , delayedItems) -> getRecord delayedItems
         (Just rec, delayedItems) -> case null delayedItems of
           True  -> return rec
-          False -> emitOp $ RecordCons (Record delayedItems) rec
+          False -> do
+            dr <- getRecord delayedItems
+            emitOp $ RecordCons dr rec
+        where
+          getRecord delayedItems = do
+            tys <- traverse getType delayedItems
+            return $ Record tys $ toList delayedItems
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels

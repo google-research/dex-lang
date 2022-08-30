@@ -33,13 +33,13 @@ import qualified System.Environment as E
 import Numeric
 
 import LabeledItems
-
 import Err
 import Name
 import Syntax
 import Types.Core
 import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
+import Util (restructure)
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -187,9 +187,6 @@ instance PrettyPrecE e => Pretty     (Abs Binder e n) where pretty = prettyFromP
 instance PrettyPrecE e => PrettyPrec (Abs Binder e n) where
   prettyPrec (Abs binder body) = atPrec LowestPrec $ "\\" <> p binder <> "." <> pLowest body
 
-instance PrettyPrecE e => Pretty (PrimCon (e n)) where pretty = prettyFromPrettyPrec
-instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
-
 instance Pretty (DeclBinding n) where
   pretty (DeclBinding ann ty expr) =
     "Decl" <> p ann <> indented (               "type: " <+> p ty
@@ -272,7 +269,6 @@ instance PrettyPrec (Atom n) where
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
-    Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
       ls = LabeledItems $ case i of
             0 -> M.empty
@@ -912,6 +908,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "Unit"
+    ProdType [a] -> atPrec ArgPrec $ "(" <> pArg a <> "&)"
     ProdType as  -> atPrec ArgPrec $ align $ group $
       encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
@@ -927,10 +924,18 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimCon e) where
   prettyPrec = prettyPrecPrimCon
+-- TODO: Define Show instances in user-space and avoid those overlapping instances!
+instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (PrimCon (Atom n)) where
+  prettyPrec = \case
+    Newtype (StaticRecordTy ty) (ProdVal itemList) ->
+      prettyLabeledItems (restructure itemList ty) (line' <> ",") " ="
+    con -> prettyPrecPrimCon con
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l        -> prettyPrec l
+  ProdCon [x]  -> atPrec ArgPrec $ "(" <> pLowest x <> ",)"
   ProdCon xs  -> atPrec ArgPrec $ align $ group $
     encloseSep "(" ")" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
@@ -941,7 +946,6 @@ prettyPrecPrimCon con = case con of
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
-  RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e

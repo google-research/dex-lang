@@ -273,7 +273,6 @@ transposeAtom atom ct = case atom of
       LinRef ref -> emitCTToRef ref ct
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
-  Record e        -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   DepPair _ _ _   -> notImplemented
   DataCon _ _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
@@ -351,16 +350,16 @@ transposeCon con ct = case con of
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
-  Newtype ty _      -> case ty of
+  Newtype ty e      -> case ty of
     TC (Fin _) -> notTangent
-    _          -> notImplemented
+    StaticRecordTy _ -> transposeAtom e (unwrapNewtype ct)
+    _ -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent
   ConRef _       -> notTangent
-  RecordRef _    -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

@@ -25,7 +25,6 @@ import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import Data.Word
 import Data.Maybe
 import Data.Functor
-import Data.Foldable
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.ByteString       as BS
@@ -61,7 +60,6 @@ data Atom (n::S) =
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
  | LabeledRow (FieldRowElems n)
- | Record (LabeledItems (Atom n))
  | RecordTy  (FieldRowElems n)
  | Variant   (ExtLabeledItems (Type n) (AtomName n)) Label Int (Atom n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
@@ -681,6 +679,9 @@ pattern ProdTy tys = TC (ProdType tys)
 pattern ProdVal :: [Atom n] -> Atom n
 pattern ProdVal xs = Con (ProdCon xs)
 
+pattern Record :: LabeledItems (Type n) -> [Atom n] -> Atom n
+pattern Record ty xs = Con (Newtype (StaticRecordTy ty) (ProdVal xs))
+
 pattern SumTy :: [Type n] -> Type n
 pattern SumTy cs = TC (SumType cs)
 
@@ -993,9 +994,8 @@ instance GenericE Atom where
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
-            ) (EitherE5
+            ) (EitherE4
   {- LabeledRow -} ( FieldRowElems )
-  {- Record -}     ( ComposeE LabeledItems Atom )
   {- RecordTy -}   ( FieldRowElems )
   {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
                      LiftE (Label, Int) `PairE` Atom )
@@ -1031,11 +1031,10 @@ instance GenericE Atom where
     DictCon d -> Case2 $ Case4 d
     DictTy  d -> Case2 $ Case5 d
     LabeledRow elems    -> Case3 $ Case0 $ elems
-    Record items        -> Case3 $ Case1 $ ComposeE items
-    RecordTy elems -> Case3 $ Case2 elems
-    Variant extItems l con payload -> Case3 $ Case3 $
+    RecordTy elems -> Case3 $ Case1 elems
+    Variant extItems l con payload -> Case3 $ Case2 $
       ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
-    VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
+    VariantTy extItems  -> Case3 $ Case3 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
@@ -1072,12 +1071,11 @@ instance GenericE Atom where
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
-      Case1 (ComposeE items) -> Record items
-      Case2 elems -> RecordTy elems
-      Case3 ( (ExtLabeledItemsE extItems) `PairE`
+      Case1 elems -> RecordTy elems
+      Case2 ( (ExtLabeledItemsE extItems) `PairE`
               LiftE (l, con)              `PairE`
               payload) -> Variant extItems l con payload
-      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case3 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
@@ -1129,7 +1127,6 @@ getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (NE.fromList [i]) name
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ _ xs -> xs !! i
-  Record items -> toList items !! i
   Con (ProdCon xs) -> xs !! i
   Con (Newtype _ x) | i == 0 -> x
   DepPair l _ _ | i == 0 -> l

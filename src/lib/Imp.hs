@@ -1030,7 +1030,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
       rTy' <- applySubst (lBinder@>v) rTy
       makeDestRec idxs' depVars' rTy'
     return $ DepPairRef lDest rDestAbs depPairTy
-  StaticRecordTy types -> (Con . RecordRef) <$> forM types rec
+  StaticRecordTy types -> Con . ConRef . Newtype ty <$> rec (ProdTy $ toList types)
   VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
@@ -1085,9 +1085,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
       (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
         copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
-        (RecordRef refs, Record vals)
-          | fmap (const ()) refs == fmap (const ()) vals -> do
-              zipWithM_ copyRec (toList refs) (toList vals)
         (TabRef _, TabLam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
@@ -1118,7 +1115,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
           (Newtype _ eRef, Newtype _ e) -> copyRec eRef e
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
-        _ -> error "unexpected src/dest pair"
+        _ -> error $ unlines $ ["unexpected src/dest pair:", pprint dest, "and", pprint src]
       _ -> error "unexpected src/dest pair"
 
     zipTabDestAtom :: Emits n
@@ -1186,7 +1183,6 @@ loadDest (Con dest) = do
        body' <- applySubst (b@>i) body
        result <- emitBlock body'
        loadDest result
-   RecordRef xs -> Record <$> traverse loadDest xs
    ConRef con -> Con <$> case con of
      ProdCon ds -> ProdCon <$> traverse loadDest ds
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
