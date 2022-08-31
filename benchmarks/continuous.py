@@ -33,12 +33,35 @@ class DexEndToEnd:
     return DexEndToEnd(self.example, self.repeats, 'baseline')
 
 
+@dataclass
+class DexRuntime:
+  """Measures isolated run time on a benchmark."""
+  name: str
+  repeats: int
+  variant: str = 'latest'
+
+  def clean(self, code, xdg_home):
+    run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
+
+  def bench(self, code, xdg_home):
+    source = code / 'benchmarks' / (self.name + '.dx')
+    runtime = parse_result_runtime(
+        read(code / 'dex', '--lib-path', code / 'lib',
+             'script', source, '+RTS', '-s',
+             env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
+    return [Result(self.name, 'runtime', runtime)]
+
+  def baseline(self):
+    return DexRuntime(self.name, self.repeats, 'baseline')
+
+
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
 BENCHMARKS = [
     DexEndToEnd('kernelregression', 10),
     DexEndToEnd('psd', 10),
     DexEndToEnd('fluidsim', 10),
-    DexEndToEnd('regression', 10)]
+    DexEndToEnd('regression', 10),
+    DexRuntime('fused_sum', 5)]
 
 
 def run(*args, capture=False, env=None):
@@ -71,6 +94,7 @@ def build(commit):
     run('make', 'install', env=dict(os.environ, PREFIX=commit))
     run('cp', '-r', 'lib', install_path / 'lib')
     run('cp', '-r', 'examples', install_path / 'examples')
+    run('cp', '-r', 'benchmarks', install_path / 'benchmarks')
   return install_path
 
 
@@ -109,6 +133,8 @@ class Result:
       return self
     if self.measure == 'time':
       return Result(self.benchmark, 'time_rel', self.value / other.value)
+    if self.measure == 'runtime':
+      return Result(self.benchmark, 'runtime_rel', self.value / other.value)
 
 
 ALLOC_PATTERN = re.compile(r"^\s*([0-9,]+) bytes allocated in the heap", re.M)
@@ -123,6 +149,22 @@ def parse_result(output):
     raise RuntimeError("Couldn't extract total time")
   total_time = float(time_line.group(1))
   return total_alloc, total_time
+
+
+RUNTIME_PATTERN = re.compile(r"^>\s*Run\s*time:\s*([0-9.]+)\s*([mun]?s)", re.M)
+def parse_result_runtime(output):
+  runtime_line = RUNTIME_PATTERN.search(output)
+  if runtime_line is None:
+    raise RuntimeError(f"Couldn't extract total runtime from\n{output}")
+  raw_runtime = float(runtime_line.group(1))
+  if runtime_line.group(2) == 's':
+    return raw_runtime
+  elif runtime_line.group(2) == 'ms':
+    return raw_runtime / 1000.
+  elif runtime_line.group(2) == 'us':
+    return raw_runtime / 1000_000.
+  elif runtime_line.group(2) == 'ns':
+    return raw_runtime / 1000_000_000.
 
 
 def save(commit, results: Sequence[Result], datapath, commitpath):
