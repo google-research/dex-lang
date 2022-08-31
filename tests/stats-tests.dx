@@ -1,0 +1,161 @@
+-- stats-tests.dx
+
+import stats
+
+-- mainly cross-checking against results from R
+
+-- bernoulli
+
+log_pdf (Bernoulli 0.6) True ~~ -0.5108256
+> True
+
+log_cdf (Bernoulli 0.6) False ~~ log 0.4
+> True
+
+log_sf (Bernoulli 0.6) False ~~ log 0.6
+> True
+
+quantile (Bernoulli 0.6) 0.39 == False
+> True
+
+quantile (Bernoulli 0.6) 0.41 == True
+> True
+
+rand_vec 5 (draw $ Bernoulli 0.6) (new_key 0) :: Fin 5=>Bool
+> [False, True, True, True, True]
+
+-- binomial
+
+log_pdf (Binomial 10 0.4) 8 ~~ -4.545315
+> True
+
+log_cdf (Binomial 10 0.4) 7 ~~ -0.01237076
+> True
+
+log_sf (Binomial 10 0.4) 7 ~~ -4.398599
+> True
+
+quantile (Binomial 10 0.4) 0.5 == 4
+> True
+
+rand_vec 5 (draw $ Binomial 10 0.4) (new_key 0) :: Fin 5=>Nat
+> [1, 0, 7, 6, 7]
+
+-- exponential
+
+log_pdf (Exponential 2.0) 3.0 ~~ -5.306853
+> True
+
+log_cdf (Exponential 2.0) 3.0 ~~ -0.002481829
+> True
+
+log_sf (Exponential 2.0) 3.0 ~~ -6
+> True
+
+quantile (Exponential 2.0) 0.5 ~~ 0.3465736
+> True
+
+rand_vec 5 (draw $ Exponential 2.0) (new_key 0) :: Fin 5=>Float
+> [1.021143, 0.14182, 0.093212, 0.213017, 0.430549]
+
+-- gaussian
+
+log_pdf (Gaussian 1.0 2.0) 3.0 ~~ -2.112086
+> True
+
+rand_vec 5 (draw $ Gaussian 1.0 2.0) (new_key 0) :: Fin 5=>Float
+> [-1.93355, 4.198111, 0.529252, 0.018863, 2.921813]
+
+-- geometric
+
+log_pdf (Geometric 0.1) 10 ~~ -3.25083
+> True
+
+log_cdf (Geometric 0.1) 10 ~~ -0.4287518
+> True
+
+log_sf (Geometric 0.1) 10 ~~ -1.053605
+> True
+
+quantile (Geometric 0.1) 0.5 == 7
+> True
+
+rand_vec 5 (draw $ Geometric 0.1) (new_key 0) :: Fin 5=>Nat
+> [20, 3, 2, 5, 9]
+
+-- poisson
+
+log_pdf (Poisson 5.0) 8 ~~ -2.7291
+> True
+
+log_cdf (Poisson 5.0) 8 ~~ -0.07052294
+> True
+
+log_sf (Poisson 5.0) 8 ~~ -2.686872
+> True
+
+quantile (Poisson 5.0) 0.7 == 6
+> True
+
+rand_vec 5 (draw $ Poisson 5.0) (new_key 0) :: Fin 5=>Nat
+> [4, 4, 2, 2, 7]
+
+-- uniform
+
+log_pdf (Uniform 2.0 5.0) 3.5 ~~ -1.098612
+> True
+
+log_cdf (Uniform 2.0 5.0) 3.5 ~~ -0.6931472
+> True
+
+log_sf (Uniform 2.0 5.0) 3.5 ~~ -0.6931472
+> True
+
+quantile (Uniform 2.0 5.0) 0.2 ~~ 2.6
+> True
+
+rand_vec 5 (draw $ Uniform 2.0 5.0) (new_key 0) :: Fin 5=>Float
+> [4.610805, 2.740888, 2.510233, 3.040717, 3.731907]
+
+
+-- data summaries
+
+mean_and_var [2.0,3.0,4.0] ~~ (3,1)
+> True
+
+mean [2.0,3.0,4.0] ~~ 3.0
+> True
+
+var [1.0,3.0,5.0] ~~ 4.0
+> True
+
+sd [1.0,3.0,5.0] ~~ 2.0
+> True
+
+mean_and_cov [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ ([3,4], [[4,4],[4,4]])
+> True
+
+mean [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [3,4]
+> True
+
+cov_mat [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [[4,4],[4,4]]
+> True
+
+cov [1.0,2.0,3.0] [2.0,3.0,4.0] ~~ 1
+> True
+
+cov [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
+> True
+
+cor [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
+> True
+
+cov [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 1
+> True
+
+cor [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 0.5
+> True
+
+
+-- eof
+
