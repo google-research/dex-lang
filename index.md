@@ -31,6 +31,7 @@
 - [examples/tutorial.dx](examples/tutorial.html): Introduction to Dex
 - [examples/latex.dx](examples/latex.html): $\href{https://katex.org/}{\KaTeX}$ Rendering Examples
 - [examples/linear-maps.dx](examples/linear-maps.html): Polymorphic Operations on Linear Maps
+- [examples/levenshtein-distance.dx](examples/levenshtein-distance.html): Levenshtein Distance
 
 ## Libraries
 
