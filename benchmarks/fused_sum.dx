@@ -1,0 +1,6 @@
+n = if dex_test_mode() then 1000 else 1000000
+
+%bench "fused-sum"
+sum $ for i:(Fin n).
+  x = n_to_i64 (ordinal i)
+  x * x
