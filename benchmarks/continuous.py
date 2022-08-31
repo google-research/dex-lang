@@ -1,13 +1,23 @@
+# Copyright 2022 Google LLC
+#
+# Use of this source code is governed by a BSD-style
+# license that can be found in the LICENSE file or at
+# https://developers.google.com/open-source/licenses/bsd
+
 import re
 import os
 import sys
+import time
+import timeit
 import csv
 import subprocess
 import tempfile
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union, Sequence
+from typing import Callable, Union, Sequence
+
+import numpy as np
 
 
 @dataclass
@@ -52,7 +62,31 @@ class DexRuntime:
     return [Result(self.name, 'runtime', runtime)]
 
   def baseline(self):
-    return DexRuntime(self.name, self.repeats, 'baseline')
+    return Python(self.name, self.repeats, RUNTIME_BASELINES[self.name])
+
+
+@dataclass
+class Python:
+  name: str
+  repeats: int
+  f: Callable
+
+  def clean(self, _code, _xdg_home):
+    # Ensure NumPy can only use a single thread for an
+    # apples-to-apples comparison.
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
+  def bench(self, _code, _xdg_home):
+    avg_time, iters = bench_python(self.f)
+    return [Result(self.name, 'runtime', avg_time)]
+
+
+def numpy_sum():
+  n = 1000000
+  xs = np.arange(n, dtype=np.float64)
+  return np.sum(xs * xs)
 
 
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
@@ -62,6 +96,9 @@ BENCHMARKS = [
     DexEndToEnd('fluidsim', 10),
     DexEndToEnd('regression', 10),
     DexRuntime('fused_sum', 5)]
+RUNTIME_BASELINES = {
+    'fused_sum': numpy_sum
+}
 
 
 def run(*args, capture=False, env=None):
@@ -165,6 +202,18 @@ def parse_result_runtime(output):
     return raw_runtime / 1000_000.
   elif runtime_line.group(2) == 'ns':
     return raw_runtime / 1000_000_000.
+
+
+def bench_python(f, loops=None):
+  """Return average runtime of `f` in seconds and number of iterations used."""
+  if loops is None:
+    f()
+    s = time.perf_counter()
+    f()
+    e = time.perf_counter()
+    duration = e - s
+    loops = max(4, int(2 / duration)) # aim for 2s
+  return (timeit.timeit(f, number=loops, globals=globals()) / loops, loops)
 
 
 def save(commit, results: Sequence[Result], datapath, commitpath):
