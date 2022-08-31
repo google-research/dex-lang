@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.ByteString as BS
 import Data.Functor ((<&>))
+import Data.List.NonEmpty qualified as NE
 import Data.ByteString.Internal (memcpy)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Foldable
@@ -34,9 +35,11 @@ import Err
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 
 import Syntax
+import Types.Core
 import QueryType
 import Name
 import PPrint ()
+import Util (restructure)
 
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
@@ -64,11 +67,9 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
       TC (Fin (IdxRepVal n)) <- return $ binderType i
-      Block _ (Nest castDecl (Nest offDecl (Nest loadDecl Empty))) (Var result) <- return body
-      Let v (DeclBinding _ _ (Op (CastOp IdxRepTy (Var i')))) <- return castDecl
+      Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
+      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (0 NE.:| []) i')))) <- return offDecl
       guard $ binderName i == i'
-      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (Var v')))) <- return offDecl
-      guard $ binderName v == v'
       Let r (DeclBinding _ _ loadExpr) <- return loadDecl
       guard $ binderName r == result
       Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
@@ -76,7 +77,7 @@ getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
       Let ioR (DeclBinding _ _ (Op (PtrLoad (Var v1')))) <- return ioDecl
       guard $ binderName ioR == ioResult
       guard $ binderName v1 == v1'
-      HoistSuccess ptrAtomTop <- return $ hoist (PairB i v) ptrName
+      HoistSuccess ptrAtomTop <- return $ hoist i ptrName
       return (ptrAtomTop, n)
 getDexString x = error $ "Not a string: " ++ pprint x
 {-# SCC getDexString #-}
@@ -114,6 +115,17 @@ prettyVal val = case val of
     mapM prettyVal args <&> \case
       []    -> pretty name
       args' -> parens $ pretty name <+> hsep args'
+  Record tys vals -> do
+    let LabeledItems row = restructure vals tys
+    let separator = line' <> ","
+    let bindwith = " ="
+    let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
+    let fmElem = \(label, v) -> ((pretty label <> bindwith) <+>) <$> prettyVal v
+    docs <- mapM fmElem elems
+    let innerDoc = "{" <> flatAlt " " ""
+          <> concatWith (surround (separator <> " ")) docs
+          <> "}"
+    return $ align $ group innerDoc
   Con con -> case con of
     ProdCon [] -> return $ pretty ()
     ProdCon [x, y] -> do
@@ -137,16 +149,6 @@ prettyVal val = case val of
             variant = Variant (NoExt types) theLabel repeatNum value
         _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
-  Record (LabeledItems row) -> do
-    let separator = line' <> ","
-    let bindwith = " ="
-    let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
-    let fmElem = \(label, v) -> ((pretty label <> bindwith) <+>) <$> prettyVal v
-    docs <- mapM fmElem elems
-    let innerDoc = "{" <> flatAlt " " ""
-          <> concatWith (surround (separator <> " ")) docs
-          <> "}"
-    return $ align $ group innerDoc
   atom -> return $ prettyPrec atom LowestPrec
 
 -- === taking memory snapshots for serializing heap-backed dex values ===

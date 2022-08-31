@@ -273,7 +273,6 @@ transposeAtom atom ct = case atom of
       LinRef ref -> emitCTToRef ref ct
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
-  Record e        -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   DepPair _ _ _   -> notImplemented
   DataCon _ _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
@@ -317,7 +316,7 @@ transposeHof hof ct = case hof of
       ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal
-  RunState s (Lam (BinaryLamExpr hB refB body)) -> do
+  RunState Nothing s (Lam (BinaryLamExpr hB refB body)) -> do
     (ctBody, ctState) <- fromPair ct
     (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
@@ -334,7 +333,7 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ct)
       return UnitVal
     transposeAtom r ct'
-  RunWriter _ (Lam (BinaryLamExpr hB refB body))-> do
+  RunWriter Nothing _ (Lam (BinaryLamExpr hB refB body))-> do
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader noHint ctEff \h ref -> do
@@ -351,14 +350,16 @@ transposeCon con ct = case con of
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
+  Newtype ty e      -> case ty of
+    TC (Fin _) -> notTangent
+    StaticRecordTy _ -> transposeAtom e (unwrapNewtype ct)
+    _ -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  FinVal _ _        -> notTangent
   LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent
   ConRef _       -> notTangent
-  RecordRef _    -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

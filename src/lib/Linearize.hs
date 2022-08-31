@@ -266,8 +266,6 @@ linearizeAtom atom = case atom of
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
-  Record elems ->
-    fmapLin (Record . fromComposeE) $ seqLin (fmap linearizeAtom elems)
   Variant t l i e -> do
     t' <- substM $ ExtLabeledItemsE t
     linearizeAtom e `bindLin` \e' ->
@@ -527,12 +525,18 @@ linearizePrimCon con = case con of
       elemsT <- forM elemsWithT \elemsWithT' ->
                   forM elemsWithT' \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
-  FinVal _ _            -> emitZeroT
+  Newtype ty x    -> case ty of
+    TC (Fin _) -> emitZeroT
+    StaticRecordTy _ -> do
+      ty' <- substM ty
+      tanTy' <- tangentType ty'
+      WithTangent prims lins <- linearizeAtom x
+      return $ WithTangent (Con $ Newtype ty' prims) (Con . Newtype (sink tanTy') <$> lins)
+    _ -> error $ "Unsupported newtype: " ++ pprint ty
   LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"
-  RecordRef _    -> error "Unexpected ref"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
   where emitZeroT = withZeroT $ substM $ Con con
@@ -556,25 +560,25 @@ linearizeHof hof = case hof of
       rLin' <- rLin
       tanEffectLam <- applyLinToTangents $ sink tangentLam
       liftM Var $ emit $ Hof $ RunReader rLin' tanEffectLam
-  RunState sInit lam -> do
+  RunState Nothing sInit lam -> do
     WithTangent sInit' sLin <- linearizeAtom sInit
     lam' <- linearizeEffectFun State lam
-    (result, sFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunState sInit' lam')
+    (result, sFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunState Nothing sInit' lam')
     (primalResult, tangentLam) <- fromPair result
     return $ WithTangent (PairVal primalResult sFinal) do
       sLin' <- sLin
       tanEffectLam <- applyLinToTangents $ sink tangentLam
-      liftM Var $ emit $ Hof $ RunState sLin' tanEffectLam
-  RunWriter bm lam -> do
+      liftM Var $ emit $ Hof $ RunState Nothing sLin' tanEffectLam
+  RunWriter Nothing bm lam -> do
     -- TODO: check it's actually the 0/+ monoid (or should we just build that in?)
     ComposeE bm' <- substM (ComposeE bm)
     lam' <- linearizeEffectFun Writer lam
-    (result, wFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunWriter bm' lam')
+    (result, wFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunWriter Nothing bm' lam')
     (primalResult, tangentLam) <- fromPair result
     return $ WithTangent (PairVal primalResult wFinal) do
       ComposeE bm'' <- sinkM $ ComposeE bm'
       tanEffectLam <- applyLinToTangents $ sink tangentLam
-      liftM Var $ emit $ Hof $ RunWriter bm'' tanEffectLam
+      liftM Var $ emit $ Hof $ RunWriter Nothing bm'' tanEffectLam
   RunIO (Lam (LamExpr b@(LamBinder _ _ _ effs) body)) -> do
     effs' <- substM $ ignoreHoistFailure $ hoist b effs
     -- TODO: consider the possibility of other effects here besides IO

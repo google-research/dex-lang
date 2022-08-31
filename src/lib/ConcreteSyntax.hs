@@ -72,7 +72,7 @@ data CTopDecl'
       SourceName -- Effect name
       Group -- Handler arguments
       Group -- Handler type annotation
-      [(SourceName, UResumePolicy, CBlock)] -- Handler methods
+      [(SourceName, Maybe UResumePolicy, CBlock)] -- Handler methods
   deriving (Show, Generic)
 
 type NameAndArgs = (SourceName, [Group])
@@ -212,11 +212,13 @@ pattern Identifier name <- (WithSrc _ (CIdentifier name)) where
 
 binOptL :: Bin' -> Group -> (Maybe Group, Maybe Group)
 binOptL tag = \case
+  (WithSrc _ (CParens (ExprBlock content))) -> binOptL tag content
   (Binary tag' lhs rhs) | tag == tag' -> (Just lhs, Just rhs)
   rhs -> (Nothing, Just rhs)
 
 binOptR :: Bin' -> Group -> (Maybe Group, Maybe Group)
 binOptR tag = \case
+  (WithSrc _ (CParens (ExprBlock content))) -> binOptR tag content
   (Binary tag' lhs rhs) | tag == tag' -> (Just lhs, Just rhs)
   lhs -> (Just lhs, Nothing)
 
@@ -420,10 +422,10 @@ handlerDef = withSrc do
   return $ CHandlerDecl (fromString handlerName) (fromString effectName)
     args typeAnn methods
 
-effectOpDef :: Parser (SourceName, UResumePolicy, CBlock)
+effectOpDef :: Parser (SourceName, Maybe UResumePolicy, CBlock)
 effectOpDef = do
-  (rp, v) <- (keyWord ReturnKW $> (UReturn, "return"))
-         <|> ((,) <$> resumePolicy <*> anyName)
+  (rp, v) <- (keyWord ReturnKW $> (Nothing, "return"))
+         <|> ((,) <$> (Just <$> resumePolicy) <*> anyName)
   sym "="
   rhs <- cBlock
   return ((fromString v), rp, rhs)
@@ -625,7 +627,12 @@ thenSameLine :: Parser (CBlock, Maybe CBlock)
 thenSameLine = do
   keyWord ThenKW
   cBlock' >>= \case
-    (Left blk) -> return (blk, Nothing)
+    (Left blk) -> do
+      let msg = ("No `else` may follow same-line `then` and indented consequent"
+                  ++ "; indent and align both `then` and `else`, or write the "
+                  ++ "whole `if` on one line.")
+      mayBreak $ noElse msg
+      return (blk, Nothing)
     (Right ex) -> do
       alt <- optional
         $ (keyWord ElseKW >> cBlock)
@@ -638,14 +645,23 @@ thenNewLine = withIndent $ mayNotBreak $ do
   keyWord ThenKW
   cBlock' >>= \case
     (Left blk) -> do
-      alt <- optional $ do
-        try $ nextLine >> keyWord ElseKW
-        cBlock
+      alt <- do
+        -- With `mayNotBreak`, this just forbids inline else
+        noElse ("Same-line `else` may not follow indented consequent;"
+                ++ " put the `else` on the next line.")
+        optional $ do
+          try $ nextLine >> keyWord ElseKW
+          cBlock
       return (blk, alt)
     (Right ex) -> do
       void $ optional $ try nextLine
       alt <- optional $ keyWord ElseKW >> cBlock
       return (ExprBlock ex, alt)
+
+noElse :: String -> Parser ()
+noElse msg = (optional $ try $ sc >> keyWord ElseKW) >>= \case
+  Just () -> fail msg
+  Nothing -> return ()
 
 leafGroupTrailingEmpty :: Parser Group'
 leafGroupTrailingEmpty = do
@@ -907,8 +923,8 @@ builtinNames = M.fromList
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
   , ("runReader"       , HofExpr $ RunReader () ())
-  , ("runWriter"       , HofExpr $ RunWriter (BaseMonoid () ()) ())
-  , ("runState"        , HofExpr $ RunState  () ())
+  , ("runWriter"       , HofExpr $ RunWriter Nothing (BaseMonoid () ()) ())
+  , ("runState"        , HofExpr $ RunState  Nothing () ())
   , ("runIO"           , HofExpr $ RunIO ())
   , ("catchException"  , HofExpr $ CatchException ())
   , ("TyKind"    , TCExpr $ TypeKind)

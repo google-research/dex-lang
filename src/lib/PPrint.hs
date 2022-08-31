@@ -33,13 +33,13 @@ import qualified System.Environment as E
 import Numeric
 
 import LabeledItems
-
 import Err
 import Name
 import Syntax
 import Types.Core
 import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
+import Util (restructure)
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -172,6 +172,7 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
   nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
           <> effectLine effs)
   where
+    effectLine :: EffectRowP Name n -> Doc ann
     effectLine Pure = ""
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
@@ -185,9 +186,6 @@ prettyBinderNoAnn (b:>_) = p b
 instance PrettyPrecE e => Pretty     (Abs Binder e n) where pretty = prettyFromPrettyPrec
 instance PrettyPrecE e => PrettyPrec (Abs Binder e n) where
   prettyPrec (Abs binder body) = atPrec LowestPrec $ "\\" <> p binder <> "." <> pLowest body
-
-instance PrettyPrecE e => Pretty (PrimCon (e n)) where pretty = prettyFromPrettyPrec
-instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
 
 instance Pretty (DeclBinding n) where
   pretty (DeclBinding ann ty expr) =
@@ -271,7 +269,6 @@ instance PrettyPrec (Atom n) where
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
-    Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
       ls = LabeledItems $ case i of
             0 -> M.empty
@@ -425,6 +422,14 @@ instance Pretty (Effect n) where
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
+    UserEffect name -> p name
+
+instance Pretty (UEffect n) where
+  pretty eff = case eff of
+    RWSEffect rws h -> p rws <+> p h
+    ExceptionEffect -> "Except"
+    IOEffect        -> "IO"
+    UserEffect name -> p name
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
@@ -467,13 +472,10 @@ instance Pretty (Binding s n) where
     AtomNameBinding   info -> "Atom name:" <+> pretty info
     DataDefBinding    dataDef -> pretty dataDef
     TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
-    DataConBinding    dataDefName idx e ->
-      "Data constructor:" <+> pretty dataDefName <+>
-      "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
-    ClassBinding    classDef    -> pretty classDef
+    DataConBinding    dataDefName idx e -> "Data constructor:" <+> pretty dataDefName <+> "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
+    ClassBinding    classDef -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
-    MethodBinding className idx _ ->
-      "Method" <+> pretty idx <+> "of" <+> pretty className
+    MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
     ObjectFileBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
@@ -615,6 +617,9 @@ instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName   v) = p v
   pretty (InternalName v _) = p v
 
+instance (Color c) => Pretty (SourceOrInternalName c n) where
+  pretty (SourceOrInternalName sn) = p sn
+
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
   prettyPrec (ULamExpr arr pat body) = atPrec LowestPrec $ align $
@@ -632,8 +637,8 @@ instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
   prettyPrec (UPiExpr arr pat Pure ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> pLowest ty
-  prettyPrec (UPiExpr arr pat _ ty) = atPrec LowestPrec $ align $
-    p pat <+> pretty arr <+> "{todo: pretty effects}" <+> pLowest ty
+  prettyPrec (UPiExpr arr pat eff ty) = atPrec LowestPrec $ align $
+    p pat <+> pretty arr <+> p eff <+> pLowest ty
 
 instance Pretty (UTabPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UTabPiExpr n) where
@@ -720,18 +725,23 @@ instance Pretty (UDecl n l) where
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
     where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
                  | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
-  pretty (UHandlerDecl effName tyArgs _retEff retTy opDefs name) =
+  pretty (UHandlerDecl effName tyArgs retEff retTy opDefs name) =
     "handler" <+> p name <+> "of" <+> p effName <+> prettyBinderNest tyArgs
-    <+> ":" <+> "{todo: pretty effects}" <+> p retTy <> hardline
-    <> foldMap (<>hardline) ops
-    where ops = [ p rp <+> p n <+> "=" <+> p body
-                 | UEffectOpDef n rp body <- opDefs ]
+    <+> ":" <+> p retEff <+> p retTy <> hardline
+    <> foldMap ((<>hardline) . p) opDefs
+
+instance Pretty (UEffectOpDef n) where
+  pretty (UEffectOpDef rp n body) = p rp <+> p n <+> "=" <+> p body
+  pretty (UReturnOpDef body) = "return =" <+> p body
 
 instance Pretty UResumePolicy where
   pretty UNoResume = "jmp"
   pretty ULinearResume = "def"
   pretty UAnyResume = "ctl"
-  pretty UReturn = ""
+
+instance Pretty (UEffectRow n) where
+  pretty (EffectRow x Nothing) = encloseSep "<" ">" "," $ (p <$> toList x)
+  pretty (EffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (p <$> toList x)) <+> "|" <+> p y <> "}"
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
@@ -898,6 +908,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "Unit"
+    ProdType [a] -> atPrec ArgPrec $ "(" <> pArg a <> "&)"
     ProdType as  -> atPrec ArgPrec $ align $ group $
       encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
@@ -913,21 +924,28 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimCon e) where
   prettyPrec = prettyPrecPrimCon
+-- TODO: Define Show instances in user-space and avoid those overlapping instances!
+instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (PrimCon (Atom n)) where
+  prettyPrec = \case
+    Newtype (StaticRecordTy ty) (ProdVal itemList) ->
+      prettyLabeledItems (restructure itemList ty) (line' <> ",") " ="
+    con -> prettyPrecPrimCon con
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
-  Lit l       -> prettyPrec l
+  Lit l        -> prettyPrec l
+  ProdCon [x]  -> atPrec ArgPrec $ "(" <> pLowest x <> ",)"
   ProdCon xs  -> atPrec ArgPrec $ align $ group $
     encloseSep "(" ")" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  FinVal n i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (Fin n)
+  Newtype ty e -> atPrec LowestPrec $ pArg e <> "@" <> (parens $ pLowest ty)
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
-  RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e

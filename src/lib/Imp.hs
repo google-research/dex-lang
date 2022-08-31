@@ -473,11 +473,6 @@ toImpOp maybeDest op = case op of
       (BaseTy _, BaseTy bt) -> do
         x' <- fromScalarAtom x
         returnVal =<< toScalarAtom =<< cast x' bt
-      (TC (Fin _), IdxRepTy) -> do
-        let Con (FinVal _ xord) = x
-        returnVal xord
-      (IdxRepTy, TC (Fin n)) ->
-        returnVal $ Con $ FinVal n x
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   BitcastOp destTy x -> do
     case destTy of
@@ -577,9 +572,11 @@ toImpHof maybeDest hof = do
       copyAtom rDest r'
       extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal rDest) $
         translateBlock maybeDest body
-    RunWriter (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
-      let PairTy _ accTy = resultTy
-      (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+    RunWriter d (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
+      let PairTy ansTy accTy = resultTy
+      (aDest, wDest) <- case d of
+        Nothing -> destPairUnpack <$> allocDest maybeDest resultTy
+        Just d' -> (,) <$> allocDest Nothing ansTy <*> substM d'
       e' <- substM e
       emptyVal <- liftBuilderImp do
         PairE accTy' e'' <- sinkM $ PairE accTy e'
@@ -588,10 +585,12 @@ toImpHof maybeDest hof = do
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal wDest) $
         translateBlock (Just aDest) body
       PairVal <$> destToAtom aDest <*> destToAtom wDest
-    RunState s (Lam (BinaryLamExpr h ref body)) -> do
-      s' <- substM s
-      (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
-      copyAtom sDest s'
+    RunState d s (Lam (BinaryLamExpr h ref body)) -> do
+      let PairTy ansTy _ = resultTy
+      (aDest, sDest) <- case d of
+        Nothing -> destPairUnpack <$> allocDest maybeDest resultTy
+        Just d' -> (,) <$> allocDest Nothing ansTy <*> substM d'
+      copyAtom sDest =<< substM s
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal sDest) $
         translateBlock (Just aDest) body
       PairVal <$> destToAtom aDest <*> destToAtom sDest
@@ -1031,7 +1030,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
       rTy' <- applySubst (lBinder@>v) rTy
       makeDestRec idxs' depVars' rTy'
     return $ DepPairRef lDest rDestAbs depPairTy
-  StaticRecordTy types -> (Con . RecordRef) <$> forM types rec
+  StaticRecordTy types -> Con . ConRef . Newtype ty <$> rec (ProdTy $ toList types)
   VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
@@ -1041,7 +1040,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
     Fin n -> do
       x <- rec IdxRepTy
-      return $ Con $ ConRef $ FinVal n x
+      return $ Con $ ConRef $ Newtype (TC $ Fin n) x
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
@@ -1086,9 +1085,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
       (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
         copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
-        (RecordRef refs, Record vals)
-          | fmap (const ()) refs == fmap (const ()) vals -> do
-              zipWithM_ copyRec (toList refs) (toList vals)
         (TabRef _, TabLam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
@@ -1117,9 +1113,9 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
-          (FinVal _ iRef, FinVal _ i) -> copyRec iRef i
+          (Newtype _ eRef, Newtype _ e) -> copyRec eRef e
           _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
-        _ -> error "unexpected src/dest pair"
+        _ -> error $ unlines $ ["unexpected src/dest pair:", pprint dest, "and", pprint src]
       _ -> error "unexpected src/dest pair"
 
     zipTabDestAtom :: Emits n
@@ -1187,11 +1183,10 @@ loadDest (Con dest) = do
        body' <- applySubst (b@>i) body
        result <- emitBlock body'
        loadDest result
-   RecordRef xs -> Record <$> traverse loadDest xs
    ConRef con -> Con <$> case con of
      ProdCon ds -> ProdCon <$> traverse loadDest ds
      SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
-     FinVal n iRef -> FinVal n <$> loadDest iRef
+     Newtype ty eRef -> Newtype ty <$> loadDest eRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest

@@ -1,4 +1,4 @@
-' ### PSD solver based on Cholesky decomposition
+'# PSD Solver Based on Cholesky Decomposition
 
 import linalg
 
@@ -14,7 +14,7 @@ N = Fin 4
 [k1, k2] = split_key $ new_key 0
 
 psd : N=>N=>Float =
-  a = for i:N j:N. randn $ ixkey2 k1 i j
+  a = for i:N j:N. randn $ ixkey k1 (i, j)
   x = a ** transpose a
   x + eye
 
@@ -27,10 +27,17 @@ def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
 l = chol psd
 l_full = padLowerTriMat l
 :p l_full
+<<<<<<< HEAD
 > [ [1.600752, 0., 0., 0.]
 > , [-0.86964, 1.415858, 0., 0.]
 > , [0.432356, -0.2367, 1.106284, 0.]
 > , [0.959413, 0.188781, 0.583046, 2.268742] ]
+=======
+> [ [1.621016, 0., 0., 0.]
+> , [0.779301, 2.965358, 0., 0.]
+> , [-0.644939, 1.054188, 2.194109, 0.]
+> , [0.162014, -1.009056, -1.49802, 1.355752] ]
+>>>>>>> upstream/main
 
 psdReconstructed = l_full ** transpose l_full
 
@@ -39,6 +46,11 @@ psdReconstructed = l_full ** transpose l_full
 
 vec : N=>Float = arb k2
 
+<<<<<<< HEAD
 :p (vec, psd **. psdsolve psd vec)
 > ( [-0.941782, -0.705757, 0.511087, 0.533511]
 > , [-0.941783, -0.705756, 0.511087, 0.533511] )
+=======
+vec ~~ (psd **. psdsolve psd vec)
+> True
+>>>>>>> upstream/main

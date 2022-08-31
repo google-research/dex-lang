@@ -24,12 +24,13 @@ import CUDA
 import LLVMExec
 import Err
 import LabeledItems
+import Types.Core
 
 import Name
 import Syntax
 import QueryType
 import PPrint ()
-import Util ((...), iota)
+import Util ((...), iota, restructure)
 import Builder
 import CheapReduction (cheapNormalize)
 
@@ -100,7 +101,6 @@ traverseSurfaceAtomNames atom doWithName = case atom of
     DataCon printName defName'
       <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
       <*> pure con <*> mapM rec args
-  Record items -> Record <$> mapM rec items
   RecordTy _ -> substM atom
   Variant ty l con payload ->
     Variant
@@ -209,10 +209,6 @@ evalOp expr = mapM evalAtom expr >>= \case
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
                              " -> " ++ pprint destTy
     case (sourceTy, destTy) of
-      (IdxRepTy, TC (Fin n)) -> return $ Con $ FinVal n x
-      (TC (Fin _), IdxRepTy) -> do
-        let Con (FinVal _ ord) = x
-        return ord
       (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
         (Int64Type, Int32Type) -> do
           let Con (Lit (Int64Lit v)) = x
@@ -257,27 +253,31 @@ matchUPat (WithSrcB _ pat) x = do
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
     (UPatUnit UnitB, UnitVal) -> return emptyInFrag
-    (UPatRecord pats, Record initXs) -> go initXs pats
+    (UPatRecord pats, Record initTys initXs) -> go initTys (restructure initXs initTys) pats
       where
-        go :: Interp m => LabeledItems (Atom o) -> UFieldRowPat i i' -> m i o (SubstFrag AtomSubstVal i i' o)
-        go xs = \case
+        go :: Interp m
+           => LabeledItems (Type o) -> LabeledItems (Atom o)
+           -> UFieldRowPat i i' -> m i o (SubstFrag AtomSubstVal i i' o)
+        go tys xs = \case
           UEmptyRowPat    -> return emptyInFrag
-          URemFieldsPat b -> return $ b @> SubstVal (Record xs)
+          URemFieldsPat b -> return $ b @> SubstVal (Record tys $ toList xs)
           UDynFieldsPat ~(InternalName _ (UAtomVar v)) b rest ->
             evalAtom (Var v) >>= \case
               LabeledRow f | [StaticFields fields] <- fromFieldRowElems f -> do
                 let (items, remItems) = splitLabeledItems fields xs
-                frag <- matchUPat b (Record items)
-                frag `followedByFrag` go remItems rest
+                let (itemTys, remTys) = splitLabeledItems fields tys
+                frag <- matchUPat b (Record itemTys $ toList items)
+                frag `followedByFrag` go remTys remItems rest
               _ -> error "Unevaluated fields?"
           UDynFieldPat ~(InternalName _ (UAtomVar v)) b rest ->
             evalAtom (Var v) >>= \case
-              Con (LabelCon l) -> go xs $ UStaticFieldPat l b rest
+              Con (LabelCon l) -> go tys xs $ UStaticFieldPat l b rest
               _ -> error "Unevaluated label?"
           UStaticFieldPat l b rest -> case popLabeledItems l xs of
             Just (val, xsTail) -> do
+              let Just (_, tysTail) = popLabeledItems l tys
               headFrag <- matchUPat b val
-              headFrag `followedByFrag` go xsTail rest
+              headFrag `followedByFrag` go tysTail xsTail rest
             Nothing -> error "Field missing in record"
     (UPatVariant _ _ _  , _) -> error "can't have top-level may-fail pattern"
     (UPatVariantLift _ _, _) -> error "can't have top-level may-fail pattern"

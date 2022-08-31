@@ -1,0 +1,7 @@
+>=> ... ... Parse error:1:6:
+  |
+1 | :help
+  |      ^
+unrecognized command: "help"
+
+>=> 

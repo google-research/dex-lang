@@ -30,6 +30,35 @@ import Util (foldMapM)
 
 type DestBlock = Abs Binder Block
 
+-- === For loop resolution ===
+
+-- The `lowerFullySequential` pass makes two related changes:
+-- - All `for` loops become `seq` loops
+-- - Arrays are now explicily allocated as `Dest`s (whither the
+--   content is written in due course)
+--
+-- We also perform destination passing here, to elide as many copies
+-- as possible.
+--
+-- The idea for multithreading parallelism is to add IR elements that
+-- specify parallelization strategy (`Seq` specifies sequential
+-- execution) and add lowerings similar to lowerFullySequential that
+-- choose which one(s) to use.
+
+-- The `For` constructor of `PrimHof` disappears from the IR due to
+-- this pass, and the `Seq`, `AllocDest`, `Place`, `RememberDest`, and
+-- `Freeze` constructors appear.
+--
+-- All the `Place`s in the resulting IR are non-conflicting: every
+-- array element is only written to once.
+--
+-- The traversal for a block or subexpression returns an `Atom`
+-- representing the returned value.  If a destination was passed in,
+-- the traversal is also responsible for arranging to write that value
+-- into that destination (possibly by forwarding (a part of) the
+-- destination to a sub-block or sub-expression, hence "desintation
+-- passing style").
+
 lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   effs <- extendEffRow (S.singleton IOEffect) <$> getEffects b
@@ -37,6 +66,9 @@ lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     Abs (destBinder:>resultDestTy) <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
+      -- TODO(apaszke): Do we still need to indirect through this
+      -- RememberDest?  `traverseBlockWithDest` returns an atom for
+      -- the answer now.
       dest' <- emit . Hof . RememberDest dest =<<
         buildLam noHint PlainArrow (sink resultDestTy) (sink effs) \dest' ->
           traverseBlockWithDest (Var dest') b $> UnitVal
@@ -84,16 +116,38 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
   body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
     (i, dest) <- fromPair $ Var b'
     idest <- emitOp $ IndexRef dest i
-    extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
+    void $ extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
     return UnitVal
   let seqHof = Hof $ Seq dir ixDict' initDest body'
   Op . Freeze . Var <$> emit seqHof
 
 -- Destination-passing traversals
+--
+-- The idea here is to try to reuse the memory already allocated for outputs of surrounding
+-- higher order functions for values produced inside nested blocks. As an example,
+-- consider two perfectly nested for loops:
+--
+-- for i:(Fin 10).
+--   v = for j:(Fin 20). ...
+--   v
+--
+-- (binding of the for as v is necessary since Blocks end with Atoms).
+--
+-- The outermost loop will have to allocate the memory for a 2D array. But it would be
+-- a waste if the inner loop kept allocating 20-element blocks only to copy them into
+-- that full outermost buffer. Instead, we invoke traverseBlockWithDest on the body
+-- of the i-loop, which will realize that v has a valid destination. Then,
+-- traverseExprWithDest will be called at the for decl and will translate the j-loop
+-- so that it never allocates scratch space for its result, but will put it directly in
+-- the corresponding slice of the full 2D buffer.
 
-type DestAssignment (i'::S) (o::S) = AtomNameMap (Dest o) i'
+type DestAssignment (i'::S) (o::S) = AtomNameMap (ProjDest o) i'
 
-lookupDest :: DestAssignment i' o -> AtomName i' -> Maybe (Dest o)
+data ProjDest o
+  = FullDest (Dest o)
+  | ProjDest (NE.NonEmpty Int) (Dest o)  -- dest corresponds to the projection applied to name
+
+lookupDest :: DestAssignment i' o -> AtomName i' -> Maybe (ProjDest o)
 lookupDest = flip lookupNameMap
 
 -- Matches up the free variables of the atom, with the given dest. For example, if the
@@ -101,33 +155,38 @@ lookupDest = flip lookupNameMap
 -- and a dest assignment mapping each side to its respective dest will be returned.
 -- This function works on a best-effort basis. It's never an error to not split the dest
 -- as much as possible, but it can lead to unnecessary copies being done at run-time.
+--
+-- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest o -> Atom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
-  Var v -> return $ Just $ singletonNameMap v dest
+  Var v -> return $ Just $ singletonNameMap v $ FullDest dest
+  ProjectElt ps v -> return $ Just $ singletonNameMap v $ ProjDest ps dest
   _ -> return Nothing
 
-traverseBlockWithDest :: Emits o => Dest o -> Block i -> LowerM i o ()
+traverseBlockWithDest :: Emits o => Dest o -> Block i -> LowerM i o (Atom o)
 traverseBlockWithDest dest (Block _ decls ans) = do
   decomposeDest dest ans >>= \case
     Nothing -> do
       ans' <- traverseDeclNest decls $ traverseAtom ans
-      place dest ans'
+      place (FullDest dest) ans'
+      return ans'
     Just destMap -> do
       s <- getSubst
       case isDistinctNest decls of
         Nothing -> error "Non-distinct decls?"
         Just DistinctBetween -> do
-          -- Note that we ignore ans! Its components are written inplace through destMap.
-          traverseDeclNestWithDestS destMap s decls
+          s' <- traverseDeclNestWithDestS destMap s decls
           -- But we have to emit explicit writes, for all the vars that are not defined in decls!
           forM_ (toListNameMap $ hoistFilterNameMap decls destMap) \(n, d) ->
             place d $ case s ! n of Rename v -> Var v; SubstVal a -> a
+          withSubst s' $ substM ans
+
 
 traverseDeclNestWithDestS
   :: forall i i' l o. (Emits o, DistinctBetween l i')
-  => DestAssignment i' o -> Subst AtomSubstVal l o -> Nest Decl l i' -> LowerM i o ()
+  => DestAssignment i' o -> Subst AtomSubstVal l o -> Nest Decl l i' -> LowerM i o (Subst AtomSubstVal i' o)
 traverseDeclNestWithDestS destMap s = \case
-  Empty -> return ()
+  Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
     DistinctBetween <- return $ withExtEvidence rest $ shortenBetween @i' b
     let maybeDest = lookupDest destMap $ sinkBetween $ binderName b
@@ -135,21 +194,59 @@ traverseDeclNestWithDestS destMap s = \case
     v <- emitDecl (getNameHint b) ann expr'
     traverseDeclNestWithDestS destMap (s <>> (b @> Rename v)) rest
 
-traverseExprWithDest :: Emits o => Maybe (Dest o) -> Expr i -> LowerM i o (Expr o)
+traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> Expr i -> LowerM i o (Expr o)
 traverseExprWithDest dest expr = case expr of
-  Hof (For dir ixDict (Lam body)) -> traverseFor dest dir ixDict body
-  _ -> do
-    expr' <- traverseExprDefault expr
-    case dest of
-      Nothing -> return expr'
-      Just d  -> do
-        ans <- Var <$> emit expr'
-        place d ans
-        return $ Atom ans
+  Hof (For dir ixDict (Lam body)) -> do
+    let dest' = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
+    traverseFor dest' dir ixDict body
+  Hof (RunWriter Nothing m body) -> traverseRWS Writer body \ref' body' -> do
+    m' <- traverse traverseGenericE m
+    return $ RunWriter ref' m' body'
+  Hof (RunState Nothing s body) -> traverseRWS State body \ref' body' -> do
+    s' <- traverseAtom s
+    return $ RunState ref' s' body'
+  _ -> generic
+  where
+    generic = do
+      expr' <- traverseExprDefault expr
+      case dest of
+        Nothing -> return expr'
+        Just d  -> do
+          ans <- Var <$> emit expr'
+          place d ans
+          return $ Atom ans
 
-place :: Emits o => Atom o -> Atom o -> LowerM i o ()
-place d x = void $ emitOp $ Place d x
-{-# INLINE place #-}
+    traverseRWS :: RWS -> Atom i -> (Maybe (Dest o) -> Atom o -> LowerM i o (Hof o)) -> LowerM i o (Expr o)
+    traverseRWS rws (Lam (BinaryLamExpr hb rb body)) mkHof = do
+      unpackRWSDest dest >>= \case
+        Nothing -> generic
+        Just (bodyDest, refDest) -> do
+          let RefTy _ ty = binderType rb
+          ty' <- traverseGenericE $ ignoreHoistFailure $ hoist hb ty
+          liftM Hof $ mkHof refDest =<<
+            buildEffLam rws (getNameHint rb) ty' \hb' rb' ->
+              extendRenamer (hb@>hb' <.> rb@>rb') do
+                case bodyDest of
+                  Nothing -> traverseBlock body
+                  Just bd -> traverseBlockWithDest (sink bd) body
+    traverseRWS _ _ _ = error "Expected a binary lambda expression"
+
+    unpackRWSDest = \case
+      Nothing -> return Nothing
+      Just d -> case d of
+        FullDest fd -> do
+          bd <- getProjRef 0 fd
+          rd <- getProjRef 1 fd
+          return $ Just (Just bd, Just rd)
+        ProjDest (0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
+        ProjDest (1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
+        ProjDest _ _ -> return Nothing
+
+
+place :: Emits o => ProjDest o -> Atom o -> LowerM i o ()
+place pd x = case pd of
+  FullDest d -> void $ emitOp $ Place d x
+  ProjDest p d -> void $ emitOp $ Place d $ getProjection (NE.toList p) x
 
 -- === Vectorization ===
 

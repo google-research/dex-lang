@@ -14,7 +14,7 @@ module Builder (
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
-  select, getUnpacked, emitUnpacked,
+  select, getUnpacked, emitUnpacked, unwrapNewtype,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
   indexRef, naryIndexRef,
@@ -62,6 +62,7 @@ import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
+import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import GHC.Stack
 
@@ -76,7 +77,7 @@ import CheapReduction
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
-import Util (enumerate, restructure, transitiveClosureM, bindM2, iota)
+import Util (enumerate, transitiveClosureM, bindM2, iota)
 import Err
 import Types.Core
 import Core
@@ -929,7 +930,7 @@ emitRunWriter
   -> m n (Atom n)
 emitRunWriter hint accTy bm body = do
   lam <- buildEffLam Writer hint accTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunWriter bm lam
+  liftM Var $ emit $ Hof $ RunWriter Nothing bm lam
 
 mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
 mCombine monoidDict x y = do
@@ -944,7 +945,7 @@ emitRunState
 emitRunState hint initVal body = do
   stateTy <- getType initVal
   lam <- buildEffLam State hint stateTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunState initVal lam
+  liftM Var $ emit $ Hof $ RunState Nothing initVal lam
 
 emitRunReader
   :: (Emits n, ScopableBuilder m)
@@ -958,11 +959,11 @@ emitRunReader hint r body = do
 
 -- === vector space (ish) type class ===
 
-zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n )
+zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n)
 zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
   ProdTy tys -> ProdVal <$> mapM zeroAt tys
-  StaticRecordTy tys -> Record <$> mapM zeroAt tys
+  StaticRecordTy tys -> Record tys <$> mapM zeroAt (toList tys)
   TabTy (b:>ixTy) bodyTy ->
     liftEmitBuilder $ buildTabLam (getNameHint b) ixTy \i ->
       zeroAt =<< applySubst (b@>i) bodyTy
@@ -1023,7 +1024,7 @@ addTangent x y = do
   getType x >>= \case
     StaticRecordTy tys -> do
       elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
-      return $ Record $ restructure elems tys
+      return $ Record tys elems
     TabTy (b:>ixTy) _  ->
       liftEmitBuilder $ buildFor (getNameHint b) Fwd ixTy \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
@@ -1217,14 +1218,18 @@ getUnpacked :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
 getUnpacked atom = do
   atom' <- cheapNormalize atom
   ty <- getType atom'
-  len <- projectLength ty
-  return $ map (\i -> getProjection [i] atom') (iota len)
+  (len, suffix) <- projectLength ty
+  return $ map (\i -> getProjection (i:suffix) atom') (iota len)
 {-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
 emitUnpacked tup = do
   xs <- getUnpacked tup
   forM xs \x -> emit $ Atom x
+
+unwrapNewtype :: Atom n -> Atom n
+unwrapNewtype = getProjection [0]
+{-# INLINE unwrapNewtype #-}
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x (i:|[]))
@@ -1293,11 +1298,11 @@ projectIxFinMethod methodIx n = liftBuilder do
     -- size
     0 -> return n
     -- ordinal
-    1 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-           emitOp $ CastOp IdxRepTy $ Var ix
+    1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
+           return $ ProjectElt (0 NE.:| []) ix
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
-           return $ Con $ FinVal (sink n) $ Var ix
+           return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
     _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===

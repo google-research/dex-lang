@@ -215,7 +215,6 @@ instance CheaplyReducibleE Atom Atom where
     DataCon sourceName dataDefName params con args ->
       DataCon sourceName <$> substM dataDefName <*> cheapReduceE params
                          <*> pure con <*> mapM cheapReduceE args
-    Record items -> Record <$> mapM cheapReduceE items
     Variant ty l c p -> do
       ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
       Variant ty' l c <$> cheapReduceE p

@@ -81,124 +81,14 @@ def myInt2 : {State Int} Int = 1
 > def myInt2 : {State Int} Int = 1
 > ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
--- Check all the if syntaxes.  The principles are
--- - `else` is optional (regardless of indentation)
--- - `then` and `else` can be inline with the preceding, or indented relative
---   to the `if`
--- - The code for each arm of the `if` be either an inline expression
---   or start a new indentation level (relative to its keyword if that
---   is indented, or relative to the `if` otherwise)
---
--- This produces four combinations for one-armed `if`, all of which are legal.
---
--- For two-armed `if`, this produces 16 combinations, but:
--- - If the consequent is indented, it makes so sense to have the `else`
---   inline (eliminating 4 combinations).
--- - If additionally `then` is inline, there can be no indented `else`
---   either, because there is no readable level at which to indent it
---   (elimintaing 2 more combinations).
-:p
-  yield_accum (AddMonoid Float) \ref.
-    -- All indentations of one-armed `if` are ok.
-    if True then ref += 3.
-    if True then
-      ref += 1.
-      ref += 2.
-    if True
-      then ref += 3.
-    if False
-      then
-        ref += 1.
-        ref += 2.
-
-    -- Two-armed `if` with `then` and the consequent both inline.
-    x = if False then 1. else 3.
-    if False then ref += 100. else
-      ref += 1.
-      ref += 2.
-    if False then ref += 200.
-      else ref += x
-    if False then ref += 300.
-      else
-        ref += 1.
-        ref += 2.
-
-    -- Two-armed `if` with `then` indented but the consequent inline.
-    y = if False
-          then 1. else 3.
-    if False
-      then ref += 100. else
-        ref += 1.
-        ref += 2.
-    if False
-      then ref += 200.
-      else ref += y
-    if False
-      then ref += 300.
-      else
-        ref += 1.
-        ref += 2.
-
-    -- Two-armed `if` with `then` and the consequent both indented.
-    if False
-      then
-        ref += 100.
-        ref += 200.
-      else ref += 3.
-    if False
-      then
-        ref += 100.
-        ref += 200.
-      else
-        ref += 2.
-        ref += 4.
-> 36.
-
--- No inline `else` after indented `then` and consequent
-if True
-  then
-    x = 6
-    x else 5
-
-> Parse error:161:7:
->     |
-> 161 |     x else 5
->     |       ^^
-> unexpected "el"
-> expecting "..", "<..", ';', backquoted name, end of input, end of line, or infix operator
--- No inline `else` after inline `then` and indented consequent
-if True then
-  x = 6
-  x else 5
-
-> Parse error:172:5:
->     |
-> 172 |   x else 5
->     |     ^^
-> unexpected "el"
-> expecting "..", "<..", ';', backquoted name, end of input, end of line, or infix operator
--- No indented `else` after inline `then` and indented consequent either
-:p
- if True then
-   x = 6
-   x
-  else 5
-
-> Parse error:185:2:
->     |
-> 185 |   else 5
->     |  ^^^^^^^^
-> unexpected " else 5<newline><newline>> Par"
-> expecting "..", "...", "..<", "@...", "named-instance", '+', '-', function definition, name, or symbol name
-
 -- Check that a syntax error in a funDefLet doesn't try to reparse the
 -- whole definition as something it's not.
 def frob (x:Int) (y:Int) : + =
 
-> Parse error:196:30:
->     |
-> 196 | def frob (x:Int) (y:Int) : + =
->     |                              ^
+> Parse error:86:30:
+>    |
+> 86 | def frob (x:Int) (y:Int) : + =
+>    |                              ^
 > unexpected '='
 > expecting name or symbol name
 
@@ -206,17 +96,27 @@ def frob (x:Int) (y:Int) : + =
 for i.
 i
 
-> Parse error:207:1:
->     |
-> 207 | i
->     | ^
+> Parse error:97:1:
+>    |
+> 97 | i
+>    | ^
 > expecting end of line or space
 
 def (foo + bar) : Int = 6
 
-> Parse error:215:6:
+> Parse error:105:6:
 >     |
-> 215 | def (foo + bar) : Int = 6
+> 105 | def (foo + bar) : Int = 6
 >     |      ^
 > unexpected 'f'
 > expecting symbol name
+
+'Data definitions allow but do not require type / kind annotations
+
+data MyPair1 a b = MkPair1 a b
+
+data MyPair2 a:Type b:Type = MkPair2 x:a y:b
+
+'which may be grouped with parentheses
+
+data MyPair3 (a:Type) (b:Type) = MkPair3 (x:a) (y:b)

@@ -240,7 +240,8 @@ class _SignatureParser:
     return False
 
   digit_codes = set(string.digits.encode('ascii'))
-  name_codes = set(string.ascii_letters.encode('ascii')) | digit_codes | {ord('.'), ord('#')}
+  name_codes = (set(string.ascii_letters.encode('ascii'))
+    | digit_codes | {ord('.'), ord('#'), ord('_'), ord('\'')})
 
   def parse_name(self) -> str:
     end = self.offset

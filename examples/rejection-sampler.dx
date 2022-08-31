@@ -1,4 +1,4 @@
-'# Rejection sampler of a Binomial distribution
+'# Rejection Sampler for a Binomial Distribution
 
 'We implement rejection sampling from a Binomial distribution using a uniform proposal.
 

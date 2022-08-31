@@ -8,7 +8,8 @@
 module GenericTraversal
   ( GenericTraverser (..), GenericallyTraversableE (..)
   , GenericTraverserM (..), liftGenericTraverserM
-  , traverseExprDefault, traverseAtomDefault, traverseDeclNest) where
+  , traverseExprDefault, traverseAtomDefault
+  , traverseDeclNest, traverseBlock ) where
 
 import Control.Monad
 import Control.Monad.State.Class
@@ -94,7 +95,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   DictTy (DictType sn cn params) ->
     DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
   LabeledRow elems -> LabeledRow <$> traverseGenericE elems
-  Record items -> Record <$> mapM tge items
   RecordTy elems -> RecordTy <$> traverseGenericE elems
   Variant ext label i value -> do
     ext' <- traverseExtLabeledItems ext
@@ -160,6 +160,11 @@ instance GenericallyTraversableE DictExpr where
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
     IxFin n ->  IxFin <$> tge n
+
+traverseBlock
+  :: (GenericTraverser s, Emits o)
+  => Block i -> GenericTraverserM s i o (Atom o)
+traverseBlock (Block _ decls result) = traverseDeclNest decls $ traverseAtom result
 
 traverseDeclNest
   :: (GenericTraverser s, Emits o)

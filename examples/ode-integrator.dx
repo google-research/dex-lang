@@ -1,3 +1,5 @@
+'# ODE Integrator
+
 'Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
 stepsize calculation.
 This version is a port of the [Jax implementation](https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py).
@@ -166,7 +168,7 @@ def odeint {d n}
   init_carry = (z0, f0, t0, init_step, t0, init_interp_coeff)
   snd $ scan init_carry integrate_to_next_time
 
-'#### Example: Linear dynamics
+'## Example: Linear dynamics
 
 def myDyn {a} (z : a) (t:Time) : a = z
 

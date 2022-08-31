@@ -1882,7 +1882,6 @@ def hash (x:Key) (y:Nat) : Key =
 def new_key (x:Nat) : Key = hash (n_to_w64 0) x
 def many {a n} [Ix n] (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey {n} (k:Key) (i:n) [Ix n] : Key = hash k (ordinal i)
-def ixkey2 {n m} (k:Key) (i:n) (j:m) [Ix n, Ix m] : Key = hash (hash k (ordinal i)) (ordinal j)
 def split_key {n} (k:Key) : Fin n => Key = for i. ixkey k i
 
 '### Sample Generators
@@ -1899,7 +1898,7 @@ def rand_vec {a} (n:Nat) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
 def rand_mat {a} (n:Nat) (m:Nat) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
-  for i j. f (ixkey2 k i j)
+  for i j. f (ixkey k (i, j))
 
 def randn (k:Key) : Float =
   [k1, k2] = split_key k

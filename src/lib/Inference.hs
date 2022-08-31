@@ -37,6 +37,7 @@ import GHC.Generics (Generic (..))
 import Name
 import Builder
 import Syntax hiding (State)
+import Types.Core
 import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType)
 import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
@@ -988,10 +989,16 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       resolveDelay :: EmitsInf o
                    => (Maybe (Atom o), LabeledItems (Atom o)) -> InfererM i o (Atom o)
       resolveDelay = \case
-        (Nothing , delayedItems) -> return $ Record delayedItems
+        (Nothing , delayedItems) -> getRecord delayedItems
         (Just rec, delayedItems) -> case null delayedItems of
           True  -> return rec
-          False -> emitOp $ RecordCons (Record delayedItems) rec
+          False -> do
+            dr <- getRecord delayedItems
+            emitOp $ RecordCons dr rec
+        where
+          getRecord delayedItems = do
+            tys <- traverse getType delayedItems
+            return $ Record tys $ toList delayedItems
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -1584,7 +1591,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs)
 checkUEffRow :: EmitsInf o => UEffectRow i -> InfererM i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
-   t' <- forM t \(InternalName _ v) -> do
+   t' <- forM t \(SIInternalName _ v) -> do
             v' <- substM v
             constrainVarTy v' EffKind
             return v'
@@ -1592,13 +1599,14 @@ checkUEffRow (EffectRow effs t) = do
 
 checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect o)
 checkUEff eff = case eff of
-  RWSEffect rws (Just ~(InternalName _ region)) -> do
+  RWSEffect rws (Just ~(SIInternalName _ region)) -> do
     region' <- substM region
     constrainVarTy region' TyKind
     return $ RWSEffect rws $ Just region'
   RWSEffect rws Nothing -> return $ RWSEffect rws Nothing
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
+  UserEffect ~(SIInternalName _ name) -> UserEffect <$> substM name
 
 constrainVarTy :: EmitsInf o => AtomName o -> Type o -> InfererM i o ()
 constrainVarTy v tyReq = do
@@ -2237,7 +2245,7 @@ instance Unifiable DataDefParams where
   -- We ignore the dictionaries because we assume coherence
   unifyZonked (DataDefParams xs _) (DataDefParams xs' _) = zipWithM_ unify xs xs'
 
-instance Unifiable (EffectRowP AtomName) where
+instance Unifiable (EffectRowP Name) where
   unifyZonked x1 x2 =
         unifyDirect x1 x2
     <|> unifyDirect x2 x1

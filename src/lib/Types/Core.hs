@@ -25,7 +25,6 @@ import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import Data.Word
 import Data.Maybe
 import Data.Functor
-import Data.Foldable
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.ByteString       as BS
@@ -61,14 +60,12 @@ data Atom (n::S) =
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
  | LabeledRow (FieldRowElems n)
- | Record (LabeledItems (Atom n))
  | RecordTy  (FieldRowElems n)
  | Variant   (ExtLabeledItems (Type n) (AtomName n)) Label Int (Atom n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
  | Con (Con n)
  | TC  (TC  n)
  | Eff (EffectRow n)
-   -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
  | DataConRef (DataDefName n) (DataDefParams n) (EmptyAbs (Nest DataConRefBinding) n)
@@ -99,17 +96,18 @@ data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
 type Decls = Nest Decl
 
 type AtomName     = Name AtomNameC
-type DataDefName  = Name DataDefNameC
 type ClassName    = Name ClassNameC
-type MethodName   = Name MethodNameC
+type DataDefName  = Name DataDefNameC
+type EffectName   = Name EffectNameC
 type InstanceName = Name InstanceNameC
+type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
 type PtrName      = Name PtrNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
-type Effect    = EffectP    AtomName
-type EffectRow = EffectRowP AtomName
+type Effect    = EffectP    Name
+type EffectRow = EffectRowP Name
 type BaseMonoid n = BaseMonoidP (Atom n)
 
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
@@ -681,6 +679,9 @@ pattern ProdTy tys = TC (ProdType tys)
 pattern ProdVal :: [Atom n] -> Atom n
 pattern ProdVal xs = Con (ProdCon xs)
 
+pattern Record :: LabeledItems (Type n) -> [Atom n] -> Atom n
+pattern Record ty xs = Con (Newtype (StaticRecordTy ty) (ProdVal xs))
+
 pattern SumTy :: [Type n] -> Type n
 pattern SumTy cs = TC (SumType cs)
 
@@ -967,7 +968,7 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
 instance GenericE Atom where
   -- As tempting as it might be to reorder cases here, the current permutation
   -- was chosen as to make GHC inliner confident enough to simplify through
-  -- toE/fromE entirely. If you wish to modify the order, please consuly the
+  -- toE/fromE entirely. If you wish to modify the order, please consult the
   -- GHC Core dump to make sure you haven't regressed this optimization.
   type RepE Atom =
       EitherE6
@@ -993,9 +994,8 @@ instance GenericE Atom where
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
-            ) (EitherE5
+            ) (EitherE4
   {- LabeledRow -} ( FieldRowElems )
-  {- Record -}     ( ComposeE LabeledItems Atom )
   {- RecordTy -}   ( FieldRowElems )
   {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
                      LiftE (Label, Int) `PairE` Atom )
@@ -1031,11 +1031,10 @@ instance GenericE Atom where
     DictCon d -> Case2 $ Case4 d
     DictTy  d -> Case2 $ Case5 d
     LabeledRow elems    -> Case3 $ Case0 $ elems
-    Record items        -> Case3 $ Case1 $ ComposeE items
-    RecordTy elems -> Case3 $ Case2 elems
-    Variant extItems l con payload -> Case3 $ Case3 $
+    RecordTy elems -> Case3 $ Case1 elems
+    Variant extItems l con payload -> Case3 $ Case2 $
       ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
-    VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
+    VariantTy extItems  -> Case3 $ Case3 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
@@ -1072,12 +1071,11 @@ instance GenericE Atom where
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
-      Case1 (ComposeE items) -> Record items
-      Case2 elems -> RecordTy elems
-      Case3 ( (ExtLabeledItemsE extItems) `PairE`
+      Case1 elems -> RecordTy elems
+      Case2 ( (ExtLabeledItemsE extItems) `PairE`
               LiftE (l, con)              `PairE`
               payload) -> Variant extItems l con payload
-      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case3 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
@@ -1129,8 +1127,8 @@ getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (NE.fromList [i]) name
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ _ xs -> xs !! i
-  Record items -> toList items !! i
   Con (ProdCon xs) -> xs !! i
+  Con (Newtype _ x) | i == 0 -> x
   DepPair l _ _ | i == 0 -> l
   DepPair _ r _ | i == 1 -> r
   ACase scrut alts resultTy -> ACase scrut alts' resultTy'
@@ -2132,7 +2130,7 @@ instance (Store (ann n)) => Store (NonDepNest ann n l)
 -- === Orphan instances ===
 -- TODO: Resolve this!
 
-instance SubstE AtomSubstVal (EffectRowP AtomName) where
+instance SubstE AtomSubstVal (EffectRowP Name) where
   substE env (EffectRow effs tailVar) = do
     let effs' = S.fromList $ map (substE env) (S.toList effs)
     let tailEffRow = case tailVar of
@@ -2144,7 +2142,7 @@ instance SubstE AtomSubstVal (EffectRowP AtomName) where
             _ -> error "Not a valid effect substitution"
     extendEffRow effs' tailEffRow
 
-instance SubstE AtomSubstVal (EffectP AtomName) where
+instance SubstE AtomSubstVal (EffectP Name) where
   substE (_, env) eff = case eff of
     RWSEffect rws Nothing -> RWSEffect rws Nothing
     RWSEffect rws (Just v) -> do
@@ -2156,3 +2154,9 @@ instance SubstE AtomSubstVal (EffectP AtomName) where
       RWSEffect rws v'
     ExceptionEffect -> ExceptionEffect
     IOEffect        -> IOEffect
+    UserEffect v    ->
+      case env ! v of
+        Rename v' -> UserEffect v'
+        -- other cases are proven unreachable by type system
+        -- v' is an EffectNameC but other cases apply only to
+        -- AtomNameC
