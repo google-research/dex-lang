@@ -16,13 +16,15 @@
   <script>
     const pretty_measure = {
       alloc: 'Total bytes allocated',
-      time_rel: 'Time relative to baseline',
+      time_rel: 'Total time relative to baseline',
+      runtime_rel: 'Runtime relative to baseline',
     }
     const pretty_benchmark = {
       kernelregression: 'Kernel regression example',
       psd: 'PSD solver example',
       regression: 'Regression example',
       fluidsim: 'Fluid simulation example',
+      fused_sum: 'Fused summation micro-benchmark',
     }
     var charts = {};
     var container = $('#chart-container');
