@@ -216,9 +216,13 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
 
 doc-names = conditionals functions
 
-all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(doc-names:%=doc/%)
+benchmark-names = fused_sum
 
-quine-test-targets = $(all-names:%=run-%)
+quine-test-targets = \
+  $(test-names:%=run-tests/%) \
+  $(example-names:%=run-examples/%) \
+  $(doc-names:%=run-doc/%) \
+  $(benchmark-names:%=run-bench-tests/%)
 
 update-test-targets    = $(test-names:%=update-tests/%)
 update-doc-targets     = $(doc-names:%=update-doc/%)
@@ -264,6 +268,10 @@ run-doc/%: doc/%.dx just-build
 	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) -O script
+# This runs the benchmark in test mode, which means we're checking
+# that it's not broken, but not actually trying to measure runtimes
+run-bench-tests/%: benchmarks/%.dx just-build
+	misc/check-quine $< $(dex) -O script
 
 lower-tests: export DEX_LOWER=1
 lower-tests: export DEX_ALLOW_CONTRACTIONS=0
@@ -301,7 +309,11 @@ update-examples/%: examples/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
-run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
+update-bench-tests/%: benchmarks/%.dx just-build
+	$(dex) script $< > $<.tmp
+	mv $<.tmp $<
+
+run-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
 run-gpu-tests: tests/gpu-tests.dx just-build
 	misc/check-quine $< $(dex) --backend llvm-cuda script
 

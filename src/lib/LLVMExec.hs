@@ -110,8 +110,11 @@ compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
                   freeLitVals resultPtr resultTypes
             let sync = when shouldSyncCUDA $ synchronizeCUDA
             exampleDuration <- snd <$> measureSeconds (run >> sync)
+            test_mode <- (Just "t" ==) <$> E.lookupEnv "DEX_TEST_MODE"
             let timeBudget = 2 -- seconds
-            let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+            let benchRuns = if test_mode
+                  then 1
+                  else (ceiling $ timeBudget / exampleDuration) :: Int
             sync
             totalTime <- liftM snd $ measureSeconds $ do
               forM_ [1..benchRuns] $ const run
