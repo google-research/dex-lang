@@ -10,8 +10,35 @@ from pathlib import Path
 from typing import Union, Sequence
 
 
+@dataclass
+class DexEndToEnd:
+  """Measures end-to-end time and memory on a published example."""
+  example: str
+  repeats: int
+  variant: str = 'latest'
+
+  def clean(self, code, xdg_home):
+    run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
+
+  def bench(self, code, xdg_home):
+    source = code / 'examples' / (self.example + '.dx')
+    total_time, total_alloc = parse_result(
+        read_stderr(code / 'dex', '--lib-path', code / 'lib',
+                    'script', source, '+RTS', '-s',
+                    env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
+    return [Result(self.example, 'alloc', total_alloc),
+            Result(self.example, 'time', total_time)]
+
+  def baseline(self):
+    return DexEndToEnd(self.example, self.repeats, 'baseline')
+
+
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
-BENCH_EXAMPLES = [('kernelregression', 10), ('psd', 10), ('fluidsim', 10), ('regression', 10)]
+BENCHMARKS = [
+    DexEndToEnd('kernelregression', 10),
+    DexEndToEnd('psd', 10),
+    DexEndToEnd('fluidsim', 10),
+    DexEndToEnd('regression', 10)]
 
 
 def run(*args, capture=False, env=None):
@@ -49,37 +76,25 @@ def build(commit):
 
 def benchmark(baseline_path, latest_path):
   with tempfile.TemporaryDirectory() as tmp:
-    def clean(p, uniq):
-      run(p / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(tmp) / uniq})
-    def bench(p, uniq, bench_name, path):
-      return parse_result(
-          read_stderr(p / 'dex', '--lib-path', p / 'lib',
-                      'script', path, '+RTS', '-s',
-                      env={'XDG_CACHE_HOME': Path(tmp) / uniq}))
-    baseline_clean = partial(clean, baseline_path, 'baseline')
-    baseline_bench = partial(bench, baseline_path, 'baseline')
-    latest_clean = partial(clean, latest_path, 'latest')
-    latest_bench = partial(bench, latest_path, 'latest')
     results = []
-    for example, repeats in BENCH_EXAMPLES:
-      baseline_example = baseline_path / 'examples' / (example + '.dx')
-      latest_example = latest_path / 'examples' / (example + '.dx')
-      # warm-up the caches
-      baseline_clean()
-      baseline_bench(example, baseline_example)
-      latest_clean()
-      latest_bench(example, latest_example)
-      for i in range(repeats):
+    for test in BENCHMARKS:
+      baseline = test.baseline()
+      # Warm up the caches
+      baseline.clean(baseline_path, tmp)
+      baseline.bench(baseline_path, tmp)
+      test.clean(latest_path, tmp)
+      test.bench(latest_path, tmp)
+      for i in range(test.repeats):
         print(f'Iteration {i}')
-        baseline_alloc, baseline_time = baseline_bench(example, baseline_example)
-        latest_alloc, latest_time = latest_bench(example, latest_example)
-        print(baseline_alloc, '->', latest_alloc)
-        print(baseline_time, '->', latest_time)
-        # Allocation measurements are stable enough so that we don't need to
-        # take too many. But take two to get some estimate of the noise.
-        if i < 2:
-          results.append(Result(example, 'alloc', latest_alloc))
-        results.append(Result(example, 'time_rel', latest_time / baseline_time))
+        baseline_results = baseline.bench(baseline_path, tmp)
+        test_results = test.bench(latest_path, tmp)
+        for test_r, base_r in zip(test_results, baseline_results):
+          print(base_r, '->', test_r)
+          # Allocation measurements are stable enough so that we don't need to
+          # take too many. But take two to get some estimate of the noise.
+          if test_r.measure == 'alloc' and i >= 2:
+            continue
+          results.append(test_r.compare(base_r))
     return results
 
 
@@ -88,6 +103,12 @@ class Result:
   benchmark: str
   measure: str
   value: Union[int, float]
+
+  def compare(self, other):
+    if self.measure == 'alloc':
+      return self
+    if self.measure == 'time':
+      return Result(self.benchmark, 'time_rel', self.value / other.value)
 
 
 ALLOC_PATTERN = re.compile(r"^\s*([0-9,]+) bytes allocated in the heap", re.M)
