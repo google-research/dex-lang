@@ -32,7 +32,7 @@ class DexEndToEnd:
 
   def bench(self, code, xdg_home):
     source = code / 'examples' / (self.example + '.dx')
-    total_time, total_alloc = parse_result(
+    total_alloc, total_time = parse_result(
         read_stderr(code / 'dex', '--lib-path', code / 'lib',
                     'script', source, '+RTS', '-s',
                     env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
