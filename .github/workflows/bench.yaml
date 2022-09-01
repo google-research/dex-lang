@@ -21,8 +21,14 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+
     - name: Install system dependencies
       run: |
+        pip install numpy
         ${{ matrix.install_deps }}
         echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
 
