@@ -231,11 +231,13 @@ nary op g = go g [] where
   go (WithSrc _ CEmpty) rest = rest
   go grp rest = grp:rest
 
--- Roll up a list of groups as binary applications.
+-- Roll up a list of groups as binary applications, associating to the left.
 nary' :: Bin' -> [Group] -> Group
 nary' _ [] = WithSrc Nothing CEmpty
 nary' _ (lst:[]) = lst
-nary' op (g:rest) = Binary op g $ nary' op rest
+nary' op (g1:(g2:rest)) = go (Binary op g1 g2) rest where
+  go lhs [] = lhs
+  go lhs (g:gs) = go (Binary op lhs g) gs
 
 -- === Parser (top-level structure) ===
 
