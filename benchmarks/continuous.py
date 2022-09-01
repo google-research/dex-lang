@@ -172,6 +172,7 @@ class Result:
       return Result(self.benchmark, 'time_rel', self.value / other.value)
     if self.measure == 'runtime':
       return Result(self.benchmark, 'runtime_rel', self.value / other.value)
+    raise NotImplementedError(f"Unrecognized metric type {self.measure}")
 
 
 ALLOC_PATTERN = re.compile(r"^\s*([0-9,]+) bytes allocated in the heap", re.M)
