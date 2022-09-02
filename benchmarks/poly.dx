@@ -7,3 +7,7 @@ a = for i:(Fin n). n_to_f $ ordinal i
 
 %bench "poly"
 res = poly a
+>
+> poly
+> Compile time: 44.950 ms
+> Run time:     11.224 us 	(based on 1 run)

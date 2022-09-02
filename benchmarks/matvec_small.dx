@@ -6,3 +6,7 @@ vs = for i:(Fin width). rand_vec n randn (new_key 1)
 
 %bench "matvec_small"
 res = for i. ms.i **. vs.i
+>
+> matvec_small
+> Compile time: 29.506 ms
+> Run time:     387.630 us 	(based on 1 run)
