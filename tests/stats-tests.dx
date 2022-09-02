@@ -58,14 +58,6 @@ quantile (Exponential 2.0) 0.5 ~~ 0.3465736
 rand_vec 5 (draw $ Exponential 2.0) (new_key 0) :: Fin 5=>Float
 > [1.021143, 0.14182, 0.093212, 0.213017, 0.430549]
 
--- gaussian
-
-log_pdf (Gaussian 1.0 2.0) 3.0 ~~ -2.112086
-> True
-
-rand_vec 5 (draw $ Gaussian 1.0 2.0) (new_key 0) :: Fin 5=>Float
-> [-1.93355, 4.198111, 0.529252, 0.018863, 2.921813]
-
 -- geometric
 
 log_pdf (Geometric 0.1) 10 ~~ -3.25083
@@ -80,8 +72,28 @@ log_sf (Geometric 0.1) 10 ~~ -1.053605
 quantile (Geometric 0.1) 0.5 == 7
 > True
 
+log_pdf (Geometric 0) 1 == -infinity
+> True
+
+log_pdf (Geometric 0) 2 == -infinity
+> True
+
+log_pdf (Geometric 1) 1 ~~ 0
+> True
+
+log_pdf (Geometric 1) 2 == -infinity
+> True
+
 rand_vec 5 (draw $ Geometric 0.1) (new_key 0) :: Fin 5=>Nat
 > [20, 3, 2, 5, 9]
+
+-- normal
+
+log_pdf (Normal 1.0 2.0) 3.0 ~~ -2.112086
+> True
+
+rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
+> [-1.93355, 4.198111, 0.529252, 0.018863, 2.921813]
 
 -- poisson
 
@@ -120,40 +132,49 @@ rand_vec 5 (draw $ Uniform 2.0 5.0) (new_key 0) :: Fin 5=>Float
 
 -- data summaries
 
-mean_and_var [2.0,3.0,4.0] ~~ (3,1)
+mean_and_variance [2.0,3.0,4.0] ~~ (3,1)
+> True
+
+variance [2.0,3.0,4.0] ~~ 1
 > True
 
 mean [2.0,3.0,4.0] ~~ 3.0
 > True
 
-var [1.0,3.0,5.0] ~~ 4.0
+variance [1.0,3.0,5.0] ~~ 4.0
 > True
 
-sd [1.0,3.0,5.0] ~~ 2.0
+std_dev [1.0,3.0,5.0] ~~ 2.0
 > True
 
-mean_and_cov [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ ([3,4], [[4,4],[4,4]])
+mean_and_variance_matrix [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ ([3,4], [[4,4],[4,4]])
 > True
 
 mean [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [3,4]
 > True
 
-cov_mat [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [[4,4],[4,4]]
+variance_matrix [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [[4,4],[4,4]]
 > True
 
-cov [1.0,2.0,3.0] [2.0,3.0,4.0] ~~ 1
+covariance [1.0,2.0,3.0] [2.0,3.0,4.0] ~~ 1
 > True
 
-cov [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
+covariance [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
 > True
 
-cor [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
+correlation [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
 > True
 
-cov [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 1
+covariance [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 1
 > True
 
-cor [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 0.5
+correlation [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 0.5
+> True
+
+variance_matrix (transpose [[1.0,2.0,3.0],[4.0,8.0,6.0]]) ~~ [[1,1],[1,4]]
+> True
+
+correlation_matrix (transpose [[1.0,2.0,3.0],[4.0,8.0,6.0]]) ~~ [[1,0.5],[0.5,1]]
 > True
 
 

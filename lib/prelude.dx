@@ -1886,7 +1886,7 @@ def split_key {n} (k:Key) : Fin n => Key = for i. ixkey k i
 
 '### Sample Generators
 These functions generate samples taken from, different distributions.
-Such as `rand_mat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
+Such as `rand_mat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution. Note that additional standard distributions are provided by the `stats` library.
 
 def rand (k:Key) : Float =
   exponent_bits = 1065353216 -- 1065353216 = 127 << 23
@@ -1912,26 +1912,6 @@ def randn (k:Key) : Float =
 def rand_int (k:Key) : Nat = (internal_cast Nat k) `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
-
-def binom (n:Nat) (p:Float) (k:Key) : Nat =
-  sum $ map b_to_n (rand_vec n (bern p) k)
-
-def poisson (rate:Float) (k:Key) : Nat =
-  --After Knuth: Seminumerical Algorithms. Art of Computer Programming, Volume 2.
-  exp_neg_rate = exp(-rate)
-  [current_k, next_k] = split_key k
-  yield_state 0 \ans.
-    with_state (rand current_k) \p. with_state next_k \k'.
-      while do
-        if get p > exp_neg_rate
-          then
-            [ck, nk] = split_key (get k')
-            p := (get p) * rand ck
-            ans := (get ans) + 1
-            k' := nk
-            True
-          else
-            False
 
 def randn_vec {n} [Ix n] (k:Key) : n=>Float =
   for i. randn (ixkey k i)

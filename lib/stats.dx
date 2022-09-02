@@ -17,153 +17,158 @@ interface Dist d a
 
 
 '### Bernoulli distribution
-The [Bernoulli distribution](https://en.wikipedia.org/wiki/Bernoulli_distribution) is parameterised by its "success" probability, `p`.
+The [Bernoulli distribution](https://en.wikipedia.org/wiki/Bernoulli_distribution) is parameterised by its "success" probability, `prob`.
 
 data BernoulliDist = Bernoulli Float
 
 instance Dist BernoulliDist Bool
-  log_pdf = \(Bernoulli p) b.
-    if (b)
-     then log p
-     else log1p (-p)
-  log_cdf = \(Bernoulli p) b.
-    if (b)
+  log_pdf = \(Bernoulli prob) b.
+    if b
+     then log prob
+     else log1p (-prob)
+  log_cdf = \(Bernoulli prob) b.
+    if b
       then 0.0
-      else log1p (-p)
-  log_sf = \(Bernoulli p) b.
-    if (b)
+      else log1p (-prob)
+  log_sf = \(Bernoulli prob) b.
+    if b
       then -infinity
-      else log p
-  quantile = \(Bernoulli p) q.
-    q > (1 - p)
-  draw = \(Bernoulli p) k.
-    (rand k) < p
+      else log prob
+  quantile = \(Bernoulli prob) q.
+    q > (1 - prob)
+  draw = \(Bernoulli prob) k.
+    rand k < prob
 
 
 '### Binomial distribution
-The [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution) is parameterised by the number of trials, `n`, and the success probability, `p`. Mean is `np`.
+The [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution) is parameterised by the number of trials, `trials`, and the success probability, `prob`. Mean is `trials*prob`.
 
 data BinomialDist = Binomial Nat Float
 
-def binomial_log_pdf_private (n: Nat) (p: Float) (x: Nat) : Float =
-  nf = n_to_f n
+def binomial_log_pdf (trials: Nat) (prob: Float) (x: Nat) : Float =
+  tf = n_to_f trials
   xf = n_to_f x
-  if (xf > nf)
+  if (xf > tf)
     then -infinity
-    else (xf * (log p)) + ((nf - xf) * (log1p (-p))) +
-      (lgamma (nf + 1)) - (lgamma (xf + 1)) - (lgamma (nf + 1 - xf))
+    else (xf * log prob) + ((tf - xf) * log1p (-prob)) +
+      lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf)
 
 instance Dist BinomialDist Nat
-  log_pdf = \(Binomial n p) x.
-    binomial_log_pdf_private n p x
-  log_cdf = \(Binomial n p) x.
+  log_pdf = \(Binomial trials prob) x.
+    binomial_log_pdf trials prob x
+  log_cdf = \(Binomial trials prob) x.
     xp1:Nat = x + 1
-    logsumexp $ for i:(Fin xp1). binomial_log_pdf_private n p (ordinal i)
-  log_sf = \(Binomial n p) x.
-    nmx = n -| x
-    logsumexp $ for i:(Fin nmx). binomial_log_pdf_private n p (x + 1 + ordinal i)
-  quantile = \(Binomial n p) q.
-    np1:Nat = n + 1
-    lpdf = for i:(Fin np1). binomial_log_pdf_private n p (ordinal i)
+    logsumexp $ for i:(Fin xp1). binomial_log_pdf trials prob (ordinal i)
+  log_sf = \(Binomial trials prob) x.
+    tmx = trials -| x
+    logsumexp $ for i:(Fin tmx). binomial_log_pdf trials prob (x + 1 + ordinal i)
+  quantile = \(Binomial trials prob) q.
+    tp1:Nat = trials + 1
+    lpdf = for i:(Fin tp1). binomial_log_pdf trials prob (ordinal i)
     cdf = cdf_for_categorical lpdf
     mi = search_sorted cdf q
     ordinal $ from_just mi
-  draw = \(Binomial n p) k.
-    sum $ map b_to_n (rand_vec n (draw $ Bernoulli p) k)
-
--- TODO: remove "binom" from the prelude
+  draw = \(Binomial trials prob) k.
+    sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
 
 
 '### Exponential distribution
-The [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution) is parameterised by its *rate*, `r > 0`, so that the mean of the distribution is `1/r`.
+The [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution) is parameterised by its *rate*, `rate > 0`, so that the mean of the distribution is `1/rate`.
 
 data ExponentialDist = Exponential Float
 
 instance Dist ExponentialDist Float
-  log_pdf = \(Exponential r) x.
+  log_pdf = \(Exponential rate) x.
     if (x < 0.0)
       then -infinity
-      else (log r) - (r * x)
-  log_cdf = \(Exponential r) x.
+      else log rate - (rate * x)
+  log_cdf = \(Exponential rate) x.
     if (x < 0.0)
       then -infinity
-      else log1p (-exp (-r * x))
-  log_sf = \(Exponential r) x.
+      else log1p (-exp (-rate * x))
+  log_sf = \(Exponential rate) x.
     if (x < 0.0)
       then 0.0
-      else -r * x
-  quantile = \(Exponential r) q.
-    (log1p (-q)) / -r
-  draw = \(Exponential r) k.
-    (log1p (-(rand k))) / -r
-
-
-'### Gaussian distribution
-The Gaussian, or [normal distribution](https://en.wikipedia.org/wiki/Normal_distribution) is parameterised by its *mean*, `mu`, and *standard deviation*, `sig`. ie. **not** variance or precision.
-
-data GaussianDist = Gaussian Float Float
-
-instance Dist GaussianDist Float
-  log_pdf = \(Gaussian mu sig) x.
-    -0.5 * ((log (2 * pi * (sq sig))) + (sq ((x - mu) / sig)))
-  log_cdf = todo  -- need some sort of "erf" function for this
-  log_sf = todo   -- ditto
-  quantile = todo -- need inverse "erf" function
-  draw = \(Gaussian mu sig) k.
-    mu + (sig * (randn k))
+      else -rate * x
+  quantile = \(Exponential rate) q.
+    log1p (-q) / -rate
+  draw = \(Exponential rate) k.
+    log1p (-rand k) / -rate
 
 
 '### Geometric distribution
-This [geometric distribution](https://en.wikipedia.org/wiki/Geometric_distribution) is defined as the number of trials until a success (**not** the number of failures). Parameterised by success probability, `p`. Mean is `1/p`.
+This [geometric distribution](https://en.wikipedia.org/wiki/Geometric_distribution) is defined as the number of trials until a success (**not** the number of failures). Parameterised by success probability, `prob`. Mean is `1/prob`.
 
 data GeometricDist = Geometric Float
 
 instance Dist GeometricDist Nat
-  log_pdf = \(Geometric p) n.
+  log_pdf = \(Geometric prob) n.
+    if (prob == 1)
+      then
+        if (n == 1)
+          then 0
+          else -infinity
+      else
+        nf = n_to_f n
+        ((nf-1)*log1p (-prob)) + log prob
+  log_cdf = \(Geometric prob) n.
     nf = n_to_f n
-    ((nf-1)*(log1p (-p))) + (log p)
-  log_cdf = \(Geometric p) n.
-    nf = n_to_f n
-    log1p (-pow (1-p) nf)
-  log_sf = \(Geometric p) n.
-    (n_to_f n) * (log1p (-p))
-  quantile = \(Geometric p) q.
-    f_to_n $ ceil $ (log1p (-q)) / (log1p (-p))
-  draw = \(Geometric p) k.
-    f_to_n $ ceil $ (log1p (-(rand k))) / (log1p (-p))
+    log1p (-pow (1-prob) nf)
+  log_sf = \(Geometric prob) n.
+    n_to_f n * log1p (-prob)
+  quantile = \(Geometric prob) q.
+    f_to_n $ ceil $ log1p (-q) / log1p (-prob)
+  draw = \(Geometric prob) k.
+    f_to_n $ ceil $ log1p (-rand k) / log1p (-prob)
+
+
+'### Normal distribution
+The Gaussian, or [normal distribution](https://en.wikipedia.org/wiki/Normal_distribution) is parameterised by its *mean*, `loc`, and *standard deviation*, `scale`. ie. **not** variance or precision.
+
+data NormalDist = Normal Float Float
+
+instance Dist NormalDist Float
+  log_pdf = \(Normal loc scale) x.
+    -0.5 * (log (2 * pi * (sq scale)) + (sq ((x - loc) / scale)))
+  log_cdf = todo  -- need some sort of "erf" function for this
+  log_sf = todo   -- ditto
+  quantile = todo -- need inverse "erf" function
+  draw = \(Normal loc scale) k.
+    loc + (scale * randn k)
+
 
 '### Poisson distribution
-The [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution) is parameterised by its rate, `r > 0`. Mean is `r`.
+The [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution) is parameterised by its rate, `rate > 0`. Mean is `rate`.
 
 data PoissonDist = Poisson Float
 
-def poisson_log_pdf_private (r: Float) (n: Nat) : Float =
+def poisson_log_pdf (rate: Float) (n: Nat) : Float =
   nf = n_to_f n
-  (nf * (log r)) - r - lgamma(nf + 1)
+  (nf * log rate) - rate - lgamma (nf + 1)
 
 instance Dist PoissonDist Nat
-  log_pdf = \(Poisson r) x.
-    poisson_log_pdf_private r x
-  log_cdf = \(Poisson r) x.
+  log_pdf = \(Poisson rate) x.
+    poisson_log_pdf rate x
+  log_cdf = \(Poisson rate) x.
     xp1:Nat = x + 1
-    logsumexp $ for i:(Fin xp1). poisson_log_pdf_private r (ordinal i)
-  log_sf = \(Poisson r) x.
+    logsumexp $ for i:(Fin xp1). poisson_log_pdf rate (ordinal i)
+  log_sf = \(Poisson rate) x.
     xp1:Nat = x + 1
-    lcdf = logsumexp $ for i:(Fin xp1). poisson_log_pdf_private r (ordinal i)
+    lcdf = logsumexp $ for i:(Fin xp1). poisson_log_pdf rate (ordinal i)
     log1p (-exp lcdf)
-  quantile = \(Poisson r) q.
+  quantile = \(Poisson rate) q.
     yield_state (0::Nat) \x.
       with_state 0.0 \cdf.
         while do
-          cdf := (get cdf) + exp (poisson_log_pdf_private r (get x))
+          cdf := (get cdf) + exp (poisson_log_pdf rate (get x))
           if (get cdf) > q
             then
               False
             else
               x := (get x) + 1
               True
-  draw = \(Poisson r) k.
-    exp_neg_rate = exp (-r)
+  draw = \(Poisson rate) k.
+    exp_neg_rate = exp (-rate)
     [current_k, next_k] = split_key k
     yield_state 0 \ans.
       with_state (rand current_k) \p. with_state next_k \k'.
@@ -177,67 +182,79 @@ instance Dist PoissonDist Nat
               True
             else
               False
-
--- TODO: remove "poisson" from prelude
   
 
 '### Uniform distribution
-The [uniform distribution](https://en.wikipedia.org/wiki/Continuous_uniform_distribution) is continuous on an interval determined by a lower bound, `l`, and upper bound, `u > l`. Mean is `(l+u)/2`.
+The [uniform distribution](https://en.wikipedia.org/wiki/Continuous_uniform_distribution) is continuous on an interval determined by a lower bound, `low`, and upper bound, `high > low`. Mean is `(low+high)/2`.
 
 data UniformDist = Uniform Float Float
 
 instance Dist UniformDist Float
-  log_pdf = \(Uniform l u) x.
-    if (x >= l)&&(x <= u)
-      then -log (u - l)
+  log_pdf = \(Uniform low high) x.
+    if (x >= low)&&(x <= high)
+      then -log (high - low)
       else -infinity
-  log_cdf = \(Uniform l u) x.
-    if (x < l)
+  log_cdf = \(Uniform low high) x.
+    if (x < low)
       then -infinity
-      else if (x > u)
+      else if (x > high)
         then 0.0
-        else (log (x-l)) - (log (u-l))
-  log_sf = \(Uniform l u) x.
-    if (x < l)
+        else log (x - low) - log (high - low)
+  log_sf = \(Uniform low high) x.
+    if (x < low)
       then 0.0
-      else if (x > u)
+      else if (x > high)
         then -infinity
-        else (log (u-x)) - (log (u-l))
-  quantile = \(Uniform l u) q.
-    l + ((u - l) * q)
-  draw = \(Uniform l u) k.
-    l + ((u - l) * (rand k))
+        else log (high - x) - log (high - low)
+  quantile = \(Uniform low high) q.
+    low + ((high - low) * q)
+  draw = \(Uniform low high) k.
+    low + ((high - low) * rand k)
   
 
 '## Data summaries
+Some data summary functions. Note that `mean` is provided by the prelude.
 
-def mean_and_var {n} (xs:n=>Float) : (Float & Float) =
+'### Summaries for vector quantities
+
+def mean_and_variance {n a} [VSpace a, Mul a] (xs:n=>a) : (a & a) =
   m = mean xs
   ss = sum for i. sq (xs.i - m)
-  v = ss / ((n_to_f (size n)) - 1.0)
+  v = ss / (n_to_f (size n) - 1)
   (m, v)
 
-def var {n} (xs:n=>Float) : Float =
-  snd $ mean_and_var xs
+def variance {n a} [VSpace a, Mul a] (xs:n=>a) : a =
+  snd $ mean_and_variance xs
 
-def sd {n} (xs:n=>Float) : Float =
-  sqrt $ var xs
+def std_dev {n a} [VSpace a, Mul a, Floating a] (xs:n=>a) : a =
+  sqrt $ variance xs
 
-def mean_and_cov {n d} (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
-   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / n_to_f (size n)
-   xsCov  : d=>d=>Float = (for i i'. sum for j.
-                           (xs.j.i' - xsMean.i') *
-                           (xs.j.i  - xsMean.i )   ) / (n_to_f (size n) - 1)
-   (xsMean, xsCov)
-
-def cov_mat {n d} (xs:n=>d=>Float) : d=>d=>Float =
-  snd $ mean_and_cov xs
-
-def cov {n} (x:n=>Float) (y:n=>Float) : Float =
-  xm = mean x
-  ym = mean y
-  ss = sum for i. (x.i - xm) * (y.i - ym)
+def covariance {n a} [VSpace a, Mul a] (xs:n=>a) (ys:n=>a) : a =
+  xm = mean xs
+  ym = mean ys
+  ss = sum for i. (xs.i - xm) * (ys.i - ym)
   ss / (n_to_f (size n) - 1)
 
-def cor {n} (x:n=>Float) (y:n=>Float) : Float =
-  (cov x y) / ((sd x) * (sd y))
+def correlation {n a} [VSpace a, Mul a, Floating a, Fractional a]
+    (xs:n=>a) (ys:n=>a) : a =
+  divide (covariance xs ys) (std_dev xs * std_dev ys)
+
+'### Summaries for matrix quantities
+
+def mean_and_variance_matrix {n d a} [VSpace a, Mul a] (xs:n=>d=>a) : (d=>a & d=>d=>a) =
+  xsMean:d=>a = (for i. sum for j. xs.j.i) / n_to_f (size n)
+  xsCov:d=>d=>a = (for i i'. sum for j.
+                         (xs.j.i' - xsMean.i') *
+                           (xs.j.i  - xsMean.i ) ) / (n_to_f (size n) - 1)
+  (xsMean, xsCov)
+
+def variance_matrix {n d a} [VSpace a, Mul a] (xs:n=>d=>a) : d=>d=>a =
+  snd $ mean_and_variance_matrix xs
+
+def correlation_matrix {n d a} [VSpace a, Mul a, Floating a, Fractional a]
+    (xs:n=>d=>a) : d=>d=>a =
+  cvm = variance_matrix xs
+  for i. for j. divide cvm.i.j (sqrt cvm.i.i * sqrt cvm.j.j)
+
+
+-- eof
