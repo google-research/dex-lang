@@ -96,10 +96,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
     DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
   LabeledRow elems -> LabeledRow <$> traverseGenericE elems
   RecordTy elems -> RecordTy <$> traverseGenericE elems
-  Variant ext label i value -> do
-    ext' <- traverseExtLabeledItems ext
-    value' <- tge value
-    return $ Variant ext' label i value'
   VariantTy ext -> VariantTy <$> traverseExtLabeledItems ext
   ProjectElt _ _ -> substM atom
   DepPairTy dty -> DepPairTy <$> tge dty

@@ -23,7 +23,11 @@ tmpout=$(mktemp)
 errout=$(mktemp)
 
 if ${@:2} $1 > $tmpout 2> $errout ; then
-    misc/check-no-diff $1 $tmpout
+    # We check for differences up to timing outputs from the %time or %bench
+    # commands, because those are expected to vary from run to run.
+    misc/check-no-diff \
+      <(grep -vE "> (Compile|Run) time: " $1) \
+      <(grep -vE "> (Compile|Run) time: " $tmpout)
     status=$?
 else
     status=$?

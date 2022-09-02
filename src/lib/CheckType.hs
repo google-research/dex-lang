@@ -263,19 +263,6 @@ instance HasType Atom where
       return TyKind
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     RecordTy elems -> checkFieldRowElems elems $> TyKind
-    Variant vtys@(Ext (LabeledItems types) _) label i arg -> do
-      let ty = VariantTy vtys
-      let maybeArgTy = do
-            labelTys <- M.lookup label types
-            guard $ i < length labelTys
-            return $ labelTys NE.!! i
-      case maybeArgTy of
-        Just argTy -> do
-          argTy' <- substM argTy
-          arg |: argTy'
-        Nothing -> throw TypeErr $ "Bad variant: " <> pprint atom
-                                   <> " with type " <> pprint ty
-      checkTypeE TyKind ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
     DataConRef defName params args -> do
@@ -506,6 +493,7 @@ typeCheckPrimCon con = case con of
     case ty' of
       TC (Fin _) -> e|:IdxRepTy
       StaticRecordTy tys -> e|:ProdTy (toList tys)
+      VariantTy (NoExt tys) -> e |: SumTy (toList tys)
       _ -> error $ "Unsupported newtype: " ++ pprint ty
     return ty'
   BaseTypeRef p -> do
@@ -521,6 +509,7 @@ typeCheckPrimCon con = case con of
       case ty' of
         TC (Fin _) -> e|:(RawRefTy IdxRepTy)
         StaticRecordTy tys -> e|:(RawRefTy $ ProdTy $ toList tys)
+        VariantTy (NoExt tys) -> e|:(RawRefTy $ SumTy $ toList tys)
         _ -> error $ "Unsupported newtype: " ++ pprint ty
       return $ RawRefTy ty'
     SumAsProd ty tag _ -> do    -- TODO: check args!
@@ -695,8 +684,13 @@ typeCheckPrimOp op = case op of
                           <> pprint variant <> " (of type " <> pprint fullty
                           <> ")"
     diff <- labeledRowDifference full (NoExt types')
-    return $ VariantTy $ NoExt $
-      Unlabeled [ VariantTy $ NoExt types', VariantTy diff ]
+    return $ SumTy $ [ VariantTy $ NoExt types', VariantTy diff ]
+  VariantMake ty label i e -> do
+    ty'@(VariantTy (Ext items _)) <- checkTypeE TyKind ty
+    let labelTys = lookupLabel items label
+    unless (0 <= i && i < length labelTys) $ throw TypeErr "Invalid variant index"
+    e |: (labelTys !! i)
+    return ty'
   DataConTag x -> do
     TypeCon _ _ _ <- getTypeE x
     return TagRepTy

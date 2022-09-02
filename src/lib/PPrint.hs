@@ -269,10 +269,6 @@ instance PrettyPrec (Atom n) where
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
-    Variant _ label i value -> prettyVariant ls label value where
-      ls = LabeledItems $ case i of
-            0 -> M.empty
-            _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
@@ -576,8 +572,10 @@ instance Pretty Output where
     benchName <> hardline <>
     "Compile time: " <> prettyDuration compileTime <> hardline <>
     "Run time:     " <> prettyDuration runTime <+>
-    (case stats of Just (runs, _) -> "\t" <> parens ("based on" <+> p runs <+> "runs")
-                   Nothing        -> "")
+    (case stats of
+       Just (runs, _) ->
+         "\t" <> parens ("based on" <+> p runs <+> plural "run" "runs" runs)
+       Nothing        -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
   pretty (PassInfo _ s) = p s
@@ -930,6 +928,12 @@ instance PrettyPrec (PrimCon (Atom n)) where
   prettyPrec = \case
     Newtype (StaticRecordTy ty) (ProdVal itemList) ->
       prettyLabeledItems (restructure itemList ty) (line' <> ",") " ="
+    Newtype (VariantTy (Ext tys _)) (SumVal _ fieldIx value) -> do
+      let (label, i) = toList (reflectLabels tys) !! fieldIx
+      let ls = LabeledItems $ case i of
+                 0 -> M.empty
+                 _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
+      prettyVariant ls label value
     con -> prettyPrecPrimCon con
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann

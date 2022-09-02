@@ -152,7 +152,14 @@ def f8 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 
 -------------------- Multi-parameter interfaces --------------------
 
--- TODO!
+-- Adapted from PR 1039
+interface MyDist d a
+  log_pdf : d -> a -> Float
+
+interface [MyDist d a] MyOrderedDist d a
+  log_cdf : d -> a -> Float
+
+-- TODO: Test actually using it.
 
 -------------------- Automatic quantification --------------------
 

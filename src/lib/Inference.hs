@@ -1001,15 +1001,15 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
             return $ Record tys $ toList delayedItems
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
+    ty <- getType value'
+    unless (M.size lmap == 0 || M.size lmap == 1) $ throw TypeErr
+      "All labels in a variant literal should use the same field name."
     prevTys <- mapM (const $ freshType TyKind) labels
     rest <- freshInferenceName LabeledRowKind
-    ty <- getType value'
     let items = prevTys <> labeledSingleton label ty
     let extItems = Ext items $ Just rest
-    let i = case M.lookup label lmap of
-              Just prev -> length prev
-              Nothing -> 0
-    matchRequirement $ Variant extItems label i value'
+    let i = length $ lookupLabel labels label
+    matchRequirement =<< emitOp (VariantMake (VariantTy extItems) label i value')
   URecordTy   elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
   ULabeledRow elems -> matchRequirement =<< LabeledRow . fieldRowElemsFromList . concat <$> mapM inferFieldRowElem elems
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row

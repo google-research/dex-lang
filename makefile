@@ -190,16 +190,22 @@ dexrt-llvm: src/lib/dexrt.bc
 
 # --- running tests ---
 
-example-names = mandelbrot pi sierpinski rejection-sampler \
-                regression brownian_motion particle-swarm-optimizer \
-                ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms fluidsim \
-                sgd psd kernelregression nn \
-                quaternions manifold-gradients schrodinger tutorial \
-                latex linear-maps
+example-names := \
+  mandelbrot pi sierpinski rejection-sampler \
+  regression brownian_motion particle-swarm-optimizer \
+  ode-integrator mcmc ctc raytrace particle-filter \
+  isomorphisms fluidsim \
+  sgd psd kernelregression nn \
+  quaternions manifold-gradients schrodinger tutorial \
+  latex linear-maps
 # TODO: re-enable
 # fft vega-plotting
-# TODO: enable levenshtein-distance (has timings in the outputs)
+
+# Only test levenshtein-distance on Linux, because MacOS ships with a
+# different (apparently _very_ different) word list.
+ifeq ($(shell uname -s),Linux)
+  example-names += levenshtein-distance
+endif
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
@@ -210,9 +216,13 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
 
 doc-names = conditionals functions
 
-all-names = $(test-names:%=tests/%) $(example-names:%=examples/%) $(doc-names:%=doc/%)
+benchmark-names = fused_sum
 
-quine-test-targets = $(all-names:%=run-%)
+quine-test-targets = \
+  $(test-names:%=run-tests/%) \
+  $(example-names:%=run-examples/%) \
+  $(doc-names:%=run-doc/%) \
+  $(benchmark-names:%=run-bench-tests/%)
 
 update-test-targets    = $(test-names:%=update-tests/%)
 update-doc-targets     = $(doc-names:%=update-doc/%)
@@ -258,6 +268,10 @@ run-doc/%: doc/%.dx just-build
 	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) -O script
+# This runs the benchmark in test mode, which means we're checking
+# that it's not broken, but not actually trying to measure runtimes
+run-bench-tests/%: benchmarks/%.dx just-build
+	misc/check-quine $< $(dex) -O script
 
 lower-tests: export DEX_LOWER=1
 lower-tests: export DEX_ALLOW_CONTRACTIONS=0
@@ -295,7 +309,11 @@ update-examples/%: examples/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
-run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
+update-bench-tests/%: benchmarks/%.dx just-build
+	$(dex) script $< > $<.tmp
+	mv $<.tmp $<
+
+run-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
 run-gpu-tests: tests/gpu-tests.dx just-build
 	misc/check-quine $< $(dex) --backend llvm-cuda script
 
@@ -334,9 +352,6 @@ bench-summary:
 # --- building docs ---
 
 slow-pages = pages/examples/mnist-nearest-neighbors.html
-# Not actually slow, but not tested because it shows timings
-# https://github.com/google-research/dex-lang/issues/910
-slow-pages += pages/examples/levenshtein-distance.html
 
 doc-files = $(doc-names:%=doc/%.dx)
 pages-doc-files = $(doc-names:%=pages/%.html)

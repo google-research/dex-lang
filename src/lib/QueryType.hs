@@ -333,7 +333,6 @@ instance HasType Atom where
     DictTy (DictType _ _ _) -> return TyKind
     LabeledRow _ -> return LabeledRowKind
     RecordTy _ -> return TyKind
-    Variant vtys _ _ _ -> substM $ VariantTy vtys
     VariantTy _ -> return TyKind
     ACase _ _ resultTy -> substM resultTy
     DataConRef defName params _ -> do
@@ -612,8 +611,8 @@ getTypePrimOp op = case op of
                           <> pprint variant <> " (of type " <> pprint fullty
                           <> ")"
     diff <- labeledRowDifference' full (NoExt types')
-    return $ VariantTy $ NoExt $
-      Unlabeled [ VariantTy $ NoExt types', VariantTy diff ]
+    return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
+  VariantMake ty _ _ _ -> substM ty
   DataConTag _ -> return TagRepTy
   ToEnum t _ -> substM t
   SumToVariant x -> getTypeE x >>= \case

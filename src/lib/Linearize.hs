@@ -266,10 +266,6 @@ linearizeAtom atom = case atom of
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
-  Variant t l i e -> do
-    t' <- substM $ ExtLabeledItemsE t
-    linearizeAtom e `bindLin` \e' ->
-      return $ Variant (fromExtLabeledItemsE $ sink t') l i e'
   TypeCon _ _ _   -> emitZeroT
   LabeledRow _    -> emitZeroT
   RecordTy _      -> emitZeroT
