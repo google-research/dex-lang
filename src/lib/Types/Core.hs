@@ -54,8 +54,6 @@ data Atom (n::S) =
  | TabPi  (TabPiType n)
  | DepPairTy (DepPairType n)
  | DepPair   (Atom n) (Atom n) (DepPairType n)
-   -- SourceName is purely for printing
- | DataCon SourceName (DataDefName n) (DataDefParams n) Int [Atom n]
  | TypeCon SourceName (DataDefName n) (DataDefParams n)
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
@@ -113,6 +111,7 @@ data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
 type AtomBinderP = BinderP AtomNameC
 type Binder = AtomBinderP Type
+ -- TODO: Alts don't need binder nests anymore --- we have Atom projections!
 type AltP (e::E) = Abs (Nest Binder) e :: E
 type Alt = AltP Block                  :: E
 
@@ -133,9 +132,10 @@ data DataDef n where
   -- binder name is in UExpr and Env
   DataDef :: SourceName -> DataDefBinders n l -> [DataConDef l] -> DataDef n
 
+-- TODO: The binder nest should be unnecessary. Try to get rid of it.
 -- As above, the `SourceName` is just for pretty-printing
 data DataConDef n =
-  DataConDef SourceName (EmptyAbs (Nest Binder) n)
+  DataConDef SourceName (EmptyAbs (Nest Binder) n) (Type n) [[Int]]
   deriving (Show, Generic)
 
 data DataDefBinders n l where
@@ -881,10 +881,10 @@ instance AlphaEqE DataDef
 instance AlphaHashableE DataDef
 
 instance GenericE DataConDef where
-  type RepE DataConDef = PairE (LiftE SourceName) (Abs (Nest Binder) UnitE)
-  fromE (DataConDef name ab) = PairE (LiftE name) ab
+  type RepE DataConDef = (LiftE (SourceName, [[Int]])) `PairE` (Abs (Nest Binder) UnitE) `PairE` Type
+  fromE (DataConDef name ab repTy idxs) = (LiftE (name, idxs)) `PairE` ab `PairE` repTy
   {-# INLINE fromE #-}
-  toE   (PairE (LiftE name) ab) = DataConDef name ab
+  toE   ((LiftE (name, idxs)) `PairE` ab `PairE` repTy) = DataConDef name ab repTy idxs
   {-# INLINE toE #-}
 instance SinkableE DataConDef
 instance HoistableE  DataConDef
@@ -983,13 +983,9 @@ instance GenericE Atom where
   {- Pi -}         PiType
   {- TabLam -}     TabLamExpr
   {- TabPi -}      TabPiType
-            ) (EitherE6
+            ) (EitherE5
   {- DepPairTy -}  DepPairType
   {- DepPair -}    ( Atom `PairE` Atom `PairE` DepPairType)
-  {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
-                     DataDefName               `PairE`
-                     DataDefParams               `PairE`
-                     ListE Atom )
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
@@ -1018,15 +1014,10 @@ instance GenericE Atom where
     TabPi  piExpr  -> Case1 (Case3 piExpr)
     DepPairTy ty -> Case2 (Case0 ty)
     DepPair l r ty -> Case2 (Case1 $ l `PairE` r `PairE` ty)
-    DataCon printName defName params con args -> Case2 $ Case2 $
-      LiftE (printName, con) `PairE`
-            defName          `PairE`
-            params           `PairE`
-      ListE args
-    TypeCon sourceName defName params -> Case2 $ Case3 $
+    TypeCon sourceName defName params -> Case2 $ Case2 $
       LiftE sourceName `PairE` defName `PairE` params
-    DictCon d -> Case2 $ Case4 d
-    DictTy  d -> Case2 $ Case5 d
+    DictCon d -> Case2 $ Case3 d
+    DictTy  d -> Case2 $ Case4 d
     LabeledRow elems    -> Case3 $ Case0 $ elems
     RecordTy elems -> Case3 $ Case1 elems
     VariantTy extItems  -> Case3 $ Case2 $ ExtLabeledItemsE extItems
@@ -1054,15 +1045,10 @@ instance GenericE Atom where
     Case2 val -> case val of
       Case0 ty      -> DepPairTy ty
       Case1 (l `PairE` r `PairE` ty) -> DepPair l r ty
-      Case2 ( LiftE (printName, con) `PairE`
-                    defName          `PairE`
-                    params           `PairE`
-              ListE args ) ->
-        DataCon printName defName params con args
-      Case3 (LiftE sourceName `PairE` defName `PairE` params) ->
+      Case2 (LiftE sourceName `PairE` defName `PairE` params) ->
         TypeCon sourceName defName params
-      Case4 d -> DictCon d
-      Case5 d -> DictTy  d
+      Case3 d -> DictCon d
+      Case4 d -> DictTy  d
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
@@ -1118,7 +1104,6 @@ getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (NE.fromList [i]) name
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  DataCon _ _ _ _ xs -> xs !! i
   Con (ProdCon xs) -> xs !! i
   Con (Newtype _ x) | i == 0 -> x
   DepPair l _ _ | i == 0 -> l

@@ -212,9 +212,6 @@ instance CheaplyReducibleE Atom Atom where
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
-    DataCon sourceName dataDefName params con args ->
-      DataCon sourceName <$> substM dataDefName <*> cheapReduceE params
-                         <*> pure con <*> mapM cheapReduceE args
     DictCon d -> cheapReduceE d
     -- Do recursive reduction via substitution
     -- TODO: we don't collect the dict holes here, so there's a danger of

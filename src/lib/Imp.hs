@@ -372,6 +372,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         extendSubst (bs @@> map SubstVal args) $ translateBlock maybeDest body
       Nothing -> case e' of
         Con (Newtype (VariantTy _) (Con (SumAsProd _ tag xss))) -> go tag xss
+        Con (Newtype (TypeCon _ _ _) (Con (SumAsProd _ tag xss))) -> go tag xss
         Con (SumAsProd _ tag xss) -> go tag xss
         _ -> error $ "unexpected case scrutinee: " ++ pprint e'
         where
@@ -494,14 +495,18 @@ toImpOp maybeDest op = case op of
       _ -> unsupported
   DataConTag con -> case con of
     Con (SumAsProd _ tag _) -> returnVal tag
-    DataCon _ _ _ i _ -> returnVal $ TagRepVal $ fromIntegral i
+    Con (Newtype _ (Con (SumCon _ tag _))) -> returnVal $ TagRepVal $ fromIntegral tag
+    Con (Newtype _ (Con (SumAsProd _ tag _))) -> returnVal tag
     _ -> error $ "Not a data constructor: " ++ pprint con
   ToEnum ty i -> returnVal =<< case ty of
     TypeCon _ defName _ -> do
       DataDef _ _ cons <- lookupDataDef defName
-      return $ Con $ SumAsProd ty i (map (const []) cons)
-    VariantTy (NoExt labeledItems) ->
-      return $ Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
+      return $ Con $ Newtype ty $
+        Con $ SumAsProd (SumTy $ cons <&> const UnitTy) i (cons <&> const [UnitVal])
+    VariantTy (NoExt labeledItems) -> do
+      let items = toList labeledItems
+      return $ Con $ Newtype ty $
+        Con $ SumAsProd (SumTy $ items <&> const UnitTy) i (items <&> const [UnitVal])
     SumTy cases ->
       return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
@@ -996,32 +1001,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     dcs <- instantiateDataDef def params
-    case dcs of
-      [] -> error "Void type not allowed"
-      [DataConDef _ dataConBinders] -> do
-        Distinct <- getDistinct
-        dests <- makeDataConDest depVars dataConBinders
-        return $ DataConRef defName params dests
-        where
-          makeDataConDest :: (Emits l, DExt n l)
-                          => [AtomName l]
-                          -> EmptyAbs (Nest Binder) l
-                          -> DestM l (EmptyAbs (Nest DataConRefBinding) l)
-          makeDataConDest depVars' (Abs bs UnitE) = case bs of
-            Empty -> return $ EmptyAbs Empty
-            Nest (b:>bTy) rest -> do
-              dest <- makeDestRec (sinkDestIdxs idxs) depVars' bTy
-              Abs b' (EmptyAbs restDest) <- buildAbsHoistingDeclsDest (getNameHint b) bTy \v -> do
-                let depVars'' = map sink depVars' ++ [v]
-                rest' <- applySubst (b@>v) $ EmptyAbs rest
-                makeDataConDest depVars'' rest'
-              return $ EmptyAbs $ Nest (DataConRefBinding b' dest) restDest
-      _ -> do
-        tag <- rec TagRepTy
-        contents <- forM dcs \dc -> case nonDepDataConTys dc of
-          Nothing -> error "Dependent data constructors only allowed for single-constructor types"
-          Just tys -> mapM (makeDestRec idxs depVars) tys
-        return $ Con $ ConRef $ SumAsProd ty tag contents
+    Con . ConRef . Newtype ty <$> rec (dataDefRep dcs)
   DepPairTy depPairTy@(DepPairType (lBinder:>lTy) rTy) -> do
     lDest <- rec lTy
     rDestAbs <- buildDepDest idxs depVars (getNameHint lBinder) lTy \idxs' depVars' v -> do
@@ -1080,8 +1060,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         copyAtom lRef l
         rRef <- applyAbs rRefAbs (SubstVal l)
         copyAtom rRef r
-      (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
-        copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
         (TabRef _, TabLam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
@@ -1089,9 +1067,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           src' <- fromScalarAtom src
           storeAnywhere ptr' src'
         (ConRef (SumAsProd _ tag payload), _) -> case src of
-          DataCon _ _ _ con x -> do
-            copyRec tag $ TagRepVal $ fromIntegral con
-            zipWithM_ copyRec (payload !! con) x
           Con (SumAsProd _ tagSrc payloadSrc) -> do
             copyRec tag tagSrc
             unless (all null payload) do -- optimization
@@ -1125,16 +1100,6 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         destIndexed <- destGet (sink dest) idx
         srcIndexed  <- dropSubst $ translateExpr Nothing (TabApp (sink src) (idx:|[]))
         f destIndexed srcIndexed
-
-    copyDataConArgs :: Emits n
-                    => EmptyAbs (Nest DataConRefBinding) n -> [Atom n] -> SubstImpM i n ()
-    copyDataConArgs (Abs Empty UnitE) [] = return ()
-    copyDataConArgs (Abs (Nest (DataConRefBinding b ref) rest) UnitE) (x:xs) = do
-      copyAtom ref x
-      rest' <- applySubst (b@>SubstVal x) (EmptyAbs rest)
-      copyDataConArgs rest' xs
-    copyDataConArgs bindings args =
-      error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
 {-# SCC copyAtom #-}
 
 loadAnywhere :: Emits n => IExpr n -> SubstImpM i n (IExpr n)
@@ -1156,10 +1121,6 @@ indexDest (Con (TabRef (TabVal b body))) i = do
 indexDest dest _ = error $ pprint dest
 
 loadDest :: Emits n => Dest n -> BuilderM n (Atom n)
-loadDest (DataConRef def params bs) = do
-  DataDef _ _ cons <- lookupDataDef def
-  let DataConDef conName _ = cons !! 0
-  DataCon conName def params 0 <$> loadDataConArgs bs
 loadDest (DepPairRef lr rra a) = do
   l <- loadDest lr
   r <- loadDest =<< applyAbs rra (SubstVal l)
@@ -1183,14 +1144,6 @@ loadDest (Con dest) = do
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest
-
-loadDataConArgs :: Emits n => EmptyAbs (Nest DataConRefBinding) n -> BuilderM n [Atom n]
-loadDataConArgs (Abs bs UnitE) = case bs of
-  Empty -> return []
-  Nest (DataConRefBinding b ref) rest -> do
-    val <- loadDest ref
-    rest' <- applySubst (b @> SubstVal val) $ EmptyAbs rest
-    (val:) <$> loadDataConArgs rest'
 
 -- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
 emitSwitch :: forall i n a.  Emits n

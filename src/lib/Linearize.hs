@@ -262,7 +262,6 @@ linearizeAtom atom = case atom of
       buildTabLam (getNameHint b) (sink ty) \i ->
         rematPrimal (sink subst) (sink wrt) $
           extendSubst (b@>i) $ linearizeBlock body
-  DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
@@ -343,13 +342,15 @@ linearizeExpr expr = case expr of
               isActive arg' >>= \case
                 False -> -- Pass in ZeroTangent as the tangent
                   return $ WithTangent arg' $
-                    return $ sink $ DataCon "SymbolicTangent" stDefName
-                                    (DataDefParams [argTy'] []) 0 []
+                    return $ sink $ Con $ Newtype
+                      (TypeCon "SymbolicTangent" stDefName (DataDefParams [argTy'] []))
+                      (SumVal (SumTy [UnitTy, argTy']) 0 UnitVal)
                 True -> do  -- Wrap tangent in SomeTangent
                   WithTangent arg'' argLin <- dropSubst $ linearizeAtom arg'
                   return $ WithTangent arg'' $ argLin <&> \argTan ->
-                    DataCon "SymbolicTangent" (sink stDefName)
-                    (DataDefParams [sink argTy'] []) 1 [argTan]
+                    Con $ Newtype
+                      (TypeCon "SymbolicTangent" (sink stDefName) (DataDefParams [sink argTy'] []))
+                      (SumVal (SumTy [UnitTy, sink argTy']) 1 argTan)
         (ans, flin) <- fromPair =<< naryApp cl (polyXs' ++ (wts <&> \(WithTangent p _) -> p))
         return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
   App _ _ -> error "not implemented"

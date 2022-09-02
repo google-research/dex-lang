@@ -17,7 +17,7 @@ import Name
 import Syntax
 import Builder
 import QueryType
-import Util (zipWithT, enumerate)
+import Util (enumerate)
 import GHC.Stack
 
 transpose :: (MonadFail1 m, EnvReader m) => Atom n -> m n (Atom n)
@@ -275,7 +275,6 @@ transposeAtom atom ct = case atom of
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
-  DataCon _ _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   TabVal b body   -> do
     ty <- substNonlin $ binderAnn b
     void $ buildFor noHint Fwd ty \i -> do

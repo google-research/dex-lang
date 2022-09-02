@@ -86,9 +86,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
-  DataCon sourceName dataDefName params con args ->
-    DataCon sourceName <$> substM dataDefName <*>
-      tge params <*> pure con <*> mapM tge args
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr

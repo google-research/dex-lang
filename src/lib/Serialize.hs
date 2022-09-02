@@ -11,7 +11,6 @@ import Prelude hiding (pi, abs)
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.ByteString as BS
-import Data.Functor ((<&>))
 import Data.List.NonEmpty qualified as NE
 import Data.ByteString.Internal (memcpy)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
@@ -48,9 +47,8 @@ pprintVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
 pprintVal val = docAsStr <$> prettyVal val
 {-# SCC pprintVal #-}
 
--- TODO: get the pointer rather than reading char by char
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
-getDexString (DataCon _ _ _ 0 [_, xs]) = case tryParseStringContent xs of
+getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs of
   Just (ptrAtom, n) -> do
     lookupAtomName ptrAtom >>= \case
       PtrLitBound _ ptrName -> lookupEnv ptrName >>= \case
@@ -92,10 +90,6 @@ getTableElements tab = do
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
 prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
 prettyVal val = case val of
-  -- Pretty-print strings
-  DataCon "AsList" _ (DataDefParams [Word8Ty] _) _ [_, TabVal _ _] -> do
-    s <- getDexString val
-    return $ pretty $ "\"" ++ s ++ "\""
   -- Pretty-print tables.
   TabVal _ _ -> do
     atoms <- getTableElements val
@@ -111,10 +105,6 @@ prettyVal val = case val of
       TC (Fin _)  -> mempty               -- (Fin n) is not shown
       idxSet -> "@" <> pretty idxSet -- Otherwise, show explicit index set
     return $ pretty elems <> idxSetDoc
-  DataCon name _ _ _ args -> do
-    mapM prettyVal args <&> \case
-      []    -> pretty name
-      args' -> parens $ pretty name <+> hsep args'
   Record tys vals -> do
     let LabeledItems row = restructure vals tys
     let separator = line' <> ","
@@ -136,16 +126,26 @@ prettyVal val = case val of
     Newtype vty@(VariantTy (NoExt types)) (Con (SumAsProd _ (TagRepVal trep) payload)) ->
       return $ pretty $ Newtype vty $ SumVal (SumTy $ toList types) t value
       where t = fromIntegral trep; [value] = payload !! t
-    SumAsProd (TypeCon _ dataDefName _) (TagRepVal trep) payload -> do
-      let t = fromIntegral trep
-      DataDef _ _ dataCons <- lookupDataDef dataDefName
-      DataConDef conName _ <- return $ dataCons !! t
-      mapM prettyVal (payload !! t) <&> \case
-        []   -> pretty conName
-        args -> parens $ pretty conName <+> hsep args
+    -- Pretty-print strings
+    Newtype (TypeCon "List" _ (DataDefParams [Word8Ty] _)) _ -> do
+      s <- getDexString val
+      return $ pretty $ "\"" ++ s ++ "\""
+    Newtype (TypeCon _ dataDefName _) (Con (SumCon _ t e)) -> prettyData dataDefName t e
+    Newtype (TypeCon _ dataDefName _) (Con (SumAsProd _ (TagRepVal trep) payload)) -> prettyData dataDefName t e
+      where t = fromIntegral trep; [e] = payload !! t
+    Newtype (TypeCon _ dataDefName _) e -> prettyData dataDefName 0 e
     SumAsProd _ _ _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
   atom -> return $ prettyPrec atom LowestPrec
+  where
+    prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> Atom n -> m n (Doc ann)
+    prettyData dataDefName t rep = do
+      DataDef _ _ dataCons <- lookupDataDef dataDefName
+      DataConDef conName _ _ idxs <- return $ dataCons !! t
+      prettyArgs <- forM idxs \ix -> prettyVal $ getProjection (init ix) rep
+      return $ case prettyArgs of
+        []   -> pretty conName
+        args -> parens $ pretty conName <+> hsep args
 
 -- === taking memory snapshots for serializing heap-backed dex values ===
 
