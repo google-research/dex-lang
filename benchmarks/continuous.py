@@ -9,7 +9,6 @@ import os
 import sys
 import time
 import timeit
-import csv
 import subprocess
 import tempfile
 from functools import partial
@@ -17,7 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Union, Sequence
 
+# Ensure NumPy can only use a single thread for an
+# apples-to-apples comparison.
+# But see package threadpoolctl: https://github.com/joblib/threadpoolctl
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import numpy as np
+import csv
 
 
 @dataclass
@@ -72,11 +78,7 @@ class Python:
   f: Callable
 
   def clean(self, _code, _xdg_home):
-    # Ensure NumPy can only use a single thread for an
-    # apples-to-apples comparison.
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    pass
 
   def bench(self, _code, _xdg_home):
     avg_time, iters = bench_python(self.f)
