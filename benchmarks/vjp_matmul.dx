@@ -8,3 +8,7 @@ def mmp' {l m n} (m1:l=>m=>Float) (m2:m=>n=>Float) : l=>n=>Float =
 
 %bench "jvp_matmul"
 res = mmp' m1 m2
+>
+> jvp_matmul
+> Compile time: 130.231 ms
+> Run time:     7.178 us 	(based on 1 run)

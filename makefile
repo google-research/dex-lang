@@ -216,7 +216,9 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
 
 doc-names = conditionals functions
 
-benchmark-names = fused_sum
+benchmark-names = \
+  fused_sum gaussian jvp_matmul matmul_big matmul_small matvec_big matvec_small \
+  poly vjp_matmul
 
 quine-test-targets = \
   $(test-names:%=run-tests/%) \
