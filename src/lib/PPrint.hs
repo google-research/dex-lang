@@ -251,11 +251,6 @@ instance PrettyPrec (Atom n) where
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
-    DataCon name _ _ _ xs -> case xs of
-      [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
-        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
-      _ ->  atPrec LowestPrec $ pAppArg (p name) xs
     TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
     TypeCon "RangeToExc"   _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ "..<" <> pApp i
     TypeCon "RangeFrom"    _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <>  ".."
@@ -500,7 +495,7 @@ instance Pretty (DataDef n) where
     "data" <+> p name <+> p bs <> prettyLines cons
 
 instance Pretty (DataConDef n) where
-  pretty (DataConDef name bs) =
+  pretty (DataConDef name bs _ _) =
     p name <+> ":" <+> p bs
 
 instance Pretty (ClassDef n) where

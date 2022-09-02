@@ -608,15 +608,10 @@ fromNonDepTabType ty = do
   return (ixTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [Type n]
-nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
-  where
-    go :: Nest Binder n l -> Maybe [Type n]
-    go Empty = return []
-    go (Nest (b:>ty) bs) = do
-      tys <- go bs
-      case hoist b (ListE tys) of
-        HoistFailure _ -> Nothing
-        HoistSuccess (ListE tys') -> return $ ty:tys'
+nonDepDataConTys (DataConDef _ (Abs binders UnitE) repTy _) =
+  case repTy of
+    ProdTy tys | nestLength binders == length tys -> Just tys
+    _ -> Nothing
 
 infixr 1 ?-->
 infixr 1 -->
@@ -731,11 +726,9 @@ mkBundle = bundleFold UnitVal PairVal
 
 trySelectBranch :: Atom n -> Maybe (Int, [Atom n])
 trySelectBranch e = case e of
-  DataCon _ _ _ con args -> return (con, args)
   SumVal _ i value -> Just (i, [value])
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let i = fromIntegral tag
-    return (i , vals !! i)
+  Con (SumAsProd _ (TagRepVal tag) vals) -> Just (i, vals !! i)
+    where i = fromIntegral tag
   Con (Newtype _ e') -> trySelectBranch e'
   _ -> Nothing
 

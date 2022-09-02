@@ -491,9 +491,6 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
   TypeCon _ _ _ -> substM atom
-  DataCon name def params con args ->
-    DataCon name <$> substM def <*> substM params
-                 <*> pure con <*> mapM simplifyAtom args
   DictCon d -> DictCon <$> substM d
   DictTy  t -> DictTy  <$> substM t
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
