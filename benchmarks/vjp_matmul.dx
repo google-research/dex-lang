@@ -1,0 +1,10 @@
+n = if dex_test_mode() then 10 else 500
+
+m1 = rand_mat n n randn (new_key 0)
+m2 = rand_mat n n randn (new_key 1)
+
+def mmp' {l m n} (m1:l=>m=>Float) (m2:m=>n=>Float) : l=>n=>Float =
+  snd (vjp ((**) (transpose m1)) (for _ _. 0.0)) m2
+
+%bench "jvp_matmul"
+res = mmp' m1 m2

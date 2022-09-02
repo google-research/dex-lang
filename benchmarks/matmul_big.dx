@@ -1,0 +1,7 @@
+n = if dex_test_mode() then 10 else 500
+
+m1 = rand_mat n n randn (new_key 0)
+m2 = rand_mat n n randn (new_key 1)
+
+%bench "matmul_big"
+res = m1 ** m2

@@ -89,15 +89,53 @@ def numpy_sum():
   return np.sum(xs * xs)
 
 
+def numpy_gaussian(n):
+  return lambda: np.random.normal(size=n)
+
+
+def numpy_matmul(n, width):
+  m1 = np.random.normal(size=(width, n, n)).astype(np.float32)
+  m2 = np.random.normal(size=(width, n, n)).astype(np.float32)
+  return lambda: np.matmul(m1, m2)
+
+
+def numpy_matvec(n, width):
+  ms = np.random.normal(size=(width, n, n)).astype(np.float32)
+  vs = np.random.normal(size=(width, n)).astype(np.float32)
+  return lambda: np.einsum('...ij,...j', ms, vs)
+
+
+def numpy_poly(n):
+  xs = np.arange(n, dtype=np.float32)
+  return lambda: 4.0 * (xs * xs * xs * xs) + 3.0 * (xs * xs * xs) + 2.0 * (xs * xs) + xs
+
+
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
 BENCHMARKS = [
     DexEndToEnd('kernelregression', 10),
     DexEndToEnd('psd', 10),
     DexEndToEnd('fluidsim', 10),
     DexEndToEnd('regression', 10),
-    DexRuntime('fused_sum', 5)]
+    DexRuntime('fused_sum', 5),
+    DexRuntime('gaussian', 5),
+    DexRuntime('jvp_matmul', 5),
+    DexRuntime('matmul_big', 5),
+    DexRuntime('matmul_small', 5),
+    DexRuntime('matvec_big', 5),
+    DexRuntime('matvec_small', 5),
+    DexRuntime('poly', 5),
+    DexRuntime('vjp_matmul', 5),
+]
 RUNTIME_BASELINES = {
-    'fused_sum': numpy_sum
+    'fused_sum': numpy_sum,
+    'gaussian': numpy_gaussian(1000000),
+    'jvp_matmul': numpy_matmul(500, 1),  # TODO: rewrite the baseline in JAX and actually use jvp there
+    'matmul_big': numpy_matmul(500, 1),
+    'matmul_small': numpy_matmul(10, 1000),
+    'matvec_big': numpy_matvec(10000, 1),
+    'matvec_small': numpy_matvec(10, 10000),
+    'poly': numpy_poly(100000),
+    'vjp_matmul': numpy_matmul(500, 1),  # TODO: rewrite the baseline in JAX and actually use vjp there
 }
 
 
