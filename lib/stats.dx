@@ -1,22 +1,21 @@
 '# Stats
-Probability distributions and other functions useful for statistical computing
+Probability distributions and other functions useful for statistical computing.
 
-
-'## Univariate probability distributions
-Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). 
-
-'## Dist interface
-Distributions implement the `Dist` interface.
+'## Probability distributions
+Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.
 
 interface Dist d a
   log_pdf : d -> a -> Float     -- either the density function or mass function
+  draw : d -> Key -> a          -- function for random draws
+
+interface [Dist d a] OrderedDist d a
   log_cdf : d -> a -> Float     -- the cumulative distribution function (CDF)
   log_sf : d -> a -> Float      -- the survivor function (complement of CDF)
   quantile : d -> Float -> a    -- the quantile function (inverse CDF)
-  draw : d -> Key -> a          -- function for random draws
 
-
-'### Bernoulli distribution
+'## Univariate probability distributions
+Some commonly encountered univariate distributions. 
+### Bernoulli distribution
 The [Bernoulli distribution](https://en.wikipedia.org/wiki/Bernoulli_distribution) is parameterised by its "success" probability, `prob`.
 
 data BernoulliDist = Bernoulli Float
@@ -26,6 +25,10 @@ instance Dist BernoulliDist Bool
     if b
      then log prob
      else log1p (-prob)
+  draw = \(Bernoulli prob) k.
+    rand k < prob
+
+instance OrderedDist BernoulliDist Bool
   log_cdf = \(Bernoulli prob) b.
     if b
       then 0.0
@@ -36,8 +39,6 @@ instance Dist BernoulliDist Bool
       else log prob
   quantile = \(Bernoulli prob) q.
     q > (1 - prob)
-  draw = \(Bernoulli prob) k.
-    rand k < prob
 
 
 '### Binomial distribution
@@ -45,31 +46,30 @@ The [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution)
 
 data BinomialDist = Binomial Nat Float
 
-def binomial_log_pdf (trials: Nat) (prob: Float) (x: Nat) : Float =
-  tf = n_to_f trials
-  xf = n_to_f x
-  if (xf > tf)
-    then -infinity
-    else (xf * log prob) + ((tf - xf) * log1p (-prob)) +
-      lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf)
-
 instance Dist BinomialDist Nat
   log_pdf = \(Binomial trials prob) x.
-    binomial_log_pdf trials prob x
+    tf = n_to_f trials
+    xf = n_to_f x
+    if (xf > tf)
+      then -infinity
+      else (xf * log prob) + ((tf - xf) * log1p (-prob)) +
+	lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf)
+  draw = \(Binomial trials prob) k.
+    sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
+
+instance OrderedDist BinomialDist Nat
   log_cdf = \(Binomial trials prob) x.
     xp1:Nat = x + 1
-    logsumexp $ for i:(Fin xp1). binomial_log_pdf trials prob (ordinal i)
+    logsumexp $ for i:(Fin xp1). log_pdf (Binomial trials prob) (ordinal i)
   log_sf = \(Binomial trials prob) x.
     tmx = trials -| x
-    logsumexp $ for i:(Fin tmx). binomial_log_pdf trials prob (x + 1 + ordinal i)
+    logsumexp $ for i:(Fin tmx). log_pdf (Binomial trials prob) (x + 1 + ordinal i)
   quantile = \(Binomial trials prob) q.
     tp1:Nat = trials + 1
-    lpdf = for i:(Fin tp1). binomial_log_pdf trials prob (ordinal i)
+    lpdf = for i:(Fin tp1). log_pdf (Binomial trials prob) (ordinal i)
     cdf = cdf_for_categorical lpdf
     mi = search_sorted cdf q
     ordinal $ from_just mi
-  draw = \(Binomial trials prob) k.
-    sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
 
 
 '### Exponential distribution
@@ -82,6 +82,10 @@ instance Dist ExponentialDist Float
     if (x < 0.0)
       then -infinity
       else log rate - (rate * x)
+  draw = \(Exponential rate) k.
+    log1p (-rand k) / -rate
+
+instance OrderedDist ExponentialDist Float
   log_cdf = \(Exponential rate) x.
     if (x < 0.0)
       then -infinity
@@ -92,8 +96,6 @@ instance Dist ExponentialDist Float
       else -rate * x
   quantile = \(Exponential rate) q.
     log1p (-q) / -rate
-  draw = \(Exponential rate) k.
-    log1p (-rand k) / -rate
 
 
 '### Geometric distribution
@@ -111,6 +113,10 @@ instance Dist GeometricDist Nat
       else
         nf = n_to_f n
         ((nf-1)*log1p (-prob)) + log prob
+  draw = \(Geometric prob) k.
+    f_to_n $ ceil $ log1p (-rand k) / log1p (-prob)
+
+instance OrderedDist GeometricDist Nat
   log_cdf = \(Geometric prob) n.
     nf = n_to_f n
     log1p (-pow (1-prob) nf)
@@ -118,8 +124,6 @@ instance Dist GeometricDist Nat
     n_to_f n * log1p (-prob)
   quantile = \(Geometric prob) q.
     f_to_n $ ceil $ log1p (-q) / log1p (-prob)
-  draw = \(Geometric prob) k.
-    f_to_n $ ceil $ log1p (-rand k) / log1p (-prob)
 
 
 '### Normal distribution
@@ -130,11 +134,10 @@ data NormalDist = Normal Float Float
 instance Dist NormalDist Float
   log_pdf = \(Normal loc scale) x.
     -0.5 * (log (2 * pi * (sq scale)) + (sq ((x - loc) / scale)))
-  log_cdf = todo  -- need some sort of "erf" function for this
-  log_sf = todo   -- ditto
-  quantile = todo -- need inverse "erf" function
   draw = \(Normal loc scale) k.
     loc + (scale * randn k)
+
+-- TODO: with some kind of "error function" (and inverse) exposed, could and should also implement OrderedDist
 
 
 '### Poisson distribution
@@ -142,31 +145,10 @@ The [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution) i
 
 data PoissonDist = Poisson Float
 
-def poisson_log_pdf (rate: Float) (n: Nat) : Float =
-  nf = n_to_f n
-  (nf * log rate) - rate - lgamma (nf + 1)
-
 instance Dist PoissonDist Nat
-  log_pdf = \(Poisson rate) x.
-    poisson_log_pdf rate x
-  log_cdf = \(Poisson rate) x.
-    xp1:Nat = x + 1
-    logsumexp $ for i:(Fin xp1). poisson_log_pdf rate (ordinal i)
-  log_sf = \(Poisson rate) x.
-    xp1:Nat = x + 1
-    lcdf = logsumexp $ for i:(Fin xp1). poisson_log_pdf rate (ordinal i)
-    log1p (-exp lcdf)
-  quantile = \(Poisson rate) q.
-    yield_state (0::Nat) \x.
-      with_state 0.0 \cdf.
-        while do
-          cdf := (get cdf) + exp (poisson_log_pdf rate (get x))
-          if (get cdf) > q
-            then
-              False
-            else
-              x := (get x) + 1
-              True
+  log_pdf = \(Poisson rate) n.
+    nf = n_to_f n
+    (nf * log rate) - rate - lgamma (nf + 1)
   draw = \(Poisson rate) k.
     exp_neg_rate = exp (-rate)
     [current_k, next_k] = split_key k
@@ -182,6 +164,26 @@ instance Dist PoissonDist Nat
               True
             else
               False
+
+instance OrderedDist PoissonDist Nat
+  log_cdf = \(Poisson rate) x.
+    xp1:Nat = x + 1
+    logsumexp $ for i:(Fin xp1). log_pdf (Poisson rate) (ordinal i)
+  log_sf = \(Poisson rate) x.
+    xp1:Nat = x + 1
+    lcdf = logsumexp $ for i:(Fin xp1). log_pdf (Poisson rate) (ordinal i)
+    log1p (-exp lcdf)
+  quantile = \(Poisson rate) q.
+    yield_state (0::Nat) \x.
+      with_state 0.0 \cdf.
+        while do
+          cdf := (get cdf) + exp (log_pdf (Poisson rate) (get x))
+          if (get cdf) > q
+            then
+              False
+            else
+              x := (get x) + 1
+              True
   
 
 '### Uniform distribution
@@ -194,6 +196,10 @@ instance Dist UniformDist Float
     if (x >= low)&&(x <= high)
       then -log (high - low)
       else -infinity
+  draw = \(Uniform low high) k.
+    low + ((high - low) * rand k)
+
+instance OrderedDist UniformDist Float
   log_cdf = \(Uniform low high) x.
     if (x < low)
       then -infinity
@@ -208,8 +214,6 @@ instance Dist UniformDist Float
         else log (high - x) - log (high - low)
   quantile = \(Uniform low high) q.
     low + ((high - low) * q)
-  draw = \(Uniform low high) k.
-    low + ((high - low) * rand k)
   
 
 '## Data summaries
@@ -257,4 +261,4 @@ def correlation_matrix {n d a} [VSpace a, Mul a, Floating a, Fractional a]
   for i. for j. divide cvm.i.j (sqrt cvm.i.i * sqrt cvm.j.j)
 
 
--- eof
+
