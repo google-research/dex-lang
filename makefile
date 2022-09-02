@@ -157,7 +157,7 @@ check-watch: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --fast --file-watch --ghc-options="-fno-code"
 
 install: dexrt-llvm
-	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
+	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS) $(OPT)
 
 build-opt: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) $(OPT) --flag dex:optimized
