@@ -74,12 +74,24 @@ data BinomialDist = Binomial Nat Float
 
 instance Dist BinomialDist Nat
   density = \(Binomial trials prob) x.
-    tf = n_to_f trials
-    xf = n_to_f x
-    if (xf > tf)
-      then LogFloat (-infinity)
-      else LogFloat ( (xf * log prob) + ((tf - xf) * log1p (-prob)) +
-	lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf) )
+    if (prob == 0.0)
+      then
+        if (x == 0)
+          then LogFloat 0.0
+          else LogFloat (-infinity)
+      else
+        if (prob == 1.0)
+          then
+            if (x == trials)
+              then LogFloat 0.0
+              else LogFloat (-infinity)
+          else
+            tf = n_to_f trials
+            xf = n_to_f x
+            if (xf > tf)
+              then LogFloat (-infinity)
+              else LogFloat ( (xf * log prob) + ((tf - xf) * log1p (-prob)) +
+                lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf) )
   draw = \(Binomial trials prob) k.
     sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
 
@@ -173,8 +185,12 @@ data PoissonDist = Poisson Float
 
 instance Dist PoissonDist Nat
   density = \(Poisson rate) n.
-    nf = n_to_f n
-    LogFloat $ (nf * log rate) - rate - lgamma (nf + 1)
+    if ((rate == 0.0)&&(n == 0))
+      then
+        LogFloat 0.0
+      else
+        nf = n_to_f n
+        LogFloat $ (nf * log rate) - rate - lgamma (nf + 1)
   draw = \(Poisson rate) k.
     exp_neg_rate = exp (-rate)
     [current_k, next_k] = split_key k

@@ -64,6 +64,18 @@ rand_vec 5 (draw $ Bernoulli 0.6) (new_key 0) :: Fin 5=>Bool
 get_log (density (Binomial 10 0.4) 8) ~~ -4.545315
 > True
 
+get_raw (density (Binomial 10 0) 0) ~~ 1
+> True
+
+get_raw (density (Binomial 10 0) 1) ~~ 0
+> True
+
+get_raw (density (Binomial 10 1) 10) ~~ 1
+> True
+
+get_raw (density (Binomial 10 1) 9) ~~ 0
+> True
+
 get_log (cumulative (Binomial 10 0.4) 7) ~~ -0.01237076
 > True
 
@@ -81,6 +93,12 @@ rand_vec 5 (draw $ Binomial 10 0.4) (new_key 0) :: Fin 5=>Nat
 get_log (density (Exponential 2.0) 3.0) ~~ -5.306853
 > True
 
+get_raw (density (Exponential 0) 0.0) ~~ 0.0
+> True
+
+get_raw (density (Exponential 0) 1.0) ~~ 0.0
+> True
+
 get_log (cumulative (Exponential 2.0) 3.0) ~~ -0.002481829
 > True
 
@@ -96,6 +114,18 @@ rand_vec 5 (draw $ Exponential 2.0) (new_key 0) :: Fin 5=>Float
 -- geometric
 
 get_log (density (Geometric 0.1) 10) ~~ -3.25083
+> True
+
+get_raw (density (Geometric 0.0) 1) ~~ 0.0
+> True
+
+get_raw (density (Geometric 0.0) 2) ~~ 0.0
+> True
+
+get_raw (density (Geometric 1.0) 1) ~~ 1.0
+> True
+
+get_raw (density (Geometric 1.0) 2) ~~ 0.0
 > True
 
 get_log (cumulative (Geometric 0.1) 10) ~~ -0.4287518
@@ -133,6 +163,12 @@ rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
 -- poisson
 
 get_log (density (Poisson 5.0) 8) ~~ -2.7291
+> True
+
+get_raw (density (Poisson 0.0) 0) ~~ 1.0
+> True
+
+get_raw (density (Poisson 0.0) 1) ~~ 0.0
 > True
 
 get_log (cumulative (Poisson 5.0) 8) ~~ -0.07052294
