@@ -156,8 +156,8 @@ evalExpr expr = case expr of
     case trySelectBranch e' of
       Nothing -> error "branch should be chosen at this point"
       Just (con, arg) -> do
-        Abs bs body <- return $ alts !! con
-        extendSubst (bs @@> [SubstVal arg]) $ evalBlock body
+        Abs b body <- return $ alts !! con
+        extendSubst (b @> SubstVal arg) $ evalBlock body
   Hof hof -> case hof of
     RunIO (Lam (LamExpr b body)) ->
       extendSubst (b @> SubstVal UnitTy) $

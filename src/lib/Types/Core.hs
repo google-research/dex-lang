@@ -107,9 +107,8 @@ type BaseMonoid n = BaseMonoidP (Atom n)
 
 type AtomBinderP = BinderP AtomNameC
 type Binder = AtomBinderP Type
- -- TODO: Alts don't need binder nests anymore --- we have Atom projections!
-type AltP (e::E) = Abs (Nest Binder) e :: E
-type Alt = AltP Block                  :: E
+type AltP (e::E) = Abs Binder e :: E
+type Alt = AltP Block           :: E
 
 -- The additional invariant enforced by this newtype is that the list should
 -- never contain empty StaticFields members, nor StaticFields in two consecutive

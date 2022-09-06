@@ -177,8 +177,7 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
 prettyAlt :: PrettyE e => AltP e n -> Doc ann
-prettyAlt (Abs bs body) = hsep (map prettyBinderNoAnn  bs') <+> "->" <> nest 2 (p body)
-  where bs' = fromNest bs
+prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
 
 prettyBinderNoAnn :: Binder n l -> Doc ann
 prettyBinderNoAnn (b:>_) = p b

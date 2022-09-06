@@ -198,15 +198,15 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     resultTy' <- substM resultTy
     case trySelectBranch e' of
       Just (i, arg) -> do
-        Abs bs body <- return $ alts !! i
-        extendSubst (bs @@> [SubstVal arg]) $ simplifyBlock body
+        Abs b body <- return $ alts !! i
+        extendSubst (b @> SubstVal arg) $ simplifyBlock body
       Nothing -> do
         isData resultTy' >>= \case
           True -> do
-            alts' <- forM alts \(Abs bs body) -> do
-              bs' <- substM $ EmptyAbs bs
-              buildNaryAbs bs' \xs ->
-                extendSubst (bs @@> map Rename xs) $
+            alts' <- forM alts \(Abs b body) -> do
+              bTy' <- substM $ binderType b
+              buildAbs (getNameHint b) bTy' \x ->
+                extendSubst (b @> Rename x) $
                   buildBlock $ simplifyBlock body
             liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
@@ -244,9 +244,9 @@ defuncCase scrut alts resultTy = do
         return $ ignoreHoistFailure $ hoist bs' ty
 
     injectAltResult :: EnvReader m => [Type n] -> Int -> Alt n -> m n (Alt n)
-    injectAltResult sumTys con (Abs bs body) = liftBuilder do
-      buildAlt (EmptyAbs bs) \vs -> do
-        originalResult <- emitBlock =<< applySubst (bs@@>vs) body
+    injectAltResult sumTys con (Abs b body) = liftBuilder do
+      buildAlt (binderType b) \v -> do
+        originalResult <- emitBlock =<< applySubst (b@>v) body
         (dataResult, nonDataResult) <- fromPair originalResult
         return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
 
@@ -297,9 +297,9 @@ simplifyApp f xs =
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
         resultTy <- getAppType ty $ toList xs
-        alts' <- forM alts \(Abs bs a) -> do
-          buildAlt (EmptyAbs bs) \vs -> do
-            a' <- applySubst (bs@@>vs) a
+        alts' <- forM alts \(Abs b a) -> do
+          buildAlt (binderType b) \v -> do
+            a' <- applySubst (b@>v) a
             naryApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr caseExpr
@@ -457,9 +457,9 @@ simplifyTabApp f xs =
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
         resultTy <- getTabAppType ty $ toList xs
-        alts' <- forM alts \(Abs bs a) -> do
-          buildAlt (EmptyAbs bs) \vs -> do
-            a' <- applySubst (bs@@>vs) a
+        alts' <- forM alts \(Abs b a) -> do
+          buildAlt (binderType b) \v -> do
+            a' <- applySubst (b@>v) a
             naryTabApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr $ caseExpr
@@ -510,14 +510,14 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
     e' <- simplifyAtom e
     case trySelectBranch e' of
       Just (i, arg) -> do
-        Abs bs body <- return $ alts !! i
-        extendSubst (bs @@> [SubstVal arg]) $ simplifyAtom body
+        Abs b body <- return $ alts !! i
+        extendSubst (b @> SubstVal arg) $ simplifyAtom body
       Nothing -> do
         rTy' <- substM rTy
-        alts' <- forM alts \(Abs bs body) -> do
-          bs' <- substM $ EmptyAbs bs
-          buildNaryAbs bs' \xs ->
-            extendSubst (bs @@> map Rename xs) $
+        alts' <- forM alts \(Abs b body) -> do
+          bTy' <- substM $ binderType b
+          buildAbs (getNameHint b) bTy' \xs ->
+            extendSubst (b @> Rename xs) $
               simplifyAtom body
         return $ ACase e' alts' rTy'
   BoxedRef _       -> error "Should only occur in Imp lowering"
@@ -698,7 +698,7 @@ simplifyOp op = case op of
       let fullLabels = toList $ reflectLabels fullTys
       let labels = toList $ reflectLabels rightTys
       -- Emit a case statement (ordered by the arg type) that lifts the type.
-      buildCase right (VariantTy fullRow) \caseIdx [v] -> do
+      buildCase right (VariantTy fullRow) \caseIdx v -> do
         -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
         let (label, i) = labels !! caseIdx
         let idx = fromJust $ elemIndex (label, i + length (lookupLabel leftTys label)) fullLabels
@@ -715,7 +715,7 @@ simplifyOp op = case op of
       let fullLabels = toList $ reflectLabels fullTys
       let leftLabels = toList $ reflectLabels leftTys
       let rightLabels = toList $ reflectLabels rightTys
-      buildCase full resTy \caseIdx [v] -> do
+      buildCase full resTy \caseIdx v -> do
         let (label, i) = fullLabels !! caseIdx
         let labelIx labs li = fromJust $ elemIndex li labs
         let resTys' = sinkList resTys
@@ -858,9 +858,9 @@ exceptToMaybeExpr expr = case expr of
   Case e alts resultTy _ -> do
     e' <- substM e
     resultTy' <- substM $ MaybeTy resultTy
-    buildCase e' resultTy' \i vs -> do
-      Abs bs body <- return $ alts !! i
-      extendSubst (bs @@> map SubstVal vs) $ exceptToMaybeBlock body
+    buildCase e' resultTy' \i v -> do
+      Abs b body <- return $ alts !! i
+      extendSubst (b @> SubstVal v) $ exceptToMaybeBlock body
   Atom x -> do
     x' <- substM x
     ty <- getType x'
