@@ -834,9 +834,9 @@ buildCase :: (Emits n, ScopableBuilder m)
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
   case trySelectBranch scrut of
-    Just (i, args) -> do
+    Just (i, arg) -> do
       Distinct <- getDistinct
-      indexedAltBody i (map sink args)
+      indexedAltBody i [sink arg]
     Nothing -> do
       scrutTy <- getType scrut
       altBinderTys <- caseAltsBinderTys scrutTy

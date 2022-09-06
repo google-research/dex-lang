@@ -681,8 +681,8 @@ pattern Record ty xs = Con (Newtype (StaticRecordTy ty) (ProdVal xs))
 pattern SumTy :: [Type n] -> Type n
 pattern SumTy cs = TC (SumType cs)
 
-pattern SumVal :: Type n -> Int -> Atom n -> Atom n
-pattern SumVal ty tag payload = Con (SumCon ty tag payload)
+pattern SumVal :: [Type n] -> Int -> Atom n -> Atom n
+pattern SumVal tys tag payload = Con (SumCon tys tag payload)
 
 pattern PairVal :: Atom n -> Atom n -> Atom n
 pattern PairVal x y = Con (ProdCon [x, y])
@@ -740,10 +740,10 @@ pattern MaybeTy :: Type n -> Type n
 pattern MaybeTy a = SumTy [UnitTy, a]
 
 pattern NothingAtom :: Type n -> Atom n
-pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
+pattern NothingAtom a = SumVal [UnitTy, a] 0 UnitVal
 
 pattern JustAtom :: Type n -> Atom n -> Atom n
-pattern JustAtom a x = SumVal (MaybeTy a) 1 x
+pattern JustAtom a x = SumVal [UnitTy, a] 1 x
 
 pattern BoolTy :: Type n
 pattern BoolTy = Word8Ty

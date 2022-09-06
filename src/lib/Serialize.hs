@@ -124,15 +124,15 @@ prettyVal val = case val of
       return $ pretty (xStr, yStr)
     ProdCon _ -> error "Unexpected product type: only binary products available in surface language."
     Newtype vty@(VariantTy (NoExt types)) (Con (SumAsProd _ (TagRepVal trep) payload)) ->
-      return $ pretty $ Newtype vty $ SumVal (SumTy $ toList types) t value
-      where t = fromIntegral trep; [value] = payload !! t
+      return $ pretty $ Newtype vty $ SumVal (toList types) t value
+      where t = fromIntegral trep; value = payload !! t
     -- Pretty-print strings
     Newtype (TypeCon "List" _ (DataDefParams [Word8Ty] _)) _ -> do
       s <- getDexString val
       return $ pretty $ "\"" ++ s ++ "\""
     Newtype (TypeCon _ dataDefName _) (Con (SumCon _ t e)) -> prettyData dataDefName t e
     Newtype (TypeCon _ dataDefName _) (Con (SumAsProd _ (TagRepVal trep) payload)) -> prettyData dataDefName t e
-      where t = fromIntegral trep; [e] = payload !! t
+      where t = fromIntegral trep; e = payload !! t
     Newtype (TypeCon _ dataDefName _) e -> prettyData dataDefName 0 e
     SumAsProd _ _ _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con

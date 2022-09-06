@@ -1390,7 +1390,7 @@ dataConDefAsAtom defName conIx = liftBuilder do
           []  -> error "unreachable"
           [_] -> conProd
           _   -> SumVal conTys conIx conProd
-            where conTys = SumTy $ sinkList $ conDefs <&> \(DataConDef _ _ rty _) -> rty
+            where conTys = sinkList $ conDefs <&> \(DataConDef _ _ rty _) -> rty
 
 buildDataCon :: EnvReader m => Type n -> [Atom n] -> m n (Atom n)
 buildDataCon repTy topArgs = wrap repTy topArgs

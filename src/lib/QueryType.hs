@@ -390,8 +390,8 @@ getTypePrimCon :: PrimCon (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
-  SumCon ty _ _ -> substM ty
-  SumAsProd ty _ _ -> substM ty
+  SumCon tys _ _ -> SumTy <$> traverse substM tys
+  SumAsProd tys _ _ -> SumTy <$> traverse substM tys
   Newtype ty _ -> substM ty
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
@@ -402,8 +402,8 @@ getTypePrimCon con = case con of
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM getTypeRef xs)
     Newtype ty _ -> RawRefTy <$> substM ty
-    SumAsProd ty _ _ -> do
-      RawRefTy <$> substM ty
+    SumAsProd tys _ _ -> do
+      RawRefTy . SumTy <$> traverse substM tys
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
