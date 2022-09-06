@@ -986,7 +986,8 @@ fromNewtypeWrapper ty = do
   TypeCon _ defName params <- return ty
   def <- lookupDataDef defName
   [con] <- instantiateDataDef def params
-  DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) _ _ <- return con
+  -- Single field constructors are represented by their field
+  DataConDef _ wrappedTy [_] <- return con
   return wrappedTy
 
 tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
@@ -1048,7 +1049,7 @@ emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
 emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> Atom n -> m n (Name DataConNameC n)
 emitDataConName dataDefName conIdx conAtom = do
   DataDef _ _ dataCons <- lookupDataDef dataDefName
-  let (DataConDef name _ _ _) = dataCons !! conIdx
+  let (DataConDef name _ _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
 
 zipNest :: (forall ii ii'. a -> b ii ii' -> b' ii ii')

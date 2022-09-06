@@ -285,7 +285,7 @@ instance HasType Atom where
         -- Newtypes
         TypeCon _ defName params | i == 0 -> do
           def <- lookupDataDef defName
-          [DataConDef _ _ repTy _] <- checkedInstantiateDataDef def params
+          [DataConDef _ repTy _] <- checkedInstantiateDataDef def params
           return repTy
         TC (Fin _) | i == 0 -> return IdxRepTy
         StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
@@ -690,7 +690,8 @@ typeCheckPrimOp op = case op of
     case t' of
       TypeCon _ dataDefName (DataDefParams [] []) -> do
         DataDef _ _ dataConDefs <- lookupDataDef dataDefName
-        forM_ dataConDefs \(DataConDef _ (Abs binders _) _ _) -> checkEmptyNest binders
+        forM_ dataConDefs \(DataConDef _ _ idxs) ->
+          unless (null idxs) $ throw TypeErr "Not empty"
       VariantTy _ -> return ()  -- TODO: check empty payload
       SumTy cases -> forM_ cases \cty -> checkAlphaEq cty UnitTy
       _ -> error $ "Not a sum type: " ++ pprint t'
@@ -828,12 +829,6 @@ checkRWSAction rws f = do
   resultTy' <- liftHoistExcept $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
 
--- Having this as a separate helper function helps with "'b0' is untouchable" errors
--- from GADT+monad type inference.
-checkEmptyNest :: Fallible m => Nest b n l -> m ()
-checkEmptyNest Empty = return ()
-checkEmptyNest _  = throw TypeErr "Not empty"
-
 checkCase :: Typer m => HasType body
           => Atom i -> [AltP body i] -> Type i -> EffectRow i -> m i o (Type o)
 checkCase scrut alts resultTy effs = do
@@ -850,7 +845,7 @@ checkCaseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     cons <- checkedInstantiateDataDef def params
-    return [repTy | DataConDef _ _ repTy _ <- cons]
+    return [repTy | DataConDef _ repTy _ <- cons]
   SumTy types -> return types
   VariantTy (NoExt types) -> return $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
@@ -1261,7 +1256,7 @@ checkDataLike ty = case ty of
     params' <- substM params
     def <- lookupDataDef =<< substM defName
     dataCons <- instantiateDataDef def params'
-    dropSubst $ forM_ dataCons \(DataConDef _ _ repTy _) -> checkDataLike repTy
+    dropSubst $ forM_ dataCons \(DataConDef _ repTy _) -> checkDataLike repTy
   TC con -> case con of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as

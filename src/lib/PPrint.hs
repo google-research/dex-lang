@@ -488,8 +488,8 @@ instance Pretty (DataDef n) where
     "data" <+> p name <+> p bs <> prettyLines cons
 
 instance Pretty (DataConDef n) where
-  pretty (DataConDef name bs _ _) =
-    p name <+> ":" <+> p bs
+  pretty (DataConDef name repTy _) =
+    p name <+> ":" <+> p repTy
 
 instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames params superclasses methodTys) =

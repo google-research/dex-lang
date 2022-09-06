@@ -11,7 +11,7 @@ module QueryType (
   caseAltsBinderTys, depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getBaseMonoidType, getReferentTy,
   getMethodIndex,
-  instantiateDataDef, dataDefRep,
+  instantiateDataDef, applyDataConAbs, dataDefRep,
   instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType, specializedFunType,
@@ -80,7 +80,7 @@ caseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     cons <- instantiateDataDef def params
-    return [repTy | DataConDef _ _ repTy _ <- cons]
+    return [repTy | DataConDef _ repTy _ <- cons]
   SumTy types -> return types
   VariantTy (NoExt types) -> return $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
@@ -125,17 +125,24 @@ getMethodIndex className methodSourceName = do
 {-# INLINE getMethodIndex #-}
 
 instantiateDataDef :: ScopeReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons) (DataDefParams xs1 xs2) = do
-  fromListE <$> applySubst (bs1 @@> (SubstVal <$> xs1) <.> bs2 @@> (SubstVal <$> xs2)) (ListE cons)
+instantiateDataDef (DataDef _ bs cons) params = do
+  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) params
 {-# INLINE instantiateDataDef #-}
+
+applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, ScopeReader m)
+                => Abs DataDefBinders e n -> DataDefParams n -> m n (e n)
+applyDataConAbs (Abs (DataDefBinders bs1 bs2) e) (DataDefParams xs1 xs2) = do
+  let paramsSubst = bs1 @@> (SubstVal <$> xs1) <.> bs2 @@> (SubstVal <$> xs2)
+  applySubst paramsSubst e
+{-# INLINE applyDataConAbs #-}
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
 dataDefRep :: [DataConDef n] -> Type n
 dataDefRep = \case
   [] -> error "unreachable"  -- There's no representation for a void type
-  [DataConDef _ _ ty _] -> ty
-  tys -> SumTy $ tys <&> \(DataConDef _ _ ty _) -> ty
+  [DataConDef _ ty _] -> ty
+  tys -> SumTy $ tys <&> \(DataConDef _ ty _) -> ty
 
 instantiateNaryPi :: EnvReader m => NaryPiType n -> [Atom n] -> m n (NaryPiType n)
 instantiateNaryPi (NaryPiType bs eff resultTy) args = do
@@ -211,7 +218,7 @@ projectionIndices ty = case ty of
   TypeCon _ defName _ -> do
     DataDef _ _ cons <- lookupDataDef defName
     case cons of
-      [DataConDef _ _ _ idxs] -> return idxs
+      [DataConDef _ _ idxs] -> return idxs
       _ -> unsupported
   StaticRecordTy types -> return $ iota (length types) <&> (:[0])
   ProdTy tys -> return $ iota (length tys) <&> (:[])
@@ -356,7 +363,7 @@ instance HasType Atom where
         StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
         TypeCon _ defName params | i == 0 -> do
           def <- lookupDataDef defName
-          [DataConDef _ _ repTy _] <- instantiateDataDef def params
+          [DataConDef _ repTy _] <- instantiateDataDef def params
           return repTy
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
