@@ -267,8 +267,6 @@ instance PrettyPrec (Atom n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
-    DataConRef _ params args -> atPrec LowestPrec $
-      "DataConRef" <+> p params <+> p args
     BoxedRef (Abs (NonDepNest b ptrsSizes) body) -> atPrec LowestPrec $
       "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
@@ -294,10 +292,6 @@ instance Pretty (FieldRowElem n) where
       withLabels items <&> \(l, _, ty) -> p l <> ":" <+> pLowest ty
     DynField  l ty -> "@" <> p l <> ":" <+> p ty
     DynFields f    -> "..." <> p f
-
-instance Pretty (DataConRefBinding n l) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (DataConRefBinding n l) where
-  prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Maybe (Doc ann) -> Doc ann -> Doc ann -> DocPrec ann

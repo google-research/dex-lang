@@ -331,11 +331,6 @@ instance HasType Atom where
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
     ACase _ _ resultTy -> substM resultTy
-    DataConRef defName params _ -> do
-      defName' <- substM defName
-      DataDef sourceName _ _ <- lookupDataDef defName'
-      params' <- substM params
-      return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef _ _ ty -> do
       ty' <- substM ty
       return $ RawRefTy $ DepPairTy ty'

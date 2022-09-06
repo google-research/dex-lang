@@ -64,8 +64,6 @@ data Atom (n::S) =
  | TC  (TC  n)
  | Eff (EffectRow n)
  | ACase (Atom n) [AltP Atom n] (Type n)
-   -- single-constructor only for now
- | DataConRef (DataDefName n) (DataDefParams n) (EmptyAbs (Nest DataConRefBinding) n)
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
  | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
  | BoxedRef (Abs (NonDepNest BoxPtr) Atom n)
@@ -106,8 +104,6 @@ type AtomNameBinder = NameBinder AtomNameC
 type Effect    = EffectP    Name
 type EffectRow = EffectRowP Name
 type BaseMonoid n = BaseMonoidP (Atom n)
-
-data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
 type AtomBinderP = BinderP AtomNameC
 type Binder = AtomBinderP Type
@@ -943,22 +939,6 @@ instance SubstE AtomSubstVal FieldRowElems where
           where ExtLabeledItemsE (NoExt items') = substE env
                   (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE Atom AtomName i)
 
-instance GenericB DataConRefBinding where
-  type RepB DataConRefBinding = PairB (LiftB Atom) Binder
-  fromB (DataConRefBinding b val) = PairB (LiftB val) b
-  toB   (PairB (LiftB val) b) = DataConRefBinding b val
-
-instance SinkableB DataConRefBinding
-instance HoistableB DataConRefBinding
-instance ProvesExt  DataConRefBinding
-instance BindsNames DataConRefBinding
-instance SubstB Name DataConRefBinding
-instance SubstB AtomSubstVal DataConRefBinding
-instance AlphaEqB DataConRefBinding
-instance AlphaHashableB DataConRefBinding
-deriving instance Show (DataConRefBinding n l)
-deriving instance Generic (DataConRefBinding n l)
-
 newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
   ExtLabeledItemsE
    { fromExtLabeledItemsE :: ExtLabeledItems (e1 n) (e2 n) }
@@ -998,11 +978,8 @@ instance GenericE Atom where
   {- TC -}         (ComposeE PrimTC  Atom)
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
-            ) (EitherE3
+            ) (EitherE2
   {- BoxedRef -}   ( Abs (NonDepNest BoxPtr) Atom )
-  {- DataConRef -} ( DataDefName                    `PairE`
-                     DataDefParams                  `PairE`
-                     EmptyAbs (Nest DataConRefBinding) )
   {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
 
   fromE atom = case atom of
@@ -1026,9 +1003,7 @@ instance GenericE Atom where
     Eff effs -> Case4 $ Case2 $ effs
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
     BoxedRef ab -> Case5 $ Case0 ab
-    DataConRef defName params bs -> Case5 $ Case1 $ defName `PairE` params `PairE` bs
-    DepPairRef lhs rhs ty ->
-      Case5 $ Case2 $ lhs `PairE` rhs `PairE` ty
+    DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1063,8 +1038,7 @@ instance GenericE Atom where
       _ -> error "impossible"
     Case5 val -> case val of
       Case0 ab -> BoxedRef ab
-      Case1 (defName `PairE` params `PairE` bs) -> DataConRef defName params bs
-      Case2 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
+      Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -2092,7 +2066,6 @@ instance Store (MethodType   n)
 instance Store (DictType n)
 instance Store (DictExpr n)
 instance Store (SynthCandidates n)
-instance Store (DataConRefBinding n l)
 instance Store (ObjectFiles n)
 instance Store (Module n)
 instance Store (ImportStatus n)

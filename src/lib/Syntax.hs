@@ -41,7 +41,7 @@ module Syntax (
     ImportStatus (..), emptyModuleEnv,
     ModuleSourceName (..), LoadedModules (..), Cache (..), ObjectFiles (..),
     BindsEnv (..), BindsOneAtomName (..), AtomNameBinder,
-    DataConRefBinding (..), AltP, Alt, AtomBinding (..),
+    AltP, Alt, AtomBinding (..),
     SolverBinding (..), TopFunBinding (..), SpecializationSpec (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..),

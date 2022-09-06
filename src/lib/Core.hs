@@ -323,12 +323,6 @@ instance BindsEnv EnvFrag where
 instance BindsEnv (RecSubstFrag Binding) where
   toEnvFrag frag = EnvFrag frag mempty
 
--- This is needed to be able to derive generic traversals over Atoms, and is
--- ok to be left unimplemented for as long as it's _dynamically_ unreachable.
--- Since references are only used in Imp lowering, we're generally ok.
-instance BindsEnv DataConRefBinding where
-  toEnvFrag = error "not implemented"
-
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (PairB b1 b2)) where
   toEnvFrag (PairB b1 b2) = do
