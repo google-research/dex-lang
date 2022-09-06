@@ -256,13 +256,6 @@ instance HasType Atom where
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
-    DataConRef defName params args -> do
-      defName' <- substM defName
-      def@(DataDef sourceName _ _) <- lookupDataDef defName'
-      params' <- checkE params
-      [DataConDef _ argBs _ _] <- checkedInstantiateDataDef def params'
-      checkDataConRefEnv argBs args
-      return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef l (Abs b r) ty -> do
       ty' <- checkTypeE TyKind ty
       l |: RawRefTy (depPairLeftTy ty')
@@ -857,22 +850,6 @@ checkCaseAltsBinderTys ty = case ty of
   VariantTy (NoExt types) -> return $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
-
-checkDataConRefEnv :: Typer m
-                        => EmptyAbs (Nest Binder) o
-                        -> EmptyAbs (Nest DataConRefBinding) i
-                        -> m i o ()
-checkDataConRefEnv (EmptyAbs Empty) (Abs Empty UnitE) = return ()
-checkDataConRefEnv (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding restRefs)) = do
-  let DataConRefBinding b' ref = refBinding
-  ref |: RawRefTy (binderAnn b)
-  bAnn' <- substM $ binderAnn b'
-  checkAlphaEq (binderAnn b) bAnn'
-  checkB b' \b'' -> do
-    ab <- sinkM $ Abs b (EmptyAbs restBs)
-    restBs' <- applyAbs ab (binderName b'')
-    checkDataConRefEnv restBs' (EmptyAbs restRefs)
-checkDataConRefEnv _ _ = throw CompilerErr $ "Mismatched args and binders"
 
 checkAlt :: (HasType body, Typer m)
          => Type o -> Type o -> AltP body i -> m i o ()

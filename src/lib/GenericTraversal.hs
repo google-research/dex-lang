@@ -98,7 +98,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
   ACase _ _ _ -> nyi
-  DataConRef _ _ _ -> nyi
   DepPairRef _ _ _ -> nyi
   BoxedRef _ -> nyi
   where nyi = error $ "not implemented: " ++ pprint atom
