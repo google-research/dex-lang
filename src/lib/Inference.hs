@@ -1199,14 +1199,14 @@ instance SinkableE IndexedAlt where
   sinkingProofE = todoSinkableProof
 
 buildNthOrderedAlt :: (Emits n, Builder m)
-                   => [IndexedAlt n] -> Type n -> Type n -> Int -> [Atom n]
+                   => [IndexedAlt n] -> Type n -> Type n -> Int -> Atom n
                    -> m n (Atom n)
-buildNthOrderedAlt alts scrutTy resultTy i vs = do
+buildNthOrderedAlt alts scrutTy resultTy i v = do
   case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
       emitOp $ ThrowError resultTy'
-    Just alt -> applyNaryAbs alt (SubstVal <$> vs) >>= emitBlock
+    Just alt -> applyAbs alt (SubstVal v) >>= emitBlock
 
 -- converts from the ordinal index used in the core IR to the more complicated
 -- `CaseAltIndex` used in the surface IR.
@@ -1226,11 +1226,11 @@ buildMonomorphicCase
   => [IndexedAlt n] -> Atom n -> Type n -> m n (Atom n)
 buildMonomorphicCase alts scrut resultTy = do
   scrutTy <- getType scrut
-  buildCase scrut resultTy \i vs -> do
+  buildCase scrut resultTy \i v -> do
     ListE alts' <- sinkM $ ListE alts
     scrutTy'    <- sinkM scrutTy
     resultTy'   <- sinkM resultTy
-    buildNthOrderedAlt alts' scrutTy' resultTy' i vs
+    buildNthOrderedAlt alts' scrutTy' resultTy' i v
 
 buildSortedCase :: (Fallible1 m, Builder m, Emits n)
                  => Atom n -> [IndexedAlt n] -> Type n
@@ -1245,7 +1245,7 @@ buildSortedCase scrut alts resultTy = do
         -- Single constructor ADTs are not sum types, so elide the case.
         [_] -> do
           let [IndexedAlt _ alt] = alts
-          emitBlock =<< applyNaryAbs alt [SubstVal $ unwrapNewtype scrut]
+          emitBlock =<< applyAbs alt (SubstVal $ unwrapNewtype scrut)
         _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
@@ -1273,7 +1273,7 @@ buildSortedCase scrut alts resultTy = do
                         resultTy'   <- sinkM resultTy
                         liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
               (\v -> do tailAlt' <- sinkM tailAlt
-                        applyNaryAbs tailAlt' [SubstVal v] >>= emitBlock )
+                        applyAbs tailAlt' (SubstVal v) >>= emitBlock )
         _ -> throw TypeErr "Can't specify more than one variant tail pattern."
     _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
 
@@ -1716,7 +1716,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
                                              ++ " got " ++ show (nestLength ps)
     (params, repTy') <- inferParams (Abs paramBs repTy)
     constrainEq scrutineeTy $ TypeCon sourceName dataDefName params
-    buildUnaryAltInf repTy' \arg -> do
+    buildAltInf repTy' \arg -> do
       args <- forM idxs $ init |> NE.nonEmpty |> \case
         Nothing    -> return arg
         Just idxs' -> emit $ Atom $ ProjectElt idxs' arg
@@ -1729,7 +1729,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     let patTypes = prevTys <> labeledSingleton label ty
     let extPatTypes = Ext patTypes $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
-    buildUnaryAltInf ty \x ->
+    buildAltInf ty \x ->
       bindLamPat p x cont
   UPatVariantLift labels p -> do
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -1737,7 +1737,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     let extPatTypes = Ext prevTys $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
     let ty = VariantTy $ Ext NoLabeledItems $ Just rest
-    buildUnaryAltInf ty \x ->
+    buildAltInf ty \x ->
       bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
@@ -2802,31 +2802,16 @@ buildTabPiInf hint ty body = do
       withAllowedEffects Pure $ body v
   return $ TabPiType (b:>ty) resultTy
 
-buildUnaryAltInf
+buildAltInf
   :: EmitsInf n
   => Type n
   -> (forall l. (EmitsBoth l, Ext n l) => AtomName l -> InfererM i l (Atom l))
   -> InfererM i n (Alt n)
-buildUnaryAltInf ty body = do
-  bs <- liftBuilder $ singletonBinderNest noHint ty
-  buildAltInf bs \[v] -> body v
-
-buildAltInf
-  :: EmitsInf n
-  => EmptyAbs (Nest Binder) n
-  -> (forall l. (EmitsBoth l, Ext n l) => [AtomName l] -> InfererM i l (Atom l))
-  -> InfererM i n (Alt n)
-buildAltInf (Abs Empty UnitE) body =
-  Abs Empty <$> buildBlockInf (body [])
-buildAltInf (Abs (Nest (b:>ty) bs) UnitE) body = do
-  Abs b' (Abs bs' body') <-
-    buildAbsInf (getNameHint b) ty \v -> do
-      ab <- sinkM $ Abs b (EmptyAbs bs)
-      bs' <- applyAbs ab v
-      buildAltInf bs' \vs -> do
-        v' <- sinkM v
-        body $ v' : vs
-  return $ Abs (Nest b' bs') body'
+buildAltInf ty body = do
+  buildAbsInf noHint ty \v ->
+    buildBlockInf do
+      Distinct <- getDistinct
+      body $ sink v
 
 -- === EmitsInf predicate ===
 

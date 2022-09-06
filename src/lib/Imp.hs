@@ -368,8 +368,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     e' <- substM e
     case trySelectBranch e' of
       Just (con, arg) -> do
-        Abs bs body <- return $ alts !! con
-        extendSubst (bs @@> [SubstVal arg]) $ translateBlock maybeDest body
+        Abs b body <- return $ alts !! con
+        extendSubst (b @> SubstVal arg) $ translateBlock maybeDest body
       Nothing -> case e' of
         Con (Newtype (VariantTy _) (Con (SumAsProd _ tag xss))) -> go tag xss
         Con (Newtype (TypeCon _ _ _) (Con (SumAsProd _ tag xss))) -> go tag xss
@@ -380,8 +380,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
             tag' <- fromScalarAtom tag
             dest <- allocDest maybeDest =<< substM ty
             emitSwitch tag' (zip xss alts) $
-              \(xs, Abs bs body) ->
-                 void $ extendSubst (bs @@> [SubstVal $ sink xs]) $
+              \(xs, Abs b body) ->
+                 void $ extendSubst (b @> SubstVal (sink xs)) $
                    translateBlock (Just $ sink dest) body
             destToAtom dest
   where

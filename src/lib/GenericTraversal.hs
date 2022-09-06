@@ -185,14 +185,9 @@ traverseAlt
   :: GenericTraverser s
   => Alt i
   -> GenericTraverserM s i o (Alt o)
-traverseAlt (Abs Empty body) = Abs Empty <$> tge body
-traverseAlt (Abs (Nest (b:>ty) bs) body) = do
+traverseAlt (Abs (b:>ty) body) = do
   ty' <- tge ty
-  Abs b' (Abs bs' body') <-
-    buildAbs (getNameHint b) ty' \v -> do
-      extendRenamer (b@>v) $
-        traverseAlt $ Abs bs body
-  return $ Abs (Nest b' bs') body'
+  buildAbs (getNameHint b) ty' \v -> extendRenamer (b@>v) $ tge body
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

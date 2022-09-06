@@ -367,10 +367,10 @@ linearizeExpr expr = case expr of
         resultTangentType <- tangentType resultTy'
         resultTyWithTangent <- PairTy <$> substM resultTy
                                       <*> tangentFunType resultTangentType
-        (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i xs -> do
-          xs' <- mapM emitAtomToName xs
-          Abs bs body <- return $ alts !! i
-          extendSubst (bs @@> xs') $ withTangentFunAsLambda $ linearizeBlock body
+        (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i x -> do
+          x' <- emitAtomToName x
+          Abs b body <- return $ alts !! i
+          extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do
           applyLinToTangents $ sink linLam
 

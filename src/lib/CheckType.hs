@@ -858,8 +858,7 @@ checkCaseAltsBinderTys ty = case ty of
 
 checkAlt :: (HasType body, Typer m)
          => Type o -> Type o -> AltP body i -> m i o ()
-checkAlt resultTyReq bTyReq (Abs bs body) = do
-  Nest b Empty <- return bs
+checkAlt resultTyReq bTyReq (Abs b body) = do
   bTy <- substM $ binderType b
   checkAlphaEq bTyReq bTy
   substBinders b \_ -> do
