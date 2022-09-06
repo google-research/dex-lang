@@ -367,9 +367,9 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
-      Just (con, args) -> do
+      Just (con, arg) -> do
         Abs bs body <- return $ alts !! con
-        extendSubst (bs @@> map SubstVal args) $ translateBlock maybeDest body
+        extendSubst (bs @@> [SubstVal arg]) $ translateBlock maybeDest body
       Nothing -> case e' of
         Con (Newtype (VariantTy _) (Con (SumAsProd _ tag xss))) -> go tag xss
         Con (Newtype (TypeCon _ _ _) (Con (SumAsProd _ tag xss))) -> go tag xss
@@ -381,7 +381,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
             dest <- allocDest maybeDest =<< substM ty
             emitSwitch tag' (zip xss alts) $
               \(xs, Abs bs body) ->
-                 void $ extendSubst (bs @@> map (SubstVal . sink) xs) $
+                 void $ extendSubst (bs @@> [SubstVal $ sink xs]) $
                    translateBlock (Just $ sink dest) body
             destToAtom dest
   where
@@ -502,13 +502,13 @@ toImpOp maybeDest op = case op of
     TypeCon _ defName _ -> do
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ Newtype ty $
-        Con $ SumAsProd (SumTy $ cons <&> const UnitTy) i (cons <&> const [UnitVal])
+        Con $ SumAsProd (cons <&> const UnitTy) i (cons <&> const UnitVal)
     VariantTy (NoExt labeledItems) -> do
       let items = toList labeledItems
       return $ Con $ Newtype ty $
-        Con $ SumAsProd (SumTy $ items <&> const UnitTy) i (items <&> const [UnitVal])
+        Con $ SumAsProd (items <&> const UnitTy) i (items <&> const UnitVal)
     SumTy cases ->
-      return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
+      return $ Con $ SumAsProd cases i $ cases <&> const UnitVal
     _ -> error $ "Not an enum: " ++ pprint ty
   SumToVariant c -> do
     resultTy <- resultTyM
@@ -1027,7 +1027,7 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
     recSumType cases = do
       tag <- rec TagRepTy
       contents <- forM cases rec
-      return $ Con $ ConRef $ SumAsProd (SumTy cases) tag $ map (\x->[x]) contents
+      return $ Con $ ConRef $ SumAsProd cases tag $ contents
 
 makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr (idxsTy, idxs) ty = do
@@ -1069,15 +1069,13 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         (ConRef (SumAsProd _ tag payload), _) -> case src of
           Con (SumAsProd _ tagSrc payloadSrc) -> do
             copyRec tag tagSrc
-            unless (all null payload) do -- optimization
+            unless (all (\case UnitVal -> True; _ -> False) payload) do -- optimization
               tagSrc' <- fromScalarAtom tagSrc
               emitSwitch tagSrc' (zip payload payloadSrc)
-                \(d, s) -> zipWithM_ copyRec (map sink d) (map sink s)
+                \(d, s) -> copyRec (sink d) (sink s)
           SumVal _ con x -> do
             copyRec tag $ TagRepVal $ fromIntegral con
-            case payload !! con of
-              [xDest] -> copyRec xDest x
-              _       -> error "Expected singleton payload in SumAsProd"
+            copyRec (payload !! con) x
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) -> case (destCon, srcCon) of
           (ProdCon ds, ProdCon ss) -> zipWithM_ copyRec ds ss
@@ -1139,7 +1137,10 @@ loadDest (Con dest) = do
        loadDest result
    ConRef con -> Con <$> case con of
      ProdCon ds -> ProdCon <$> traverse loadDest ds
-     SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
+     -- FIXME: This seems dangerous! We should only load the dest chosen by the tag
+     -- I think it might be ok given the current definition of loadDest, but I'm not
+     -- 100% sure...
+     SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM loadDest xss
      Newtype ty eRef -> Newtype ty <$> loadDest eRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest

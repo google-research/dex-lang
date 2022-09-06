@@ -718,9 +718,9 @@ mkBundleTy = bundleFold UnitTy PairTy
 mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
 
-trySelectBranch :: Atom n -> Maybe (Int, [Atom n])
+trySelectBranch :: Atom n -> Maybe (Int, Atom n)
 trySelectBranch e = case e of
-  SumVal _ i value -> Just (i, [value])
+  SumVal _ i value -> Just (i, value)
   Con (SumAsProd _ (TagRepVal tag) vals) -> Just (i, vals !! i)
     where i = fromIntegral tag
   Con (Newtype _ e') -> trySelectBranch e'

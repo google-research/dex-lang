@@ -459,12 +459,17 @@ typeCheckPrimCon :: Typer m => PrimCon (Atom i) -> m i o (Type o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
-  SumCon ty tag payload -> do
-    ty'@(SumTy caseTys) <- substM ty
+  SumCon tys tag payload -> do
+    caseTys <- traverse substM tys
     unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
     payload |: (caseTys !! tag)
-    return ty'
-  SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
+    return $ SumTy caseTys
+  SumAsProd tys tag es -> do
+    tag |: TagRepTy
+    tys' <- traverse substM tys
+    unless (length tys == length es) $ throw TypeErr "Invalid SumAsProd"
+    forM_ (zip es tys') $ uncurry (|:)
+    return $ SumTy tys'
   Newtype ty e -> do
     ty' <- substM ty
     case ty' of
@@ -497,9 +502,9 @@ typeCheckPrimCon con = case con of
           e |: RawRefTy (dataDefRep cons)
         _ -> error $ "Unsupported newtype: " ++ pprint ty
       return $ RawRefTy ty'
-    SumAsProd ty tag _ -> do    -- TODO: check args!
+    SumAsProd tys tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
-      RawRefTy <$> substM ty
+      RawRefTy . SumTy <$> traverse substM tys
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy method  -> do

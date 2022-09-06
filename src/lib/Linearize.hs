@@ -343,13 +343,13 @@ linearizeExpr expr = case expr of
                   return $ WithTangent arg' $
                     return $ sink $ Con $ Newtype
                       (TypeCon "SymbolicTangent" stDefName (DataDefParams [argTy'] []))
-                      (SumVal (SumTy [UnitTy, argTy']) 0 UnitVal)
+                      (SumVal [UnitTy, argTy'] 0 UnitVal)
                 True -> do  -- Wrap tangent in SomeTangent
                   WithTangent arg'' argLin <- dropSubst $ linearizeAtom arg'
                   return $ WithTangent arg'' $ argLin <&> \argTan ->
                     Con $ Newtype
                       (TypeCon "SymbolicTangent" (sink stDefName) (DataDefParams [sink argTy'] []))
-                      (SumVal (SumTy [UnitTy, sink argTy']) 1 argTan)
+                      (SumVal [UnitTy, sink argTy'] 1 argTan)
         (ans, flin) <- fromPair =<< naryApp cl (polyXs' ++ (wts <&> \(WithTangent p _) -> p))
         return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
   App _ _ -> error "not implemented"
@@ -511,16 +511,15 @@ linearizePrimCon con = case con of
   Lit _ -> emitZeroT
   ProdCon xs -> fmapLin (ProdVal . fromComposeE) $ seqLin (fmap linearizeAtom xs)
   SumCon  _ _ _ -> notImplemented
-  SumAsProd ty tg elems -> do
-    ty' <- substM ty
+  SumAsProd tys tg elems -> do
+    tys' <- traverse substM tys
     tg' <- substM tg
     -- There must be a way to do this with `seqLin` etc but it's too much for me
-    elemsWithT <- traverse (traverse linearizeAtom) elems
-    let elemsP = fmap (fmap (\(WithTangent x _) -> x)) elemsWithT
-    return $ WithTangent (Con $ SumAsProd ty' tg' elemsP) do
-      elemsT <- forM elemsWithT \elemsWithT' ->
-                  forM elemsWithT' \(WithTangent _ t) -> t
-      return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
+    elemsWithT <- traverse linearizeAtom elems
+    let elemsP = fmap (\(WithTangent x _) -> x) elemsWithT
+    return $ WithTangent (Con $ SumAsProd tys' tg' elemsP) do
+      elemsT <- forM elemsWithT \(WithTangent _ t) -> t
+      return $ Con $ SumAsProd (sinkList tys') (sink tg') elemsT
   Newtype ty x    -> case ty of
     TC (Fin _) -> emitZeroT
     StaticRecordTy _ -> do

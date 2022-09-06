@@ -155,9 +155,9 @@ evalExpr expr = case expr of
     e' <- evalAtom e
     case trySelectBranch e' of
       Nothing -> error "branch should be chosen at this point"
-      Just (con, args) -> do
+      Just (con, arg) -> do
         Abs bs body <- return $ alts !! con
-        extendSubst (bs @@> map SubstVal args) $ evalBlock body
+        extendSubst (bs @@> [SubstVal arg]) $ evalBlock body
   Hof hof -> case hof of
     RunIO (Lam (LamExpr b body)) ->
       extendSubst (b @> SubstVal UnitTy) $
@@ -218,11 +218,11 @@ evalOp expr = mapM evalAtom expr >>= \case
   ToEnum ty@(TypeCon _ defName _) i -> do
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ Newtype ty $ Con $
-        SumAsProd (SumTy $ cons <&> const UnitTy) i (cons <&> const [UnitVal])
+        SumAsProd (cons <&> const UnitTy) i (cons <&> const UnitVal)
   ProjMethod dict i -> evalProjectDictMethod dict i
   VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
-    return $ Con $ Newtype ty $ SumVal (SumTy $ toList tys) ix v
+    return $ Con $ Newtype ty $ SumVal (toList tys) ix v
   _ -> error $ "Not implemented: " ++ pprint expr
 
 evalProjectDictMethod :: Interp m => Atom o -> Int -> m i o (Atom o)
