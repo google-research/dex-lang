@@ -109,7 +109,7 @@ def numpy_matvec(n, width):
 
 def numpy_poly(n):
   xs = np.arange(n, dtype=np.float32)
-  return lambda: 4.0 * (xs * xs * xs * xs) + 3.0 * (xs * xs * xs) + 2.0 * (xs * xs) + xs
+  return lambda: np.polynomial.Polynomial([0.0, 1.0, 2.0, 3.0, 4.0])(xs)
 
 
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
