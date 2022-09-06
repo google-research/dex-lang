@@ -1,12 +1,9 @@
-def poly {t} [VSpace t, Mul t] (x:t) : t =
-  4.0 .* (x * x * x * x) + 3.0 .* (x * x * x) + 2.0 .* (x * x) + x
-
 n = if dex_test_mode() then 1000 else 100000
 
 a = for i:(Fin n). n_to_f $ ordinal i
 
 %bench "poly"
-res = poly a
+res = for i. evalpoly [0.0, 1.0, 2.0, 3.0, 4.0] a.i
 >
 > poly
 > Compile time: 44.950 ms
