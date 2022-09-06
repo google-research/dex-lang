@@ -212,7 +212,7 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
              standalone-function-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
-             linalg-tests set-tests fft-tests
+             linalg-tests set-tests fft-tests stats-tests
 
 doc-names = conditionals functions
 

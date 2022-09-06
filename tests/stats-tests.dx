@@ -1,0 +1,253 @@
+-- stats-tests.dx
+
+import stats
+
+-- NonNegFloat
+
+rp = [0.1, 0.3, 0.2, 0.1]
+nnp = map f_to_nnf rp
+(get_raw $ sum nnp) ~~ sum rp
+> True
+
+(get_raw $ prod nnp) ~~ prod rp
+> True
+
+get_raw (f_to_nnf 0.0) ~~ 0.0
+> True
+
+get_raw (f_to_nnf 0.5) ~~ 0.5
+> True
+
+get_raw (f_to_nnf 1.0) ~~ 1.0
+> True
+
+get_raw (f_to_nnf 2.0) ~~ 2.0
+> True
+
+get_raw (f_to_nnf 0.1 + f_to_nnf 0.2) ~~ 0.3
+> True
+
+get_raw (f_to_nnf 0.4 * f_to_nnf 0.5) ~~ 0.2
+> True
+
+get_raw (divide (f_to_nnf 0.4) (f_to_nnf 0.5)) ~~ 0.8
+> True
+
+
+-- mainly cross-checking against results from R
+
+-- bernoulli
+
+get_log (density (Bernoulli 0.6) True) ~~ -0.5108256
+> True
+
+get_log (cumulative (Bernoulli 0.6) False) ~~ log 0.4
+> True
+
+get_raw (cumulative (Bernoulli 0.6) False) ~~ 0.4
+> True
+
+get_log (survivor (Bernoulli 0.6) False) ~~ log 0.6
+> True
+
+quantile (Bernoulli 0.6) 0.39 == False
+> True
+
+quantile (Bernoulli 0.6) 0.41 == True
+> True
+
+rand_vec 5 (draw $ Bernoulli 0.6) (new_key 0) :: Fin 5=>Bool
+> [False, True, True, True, True]
+
+-- binomial
+
+get_log (density (Binomial 10 0.4) 8) ~~ -4.545315
+> True
+
+get_raw (density (Binomial 10 0) 0) ~~ 1
+> True
+
+get_raw (density (Binomial 10 0) 1) ~~ 0
+> True
+
+get_raw (density (Binomial 10 1) 10) ~~ 1
+> True
+
+get_raw (density (Binomial 10 1) 9) ~~ 0
+> True
+
+get_log (cumulative (Binomial 10 0.4) 7) ~~ -0.01237076
+> True
+
+get_log (survivor (Binomial 10 0.4) 7) ~~ -4.398599
+> True
+
+quantile (Binomial 10 0.4) 0.5 == 4
+> True
+
+rand_vec 5 (draw $ Binomial 10 0.4) (new_key 0) :: Fin 5=>Nat
+> [1, 0, 7, 6, 7]
+
+-- exponential
+
+get_log (density (Exponential 2.0) 3.0) ~~ -5.306853
+> True
+
+get_raw (density (Exponential 0) 0.0) ~~ 0.0
+> True
+
+get_raw (density (Exponential 0) 1.0) ~~ 0.0
+> True
+
+get_log (cumulative (Exponential 2.0) 3.0) ~~ -0.002481829
+> True
+
+get_log (survivor (Exponential 2.0) 3.0) ~~ -6
+> True
+
+quantile (Exponential 2.0) 0.5 ~~ 0.3465736
+> True
+
+rand_vec 5 (draw $ Exponential 2.0) (new_key 0) :: Fin 5=>Float
+> [1.021143, 0.14182, 0.093212, 0.213017, 0.430549]
+
+-- geometric
+
+get_log (density (Geometric 0.1) 10) ~~ -3.25083
+> True
+
+get_raw (density (Geometric 0.0) 1) ~~ 0.0
+> True
+
+get_raw (density (Geometric 0.0) 2) ~~ 0.0
+> True
+
+get_raw (density (Geometric 1.0) 1) ~~ 1.0
+> True
+
+get_raw (density (Geometric 1.0) 2) ~~ 0.0
+> True
+
+get_log (cumulative (Geometric 0.1) 10) ~~ -0.4287518
+> True
+
+get_log (survivor (Geometric 0.1) 10) ~~ -1.053605
+> True
+
+quantile (Geometric 0.1) 0.5 == 7
+> True
+
+get_log (density (Geometric 0) 1) == -infinity
+> True
+
+get_log (density (Geometric 0) 2) == -infinity
+> True
+
+get_log (density (Geometric 1) 1) ~~ 0
+> True
+
+get_log (density (Geometric 1) 2) == -infinity
+> True
+
+rand_vec 5 (draw $ Geometric 0.1) (new_key 0) :: Fin 5=>Nat
+> [20, 3, 2, 5, 9]
+
+-- normal
+
+get_log (density (Normal 1.0 2.0) 3.0) ~~ -2.112086
+> True
+
+rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
+> [-1.93355, 4.198111, 0.529252, 0.018863, 2.921813]
+
+-- poisson
+
+get_log (density (Poisson 5.0) 8) ~~ -2.7291
+> True
+
+get_raw (density (Poisson 0.0) 0) ~~ 1.0
+> True
+
+get_raw (density (Poisson 0.0) 1) ~~ 0.0
+> True
+
+get_log (cumulative (Poisson 5.0) 8) ~~ -0.07052294
+> True
+
+get_log (survivor (Poisson 5.0) 8) ~~ -2.686872
+> True
+
+quantile (Poisson 5.0) 0.7 == 6
+> True
+
+rand_vec 5 (draw $ Poisson 5.0) (new_key 0) :: Fin 5=>Nat
+> [4, 4, 2, 2, 7]
+
+-- uniform
+
+get_log (density (Uniform 2.0 5.0) 3.5) ~~ -1.098612
+> True
+
+get_log (cumulative (Uniform 2.0 5.0) 3.5) ~~ -0.6931472
+> True
+
+get_log (survivor (Uniform 2.0 5.0) 3.5) ~~ -0.6931472
+> True
+
+quantile (Uniform 2.0 5.0) 0.2 ~~ 2.6
+> True
+
+rand_vec 5 (draw $ Uniform 2.0 5.0) (new_key 0) :: Fin 5=>Float
+> [4.610805, 2.740888, 2.510233, 3.040717, 3.731907]
+
+
+-- data summaries
+
+mean_and_variance [2.0,3.0,4.0] ~~ (3,1)
+> True
+
+variance [2.0,3.0,4.0] ~~ 1
+> True
+
+mean [2.0,3.0,4.0] ~~ 3.0
+> True
+
+variance [1.0,3.0,5.0] ~~ 4.0
+> True
+
+std_dev [1.0,3.0,5.0] ~~ 2.0
+> True
+
+mean_and_variance_matrix [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ ([3,4], [[4,4],[4,4]])
+> True
+
+mean [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [3,4]
+> True
+
+variance_matrix [[1.0,2.0],[3.0,4.0],[5.0,6.0]] ~~ [[4,4],[4,4]]
+> True
+
+covariance [1.0,2.0,3.0] [2.0,3.0,4.0] ~~ 1
+> True
+
+covariance [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
+> True
+
+correlation [1.0,2.0,3.0] [2.0,4.0,3.0] ~~ 0.5
+> True
+
+covariance [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 1
+> True
+
+correlation [1.0,2.0,3.0] [4.0,8.0,6.0] ~~ 0.5
+> True
+
+variance_matrix (transpose [[1.0,2.0,3.0],[4.0,8.0,6.0]]) ~~ [[1,1],[1,4]]
+> True
+
+correlation_matrix (transpose [[1.0,2.0,3.0],[4.0,8.0,6.0]]) ~~ [[1,0.5],[0.5,1]]
+> True
+
+
+-- eof
+
