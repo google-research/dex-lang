@@ -43,4 +43,5 @@
 - [lib/parser.dx](lib/parser.html): Parser Combinators
 - [lib/fft.dx](lib/fft.html): Fast Fourier Transform
 - [lib/diagram.dx](lib/diagram.html): Vector Graphics
+- [lib/stats.dx](lib/stats.html): Stats
 - [lib/set.dx](lib/set.html): Sets and Set-Indexed Arrays
