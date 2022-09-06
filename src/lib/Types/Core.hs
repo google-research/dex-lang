@@ -127,11 +127,10 @@ data DataDef n where
   -- binder name is in UExpr and Env
   DataDef :: SourceName -> DataDefBinders n l -> [DataConDef l] -> DataDef n
 
--- TODO: The binder nest should be unnecessary. Try to get rid of it.
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
   -- list of projection indices that recovers elements from the representation.
-  DataConDef SourceName (EmptyAbs (Nest Binder) n) (Type n) [[Int]]
+  DataConDef SourceName (Type n) [[Int]]
   deriving (Show, Generic)
 
 data DataDefBinders n l where
@@ -877,10 +876,10 @@ instance AlphaEqE DataDef
 instance AlphaHashableE DataDef
 
 instance GenericE DataConDef where
-  type RepE DataConDef = (LiftE (SourceName, [[Int]])) `PairE` (Abs (Nest Binder) UnitE) `PairE` Type
-  fromE (DataConDef name ab repTy idxs) = (LiftE (name, idxs)) `PairE` ab `PairE` repTy
+  type RepE DataConDef = (LiftE (SourceName, [[Int]])) `PairE` Type
+  fromE (DataConDef name repTy idxs) = (LiftE (name, idxs)) `PairE` repTy
   {-# INLINE fromE #-}
-  toE   ((LiftE (name, idxs)) `PairE` ab `PairE` repTy) = DataConDef name ab repTy idxs
+  toE   ((LiftE (name, idxs)) `PairE` repTy) = DataConDef name repTy idxs
   {-# INLINE toE #-}
 instance SinkableE DataConDef
 instance HoistableE  DataConDef

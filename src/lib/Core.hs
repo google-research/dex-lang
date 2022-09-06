@@ -602,9 +602,9 @@ fromNonDepTabType ty = do
   return (ixTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [Type n]
-nonDepDataConTys (DataConDef _ (Abs binders UnitE) repTy _) =
+nonDepDataConTys (DataConDef _ repTy idxs) =
   case repTy of
-    ProdTy tys | nestLength binders == length tys -> Just tys
+    ProdTy tys | length idxs == length tys -> Just tys
     _ -> Nothing
 
 infixr 1 ?-->

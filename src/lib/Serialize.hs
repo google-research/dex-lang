@@ -141,7 +141,7 @@ prettyVal val = case val of
     prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> Atom n -> m n (Doc ann)
     prettyData dataDefName t rep = do
       DataDef _ _ dataCons <- lookupDataDef dataDefName
-      DataConDef conName _ _ idxs <- return $ dataCons !! t
+      DataConDef conName _ idxs <- return $ dataCons !! t
       prettyArgs <- forM idxs \ix -> prettyVal $ getProjection (init ix) rep
       return $ case prettyArgs of
         []   -> pretty conName

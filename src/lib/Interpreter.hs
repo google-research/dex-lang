@@ -249,7 +249,7 @@ matchUPat (WithSrcB _ pat) x = do
     (UPatCon _ ps, Con (Newtype (TypeCon _ dataDefName _) _)) -> do
       DataDef _ _ cons <- lookupDataDef dataDefName
       case cons of
-        [DataConDef _ _ _ idxs] -> matchUPats ps [getProjection ix x' | ix <- idxs]
+        [DataConDef _ _ idxs] -> matchUPats ps [getProjection ix x' | ix <- idxs]
         _ -> error "Expected a single ADt constructor"
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
