@@ -50,7 +50,19 @@
       raw_data = perf_data_df.head(perf_data_df.shape[0] - 1)
       raw_data.print()
       const benchmarks = raw_data['benchmark'].unique().sortValues().values
-      benchmarks.map(benchmark => {
+      // Hack to sort the examples ahead of the micro-benchmarks
+      benchmarks_ordered = []
+      for (b of benchmarks) {
+        if (pretty_benchmark[b].includes('example')) {
+          benchmarks_ordered.push(b)
+        }
+      }
+      for (b of benchmarks) {
+        if (!pretty_benchmark[b].includes('example')) {
+          benchmarks_ordered.push(b)
+        }
+      }
+      benchmarks_ordered.map(benchmark => {
         benchmark_data = raw_data.query(raw_data['benchmark'].eq(benchmark))
         const measures = benchmark_data['measure'].unique().sortValues().values
         const row = $('<div></div>').addClass('row')
