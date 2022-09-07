@@ -1,0 +1,74 @@
+' # Dither.dx
+
+import plot
+import png
+
+' # Round 0: Creating a test image
+
+Height = Fin 100
+Width = Fin 300
+key = new_key 1234
+img_ = for i:Height. for j:Width. n_to_f ((ordinal i) + (ordinal j))
+img = img_ / (n_to_f (size Height + size Width))
+
+:t img
+:html matshow img
+' # Round 1: Threshold dithering
+
+def dither_threshold {h w} (img: h=>w=>Float) : (h=>w=>Float) =
+    for i j. b_to_f $ img.i.j > 0.5
+
+:html matshow $ dither_threshold img
+
+' # Round 2: Noise dithering
+
+def dither_noise {h w} (k:Key) (img: h=>w=>Float)  : (h=>w=>Float) =
+    for i j. b_to_f $ img.i.j > rand (ixkey k (i, j))
+
+:html matshow $ dither_noise key img
+
+' # Round 3: Ordered dithering
+
+def dither_ordered {h w mh mw} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Float) =
+    for i j. b_to_f $ img.i.j > mat.(asidx (mod (ordinal i) (size mh))).(asidx (mod (ordinal j) (size mw)))
+
+bayer = [[1.0,  9,  3, 11], 
+         [ 13,  5, 15,  7],
+         [  4, 12,  2, 10],
+         [ 16,  8, 14,  6]] / 17.0
+
+:html matshow $ dither_ordered bayer img
+
+halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
+            [   7,   2,  1,  9, 26, 31, 32, 24],
+            [  11,   3,  4,  5, 22, 30, 29, 28],
+            [  15,   8, 12, 16, 18, 25, 21, 17],
+            [  19,  23, 27, 20, 14, 10,  6, 13],
+            [  26,  31, 32, 24,  7,  2,  1,  9],
+            [  22,  30, 29, 28, 11,  3,  4,  5],
+            [  18,  25, 21, 17, 15,  8, 12, 16]] / 33.0
+
+:html matshow $ dither_ordered halftone img
+
+' # Dithering a real image
+
+def pixel (x:Char) : Float32 =
+  r = w8_to_i x
+  i_to_f case r < 0 of
+    True -> 256 + r
+    False -> r
+
+IHeight = Fin 512
+IWidth = Fin 512
+Full = Fin ((size IHeight) * (size IWidth))
+(AsList _ imgbytes) = unsafe_io do read_file "examples/cameraman.bytes"
+
+raw = unsafe_cast_table Full (for i:Full. imgbytes.((ordinal i) @ _))
+img_cameraman = for i:IHeight j:IWidth. (pixel raw.((ordinal (i, j)) @ Full)) / 255.0
+
+:html matshow img_cameraman
+
+:html matshow $ dither_threshold img_cameraman
+:html matshow $ dither_noise key img_cameraman
+:html matshow $ dither_ordered bayer img_cameraman
+:html matshow $ dither_ordered halftone img_cameraman
