@@ -29,8 +29,8 @@ def dither_noise {h w} (k:Key) (img: h=>w=>Float)  : (h=>w=>Float) =
 
 ' # Round 3: Ordered dithering
 
-def dither_ordered {h w mh mw} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Float) =
-    for i j. b_to_f $ img.i.j > mat.(asidx (mod (ordinal i) (size mh))).(asidx (mod (ordinal j) (size mw)))
+def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Float) =
+    for i j. b_to_f $ img.i.j > mat.(wrap mh i).(wrap mw j)
 
 bayer = [[1.0,  9,  3, 11], 
          [ 13,  5, 15,  7],
