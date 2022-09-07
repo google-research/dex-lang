@@ -129,8 +129,9 @@ data DataDef n where
   DataDef :: SourceName -> DataDefBinders n l -> [DataConDef l] -> DataDef n
 
 -- TODO: The binder nest should be unnecessary. Try to get rid of it.
--- As above, the `SourceName` is just for pretty-printing
 data DataConDef n =
+  -- Name for pretty printing, constructor elements, representation type,
+  -- list of projection indices that recovers elements from the representation.
   DataConDef SourceName (EmptyAbs (Nest Binder) n) (Type n) [[Int]]
   deriving (Show, Generic)
 
