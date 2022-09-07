@@ -29,8 +29,6 @@ RawPtr : Type = %Word8Ptr
 Int = Int32
 Float = Float32
 
-Nat = Word32
-
 '### Casting
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
@@ -42,45 +40,67 @@ def f_to_f32 (x : Float)   : Float32 = internal_cast _ x
 def i64_to_i (x : Int64)   : Int     = internal_cast _ x
 def i32_to_i (x : Int32)   : Int     = internal_cast _ x
 def w8_to_i  (x : Word8)   : Int     = internal_cast _ x
-def w8_to_n  (x : Word8)   : Nat     = internal_cast _ x
 def i_to_i64 (x : Int)     : Int64   = internal_cast _ x
 def i_to_i32 (x : Int)     : Int32   = internal_cast _ x
 def i_to_w8  (x : Int)     : Word8   = internal_cast _ x
 def i_to_w32 (x : Int)     : Word32  = internal_cast _ x
 def i_to_w64 (x : Int)     : Word64  = internal_cast _ x
 def w32_to_w64 (x : Word32): Word64  = internal_cast _ x
-def i_to_f (x:Int) : Float = internal_cast _ x
+def i_to_f (x:Int)   : Float = internal_cast _ x
+def f_to_i (x:Float) : Int   = internal_cast _ x
 def i64_to_raw_ptr (x:Int64 ) : RawPtr = internal_cast _ x
 def raw_ptr_to_i64 (x:RawPtr) : Int64  = internal_cast _ x
-def n_to_i64 (x : Nat) : Int64 = internal_cast _ x
-def n_to_i32 (x : Nat) : Int32 = internal_cast _ x
-def n_to_w32 (x : Nat) : Word32  = internal_cast _ x
-def n_to_w64 (x : Nat) : Word64  = internal_cast _ x
-def i64_to_n (x : Int64) : Nat = internal_cast _ x
-def i32_to_n (x : Int32) : Nat = internal_cast _ x
 
-def f_to_i (x:Float) : Int = internal_cast _ x
-def f_to_n (x:Float) : Nat = internal_cast _ x
-def n_to_f (x : Nat) : Float = internal_cast _ x
-def n_to_w8 (x : Nat) : Word8   = internal_cast _ x
+Nat = %Nat
+NatRep = Word32
 
-interface FromNatural a
-  from_natural : Word64 -> a
+def nat_to_rep (x : Nat)    : NatRep = %projNewtype x
+def rep_to_nat (x : NatRep) : Nat    = %newtype Nat x
 
-instance FromNatural Float32
-  from_natural = \x. internal_cast _ x
+def n_to_w8  (x : Nat) : Word8   = internal_cast _ $ nat_to_rep x
+def n_to_w32 (x : Nat) : Word32  = internal_cast _ $ nat_to_rep x
+def n_to_w64 (x : Nat) : Word64  = internal_cast _ $ nat_to_rep x
+def n_to_i32 (x : Nat) : Int32   = internal_cast _ $ nat_to_rep x
+def n_to_i64 (x : Nat) : Int64   = internal_cast _ $ nat_to_rep x
+def n_to_f32 (x : Nat) : Float32 = internal_cast _ $ nat_to_rep x
+def n_to_f64 (x : Nat) : Float64 = internal_cast _ $ nat_to_rep x
+def n_to_f   (x : Nat) : Float   = internal_cast _ $ nat_to_rep x
 
-instance FromNatural Float64
-  from_natural = \x. internal_cast _ x
+def w8_to_n  (x : Word8)   : Nat = rep_to_nat $ internal_cast _ x
+def w32_to_n (x : Word32)  : Nat = rep_to_nat $ internal_cast _ x
+def w64_to_n (x : Word64)  : Nat = rep_to_nat $ internal_cast _ x
+def i32_to_n (x : Int32)   : Nat = rep_to_nat $ internal_cast _ x
+def i64_to_n (x : Int64)   : Nat = rep_to_nat $ internal_cast _ x
+def f32_to_n (x : Float32) : Nat = rep_to_nat $ internal_cast _ x
+def f64_to_n (x : Float64) : Nat = rep_to_nat $ internal_cast _ x
+def f_to_n   (x : Float)   : Nat = rep_to_nat $ internal_cast _ x
 
-instance FromNatural Int32
-  from_natural = \x. internal_cast _ x
+interface FromUnsignedInteger a
+  from_unsigned_integer : Word64 -> a
 
-instance FromNatural Word32
-  from_natural = \x. internal_cast _ x
+instance FromUnsignedInteger Word8
+  from_unsigned_integer = \x. internal_cast _ x
 
-instance FromNatural Word64
-  from_natural = \x. x
+instance FromUnsignedInteger Word32
+  from_unsigned_integer = \x. internal_cast _ x
+
+instance FromUnsignedInteger Word64
+  from_unsigned_integer = \x. x
+
+instance FromUnsignedInteger Int32
+  from_unsigned_integer = \x. internal_cast _ x
+
+instance FromUnsignedInteger Int64
+  from_unsigned_integer = \x. internal_cast _ x
+
+instance FromUnsignedInteger Float32
+  from_unsigned_integer = \x. internal_cast _ x
+
+instance FromUnsignedInteger Float64
+  from_unsigned_integer = \x. internal_cast _ x
+
+instance FromUnsignedInteger Nat
+  from_unsigned_integer = w64_to_n
 
 interface FromInteger a
   from_integer : Int64 -> a
@@ -147,44 +167,49 @@ def (-) {a} [Sub a] : a -> a -> a = sub
 
 instance Add Float64
   add = \x y. %fadd x y
-  zero = f_to_f64 0.0
+  zero = 0
 instance Sub Float64
   sub = \x y. %fsub x y
 
 instance Add Float32
   add = \x y. %fadd x y
-  zero = f_to_f32 0.0
+  zero = 0
 instance Sub Float32
   sub = \x y. %fsub x y
 
 instance Add Int64
   add = \x y. %iadd x y
-  zero = i_to_i64 0
+  zero = 0
 instance Sub Int64
   sub = \x y. %isub x y
 
 instance Add Int32
   add = \x y. %iadd x y
-  zero = i_to_i32 0
+  zero = 0
 instance Sub Int32
   sub = \x y. %isub x y
 
 instance Add Word8
   add = \x y. %iadd x y
-  zero = i_to_w8 0
+  zero = 0
 instance Sub Word8
   sub = \x y. %isub x y
 
 instance Add Word32
   add = \x y. %iadd x y
-  zero = i_to_w32 0
--- XXX: we don't implement `Sub Word32` because we use `Word32` as `Nat`
+  zero = 0
+instance Sub Word32
+  sub = \x y. %isub x y
 
 instance Add Word64
   add = \x y. %iadd x y
-  zero = i_to_w64 0
+  zero = 0
 instance Sub Word64
   sub = \x y. %isub x y
+
+instance Add Nat
+  add = \x y. rep_to_nat $ %iadd (nat_to_rep x) (nat_to_rep y)
+  zero = 0
 
 instance Add Unit
   add = \x y. ()
@@ -218,23 +243,27 @@ instance Mul Float32
 
 instance Mul Int64
   mul = \x y. %imul x y
-  one = i_to_i64 1
+  one = 1
 
 instance Mul Int32
   mul = \x y. %imul x y
-  one = i_to_i32 1
+  one = 1
 
 instance Mul Word8
   mul = \x y. %imul x y
-  one = i_to_w8 1
+  one = 1
 
 instance Mul Word32
   mul = \x y. %imul x y
-  one = i_to_w32 1
+  one = 1
 
 instance Mul Word64
   mul = \x y. %imul x y
-  one = i_to_w64 1
+  one = 1
+
+instance Mul Nat
+  mul = \x y. rep_to_nat $ %imul (nat_to_rep x) (nat_to_rep y)
+  one = 1
 
 instance Mul Unit
   mul = \x y. ()
@@ -271,6 +300,10 @@ instance Integral Word64
   idiv = \x y.  %idiv x y
   rem  = \x y.  %irem x y
 
+instance Integral Nat
+  idiv = \x y. rep_to_nat $ %idiv (nat_to_rep x) (nat_to_rep y)
+  rem  = \x y. rep_to_nat $ %irem (nat_to_rep x) (nat_to_rep y)
+
 '#### Fractional
 Rational-like things.
 Includes floating point and two field rational representations.
@@ -295,10 +328,15 @@ def Fin (n:Nat) : Type = %Fin n
 
 -- version of subtraction on Nats that clamps at zero
 def (-|) (x: Nat) (y:Nat) : Nat =
-  requires_clamp = %ilt x y
-  %select requires_clamp 0 (%isub x y)
+  x' = nat_to_rep x
+  y' = nat_to_rep y
+  requires_clamp = %ilt x' y'
+  rep_to_nat $ %select requires_clamp 0 (%isub x' y')
 
-def unsafe_nat_diff (x:Nat) (y:Nat) : Nat = %isub x y
+def unsafe_nat_diff (x:Nat) (y:Nat) : Nat =
+  x' = nat_to_rep x
+  y' = nat_to_rep y
+  rep_to_nat $ %isub x' y'
 
 -- `(i..)` parses as `RangeFrom _ i`
 data RangeFrom q:Type i:q = UnsafeMkRangeFrom Nat
@@ -516,21 +554,22 @@ instance {a b} [Ix a, Ix b] Ix (a | b)
     Left ai  -> ordinal ai
     Right bi -> ordinal bi + size a
   unsafe_from_ordinal = \o.
-    as = size a
+    as = nat_to_rep $ size a
+    o' = nat_to_rep o
     -- TODO: Reshuffle the prelude to be able to use (<) here
-    case w8_to_b $ %ilt o as of
+    case w8_to_b $ %ilt o' as of
       True  -> Left $ unsafe_from_ordinal a o
       -- TODO: Reshuffle the prelude to be able to use `diff_nat` here
-      False -> Right $ unsafe_from_ordinal b (%isub o as)
+      False -> Right $ unsafe_from_ordinal b (rep_to_nat (%isub o' as))
 
 '## Subtraction on Nats
 -- TODO: think more about the right API here
 
 def unsafe_i_to_n (x:Int) : Nat =
-  internal_cast _ x
+  rep_to_nat $ internal_cast _ x
 
 def n_to_i (x:Nat) : Int =
-  internal_cast _ x
+  internal_cast _ $ nat_to_rep x
 
 def i_to_n (x:Int) : Maybe Nat =
   if w8_to_b $ %ilt x (0::Int)
@@ -790,6 +829,14 @@ instance {a b} [Ord a, Ord b] Ord (a & b)
 instance Eq Ordering
   (==) = \x y. o_to_w8 x == o_to_w8 y
 
+
+instance Eq Nat
+  (==) = \x y. nat_to_rep x == nat_to_rep y
+
+instance Ord Nat
+  (>) = \x y. nat_to_rep x > nat_to_rep y
+  (<) = \x y. nat_to_rep x < nat_to_rep y
+
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
 instance {n} Eq (Fin n)
   (==) = \x y. ordinal x == ordinal y
@@ -1022,6 +1069,11 @@ instance Storable Float32
   load = \(MkPtr ptr)   . %ptrLoad  (internal_cast %Float32Ptr ptr)
   storage_size = 4
 
+instance Storable Nat
+  store = \(MkPtr ptr) x. store (MkPtr ptr) $ nat_to_rep x
+  load  = \(MkPtr ptr)  . rep_to_nat $ load (MkPtr ptr)
+  storage_size = storage_size NatRep
+
 instance {a} Storable (Ptr a)
   store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast %PtrPtr ptr) x
   load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast %PtrPtr ptr)
@@ -1031,7 +1083,7 @@ instance {a} Storable (Ptr a)
 
 def malloc {a} [Storable a] (n:Nat) : {IO} (Ptr a) =
   numBytes = storage_size a * n
-  MkPtr $ %alloc numBytes
+  MkPtr $ %alloc (nat_to_rep numBytes)
 
 def free {a} (ptr:Ptr a) : {IO} Unit =
   (MkPtr ptr') = ptr
@@ -1039,7 +1091,7 @@ def free {a} (ptr:Ptr a) : {IO} Unit =
 
 def (+>>) {a} [Storable a] (ptr:Ptr a) (i:Nat) : Ptr a =
   (MkPtr ptr') = ptr
-  i' = i * storage_size a
+  i' = nat_to_rep $ i * storage_size a
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: consider making a Storable instance for tables instead
@@ -1468,8 +1520,8 @@ def push_dynamic_buffer {a} [Storable a]
 
 String : Type = List Char
 
-def string_from_char_ptr (n:Nat) (ptr:Ptr Char) : {IO} String =
-  AsList n $ table_from_ptr _ ptr
+def string_from_char_ptr (n:Word32) (ptr:Ptr Char) : {IO} String =
+  AsList (rep_to_nat n) $ table_from_ptr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = w8_to_i c
@@ -1493,35 +1545,31 @@ interface Show a
 instance Show String
   show = id
 
-foreign "showNat32" showNat32 : Nat -> {IO} (Nat & RawPtr)
-
-instance Show Nat
-  show = \x. unsafe_io do
-    (n, ptr) = showNat32 x
-    string_from_char_ptr n $ MkPtr ptr
-
-foreign "showInt32" showInt32 : Int32 -> {IO} (Nat & RawPtr)
+foreign "showInt32" showInt32 : Int32 -> {IO} (Word32 & RawPtr)
 
 instance Show Int32
   show = \x. unsafe_io do
     (n, ptr) = showInt32 x
     string_from_char_ptr n $ MkPtr ptr
 
-foreign "showInt64" showInt64 : Int64 -> {IO} (Nat & RawPtr)
+foreign "showInt64" showInt64 : Int64 -> {IO} (Word32 & RawPtr)
 
 instance Show Int64
   show = \x. unsafe_io do
     (n, ptr) = showInt64 x
     string_from_char_ptr n $ MkPtr ptr
 
-foreign "showFloat32" showFloat32 : Float32 -> {IO} (Nat & RawPtr)
+instance Show Nat
+  show = \x. show $ n_to_i64 x
+
+foreign "showFloat32" showFloat32 : Float32 -> {IO} (Word32 & RawPtr)
 
 instance Show Float32
   show = \x. unsafe_io do
     (n, ptr) = showFloat32 x
     string_from_char_ptr n $ MkPtr ptr
 
-foreign "showFloat64" showFloat64 : Float64 -> {IO} (Nat & RawPtr)
+foreign "showFloat64" showFloat64 : Float64 -> {IO} (Word32 & RawPtr)
 
 instance Show Float64
   show = \x. unsafe_io do
@@ -1703,9 +1751,9 @@ def fread (stream:Stream ReadMode) : {IO} String =
     with_dynamic_buffer \buf.
       iter \_.
         (MkPtr rawPtr) = ptr
-        numRead = i64_to_n $ freadFFI rawPtr (i_to_i64 1) (n_to_i64 n) stream'
+        numRead = i_to_w32 $ i64_to_i $ freadFFI rawPtr (i_to_i64 1) (n_to_i64 n) stream'
         extend_dynamic_buffer buf $ string_from_char_ptr numRead ptr
-        if numRead == n
+        if numRead == n_to_w32 n
           then Continue
           else Done ()
       load_dynamic_buffer buf
@@ -1947,7 +1995,7 @@ instance Arbitrary Float32
 instance Arbitrary Int32
   arb = \key. f_to_i $ randn key * 5.0
 
-instance Arbitrary Word32
+instance Arbitrary Nat
   arb = \key. f_to_n $ randn key * 5.0
 
 instance {n a} [Arbitrary a] Arbitrary (n=>a)
@@ -2245,8 +2293,8 @@ def pad_to {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
       False -> x
 
 def idiv_ceil (x:Nat) (y:Nat) : Nat = idiv x y + b_to_n (rem x y /= 0)
-def intdiv2 (x:Nat) : Nat = %shr x (1 :: Nat)
-def intpow2 (power:Nat) : Nat = %shl (1 :: Nat) power
+def intdiv2 (x:Nat) : Nat = rep_to_nat $ %shr (nat_to_rep x) (1 :: NatRep)
+def intpow2 (power:Nat) : Nat = rep_to_nat $ %shl (1 :: NatRep) (nat_to_rep power)
 def is_odd  (x:Nat) : Bool = rem x 2 == 1
 def is_even (x:Nat) : Bool = rem x 2 == 0
 
@@ -2256,9 +2304,10 @@ def is_power_of_2 (x:Nat) : Bool =
   -- Note: The bitwise and operator (.&.)
   -- is only defined for Byte, which is why
   -- we use %and here. TODO: Make (.&.) polymorphic.
-  if x == 0
+  x' = nat_to_rep x
+  if x' == 0
     then False
-    else 0 == %and x (unsafe_nat_diff x 1)
+    else 0 == %and x' (%isub x' (1::NatRep))
 
 def natlog2 (x:Nat) : Nat =
   tmp = yield_state 0 \ansRef.
@@ -2267,7 +2316,7 @@ def natlog2 (x:Nat) : Nat =
         if x >= (get cmpRef)
           then
             ansRef := (get ansRef) + 1
-            cmpRef := %shl (get cmpRef) (1 :: Nat)
+            cmpRef := rep_to_nat $ %shl (nat_to_rep $ get cmpRef) (1 :: NatRep)
             True
           else
             False

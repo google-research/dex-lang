@@ -205,7 +205,7 @@ applyDefaults :: EmitsInf o => InfererM i o ()
 applyDefaults = do
   defaults <- getDefaults
   applyDefault (intDefaults defaults) (BaseTy $ Scalar Int32Type)
-  applyDefault (natDefaults defaults) (BaseTy $ Scalar Word32Type)
+  applyDefault (natDefaults defaults) NatTy
   where
     applyDefault ds ty =
       forM_ (nameSetToList ds) \v -> tryConstrainEq (Var v) ty
@@ -946,6 +946,9 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     f' <- inferFunNoInstantiation f
     x' <- inferRho x
     (liftM Var $ emit $ App f' (x':|[])) >>= matchRequirement
+  UPrimExpr (OpExpr (ProjNewtype x)) -> do
+    x' <- inferRho x >>= emitAtomToName
+    return $ ProjectElt (NE.fromList [0]) x'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
       xBlock <- buildBlockInf $ inferRho x
@@ -1019,7 +1022,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emitOp (VariantLift prev value')
   UNatLit x -> do
-    lookupSourceMap "from_natural" >>= \case
+    lookupSourceMap "from_unsigned_integer" >>= \case
       Nothing ->
         -- fallback for missing protolude
         matchRequirement $ Con $ Lit $ Word32Lit $ fromIntegral x

@@ -41,7 +41,7 @@ module Builder (
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   telescopicCapture, unpackTelescope,
-  applyRecon, applyReconAbs, clampPositive,
+  applyRecon, applyReconAbs,
   emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
   addTangent, updateAddAt, tangentBaseMonoidFor,
@@ -975,6 +975,7 @@ maybeTangentType' ty = case ty of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
+    Nat                           -> return $ UnitTy
     Fin _                         -> return $ UnitTy
     ProdType   tys                -> ProdTy <$> traverse rec tys
     _ -> empty
@@ -1243,10 +1244,8 @@ unsafePtrLoad x = do
 
 -- === index set type class ===
 
-clampPositive :: (Builder m, Emits n) => Atom n -> m n (Atom n)
-clampPositive x = do
-  isNegative <- x `ilt` (IdxRepVal 0)
-  select isNegative (IdxRepVal 0) x
+-- XXX: the internal versions of `ordinal`, `unsafeFromOrdinal` etc. work with
+-- `IdxRepTy` (whereas the user-facing versions work with `Nat`)
 
 projMethod :: (Builder m, Emits n) => String -> Atom n -> m n (Atom n)
 projMethod methodName dict = do
@@ -1259,16 +1258,24 @@ projMethod methodName dict = do
 unsafeFromOrdinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
 unsafeFromOrdinal (IxType _ dict) i = do
   f <- projMethod "unsafe_from_ordinal" dict
-  app f i
+  app f (repToNat i)
 
 ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
 ordinal (IxType _ dict) idx = do
   f <- projMethod "ordinal" dict
-  app f idx
+  natToRep <$> app f idx
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = projMethod "size" dict
+indexSetSize (IxType _ dict) = natToRep <$> projMethod "size" dict
 
+natToRep :: Atom n -> Atom n
+natToRep x = getProjection [0] x
+
+repToNat :: Atom n -> Atom n
+repToNat x = Con $ Newtype NatTy x
+
+-- This works with `Nat` instead of `IndexRepTy` because it's used alongside
+-- user-defined instances.
 projectIxFinMethod :: EnvReader m => Int -> Atom n -> m n (Atom n)
 projectIxFinMethod methodIx n = liftBuilder do
   case methodIx of
@@ -1278,7 +1285,7 @@ projectIxFinMethod methodIx n = liftBuilder do
     1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
            return $ ProjectElt (0 NE.:| []) ix
     -- unsafe_from_ordinal
-    2 -> buildPureLam noHint PlainArrow IdxRepTy \ix ->
+    2 -> buildPureLam noHint PlainArrow NatTy \ix ->
            return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
     _ -> error "Ix only has three methods"
 

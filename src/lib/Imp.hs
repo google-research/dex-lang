@@ -1016,8 +1016,11 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
       return $ Con $ BaseTypeRef ptr
     SumType cases -> recSumType cases
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
-    Fin n -> do
+    Nat -> do
       x <- rec IdxRepTy
+      return $ Con $ ConRef $ Newtype NatTy x
+    Fin n -> do
+      x <- rec NatTy
       return $ Con $ ConRef $ Newtype (TC $ Fin n) x
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty

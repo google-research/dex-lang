@@ -64,9 +64,9 @@ getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs 
     tryParseStringContent :: Atom n -> Maybe (AtomName n, Word32)
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
-      TC (Fin (IdxRepVal n)) <- return $ binderType i
+      FinConst n <- return $ binderType i
       Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
-      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (0 NE.:| []) i')))) <- return offDecl
+      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (0 NE.:| [0]) i')))) <- return offDecl
       guard $ binderName i == i'
       Let r (DeclBinding _ _ loadExpr) <- return loadDecl
       guard $ binderName r == result
@@ -96,8 +96,7 @@ prettyVal val = case val of
     elems <- forM atoms \atom -> do
       case atom of
         Con (Lit (Word8Lit  c)) -> return $ "'" ++ showChar (toEnum @Char $ fromIntegral c) "" ++ "'"
-        -- print in decimal rather than hex because we use this for the `Nat` alias
-        Con (Lit (Word32Lit c)) -> return $ show c
+        Con (Lit (Word32Lit c)) -> return $ "0x" ++ showHex c ""
         Con (Lit (Word64Lit c)) -> return $ "0x" ++ showHex c ""
         _ -> pprintVal atom
     TabTy b _ <- getType val
@@ -123,6 +122,7 @@ prettyVal val = case val of
       yStr <- pprintVal y
       return $ pretty (xStr, yStr)
     ProdCon _ -> error "Unexpected product type: only binary products available in surface language."
+    Newtype NatTy (IdxRepVal n) -> return $ pretty n
     Newtype vty@(VariantTy (NoExt types)) (Con (SumAsProd _ (TagRepVal trep) payload)) ->
       return $ pretty $ Newtype vty $ SumVal (toList types) t value
       where t = fromIntegral trep; value = payload !! t

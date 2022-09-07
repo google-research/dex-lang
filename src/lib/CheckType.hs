@@ -282,17 +282,21 @@ instance HasType Atom where
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM v
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
-        -- Newtypes
-        TypeCon _ defName params | i == 0 -> do
-          def <- lookupDataDef defName
-          [DataConDef _ repTy _] <- checkedInstantiateDataDef def params
-          return repTy
-        TC (Fin _) | i == 0 -> return IdxRepTy
-        StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
-        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
+        _ | isNewtype ty && i == 0 -> projectNewtype ty
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
+
+projectNewtype :: Typer m => Type o -> m i o (Type o)
+projectNewtype ty = case ty of
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
+    [DataConDef _ repTy _] <- checkedInstantiateDataDef def params
+    return repTy
+  TC Nat     -> return IdxRepTy
+  TC (Fin _) -> return NatTy
+  StaticRecordTy types -> return $ ProdTy $ toList types
+  _ -> throw CompilerErr $ "Not a newtype: " ++ pprint ty
 
 instance (Color c, ToBinding ann c, CheckableE ann)
          => CheckableB (BinderP c ann) where
@@ -393,7 +397,7 @@ dictExprType e = case e of
     DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclassTypes superclasses !! i)) params
     return dTy
   IxFin n -> do
-    n' <- substM n
+    n' <- checkTypeE NatTy n
     ixDictType $ TC $ Fin n'
 
 instance HasType DictExpr where
@@ -446,7 +450,8 @@ instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
 typeCheckPrimTC :: Typer m => PrimTC (Atom i) -> m i o (Type o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
-  Fin n -> n|:IdxRepTy >> return TyKind
+  Nat              -> return TyKind
+  Fin n -> n|:NatTy >> return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
@@ -473,7 +478,8 @@ typeCheckPrimCon con = case con of
   Newtype ty e -> do
     ty' <- substM ty
     case ty' of
-      TC (Fin _) -> e|:IdxRepTy
+      TC Nat -> e |: IdxRepTy
+      TC (Fin _) -> e|:NatTy
       StaticRecordTy tys -> e|:ProdTy (toList tys)
       VariantTy (NoExt tys) -> e |: SumTy (toList tys)
       TypeCon _ defName params -> do
@@ -493,6 +499,7 @@ typeCheckPrimCon con = case con of
     Newtype ty e -> do
       ty' <- substM ty
       case ty' of
+        NatTy      -> e|:(RawRefTy IdxRepTy)
         TC (Fin _) -> e|:(RawRefTy IdxRepTy)
         StaticRecordTy tys -> e|:(RawRefTy $ ProdTy $ toList tys)
         VariantTy (NoExt tys) -> e|:(RawRefTy $ SumTy $ toList tys)
@@ -702,6 +709,7 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  ProjNewtype x -> getTypeE x >>= projectNewtype
   ProjMethod dict i -> do
     DictTy (DictType _ className params) <- getTypeE dict
     def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
@@ -949,8 +957,6 @@ checkFloatBaseType t = case t of
       "Expected a fixed-width scalar floating-point type, but found: " ++ pprint t
 
 checkValidCast :: Fallible1 m => Type n -> Type n -> m n ()
-checkValidCast (TC (Fin _)) IdxRepTy = return ()
-checkValidCast IdxRepTy (TC (Fin _)) = return ()
 checkValidCast (BaseTy l) (BaseTy r) = checkValidBaseCast l r
 checkValidCast sourceTy destTy =
   throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
@@ -1261,6 +1267,7 @@ checkDataLike ty = case ty of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as
     SumType  cs      -> mapM_ recur cs
+    Nat              -> return ()
     Fin _            -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty

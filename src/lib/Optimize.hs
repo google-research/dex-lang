@@ -48,9 +48,9 @@ data IndexSetKind n
 
 isTrivialIndex :: Type i -> UTLM i o (IndexSetKind o)
 isTrivialIndex = \case
-  TC (Fin (IdxRepVal n)) | n <= 0 -> return EmptyIxSet
-  TC (Fin (IdxRepVal n)) | n == 1 ->
-    return $ SingletonIxSet $ Con $ Newtype (FinConst n) (IdxRepVal 0)
+  TC (Fin (NatVal n)) | n <= 0 -> return EmptyIxSet
+  TC (Fin (NatVal n)) | n == 1 ->
+    return $ SingletonIxSet $ Con $ Newtype (FinConst n) (NatVal 0)
   _ -> return UnknownIxSet
 
 instance GenericTraverser UTLS where
@@ -83,7 +83,7 @@ peepholeExpr expr = case expr of
     return $ Left $ Con $ Lit $ Word64Lit $ fromIntegral x
   -- TODO: Support more unary and binary ops!
   Op (BinOp IAdd (IdxRepVal a) (IdxRepVal b)) -> return $ Left $ IdxRepVal $ a + b
-  TabApp (Var t) ((Con (Newtype (TC (Fin _)) (IdxRepVal ord))) NE.:| []) ->
+  TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
     lookupAtomName t <&> \case
       LetBound (DeclBinding PlainLet _ (Op (TabCon _ elems))) ->
         -- It is not safe to assume that this index can always be simplified!
@@ -122,11 +122,11 @@ instance GenericTraverser ULS where
             True -> case body' of
               Lam (LamExpr b' block') -> do
                 vals <- dropSubst $ forM [0..(fromIntegral n :: Int) - 1] \ord -> do
-                  let i = Con $ Newtype (FinConst n) (IdxRepVal $ fromIntegral ord)
+                  let i = Con $ Newtype (FinConst n) (NatVal $ fromIntegral ord)
                   extendSubst (b' @> SubstVal i) $ emitSubstBlock block'
                 getType body' >>= \case
                   Pi (PiType (PiBinder tb _ _) _ valTy) -> do
-                    let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ IdxRepVal n))) valTy
+                    let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy
                     return $ Right $ Op $ TabCon tabTy vals
                   _ -> error "Expected for body to have a Pi type"
               _ -> error "Expected for body to be a lambda expression"
