@@ -1379,7 +1379,7 @@ tyConDefAsAtom defName = liftBuilder do
 dataConDefAsAtom :: EnvReader m => DataDefName n -> Int -> m n (Atom n)
 dataConDefAsAtom defName conIx = liftBuilder do
   buildTyConLam defName ImplicitArrow \_ params -> do
-    let defName' = sink defName
+    defName' <- sinkM defName
     def@(DataDef sourceName _ _ ) <- lookupDataDef defName'
     conDefs <- instantiateDataDef def params
     DataConDef _ (EmptyAbs conArgBinders) conRep _ <- return $ conDefs !! conIx
