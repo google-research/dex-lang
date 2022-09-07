@@ -109,10 +109,10 @@ instance Dist BinomialDist Nat Float
 instance OrderedDist BinomialDist Nat Float
   cumulative = \(Binomial trials prob) x.
     xp1:Nat = x + 1
-    sum $ for i:(Fin xp1). density (Binomial trials prob) (ordinal i)
+    ls_sum $ for i:(Fin xp1). density (Binomial trials prob) (ordinal i)
   survivor = \(Binomial trials prob) x.
     tmx = trials -| x
-    sum $ for i:(Fin tmx). density (Binomial trials prob) (x + 1 + ordinal i)
+    ls_sum $ for i:(Fin tmx). density (Binomial trials prob) (x + 1 + ordinal i)
   quantile = \(Binomial trials prob) q.
     tp1:Nat = trials + 1
     lpdf = for i:(Fin tp1). ln $ density (Binomial trials prob) (ordinal i)
@@ -229,10 +229,10 @@ instance Dist PoissonDist Nat Float
 instance OrderedDist PoissonDist Nat Float
   cumulative = \(Poisson rate) x.
     xp1:Nat = x + 1
-    sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
+    ls_sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
   survivor = \(Poisson rate) x.
     xp1:Nat = x + 1
-    cdf = sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
+    cdf = ls_sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
     Exp $ log1p (-ls_to_f cdf)
   quantile = \(Poisson rate) q.
     yield_state (0::Nat) \x.
