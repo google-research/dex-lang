@@ -40,6 +40,7 @@ class IsBool a where
 
 iota :: (Enum a, Integral a) => a -> [a]
 iota n = take (fromEnum n) [0..] -- XXX: `[0..(n-1)]` is incorrect for unsigned ints!
+{-# INLINE iota #-}
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"

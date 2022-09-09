@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as M
 import LabeledItems
 
 import Err
-import Util (forMZipped_, iota)
+import Util (forMZipped_)
 import QueryType hiding (HasType)
 
 import CheapReduction
@@ -241,15 +241,6 @@ instance HasType Atom where
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
-    DataCon _ defName params conIx args -> do
-      defName' <- substM defName
-      def@(DataDef sourceName _ _) <- lookupDataDef defName'
-      params' <- checkE params
-      cons' <- checkedInstantiateDataDef def params'
-      let DataConDef _ conParamAbs' = cons' !! conIx
-      args'   <- traverse checkE args
-      void $ checkedApplyNaryAbs conParamAbs' args'
-      return $ TypeCon sourceName defName' params'
     TypeCon _ defName params -> do
       def <- lookupDataDef =<< substM defName
       params' <- checkE params
@@ -265,13 +256,6 @@ instance HasType Atom where
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
-    DataConRef defName params args -> do
-      defName' <- substM defName
-      def@(DataDef sourceName _ _) <- lookupDataDef defName'
-      params' <- checkE params
-      [DataConDef _ argBs] <- checkedInstantiateDataDef def params'
-      checkDataConRefEnv argBs args
-      return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef l (Abs b r) ty -> do
       ty' <- checkTypeE TyKind ty
       l |: RawRefTy (depPairLeftTy ty')
@@ -294,22 +278,15 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        TypeCon _ defName params -> do
-          v' <- substM v
-          def <- lookupDataDef defName
-          [DataConDef _ (Abs bs' UnitE)] <- checkedInstantiateDataDef def params
-          PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
-          -- `ty` can depend on earlier binders from this constructor. Rewrite
-          -- it to also use projections.
-          dropSubst $
-            applyNaryAbs (Abs bsInit bTy)
-              [ SubstVal (ProjectElt (j NE.:| is) v')
-              | j <- iota $ nestLength bsInit]
         ProdTy xs -> return $ xs !! i
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM v
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
         -- Newtypes
+        TypeCon _ defName params | i == 0 -> do
+          def <- lookupDataDef defName
+          [DataConDef _ repTy _] <- checkedInstantiateDataDef def params
+          return repTy
         TC (Fin _) | i == 0 -> return IdxRepTy
         StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
@@ -482,18 +459,27 @@ typeCheckPrimCon :: Typer m => PrimCon (Atom i) -> m i o (Type o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
-  SumCon ty tag payload -> do
-    ty'@(SumTy caseTys) <- substM ty
+  SumCon tys tag payload -> do
+    caseTys <- traverse substM tys
     unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
     payload |: (caseTys !! tag)
-    return ty'
-  SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
+    return $ SumTy caseTys
+  SumAsProd tys tag es -> do
+    tag |: TagRepTy
+    tys' <- traverse substM tys
+    unless (length tys == length es) $ throw TypeErr "Invalid SumAsProd"
+    forM_ (zip es tys') $ uncurry (|:)
+    return $ SumTy tys'
   Newtype ty e -> do
     ty' <- substM ty
     case ty' of
       TC (Fin _) -> e|:IdxRepTy
       StaticRecordTy tys -> e|:ProdTy (toList tys)
       VariantTy (NoExt tys) -> e |: SumTy (toList tys)
+      TypeCon _ defName params -> do
+        def <- lookupDataDef defName
+        cons <- checkedInstantiateDataDef def params
+        e |: dataDefRep cons
       _ -> error $ "Unsupported newtype: " ++ pprint ty
     return ty'
   BaseTypeRef p -> do
@@ -510,11 +496,15 @@ typeCheckPrimCon con = case con of
         TC (Fin _) -> e|:(RawRefTy IdxRepTy)
         StaticRecordTy tys -> e|:(RawRefTy $ ProdTy $ toList tys)
         VariantTy (NoExt tys) -> e|:(RawRefTy $ SumTy $ toList tys)
+        TypeCon _ defName params -> do
+          def <- lookupDataDef defName
+          cons <- checkedInstantiateDataDef def params
+          e |: RawRefTy (dataDefRep cons)
         _ -> error $ "Unsupported newtype: " ++ pprint ty
       return $ RawRefTy ty'
-    SumAsProd ty tag _ -> do    -- TODO: check args!
+    SumAsProd tys tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
-      RawRefTy <$> substM ty
+      RawRefTy . SumTy <$> traverse substM tys
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy method  -> do
@@ -700,7 +690,8 @@ typeCheckPrimOp op = case op of
     case t' of
       TypeCon _ dataDefName (DataDefParams [] []) -> do
         DataDef _ _ dataConDefs <- lookupDataDef dataDefName
-        forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
+        forM_ dataConDefs \(DataConDef _ _ idxs) ->
+          unless (null idxs) $ throw TypeErr "Not empty"
       VariantTy _ -> return ()  -- TODO: check empty payload
       SumTy cases -> forM_ cases \cty -> checkAlphaEq cty UnitTy
       _ -> error $ "Not a sum type: " ++ pprint t'
@@ -838,12 +829,6 @@ checkRWSAction rws f = do
   resultTy' <- liftHoistExcept $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
 
--- Having this as a separate helper function helps with "'b0' is untouchable" errors
--- from GADT+monad type inference.
-checkEmptyNest :: Fallible m => Nest b n l -> m ()
-checkEmptyNest Empty = return ()
-checkEmptyNest _  = throw TypeErr "Not empty"
-
 checkCase :: Typer m => HasType body
           => Atom i -> [AltP body i] -> Type i -> EffectRow i -> m i o (Type o)
 checkCase scrut alts resultTy effs = do
@@ -855,41 +840,23 @@ checkCase scrut alts resultTy effs = do
     checkAlt resultTy' bs alt
   return resultTy'
 
-checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m)
-                  => Type n -> m n [EmptyAbs (Nest Binder) n]
+checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m) => Type n -> m n [Type n]
 checkCaseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     cons <- checkedInstantiateDataDef def params
-    return [bs | DataConDef _ bs <- cons]
-  VariantTy (NoExt types) -> do
-    mapM typeAsBinderNest $ toList types
+    return [repTy | DataConDef _ repTy _ <- cons]
+  SumTy types -> return types
+  VariantTy (NoExt types) -> return $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
-  SumTy cases -> mapM typeAsBinderNest cases
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
-checkDataConRefEnv :: Typer m
-                        => EmptyAbs (Nest Binder) o
-                        -> EmptyAbs (Nest DataConRefBinding) i
-                        -> m i o ()
-checkDataConRefEnv (EmptyAbs Empty) (Abs Empty UnitE) = return ()
-checkDataConRefEnv (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding restRefs)) = do
-  let DataConRefBinding b' ref = refBinding
-  ref |: RawRefTy (binderAnn b)
-  bAnn' <- substM $ binderAnn b'
-  checkAlphaEq (binderAnn b) bAnn'
-  checkB b' \b'' -> do
-    ab <- sinkM $ Abs b (EmptyAbs restBs)
-    restBs' <- applyAbs ab (binderName b'')
-    checkDataConRefEnv restBs' (EmptyAbs restRefs)
-checkDataConRefEnv _ _ = throw CompilerErr $ "Mismatched args and binders"
-
-checkAlt :: HasType body => Typer m
-         => Type o -> EmptyAbs (Nest Binder) o -> AltP body i -> m i o ()
-checkAlt resultTyReq reqBs (Abs bs body) = do
-  bs' <- substM (EmptyAbs bs)
-  checkAlphaEq reqBs bs'
-  substBinders bs \_ -> do
+checkAlt :: (HasType body, Typer m)
+         => Type o -> Type o -> AltP body i -> m i o ()
+checkAlt resultTyReq bTyReq (Abs b body) = do
+  bTy <- substM $ binderType b
+  checkAlphaEq bTyReq bTy
+  substBinders b \_ -> do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
@@ -1289,8 +1256,7 @@ checkDataLike ty = case ty of
     params' <- substM params
     def <- lookupDataDef =<< substM defName
     dataCons <- instantiateDataDef def params'
-    dropSubst $ forM_ dataCons \(DataConDef _ bs) ->
-      checkDataLikeBinderNest bs
+    dropSubst $ forM_ dataCons \(DataConDef _ repTy _) -> checkDataLike repTy
   TC con -> case con of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as
@@ -1299,9 +1265,3 @@ checkDataLike ty = case ty of
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty
   where recur = checkDataLike
-
-checkDataLikeBinderNest :: Typer m => EmptyAbs (Nest Binder) i -> m i o ()
-checkDataLikeBinderNest (Abs Empty UnitE) = return ()
-checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
-  checkDataLike $ binderType b
-  substBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE

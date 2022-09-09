@@ -197,16 +197,16 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     eff' <- substM eff
     resultTy' <- substM resultTy
     case trySelectBranch e' of
-      Just (i, args) -> do
-        Abs bs body <- return $ alts !! i
-        extendSubst (bs @@> map SubstVal args) $ simplifyBlock body
+      Just (i, arg) -> do
+        Abs b body <- return $ alts !! i
+        extendSubst (b @> SubstVal arg) $ simplifyBlock body
       Nothing -> do
         isData resultTy' >>= \case
           True -> do
-            alts' <- forM alts \(Abs bs body) -> do
-              bs' <- substM $ EmptyAbs bs
-              buildNaryAbs bs' \xs ->
-                extendSubst (bs @@> map Rename xs) $
+            alts' <- forM alts \(Abs b body) -> do
+              bTy' <- substM $ binderType b
+              buildAbs (getNameHint b) bTy' \x ->
+                extendSubst (b @> Rename x) $
                   buildBlock $ simplifyBlock body
             liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
@@ -225,7 +225,7 @@ defuncCase scrut alts resultTy = do
   closureTys <- mapM getAltNonDataTy alts'
   let closureSumTy = SumTy closureTys
   let newNonDataTy = nonDataTy split
-  alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
+  alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureTys i alt
   caseExpr <- caseComputingEffs scrut alts'' (PairTy (dataTy split) closureSumTy)
   caseResult <- liftM Var $ emit $ caseExpr
 
@@ -243,12 +243,12 @@ defuncCase scrut alts resultTy = do
         -- Result types of simplified abs should be hoistable past binder
         return $ ignoreHoistFailure $ hoist bs' ty
 
-    injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
-    injectAltResult sumTy con (Abs bs body) = liftBuilder do
-      buildAlt (EmptyAbs bs) \vs -> do
-        originalResult <- emitBlock =<< applySubst (bs@@>vs) body
+    injectAltResult :: EnvReader m => [Type n] -> Int -> Alt n -> m n (Alt n)
+    injectAltResult sumTys con (Abs b body) = liftBuilder do
+      buildAlt (binderType b) \v -> do
+        originalResult <- emitBlock =<< applySubst (b@>v) body
         (dataResult, nonDataResult) <- fromPair originalResult
-        return $ PairVal dataResult $ Con $ SumCon (sink sumTy) con nonDataResult
+        return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
 
     -- similar to `simplifyAbs` but assumes that the result is a pair
     -- whose first component is data. The reconstruction returned only
@@ -297,9 +297,9 @@ simplifyApp f xs =
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
         resultTy <- getAppType ty $ toList xs
-        alts' <- forM alts \(Abs bs a) -> do
-          buildAlt (EmptyAbs bs) \vs -> do
-            a' <- applySubst (bs@@>vs) a
+        alts' <- forM alts \(Abs b a) -> do
+          buildAlt (binderType b) \v -> do
+            a' <- applySubst (b@>v) a
             naryApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr caseExpr
@@ -457,9 +457,9 @@ simplifyTabApp f xs =
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
         resultTy <- getTabAppType ty $ toList xs
-        alts' <- forM alts \(Abs bs a) -> do
-          buildAlt (EmptyAbs bs) \vs -> do
-            a' <- applySubst (bs@@>vs) a
+        alts' <- forM alts \(Abs b a) -> do
+          buildAlt (binderType b) \v -> do
+            a' <- applySubst (b@>v) a
             naryTabApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr $ caseExpr
@@ -491,9 +491,6 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
   TypeCon _ _ _ -> substM atom
-  DataCon name def params con args ->
-    DataCon name <$> substM def <*> substM params
-                 <*> pure con <*> mapM simplifyAtom args
   DictCon d -> DictCon <$> substM d
   DictTy  t -> DictTy  <$> substM t
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
@@ -512,18 +509,17 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   ACase e alts rTy   -> do
     e' <- simplifyAtom e
     case trySelectBranch e' of
-      Just (i, args) -> do
-        Abs bs body <- return $ alts !! i
-        extendSubst (bs @@> map SubstVal args) $ simplifyAtom body
+      Just (i, arg) -> do
+        Abs b body <- return $ alts !! i
+        extendSubst (b @> SubstVal arg) $ simplifyAtom body
       Nothing -> do
         rTy' <- substM rTy
-        alts' <- forM alts \(Abs bs body) -> do
-          bs' <- substM $ EmptyAbs bs
-          buildNaryAbs bs' \xs ->
-            extendSubst (bs @@> map Rename xs) $
+        alts' <- forM alts \(Abs b body) -> do
+          bTy' <- substM $ binderType b
+          buildAbs (getNameHint b) bTy' \xs ->
+            extendSubst (b @> Rename xs) $
               simplifyAtom body
         return $ ACase e' alts' rTy'
-  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
@@ -702,42 +698,42 @@ simplifyOp op = case op of
       let fullLabels = toList $ reflectLabels fullTys
       let labels = toList $ reflectLabels rightTys
       -- Emit a case statement (ordered by the arg type) that lifts the type.
-      buildCase right (VariantTy fullRow) \caseIdx [v] -> do
+      buildCase right (VariantTy fullRow) \caseIdx v -> do
         -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
         let (label, i) = labels !! caseIdx
         let idx = fromJust $ elemIndex (label, i + length (lookupLabel leftTys label)) fullLabels
         let fullRow'@(NoExt fullRowItems') = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
-        return $ Con $ Newtype (VariantTy fullRow') $ SumVal (SumTy $ toList fullRowItems') idx v
+        return $ Con $ Newtype (VariantTy fullRow') $ SumVal (toList fullRowItems') idx v
     _ -> error "not a variant"
   VariantSplit leftTys full -> getType full >>= \case
     VariantTy (NoExt fullTys) -> do
       -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
       -- Emit a case statement (ordered by the arg type) that splits into the
       -- appropriate piece, changing indices as needed.
-      resTy <- getType $ Op op
+      resTy@(SumTy resTys) <- getType $ Op op
       let (_, rightTys) = splitLabeledItems leftTys fullTys
       let fullLabels = toList $ reflectLabels fullTys
       let leftLabels = toList $ reflectLabels leftTys
       let rightLabels = toList $ reflectLabels rightTys
-      buildCase full resTy \caseIdx [v] -> do
+      buildCase full resTy \caseIdx v -> do
         let (label, i) = fullLabels !! caseIdx
         let labelIx labs li = fromJust $ elemIndex li labs
-        let resTy' = sink resTy
+        let resTys' = sinkList resTys
         let lTy = sink $ VariantTy $ NoExt leftTys
         let rTy = sink $ VariantTy $ NoExt rightTys
         case leftTys `lookupLabel` label of
-          [] -> return $ SumVal resTy' 1 $ Con $ Newtype rTy $
-            SumVal (SumTy $ sinkList $ toList rightTys) (labelIx rightLabels (label, i)) v
+          [] -> return $ SumVal resTys' 1 $ Con $ Newtype rTy $
+            SumVal (sinkList $ toList rightTys) (labelIx rightLabels (label, i)) v
           tys -> if i < length tys
-            then return $ SumVal resTy' 0 $ Con $ Newtype lTy $
-              SumVal (SumTy $ sinkList $ toList leftTys) (labelIx leftLabels (label, i)) v
-            else return $ SumVal resTy' 1 $ Con $ Newtype rTy $
-              SumVal (SumTy $ sinkList $ toList rightTys)
+            then return $ SumVal resTys' 0 $ Con $ Newtype lTy $
+              SumVal (sinkList $ toList leftTys) (labelIx leftLabels (label, i)) v
+            else return $ SumVal resTys' 1 $ Con $ Newtype rTy $
+              SumVal (sinkList $ toList rightTys)
                      (labelIx rightLabels (label, i - length tys)) v
     _ -> error "Not a variant type"
   VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
-    return $ Con $ Newtype ty $ SumVal (SumTy $ toList tys) ix v
+    return $ Con $ Newtype ty $ SumVal (toList tys) ix v
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
   CastOp (BaseTy (Scalar Word32Type)) (Con (Lit (Word64Lit val))) ->
@@ -862,9 +858,9 @@ exceptToMaybeExpr expr = case expr of
   Case e alts resultTy _ -> do
     e' <- substM e
     resultTy' <- substM $ MaybeTy resultTy
-    buildCase e' resultTy' \i vs -> do
-      Abs bs body <- return $ alts !! i
-      extendSubst (bs @@> map SubstVal vs) $ exceptToMaybeBlock body
+    buildCase e' resultTy' \i v -> do
+      Abs b body <- return $ alts !! i
+      extendSubst (b @> SubstVal v) $ exceptToMaybeBlock body
   Atom x -> do
     x' <- substM x
     ty <- getType x'

@@ -2,35 +2,38 @@
 
 import stats
 
--- NonNegFloat
+-- LogSpace Float
 
 rp = [0.1, 0.3, 0.2, 0.1]
-nnp = map f_to_nnf rp
-(get_raw $ sum nnp) ~~ sum rp
+nnp = map f_to_ls rp
+(ls_to_f $ sum nnp) ~~ sum rp
 > True
 
-(get_raw $ prod nnp) ~~ prod rp
+(ls_to_f $ ls_sum nnp) ~~ sum rp
 > True
 
-get_raw (f_to_nnf 0.0) ~~ 0.0
+(ls_to_f $ prod nnp) ~~ prod rp
 > True
 
-get_raw (f_to_nnf 0.5) ~~ 0.5
+ls_to_f (f_to_ls 0.0) ~~ 0.0
 > True
 
-get_raw (f_to_nnf 1.0) ~~ 1.0
+ls_to_f (f_to_ls 0.5) ~~ 0.5
 > True
 
-get_raw (f_to_nnf 2.0) ~~ 2.0
+ls_to_f (f_to_ls 1.0) ~~ 1.0
 > True
 
-get_raw (f_to_nnf 0.1 + f_to_nnf 0.2) ~~ 0.3
+ls_to_f (f_to_ls 2.0) ~~ 2.0
 > True
 
-get_raw (f_to_nnf 0.4 * f_to_nnf 0.5) ~~ 0.2
+ls_to_f (f_to_ls 0.1 + f_to_ls 0.2) ~~ 0.3
 > True
 
-get_raw (divide (f_to_nnf 0.4) (f_to_nnf 0.5)) ~~ 0.8
+ls_to_f (f_to_ls 0.4 * f_to_ls 0.5) ~~ 0.2
+> True
+
+ls_to_f (divide (f_to_ls 0.4) (f_to_ls 0.5)) ~~ 0.8
 > True
 
 
@@ -38,16 +41,16 @@ get_raw (divide (f_to_nnf 0.4) (f_to_nnf 0.5)) ~~ 0.8
 
 -- bernoulli
 
-get_log (density (Bernoulli 0.6) True) ~~ -0.5108256
+ln (density (Bernoulli 0.6) True) ~~ -0.5108256
 > True
 
-get_log (cumulative (Bernoulli 0.6) False) ~~ log 0.4
+ln (cumulative (Bernoulli 0.6) False) ~~ log 0.4
 > True
 
-get_raw (cumulative (Bernoulli 0.6) False) ~~ 0.4
+ls_to_f (cumulative (Bernoulli 0.6) False) ~~ 0.4
 > True
 
-get_log (survivor (Bernoulli 0.6) False) ~~ log 0.6
+ln (survivor (Bernoulli 0.6) False) ~~ log 0.6
 > True
 
 quantile (Bernoulli 0.6) 0.39 == False
@@ -61,25 +64,25 @@ rand_vec 5 (draw $ Bernoulli 0.6) (new_key 0) :: Fin 5=>Bool
 
 -- binomial
 
-get_log (density (Binomial 10 0.4) 8) ~~ -4.545315
+ln (density (Binomial 10 0.4) 8) ~~ -4.545315
 > True
 
-get_raw (density (Binomial 10 0) 0) ~~ 1
+ls_to_f (density (Binomial 10 0) 0) ~~ 1.0
 > True
 
-get_raw (density (Binomial 10 0) 1) ~~ 0
+ls_to_f (density (Binomial 10 0) 1) ~~ 0.0
 > True
 
-get_raw (density (Binomial 10 1) 10) ~~ 1
+ls_to_f (density (Binomial 10 1) 10) ~~ 1.0
 > True
 
-get_raw (density (Binomial 10 1) 9) ~~ 0
+ls_to_f (density (Binomial 10 1) 9) ~~ 0.0
 > True
 
-get_log (cumulative (Binomial 10 0.4) 7) ~~ -0.01237076
+ln (cumulative (Binomial 10 0.4) 7) ~~ -0.01237076
 > True
 
-get_log (survivor (Binomial 10 0.4) 7) ~~ -4.398599
+ln (survivor (Binomial 10 0.4) 7) ~~ -4.398599
 > True
 
 quantile (Binomial 10 0.4) 0.5 == 4
@@ -90,19 +93,19 @@ rand_vec 5 (draw $ Binomial 10 0.4) (new_key 0) :: Fin 5=>Nat
 
 -- exponential
 
-get_log (density (Exponential 2.0) 3.0) ~~ -5.306853
+ln (density (Exponential 2.0) 3.0) ~~ -5.306853
 > True
 
-get_raw (density (Exponential 0) 0.0) ~~ 0.0
+ls_to_f (density (Exponential 0) 0.0) ~~ 0.0
 > True
 
-get_raw (density (Exponential 0) 1.0) ~~ 0.0
+ls_to_f (density (Exponential 0) 1.0) ~~ 0.0
 > True
 
-get_log (cumulative (Exponential 2.0) 3.0) ~~ -0.002481829
+ln (cumulative (Exponential 2.0) 3.0) ~~ -0.002481829
 > True
 
-get_log (survivor (Exponential 2.0) 3.0) ~~ -6
+ln (survivor (Exponential 2.0) 3.0) ~~ -6.0
 > True
 
 quantile (Exponential 2.0) 0.5 ~~ 0.3465736
@@ -113,40 +116,40 @@ rand_vec 5 (draw $ Exponential 2.0) (new_key 0) :: Fin 5=>Float
 
 -- geometric
 
-get_log (density (Geometric 0.1) 10) ~~ -3.25083
+ln (density (Geometric 0.1) 10) ~~ -3.25083
 > True
 
-get_raw (density (Geometric 0.0) 1) ~~ 0.0
+ls_to_f (density (Geometric 0.0) 1) ~~ 0.0
 > True
 
-get_raw (density (Geometric 0.0) 2) ~~ 0.0
+ls_to_f (density (Geometric 0.0) 2) ~~ 0.0
 > True
 
-get_raw (density (Geometric 1.0) 1) ~~ 1.0
+ls_to_f (density (Geometric 1.0) 1) ~~ 1.0
 > True
 
-get_raw (density (Geometric 1.0) 2) ~~ 0.0
+ls_to_f (density (Geometric 1.0) 2) ~~ 0.0
 > True
 
-get_log (cumulative (Geometric 0.1) 10) ~~ -0.4287518
+ln (cumulative (Geometric 0.1) 10) ~~ -0.4287518
 > True
 
-get_log (survivor (Geometric 0.1) 10) ~~ -1.053605
+ln (survivor (Geometric 0.1) 10) ~~ -1.053605
 > True
 
 quantile (Geometric 0.1) 0.5 == 7
 > True
 
-get_log (density (Geometric 0) 1) == -infinity
+ln (density (Geometric 0) 1) == -infinity
 > True
 
-get_log (density (Geometric 0) 2) == -infinity
+ln (density (Geometric 0) 2) == -infinity
 > True
 
-get_log (density (Geometric 1) 1) ~~ 0
+ln (density (Geometric 1) 1) ~~ 0.0
 > True
 
-get_log (density (Geometric 1) 2) == -infinity
+ln (density (Geometric 1) 2) == -infinity
 > True
 
 rand_vec 5 (draw $ Geometric 0.1) (new_key 0) :: Fin 5=>Nat
@@ -154,7 +157,7 @@ rand_vec 5 (draw $ Geometric 0.1) (new_key 0) :: Fin 5=>Nat
 
 -- normal
 
-get_log (density (Normal 1.0 2.0) 3.0) ~~ -2.112086
+ln (density (Normal 1.0 2.0) 3.0) ~~ -2.112086
 > True
 
 rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
@@ -162,19 +165,19 @@ rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
 
 -- poisson
 
-get_log (density (Poisson 5.0) 8) ~~ -2.7291
+ln (density (Poisson 5.0) 8) ~~ -2.7291
 > True
 
-get_raw (density (Poisson 0.0) 0) ~~ 1.0
+ls_to_f (density (Poisson 0.0) 0) ~~ 1.0
 > True
 
-get_raw (density (Poisson 0.0) 1) ~~ 0.0
+ls_to_f (density (Poisson 0.0) 1) ~~ 0.0
 > True
 
-get_log (cumulative (Poisson 5.0) 8) ~~ -0.07052294
+ln (cumulative (Poisson 5.0) 8) ~~ -0.07052294
 > True
 
-get_log (survivor (Poisson 5.0) 8) ~~ -2.686872
+ln (survivor (Poisson 5.0) 8) ~~ -2.686872
 > True
 
 quantile (Poisson 5.0) 0.7 == 6
@@ -185,13 +188,13 @@ rand_vec 5 (draw $ Poisson 5.0) (new_key 0) :: Fin 5=>Nat
 
 -- uniform
 
-get_log (density (Uniform 2.0 5.0) 3.5) ~~ -1.098612
+ln (density (Uniform 2.0 5.0) 3.5) ~~ -1.098612
 > True
 
-get_log (cumulative (Uniform 2.0 5.0) 3.5) ~~ -0.6931472
+ln (cumulative (Uniform 2.0 5.0) 3.5) ~~ -0.6931472
 > True
 
-get_log (survivor (Uniform 2.0 5.0) 3.5) ~~ -0.6931472
+ln (survivor (Uniform 2.0 5.0) 3.5) ~~ -0.6931472
 > True
 
 quantile (Uniform 2.0 5.0) 0.2 ~~ 2.6

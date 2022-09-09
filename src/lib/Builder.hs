@@ -23,8 +23,7 @@ module Builder (
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
   buildLam, buildTabLam, buildLamGeneral,
   buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr, asNaryLam,
-  buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
-  buildNewtype,
+  buildAlt, buildUnaryAtomAlt,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
@@ -77,7 +76,7 @@ import CheapReduction
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
-import Util (enumerate, transitiveClosureM, bindM2, iota)
+import Util (enumerate, transitiveClosureM, bindM2)
 import Err
 import Types.Core
 import Core
@@ -797,24 +796,14 @@ buildNaryLamExpr (NaryPiType (NonEmptyNest b bs) eff resultTy) cont =
 
 buildAlt
   :: ScopableBuilder m
-  => EmptyAbs (Nest Binder) n
-  -> (forall l. (Distinct l, Emits l, DExt n l) => [AtomName l] -> m l (Atom l))
+  => Type n
+  -> (forall l. (Distinct l, Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
-buildAlt bs body = do
-  buildNaryAbs bs \xs -> do
+buildAlt ty body = do
+  buildAbs noHint ty \x ->
     buildBlock do
       Distinct <- getDistinct
-      xs' <- mapM sinkM xs
-      body xs'
-
-buildUnaryAlt
-  :: ScopableBuilder m
-  => Type n
-  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
-  -> m n (Alt n)
-buildUnaryAlt ty body = do
-  bs <- singletonBinderNest noHint ty
-  buildAlt bs \[v] -> body v
+      body $ sink x
 
 buildUnaryAtomAlt
   :: ScopableBuilder m
@@ -822,44 +811,30 @@ buildUnaryAtomAlt
   -> (forall l. (Distinct l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (AltP Atom n)
 buildUnaryAtomAlt ty body = do
-  bs <- singletonBinderNest noHint ty
-  buildNaryAbs bs \[v] -> do
+  buildAbs noHint ty \v -> do
     Distinct <- getDistinct
     body v
-
-buildNewtype :: ScopableBuilder m
-             => SourceName
-             -> EmptyAbs (Nest Binder) n
-             -> (forall l. DExt n l => [AtomName l] -> m l (Type l))
-             -> m n (DataDef n)
-buildNewtype name paramBs body = do
-  Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
-    ty <- body params
-    singletonBinderNest noHint ty
-  return $ DataDef name (DataDefBinders paramBs' Empty) [DataConDef ("mk" <> name) argBs]
 
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, ScopableBuilder m)
           => Atom n -> Type n
-          -> (forall l. (Emits l, DExt n l) => Int -> [Atom l] -> m l (Atom l))
+          -> (forall l. (Emits l, DExt n l) => Int -> Atom l -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
   case trySelectBranch scrut of
-    Just (i, args) -> do
+    Just (i, arg) -> do
       Distinct <- getDistinct
-      indexedAltBody i (map sink args)
+      indexedAltBody i $ sink arg
     Nothing -> do
       scrutTy <- getType scrut
-      altsBinderTys <- caseAltsBinderTys scrutTy
-      (alts, effs) <- unzip <$> forM (enumerate altsBinderTys) \(i, bs) -> do
-        (Abs bs' (body `PairE` eff')) <- buildNaryAbs bs \xs -> do
-          blk <- buildBlock do
-            ListE xs' <- sinkM $ ListE xs
-            indexedAltBody i (Var <$> xs')
+      altBinderTys <- caseAltsBinderTys scrutTy
+      (alts, effs) <- unzip <$> forM (enumerate altBinderTys) \(i, bTy) -> do
+        (Abs b' (body `PairE` eff')) <- buildAbs noHint bTy \x -> do
+          blk <- buildBlock $ indexedAltBody i $ Var $ sink x
           eff <- getEffects blk
           return $ blk `PairE` eff
-        return (Abs bs' body, ignoreHoistFailure $ hoist bs' eff')
+        return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
       liftM Var $ emit $ Case scrut alts resultTy $ mconcat effs
 
 buildSplitCase :: (Emits n, ScopableBuilder m)
@@ -869,7 +844,7 @@ buildSplitCase :: (Emits n, ScopableBuilder m)
                -> m n (Atom n)
 buildSplitCase tys scrut resultTy match fallback = do
   split <- emitOp $ VariantSplit tys scrut
-  buildCase split resultTy \i [v] ->
+  buildCase split resultTy \i v ->
     case i of
       0 -> match v
       1 -> fallback v
@@ -990,6 +965,7 @@ maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
 maybeTangentType' :: Type n -> EnvReaderT Maybe n (Type n)
 maybeTangentType' ty = case ty of
   StaticRecordTy items -> StaticRecordTy <$> mapM rec items
+  -- TODO: Delete this case! This is a hack!
   TypeCon _ _ _ -> rec =<< fromNewtypeWrapper ty
   TabTy b bodyTy -> do
     refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
@@ -1010,7 +986,8 @@ fromNewtypeWrapper ty = do
   TypeCon _ defName params <- return ty
   def <- lookupDataDef defName
   [con] <- instantiateDataDef def params
-  DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) <- return con
+  -- Single field constructors are represented by their field
+  DataConDef _ wrappedTy [_] <- return con
   return wrappedTy
 
 tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
@@ -1072,7 +1049,7 @@ emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
 emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> Atom n -> m n (Name DataConNameC n)
 emitDataConName dataDefName conIdx conAtom = do
   DataDef _ _ dataCons <- lookupDataDef dataDefName
-  let (DataConDef name _) = dataCons !! conIdx
+  let (DataConDef name _ _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
 
 zipNest :: (forall ii ii'. a -> b ii ii' -> b' ii ii')
@@ -1218,8 +1195,8 @@ getUnpacked :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
 getUnpacked atom = do
   atom' <- cheapNormalize atom
   ty <- getType atom'
-  (len, suffix) <- projectLength ty
-  return $ map (\i -> getProjection (i:suffix) atom') (iota len)
+  idxs <- projectionIndices ty
+  return $ idxs <&> flip getProjection atom'
 {-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
@@ -1320,7 +1297,7 @@ emitIf :: (Emits n, ScopableBuilder m)
        -> m n (Atom n)
 emitIf predicate resultTy trueCase falseCase = do
   predicate' <- emitOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
-  buildCase predicate' resultTy \i [_] ->
+  buildCase predicate' resultTy \i _ ->
     case i of
       0 -> falseCase
       1 -> trueCase
@@ -1332,7 +1309,7 @@ emitMaybeCase :: (Emits n, ScopableBuilder m)
               -> (forall l. (Emits l, DExt n l) => Atom l -> m l (Atom l))
               -> m n (Atom n)
 emitMaybeCase scrut resultTy nothingCase justCase = do
-  buildCase scrut resultTy \i [v] ->
+  buildCase scrut resultTy \i v ->
     case i of
       0 -> nothingCase
       1 -> justCase v

@@ -1,43 +1,50 @@
 '# Stats
 Probability distributions and other functions useful for statistical computing.
 
-'## Non-negative floating point numbers
-When working with probability densities, mass functions, distributions, likelihoods, etc., we often work on a logarithmic scale to prevent floating point overflow/underflow. Working on the log scale makes `product` operations safe, since they correspond to addition on the log scale. However, when it comes to `sum` operations on the raw probability scale, care must be taken to avoid underflow by using a safe `logsumexp` function. `NonNegFloat` stores the log value internally, but is "safe" for both `sum` and `product`, since addition is implemented using the log-sum-exp trick. Several of the functions in this library return values as a `NonNegFloat`. The internally stored logarithmic value can be extracted with `get_log`, and the actual value being represented (the raw probability) can be computed with `get_raw`.
+'## Log-space floating point numbers
+When working with probability densities, mass functions, distributions, likelihoods, etc., we often work on a logarithmic scale to prevent floating point overflow/underflow. Working on the log scale makes `product` operations safe, since they correspond to addition on the log scale. However, when it comes to `sum` operations on the raw probability scale, care must be taken to avoid underflow by using a safe [log-sum-exp](https://en.wikipedia.org/wiki/LogSumExp) function. `LogSpace` stores the log value internally, but is "safe" for both `sum` and `product`, since addition is implemented using the log-sum-exp trick. Several of the functions in this library return values as a `LogSpace Float`. The internally stored logarithmic value can be extracted with `ln`, and the actual value being represented (the raw probability) can be computed with `ls_to_f`. Although it is safe to use `sum` on a value of type `n=>LogSpace f`, it may be slightly more accurate and/or performant to instead use `ls_sum`, which applies the standard max-sweep log-sum-exp trick directly, rather than relying on monoid reduction using `add`.
 
-data NonNegFloat = LogFloat Float
+data LogSpace f = Exp f
 
-instance Mul NonNegFloat
-  mul = \(LogFloat la) (LogFloat lb). LogFloat $ la + lb
-  one = LogFloat 0.0
+instance {f} [Add f] Mul (LogSpace f)
+  mul = \(Exp la) (Exp lb). Exp $ la + lb
+  one = Exp zero
 
-instance Fractional NonNegFloat
-  divide = \(LogFloat la) (LogFloat lb). LogFloat $ la - lb
+instance {f} [Sub f] Fractional (LogSpace f)
+  divide = \(Exp la) (Exp lb). Exp $ la - lb
 
-instance Add NonNegFloat
-  add = \(LogFloat la) (LogFloat lb).
+instance {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] Add (LogSpace f)
+  add = \(Exp la) (Exp lb).
     if (la > lb)
-      then LogFloat $ la + log1p (exp (lb - la))
-      else LogFloat $ lb + log1p (exp (la - lb))
-  zero = LogFloat (-infinity)
+      then Exp $ la + log1p (exp (lb - la))
+      else Exp $ lb + log1p (exp (la - lb))
+  zero = Exp (zero - (divide one zero))
 
-def f_to_nnf (a:Float) : NonNegFloat = LogFloat $ log a
+def f_to_ls {f} [Floating f] (a:f) : LogSpace f = Exp $ log a
 
-def get_raw ((LogFloat la):NonNegFloat) : Float = exp la
+def ls_to_f {f} [Floating f] ((Exp la):LogSpace f) : f = exp la
 
-def get_log ((LogFloat la):NonNegFloat) : Float = la
+def ln {f} [Floating f] ((Exp la):LogSpace f) : f = la
+
+def ls_sum {n f} [Floating f, Add f, Sub f, Ord f] (x:n=>LogSpace f) : LogSpace f =
+  lx = map ln x
+  m = maximum lx
+  Exp $ m + (log $ sum for i. exp (lx.i - m))
 
 
 '## Probability distributions
-Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.
+Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions which can be sampled should implement `Random`, and those which can be evaluated should implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.
 
-interface Dist d a
-  density : d -> a -> NonNegFloat    -- either the density function or mass function
-  draw : d -> Key -> a               -- function for random draws
+interface Random d a
+  draw : d -> Key -> a                -- function for random draws
 
-interface [Dist d a] OrderedDist d a
-  cumulative : d -> a -> NonNegFloat -- the cumulative distribution function (CDF)
-  survivor : d -> a -> NonNegFloat   -- the survivor function (complement of CDF)
-  quantile : d -> Float -> a         -- the quantile function (inverse CDF)
+interface Dist d a f
+  density : d -> a -> LogSpace f      -- either the density function or mass function
+
+interface [Dist d a f] OrderedDist d a f
+  cumulative : d -> a -> LogSpace f   -- the cumulative distribution function (CDF)
+  survivor : d -> a -> LogSpace f     -- the survivor function (complement of CDF)
+  quantile : d -> f -> a              -- the quantile function (inverse CDF)
 
 '## Univariate probability distributions
 Some commonly encountered univariate distributions. 
@@ -46,23 +53,25 @@ The [Bernoulli distribution](https://en.wikipedia.org/wiki/Bernoulli_distributio
 
 data BernoulliDist = Bernoulli Float
 
-instance Dist BernoulliDist Bool
-  density = \(Bernoulli prob) b.
-    if b
-     then LogFloat $ log prob
-     else LogFloat $ log1p (-prob)
+instance Random BernoulliDist Bool
   draw = \(Bernoulli prob) k.
     rand k < prob
 
-instance OrderedDist BernoulliDist Bool
+instance Dist BernoulliDist Bool Float
+  density = \(Bernoulli prob) b.
+    if b
+     then Exp $ log prob
+     else Exp $ log1p (-prob)
+
+instance OrderedDist BernoulliDist Bool Float
   cumulative = \(Bernoulli prob) b.
     if b
-      then LogFloat 0.0
-      else LogFloat $ log1p (-prob)
+      then Exp 0.0
+      else Exp $ log1p (-prob)
   survivor = \(Bernoulli prob) b.
     if b
-      then LogFloat (-infinity)
-      else LogFloat $ log prob
+      then Exp (-infinity)
+      else Exp $ log prob
   quantile = \(Bernoulli prob) q.
     q > (1 - prob)
 
@@ -72,39 +81,41 @@ The [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution)
 
 data BinomialDist = Binomial Nat Float
 
-instance Dist BinomialDist Nat
+instance Random BinomialDist Nat
+  draw = \(Binomial trials prob) k.
+    sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
+
+instance Dist BinomialDist Nat Float
   density = \(Binomial trials prob) x.
     if (prob == 0.0)
       then
         if (x == 0)
-          then LogFloat 0.0
-          else LogFloat (-infinity)
+          then Exp 0.0
+          else Exp (-infinity)
       else
         if (prob == 1.0)
           then
             if (x == trials)
-              then LogFloat 0.0
-              else LogFloat (-infinity)
+              then Exp 0.0
+              else Exp (-infinity)
           else
             tf = n_to_f trials
             xf = n_to_f x
             if (xf > tf)
-              then LogFloat (-infinity)
-              else LogFloat ( (xf * log prob) + ((tf - xf) * log1p (-prob)) +
+              then Exp (-infinity)
+              else Exp ( (xf * log prob) + ((tf - xf) * log1p (-prob)) +
                 lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf) )
-  draw = \(Binomial trials prob) k.
-    sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
 
-instance OrderedDist BinomialDist Nat
+instance OrderedDist BinomialDist Nat Float
   cumulative = \(Binomial trials prob) x.
     xp1:Nat = x + 1
-    sum $ for i:(Fin xp1). density (Binomial trials prob) (ordinal i)
+    ls_sum $ for i:(Fin xp1). density (Binomial trials prob) (ordinal i)
   survivor = \(Binomial trials prob) x.
     tmx = trials -| x
-    sum $ for i:(Fin tmx). density (Binomial trials prob) (x + 1 + ordinal i)
+    ls_sum $ for i:(Fin tmx). density (Binomial trials prob) (x + 1 + ordinal i)
   quantile = \(Binomial trials prob) q.
     tp1:Nat = trials + 1
-    lpdf = for i:(Fin tp1). get_log $ density (Binomial trials prob) (ordinal i)
+    lpdf = for i:(Fin tp1). ln $ density (Binomial trials prob) (ordinal i)
     cdf = cdf_for_categorical lpdf
     mi = search_sorted cdf q
     ordinal $ from_just mi
@@ -115,23 +126,25 @@ The [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distrib
 
 data ExponentialDist = Exponential Float
 
-instance Dist ExponentialDist Float
-  density = \(Exponential rate) x.
-    if (x < 0.0)
-      then LogFloat (-infinity)
-      else LogFloat $ log rate - (rate * x)
+instance Random ExponentialDist Float
   draw = \(Exponential rate) k.
     log1p (-rand k) / -rate
 
-instance OrderedDist ExponentialDist Float
+instance Dist ExponentialDist Float Float
+  density = \(Exponential rate) x.
+    if (x < 0.0)
+      then Exp (-infinity)
+      else Exp $ log rate - (rate * x)
+
+instance OrderedDist ExponentialDist Float Float
   cumulative = \(Exponential rate) x.
     if (x < 0.0)
-      then LogFloat (-infinity)
-      else LogFloat $ log1p (-exp (-rate * x))
+      then Exp (-infinity)
+      else Exp $ log1p (-exp (-rate * x))
   survivor = \(Exponential rate) x.
     if (x < 0.0)
-      then LogFloat 0.0
-      else LogFloat $ -rate * x
+      then Exp 0.0
+      else Exp $ -rate * x
   quantile = \(Exponential rate) q.
     log1p (-q) / -rate
 
@@ -141,25 +154,27 @@ This [geometric distribution](https://en.wikipedia.org/wiki/Geometric_distributi
 
 data GeometricDist = Geometric Float
 
-instance Dist GeometricDist Nat
+instance Random GeometricDist Nat
+  draw = \(Geometric prob) k.
+    f_to_n $ ceil $ log1p (-rand k) / log1p (-prob)
+
+instance Dist GeometricDist Nat Float
   density = \(Geometric prob) n.
     if (prob == 1)
       then
         if (n == 1)
-          then LogFloat 0
-          else LogFloat (-infinity)
+          then Exp 0
+          else Exp (-infinity)
       else
         nf = n_to_f n
-        LogFloat $ ((nf-1)*log1p (-prob)) + log prob
-  draw = \(Geometric prob) k.
-    f_to_n $ ceil $ log1p (-rand k) / log1p (-prob)
+        Exp $ ((nf-1)*log1p (-prob)) + log prob
 
-instance OrderedDist GeometricDist Nat
+instance OrderedDist GeometricDist Nat Float
   cumulative = \(Geometric prob) n.
     nf = n_to_f n
-    LogFloat $ log1p (-pow (1-prob) nf)
+    Exp $ log1p (-pow (1-prob) nf)
   survivor = \(Geometric prob) n.
-    LogFloat $ n_to_f n * log1p (-prob)
+    Exp $ n_to_f n * log1p (-prob)
   quantile = \(Geometric prob) q.
     f_to_n $ ceil $ log1p (-q) / log1p (-prob)
 
@@ -169,11 +184,13 @@ The Gaussian, or [normal distribution](https://en.wikipedia.org/wiki/Normal_dist
 
 data NormalDist = Normal Float Float
 
-instance Dist NormalDist Float
-  density = \(Normal loc scale) x.
-    LogFloat $ -0.5 * (log (2 * pi * (sq scale)) + (sq ((x - loc) / scale)))
+instance Random NormalDist Float
   draw = \(Normal loc scale) k.
     loc + (scale * randn k)
+
+instance Dist NormalDist Float Float
+  density = \(Normal loc scale) x.
+    Exp $ -0.5 * (log (2 * pi * (sq scale)) + (sq ((x - loc) / scale)))
 
 -- TODO: with some kind of "error function" (and inverse) exposed, could and should also implement OrderedDist
 
@@ -183,14 +200,7 @@ The [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution) i
 
 data PoissonDist = Poisson Float
 
-instance Dist PoissonDist Nat
-  density = \(Poisson rate) n.
-    if ((rate == 0.0)&&(n == 0))
-      then
-        LogFloat 0.0
-      else
-        nf = n_to_f n
-        LogFloat $ (nf * log rate) - rate - lgamma (nf + 1)
+instance Random PoissonDist Nat
   draw = \(Poisson rate) k.
     exp_neg_rate = exp (-rate)
     [current_k, next_k] = split_key k
@@ -207,19 +217,28 @@ instance Dist PoissonDist Nat
             else
               False
 
-instance OrderedDist PoissonDist Nat
+instance Dist PoissonDist Nat Float
+  density = \(Poisson rate) n.
+    if ((rate == 0.0)&&(n == 0))
+      then
+        Exp 0.0
+      else
+        nf = n_to_f n
+        Exp $ (nf * log rate) - rate - lgamma (nf + 1)
+
+instance OrderedDist PoissonDist Nat Float
   cumulative = \(Poisson rate) x.
     xp1:Nat = x + 1
-    sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
+    ls_sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
   survivor = \(Poisson rate) x.
     xp1:Nat = x + 1
-    cdf = sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
-    LogFloat $ log1p (-get_raw cdf)
+    cdf = ls_sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
+    Exp $ log1p (-ls_to_f cdf)
   quantile = \(Poisson rate) q.
     yield_state (0::Nat) \x.
       with_state 0.0 \cdf.
         while do
-          cdf := (get cdf) + get_raw (density (Poisson rate) (get x))
+          cdf := (get cdf) + ls_to_f (density (Poisson rate) (get x))
           if (get cdf) > q
             then
               False
@@ -233,27 +252,29 @@ The [uniform distribution](https://en.wikipedia.org/wiki/Continuous_uniform_dist
 
 data UniformDist = Uniform Float Float
 
-instance Dist UniformDist Float
-  density = \(Uniform low high) x.
-    if (x >= low)&&(x <= high)
-      then LogFloat $ -log (high - low)
-      else LogFloat (-infinity)
+instance Random UniformDist Float
   draw = \(Uniform low high) k.
     low + ((high - low) * rand k)
 
-instance OrderedDist UniformDist Float
+instance Dist UniformDist Float Float
+  density = \(Uniform low high) x.
+    if (x >= low)&&(x <= high)
+      then Exp $ -log (high - low)
+      else Exp (-infinity)
+
+instance OrderedDist UniformDist Float Float
   cumulative = \(Uniform low high) x.
     if (x < low)
-      then LogFloat (-infinity)
+      then Exp (-infinity)
       else if (x > high)
-        then LogFloat 0.0
-        else LogFloat $ log (x - low) - log (high - low)
+        then Exp 0.0
+        else Exp $ log (x - low) - log (high - low)
   survivor = \(Uniform low high) x.
     if (x < low)
-      then LogFloat 0.0
+      then Exp 0.0
       else if (x > high)
-        then LogFloat (-infinity)
-        else LogFloat $ log (high - x) - log (high - low)
+        then Exp (-infinity)
+        else Exp $ log (high - x) - log (high - low)
   quantile = \(Uniform low high) q.
     low + ((high - low) * q)
   

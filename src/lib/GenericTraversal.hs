@@ -86,9 +86,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
-  DataCon sourceName dataDefName params con args ->
-    DataCon sourceName <$> substM dataDefName <*>
-      tge params <*> pure con <*> mapM tge args
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr
@@ -101,7 +98,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
   ACase _ _ _ -> nyi
-  DataConRef _ _ _ -> nyi
   DepPairRef _ _ _ -> nyi
   BoxedRef _ -> nyi
   where nyi = error $ "not implemented: " ++ pprint atom
@@ -189,14 +185,9 @@ traverseAlt
   :: GenericTraverser s
   => Alt i
   -> GenericTraverserM s i o (Alt o)
-traverseAlt (Abs Empty body) = Abs Empty <$> tge body
-traverseAlt (Abs (Nest (b:>ty) bs) body) = do
+traverseAlt (Abs (b:>ty) body) = do
   ty' <- tge ty
-  Abs b' (Abs bs' body') <-
-    buildAbs (getNameHint b) ty' \v -> do
-      extendRenamer (b@>v) $
-        traverseAlt $ Abs bs body
-  return $ Abs (Nest b' bs') body'
+  buildAbs (getNameHint b) ty' \v -> extendRenamer (b@>v) $ tge body
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

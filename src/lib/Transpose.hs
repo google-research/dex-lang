@@ -17,7 +17,7 @@ import Name
 import Syntax
 import Builder
 import QueryType
-import Util (zipWithT, enumerate)
+import Util (enumerate)
 import GHC.Stack
 
 transpose :: (MonadFail1 m, EnvReader m) => Atom n -> m n (Atom n)
@@ -185,10 +185,10 @@ transposeExpr expr ct = case expr of
       True  -> notImplemented
       False -> do
         e' <- substNonlin e
-        void $ buildCase e' UnitTy \i vs -> do
-          vs' <- mapM emitAtomToName vs
-          Abs bs body <- return $ alts !! i
-          extendSubst (bs @@> map RenameNonlin vs') do
+        void $ buildCase e' UnitTy \i v -> do
+          v' <- emitAtomToName v
+          Abs b body <- return $ alts !! i
+          extendSubst (b @> RenameNonlin v') do
             transposeBlock body (sink ct)
           return UnitVal
 
@@ -275,7 +275,6 @@ transposeAtom atom ct = case atom of
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
-  DataCon _ _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   TabVal b body   -> do
     ty <- substNonlin $ binderAnn b
     void $ buildFor noHint Fwd ty \i -> do
@@ -296,7 +295,6 @@ transposeAtom atom ct = case atom of
   TC _            -> notTangent
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
-  DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _       -> error "Unexpected ref"
   DepPairRef _ _ _ -> error "Unexpected ref"
   ProjectElt idxs v -> do

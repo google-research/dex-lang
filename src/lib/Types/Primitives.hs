@@ -62,9 +62,9 @@ traversePrimTC = inline traverse
 
 data PrimCon e =
         Lit LitVal
-      | ProdCon [e]
-      | SumCon    e Int e     -- type, tag, payload
-      | SumAsProd e e   [[e]] -- type, tag, payload
+      | ProdCon   [e]
+      | SumCon    [e] Int e     -- type, tag, payload
+      | SumAsProd [e] e   [e]   -- type, tag, payload
       | LabelCon String
       | Newtype e e           -- type, payload
       -- References
