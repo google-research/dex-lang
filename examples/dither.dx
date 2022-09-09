@@ -16,13 +16,17 @@ img_ = for i:Height. for j:Width. n_to_f ((ordinal i) + (ordinal j))
 img = img_ / (n_to_f (size Height + size Width))
 
 :t img
+> ((Fin 100) => (Fin 300) => Float32)
 :html matshow img
+> <html output>
+
 ' # Round 1: Threshold dithering
 
 def dither_threshold {h w} (img: h=>w=>Float) : (h=>w=>Bool) =
   for i j. img.i.j > 0.5
 
 :html bmatshow $ dither_threshold img
+> <html output>
 
 ' # Round 2: Noise dithering
 
@@ -30,6 +34,7 @@ def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
   for i j. img.i.j > rand (ixkey k (i, j))
 
 :html bmatshow $ dither_noise key img
+> <html output>
 
 ' # Round 3: Ordered dithering
 
@@ -42,6 +47,7 @@ bayer = [[1.0,  9,  3, 11],
          [ 16,  8, 14,  6]] / 17.0
 
 :html bmatshow $ dither_ordered bayer img
+> <html output>
 
 halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
             [   7,   2,  1,  9, 26, 31, 32, 24],
@@ -53,6 +59,7 @@ halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
             [  18,  25, 21, 17, 15,  8, 12, 16]] / 33.0
 
 :html bmatshow $ dither_ordered halftone img
+> <html output>
 
 ' # Dithering a real image
 
@@ -118,9 +125,15 @@ def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
 img_cameraman = for i j. rbg_to_gray img_cameraman_rgb.i.j
 
 :t img_cameraman
+> ((Fin 512) => (Fin 512) => Float32)
 :html matshow img_cameraman
+> <html output>
 
 :html bmatshow $ dither_threshold img_cameraman
+> <html output>
 :html bmatshow $ dither_noise key img_cameraman
+> <html output>
 :html bmatshow $ dither_ordered bayer img_cameraman
+> <html output>
 :html bmatshow $ dither_ordered halftone img_cameraman
+> <html output>
