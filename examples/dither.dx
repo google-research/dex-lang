@@ -109,7 +109,10 @@ def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
   vals = for c. srgb_to_linear ((pixel pix.c) / 255.0)
   linear_to_srgb $ vdot vals [0.2126, 0.7152, 0.0722]
 
--- Load image
+
+' To run this section, move the following .ppm image to examples
+
+'  `wget https://gist.githubusercontent.com/adrhill/963f522bcd335e475174ebdd41f8c3f4/raw/d9ac4531a55ad11045ec8163ae59673c5c828c3a/cameraman.ppm`
 
 (MkImage rows cols img_cameraman_rgb) = from_just $ load_image_p6 "examples/cameraman.ppm"
 img_cameraman = for i j. rbg_to_gray img_cameraman_rgb.i.j
