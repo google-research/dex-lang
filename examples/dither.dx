@@ -2,8 +2,12 @@
 
 import plot
 import png
+import parser
 
 ' # Round 0: Creating a test image
+
+def bmatshow {h w} (mat: h=>w=>Bool) : Html =
+  matshow for i j. b_to_f mat.i.j
 
 Height = Fin 100
 Width = Fin 300
@@ -15,29 +19,29 @@ img = img_ / (n_to_f (size Height + size Width))
 :html matshow img
 ' # Round 1: Threshold dithering
 
-def dither_threshold {h w} (img: h=>w=>Float) : (h=>w=>Float) =
-    for i j. b_to_f $ img.i.j > 0.5
+def dither_threshold {h w} (img: h=>w=>Float) : (h=>w=>Bool) =
+  for i j. img.i.j > 0.5
 
-:html matshow $ dither_threshold img
+:html bmatshow $ dither_threshold img
 
 ' # Round 2: Noise dithering
 
-def dither_noise {h w} (k:Key) (img: h=>w=>Float)  : (h=>w=>Float) =
-    for i j. b_to_f $ img.i.j > rand (ixkey k (i, j))
+def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
+  for i j. img.i.j > rand (ixkey k (i, j))
 
-:html matshow $ dither_noise key img
+:html bmatshow $ dither_noise key img
 
 ' # Round 3: Ordered dithering
 
-def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Float) =
-    for i j. b_to_f $ img.i.j > mat.(wrap mh (ordinal i)).(wrap mw (ordinal j))
+def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Bool) =
+  for i j. img.i.j > mat.(wrap mh (ordinal i)).(wrap mw (ordinal j))
 
 bayer = [[1.0,  9,  3, 11], 
          [ 13,  5, 15,  7],
          [  4, 12,  2, 10],
          [ 16,  8, 14,  6]] / 17.0
 
-:html matshow $ dither_ordered bayer img
+:html bmatshow $ dither_ordered bayer img
 
 halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
             [   7,   2,  1,  9, 26, 31, 32, 24],
@@ -48,9 +52,42 @@ halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
             [  22,  30, 29, 28, 11,  3,  4,  5],
             [  18,  25, 21, 17, 15,  8, 12, 16]] / 33.0
 
-:html matshow $ dither_ordered halftone img
+:html bmatshow $ dither_ordered halftone img
 
 ' # Dithering a real image
+
+-- Image Loading Utilities
+
+data Image =
+  MkImage rows:Nat cols:Nat pixels:(Fin rows => Fin cols => Fin 3 => Word8)
+
+def parse_p6 : Parser Image = MkParser \h.
+  -- Loads a raw PPM file in P6 format.
+  -- The header will look something like:
+  --   P6
+  --   220 220    (height, width)
+  --   255        (max color value)
+  -- followed by a flat block of height x width x 3 chars.
+  parse h $ p_char 'P'
+  parse h $ p_char '6'
+  parse h $ parse_any
+  rows = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  cols = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  colorsize = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  pixels = for r:(Fin rows).
+    for c:(Fin cols).
+      for c:(Fin 3).
+        parse h parse_any
+  MkImage rows cols pixels
+
+def load_image_p6 (filename:String) : Maybe Image =
+  image_raw = unsafe_io do read_file filename
+  run_parser_partial image_raw parse_p6
+
+-- Conversion from RGB to grayscale
 
 def pixel (x:Char) : Float32 =
   r = w8_to_i x
@@ -58,17 +95,29 @@ def pixel (x:Char) : Float32 =
     True -> 256 + r
     False -> r
 
-IHeight = Fin 512
-IWidth = Fin 512
-Full = Fin ((size IHeight) * (size IWidth))
-(AsList _ imgbytes) = unsafe_io do read_file "examples/cameraman.bytes"
+def srgb_to_linear (c: Float) : Float =
+  case c <= 0.04045 of
+    True  -> c / 12.92
+    False -> pow ((c + 0.055) / 1.055) 2.4
 
-raw = unsafe_cast_table Full (for i:Full. imgbytes.((ordinal i) @ _))
-img_cameraman = for i:IHeight j:IWidth. (pixel raw.((ordinal (i, j)) @ Full)) / 255.0
+def linear_to_srgb (c: Float) : Float = 
+  case c <= 0.0031308 of
+    True  -> c * 12.92
+    False -> 1.055 * (pow c (1.0 / 2.4)) - 0.055
 
+def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
+  vals = for c. srgb_to_linear ((pixel pix.c) / 255.0)
+  linear_to_srgb $ vdot vals [0.2126, 0.7152, 0.0722]
+
+-- Load image
+
+(MkImage rows cols img_cameraman_rgb) = from_just $ load_image_p6 "examples/cameraman.ppm"
+img_cameraman = for i j. rbg_to_gray img_cameraman_rgb.i.j
+
+:t img_cameraman
 :html matshow img_cameraman
 
-:html matshow $ dither_threshold img_cameraman
-:html matshow $ dither_noise key img_cameraman
-:html matshow $ dither_ordered bayer img_cameraman
-:html matshow $ dither_ordered halftone img_cameraman
+:html bmatshow $ dither_threshold img_cameraman
+:html bmatshow $ dither_noise key img_cameraman
+:html bmatshow $ dither_ordered bayer img_cameraman
+:html bmatshow $ dither_ordered halftone img_cameraman
