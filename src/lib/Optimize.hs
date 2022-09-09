@@ -262,6 +262,7 @@ instance HasDCE TabPiType
 instance HasDCE DepPairType
 instance HasDCE EffectRow
 instance HasDCE Effect
+instance HasDCE EffectOpType
 instance HasDCE DictExpr
 instance HasDCE DictType
 instance HasDCE FieldRowElems

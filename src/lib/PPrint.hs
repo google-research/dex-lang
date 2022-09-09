@@ -236,6 +236,9 @@ instance PrettyPrec (DepPairType n) where
   prettyPrec (DepPairType b rhs) =
     atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
 
+instance Pretty (EffectOpType n) where
+  pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
+
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
@@ -250,6 +253,7 @@ instance PrettyPrec (Atom n) where
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
+    EffOp _ _ ty -> atPrec ArgPrec $ p ty
     TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
     TypeCon "RangeToExc"   _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ "..<" <> pApp i
     TypeCon "RangeFrom"    _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <>  ".."
@@ -464,6 +468,10 @@ instance Pretty (Binding s n) where
     ObjectFileBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding     _ -> "<ptr>"
+    -- TODO(alex): do something actually useful here
+    EffectBinding _ -> "<effect-binding>"
+    HandlerBinding _ -> "<handler-binding>"
+    EffectOpBinding _ -> "<effect-op-binding>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
@@ -711,8 +719,8 @@ instance Pretty (UDecl n l) where
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
     where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
                  | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
-  pretty (UHandlerDecl effName tyArgs retEff retTy opDefs name) =
-    "handler" <+> p name <+> "of" <+> p effName <+> prettyBinderNest tyArgs
+  pretty (UHandlerDecl effName bodyTyArg tyArgs retEff retTy opDefs name) =
+    "handler" <+> p name <+> "of" <+> p effName <+> p bodyTyArg <+> prettyBinderNest tyArgs
     <+> ":" <+> p retEff <+> p retTy <> hardline
     <> foldMap ((<>hardline) . p) opDefs
 

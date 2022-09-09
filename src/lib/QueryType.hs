@@ -213,6 +213,9 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
 oneEffect :: Effect n -> EffectRow n
 oneEffect eff = EffectRow (S.singleton eff) Nothing
 
+userEffect :: EffectName n -> Atom n
+userEffect v = Eff (oneEffect (UserEffect v))
+
 projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Int]]
 projectionIndices ty = case ty of
   TypeCon _ defName _ -> do
@@ -236,9 +239,9 @@ sourceNameType v = do
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
       UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
-      UEffectVar   _ -> error "not implemented: sourceNameType::UEffectVar"
-      UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"
-      UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"
+      UEffectVar  v' -> getType $ userEffect v'
+      UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"  -- TODO(alex): implement
+      UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"   -- TODO(alex): implement
 
 typeBinOp :: BinOp -> BaseType -> BaseType
 typeBinOp binop xTy = case binop of
@@ -331,6 +334,8 @@ instance HasType Atom where
     Con con -> getTypePrimCon con
     TC _ -> return TyKind
     Eff _ -> return EffKind
+    -- TODO(alex): validate
+    EffOp _ _ (EffectOpType _ ty) -> substM ty
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
@@ -630,7 +635,8 @@ getTypePrimOp op = case op of
   VectorSubref ref _ vty -> getTypeE ref >>= \case
     TC (RefType h _) -> TC . RefType h <$> substM vty
     ty -> error $ "Not a reference type: " ++ pprint ty
-  Resume _ _ -> throw NotImplementedErr "getTypePrimOp.Resume"
+  Resume retTy _ -> substM retTy
+  Handle _ _ -> throw NotImplementedErr "getTypePrimOp.Handle"  -- TODO(alex): implement
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =

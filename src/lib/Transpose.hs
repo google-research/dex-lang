@@ -260,6 +260,7 @@ transposeOp op ct = case op of
   VectorIota _          -> unreachable
   VectorSubref _ _ _    -> unreachable
   Resume _ _            -> notLinear
+  Handle _ _            -> notLinear
   where
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
     unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
@@ -294,6 +295,7 @@ transposeAtom atom ct = case atom of
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
+  EffOp _ _ _     -> notTangent  -- TODO(alex): check correctness
   ACase _ _ _     -> error "Unexpected ACase"
   BoxedRef _       -> error "Unexpected ref"
   DepPairRef _ _ _ -> error "Unexpected ref"

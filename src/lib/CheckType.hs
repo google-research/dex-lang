@@ -157,17 +157,21 @@ instance CheckableB EnvFrag where
 
 instance Color c => CheckableE (Binding c) where
   checkE binding = case binding of
-    AtomNameBinding   atomNameBinding   -> AtomNameBinding <$> checkE atomNameBinding
-    DataDefBinding    dataDef           -> DataDefBinding  <$> checkE dataDef
-    TyConBinding      dataDefName     e -> TyConBinding    <$> substM dataDefName              <*> substM e
-    DataConBinding    dataDefName idx e -> DataConBinding  <$> substM dataDefName <*> pure idx <*> substM e
-    ClassBinding      classDef          -> ClassBinding    <$> substM classDef
-    InstanceBinding   instanceDef       -> InstanceBinding <$> substM instanceDef
-    MethodBinding className idx f       -> MethodBinding     <$> substM className <*> pure idx <*> substM f
+    AtomNameBinding   atomNameBinding   -> AtomNameBinding   <$> checkE atomNameBinding
+    DataDefBinding    dataDef           -> DataDefBinding    <$> checkE dataDef
+    TyConBinding      dataDefName     e -> TyConBinding      <$> substM dataDefName              <*> substM e
+    DataConBinding    dataDefName idx e -> DataConBinding    <$> substM dataDefName <*> pure idx <*> substM e
+    ClassBinding      classDef          -> ClassBinding      <$> substM classDef
+    InstanceBinding   instanceDef       -> InstanceBinding   <$> substM instanceDef
+    MethodBinding     className idx f   -> MethodBinding     <$> substM className   <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
     ModuleBinding     md                -> ModuleBinding     <$> substM md
     PtrBinding        ptr               -> PtrBinding        <$> return ptr
+    -- TODO(alex): consider checkE below?
+    EffectBinding     eff               -> EffectBinding     <$> substM eff
+    HandlerBinding    h                 -> HandlerBinding    <$> substM h
+    EffectOpBinding   op                -> EffectOpBinding   <$> substM op
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -224,6 +228,9 @@ instance HasType AtomName where
     atomBindingType <$> lookupEnv name'
   {-# INLINE getTypeE #-}
 
+instance HasType EffectOpType where
+  getTypeE (EffectOpType _ ty) = getTypeE ty
+
 instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> getTypeE name
@@ -241,6 +248,8 @@ instance HasType Atom where
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
+    -- TODO(alex): what's the right thing to do here with eff?
+    EffOp eff _ (EffectOpType _ ty) -> checkE (oneEffect eff) >> substM ty
     TypeCon _ defName params -> do
       def <- lookupDataDef =<< substM defName
       params' <- checkE params
@@ -734,7 +743,10 @@ typeCheckPrimOp op = case op of
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
     return ty'
-  Resume _ _ -> throw NotImplementedErr "typeCheckPrimOp.Resume"
+  Resume retTy _argTy -> do
+    -- TODO(alex): check the argument
+    checkTypeE TyKind retTy
+  Handle _ _ -> throw NotImplementedErr "typeCheckPrimOp.Handle"  -- TODO(alex): implement
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

@@ -25,6 +25,7 @@ module Builder (
   buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr, asNaryLam,
   buildAlt, buildUnaryAtomAlt,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
+  emitEffectDef, emitHandlerDef, emitEffectOp,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
@@ -1038,6 +1039,28 @@ emitDataDef dataDef@(DataDef sourceName _ _) =
   emitBinding hint $ DataDefBinding dataDef
   where hint = getNameHint sourceName
 
+emitEffectDef :: (Mut n, TopBuilder m) => EffectDef n -> m n (EffectName n)
+emitEffectDef effectDef@(EffectDef name _) =
+  emitBinding (getNameHint name) $ EffectBinding effectDef
+
+emitHandlerDef :: (Mut n, TopBuilder m) => SourceName -> HandlerDef n -> m n (HandlerName n)
+emitHandlerDef name handlerDef =
+  emitBinding (getNameHint name) $ HandlerBinding handlerDef
+
+emitEffectOp :: (Mut n, TopBuilder m) => EffectName n -> Int -> SourceName -> m n (Name EffectOpNameC n)
+emitEffectOp effName i opName = do
+  let hint = getNameHint opName
+  perform <- makePerformOp effName i
+  let opDef = EffectOpDef effName (OpIdx i) perform
+  emitBinding hint $ EffectOpBinding opDef
+
+makePerformOp :: EnvReader m => EffectName n -> Int -> m n (Atom n)
+makePerformOp effName opIdx = do
+  effName' <- sinkM effName
+  EffectDef _ ops <- getEffectDef effName'
+  let (_, opType) = ops !! opIdx
+  return $ EffOp (UserEffect effName') opIdx opType
+
 emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> m n (Name ClassNameC n)
 emitClassDef classDef@(ClassDef name _ _ _ _) =
   emitBinding (getNameHint name) $ ClassBinding classDef
@@ -1094,6 +1117,11 @@ getClassDef :: EnvReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
   ~(ClassBinding classDef) <- lookupEnv classDefName
   return classDef
+
+getEffectDef :: EnvReader m => EffectName n -> m n (EffectDef n)
+getEffectDef effDefName = do
+  ~(EffectBinding def) <- lookupEnv effDefName
+  return def
 
 -- === builder versions of common local ops ===
 
