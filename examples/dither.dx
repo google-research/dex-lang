@@ -1,4 +1,14 @@
 ' # Dither.dx
+  "A common use of dither is converting a grayscale image to black and white, 
+   such that the density of black dots in the new image approximates 
+   the average gray level in the original." 
+  [From [https://en.wikipedia.org/wiki/Dither](https://en.wikipedia.org/wiki/Dither)]
+
+'Here we represent grayscale images as matrices of floats with continuous
+ values between 0 (white) and 1 (black). The quantized results after dithering will be
+ matrices of booleans arising from a pixel-wise thresholding. Each
+ dithering algorithm below uses its own rule of choosing a threshold value,
+ resulting in distinct styles.
 
 import plot
 import png
@@ -37,6 +47,9 @@ def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
 > <html output>
 
 ' # Round 3: Ordered dithering
+  Ordered dithering uses a small threshold matrix that is periodically tiled over the target
+  image. We achieve this by wrapping the pixel indices i and j into the range
+  of the small matrix `mat` to retrieve the threshold.
 
 def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Bool) =
   for i j. img.i.j > mat.(wrap mh (ordinal i)).(wrap mw (ordinal j))
