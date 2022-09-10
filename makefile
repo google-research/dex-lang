@@ -249,12 +249,12 @@ tutorial-data: $(tutorial-data)
 run-examples/tutorial: tutorial-data
 update-examples/tutorial: tutorial-data
 
-cameraman-sha256 = 1843932452e3a6f432df891ced26ecb6473fcd6b00dc2a4dfe8fe5648b3555ea
-dither-data = cameraman
+camera-sha256 = c5c69e1bf02f219b6e1c12c13405671425aa1c4dc130c1c380e7416a064341bc
+dither-data = camera
 dither-data := $(dither-data:%=examples/%)
 
 $(dither-data):
-	wget -qO $@.ppm https://gist.githubusercontent.com/adrhill/963f522bcd335e475174ebdd41f8c3f4/raw/d9ac4531a55ad11045ec8163ae59673c5c828c3a/$(@F).ppm
+	wget -qO $@.ppm https://gist.github.com/niklasschmitz/03be29c2850ac3bbdf6ce86229b71d8f/raw/300962b117fe8595913fb1f35db546b53974576c/$(@F).ppm
 	@echo $($(@F)-sha256) $@.ppm > $@.sha256
 	sha256sum -c $@.sha256
 	$(RM) $@.sha256

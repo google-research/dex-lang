@@ -72,15 +72,15 @@ def parse_p6 : Parser Image = MkParser \h.
   -- Loads a raw PPM file in P6 format.
   -- The header will look something like:
   --   P6
-  --   220 220    (height, width)
+  --   220 220    (width, height)
   --   255        (max color value)
   -- followed by a flat block of height x width x 3 chars.
   parse h $ p_char 'P'
   parse h $ p_char '6'
   parse h $ parse_any
-  rows = i32_to_n $ parse h $ parse_unsigned_int
-  parse h $ parse_any
   cols = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  rows = i32_to_n $ parse h $ parse_unsigned_int
   parse h $ parse_any
   colorsize = i32_to_n $ parse h $ parse_unsigned_int
   parse h $ parse_any
@@ -119,21 +119,21 @@ def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
 
 ' To run this section, move the following .ppm image to examples
 
-'  `wget https://gist.githubusercontent.com/adrhill/963f522bcd335e475174ebdd41f8c3f4/raw/d9ac4531a55ad11045ec8163ae59673c5c828c3a/cameraman.ppm`
+'  `wget https://gist.github.com/niklasschmitz/03be29c2850ac3bbdf6ce86229b71d8f/raw/300962b117fe8595913fb1f35db546b53974576c/camera.ppm`
 
-(MkImage rows cols img_cameraman_rgb) = from_just $ load_image_p6 "examples/cameraman.ppm"
-img_cameraman = for i j. rbg_to_gray img_cameraman_rgb.i.j
+(MkImage rows cols img_camera_rgb) = from_just $ load_image_p6 "examples/camera.ppm"
+img_camera = for i j. rbg_to_gray img_camera_rgb.i.j
 
-:t img_cameraman
-> ((Fin 512) => (Fin 512) => Float32)
-:html matshow img_cameraman
+:t img_camera
+> ((Fin 427) => (Fin 640) => Float32)
+:html matshow img_camera
 > <html output>
 
-:html bmatshow $ dither_threshold img_cameraman
+:html bmatshow $ dither_threshold img_camera
 > <html output>
-:html bmatshow $ dither_noise key img_cameraman
+:html bmatshow $ dither_noise key img_camera
 > <html output>
-:html bmatshow $ dither_ordered bayer img_cameraman
+:html bmatshow $ dither_ordered bayer img_camera
 > <html output>
-:html bmatshow $ dither_ordered halftone img_cameraman
+:html bmatshow $ dither_ordered halftone img_camera
 > <html output>
