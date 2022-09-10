@@ -323,12 +323,6 @@ instance BindsEnv EnvFrag where
 instance BindsEnv (RecSubstFrag Binding) where
   toEnvFrag frag = EnvFrag frag mempty
 
--- This is needed to be able to derive generic traversals over Atoms, and is
--- ok to be left unimplemented for as long as it's _dynamically_ unreachable.
--- Since references are only used in Imp lowering, we're generally ok.
-instance BindsEnv DataConRefBinding where
-  toEnvFrag = error "not implemented"
-
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (PairB b1 b2)) where
   toEnvFrag (PairB b1 b2) = do
@@ -608,15 +602,10 @@ fromNonDepTabType ty = do
   return (ixTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [Type n]
-nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
-  where
-    go :: Nest Binder n l -> Maybe [Type n]
-    go Empty = return []
-    go (Nest (b:>ty) bs) = do
-      tys <- go bs
-      case hoist b (ListE tys) of
-        HoistFailure _ -> Nothing
-        HoistSuccess (ListE tys') -> return $ ty:tys'
+nonDepDataConTys (DataConDef _ repTy idxs) =
+  case repTy of
+    ProdTy tys | length idxs == length tys -> Just tys
+    _ -> Nothing
 
 infixr 1 ?-->
 infixr 1 -->
@@ -729,13 +718,11 @@ mkBundleTy = bundleFold UnitTy PairTy
 mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
 
-trySelectBranch :: Atom n -> Maybe (Int, [Atom n])
+trySelectBranch :: Atom n -> Maybe (Int, Atom n)
 trySelectBranch e = case e of
-  DataCon _ _ _ con args -> return (con, args)
-  SumVal _ i value -> Just (i, [value])
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let i = fromIntegral tag
-    return (i , vals !! i)
+  SumVal _ i value -> Just (i, value)
+  Con (SumAsProd _ (TagRepVal tag) vals) -> Just (i, vals !! i)
+    where i = fromIntegral tag
   Con (Newtype _ e') -> trySelectBranch e'
   _ -> Nothing
 

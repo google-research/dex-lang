@@ -262,7 +262,6 @@ linearizeAtom atom = case atom of
       buildTabLam (getNameHint b) (sink ty) \i ->
         rematPrimal (sink subst) (sink wrt) $
           extendSubst (b@>i) $ linearizeBlock body
-  DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
@@ -281,7 +280,6 @@ linearizeAtom atom = case atom of
   -- Those should be gone after simplification
   Lam _            -> error "Unexpected non-table lambda"
   ACase _ _ _      -> error "Unexpected ACase"
-  DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _       -> error "Unexpected ref"
   DepPairRef _ _ _ -> error "Unexpected ref"
   where emitZeroT = withZeroT $ substM atom
@@ -343,13 +341,15 @@ linearizeExpr expr = case expr of
               isActive arg' >>= \case
                 False -> -- Pass in ZeroTangent as the tangent
                   return $ WithTangent arg' $
-                    return $ sink $ DataCon "SymbolicTangent" stDefName
-                                    (DataDefParams [argTy'] []) 0 []
+                    return $ sink $ Con $ Newtype
+                      (TypeCon "SymbolicTangent" stDefName (DataDefParams [argTy'] []))
+                      (SumVal [UnitTy, argTy'] 0 UnitVal)
                 True -> do  -- Wrap tangent in SomeTangent
                   WithTangent arg'' argLin <- dropSubst $ linearizeAtom arg'
                   return $ WithTangent arg'' $ argLin <&> \argTan ->
-                    DataCon "SymbolicTangent" (sink stDefName)
-                    (DataDefParams [sink argTy'] []) 1 [argTan]
+                    Con $ Newtype
+                      (TypeCon "SymbolicTangent" (sink stDefName) (DataDefParams [sink argTy'] []))
+                      (SumVal [UnitTy, sink argTy'] 1 argTan)
         (ans, flin) <- fromPair =<< naryApp cl (polyXs' ++ (wts <&> \(WithTangent p _) -> p))
         return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
   App _ _ -> error "not implemented"
@@ -367,10 +367,10 @@ linearizeExpr expr = case expr of
         resultTangentType <- tangentType resultTy'
         resultTyWithTangent <- PairTy <$> substM resultTy
                                       <*> tangentFunType resultTangentType
-        (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i xs -> do
-          xs' <- mapM emitAtomToName xs
-          Abs bs body <- return $ alts !! i
-          extendSubst (bs @@> xs') $ withTangentFunAsLambda $ linearizeBlock body
+        (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i x -> do
+          x' <- emitAtomToName x
+          Abs b body <- return $ alts !! i
+          extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do
           applyLinToTangents $ sink linLam
 
@@ -511,16 +511,15 @@ linearizePrimCon con = case con of
   Lit _ -> emitZeroT
   ProdCon xs -> fmapLin (ProdVal . fromComposeE) $ seqLin (fmap linearizeAtom xs)
   SumCon  _ _ _ -> notImplemented
-  SumAsProd ty tg elems -> do
-    ty' <- substM ty
+  SumAsProd tys tg elems -> do
+    tys' <- traverse substM tys
     tg' <- substM tg
     -- There must be a way to do this with `seqLin` etc but it's too much for me
-    elemsWithT <- traverse (traverse linearizeAtom) elems
-    let elemsP = fmap (fmap (\(WithTangent x _) -> x)) elemsWithT
-    return $ WithTangent (Con $ SumAsProd ty' tg' elemsP) do
-      elemsT <- forM elemsWithT \elemsWithT' ->
-                  forM elemsWithT' \(WithTangent _ t) -> t
-      return $ Con $ SumAsProd (sink ty') (sink tg') elemsT
+    elemsWithT <- traverse linearizeAtom elems
+    let elemsP = fmap (\(WithTangent x _) -> x) elemsWithT
+    return $ WithTangent (Con $ SumAsProd tys' tg' elemsP) do
+      elemsT <- forM elemsWithT \(WithTangent _ t) -> t
+      return $ Con $ SumAsProd (sinkList tys') (sink tg') elemsT
   Newtype ty x    -> case ty of
     TC (Fin _) -> emitZeroT
     StaticRecordTy _ -> do

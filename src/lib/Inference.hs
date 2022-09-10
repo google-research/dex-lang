@@ -68,11 +68,11 @@ data UDeclInferenceResult e n =
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  def' <- liftInfererM $ solveLocal $ inferDataDef def
+  PairE def' (Abs ddbs' (ListE cbs')) <- liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
   tc' <- emitTyConName defName =<< tyConDefAsAtom defName
-  dcs' <- forM (iota (nestLength dcs)) \i ->
-    emitDataConName defName i =<< dataConDefAsAtom defName i
+  dcs' <- forM (enumerate cbs') \(i, cbs'') ->
+    emitDataConName defName i =<< dataConDefAsAtom (Abs ddbs' cbs'') defName i
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applySubst subst result
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
@@ -1199,14 +1199,14 @@ instance SinkableE IndexedAlt where
   sinkingProofE = todoSinkableProof
 
 buildNthOrderedAlt :: (Emits n, Builder m)
-                   => [IndexedAlt n] -> Type n -> Type n -> Int -> [Atom n]
+                   => [IndexedAlt n] -> Type n -> Type n -> Int -> Atom n
                    -> m n (Atom n)
-buildNthOrderedAlt alts scrutTy resultTy i vs = do
+buildNthOrderedAlt alts scrutTy resultTy i v = do
   case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
       emitOp $ ThrowError resultTy'
-    Just alt -> applyNaryAbs alt (SubstVal <$> vs) >>= emitBlock
+    Just alt -> applyAbs alt (SubstVal v) >>= emitBlock
 
 -- converts from the ordinal index used in the core IR to the more complicated
 -- `CaseAltIndex` used in the surface IR.
@@ -1226,11 +1226,11 @@ buildMonomorphicCase
   => [IndexedAlt n] -> Atom n -> Type n -> m n (Atom n)
 buildMonomorphicCase alts scrut resultTy = do
   scrutTy <- getType scrut
-  buildCase scrut resultTy \i vs -> do
+  buildCase scrut resultTy \i v -> do
     ListE alts' <- sinkM $ ListE alts
     scrutTy'    <- sinkM scrutTy
     resultTy'   <- sinkM resultTy
-    buildNthOrderedAlt alts' scrutTy' resultTy' i vs
+    buildNthOrderedAlt alts' scrutTy' resultTy' i v
 
 buildSortedCase :: (Fallible1 m, Builder m, Emits n)
                  => Atom n -> [IndexedAlt n] -> Type n
@@ -1238,7 +1238,15 @@ buildSortedCase :: (Fallible1 m, Builder m, Emits n)
 buildSortedCase scrut alts resultTy = do
   scrutTy <- getType scrut
   case scrutTy of
-    TypeCon _ _ _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
+    TypeCon _ defName _ -> do
+      DataDef _ _ cons <- lookupDataDef defName
+      case cons of
+        [] -> error "case of void?"
+        -- Single constructor ADTs are not sum types, so elide the case.
+        [_] -> do
+          let [IndexedAlt _ alt] = alts
+          emitBlock =<< applyAbs alt (SubstVal $ unwrapNewtype scrut)
+        _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
         [] -> case tailName of
@@ -1265,7 +1273,7 @@ buildSortedCase scrut alts resultTy = do
                         resultTy'   <- sinkM resultTy
                         liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
               (\v -> do tailAlt' <- sinkM tailAlt
-                        applyNaryAbs tailAlt' [SubstVal v] >>= emitBlock )
+                        applyAbs tailAlt' (SubstVal v) >>= emitBlock )
         _ -> throw TypeErr "Can't specify more than one variant tail pattern."
     _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
 
@@ -1368,33 +1376,93 @@ tyConDefAsAtom defName = liftBuilder do
   buildTyConLam defName PlainArrow \sourceName params ->
     return $ TypeCon sourceName (sink defName) params
 
-dataConDefAsAtom :: EnvReader m => DataDefName n -> Int -> m n (Atom n)
-dataConDefAsAtom defName conIx = liftBuilder do
+dataConDefAsAtom :: EnvReader m
+                 => Abs DataDefBinders (EmptyAbs (Nest Binder)) n
+                 -> DataDefName n -> Int -> m n (Atom n)
+dataConDefAsAtom bsAbs defName conIx = liftBuilder do
   buildTyConLam defName ImplicitArrow \_ params -> do
-    def <- lookupDataDef (sink defName)
+    defName' <- sinkM defName
+    def@(DataDef sourceName _ _) <- lookupDataDef defName'
     conDefs <- instantiateDataDef def params
-    DataConDef conName (EmptyAbs conArgBinders) <- return $ conDefs !! conIx
-    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conArgBinders) \conArgs ->
-      return $ DataCon conName (sink defName) (sink params) conIx (Var <$> conArgs)
+    let DataConDef _ conRep _ = conDefs !! conIx
+    Abs conArgBinders UnitE <- applyDataConAbs (sink bsAbs) params
+    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conArgBinders) \conArgs -> do
+      conProd <- buildDataCon (sink conRep) $ Var <$> conArgs
+      return $ Con $ Newtype (sink $ TypeCon sourceName defName' params) $
+        case conDefs of
+          []  -> error "unreachable"
+          [_] -> conProd
+          _   -> SumVal conTys conIx conProd
+            where conTys = sinkList $ conDefs <&> \(DataConDef _ rty _) -> rty
+
+buildDataCon :: EnvReader m => Type n -> [Atom n] -> m n (Atom n)
+buildDataCon repTy topArgs = wrap repTy topArgs
+  where
+    wrap :: EnvReader m => Type n -> [Atom n] -> m n (Atom n)
+    wrap _ [arg] = return $ arg
+    wrap rty args = case rty of
+      ProdTy tys  ->
+        if nargs == ntys
+          then return $ ProdVal args
+          else ProdVal . (curArgs ++) . (:[]) <$> wrap (last tys) remArgs
+        where
+          nargs = length args; ntys = length tys
+          (curArgs, remArgs) = splitAt (ntys - 1) args
+      DepPairTy dpt@(DepPairType b rty') -> do
+        rty'' <- applySubst (b@>SubstVal h) rty'
+        ans <- wrap rty'' t
+        return $ DepPair h ans dpt
+        where h:t = args
+      _ -> error $ "Unexpected data con representation type: " ++ pprint repTy
 
 binderNestAsPiNest :: Arrow -> Nest Binder n l -> Nest PiBinder n l
 binderNestAsPiNest arr = \case
   Empty             -> Empty
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
-inferDataDef :: EmitsInf o => UDataDef i -> InfererM i o (DataDef o)
+inferDataDef :: EmitsInf o => UDataDef i
+             -> InfererM i o (PairE DataDef (Abs DataDefBinders (ListE (EmptyAbs (Nest Binder)))) o)
 inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
-  Abs paramBs' (Abs clsBs' (ListE dataCons')) <-
+  Abs paramBs' (Abs clsBs' (ListE dataConsWithBs')) <-
     withNestedUBinders paramBs id \_ -> do
       withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ ->
         ListE <$> mapM inferDataCon dataCons
-  return $ DataDef tyConName (DataDefBinders paramBs' clsBs') dataCons'
+  let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
+  let ddbs = (DataDefBinders paramBs' clsBs')
+  return $ PairE (DataDef tyConName ddbs dataCons')
+                 (Abs ddbs $ ListE bs')
 
 inferDataCon :: EmitsInf o
-             => (SourceName, UDataDefTrail i) -> InfererM i o (DataConDef o)
+             => (SourceName, UDataDefTrail i)
+             -> InfererM i o (PairE DataConDef (EmptyAbs (Nest Binder)) o)
 inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
-  return $ DataConDef sourceName argBs'
+  let (repTy, projIdxs) = dataConRepTy argBs'
+  return $ PairE (DataConDef sourceName repTy projIdxs) argBs'
+
+dataConRepTy :: EmptyAbs (Nest Binder) n -> (Type n, [[Int]])
+dataConRepTy (Abs topBs UnitE) = case topBs of
+  Empty -> (UnitTy, [])
+  _ -> go [] [0] topBs
+  where
+    go :: [Type l] -> [Int] -> Nest Binder l p -> (Type l, [[Int]])
+    go revAcc projIdxs = \case
+      Empty -> case revAcc of
+        []   -> error "should never happen"
+        [ty] -> (ty, [projIdxs])
+        _    -> (ProdTy $ reverse revAcc, iota (length revAcc) <&> (:projIdxs))
+      Nest b bs -> case hoist b (EmptyAbs bs) of
+        HoistSuccess (Abs bs' UnitE) -> go (binderType b:revAcc) projIdxs bs'
+        HoistFailure _ -> (fullTy, idxs)
+          where
+            accSize = length revAcc
+            (fullTy, depTyIdxs) = case revAcc of
+              [] -> (depTy, [])
+              _  -> (ProdTy $ reverse revAcc ++ [depTy], [accSize])
+            idxs = (iota accSize <&> (:projIdxs)) ++
+                   ((0 : (depTyIdxs ++ projIdxs)) : tailIdxs)
+            depTy = DepPairTy $ DepPairType b tailTy
+            (tailTy, tailIdxs) = go [] (1 : (depTyIdxs ++ projIdxs)) bs
 
 inferClassDef
   :: SourceName -> [SourceName] -> Nest (UAnnBinder AtomNameC) i i'
@@ -1650,14 +1718,18 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, con) <- substM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
-    DataConDef _ (EmptyAbs argBs) <- return $ cons !! con
-    when (nestLength argBs /= nestLength ps) $ throw TypeErr $
-      "Unexpected number of pattern binders. Expected " ++ show (nestLength argBs)
+    DataConDef _ repTy idxs <- return $ cons !! con
+    when (length idxs /= nestLength ps) $ throw TypeErr $
+      "Unexpected number of pattern binders. Expected " ++ show (length idxs)
                                              ++ " got " ++ show (nestLength ps)
-    (params, argBs') <- inferParams (Abs paramBs $ EmptyAbs argBs)
+    (params, repTy') <- inferParams (Abs paramBs repTy)
     constrainEq scrutineeTy $ TypeCon sourceName dataDefName params
-    buildAltInf argBs' \args ->
+    buildAltInf repTy' \arg -> do
+      args <- forM idxs $ init |> NE.nonEmpty |> \case
+        Nothing    -> return arg
+        Just idxs' -> emit $ Atom $ ProjectElt idxs' arg
       bindLamPats ps args $ cont
+      where (|>) = flip (.)
   UPatVariant labels label p -> do
     ty <- freshType TyKind
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -1665,7 +1737,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     let patTypes = prevTys <> labeledSingleton label ty
     let extPatTypes = Ext patTypes $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
-    buildUnaryAltInf ty \x ->
+    buildAltInf ty \x ->
       bindLamPat p x cont
   UPatVariantLift labels p -> do
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -1673,7 +1745,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     let extPatTypes = Ext prevTys $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
     let ty = VariantTy $ Ext NoLabeledItems $ Just rest
-    buildUnaryAltInf ty \x ->
+    buildAltInf ty \x ->
       bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
@@ -1719,17 +1791,16 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         cont
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< substM conName
-    (DataDef sourceName paramBs cons) <- lookupDataDef dataDefName
+    DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     case cons of
-      [DataConDef _ (EmptyAbs argBs)] -> do
-        when (nestLength argBs /= nestLength ps) $ throw TypeErr $
-          "Unexpected number of pattern binders. Expected " ++ show (nestLength argBs)
+      [DataConDef _ _ idxs] -> do
+        when (length idxs /= nestLength ps) $ throw TypeErr $
+          "Unexpected number of pattern binders. Expected " ++ show (length idxs)
                                                  ++ " got " ++ show (nestLength ps)
         (params, UnitE) <- inferParams (Abs paramBs UnitE)
         constrainVarTy v $ TypeCon sourceName dataDefName params
-        xs <- zonk (Var v) >>= emitUnpacked
-        xs' <- forM xs \x -> zonk (Var x) >>= emitAtomToName
-        bindLamPats ps xs' cont
+        xs <- mapM emitAtomToName =<< getUnpacked =<< zonk (Var v)
+        bindLamPats ps xs cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
   UPatRecord rowPat -> do
     bindPats cont ([], Empty, v) rowPat
@@ -2739,31 +2810,16 @@ buildTabPiInf hint ty body = do
       withAllowedEffects Pure $ body v
   return $ TabPiType (b:>ty) resultTy
 
-buildUnaryAltInf
+buildAltInf
   :: EmitsInf n
   => Type n
   -> (forall l. (EmitsBoth l, Ext n l) => AtomName l -> InfererM i l (Atom l))
   -> InfererM i n (Alt n)
-buildUnaryAltInf ty body = do
-  bs <- liftBuilder $ singletonBinderNest noHint ty
-  buildAltInf bs \[v] -> body v
-
-buildAltInf
-  :: EmitsInf n
-  => EmptyAbs (Nest Binder) n
-  -> (forall l. (EmitsBoth l, Ext n l) => [AtomName l] -> InfererM i l (Atom l))
-  -> InfererM i n (Alt n)
-buildAltInf (Abs Empty UnitE) body =
-  Abs Empty <$> buildBlockInf (body [])
-buildAltInf (Abs (Nest (b:>ty) bs) UnitE) body = do
-  Abs b' (Abs bs' body') <-
-    buildAbsInf (getNameHint b) ty \v -> do
-      ab <- sinkM $ Abs b (EmptyAbs bs)
-      bs' <- applyAbs ab v
-      buildAltInf bs' \vs -> do
-        v' <- sinkM v
-        body $ v' : vs
-  return $ Abs (Nest b' bs') body'
+buildAltInf ty body = do
+  buildAbsInf noHint ty \v ->
+    buildBlockInf do
+      Distinct <- getDistinct
+      body $ sink v
 
 -- === EmitsInf predicate ===
 

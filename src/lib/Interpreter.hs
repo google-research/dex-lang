@@ -17,6 +17,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromJust)
 import Data.List (elemIndex)
 import Data.Foldable (toList)
+import Data.Functor
 import Data.Word
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
@@ -98,17 +99,11 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   TypeCon sn defName (DataDefParams params dicts) -> do
     defName' <- substM defName
     TypeCon sn defName' <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
-  DataCon printName defName (DataDefParams params dicts) con args -> do
-    defName' <- substM defName
-    DataCon printName defName'
-      <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
-      <*> pure con <*> mapM rec args
   RecordTy _ -> substM atom
   VariantTy _      -> substM atom
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
     ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
-  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
@@ -160,9 +155,9 @@ evalExpr expr = case expr of
     e' <- evalAtom e
     case trySelectBranch e' of
       Nothing -> error "branch should be chosen at this point"
-      Just (con, args) -> do
-        Abs bs body <- return $ alts !! con
-        extendSubst (bs @@> map SubstVal args) $ evalBlock body
+      Just (con, arg) -> do
+        Abs b body <- return $ alts !! con
+        extendSubst (b @> SubstVal arg) $ evalBlock body
   Hof hof -> case hof of
     RunIO (Lam (LamExpr b body)) ->
       extendSubst (b @> SubstVal UnitTy) $
@@ -222,11 +217,12 @@ evalOp expr = mapM evalAtom expr >>= \case
     _ -> error $ "Invalid select condition: " ++ pprint cond
   ToEnum ty@(TypeCon _ defName _) i -> do
       DataDef _ _ cons <- lookupDataDef defName
-      return $ Con $ SumAsProd ty i (map (const []) cons)
+      return $ Con $ Newtype ty $ Con $
+        SumAsProd (cons <&> const UnitTy) i (cons <&> const UnitVal)
   ProjMethod dict i -> evalProjectDictMethod dict i
   VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
-    return $ Con $ Newtype ty $ SumVal (SumTy $ toList tys) ix v
+    return $ Con $ Newtype ty $ SumVal (toList tys) ix v
   _ -> error $ "Not implemented: " ++ pprint expr
 
 evalProjectDictMethod :: Interp m => Atom o -> Int -> m i o (Atom o)
@@ -250,7 +246,11 @@ matchUPat (WithSrcB _ pat) x = do
   x' <- dropSubst $ evalAtom x
   case (pat, x') of
     (UPatBinder b, _) -> return $ b @> SubstVal x'
-    (UPatCon _ ps, DataCon _ _ _ _ xs) -> matchUPats ps xs
+    (UPatCon _ ps, Con (Newtype (TypeCon _ dataDefName _) _)) -> do
+      DataDef _ _ cons <- lookupDataDef dataDefName
+      case cons of
+        [DataConDef _ _ idxs] -> matchUPats ps [getProjection ix x' | ix <- idxs]
+        _ -> error "Expected a single ADt constructor"
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
     (UPatUnit UnitB, UnitVal) -> return emptyInFrag

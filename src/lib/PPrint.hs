@@ -177,8 +177,7 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
 prettyAlt :: PrettyE e => AltP e n -> Doc ann
-prettyAlt (Abs bs body) = hsep (map prettyBinderNoAnn  bs') <+> "->" <> nest 2 (p body)
-  where bs' = fromNest bs
+prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
 
 prettyBinderNoAnn :: Binder n l -> Doc ann
 prettyBinderNoAnn (b:>_) = p b
@@ -251,11 +250,6 @@ instance PrettyPrec (Atom n) where
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
-    DataCon name _ _ _ xs -> case xs of
-      [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
-        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
-      _ ->  atPrec LowestPrec $ pAppArg (p name) xs
     TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
     TypeCon "RangeToExc"   _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ "..<" <> pApp i
     TypeCon "RangeFrom"    _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <>  ".."
@@ -272,8 +266,6 @@ instance PrettyPrec (Atom n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
-    DataConRef _ params args -> atPrec LowestPrec $
-      "DataConRef" <+> p params <+> p args
     BoxedRef (Abs (NonDepNest b ptrsSizes) body) -> atPrec LowestPrec $
       "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
@@ -299,10 +291,6 @@ instance Pretty (FieldRowElem n) where
       withLabels items <&> \(l, _, ty) -> p l <> ":" <+> pLowest ty
     DynField  l ty -> "@" <> p l <> ":" <+> p ty
     DynFields f    -> "..." <> p f
-
-instance Pretty (DataConRefBinding n l) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (DataConRefBinding n l) where
-  prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Maybe (Doc ann) -> Doc ann -> Doc ann -> DocPrec ann
@@ -500,8 +488,8 @@ instance Pretty (DataDef n) where
     "data" <+> p name <+> p bs <> prettyLines cons
 
 instance Pretty (DataConDef n) where
-  pretty (DataConDef name bs) =
-    p name <+> ":" <+> p bs
+  pretty (DataConDef name repTy _) =
+    p name <+> ":" <+> p repTy
 
 instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames params superclasses methodTys) =

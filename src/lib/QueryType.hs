@@ -11,10 +11,11 @@ module QueryType (
   caseAltsBinderTys, depPairLeftTy, extendEffect,
   getAppType, getTabAppType, getBaseMonoidType, getReferentTy,
   getMethodIndex,
-  instantiateDataDef, instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
+  instantiateDataDef, applyDataConAbs, dataDefRep,
+  instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType, specializedFunType,
-  oneEffect, projectLength, sourceNameType, typeAsBinderNest, typeBinOp, typeUnOp,
+  oneEffect, projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict
   ) where
 
@@ -74,16 +75,15 @@ getEffectsSubst e = do
 -- === Exposed helpers for querying types and effects ===
 
 caseAltsBinderTys :: (Fallible1 m, EnvReader m)
-                  => Type n -> m n [EmptyAbs (Nest Binder) n]
+                  => Type n -> m n [Type n]
 caseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     cons <- instantiateDataDef def params
-    return [bs | DataConDef _ bs <- cons]
-  VariantTy (NoExt types) -> do
-    mapM typeAsBinderNest $ toList types
+    return [repTy | DataConDef _ repTy _ <- cons]
+  SumTy types -> return types
+  VariantTy (NoExt types) -> return $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
-  SumTy cases -> mapM typeAsBinderNest cases
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
 depPairLeftTy :: DepPairType n -> Type n
@@ -125,9 +125,24 @@ getMethodIndex className methodSourceName = do
 {-# INLINE getMethodIndex #-}
 
 instantiateDataDef :: ScopeReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons) (DataDefParams xs1 xs2) = do
-  fromListE <$> applyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (map SubstVal $ xs1 <> xs2)
+instantiateDataDef (DataDef _ bs cons) params = do
+  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) params
 {-# INLINE instantiateDataDef #-}
+
+applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, ScopeReader m)
+                => Abs DataDefBinders e n -> DataDefParams n -> m n (e n)
+applyDataConAbs (Abs (DataDefBinders bs1 bs2) e) (DataDefParams xs1 xs2) = do
+  let paramsSubst = bs1 @@> (SubstVal <$> xs1) <.> bs2 @@> (SubstVal <$> xs2)
+  applySubst paramsSubst e
+{-# INLINE applyDataConAbs #-}
+
+-- Returns a representation type (type of an TypeCon-typed Newtype payload)
+-- given a list of instantiated DataConDefs.
+dataDefRep :: [DataConDef n] -> Type n
+dataDefRep = \case
+  [] -> error "unreachable"  -- There's no representation for a void type
+  [DataConDef _ ty _] -> ty
+  tys -> SumTy $ tys <&> \(DataConDef _ ty _) -> ty
 
 instantiateNaryPi :: EnvReader m => NaryPiType n -> [Atom n] -> m n (NaryPiType n)
 instantiateNaryPi (NaryPiType bs eff resultTy) args = do
@@ -198,18 +213,17 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
 oneEffect :: Effect n -> EffectRow n
 oneEffect eff = EffectRow (S.singleton eff) Nothing
 
--- Returns the number of components available for projection in the first
--- result, and the suffix of ProjectElt that has to be used to reach them
--- (we might need to unwrap newtypes to uncover them).
-projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n (Int, [Int])
-projectLength ty = case ty of
-  TypeCon _ defName params -> do
-    def <- lookupDataDef defName
-    [DataConDef _ (Abs bs UnitE)] <- instantiateDataDef def params
-    return $ (nestLength bs, [])
-  StaticRecordTy types -> return $ (length types, [0])
-  ProdTy tys -> return $ (length tys, [])
-  _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
+projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Int]]
+projectionIndices ty = case ty of
+  TypeCon _ defName _ -> do
+    DataDef _ _ cons <- lookupDataDef defName
+    case cons of
+      [DataConDef _ _ idxs] -> return idxs
+      _ -> unsupported
+  StaticRecordTy types -> return $ iota (length types) <&> (:[0])
+  ProdTy tys -> return $ iota (length tys) <&> (:[])
+  _ -> unsupported
+  where unsupported = error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
 sourceNameType :: (EnvReader m, Fallible1 m)
                => SourceName -> m n (Type n)
@@ -225,12 +239,6 @@ sourceNameType v = do
       UEffectVar   _ -> error "not implemented: sourceNameType::UEffectVar"
       UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"
       UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"
-
-typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
-typeAsBinderNest ty = do
-  Abs ignored body <- toConstAbs UnitE
-  return $ Abs (Nest (ignored:>ty) Empty) body
-{-# INLINE typeAsBinderNest #-}
 
 typeBinOp :: BinOp -> BaseType -> BaseType
 typeBinOp binop xTy = case binop of
@@ -323,11 +331,6 @@ instance HasType Atom where
     Con con -> getTypePrimCon con
     TC _ -> return TyKind
     Eff _ -> return EffKind
-    DataCon _ defName params _ _ -> do
-      defName' <- substM defName
-      (DataDef sourceName _ _) <- lookupDataDef defName'
-      params' <- substM params
-      return $ TypeCon sourceName defName' params'
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
@@ -335,11 +338,6 @@ instance HasType Atom where
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
     ACase _ _ resultTy -> substM resultTy
-    DataConRef defName params _ -> do
-      defName' <- substM defName
-      DataDef sourceName _ _ <- lookupDataDef defName'
-      params' <- substM params
-      return $ RawRefTy $ TypeCon sourceName defName' params'
     DepPairRef _ _ ty -> do
       ty' <- substM ty
       return $ RawRefTy $ DepPairTy ty'
@@ -354,19 +352,6 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        TypeCon _ defName params -> do
-          v' <- substM (Var v) >>= \case
-            (Var v') -> return v'
-            _ -> error "!??"
-          def <- lookupDataDef defName
-          [DataConDef _ (Abs bs' UnitE)] <- instantiateDataDef def params
-          PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
-          -- `ty` can depend on earlier binders from this constructor. Rewrite
-          -- it to also use projections.
-          dropSubst $
-            applyNaryAbs (Abs bsInit bTy)
-              [ SubstVal (ProjectElt (j NE.:| is) v')
-              | j <- iota $ nestLength bsInit]
         ProdTy xs -> return $ xs !! i
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM (Var v) >>= \case
@@ -376,6 +361,10 @@ instance HasType Atom where
         -- Newtypes
         TC (Fin _) | i == 0 -> return IdxRepTy
         StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
+        TypeCon _ defName params | i == 0 -> do
+          def <- lookupDataDef defName
+          [DataConDef _ repTy _] <- instantiateDataDef def params
+          return repTy
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
@@ -408,8 +397,8 @@ getTypePrimCon :: PrimCon (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
-  SumCon ty _ _ -> substM ty
-  SumAsProd ty _ _ -> substM ty
+  SumCon tys _ _ -> SumTy <$> traverse substM tys
+  SumAsProd tys _ _ -> SumTy <$> traverse substM tys
   Newtype ty _ -> substM ty
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
@@ -420,8 +409,8 @@ getTypePrimCon con = case con of
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM getTypeRef xs)
     Newtype ty _ -> RawRefTy <$> substM ty
-    SumAsProd ty _ _ -> do
-      RawRefTy <$> substM ty
+    SumAsProd tys _ _ -> do
+      RawRefTy . SumTy <$> traverse substM tys
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
