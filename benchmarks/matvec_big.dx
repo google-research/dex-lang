@@ -1,0 +1,11 @@
+n = if dex_test_mode() then 10 else 10000
+
+m = rand_mat n n randn (new_key 0)
+v = rand_vec n randn (new_key 1)
+
+%bench "matvec_big"
+res = m **. v
+>
+> matvec_big
+> Compile time: 23.898 ms
+> Run time:     4.682 us 	(based on 1 run)

@@ -1,15 +1,63 @@
+# Main targets of interest for development
+#
+#   make tests             Run the full test suite in a clean build
+#   make run-tests/<file>  Run one test file from tests/
+#   make build             Build Dex (fastest complete compile time)
+#   make watch             Build Dex continuously as source is edited
+#   make check-watch       Just typecheck Dex continuously (fastest feedback)
+#   make build-opt         Slower, but gives faster Dex compiles
+#   make build-dbg         Slower, but better Haskell errors
+#   make build-prof        Optimized for profiling the speed of the Dex compiler
+#
+# We suggest adding the following or equivalent aliases:
+#
+#   alias dex="stack exec dex -- --lib-path lib"
+#   alias dexopt="stack exec --work-dir .stack-work-opt dex -- --lib-path lib"
+#   alias dexdbg="stack exec --work-dir .stack-work-dbg --trace dex -- --lib-path lib"
+#   alias dexprof="stack exec --work-dir .stack-work-prof --trace dex -- --lib-path lib"
+
+# In more detail:
+#
+# - The default build is for quickly getting feedback on development
+#   changes: get Haskell type errors and run small Dex test scripts as
+#   fast as possible.
+#
+# - The opt build is for developing a Dex program or example (possibly
+#   against a patched Dex): pay a slow optimizing compile once but have
+#   the fastest possible Dex development loop.
+#
+# - The dbg build is for hunting (crash) bugs in Dex: pay slow GHC
+#   compilation and slow Dex compilation, but get (relatively) detailed
+#   stack traces from `error` and `C-c`, and extra internal debug checks.
+#
+# - The prof build is for profiling the Dex compiler: pay very slow GHC
+#   compilation, but get relatively high signal-to-noise profiling
+#   information on the Dex compiler's performance.
+#
+# The prof and dbg builds are different in two ways: prof turns on
+# GHC's -O, but turns off Dex's self-checks and GHC's automatic cost
+# center insertion.  This way (i) you're profiling optimized rather
+# than unoptimized Dex, and (ii) the profile data is restricted to our
+# {-# SCC #-} annotations, and thus not as overwhelming.
+#
+# We keep the builds in separate .stack-work directories so they don't
+# step on each other's GHC-level compilation caches.
+#
+# The tests are run in the default `build` configuration, namely no
+# optimization and no debug aids.
+
+
 # Set shell to bash to resolve symbolic links when looking up
 # executables, to support user-account installation of stack.
-SHELL=/bin/bash
+SHELL=/usr/bin/env bash
 
 STACK=$(shell command -v stack 2>/dev/null)
 ifeq (, $(STACK))
 	STACK=cabal
 
-	PROF := --enable-library-profiling --enable-executable-profiling
+	DBG := --enable-library-profiling --enable-executable-profiling
 
-	dex     := cabal exec dex --
-	dexprof := cabal exec $(PROF) dex -- +RTS -p -RTS
+	dex := cabal exec dex --
 else
 	STACK=stack
 
@@ -18,13 +66,19 @@ else
 		STACK=stack --stack-yaml=stack-macos.yaml
 	endif
 
+	DUMP_FLAGS = --ghc-options="-ddump-simpl" \
+	             --ghc-options="-ddump-stg" \
+	             --ghc-options="-dsuppress-all" \
+	             --ghc-options="-dno-suppress-type-signatures" \
+	             --ghc-options="-ddump-to-file"
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-	PROF := --profile --work-dir .stack-work-prof
+	OPT  := --work-dir .stack-work-opt $(DUMP_FLAGS)
+	DBG  := --work-dir .stack-work-dbg --trace
+	PROF := --work-dir .stack-work-prof --trace --ghc-options="-fno-prof-auto" $(DUMP_FLAGS)
 
-	dex     := $(STACK) exec         dex --
-	dexprof := $(STACK) exec $(PROF) dex --
+	dex := $(STACK) exec dex --
 endif
 
 
@@ -32,9 +86,11 @@ endif
 
 CFLAGS := -fPIC
 
+STACK_FLAGS := --ghc-options="-j +RTS -A256m -n2m -RTS"
+
 # CUDA
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
-STACK_FLAGS = --flag dex:cuda
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
 endif
 
@@ -47,6 +103,34 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
+# Make sure we always use a debug build in CI --- it enables extra checks!
+ifneq (,$(DEX_CI))
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:debug
+endif
+
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++
+
+CLANG := clang++
+
+ifeq (1,$(DEX_LLVM_HEAD))
+ifeq ($(PLATFORM),Darwin)
+$(error LLVM head builds not supported on macOS!)
+endif
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
+STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
+else
+CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
+if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
+then echo "$$clangversion" ; break ; fi ; done)
+ifeq (,$(CLANG))
+$(error "Please install clang++-12")
+endif
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)|(12\.)).*$$/, "")) }')
+ifneq (1,$(clang-version-compatible))
+$(error "Please install clang++-12")
+endif
+endif
+
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
 
@@ -57,103 +141,200 @@ all: build
 tc: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
-build: dexrt-llvm
+# Build without clearing the cache. Use at your own risk.
+just-build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
 
+build: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --fast
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
+
 watch: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --file-watch
+	$(STACK) build $(STACK_FLAGS) --fast --file-watch
+
+check-watch: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --fast --file-watch --ghc-options="-fno-code"
 
 install: dexrt-llvm
-	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
+	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS) $(OPT)
+
+build-opt: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) $(OPT) --flag dex:optimized
+
+build-dbg: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) $(DBG) --flag dex:debug
 
 build-prof: dexrt-llvm
-	$(STACK) build $(PROF)
+	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:optimized
 
 # For some reason stack fails to detect modifications to foreign library files
-build-python: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --force-dirty
-	$(eval STACK_INSTALL_DIR=$(shell stack $(STACK_FLAGS) path --local-install-root))
+build-ffis: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --work-dir .stack-work-ffis --force-dirty --flag dex:foreign --flag dex:optimized
+	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --work-dir .stack-work-ffis --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
+
+build-nolive: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --flag dex:-live
 
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp
-	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
+	$(CLANG) $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
 
 # --- running tests ---
 
-example-names = mandelbrot pi sierpinski rejection-sampler \
-                regression brownian_motion particle-swarm-optimizer \
-                ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms ode-integrator linear_algebra fluidsim \
-                sgd chol fft tutorial vega-plotting
+example-names := \
+  mandelbrot pi sierpinski rejection-sampler \
+  regression brownian_motion particle-swarm-optimizer \
+  ode-integrator mcmc ctc raytrace particle-filter \
+  isomorphisms fluidsim \
+  sgd psd kernelregression nn \
+  quaternions manifold-gradients schrodinger tutorial \
+  latex linear-maps
+# TODO: re-enable
+# fft vega-plotting
 
-test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-             shadow-tests monad-tests io-tests exception-tests \
+# Only test levenshtein-distance on Linux, because MacOS ships with a
+# different (apparently _very_ different) word list.
+ifeq ($(shell uname -s),Linux)
+  example-names += levenshtein-distance
+endif
+
+test-names = uexpr-tests adt-tests type-tests eval-tests show-tests read-tests \
+             shadow-tests monad-tests io-tests exception-tests sort-tests \
+             standalone-function-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
-             record-variant-tests typeclass-tests complex-tests trig-tests
+             record-variant-tests typeclass-tests complex-tests trig-tests \
+             linalg-tests set-tests fft-tests stats-tests
 
-lib-names = diagram plot png
+doc-names = conditionals functions
 
-all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
+benchmark-names = \
+  fused_sum gaussian jvp_matmul matmul_big matmul_small matvec_big matvec_small \
+  poly vjp_matmul
 
-quine-test-targets = $(all-names:%=run-%)
+quine-test-targets = \
+  $(test-names:%=run-tests/%) \
+  $(example-names:%=run-examples/%) \
+  $(doc-names:%=run-doc/%) \
+  $(benchmark-names:%=run-bench-tests/%)
 
-update-test-targets    = $(test-names:%=update-tests-%)
-update-example-targets = $(example-names:%=update-examples-%)
+update-test-targets    = $(test-names:%=update-tests/%)
+update-doc-targets     = $(doc-names:%=update-doc/%)
+update-example-targets = $(example-names:%=update-examples/%)
 
-doc-example-names = $(example-names:%=doc/examples/%.html)
+t10k-images-idx3-ubyte-sha256 = 346e55b948d973a97e58d2351dde16a484bd415d4595297633bb08f03db6a073
+t10k-labels-idx1-ubyte-sha256 = 67da17c76eaffca5446c3361aaab5c3cd6d1c2608764d35dfb1850b086bf8dd5
 
-doc-lib-names = $(lib-names:%=doc/lib/%.html)
+tutorial-data = t10k-images-idx3-ubyte t10k-labels-idx1-ubyte
+tutorial-data := $(tutorial-data:%=examples/%)
 
-tests: quine-tests repl-test
+$(tutorial-data):
+	wget -qO $@.gz http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/$(@F).gz
+	@echo $($(@F)-sha256) $@.gz > $@.sha256
+	sha256sum -c $@.sha256
+	$(RM) $@.sha256
+	gunzip $@.gz
+
+.PHONY: tutorial-data
+tutorial-data: $(tutorial-data)
+
+run-examples/tutorial: tutorial-data
+update-examples/tutorial: tutorial-data
+
+tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests
+
+# Keep the unit tests in their own working directory too, due to
+# https://github.com/commercialhaskell/stack/issues/4977
+unit-tests:
+	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS)
+
+opt-tests: just-build
+	misc/file-check tests/opt-tests.dx $(dex) -O script
 
 quine-tests: $(quine-test-targets)
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t
 
-run-tests/%: tests/%.dx build
-	misc/check-quine $< $(dex) script --allow-errors
-run-examples/%: examples/%.dx build
-	misc/check-quine $< $(dex) script --allow-errors
+run-tests/%: tests/%.dx just-build
+	misc/check-quine $< $(dex) -O script
+run-doc/%: doc/%.dx just-build
+	misc/check-quine $< $(dex) script
+run-examples/%: examples/%.dx just-build
+	misc/check-quine $< $(dex) -O script
+# This runs the benchmark in test mode, which means we're checking
+# that it's not broken, but not actually trying to measure runtimes
+run-bench-tests/%: benchmarks/%.dx just-build
+	misc/check-quine $< $(dex) -O script
 
-# Run these with profiling on while they're catching lots of crashes
-prop-tests: cbits/libdex.so
-	$(STACK) test $(PROF)
+lower-tests: export DEX_LOWER=1
+lower-tests: export DEX_ALLOW_CONTRACTIONS=0
+lower-tests: export DEX_TEST_MODE=t
+lower-tests: just-build
+	misc/check-quine tests/lower.dx $(dex) script
+update-lower-tests: just-build
+	$(dex) script tests/lower.dx > tests/lower.dx.tmp
+	mv tests/lower.dx.tmp tests/lower.dx
+
+lower-vectorize-tests: export DEX_LOWER=1
+lower-vectorize-tests: export DEX_VECTORIZE=1
+lower-vectorize-tests: export DEX_ALLOW_CONTRACTIONS=0
+lower-vectorize-tests: export DEX_TEST_MODE=t
+lower-vectorize-tests: just-build
+	misc/check-quine tests/lower-vectorize.dx $(dex) script
+update-lower-vectorize-tests: just-build
+	DEX_LOWER=1 DEX_VECTORIZE=1 $(dex) script tests/lower-vectorize.dx > tests/lower-vectorize.dx.tmp
+	mv tests/lower-vectorize.dx.tmp tests/lower-vectorize.dx
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: export DEX_TEST_MODE=t
 
 update-all: $(update-test-targets) $(update-example-targets)
 
-update-tests-%: tests/%.dx build
-	$(dex) script --allow-errors $< > $<.tmp
+update-tests/%: tests/%.dx just-build
+	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
-update-examples-%: examples/%.dx build
-	$(dex) script --allow-errors $< > $<.tmp
+update-doc/%: doc/%.dx just-build
+	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
-run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
-run-gpu-tests: tests/gpu-tests.dx build
-	misc/check-quine $< $(dex) --backend llvm-cuda script --allow-errors
+update-examples/%: examples/%.dx just-build
+	$(dex) script $< > $<.tmp
+	mv $<.tmp $<
+
+update-bench-tests/%: benchmarks/%.dx just-build
+	$(dex) script $< > $<.tmp
+	mv $<.tmp $<
+
+run-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
+run-gpu-tests: tests/gpu-tests.dx just-build
+	misc/check-quine $< $(dex) --backend llvm-cuda script
 
 update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
-update-gpu-tests: tests/gpu-tests.dx build
-	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
+update-gpu-tests: tests/gpu-tests.dx just-build
+	$(dex) --backend llvm-cuda script $< > $<.tmp
 	mv $<.tmp $<
 
-uexpr-tests:
-	misc/check-quine examples/uexpr-tests.dx $(dex) script
-
-repl-test:
+repl-test: just-build
 	misc/check-no-diff \
 	  tests/repl-multiline-test-expected-output \
 	  <($(dex) repl < tests/repl-multiline-test.dx)
+	misc/check-no-diff \
+	  tests/repl-regression-528-test-expected-output \
+	  <($(dex) repl < tests/repl-regression-528-test.dx)
+
+module-tests: just-build
+	misc/check-quine tests/module-tests.dx \
+    $(dex) --prelude lib/prelude.dx --lib-path tests script
 
 # --- running and querying benchmarks ---
 
@@ -172,22 +353,38 @@ bench-summary:
 
 # --- building docs ---
 
-slow-docs = doc/examples/mnist-nearest-neighbors.html
+slow-pages = pages/examples/mnist-nearest-neighbors.html
 
-docs: doc-prelude $(doc-example-names) $(doc-lib-names) $(slow-docs)
+doc-files = $(doc-names:%=doc/%.dx)
+pages-doc-files = $(doc-names:%=pages/%.html)
+example-files = $(example-names:%=examples/%.dx)
+pages-example-files = $(example-names:%=pages/examples/%.html)
 
-doc-prelude: lib/prelude.dx
-	mkdir -p doc
-	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > doc/prelude.html
+lib-files = $(filter-out lib/prelude.dx,$(wildcard lib/*.dx))
+pages-lib-files = $(patsubst %.dx,pages/%.html,$(lib-files))
 
-doc/examples/%.html: examples/%.dx
-	mkdir -p doc/examples
+docs: pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/index.md
+
+pages-prelude: lib/prelude.dx
+	mkdir -p pages
+	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > pages/prelude.html
+
+pages/examples/%.html: examples/%.dx
+	mkdir -p pages/examples
 	$(dex) script $^ --outfmt html > $@
 
-doc/lib/%.html: lib/%.dx
-	mkdir -p doc/lib
+pages/lib/%.html: lib/%.dx
+	mkdir -p pages/lib
+	$(dex) script $^ --outfmt html > $@
+
+pages/index.md: $(doc-files) $(example-files) $(lib-files)
+	misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > $@
+
+${pages-doc-files}:pages/%.html: doc/%.dx
+	mkdir -p pages
 	$(dex) script $^ --outfmt html > $@
 
 clean:
 	$(STACK) clean
-	rm -rf src/lib/dexrt.bc
+	$(RM) src/lib/dexrt.bc
+	$(RM) $(tutorial-data)

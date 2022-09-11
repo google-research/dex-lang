@@ -5,12 +5,12 @@
 ;; https://developers.google.com/open-source/licenses/bsd
 
 (setq dex-highlights
-  '(("^--.*$"                . font-lock-comment-face)
+  '(("--\\([^o].*$\\|$\\)"   . font-lock-comment-face)
     ("^> .*$"                . font-lock-comment-face)
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
     ("\\w+:"                 . font-lock-comment-face)
     ("^:\\w*"                . font-lock-preprocessor-face)
-    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|\\binstance\\b\\|\\bdo\\b\\|\\bview\\b\\|\\bimport\\b" .
+    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|\\binstance\\b\\|\\bdo\\b\\|\\bview\\b\\|\\bimport\\b\\|\\bforeign\\b" .
            font-lock-keyword-face)
     ("--o"                               . font-lock-variable-name-face)
     ("[-.,!$^&*:~+/=<>|?\\\\]"           . font-lock-variable-name-face)

@@ -1,37 +1,38 @@
-' ## Multi-step Ray Tracer
+'# Multi-step Ray Tracer
 
 ' Based on Eric Jang's
 [JAX implementation](https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb),
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 
+import png
 import plot
 
-' ### Generic Helper Functions
+'## Generic Helper Functions
 Some of these should probably go in prelude.
 
-def Vec (n:Int) : Type = Fin n => Float
-def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Float
+def Vec (n:Nat) : Type = Fin n => Float
+def Mat (n:Nat) (m:Nat) : Type = Fin n => Fin m => Float
 
 def relu (x:Float) : Float = max x 0.0
-def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+def length {d} (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 -- TODO: make a newtype for normal vectors
-def normalize (x: d=>Float) : d=>Float = x / (length x)
-def directionAndLength (x: d=>Float) : (d=>Float & Float) =
+def normalize {d} (x: d=>Float) : d=>Float = x / (length x)
+def directionAndLength {d} (x: d=>Float) : (d=>Float & Float) =
   l = length x
   (x / (length x), l)
 
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def sampleAveraged [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
-  yieldState zero \total.
+def sampleAveraged {a} [VSpace a] (sample:Key -> a) (n:Nat) (k:Key) : a =
+  yield_state zero \total.
     for i:(Fin n).
-      total := get total + sample (ixkey k i) / IToF n
+      total := get total + sample (ixkey k i) / n_to_f n
 
-def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
+def positiveProjection {n} (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
-' ### 3D Helper Functions
+'## 3D Helper Functions
 
 def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
   [a1, a2, a3] = a
@@ -40,7 +41,7 @@ def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
 
 -- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
 data Image =
- MkImage height:Int width:Int (Fin height => Fin width => Color)
+ MkImage height:Nat width:Nat (Fin height => Fin width => Color)
 
 xHat : Vec 3 = [1., 0., 0.]
 yHat : Vec 3 = [0., 1., 0.]
@@ -67,7 +68,7 @@ def rotateZ (p:Vec 3) (angle:Angle) : Vec 3 =
   [c*px - s*py, s*px+c*py, pz]
 
 def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
-  [k1, k2] = splitKey k
+  [k1, k2] = split_key k
   u1 = rand k1
   u2 = rand k2
   uu = normalize $ cross normal [0.0, 1.1, 1.1]
@@ -79,7 +80,7 @@ def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
   rr = (rx .* uu) + (ry .* vv) + (rz .* normal)
   normalize rr
 
-' ### Raytracer
+'## Raytracer
 
 Distance = Float
 
@@ -111,12 +112,13 @@ Filter   = Color
 
 -- TODO: use a record
 -- num samples, num bounces, share seed?
-Params = { numSamples : Int
-         & maxBounces : Int
-         & shareSeed  : Bool }
+Params = {
+    numSamples : Nat
+  & maxBounces : Nat
+  & shareSeed  : Bool }
 
 -- TODO: use a list instead, once they work
-data Scene n:Type = MkScene (n=>Object)
+data Scene n:Type [Ix n] = MkScene (n=>Object)
 
 def sampleReflection ((nor, surf):OrientedSurface) ((pos, dir):Ray) (k:Key) : Ray =
   newDir = case surf of
@@ -154,9 +156,9 @@ def sdObject (pos:Position) (obj:Object) : Distance =
       halfWidths = [hw, 0.01, hw]
       length $ for i. max ((abs pos'.i) - halfWidths.i) 0.0
 
-def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
+def sdScene {n} (scene:Scene n) (pos:Position) : (Object & Distance) =
   (MkScene objs) = scene
-  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
+  (i, d) = minimum_by snd $ for i. (i, sdObject pos objs.i)
   (objs.i, d)
 
 def calcNormal (obj:Object) (pos:Position) : Direction =
@@ -169,13 +171,13 @@ data RayMarchResult =
   -- Could refine with failure reason (beyond horizon, failed to converge etc)
   HitNothing
 
-def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
+def raymarch {n} (scene:Scene n) (ray:Ray) : RayMarchResult =
   maxIters = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
   (rayOrigin, rayDir) = ray
-  withState (10.0 * tol) \rayLength.
-    boundedIter maxIters HitNothing \_.
+  with_state (10.0 * tol) \rayLength.
+    bounded_iter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
       (obj, d) = sdScene scene $ rayPos
       -- 0.9 ensures we come close to the surface but don't touch it
@@ -195,24 +197,24 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
                 PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
                 Light _ _ radiance   -> HitLight radiance
 
-def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
+def rayDirectRadiance {n} (scene:Scene n) (ray:Ray) : Radiance =
   case raymarch scene ray of
     HitLight intensity -> intensity
     HitNothing -> zero
     HitObj _ _ -> zero
 
 def sampleSquare (hw:Float) (k:Key) : Position =
- [kx, kz] = splitKey k
+ [kx, kz] = split_key k
  x = randuniform (- hw) hw kx
  z = randuniform (- hw) hw kz
  [x, 0.0, z]
 
-def sampleLightRadiance
+def sampleLightRadiance {n}
       (scene:Scene n) (osurf:OrientedSurface) (inRay:Ray) (k:Key) : Radiance =
   (surfNor, surf) = osurf
   (rayPos, _) = inRay
   (MkScene objs) = scene
-  yieldAccum (AddMonoid Float) \radiance.
+  yield_accum (AddMonoid Float) \radiance.
     for i. case objs.i of
       PassiveObject _ _ -> ()
       Light lightPos hw _ ->
@@ -225,19 +227,19 @@ def sampleLightRadiance
           coeff = fracSolidAngle * probReflection osurf inRay outRay
           radiance += coeff .* rayDirectRadiance scene outRay
 
-def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
+def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
-  yieldAccum (AddMonoid Float) \radiance.
-    runState  noFilter \filter.
-     runState initRay  \ray.
-      boundedIter (getAt #maxBounces params) () \i.
+  yield_accum (AddMonoid Float) \radiance.
+    run_state  noFilter \filter.
+     run_state initRay  \ray.
+      bounded_iter (get_at #maxBounces params) () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->
             if i == 0 then radiance += intensity   -- TODO: scale etc
             Done ()
           HitObj incidentRay osurf ->
-            [k1, k2] = splitKey $ hash k i
+            [k1, k2] = split_key $ hash k i
             lightRadiance = sampleLightRadiance scene osurf incidentRay k1
             ray    := sampleReflection osurf incidentRay k2
             filter := surfaceFilter (get filter) (snd osurf)
@@ -245,40 +247,40 @@ def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
             Continue
 
 -- Assumes we're looking towards -z.
-Camera =
-  { numPix     : Int
+Camera = {
+    numPix     : Nat
   & pos        : Position  -- pinhole position
   & halfWidth  : Float     -- sensor half-width
   & sensorDist : Float }   -- pinhole-sensor distance
 
 -- TODO: might be better with an anonymous dependent pair for the result
-def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
+def cameraRays (n:Nat) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
-  halfWidth = getAt #halfWidth camera
-  pixHalfWidth = halfWidth / IToF n
+  halfWidth = get_at #halfWidth camera
+  pixHalfWidth = halfWidth / n_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.
-    [kx, ky] = splitKey key
+    [kx, ky] = split_key key
     x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
-    (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
+    (get_at #pos camera, normalize [x, y, neg (get_at #sensorDist camera)])
 
-def takePicture (params:Params) (scene:Scene m) (camera:Camera) : Image =
-  n = getAt #numPix camera
+def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
+  n = get_at #numPix camera
   rays = cameraRays n camera
-  rootKey = newKey 0
+  rootKey = new_key 0
   image = for i j.
-    pixKey = if getAt #shareSeed params
+    pixKey = if get_at #shareSeed params
       then rootKey
       else ixkey (ixkey rootKey i) j
     sampleRayColor : Key -> Color =  \k.
-      [k1, k2] = splitKey k
+      [k1, k2] = split_key k
       trace params scene (rays.i.j k1) k2
-    sampleAveraged sampleRayColor (getAt #numSamples params) pixKey
+    sampleAveraged sampleRayColor (get_at #numSamples params) pixKey
   MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
 
-' ### Define the scene and render it
+'## Define the scene and render it
 
 lightColor = [0.2, 0.2, 0.2]
 leftWallColor  = 1.5 .* [0.611, 0.0555, 0.062]
@@ -287,31 +289,33 @@ whiteWallColor = [255.0, 239.0, 196.0] / 255.0
 blockColor     = [200.0, 200.0, 255.0] / 255.0
 
 theScene = MkScene $
-    [ Light (1.9 .* yHat) 0.5 lightColor
-    , PassiveObject (Wall      xHat  2.0) (Matte leftWallColor)
-    , PassiveObject (Wall (neg xHat) 2.0) (Matte rightWallColor)
-    , PassiveObject (Wall      yHat  2.0) (Matte whiteWallColor)
-    , PassiveObject (Wall (neg yHat) 2.0) (Matte whiteWallColor)
-    , PassiveObject (Wall      zHat  2.0) (Matte whiteWallColor)
-    , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
-    , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
-    , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
-    ]
+  [ Light (1.9 .* yHat) 0.5 lightColor
+  , PassiveObject (Wall      xHat  2.0) (Matte leftWallColor)
+  , PassiveObject (Wall (neg xHat) 2.0) (Matte rightWallColor)
+  , PassiveObject (Wall      yHat  2.0) (Matte whiteWallColor)
+  , PassiveObject (Wall (neg yHat) 2.0) (Matte whiteWallColor)
+  , PassiveObject (Wall      zHat  2.0) (Matte whiteWallColor)
+  , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
+  , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
+  , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
+  ]
 
-defaultParams = { numSamples = 50
-                , maxBounces = 10
-                , shareSeed  = True }
+defaultParams = {
+    numSamples = 50
+  , maxBounces = 10
+  , shareSeed  = True }
 
-defaultCamera = { numPix     = 250
-                , pos        = 10.0 .* zHat
-                , halfWidth  = 0.3
-                , sensorDist = 1.0 }
+defaultCamera = {
+    numPix     = 250
+  , pos        = 10.0 .* zHat
+  , halfWidth  = 0.3
+  , sensorDist = 1.0 }
 
 -- We change to a small num pix here to reduce the compute needed for tests
 params = defaultParams
 camera = if dex_test_mode ()
-           then defaultCamera |> setAt #numPix 10
-           else defaultCamera
+  then defaultCamera |> set_at #numPix 10
+  else defaultCamera
 
 -- %time
 (MkImage _ _ image) = takePicture params theScene camera
@@ -321,7 +325,7 @@ camera = if dex_test_mode ()
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
-params2 = defaultParams |> setAt #numSamples 1
+params2 = defaultParams |> set_at #numSamples 1
 (MkImage _ _ image2) = takePicture params2 theScene camera
 
 :html imshow image2

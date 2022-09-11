@@ -4,10 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
@@ -24,8 +20,11 @@ import Control.Monad.Writer
 import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 
+import Err
+
 newtype CatT env m a = CatT (StateT (env, env) m a)
-  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadFail, Alternative)
+  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadFail, Alternative,
+            Fallible)
 
 type Cat env = CatT env Identity
 
@@ -74,14 +73,6 @@ instance MonadCat env m => MonadCat env (ExceptT e m) where
                 case xerr of
                   Left err -> throwError err
                   Right x  -> return (x, env)
-
-instance (Monoid env, MonadError e m) => MonadError e (CatT env m) where
-  throwError = lift . throwError
-  catchError m catch = do
-    env <- look
-    (ans, env') <- lift $ runCatT m env `catchError` (\e -> runCatT (catch e) env)
-    extend env'
-    return ans
 
 instance (Monoid env, MonadReader r m) => MonadReader r (CatT env m) where
   ask = lift ask

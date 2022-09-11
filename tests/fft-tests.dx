@@ -1,0 +1,16 @@
+import fft
+
+:p map nextpow2 [0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
+> [0, 0, 1, 2, 2, 3, 3, 4, 10, 10, 11]
+
+a : (Fin 4)=>Complex = arb $ new_key 0
+:p a ~~ (ifft $ fft a)
+> True
+:p a ~~ (fft $ ifft a)
+> True
+
+b : (Fin 20)=>(Fin 70)=>Complex = arb $ new_key 0
+:p b ~~ (ifft2 $ fft2 b)
+> True
+:p b ~~ (fft2 $ ifft2 b)
+> True

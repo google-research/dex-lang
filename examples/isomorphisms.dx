@@ -7,29 +7,30 @@
 
 'This is a normal ADT, and you can construct your own isomorphisms.
 
-cycleThree : Iso (a & b & c) (b & c & a) =
-  MkIso { fwd = \(a, b, c). (b, c, a)
-        , bwd = \(b, c, a). (a, b, c)
-        }
+def cycleThree {a b c} : Iso (a & b & c) (b & c & a) =
+  MkIso {
+      fwd = \(a, b, c). (b, c, a)
+    , bwd = \(b, c, a). (a, b, c)
+    }
 
 'Isomorphisms can be applied with `appIso`, applied in reverse with `revIso`,
 and flipped with `flipIso`
 
-:p appIso cycleThree (1, 2.0, 3)
+:p app_iso cycleThree (1, 2.0, 3)
 > (2., (3, 1))
 
-:p revIso cycleThree (1, 2.0, 3)
+:p rev_iso cycleThree (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p appIso (flipIso cycleThree) (1, 2.0, 3)
+:p app_iso (flip_iso cycleThree) (1, 2.0, 3)
 > (3, (1, 2.))
 
 'They can also be composed with `&>>`:
 
-:p appIso (cycleThree &>> cycleThree) (1, 2.0, 3)
+:p app_iso (cycleThree &>> cycleThree) (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p appIso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
+:p app_iso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
 > (1, (2., 3))
 
 'Note that we assume but do not check that the isomorphism is lawful (i.e.
@@ -43,28 +44,22 @@ that produce isos. We will start with the first two:
 - `#?x` produces a "prism-like" variant matcher `Iso {x:a | ...r} (a | {|...r})`
 
 %passes parse
-:t #b : Iso {a:Int & b:Float & c:Unit} _
+:t #b :: Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = x, ...r}. (,) x r}
->   : Iso {a: Int & b: Float & c: Unit} _
+> (MkIso {fwd=(\{b=x, ...r}. (,) x r), bwd=(\(x, r). {b=x, ...r})}
+>  : Iso {a: Int & b: Float & c: Unit} _)
 
 %passes parse
-:t #?b : Iso {a:Int | b:Float | c:Unit} _
+:t #?b :: Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \v. case v
->                 ((Left x)) -> {| b = x |}
->                 ((Right r)) -> {|b| ...r |}
->                 
->     , fwd = \v. case v
->                 {| b = x |} -> (Left x)
->                 {|b| ...r |} -> (Right r)
->                 }
->   : Iso {a: Int | b: Float | c: Unit} _
+> (MkIso
+>    {fwd=(\v. case v
+>              {| b = x |} -> (Left x)
+>              {|b| ...r |} -> (Right r))
+>    , bwd=(\v. case v
+>               ((Left x)) -> {| b = x |}
+>               ((Right r)) -> {|b| ...r |})}
+>  : Iso {a: Int | b: Float | c: Unit} _)
 
 'There are also two "zipper" forms, described later on this page:
 - `#&x` produces a "record-zipper" isomorphism
@@ -79,54 +74,54 @@ that produce isos. We will start with the first two:
 '## Record accessors and lens-like helpers
 Record accessor isomorphisms can be passed into the helper function `getAt`:
 
-:t getAt
+:t get_at
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> a -> b)
 
-:p getAt #foo {foo=1, bar=2.0}
+:p get_at #foo {foo=1, bar=2.0}
 > 1
 
 'We can also do other types of things:
 
-:p popAt #foo {foo=1, bar=2.0}
+:p pop_at #foo {foo=1, bar=2.0}
 > {bar = 2.}
 
-:p pushAt #foo 3.0 {foo=1, bar=2.0}
+:p push_at #foo 3.0 {foo=1, bar=2.0}
 > {bar = 2., foo = 3., foo = 1}
 
-:p setAt #foo 2 {foo=1, bar=2.0}
+:p set_at #foo 2 {foo=1, bar=2.0}
 > {bar = 2., foo = 2}
 
 'These helper functions work with any "lens-like" isomorphism. For instance,
 we can select everything except for a particular field:
 
-:t exceptLens
+:t except_lens
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> Iso a (c & b))
 
-:p getAt (exceptLens #foo) {foo=1, bar=2.0, baz=3}
+:p get_at (except_lens #foo) {foo=1, bar=2.0, baz=3}
 > {bar = 2., baz = 3}
 
 
 '## Variant accessors and prism-like helpers
 Similarly, there are prism-like helpers
 
-:t matchWith
+:t match_with
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b | c)) -> a -> Maybe b)
 
-:t buildWith
+:t build_with
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b | c)) -> b -> a)
 
 'which can be used with variant accessors or any other prism-like isomorphism:
 
-:p matchWith #?foo $ {|foo = 1|}:{foo:Int | bar:Float}
+:p match_with #?foo $ {|foo = 1|}::{foo:Int | bar:Float}
 > (Just 1)
 
-:p matchWith #?foo $ {|bar = 1.0|}:{foo:Int | bar:Float}
+:p match_with #?foo $ {|bar = 1.0|}::{foo:Int | bar:Float}
 > Nothing
 
-:p buildWith #?foo 3 : {foo:Int | bar:Float}
+:p build_with #?foo 3 :: {foo:Int | bar:Float}
 > {| foo = 3 |}
 
-:p matchWith (exceptPrism #?foo) $  {|bar = 1.0|}:{foo:Int | bar:Float}
+:p match_with (except_prism #?foo) $  {|bar = 1.0|}::{foo:Int | bar:Float}
 > (Just {| bar = 1. |})
 
 '## Record zipper isomorphisms
@@ -137,20 +132,18 @@ a "zipper isomorphism", which moves a subset of fields from one place to
 another. For instance:
 
 %passes parse
-:t #&a : Iso ({&} & {a:Int & b:Float & c:Unit}) _
+:t #&a :: Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \({a = x, ...l}, {, ...r}). (,) {, ...l} {a = x, ...r}
->     , fwd = \({, ...l}, {a = x, ...r}). (,) {a = x, ...l} {, ...r}}
->   : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _
+> (MkIso
+>    {fwd=(\({...l}, {a=x, ...r}). (,) {a=x, ...l} {...r})
+>    , bwd=(\({a=x, ...l}, {...r}). (,) {...l} {a=x, ...r})}
+>  : Iso ((&) {} {a: Int & b: Float & c: Unit}) _)
 
-:t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
+:t (#&a &>> #&b) :: Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32 & b: Float32} & {c: Unit}))
 
 '`#&a` and `#&b` are isomorphisms that move a given field from the record on the
@@ -159,11 +152,14 @@ right to the record on the left; when composed, they move both fields.
 'The main use for record zipper isomorphisms is to specify multiple named axes
 when using a record type as an index set:
 
-:t overFields
+:t over_fields
 > ((a:Type)
 >  ?-> (b:Type)
 >  ?-> (c:Type)
->  ?-> (v:Type) ?-> (Iso ({ &} & a) (b & c)) -> (a => v) -> b => c => v)
+>  ?-> (v:Type)
+>  ?-> (v#0:(Ix b))
+>  ?=> (v#1:(Ix c))
+>  ?=> (Iso ({&} & a) (b & c)) -> (_autoq:(Ix a)) ?=> (a => v) -> b => c => v)
 
 -- :p
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -179,27 +175,49 @@ when using a record type as an index set:
 'Note that `overFields` is just a simple wrapper combining `splitR` and
 `overLens`:
 
-:t splitR
-> ((a:Type) ?-> Iso a ({ &} & a))
+:t split_r
+> ((a:Type) ?-> Iso a ({&} & a))
 
-:t overLens
+:t over_lens
 > ((a:Type)
 >  ?-> (b:Type)
->  ?-> (c:Type) ?-> (v:Type) ?-> (Iso a (b & c)) -> (a => v) -> b => c => v)
+>  ?-> (c:Type)
+>  ?-> (v:Type)
+>  ?-> (v#0:(Ix b))
+>  ?=> (v#1:(Ix c))
+>  ?=> (Iso a (b & c)) -> (_autoq:(Ix a)) ?=> (a => v) -> b => c => v)
 
 '`overLens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.
 
+def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
+  fwd = \({a, b, c}). (c, b, a)
+  bwd = \(c, b, a). {a, b, c}
+  MkIso {fwd, bwd}
+instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
+  size = size n * size m * size q
+  ordinal = ordinal <<< app_iso abcToTuple
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToTuple
+
+def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
+  fwd = \({b, c}). (c, b)
+  bwd = \(c, b). {b, c}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
+  size = size n * size m
+  ordinal = ordinal <<< app_iso bcToPair
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso bcToPair
+
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
     ordinal a * 100 + ordinal b * 10 + ordinal c
-  overLens #a x
+  over_lens #a x
 > [ [0, 10, 1, 11]@{b: Fin 2 & c: Fin 2}
 > , [100, 110, 101, 111]@{b: Fin 2 & c: Fin 2} ]
 
 '`splitR` can be used if you want to process multiple fields at once:
 
-:p pushAt (splitR &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
+:p push_at (split_r &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
 > {a = 1, b = 2., c = 3, d = 4.}
 
 '## Variant zipper isomorphisms
@@ -207,50 +225,86 @@ Just as there are record zipper isomorphisms, there are also variant
 zipper isomorphisms:
 
 %passes parse
-:t #|a : Iso ({|} | {a:Int | b:Float | c:Unit}) _
+:t #|a :: Iso ({| } | {a:Int | b:Float | c:Unit}) _
 > (Iso
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \v. case v
->                 ((Left w)) -> (case w
->                                  {| a = x |} -> (Right {| a = x |})
->                                  {|a| ...r |} -> (Left r)
->                                  )
->                 ((Right l)) -> (Right {|a| ...l |})
->                 
->     , fwd = \v. case v
->                 ((Left l)) -> (Left {|a| ...l |})
->                 ((Right w)) -> (case w
->                                   {| a = x |} -> (Left {| a = x |})
->                                   {|a| ...r |} -> (Right r)
->                                   )
->                 }
->   : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _
+> (MkIso
+>    {fwd=(\v. case v
+>              ((Left l)) -> (Left {|a| ...l |})
+>              ((Right w)) -> (case w
+>                                {| a = x |} -> (Left {| a = x |})
+>                                {|a| ...r |} -> (Right r)))
+>    , bwd=(\v. case v
+>               ((Left w)) -> (case w
+>                                {| a = x |} -> (Right {| a = x |})
+>                                {|a| ...r |} -> (Left r))
+>               ((Right l)) -> (Right {|a| ...l |}))}
+>  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:
 
-:t splitV
+:t split_v
 > ((a:Type) ?-> Iso a ({ |} | a))
 
 :p
   vals : (Fin 3)=>{a:_ | b:_ | c:_ } = [{|a = 1|}, {|b = 2|}, {|c = 3|}]
-  for i. matchWith (splitV &>> #|a &>> #|b) vals.i
+  for i. match_with (split_v &>> #|a &>> #|b) vals.i
 > [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
 
 '`sliceFields` uses this to specific named variants from a variant-indexed
 table:
 
+def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right (Left x)
+    {|c=x|} -> Right (Right x)
+  bwd = \v. case v of
+    Left  x -> {|a=x|}
+    Right x -> case x of
+      Left  y -> {|b=y|}
+      Right y -> {|c=y|}
+  MkIso {fwd, bwd}
+instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
+  size = size n + size m + size q
+  ordinal = ordinal <<< app_iso abcToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToEither
+
+def abToEither {a b} : Iso {a:a | b:b} (a|b) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|b=x|}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
+  size = size n + size m
+  ordinal = ordinal <<< app_iso abToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToEither
+
+def acToEither {a c} : Iso {a:a | c:c} (a|c) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|c=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|c=x|}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
+  size = size n + size m
+  ordinal = ordinal <<< app_iso acToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso acToEither
+
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
   v1 = x
-  v2 = sliceFields (#|b) x
-  v3 = sliceFields (#|a &>> #|c) x
-  v4 = sliceFields (#|a &>> #|b &>> #|c) x
+  v2 = slice_fields (#|a &>> #|b) x
+  v3 = slice_fields (#|a &>> #|c) x
+  v4 = slice_fields (#|a &>> #|b &>> #|c) x
   (v1, v2, v3, v4)
 > ( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
-> , ( [2, 3]@{b: Fin 2}
+> , ( [0, 1, 2, 3]@{a: Fin 2 | b: Fin 2}
 > , ( [0, 1, 4, 5]@{a: Fin 2 | c: Fin 2}
 > , [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2} ) ) )

@@ -48,6 +48,7 @@ enumeration variable.
 ' We can also display it as html. To do this we include the plot library.
   Right now our table is not so interesting :)
 
+import png
 import plot
 
 :html matshow x
@@ -88,7 +89,7 @@ import plot
 ' This style of using `for` to construct type-inferred tables is central to what
   makes Dex powerful. Tables do not only need to have `Fin` types.
 
-' Let's consider another example. This one produces a list of
+' Let's consider another example. This one produces a list of ones
   in Python.
 
 ' `y = [1.0 for j in range(width) for i in range(height)]`
@@ -121,16 +122,16 @@ mean y
 '## Typed indexing
 
 ' The use of typed indices lets you do really neat things, but
-  lets consider how it works. Critically, one cannot
+  let's consider how it works. Critically, one cannot
   simply index an table with an integer.
 
-r = x.2
+r = x.(2 :: Int)
 > Type error:
 > Expected: (Fin 3)
 >   Actual: Int32
 >
-> r = x.2
->       ^
+> r = x.(2 :: Int)
+>       ^^^^^^^^^^
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator.
@@ -170,12 +171,12 @@ row = x.(2 @ Height)
 >                                   ^
 
 :t for i:Height. for j:Width. (ordinal i) + (ordinal j)
-> ((Fin 3) => (Fin 8) => Int32)
+> ((Fin 3) => (Fin 8) => Nat)
 
 ' If we want to convert these values to floats, we do it manually with the `IToF`
   function. We can use this to make an image gradient.
 
-gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
+gradient = for i:Height. for j:Width. n_to_f ((ordinal i) + (ordinal j))
 :html matshow gradient
 > <html output>
 
@@ -213,7 +214,8 @@ for pair:(Fin 2 & Fin 3). ordinal pair
   change the order of the axes. This is useful for applying functions on tables.
 
 ' For instance, we saw the `mean` function above which sums over the first axis
-  of an table. We can apply `mean` to `x2` to produce the sum over 50 elements:
+  of an table. We can apply `mean` to `y` to produce the mean average over 24
+  elements:
 
 :t y
 > ((Fin 3 & Fin 8) => Float32)
@@ -247,8 +249,8 @@ add5 1.0
   table argument type: this declares the type variable `n` as the index type of
   the table argument.
 
-def tableAdd5' (x : n => Float32) : n => Float32 =
-    for i. x.i + 5.0
+def tableAdd5' {n} (x : n => Float32) : n => Float32 =
+  for i. x.i + 5.0
 
 :t tableAdd5' y
 > ((Fin 3 & Fin 8) => Float32)
@@ -259,21 +261,21 @@ def tableAdd5' (x : n => Float32) : n => Float32 =
 
 ' Imagine we have `transpose` function. We can encode the shape change in the type.
 
-def transFloat (x : m => n => Float32) : n => m => Float32 =
-    for i. for j. x.j.i
+def transFloat {m n} (x : m => n => Float32) : n => m => Float32 =
+  for i. for j. x.j.i
 
 ' We can even make it more generic by abstracting over the value type.
 
-def trans (x : m => n => v) : n => m => v =
-    for i. for j. x.j.i
+def trans {m n v} (x : m => n => v) : n => m => v =
+  for i. for j. x.j.i
 
 ' We can also use this to check for shape errors:
 
 :t x
 > ((Fin 3) => (Fin 8) => Float32)
 
-def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
-    for i. for j. x.i.j + y.i.j
+def tableAdd' {m n} (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
+  for i. for j. x.i.j + y.i.j
 
 :t tableAdd' x x
 > ((Fin 3) => (Fin 8) => Float32)
@@ -284,7 +286,7 @@ def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float3
 >   Actual: ((Fin 8) => (Fin 3) => Float32)
 >
 > :t tableAdd' x (trans x)
->                 ^^^^^^^
+>                ^^^^^^^^^
 
 ' The type system checked for us that the input tables indeed have the same shape.
 
@@ -314,26 +316,23 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
   ignore it for now.
 
 def pixel (x:Char) : Float32 =
-     r = W8ToI x
-     IToF case r < 0 of
-             True -> (abs r) + 128
-             False -> r
+  r = w8_to_i x
+  i_to_f case r < 0 of
+    True -> 256 + r
+    False -> r
 
 def getIm : Batch => Image =
-    -- File is unsigned bytes offset with 16 starting bytes
-    (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
-    raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
-    for b: Batch i j.
-        pixel raw.((ordinal (b, i, j)) @ Full)
+  -- File is unsigned bytes offset with 16 starting bytes
+  (AsList _ im) = unsafe_io do read_file "examples/t10k-images-idx3-ubyte"
+  raw = unsafe_cast_table Full (for i:Full. im.((ordinal i + 16) @ _))
+  for b: Batch i j.
+    pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
-    -- File is unsigned bytes offset with 8 starting bytes
-    (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
-    r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
-    for i. (W8ToI r.i @ Class)
-
-' Once you have downloaded the files, uncomment these lines to
-  see the images of below.
+  -- File is unsigned bytes offset with 8 starting bytes
+  (AsList _ lab) = unsafe_io do read_file "examples/t10k-labels-idx1-ubyte"
+  r = unsafe_cast_table Batch (for i:Batch. lab.((ordinal i + 8) @ _))
+  for i. (w8_to_n r.i @ Class)
 
 all_ims = getIm
 all_labels = getLabel
@@ -352,7 +351,7 @@ im = ims.(0 @ _)
 :html matshow (sum ims)
 > <html output>
 
-' This example overplots three different pairs of closing.
+' This example overplots three different pairs of clothing.
 
 imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
@@ -365,9 +364,9 @@ imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 ' This one shows all the images on one channel over the base plot.
 
 imscolor2 = for b. for i. for j. for c:Channels.
-          case ordinal c == 0 of
-             True -> (sum ims).i.j / (IToF (size Batch))
-             False -> ims.b.i.j
+  case ordinal c == 0 of
+    True  -> (sum ims).i.j / (n_to_f (size Batch))
+    False -> ims.b.i.j
 
 :html imseqshow (imscolor2 / 255.0)
 > <html output>
@@ -377,11 +376,14 @@ imscolor2 = for b. for i. for j. for c:Channels.
   pixel in a tile grid pattern. See if you can figure out the other
   types.
 
-def split (x: m=>v) : n=>o=>v =
-    for i j. x.(ordinal (i,j)@_)
+def split {m n o v} [Ix n, Ix o] (x: m=>v) : n=>o=>v =
+  for i j. x.(ordinal (i,j)@_)
 
-def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
-    for kh kw h w. (split (split x).h.kh).w.kw
+def imtile {a b n o p q v}
+      [Ix n, Ix o, Ix p, Ix q]
+      (x: a=>b=>v)
+      : n=>o=>p=>q=>v =
+  for kh kw h w. (split (split x).h.kh).w.kw
 
 im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@_)
 
@@ -418,15 +420,15 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
   the `State` effect, which provides getter and setter functionality (via `get`
   and `:=` assignment). Here's what it looks like:
 
-def tableMean (x : n => Float32) : Float32 =
-    -- acc = 0
-    withState 0.0 $ \acc.
-         -- for i in range(len(x))
-         for i.
-             -- acc = acc + x[i]
-             acc := (get acc) + x.i
-         -- return acc / len(x)
-         (get acc) / (IToF (size n))
+def tableMean {n} (x : n => Float32) : Float32 =
+  -- acc = 0
+  with_state 0.0 $ \acc.
+    -- for i in range(len(x))
+    for i.
+      -- acc = acc + x[i]
+      acc := (get acc) + x.i
+    -- return acc / len(x)
+    (get acc) / (n_to_f (size n))
 
 
 tableMean [0.0, 1.0, 0.5]
@@ -456,7 +458,7 @@ tableMean [0.0, 1.0, 0.5]
   constructor in this case).
 
 :t \ x. x + 10
-> (Int32 -> Int32)
+> (Nat -> Nat)
 
 (\ x. x + 10) 20
 > 30
@@ -464,16 +466,16 @@ tableMean [0.0, 1.0, 0.5]
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
   `withState` takes an initial value `init` and a body function taking a
-  "mutable value" reference (`acc` here), and returns a pair of the body
-  function's result and the final value. Here's a simple example:
+  "mutable value" reference (`acc` here), and returns the body function's result.
+  Here's a simple example:
 
-withState 10 $ \ state.
-     state := 30
-     state := 10
-     get state
+with_state 10 $ \ state.
+  state := 30
+  state := 10
+  get state
 > 10
 
-' The element returned pair is the body function's result (`10`)
+' The element returned is the body function's result (`10`)
 
 ' Finally: this is a good point to talk a bit about some other operators in Dex.
   In the examples above, we see two types of equal sign operators: `=` and `:=`.
@@ -485,7 +487,7 @@ withState 10 $ \ state.
         temp = (ordinal i) + 10
         for j:Width.
             temp
-> ((Fin 3) => (Fin 8) => Int32)
+> ((Fin 3) => (Fin 8) => Nat)
 
 ' The other is `:=`, which is an assignment operator that can only be used
   when a `State` effect is available (e.g. inside of a body function passed to
@@ -500,7 +502,7 @@ withState 10 $ \ state.
   integer tables (of type `n => Float32`).
 
 :t tableMean
-> ((n:Type) ?-> (n => Float32) -> Float32)
+> ((n:Type) ?-> (_autoq:(Ix n)) ?=> (n => Float32) -> Float32)
 
 ' If we try to apply `tableMean` to other types for get errors. For example,
   `tableMean` does not work when applied to a table of *pairs* of floats.
@@ -514,7 +516,7 @@ tableMean (for (i, j). (x.i.j, x.i.j))
 >   Actual: (Float32 & Float32)
 >
 > tableMean (for (i, j). (x.i.j, x.i.j))
->                         ^^^^^^^^^^^^
+>                        ^^^^^^^^^^^^^^
 
 ' Intuitively, supporting this seems possible. We just need to be able to
   add and divide pair types. Let's look closer at the exact types of the
@@ -549,25 +551,30 @@ interface [Add a] VSpace a
   implement the interface (via an *instance*).
 
 ' Here is an `Add` instance for the float pair type.
+ (Again, this will throw error because it mirrors the prelude, so we just quote it here.):
 
+' ```
 instance Add (Float32 & Float32)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
   zero = (0.0, 0.0)
+ 
+instance Sub (Float32 & Float32)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
 
 ' And here is a `VSpace` instance for the float pair type:
 
+' ```
 instance VSpace (Float32 & Float32)
-  scaleVec = \s (x, y). (x * s, y * s)
+  scale_vec = \s (x, y). (x * s, y * s)
 
 ' Once we have these two instance definitions, we can revisit our table sum
   function using them:
 
-def tableMean' [VSpace v] (x : n => v) : v =
-   withState zero $ \acc: (Ref _ v).
+def tableMean' {n v} [VSpace v] (x : n => v) : v =
+   with_state zero $ \acc: (Ref _ v).
         for i.
             acc := add (get acc) x.i       -- `Add` requirement
-        (get acc) / (IToF (size n))  -- `VSpace` requirement
+        (get acc) / (n_to_f (size n))  -- `VSpace` requirement
 
 tableMean' [0.1, 0.5, 0.9]
 > 0.5
@@ -579,52 +586,50 @@ tableMean' [(1.0, 0.5), (0.5, 0.8)]
   we can and should instead define `Add` and `VSpace` instances for generic
 ' tuple types.
 
-instance [Add v, Add w] Add (v & w)
+' ```
+instance {v w} [Add v, Add w] Add (v & w)
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
   zero = (zero, zero)
-
-instance [VSpace v, VSpace w] VSpace (v & w)
-  scaleVec = \s (x, y). (scaleVec s x, scaleVec s y)
+ 
+instance {v w} [Sub v, Sub w] Sub (v & w)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+ 
+instance {v w} [VSpace v, VSpace w] VSpace (v & w)
+  scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
 
 '## More Fashion MNist
 
-' Now that we has more functions we can revisit some of the Fashion MNist examples.
+' Now that we have more functions we can revisit some of the Fashion MNist examples.
 
 ' Function that uses state to produce a histogram:
 
 Pixels = Fin 256
 
-def bincount (inp : a => b) : b => Int =
-    withState zero \acc .
-        for i.
-            v = acc!(inp.i)
-            v := (get v) + 1
-        get acc
+def bincount {a b} [Ix b] (inp : a => b) : b => Nat =
+  with_state zero \acc .
+    for i.
+      v = acc!(inp.i)
+      v := (get v) + 1
+    get acc
 
 ' Plot how many times each pixel value occurs in an image:
 
-hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
-> Ordinal index out of range:256 >= 256
-> Runtime error
+hist = bincount $ for (i,j). (f_to_n (ims.(0 @ _).i.j) @ Pixels)
 :t hist
-> Error: variable not in scope: hist
+> ((Fin 256) => Nat)
 
-:html showPlot $ yPlot (for i. (IToF hist.i))
-> Error: variable not in scope: hist
->
-> :html showPlot $ yPlot (for i. (IToF hist.i))
->                                      ^^^^
+:html show_plot $ y_plot (for i. (n_to_f hist.i))
+> <html output>
 
 ' Find nearest images in the dataset:
 
-def imdot (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
-    sum for (i, j). x.i.j * y.i.j
+def imdot {m n} (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
+  sum for (i, j). x.i.j * y.i.j
 
 dist = for b1. for b2.
-        case b1 == b2 of
-             True -> 0.0
-             False -> -imdot ims.b1 ims.b2
+  case b1 == b2 of
+    True  -> 0.0
+    False -> -imdot ims.b1 ims.b2
 
 nearest = for i. argmin dist.i
 
@@ -652,17 +657,16 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 :t for i:Height. 0.0
 > ((Fin 3) => Float32)
 
-toList for i:Height. 0.0
+to_list for i:Height. 0.0
 > (AsList 3 [0., 0., 0.])
 
-:t toList for i:Height. 0.0
+:t to_list for i:Height. 0.0
 > (List Float32)
 
 ' Tables of lists can be concatenated down to
   single lists.
 
-z = concat [toList [3.0],
-            toList [1.0, 2.0 ]]
+z = concat [to_list [3.0], to_list [1.0, 2.0 ]]
 z
 > (AsList 3 [3., 1., 2.])
 
@@ -677,10 +681,10 @@ temptab
 
 shoes = (5 @ Class)
 
-def findShoes (x : a=>b) (y : a=>Class) : List b =
-    concat for i. case (y.i == (5 @ _)) of
-            True -> toList [x.i]
-            False -> toList []
+def findShoes {a b} (x : a=>b) (y : a=>Class) : List b =
+  concat for i. case (y.i == (5 @ _)) of
+    True  -> to_list [x.i]
+    False -> to_list []
 
 ' Note though that the type here does not tell us
   how many there are. The type system cannot know this.

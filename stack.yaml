@@ -4,14 +4,14 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-resolver: lts-16.26
+resolver: lts-18.23
 
 packages:
 - .
 
 extra-deps:
-  - github: apaszke/llvm-hs
-    commit: a9a74be1a7c15f3d21b2fffd35a425002ae7736f
+  - github: llvm-hs/llvm-hs
+    commit: 789e2b9e8b827d4c5e15b997f16e395fd2259c0f
     subdirs:
       - llvm-hs
       - llvm-hs-pure
@@ -20,3 +20,19 @@ extra-deps:
   - store-0.7.8@sha256:0b604101fd5053b6d7d56a4ef4c2addf97f4e08fe8cd06b87ef86f958afef3ae,8001
   - store-core-0.4.4.4@sha256:a19098ca8419ea4f6f387790e942a7a5d0acf62fe1beff7662f098cfb611334c,1430
   - th-utilities-0.2.4.1@sha256:b37d23c8bdabd678aee5a36dd4373049d4179e9a85f34eb437e9cd3f04f435ca,1869
+
+nix:
+  enable: false
+  packages: [ libpng llvm_12 pkg-config zlib ]
+
+ghc-options:
+  containers: -fno-prof-auto -O2
+  hashable: -fno-prof-auto -O2
+  llvm-hs-pure: -fno-prof-auto -O2
+  llvm-hs: -fno-prof-auto -O2
+  megaparsec: -fno-prof-auto -O2
+  parser-combinators: -fno-prof-auto -O2
+  prettyprinter: -fno-prof-auto -O2
+  store-core: -fno-prof-auto -O2
+  store: -fno-prof-auto -O2
+  unordered-containers: -fno-prof-auto -O2

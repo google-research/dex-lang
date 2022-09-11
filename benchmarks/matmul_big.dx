@@ -1,0 +1,11 @@
+n = if dex_test_mode() then 10 else 500
+
+m1 = rand_mat n n randn (new_key 0)
+m2 = rand_mat n n randn (new_key 1)
+
+%bench "matmul_big"
+res = m1 ** m2
+>
+> matmul_big
+> Compile time: 27.431 ms
+> Run time:     4.406 us 	(based on 1 run)

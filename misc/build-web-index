@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# This script constructs a Markdown file (on standard output) that constitutes
+# an index of all web-rendered pages of Dex examples, documentation, and
+# libraries.
+
+# The rendered HTML of the index is meant to be placed at the root of the Dex
+# page tree, so that relative links work.
+
+# The script accepts three arguments:
+# - One argument containing a space-separated list of documentation files
+# - One argument containing a space-separated list of example files
+# - One argument containing a space-separated list of library files
+
+# TODO: Right now, the indexing script requires every file to have a single
+# title, identified by having a "'# <title>" line in the Dex source.  We should
+# detect when a file lacks such a title and fail loudly, instead of just
+# omitting that file from the index.
+
+set -e
+
+# The non-quotation is intentional: I am trying to get bash to split on words so
+# that `grep` takes the arguments as separate even though they were passed as
+# one thing to this script.
+docs=$1
+examples=$2
+libraries=$3
+
+echo "# InDex"; echo ""
+
+echo "## Documentation"; echo ""
+
+grep -F "'# " $docs \
+ | sed -e 's/^doc\/\(.*\).dx/- [doc\/\1.dx](\1.html)/' \
+ | sed -e "s/'#//"
+
+echo ""; echo "## Examples"; echo ""
+
+grep -F "'# " $examples \
+ | sed -e 's/^\(.*\).dx/- [\1.dx](\1.html)/' \
+ | sed -e "s/'#//"
+
+echo ""; echo "## Libraries"; echo ""
+
+echo "- [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)"
+
+grep -F "'# " $libraries \
+ | sed -e 's/^\(.*\).dx/- [\1.dx](\1.html)/' \
+ | sed -e "s/'#//"

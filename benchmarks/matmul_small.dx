@@ -1,0 +1,13 @@
+n = 10
+width = 1000
+
+m1 = for i:(Fin width). rand_mat n n randn (new_key 0)
+m2 = for i:(Fin width). rand_mat n n randn (new_key 1)
+
+%bench "matmul_small"
+res = for i. (m1.i ** m2.i)
+>
+> matmul_small
+> Compile time: 33.241 ms
+> Run time:     358.211 us 	(based on 1 run)
+

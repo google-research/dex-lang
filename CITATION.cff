@@ -1,0 +1,62 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- given-names: "Dougal"
+  family-names: "Maclaurin"
+- given-names: "Adam"
+  family-names: "Paszke"
+title: "Dex: typed and functional array processing"
+version: 0.0.0
+date-released: 2018-09-29
+url: "https://github.com/google-research/dex-lang"
+preferred-citation:
+  type: article
+  authors:
+  - given-names: "Adam"
+    family-names: "Paszke"
+  - given-names: "Daniel D."
+    family-names: "Johnson"
+  - given-names: "David"
+    family-names: "Duvenaud"
+  - given-names: "Dimitrios"
+    family-names: "Vytiniotis"
+  - given-names: "Alexey"
+    family-names: "Radul"
+  - given-names: "Matthew J."
+    family-names: "Johnson"
+  - given-names: "Jonathan"
+    family-names: "Ragan-Kelley"
+  - given-names: "Dougal"
+    family-names: "Maclaurin"
+  doi: "10.1145/3473593"
+  title: "Getting to the Point: Index Sets and Parallelism-Preserving Autodiff for Pointful Array Programming"
+  volume: 5
+  number: "ICFP"
+  year: 2021
+  month: 8
+  issue-date: "August 2021"
+  journal: "Proceedings of the ACM on Programming Languages"
+  pages: 29
+  abstract: >
+    We present a novel programming language design that attempts to combine the clarity
+    and safety of high-level functional languages with the efficiency and parallelism
+    of low-level numerical languages. We treat arrays as eagerly-memoized functions on
+    typed index sets, allowing abstract function manipulations, such as currying, to work
+    on arrays. In contrast to composing primitive bulk-array operations, we argue for
+    an explicit nested indexing style that mirrors application of functions to arguments.
+    We also introduce a fine-grained typed effects system which affords concise and automatically-parallelized
+    in-place updates. Specifically, an associative accumulation effect allows reverse-mode
+    automatic differentiation of in-place updates in a way that preserves parallelism.
+    Empirically, we benchmark against the Futhark array programming language, and demonstrate
+    that aggressive inlining and type-driven compilation allows array programs to be written
+    in an expressive, "pointful" style with little performance penalty.
+  keywords:
+  - "array programming"
+  - "automatic differentiation"
+  - "parallel computing"
+  url: "https://doi.org/10.1145/3473593"
+  publisher:
+    name: "Association for Computing Machinery"
+    city: "New York"
+    region: "NY"
+    country: "USA"

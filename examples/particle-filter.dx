@@ -1,3 +1,5 @@
+'# Particle Filter
+
 def Distribution (range:Type) : Type =
   ( Key -> range
   & range -> Float)  -- log prob
@@ -7,39 +9,39 @@ def Model (state:Type) (observation:Type) : Type =
   & state -> Distribution state          -- dynamics
   & state -> Distribution observation)   -- observations
 
-def sample (d: Distribution a) (k: Key) : a =
+def sample {a} (d: Distribution a) (k: Key) : a =
   (sampler, _) = d
   sampler k
 
-def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
+def simulate {s v} (model: Model s v) (t: Nat) (key: Key) : Fin t=>(s & v) =
   (init, dynamics, observe) = model
-  [key, subkey] = splitKey key
+  [key, subkey] = split_key key
   s0 = sample init subkey
-  withState s0 \s_ref .
+  with_state s0 \s_ref .
     for i.
-      [k1, k2] = splitKey (ixkey key i)
+      [k1, k2] = split_key (ixkey key i)
       s = get s_ref
       s_next = sample (dynamics s) k1
       v = sample (observe s) k2
       s_ref := s_next
       (s, v)
 
-def particleFilter
-    (num_particles: Int) (num_timesteps: Int)
+def particleFilter {s a v}
+    (num_particles: Nat) (num_timesteps: Nat)
     (model: Model s v)
     (summarize: (Fin num_particles => s) -> a)
     (obs: Fin num_timesteps=>v)
     (key: Key)
     : Fin num_timesteps => a =
   (init, dynamics, observe) = model
-  [key, init_key] = splitKey key
+  [key, init_key] = split_key key
   init_particles = for i: (Fin num_particles). sample init (ixkey init_key i)
-  withState init_particles \p_ref .
+  with_state init_particles \p_ref .
     for t: (Fin num_timesteps).
       p_prev = get p_ref
       logLikelihoods = for i. snd (observe p_prev.i) obs.t
-      [resample_key, dynamics_key] = splitKey (ixkey key t)
-      resampled_idxs = categoricalBatch logLikelihoods resample_key
+      [resample_key, dynamics_key] = split_key (ixkey key t)
+      resampled_idxs = categorical_batch logLikelihoods resample_key
       p_resampled = for i. p_prev.(resampled_idxs.i)
       p_next = for i. fst (dynamics p_resampled.i) (ixkey dynamics_key i)
       p_ref := p_next
@@ -60,9 +62,9 @@ timesteps = 10
 num_particles = 10000
 
 truth = for i:(Fin timesteps).
-  s = IToF (ordinal i)
-  (s, sample (normalDistn s 1.0) $ ixkey (newKey 0) i)
+  s = n_to_f (ordinal i)
+  (s, sample (normalDistn s 1.0) $ ixkey (new_key 0) i)
 
-filtered = particleFilter num_particles _ gaussModel mean (map snd truth) (newKey 0)
+filtered = particleFilter num_particles _ gaussModel mean (map snd truth) (new_key 0)
 
 -- :p for i. (truth.i, filtered.i)

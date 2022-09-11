@@ -15,34 +15,35 @@ tAmb = 80.0
 def (+|) (i:n) (off:Int) : n =
   newOrd = ordinal i + off
   case newOrd < size n of
-    True  -> unsafeFromOrdinal _ newOrd
+    True  -> unsafe_from_ordinal _ newOrd
     False -> i
 
 -- Assumes that off >= 0
 def (-|) (i:n) (off:Int) : n =
   newOrd = ordinal i - off
   case 0 <= newOrd of
-    True  -> unsafeFromOrdinal _ newOrd
+    True  -> unsafe_from_ordinal _ newOrd
     False -> i
 
-def hotspot (numIterations: Int)
-            (tsInit : r=>c=>Float)
-            (p : r=>c=>Float)
-            : r=>c=>Float =
-  gridHeight = chipHeight / (IToF $ size r)
-  gridWidth  = chipWidth  / (IToF $ size c)
+def hotspot
+      (numIterations: Int)
+      (tsInit : r=>c=>Float)
+      (p : r=>c=>Float)
+      : r=>c=>Float =
+  gridHeight = chipHeight / (i_to_f $ size r)
+  gridWidth  = chipWidth  / (i_to_f $ size c)
   cap = factorChip * specHeatSI * tChip * gridWidth * gridHeight
   Rx = gridWidth  / (2.0 * kSI * tChip * gridHeight)
   Ry = gridHeight / (2.0 * kSI * tChip * gridWidth )
   Rz = tChip / (kSI * gridHeight * gridWidth)
   maxSlope = maxPD / (factorChip * tChip * specHeatSI)
   step = precision / maxSlope
-  snd $ withState tsInit $ \ts.
+  yield_state tsInit $ \tsRef.
     for _:(Fin numIterations).
-      ts' = for r c.
-         t = get ts!r!c
-         dc = (get ts!r!(c +| 1) + get ts!r!(c -| 1) - 2.0 * t) / Rx
-         dr = (get ts!(r +| 1)!c + get ts!(r -| 1)!c - 2.0 * t) / Ry
+      ts = get tsRef
+      tsRef := for r c.
+         t = ts.r.c
+         dc = (ts.r.(c +| 1) + ts.r.(c -| 1) - 2.0 * t) / Rx
+         dr = (ts.(r +| 1).c + ts.(r -| 1).c - 2.0 * t) / Ry
          d = (step / cap) * (p.r.c + dc + dr + (tAmb - t) / Rz)
          t + d
-      ts := ts'

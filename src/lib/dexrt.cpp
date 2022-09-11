@@ -4,18 +4,17 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-#include <cfloat>
 #include <cinttypes>
 #include <cstdio>
-#include <cstdint>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <vector>
 
+#ifdef DEX_LIVE
 #include <png.h>
-#include <cstring>
-#include <fstream>
+#endif // DEX_LIVE
 
 #ifdef DEX_CUDA
 #include <cuda.h>
@@ -66,78 +65,6 @@ uint64_t apply_round(uint32_t x, uint32_t y, int rot) {
   x = x + y;
   y = rotate_left(y, rot);
   y = x ^ y;
-
-  out = (uint64_t) x;
-  out = (out << 32) | y;
-  return out;
-}
-
-uint64_t threefry2x32(uint64_t keypair, uint64_t count) {
-  /* Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins */
-
-  uint32_t k0;
-  uint32_t k1;
-  uint32_t k2;
-
-  uint32_t x;
-  uint32_t y;
-
-  uint64_t out;
-  int i;
-
-  int rotations1[4] = {13, 15, 26, 6};
-  int rotations2[4] = {17, 29, 16, 24};
-
-  k0 = (uint32_t) (keypair >> 32);
-  k1 = (uint32_t) keypair;
-  k2 = k0 ^ k1 ^ 0x1BD11BDA;
-  x = (uint32_t) (count >> 32);
-  y = (uint32_t) count;
-
-  x = x + k0;
-  y = y + k1;
-
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations1[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k1;
-  y = y + k2 + 1;
-
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations2[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k2;
-  y = y + k0 + 2;
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations1[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k0;
-  y = y + k1 + 3;
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations2[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k1;
-  y = y + k2 + 4;
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations1[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k2;
-  y = y + k0 + 5;
 
   out = (uint64_t) x;
   out = (out << 32) | y;
@@ -203,30 +130,45 @@ void doubleVec(char **resultPtr, int32_t n, float* xs) {
 }
 
 void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) {
-    png_image img;
-    memset(&img, 0, sizeof(img));
-    img.version = PNG_IMAGE_VERSION;
-    img.opaque = NULL;
-    img.width = width;
-    img.height = height;
-    img.format = PNG_FORMAT_RGB;
-    img.flags = 0;
-    img.colormap_entries = 0;
+  auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
+#ifdef DEX_LIVE
+  png_image img;
+  memset(&img, 0, sizeof(img));
+  img.version = PNG_IMAGE_VERSION;
+  img.opaque = NULL;
+  img.width = width;
+  img.height = height;
+  img.format = PNG_FORMAT_RGB;
+  img.flags = 0;
+  img.colormap_entries = 0;
 
-    const int num_pixels = width * height;
-    png_alloc_size_t num_bytes = 0;
-    png_image_write_to_memory(&img, NULL, &num_bytes, 0, (void*)pixels, 0, NULL);
-    void* out_buffer = malloc(num_bytes);
-    png_image_write_to_memory(&img, out_buffer, &num_bytes, 0, (void*)pixels, 0, NULL);
+  const int num_pixels = width * height;
+  png_alloc_size_t num_bytes = 0;
+  png_image_write_to_memory(&img, NULL, &num_bytes, 0, (void*)pixels, 0, NULL);
+  void* out_buffer = malloc_dex(num_bytes);
+  png_image_write_to_memory(&img, out_buffer, &num_bytes, 0, (void*)pixels, 0, NULL);
 
-    auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
-    auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
-    *result1Ptr = num_bytes;
-    *result2Ptr = out_buffer;
+  *result1Ptr = num_bytes;
+  *result2Ptr = out_buffer;
+#else
+  // It would be better to return a dummy empty PNG file, but this will have to do for now.
+  *result1Ptr = 0;
+  *result2Ptr = nullptr;
+#endif // DEX_LIVE
 }
 
 // The string buffer size used for converting integer and floating-point types.
 static constexpr int showStringBufferSize = 32;
+
+void showNat32(char **resultPtr, uint32_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId32, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
 
 void showInt32(char **resultPtr, int32_t x) {
   auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
@@ -292,9 +234,6 @@ void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
 
 extern "C" {
 
-void load_cuda_array(void* host_ptr, void* device_ptr, int64_t bytes) {
-  CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
-}
 
 void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
@@ -350,13 +289,13 @@ void dex_cuLaunchKernel(char* kernel_func, int64_t iters, char** args) {
 char* dex_cuMemAlloc(int64_t size) {
   if (size == 0) return nullptr;
   CUdeviceptr ptr;
-  CHECK(cuMemAlloc, &ptr, size);
+  CHECK(cuMemAllocAsync, &ptr, size, CU_STREAM_LEGACY);
   return reinterpret_cast<char*>(ptr);
 }
 
 void dex_cuMemFree(char* ptr) {
   if (!ptr) return;
-  CHECK(cuMemFree, reinterpret_cast<CUdeviceptr>(ptr));
+  CHECK(cuMemFreeAsync, reinterpret_cast<CUdeviceptr>(ptr), CU_STREAM_LEGACY);
 }
 
 void dex_synchronizeCUDA() {
@@ -373,6 +312,25 @@ void dex_ensure_has_cuda_context() {
     CHECK(cuDevicePrimaryCtxRetain, &ctx, dev);
     CHECK(cuCtxPushCurrent, ctx);
   }
+}
+
+void dex_get_cuda_architecture(int device, char* arch) {
+  int majorVersion, minorVersion;
+  CUdevice dev;
+  CHECK(cuInit, 0);
+  CHECK(cuDeviceGet, &dev, device);
+  CHECK(cuDeviceGetAttribute, &majorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+  CHECK(cuDeviceGetAttribute, &minorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+  if (majorVersion > 9 || majorVersion < 0 || minorVersion > 9 || minorVersion < 0) {
+    printf("Unsupported CUDA architecture version: %d.%d", majorVersion, minorVersion);
+    std::abort();
+  }
+  // Cap CUDA architecture version at 7.5, the latest supported by LLVM 9
+  if (majorVersion > 7 || (majorVersion == 7 && minorVersion > 5)) {
+    majorVersion = 7;
+    minorVersion = 5;
+  }
+  snprintf(arch, 6, "sm_%d%d", majorVersion, minorVersion);
 }
 
 #undef CHECK

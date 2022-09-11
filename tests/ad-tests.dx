@@ -1,6 +1,6 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum'  (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
+def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. ref += xs.i
 
 :p
    f : Float -> Float = \x. x
@@ -24,27 +24,27 @@ def sum'  (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref 
 
 :p
    f : Float --o Float = \x. x
-   transposeLinear f 2.0
+   transpose_linear f 2.0
 > 2.
 
 :p
    f : Float --o Float = \x. x + x
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 2.
 
 :p
    f : Float --o Float = \x. x + (x + x) * 2.0
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 5.
 
 :p
    f : Float --o Float = \x. x * 2.0
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 2.
 
 :p
    f : Float --o Float = \x. 2.0 * x
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > 2.
 
 :p grad (\x. x * x) 1.0
@@ -57,7 +57,7 @@ def sum'  (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref 
 > 0.5
 
 :p
-  f : n:Type ?-> n=>Float -> n=>Float =
+  f : (n:Type) ?-> n=>Float -> n=>Float =
    \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
@@ -69,8 +69,9 @@ def sum'  (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref 
 :p jvp sum' [1., 2.] [10.0, 20.0]
 > 30.
 
-f : Float -> Float = \x. yieldAccum (AddMonoid Float) \ref. ref += x
-:p jvp f 1.0 1.0
+:p
+  f : Float -> Float = \x. yield_accum (AddMonoid Float) \ref. ref += x
+  jvp f 1.0 1.0
 > 1.
 
 :p
@@ -85,12 +86,12 @@ f : Float -> Float = \x. yieldAccum (AddMonoid Float) \ref. ref += x
 
 :p
    f : Float --o (Float & Float) = \x. (x, 2.0 * x)
-   transposeLinear f (1.0, 3.0)
+   transpose_linear f (1.0, 3.0)
 > 7.
 
 :p
    f : (Float & Float) --o Float = \(x,y). x + 2.0 * y
-   transposeLinear f 1.0
+   transpose_linear f 1.0
 > (1., 2.)
 
 :p deriv cos 0.0
@@ -105,28 +106,28 @@ f : Float -> Float = \x. yieldAccum (AddMonoid Float) \ref. ref += x
 :p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
 > (0.540302, -0.540302)
 
-:p checkDeriv sin 1.0
+:p check_deriv sin 1.0
 > True
 
-:p checkDeriv cos 1.0
+:p check_deriv cos 1.0
 > True
 
-:p checkDeriv exp 2.0
+:p check_deriv exp 2.0
 > True
 
-:p checkDeriv log 2.0
+:p check_deriv log 2.0
 > True
 
-:p checkDeriv (\x. exp (sin (cos x))) 2.0
+:p check_deriv (\x. exp (sin (cos x))) 2.0
 > True
 
-:p checkDeriv (deriv sin) 1.0
+:p check_deriv (deriv sin) 1.0
 > True
 
-:p checkDeriv (deriv cos) 1.0
+:p check_deriv (deriv cos) 1.0
 > True
 
-:p checkDeriv sqrt 4.0
+:p check_deriv sqrt 4.0
 > True
 
 -- badDerivFun : Float -> Float
@@ -148,28 +149,28 @@ tripleit : Float --o Float = \x. x + x + x
 :p tripleit 1.0
 > 3.
 
-:p transposeLinear tripleit 1.0
+:p transpose_linear tripleit 1.0
 > 3.
 
-:p transposeLinear (transposeLinear tripleit) 1.0
-> 3.
-
-:p
-  f : n:Type ?->  Float --o n=>Float = \x. for i. x
-
-  transposeLinear f [1.0, 2.0]
+:p transpose_linear (transpose_linear tripleit) 1.0
 > 3.
 
 :p
-  f : n:Type ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
+  f : (n:Type) ?-> Ix n ?=> Float --o n=>Float = \x. for i. x
 
-  transposeLinear f [1.0, 2.0]
+  transpose_linear f [1.0, 2.0]
+> 3.
+
+:p
+  f : (n:Type) ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
+
+  transpose_linear f [1.0, 2.0]
 > [2., 4.]
 
 myOtherSquare : Float -> Float =
-  \x. yieldAccum (AddMonoid Float) \w. w += x * x
+  \x. yield_accum (AddMonoid Float) \w. w += x * x
 
-:p checkDeriv myOtherSquare 3.0
+:p check_deriv myOtherSquare 3.0
 > True
 
 :p
@@ -181,7 +182,7 @@ myOtherSquare : Float -> Float =
 
 :p
   f : Float -> Float = \x.
-    x * IToF (1 + 1)
+    x * i_to_f (1 + 1)
 
   jvp f 1.0 2.0
 > 4.
@@ -201,7 +202,7 @@ myOtherSquare : Float -> Float =
 > 10.
 
 :p
-  f : n:Type ?-> n=>Float -> n=>Float =
+  f : (n:Type) ?-> n=>Float -> n=>Float =
     \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
@@ -225,7 +226,7 @@ vec = [1.]
 :p
   f : Float -> Float = \x.
     y = x * 2.0
-    yieldAccum (AddMonoid Float) \a.
+    yield_accum (AddMonoid Float) \a.
       a += x * 2.0
       a += y
   grad f 1.0
@@ -234,25 +235,25 @@ vec = [1.]
 :p
   f : Float -> Float = \x.
     x2 = x * x
-    withReader x \xr.
-      withReader x2 \x2r.
+    with_reader x \xr.
+      with_reader x2 \x2r.
         5.0 * (ask x2r) + 4.0 * (ask xr) + 2.0
-  checkDeriv f 2.0
+  check_deriv f 2.0
 > True
 
 :p
   f : Float -> Float = \x.
-    yieldState x \xr.
+    yield_state x \xr.
       for i:(Fin 2).
         xr := get xr * get xr
-  checkDeriv f 2.0
+  check_deriv f 2.0
 > True
 
 :p
   f = \rec.
     ({x=x, y=y, z=z}) = rec
-    x * y * IToF z
-  (checkDeriv (\x. f {x=x, y=4.0, z=5}) 2.0, checkDeriv (\y. f {x=2.0, y=y, z=5}) 4.0)
+    x * y * i_to_f z
+  (check_deriv (\x. f {x=x, y=4.0, z=5}) 2.0, check_deriv (\y. f {x=2.0, y=y, z=5}) 4.0)
 > (True, True)
 
 -- TODO: Re-enable once the big PR is merged
@@ -267,7 +268,7 @@ vec = [1.]
 -- > True
 
 :p
-  f = \x. for i:(Fin 4). { x=x * x * (IToF $ ordinal i) }
+  f = \x. for i:(Fin 4). { x=x * x * (n_to_f $ ordinal i) }
   jvp f 2.0 1.0
 > [{x = 0.}, {x = 4.}, {x = 8.}, {x = 12.}]
 
@@ -280,26 +281,210 @@ vec = [1.]
       {| a=a |} -> 2.0 * (a + x)
       {| b=b |} -> b * x
   (y, df) = linearize f 2.0
-  checkDerivBase f 2.0
+  check_deriv_base f 2.0
 > True
 
 :p
   f = max 0.0
-  (checkDerivBase f 1.0, checkDerivBase f (-1.0))
+  (check_deriv_base f 1.0, check_deriv_base f (-1.0))
 > (True, True)
 
 :p
   xs = for i:(Fin 2). 2.0
   f = \x. sum xs
-  checkDeriv f 1.0
+  check_deriv f 1.0
 > True
 
 :p
   f = \c.
     v = for i:(Fin 2). 2.0
-    (c, v) = yieldState (c, v) \r. for i:(Fin 2).
+    (c, v) = yield_state (c, v) \r. for i:(Fin 2).
       (c, v) = get r
       r := (c + sum v, v)
     c
-  checkDeriv f 1.0
+  check_deriv f 1.0
 > True
+
+-- Test reference indexing
+:p
+  f = \x.
+    i = unsafe_from_ordinal (Fin 3) 0
+    mat = yield_state zero \m. m!i!i := x
+    mat.i.i
+
+  check_deriv f 1.0
+> True
+
+-- Regression test for bug #841, linearization through triangular table
+func = \x:Float.
+  table = for i:(Fin 2). for j:(..i). x
+  tmp = (0 @ (Fin 2))
+  sum table.tmp
+
+snd (linearize func 1.0) 2.0
+> 2.
+
+-- Nested AD, examples from #713
+def func2 {m} (x:m=>Float) : Float =
+    exp (0.5 * sum for i. sq x.i)
+
+def hvpf {m} (x:m=>Float) (v:m=>Float) : m=>Float =
+    (dot x v) .* (grad func2 x) + func2(x) .* v
+
+x = [0.1, 0.2, 0.3]
+v = [0.2, 0.3, 0.4]
+func2 x ~~ 1.072508
+> True
+
+-- analytic
+result = hvpf x v
+result ~~ [0.235952, 0.364653, 0.493354]
+> True
+
+-- finite diff over reverse
+eps = 0.0001
+(grad func2 (x + eps .* v) - grad func2 x) / eps ~~ [0.235885, 0.364631, 0.493228]
+> True
+
+-- reverse over forward
+grad (\x. jvp func2 x v) x ~~ result
+> True
+
+-- reverse over reverse
+grad (\x. dot (grad func2 x) v) x ~~ result
+> True
+
+-- forward over reverse
+jvp (grad func2) x v ~~ result
+> True
+
+-- Regression test for bug #848, AD through state effect over case
+def min' (a:Float) (b:Float) : Float =
+  yield_state a \s.
+    best = get s
+    new_best = select (best < b) best 2.0
+    s := new_best
+
+grad (\x . (min' x (x+1))) 1.0
+> 1.
+
+grad (\x . [x].(argmin [x])) 1.0
+> 1.
+
+-------------------- Custom linearization --------------------
+
+f = \x:Float. x * 2
+fLin = \x:Float. (f x, \xt:Float. xt * 4)
+
+custom-linearization f fLin
+
+deriv (\x. f (x * 2) * 5) 1.0
+> 40.
+
+deriv f 1.0
+> 4.
+
+-- Custom derivative is preserved even when we defunctionalize for
+flip deriv 1.0 \x:Float.
+  farr = for i:(Fin 5). f
+  farr.(unsafe_from_ordinal _ 1) x
+> 4.
+
+-- Custom derivative is preserved even when we defunctionalize case
+flip deriv 1.0 \x:Float.
+  total = sum $ for i:(Fin 10). ordinal i
+  f2 = case total > 10 of
+    True  -> f
+    False -> \x:Float. x
+  f2 x
+> 4.
+
+g = \x:(Float & Float). 4 .* x
+
+custom-linearization g \x. (g x, g x)
+> Type error:Expected the custom linearization to have type:
+>
+> ((Float32 & Float32)
+>  -> ((Float32 & Float32) & ((Float32 & Float32) -> (Float32 & Float32))))
+>
+> but it has type:
+>
+> ((Float32 & Float32) -> ((Float32 & Float32) & (Float32 & Float32)))
+
+data IHaveNoTangentType = MkIHaveNoTangentType
+
+noInputTangent = \x:IHaveNoTangentType. 2.0
+
+custom-linearization noInputTangent \x. (noInputTangent x, 0.0)
+> Type error:The type of one of the arguments of noInputTangent is:
+>
+>   IHaveNoTangentType
+>
+> but it doesn't have a well-defined tangent space.
+
+noOutputTangent = \x:Float. MkIHaveNoTangentType
+
+custom-linearization noOutputTangent \x. (noOutputTangent x, 0.0)
+> Type error:The type of the result of noOutputTangent is:
+>
+>   IHaveNoTangentType
+>
+> but it does not have a well-defined tangent space.
+
+-- Functions of multiple arguments should be supported
+h = \x:Float y:Float. x * 2 + y
+hLin = \x y. (h x y, \xt:Float yt:Float. xt + yt)
+
+custom-linearization h hLin
+
+deriv (\x. h x x) 1.0 == deriv (\x. x + x) 1.0
+> True
+
+-- Index-polymorphic custom linearization
+def w {n} [Ix n] (x:n=>Float) : n=>Float = 2 .* x
+def wLin {n} [Ix n] (x:n=>Float) : (n=>Float & n=>Float -> n=>Float) = (w x, \xt:(n=>Float). 4 .* xt)
+
+custom-linearization w wLin
+
+jvp (\x. w x) [1.0, 1.0] [1.0, 0.0]
+> [4., 0.]
+
+-- This is a little unexpected at first, but the result makes sense when you think about it...
+-- w has implicit args, so we're really taking a jvp of (w _ _), which is a function returned by
+-- a partial application of w to some inference holes.
+jvp w [1.0, 1.0] [1.0, 0.0]
+> [2., 0.]
+
+------ Symbolic tangents ------
+
+ST = SymbolicTangent
+
+def q (x:Float) (y:Float) : Float = x * 2 + y
+def qLin (x:Float) (y:Float) : _ =
+  def lin (xt:ST Float) (yt: ST Float) : Float =
+    case yt of
+      ZeroTangent     -> someTangent xt * 4
+      SomeTangent yt' -> someTangent xt * 2 + yt'
+  (q x y, lin)
+
+custom-linearization q qLin
+> Type error:Expected the custom linearization to have type:
+>
+> (Float32 -> Float32 -> (Float32 & (Float32 -> Float32 -> Float32)))
+>
+> but it has type:
+>
+> (Float32
+>  -> Float32
+>  -> (Float32
+>      & ((SymbolicTangent Float32) -> (SymbolicTangent Float32) -> Float32)))
+
+custom-linearization-symbolic q qLin
+
+-- Incorrect derivative, based on the ZeroTangent branch
+deriv (\x. q x 1.0) 1.0
+> 4.
+
+-- Correct derivative, based on the SomeTangent branch
+deriv (\x. q x x) 1.0
+> 3.

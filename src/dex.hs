@@ -4,92 +4,132 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RecordWildCards #-}
 
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
-import Options.Applicative
+import Options.Applicative hiding (Success, Failure)
 import Text.PrettyPrint.ANSI.Leijen (text, hardline)
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
+import System.IO (openFile, IOMode (..))
 
-import System.Directory
 import Data.List
+import Data.Functor
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import qualified Data.Map.Strict as M
 
-import Syntax
-import PPrint
-import RenderHtml
-import Serialize
-import Resources
-
+import PPrint (toJSONStr, printResult)
 import TopLevel
-import Parser  hiding (Parser)
-import LiveOutput
-import Env (envNames)
-import Export
+import Err
+import Syntax
+import Name
+import ConcreteSyntax (keyWordStrs)
+import AbstractSyntax (parseTopDeclRepl, preludeImportBlock)
+#ifdef DEX_LIVE
+import RenderHtml
+import Live.Terminal (runTerminal)
+import Live.Web (runWeb)
+#endif
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
-data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
+data DocFmt = ResultOnly
+            | TextDoc
+            | JSONDoc
+#ifdef DEX_LIVE
+            | HTMLDoc
+#endif
 data EvalMode = ReplMode String
+              | ScriptMode FilePath DocFmt ErrorHandling
+              | ExportMode FilePath FilePath -- Dex path, .o path
+              | ClearCache
+#ifdef DEX_LIVE
               | WebMode    FilePath
               | WatchMode  FilePath
-              | ExportMode FilePath FilePath -- Dex path, .o path
-              | ScriptMode FilePath DocFmt ErrorHandling
+#endif
 
-data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
+data CmdOpts = CmdOpts EvalMode EvalConfig
 
-runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
-runMode evalMode preludeFile opts = do
-  key <- case preludeFile of
-           Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
-           Just path -> show <$> getModificationTime path
-  env <- cachedWithSnapshot "prelude" key $ evalPrelude opts preludeFile
-  let runEnv m = evalStateT m env
-  case evalMode of
-    ReplMode prompt -> do
-      let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
-      let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-      runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
-    ScriptMode fname fmt _ -> do
-      results <- runEnv $ evalFile opts fname
-      printLitProg fmt results
-    -- These are broken if the prelude produces any arrays because the blockId
-    -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> runWeb      fname opts env
-    WatchMode  fname -> runTerminal fname opts env
-    ExportMode dexPath objPath -> do
-      results <- fmap snd <$> runEnv (evalFile opts dexPath)
-      let outputs = foldMap (\(Result outs _) -> outs) results
-      let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
-      putStr $ foldMap (nonEmptyNewline . pprint) errors
-      let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-      unless (backendName opts == LLVM) $ liftEitherIO $
-        throw CompilerErr "Export only supported with the LLVM CPU backend"
-      exportFunctions objPath exportedFuns $ topBindings env
+runMode :: EvalMode -> EvalConfig -> IO ()
+runMode evalMode opts = case evalMode of
+  ScriptMode fname fmt onErr -> do
+    env <- loadCache
+    (litProg, finalEnv) <- runTopperM opts env do
+      source <- liftIO $ T.readFile fname
+      evalSourceText source (printIncrementalSource fmt) \result@(Result _ errs) -> do
+        printIncrementalResult fmt result
+        return case (onErr, errs) of (HaltOnErr, Failure _) -> False; _ -> True
+    printFinal fmt litProg
+    storeCache finalEnv
+  ReplMode prompt -> do
+    env <- loadCache
+    void $ runTopperM opts env do
+      evalBlockRepl preludeImportBlock
+      forever do
+         block <- readSourceBlock prompt
+         evalBlockRepl block
+    where
+      evalBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
+      evalBlockRepl block = do
+        result <- evalSourceBlockRepl block
+        case result of
+          Result [] (Success ()) -> return ()
+          _ -> liftIO $ putStrLn $ pprint result
+  ClearCache -> clearCache
+#ifdef DEX_LIVE
+  -- These are broken if the prelude produces any arrays because the blockId
+  -- counter restarts at zero. TODO: make prelude an implicit import block
+  WebMode    fname -> do
+    env <- loadCache
+    runWeb fname opts env
+  WatchMode  fname -> do
+    env <- loadCache
+    runTerminal fname opts env
+#endif
 
-evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
-evalPrelude opts fname = flip execStateT initTopEnv $ do
-  source <- case fname of
-              Nothing   -> return preludeSource
-              Just path -> liftIO $ readFile path
-  result <- evalSource opts source
-  void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
+printIncrementalSource :: DocFmt -> SourceBlock -> IO ()
+printIncrementalSource fmt sb = case fmt of
+  ResultOnly -> return ()
+  JSONDoc    -> return ()
+  TextDoc    -> putStr $ pprint sb
+#ifdef DEX_LIVE
+  HTMLDoc -> return ()
+#endif
 
-replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
-replLoop prompt opts = do
-  sourceBlock <- readMultiline prompt parseTopDeclRepl
-  env <- lift get
-  result <- lift $ evalDecl opts sourceBlock
-  case result of Result _ (Left _) -> lift $ put env
-                 _ -> return ()
-  liftIO $ putStrLn $ pprint result
+printIncrementalResult :: DocFmt -> Result -> IO ()
+printIncrementalResult fmt result = case fmt of
+  ResultOnly -> case pprint result of [] -> return (); msg -> putStrLn msg
+  JSONDoc    -> case toJSONStr result of "{}" -> return (); s -> putStrLn s
+  TextDoc    -> do
+    isatty <- queryTerminal stdOutput
+    putStr $ printResult isatty result
+#ifdef DEX_LIVE
+  HTMLDoc -> return ()
+#endif
 
-dexCompletions :: CompletionFunc (StateT TopEnv IO)
-dexCompletions (line, _) = do
-  env <- get
-  let varNames = map pprint $ envNames $ topBindings env
+printFinal :: DocFmt -> [(SourceBlock, Result)] -> IO ()
+printFinal fmt prog = case fmt of
+  ResultOnly -> return ()
+  TextDoc    -> return ()
+  JSONDoc    -> return ()
+#ifdef DEX_LIVE
+  HTMLDoc    -> putStr $ progHtml prog
+#endif
+
+readSourceBlock :: (MonadIO (m n), EnvReader m) => String -> m n SourceBlock
+readSourceBlock prompt = do
+  sourceMap <- withEnv $ envSourceMap . moduleEnv
+  let filenameAndDexCompletions =
+        completeQuotedWord (Just '\\') "\"'" listFiles (dexCompletions sourceMap)
+  let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
+  liftIO $ runInputT hasklineSettings $ readMultiline prompt (parseTopDeclRepl . T.pack)
+
+dexCompletions :: Monad m => SourceMap n -> CompletionFunc m
+dexCompletions sourceMap (line, _) = do
+  let varNames = map pprint $ M.keys $ fromSourceMap sourceMap
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
@@ -98,12 +138,7 @@ dexCompletions (line, _) = do
   let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
   return (rest, completions)
 
-liftErrIO :: MonadIO m => Except a -> m a
-liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
-liftErrIO (Right x) = return x
-
-readMultiline :: (MonadException m, MonadIO m) =>
-                   String -> (String -> Maybe a) -> InputT m a
+readMultiline :: String -> (String -> Maybe a) -> InputT IO a
 readMultiline prompt parse = loop prompt ""
   where
     dots = replicate 3 '.' ++ " "
@@ -119,26 +154,8 @@ readMultiline prompt parse = loop prompt ""
 simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
-printLitProg :: DocFmt -> LitProg -> IO ()
-printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
-printLitProg HTMLDoc prog = putStr $ progHtml prog
-printLitProg TextDoc prog = do
-  isatty <- queryTerminal stdOutput
-  putStr $ foldMap (uncurry (printLitBlock isatty)) prog
-printLitProg JSONDoc prog =
-  forM_ prog \(_, result) -> case toJSONStr result of
-    "{}" -> return ()
-    s -> putStrLn s
-
-nonEmptyNewline :: String -> String
-nonEmptyNewline [] = []
-nonEmptyNewline l  = l ++ ['\n']
-
 parseOpts :: ParserInfo CmdOpts
-parseOpts = simpleInfo $ CmdOpts
-  <$> parseMode
-  <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
-  <*> parseEvalOpts
+parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
 
 helpOption :: String -> String -> Mod f a
 helpOption optionName options =
@@ -149,20 +166,25 @@ parseMode = subparser $
      command "repl" (simpleInfo
          (ReplMode <$> strOption (long "prompt" <> value ">=> "
                          <> metavar "STRING" <> help "REPL prompt")))
+#ifdef DEX_LIVE
   <> command "web"    (simpleInfo (WebMode    <$> sourceFileInfo))
   <> command "watch"  (simpleInfo (WatchMode  <$> sourceFileInfo))
+#endif
+  <> command "clean"  (simpleInfo (pure ClearCache))
   <> command "export" (simpleInfo (ExportMode <$> sourceFileInfo <*> objectFileInfo))
   <> command "script" (simpleInfo (ScriptMode <$> sourceFileInfo
   <*> option
         (optionList [ ("literate"   , TextDoc)
                     , ("result-only", ResultOnly)
+#ifdef DEX_LIVE
                     , ("html"       , HTMLDoc)
+#endif
                     , ("json"       , JSONDoc)])
         (long "outfmt" <> value TextDoc <>
          helpOption "Output format" "literate (default) | result-only | html | json")
-  <*> flag HaltOnErr ContinueOnErr (
-                long "allow-errors"
-             <> help "Evaluate programs containing non-fatal type errors")))
+  <*> flag ContinueOnErr HaltOnErr (
+                long "stop-on-error"
+             <> help "Stop program evaluation when an error occurs (type or runtime)")))
   where
     sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
     objectFileInfo = argument str (metavar "OBJFILE" <> help "Output path (.o file)")
@@ -175,18 +197,48 @@ optionList opts = eitherReader \s -> case lookup s opts of
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
   <$> option
-         (optionList [ ("llvm", LLVM)
-                     , ("llvm-cuda", LLVMCUDA)
-                     , ("llvm-mc", LLVMMC)
-                     , ("interpreter", Interpreter)])
+         (optionList backends)
          (long "backend" <> value LLVM <>
-          helpOption "Backend" "llvm (default) | llvm-cuda | llvm-mc | interpreter")
-  <*> optional (strOption $ long "lib-path" <> metavar "PATH" <> help "Library path")
+          helpOption "Backend" (intercalate " | " $ fst <$> backends))
+  <*> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
+    <> metavar "PATH" <> help "Library path")
+  <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
+  <*> pure Nothing
+  <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
+  where
+    backends = [ ("llvm", LLVM)
+               , ("llvm-mc", LLVMMC)
+#ifdef DEX_CUDA
+               , ("llvm-cuda", LLVMCUDA)
+#endif
+#if DEX_LLVM_VERSION == HEAD
+               , ("mlir", MLIR)
+#endif
+               , ("interpreter", Interpreter)]
+
+pathOption :: ReadM [LibPath]
+pathOption = splitPaths [] <$> str
+  where
+    splitPaths :: [LibPath] -> String -> [LibPath]
+    splitPaths revAcc = \case
+      []  -> reverse revAcc
+      str -> let (p,t) = break (==':') str in
+             splitPaths (parseLibPath p:revAcc) (dropWhile (==':') t)
+
+    parseLibPath = \case
+      "BUILTIN_LIBRARIES" -> LibBuiltinPath
+      path -> LibDirectory path
+
+openLogFile :: EvalConfig -> IO EvalConfig
+openLogFile EvalConfig {..} = do
+  logFile <- forM logFileName (`openFile` WriteMode)
+  return $ EvalConfig {..}
 
 main :: IO ()
 main = do
-  CmdOpts evalMode preludeFile opts <- execParser parseOpts
-  runMode evalMode preludeFile opts
+  CmdOpts evalMode opts <- execParser parseOpts
+  opts' <- openLogFile opts
+  runMode evalMode opts'

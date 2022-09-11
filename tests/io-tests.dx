@@ -1,26 +1,26 @@
 
-:p unsafeIO \().
-  withTempFile \fname.
-    withFile fname WriteMode \stream.
+:p unsafe_io \().
+  with_temp_file \fname.
+    with_file fname WriteMode \stream.
       fwrite stream "lorem ipsum\n"
       fwrite stream "dolor sit amet\n"
-    readFile fname
-> (AsList 27 "lorem ipsum
+    read_file fname
+> "lorem ipsum
 > dolor sit amet
-> ")
+> "
 
-:p unsafeIO \().
-  withAlloc 4 \ptr:(Ptr Int).
+:p unsafe_io \().
+  with_alloc 4 \ptr:(Ptr Nat).
     for i:(Fin 4). store (ptr +>> ordinal i) (ordinal i)
-    tabFromPtr (Fin 4) ptr
+    table_from_ptr (Fin 4) ptr
 > [0, 1, 2, 3]
 
-unsafeIO \().
+unsafe_io \().
   print "testing log"
 > testing log
 > ()
 
-unsafeIO \().
+unsafe_io \().
   for i':(Fin 10).
     i = ordinal i'
     if rem i 2 == 0
@@ -38,37 +38,37 @@ unsafeIO \().
 > 9 is odd
 > [(), (), (), (), (), (), (), (), (), ()]
 
-:p storageSize Int
+:p storage_size Int
 > 4
 
-:p unsafeIO \().
-  withAlloc 1 \ptr:(Ptr Int).
+:p unsafe_io \().
+  with_alloc 1 \ptr:(Ptr Int).
     store ptr 3
     load ptr
 > 3
 
-:p unsafeIO \().
-  withDynamicBuffer \buf.
-    extendDynBuffer buf $ toList for i:(Fin 1000). ordinal i
-    extendDynBuffer buf $ toList for i:(Fin 1000). ordinal i
-    (AsList _ xs) = loadDynBuffer buf
+:p unsafe_io \().
+  with_dynamic_buffer \buf.
+    extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
+    extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
+    (AsList _ xs) = load_dynamic_buffer buf
     sum xs
 > 999000
 
-:p unsafeIO \().
-  s = for i:(Fin 10000). IToW8 $ FToI $ 128.0 * rand (ixkey (newKey 0) i)
-  withTempFile \fname.
-    withFile fname WriteMode \stream.
+:p unsafe_io \().
+  s = for i:(Fin 10000). i_to_w8 $ f_to_i $ 128.0 * rand (ixkey (new_key 0) i)
+  with_temp_file \fname.
+    with_file fname WriteMode \stream.
       fwrite stream $ AsList _ s
-    (AsList _ s') = readFile fname
-    sum (for i. W8ToI s.i) == sum (for i. W8ToI s'.i)
+    (AsList _ s') = read_file fname
+    sum (for i. w8_to_i s.i) == sum (for i. w8_to_i s'.i)
 > True
 
-:p unsafeIO do getEnv "NOT_AN_ENV_VAR"
+:p unsafe_io do get_env "NOT_AN_ENV_VAR"
 > Nothing
 
-:p unsafeIO do getEnv "DEX_TEST_MODE"
-> (Just (AsList 1 "t"))
+:p unsafe_io do get_env "DEX_TEST_MODE"
+> (Just "t")
 
 :p dex_test_mode ()
 > True

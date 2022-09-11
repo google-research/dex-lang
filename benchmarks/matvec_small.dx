@@ -1,0 +1,12 @@
+n = 10
+width = 10000
+
+ms = for i:(Fin width). rand_mat n n randn (new_key 0)
+vs = for i:(Fin width). rand_vec n randn (new_key 1)
+
+%bench "matvec_small"
+res = for i. ms.i **. vs.i
+>
+> matvec_small
+> Compile time: 29.506 ms
+> Run time:     387.630 us 	(based on 1 run)

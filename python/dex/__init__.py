@@ -16,24 +16,44 @@ __all__ = [
   'eval',
 ]
 
+
 class Module:
   __slots__ = ('_as_parameter_',)
 
   def __init__(self, source):
     self._as_parameter_ = api.eval(prelude, api.as_cstr(source))
-    if not self._as_parameter_:
-      api.raise_from_dex()
+    if not self._as_parameter_: api.raise_from_dex()
+
+  @classmethod
+  def _from_ptr(cls, ptr):
+    if not ptr: api.raise_from_dex()
+    self = super().__new__(cls)
+    self._as_parameter_ = ptr
+    return self
 
   def __del__(self):
-    if api.nofree:
-      return
+    if api is None or api.nofree: return
     api.destroyContext(self)
 
   def __getattr__(self, name):
     result = api.lookup(self, api.as_cstr(name))
-    if not result:
-      api.raise_from_dex()
-    return Atom(result, self)
+    return Atom._from_ptr(result, self, name)
+
+  def copy(self) -> 'Module':
+    return Module._from_ptr(api.forkContext(self))
+
+  def eval(self, expr: str):
+    ans_binder_ptr = api.freshName(self)
+    ans_binder = ans_binder_ptr.decode('ascii')
+    new_ctx = api.eval(self, api.as_cstr(f"{ans_binder} = {expr}"))
+    if not new_ctx: api.raise_from_dex()
+    api.destroyContext(self)
+    self._as_parameter_ = new_ctx
+    result = api.lookup(self, ans_binder_ptr)
+    # TODO: Free ans_binder_ptr
+    # TODO: Delete the name to avoid polluting the module!
+    # TODO: How to clean up the pointers once the atom goes out of scope?
+    return Atom._from_ptr(result, self, ans_binder)
 
 
 class Prelude(Module):
@@ -44,23 +64,42 @@ class Prelude(Module):
       api.raise_from_dex()
 
 prelude = Prelude()
+eval = prelude.eval
 
-
-def eval(expr: str, module=prelude, _env=None):
-  if _env is None:
-    _env = module
-  result = api.evalExpr(_env, api.as_cstr(expr))
-  if not result:
-    api.raise_from_dex()
-  return Atom(result, module)
+_calling_conventions = {
+  'flat': api.FlatCC,
+  'xla': api.XLACC,
+}
 
 
 class Atom:
-  __slots__ = ('__weakref__', '_as_parameter_', 'module')
+  __slots__ = ('__weakref__', '_as_parameter_', 'module', 'name')
 
-  def __init__(self, ptr, module):
+  def __init__(self, value):
+    catom = api.CAtom()
+    if isinstance(value, int):
+      catom.tag = 0
+      catom.value.tag = 1
+      catom.value.value = ctypes.c_int(value)
+    elif isinstance(value, float):
+      catom.tag = 0
+      catom.value.tag = 4
+      catom.value.value = ctypes.c_float(value)
+    else:
+      raise ValueError("Can't convert given value to a Dex Atom")
+    self._as_parameter_ = api.fromCAtom(ctypes.pointer(catom))
+    self.module = prelude
+    self.name = None
+    if not self._as_parameter_: api.raise_from_dex()
+
+  @classmethod
+  def _from_ptr(cls, ptr, module, name=None):
+    if not ptr: api.raise_from_dex()
+    self = super().__new__(cls)
     self._as_parameter_ = ptr
     self.module = module
+    self.name = name
+    return self
 
   def __del__(self):
     # TODO: Free
@@ -68,7 +107,7 @@ class Atom:
 
   def __repr__(self):
     # TODO: Free!
-    return api.from_cstr(api.print(self))
+    return api.from_cstr(api.print(self.module, self))
 
   def __int__(self):
     return int(self._as_scalar())
@@ -87,6 +126,7 @@ class Atom:
     return value.value
 
   def __call__(self, *args):
+    raise NotImplementedError()
     # TODO: Make those calls more hygenic
     env = self.module
     for i, atom in enumerate(it.chain((self,), args)):
@@ -97,8 +137,8 @@ class Atom:
       api.destroyContext(old_env)
     return eval(" ".join(f"python_arg{i}" for i in range(len(args) + 1)), module=self.module, _env=env)
 
-  def compile(self):
-    func_ptr = api.compile(api.jit, self.module, self)
-    if not func_ptr:
-      api.raise_from_dex()
-    return NativeFunction(api.jit, func_ptr)
+  def compile(self, calling_convention='flat'):
+    cc = _calling_conventions[calling_convention]
+    func_ptr = api.compile(api.jit, cc, self.module, self)
+    if not func_ptr: api.raise_from_dex()
+    return NativeFunction(api.jit, func_ptr, cc)

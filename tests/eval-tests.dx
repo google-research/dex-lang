@@ -20,17 +20,17 @@
 > 6
 
 :p
-   vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
+   vdot' : (n:Type) ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
-   y = map IToF x
+   y = map n_to_f x
    vdot' y y
 > 10.
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. IToF x.i * IToF y.j
+   z = for i j. n_to_f x.i * n_to_f y.j
    sum (for i. sum z.i)
 > 18.
 
@@ -48,7 +48,7 @@ arr = iota NArr
 :p sum for i:NArr. 1
 > 7
 
-fun = \y. sum (map IToF arr) + y
+fun = \y. sum (map n_to_f arr) + y
 
 :p fun 3.0
 > 24.
@@ -66,7 +66,7 @@ fun = \y. sum (map IToF arr) + y
 > 3.
 
 :p
-   f : a:Type ?-> b:Type ?-> (a -> b & a) -> b =
+   f : (a:Type) ?-> (b:Type) ?-> (a -> b & a) -> b =
      \(x, y). x y
    f (\x. x, 1)
 > 1
@@ -113,13 +113,13 @@ fun = \y. sum (map IToF arr) + y
 :p tan 1.57079
 > 159378.27
 
-:p FToI $ floor 3.6
+:p f_to_i $ floor 3.6
 > 3
 
-:p FToI $ ceil 3.6
+:p f_to_i $ ceil 3.6
 > 4
 
-:p FToI $ round 3.6
+:p f_to_i $ round 3.6
 > 4
 
 s = 1.0
@@ -135,13 +135,20 @@ s = 1.0
    for i. xs.i + 10
 > [12, 11, 10]
 
-cumsumplus : n=>Float -> n=>Float =
+def cumsumplus {n} : n=>Float -> n=>Float =
  \xs. snd $ scan 0.0 \i c.
    ans = c + xs.i
    (ans, 1.0 + ans)
 
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2., 4., 7.]
+
+def cumsum2d {n m a} [Add a] (xs:n=>m=>a) : n=>m=>a =
+  cumsum for i. cumsum xs.i
+
+xs : (Fin 4)=>(Fin 3)=>Float = arb $ new_key 0
+sum (sum xs) ~~ (cumsum2d xs).(3@_).(2@_)
+> True
 
 :p [False, False, True]
 > [False, False, True]
@@ -161,7 +168,7 @@ cumsumplus : n=>Float -> n=>Float =
 :p 1.0 < 2.0
 > True
 
-:p BToI (1.0 < 2.0)
+:p b_to_i (1.0 < 2.0)
 > 1
 
 :p [ 1 < 2, 1.0 < 2.0,  2 < 2, 2.0 < 2.0, 2 < 1, 2.0 < 1.0]
@@ -211,17 +218,28 @@ litArr = [10, 5, 3]
 > [3, 4, 5, 6, 7, 8]
 
 :p
-   k = newKey 0
+   k = new_key 0
    mean for i:(Fin 100). randn (ixkey k i)
-> -0.1158
+> 0.00185
+
+:p hash (i_to_w64 0) 0
+> 0x6b20015999ba4efe
+
+:p hash (i_to_w64 123) 456
+> 0x500945c565c98701
+
+key = (w32_to_w64 (i_to_w32 320440878) .<<. 32) .|. (w32_to_w64 (i_to_w32 57701188)) -- 0x13198a2e03707344
+count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242054355)) -- 0x243f6a8885a308d3
+:p threefry_2x32 key count
+> 0xc4923a9c483df7a0
 
 :p
-   k = newKey 0
+   k = new_key 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
-> 1.25819
+> 0.744491
 
-:p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (newKey 11) i j
-> [[0.474153, 0.914516], [0.79446, 0.276799], [0.589586, 0.711625]]
+:p for i:(Fin 3) j:(Fin 2). rand $ ixkey (new_key 11) (i, j)
+> [[0.151324, 0.075572], [0.107597, 0.28888], [0.550955, 0.56872]]
 
 :p
   x = for i:(Fin 3). 0
@@ -233,7 +251,7 @@ litArr = [10, 5, 3]
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + IToF (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + n_to_f (ordinal j))
 > [0., 2., 4.]
 
 :p
@@ -254,16 +272,39 @@ litArr = [10, 5, 3]
 > (1, (2, 3))
 
 :p for i:(Fin 3). i
-> [(0@Fin 3), (1@Fin 3), (2@Fin 3)]
+> [(0@(Fin 3)), (1@(Fin 3)), (2@(Fin 3))]
 
 :p for i:(Fin 3). i
-> [(0@Fin 3), (1@Fin 3), (2@Fin 3)]
+> [(0@(Fin 3)), (1@(Fin 3)), (2@(Fin 3))]
 
-:p fromOrdinal (Fin 1) 0
-> (0@Fin 1)
+:p from_ordinal (Fin 1) 0
+> (0@(Fin 1))
 
 :p 0@(Fin 1)
-> (0@Fin 1)
+> (0@(Fin 1))
+
+:p 5@(Fin 5 & Fin 3)
+> ((1@(Fin 5)), (2@(Fin 3)))
+
+:p ordinal (1@(Fin 5), 2@(Fin 3))
+> 5
+
+:p for i:(Fin 3 & Fin 5). i
+> [ ((0@(Fin 3)), (0@(Fin 5)))
+> , ((0@(Fin 3)), (1@(Fin 5)))
+> , ((0@(Fin 3)), (2@(Fin 5)))
+> , ((0@(Fin 3)), (3@(Fin 5)))
+> , ((0@(Fin 3)), (4@(Fin 5)))
+> , ((1@(Fin 3)), (0@(Fin 5)))
+> , ((1@(Fin 3)), (1@(Fin 5)))
+> , ((1@(Fin 3)), (2@(Fin 5)))
+> , ((1@(Fin 3)), (3@(Fin 5)))
+> , ((1@(Fin 3)), (4@(Fin 5)))
+> , ((2@(Fin 3)), (0@(Fin 5)))
+> , ((2@(Fin 3)), (1@(Fin 5)))
+> , ((2@(Fin 3)), (2@(Fin 5)))
+> , ((2@(Fin 3)), (3@(Fin 5)))
+> , ((2@(Fin 3)), (4@(Fin 5))) ]@(Fin 3 & Fin 5)
 
 :p [1, 2, 3].(0@_)
 > 1
@@ -283,7 +324,7 @@ litArr = [10, 5, 3]
 :p select False [1,2,3] [10,20,30]
 > [10, 20, 30]
 
-:p [(1, (for i:(Fin 2) . 3))].(fromOrdinal _ 0)
+:p [(1, (for i:(Fin 2) . 3))].(from_ordinal _ 0)
 > (1, [3, 3])
 
 :p (False && False, False && True, True && False, True && True)
@@ -320,7 +361,7 @@ litArr = [10, 5, 3]
 :p select False () ()
 > ()
 
-:p [1,2,3].(fromOrdinal (Fin 3) 1 )
+:p [1,2,3].(from_ordinal (Fin 3) 1 )
 > 2
 
 :p fold (1.0, 2.0) \i:(Fin 2) (x, y). (y, x)
@@ -334,25 +375,25 @@ litArr = [10, 5, 3]
 :p min 2.0 3.0
 > 2.
 
-:p minBy sq 0.5 (-2.0)
+:p min_by sq 0.5 (-2.0)
 > 0.5
 
 :p minimum [2.0, 3.0, 4.0, 1.5, 7.0]
 > 1.5
 
-:p minimumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p minimum_by fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (1.5, 15)
 
 :p max 2.0 3.0
 > 3.
 
-:p maxBy sq 0.5 (-2.0)
+:p max_by sq 0.5 (-2.0)
 > -2.
 
 :p maximum [2.0, 4.0, 1.5, 7.0]
 > 7.
 
-:p maximumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p maximum_by fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (10., 100)
 
 :p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
@@ -361,7 +402,7 @@ litArr = [10, 5, 3]
 :p (1. == 2., (-1.) == (-1.), 1. < 2., (-1.) < 2., 2. < (-1.))
 > (False, (True, (True, (True, False))))
 
-:p for i:(Fin 7). select (i < (fromOrdinal _ 3)) 1 2
+:p for i:(Fin 7). select (i < (from_ordinal _ 3)) 1 2
 > [1, 1, 1, 2, 2, 2, 2]
 
 σ = 1.0 + 2.0
@@ -413,31 +454,6 @@ litArr = [10, 5, 3]
 > 4.
 
 :p
-  one = fromOrdinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one..i). 1.0
-> [0., 1., 2., 3.]
-
-:p
-  one = fromOrdinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one<..i). 1.0
-> [0., 0., 1., 2.]
-
-:p
-  one = fromOrdinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one<..i). 1.0
-> [0., 0., 1., 2.]
-
-:p
-  one = fromOrdinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one..<i). 1.0
-> [0., 0., 1., 2.]
-
-:p
-  one = fromOrdinal (Fin 4) 1
-  for i:(Fin 4). sum for j:(one<..<i). 1.0
-> [0., 0., 0., 1.]
-
-:p
   for i:(Fin 4). sum for j:(..i). 1.0
 > [1., 2., 3., 4.]
 
@@ -482,10 +498,10 @@ litArr = [10, 5, 3]
 > [[1, 3], [2, 4]]
 
 :p argmin [1.0, 2.0, 0.4, 5.0]
-> (2@Fin 4)
+> (2@(Fin 4))
 
-:p select True (fromOrdinal (Fin 2) 0) (fromOrdinal (Fin 2) 1)
-> (0@Fin 2)
+:p select True (from_ordinal (Fin 2) 0) (from_ordinal (Fin 2) 1)
+> (0@(Fin 2))
 
 -- TODO: printing (also parsing) tables with alternative index sets
 -- :p
@@ -502,14 +518,14 @@ litArr = [10, 5, 3]
 -- > [2.0, 2.0, 2.0]
 
 :p
-  runState 0.0 \ref. for i:(Fin 4).
+  run_state 0.0 \ref. for i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
 > ([0., 1., 2., 3.], 4.)
 
 :p
-  runState 0.0 \ref. rof i:(Fin 4).
+  run_state 0.0 \ref. rof i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
@@ -517,7 +533,7 @@ litArr = [10, 5, 3]
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left i  -> i
-  Right f -> FToI $ floor f
+  Right f -> f_to_i $ floor f
 
 :p eitherFloor (Right 1.2)
 > 1
@@ -527,20 +543,34 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
   x
 > (Right 1.2)
 
+def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
+  fwd = \v.  case v of
+    {|weights=x|} -> Left x
+    {|biases=x|}  -> Right x
+  bwd = \v. case v of
+    Left x  -> {|weights=x|}
+    Right x -> {|biases=x|}
+  MkIso {fwd, bwd}
+
+instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
+  size = size n + size m
+  ordinal = ordinal <<< app_iso wbToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso wbToEither
+
 -- Sum types as flattened index sets!
-def Weights (n:Type) (m:Type) : Type = n=>m=>Float
-def Biases  (n:Type)          : Type = n=>Float
-def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Float
+def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
+def Biases  (n:Type)          [Ix n]       : Type = n=>Float
+def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
 
-w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
-b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
+w = for i:(Fin 2). for j:(Fin 3). (n_to_f (ordinal i)) * 3.0 + (n_to_f (ordinal j))
+b = for j:(Fin 2). neg (n_to_f (ordinal j) + 1.0)
 
-def flatten ((w,b):(Weights n m & Biases n)): Params n m =
+def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
     {| weights = (i,j) |} -> w.i.j
     {| biases  = i     |} -> b.i
 
-def unflatten (params:Params n m) : (Weights n m & Biases n) =
+def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
   ( for i. for j. params.({| weights = (i,j)|})
   , for i.        params.({| biases  = i    |}))
 
@@ -580,7 +610,7 @@ def unflatten (params:Params n m) : (Weights n m & Biases n) =
 -- > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
-upperBound = sum $ for i:(Fin 4). 1
+upperBound = sum $ for i:(Fin 4). (1::Nat)
 :p for j:(Fin upperBound). 1.0
 > [1., 1., 1., 1.]
 
@@ -600,29 +630,36 @@ for i:(Fin 4).
   (x, z)
 > (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
 
-for i:(Range 4 1). 1.0
-> []@(%IntRange 4 1)
+-- TODO: re-enable these once we prevent (`(-3):Nat` occurring
+for i:(Fin (-3)). 1.0
+> Type error:Can't reduce type expression: (Fin -3)
+> This might be due to a failure to find a viable interface implementation for: (FromInteger Nat)
+>
+> for i:(Fin (-3)). 1.0
+> ^^^^^^^^^^^^^^^^^^^^^
 
 x = 2 - 4
-for i:(Range 0 x). 1.0
-> []
+> Type error:Couldn't synthesize a class dictionary for: (Sub Nat)
+>
+> x = 2 - 4
+>       ^^
 
 -- Make sure that we can construct and print an array using a pair index set
 for i:(Fin 2 & Fin 2). 1.0
 > [1., 1., 1., 1.]@(Fin 2 & Fin 2)
 
 1@(Fin 2 & Fin 2)
-> ((0@Fin 2), (1@Fin 2))
+> ((0@(Fin 2)), (1@(Fin 2)))
 
 for i:(Fin 5). for j:(..i).
-  ir = IToF $ ordinal i
-  jr = IToF $ ordinal j
+  ir = n_to_f $ ordinal i
+  jr = n_to_f $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
-> [ [0.]@(..(0@Fin 5))
-> , [1., 2.]@(..(1@Fin 5))
-> , [3., 4., 5.]@(..(2@Fin 5))
-> , [6., 7., 8., 9.]@(..(3@Fin 5))
-> , [10., 11., 12., 13., 14.]@(..(4@Fin 5)) ]
+> [ [0.]@(..(0@(Fin 5)))
+> , [1., 2.]@(..(1@(Fin 5)))
+> , [3., 4., 5.]@(..(2@(Fin 5)))
+> , [6., 7., 8., 9.]@(..(3@(Fin 5)))
+> , [10., 11., 12., 13., 14.]@(..(4@(Fin 5))) ]
 
 -- TODO: fix!
 -- -- Exercise the use of free variables in the sum solver
@@ -636,7 +673,7 @@ for i:(Fin 5). for j:(..i).
 :p 1 + 2
 > 3
 
-:p [1,2] - [2,10]
+:p [+1,2] - [2,10]
 > [-1, -8]
 
 :p 2.0 .* [[1.0, 2.0], [3.0, 4.0]]
@@ -646,7 +683,7 @@ def newtonIter (f: Float -> Float) (x:Float) : Float =
   x - (f x / deriv f x)
 
 def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
-  yieldState x0 \x.
+  yield_state x0 \x.
     iter \i.
       if abs (f $ get x) <= tol
         then Done ()
@@ -654,14 +691,14 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
           x := newtonIter f $ get x
           Continue
 
-:p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
-> 1.414216
+-- :p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
+-- > 1.414216
 
 -- :p
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
 --   -- Last dimension split to allow for vector loads
 --   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). IToF $ (iota _).(i,j,h)
---   z = yieldAccum \acc.
+--   z = yield_accum \acc.
 --         for l.
 --           for i.
 --             xil = (broadcastVector x.i.l)
@@ -689,7 +726,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > [0, 2, 4, 6]
 
 :p
-  f = withState 1 \ref.
+  f = with_state 1 \ref.
     x = get ref
     ref := 3 + x
     y = get ref
@@ -698,7 +735,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > 415
 
 :p
-  (f, w) = runAccum (AddMonoid Float) \ref.
+  (f, w) = run_accum (AddMonoid Float) \ref.
     ref += 2.0
     w = 2
     \z. z + w
@@ -731,7 +768,7 @@ arr2d.(1@_)
 > True
 
 
-'Tests for numerical utilies
+'Tests for numerical utilities
 
 easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
 hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
@@ -757,12 +794,12 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 str = ['x', 'y']
 
 :p str
-> "xy"
+> ['x', 'y']
 
 s1 = "hello world"
 
 :p s1
-> (AsList 11 "hello world")
+> "hello world"
 
 :p codepoint 'a'
 > 97
@@ -797,14 +834,14 @@ s1 = "hello world"
   sum zs + sum zs
 > 12
 
-triLit : i:(Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
+triLit : (i:Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
 triLit
-> [ [0]@(..(0@Fin 4))
-> , [1, 2]@(..(1@Fin 4))
-> , [3, 4, 5]@(..(2@Fin 4))
-> , [6, 7, 8, 9]@(..(3@Fin 4)) ]
+> [ [0]@(..(0@(Fin 4)))
+> , [1, 2]@(..(1@(Fin 4)))
+> , [3, 4, 5]@(..(2@(Fin 4)))
+> , [6, 7, 8, 9]@(..(3@(Fin 4))) ]
 
-@noinline
+-- @noinline
 def fromLeftFloat (x:(Float | Int)) : Float =
   case x of
     Left x' -> x'
@@ -838,3 +875,134 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 -- This will compile extremely slowly if non-inlining is broken
 :p f6 0
 > 100000
+
+-- Testing integer powers
+
+:p intpow 10 2
+> 100
+:p intpow 0 0
+> 1
+:p intpow 0 1
+> 0
+:p intpow 1 0
+> 1
+:p intpow 1 1
+> 1
+:p intpow 2 1
+> 2
+:p intpow 2 3
+> 8
+:p intpow 2 17
+> 131072
+
+-- Integer utility tests
+
+:p map is_power_of_2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
+> [False, True, True, False, True, True, True, False]
+
+:p map natlog2 [1, 2, 3, 4, 5, 1023, 1024, 1025]
+> [0, 1, 1, 2, 2, 9, 10, 10]
+
+interface AssociatedInt a
+  value a : Int
+
+instance AssociatedInt Int
+  value = 2
+
+instance AssociatedInt Float
+  value = 4
+
+value Int
+> 2
+value Float
+> 4
+
+interface AssociatedWithTwo a c
+  value2 a c : Int
+
+instance AssociatedWithTwo Int Float
+  value2 = 8
+
+-- TODO: the source location for this error message is a bit off since we added
+-- n-ary applications.
+value2 Int Float
+> 8
+value2 Float Int
+> Type error:Couldn't synthesize a class dictionary for: (AssociatedWithTwo Float32 Int32)
+>
+> value2 Float Int
+> ^^^^^^^
+
+-- TODO: This is a really bad error message
+interface BadAssociatedName a
+  value2 c : Int
+> Type error:Explicit type binder `c` in method value2 is not a type parameter of its interface
+
+-- Technically the two tests below are not incorrect, but we don't implement them yet.
+interface AssociatedSubsetOfParams a c
+  badValue1 a : Int
+> Not implemented:
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Permuted or incomplete explicit type binders are not supported yet.
+
+interface AssociatedPermutedParams a c
+  badValue2 c a : Int
+> Not implemented:
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Permuted or incomplete explicit type binders are not supported yet.
+
+-- XXX: Disabled because we now compile expressions like these to blocks, which
+-- need a type that makes sense in the top scope. We may revisit that choice.
+-- -- checks that mixing non-data values into the results of case expressions don't
+-- -- prevent them from later being used in types.
+-- :p
+--   x = 1 + 1
+--   (n, _) = case x > 1 of
+--     True  -> (x, \x:Int. x)
+--     False -> (x, \x:Int. x)
+--   for i:(Fin n). 1.0
+-- > [1., 1.]
+
+1.0e-4
+> 0.0001
+
+-2.0e-2
+> -0.02
+
+4.0e4
+> 40000.
+
+'### Misc. index sets
+
+all for x:(Bool & Bool).
+  x == (unsafe_from_ordinal _ (ordinal x))
+> True
+
+all for x:((Bool & Bool)=>(Fin 3)).
+  x == (unsafe_from_ordinal _ (ordinal x))
+> True
+
+all for x:((Bool & Fin 3)=>(Fin 4)).
+  x == (unsafe_from_ordinal _ (ordinal x))
+> True
+
+def all_prefixes (s:String)  : List String =
+  (AsList _ s') = s
+  to_list for i. post_slice s' first_ix i
+
+:p all_prefixes "fence"
+> (AsList 6 ["", "f", "fe", "fen", "fenc", "fence"])
+
+-- Record references
+-- Regression test for https://github.com/google-research/dex-lang/issues/694
+data Thing = T {a: Float}
+ 
+def scan_over {n} (xs:n=>Float) : n=>Float =
+  snd $ scan (T {a=1.0}) \i t.
+    (T {a}) = t
+    (T {a=a + xs.i}, a)
+
+scan_over [1.0, 2.0, 3.0]
+> [1., 2., 4.]

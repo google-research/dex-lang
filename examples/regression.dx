@@ -1,9 +1,9 @@
-'# Basis function regression
+'# Basis Function Regression
 
 import plot
 
 -- Conjugate gradients solver
-def solve (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
+def solve {m} (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
   x0 = for i:m. 0.0
   ax = mat **. x0
   r0 = b - ax
@@ -22,7 +22,7 @@ def solve (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
 
 Nx = Fin 100
 noise = 0.1
-[k1, k2] = splitKey (newKey 0)
+[k1, k2] = split_key (new_key 0)
 
 def trueFun (x:Float) : Float =
   x + sin (5.0 * x)
@@ -30,20 +30,20 @@ def trueFun (x:Float) : Float =
 xs : Nx=>Float = for i. rand (ixkey k1 i)
 ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
 
-:html showPlot $ xyPlot xs ys
+:html show_plot $ xy_plot xs ys
 > <html output>
 
 'Implement basis function regression
 
-def regress (featurize: Float -> d=>Float) (xRaw:n=>Float) (y:n=>Float) : d=>Float =
+def regress {d n} (featurize: Float -> d=>Float) (xRaw:n=>Float) (y:n=>Float) : d=>Float =
   x = map featurize xRaw
   xT = transpose x
   solve (xT ** x) (xT **. y)
 
 'Fit a third-order polynomial
 
-def poly (x:Float) : d=>Float =
-  for i. pow x (IToF (ordinal i))
+def poly {d} [Ix d] (x:Float) : d=>Float =
+  for i. pow x (n_to_f (ordinal i))
 
 params : (Fin 4)=>Float = regress poly xs ys
 
@@ -53,19 +53,31 @@ def predict (x:Float) : Float =
 
 xsTest = linspace (Fin 200) 0.0 1.0
 
-:html showPlot $ xyPlot xsTest (map predict xsTest)
+:html show_plot $ xy_plot xsTest (map predict xsTest)
 > <html output>
 
 'RMS error
 
-def rmsErr (truth:n=>Float) (pred:n=>Float) : Float =
+def rmsErr {n} (truth:n=>Float) (pred:n=>Float) : Float =
   sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)
-> 0.252695
+> 0.245523
 
+def lrToEither {a b} : Iso {left:a | right:b} (a|b) =
+  fwd = \v.  case v of
+    {|left=x|}  -> Left x
+    {|right=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|left=x|}
+    Right x -> {|right=x|}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {left:n | right:m}
+  size = size n + size m
+  ordinal = ordinal <<< app_iso lrToEither
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso lrToEither
 
-def tabCat (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
+def tabCat {n m a} (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
   for i. case i of
     {| left  = i' |} -> xs.i'
     {| right = i' |} -> ys.i'
@@ -73,7 +85,7 @@ def tabCat (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
 xsPlot = tabCat xs xsTest
 ysPlot = tabCat ys $ map predict xsTest
 
-:html showPlot $ xycPlot xsPlot ysPlot $
+:html show_plot $ xyc_plot xsPlot ysPlot $
         for i. case i of
                  {| left  = _ |} -> 0.0
                  {| right = _ |} -> 1.0

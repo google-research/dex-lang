@@ -1,0 +1,43 @@
+'# PSD Solver Based on Cholesky Decomposition
+
+import linalg
+
+def psdsolve {n} (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+  l = chol mat
+  b' = forward_substitute l b
+  u = transpose_lower_to_upper l
+  backward_substitute u b'
+
+' Test
+
+N = Fin 4
+[k1, k2] = split_key $ new_key 0
+
+psd : N=>N=>Float =
+  a = for i:N j:N. randn $ ixkey k1 (i, j)
+  x = a ** transpose a
+  x + eye
+
+def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
+  for i j.
+    if (ordinal j)<=(ordinal i)
+      then mat.i.(unsafe_cast j)
+      else zero
+
+l = chol psd
+l_full = padLowerTriMat l
+:p l_full
+> [ [1.621016, 0., 0., 0.]
+> , [0.779301, 2.965358, 0., 0.]
+> , [-0.644939, 1.054188, 2.194109, 0.]
+> , [0.162014, -1.009056, -1.49802, 1.355752] ]
+
+psdReconstructed = l_full ** transpose l_full
+
+:p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
+> 0.
+
+vec : N=>Float = arb k2
+
+vec ~~ (psd **. psdsolve psd vec)
+> True

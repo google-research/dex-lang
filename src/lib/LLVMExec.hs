@@ -4,16 +4,18 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
+                 exportObjectFileVal,
                  standardCompilationPipeline,
-                 compileCUDAKernel, loadLitVal) where
+                 compileCUDAKernel,
+                 storeLitVals, loadLitVals, allocaCells, loadLitVal) where
 
+#ifdef DEX_DEBUG
 import qualified LLVM.Analysis as L
+#endif
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.AddrSpace as L
@@ -25,8 +27,12 @@ import qualified LLVM.CodeModel as CM
 import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Module as Mod
 import qualified LLVM.Internal.Module as Mod
+#if MIN_VERSION_llvm_hs(15,0,0)
+import qualified LLVM.Passes as P
+#else
 import qualified LLVM.PassManager as P
 import qualified LLVM.Transforms as P
+#endif
 import qualified LLVM.Target as T
 import LLVM.Context
 import Data.Int
@@ -37,13 +43,14 @@ import System.IO.Unsafe
 import System.IO.Temp
 import System.Directory (listDirectory)
 import System.Process
-import System.Environment
+import qualified System.Environment as E
 import System.Exit
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
 import Foreign.C.Types (CInt (..))
 import Foreign.Storable hiding (alignment)
+import Control.Monad.IO.Class
 import Control.Monad
 import Control.Concurrent
 import Control.Exception hiding (throw)
@@ -54,12 +61,14 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Control.Exception as E
 
+import Paths_dex  (getDataFileName)
+import Err
 import Logging
 import Syntax
-import Resources
 import CUDA (synchronizeCUDA)
 import LLVM.JIT
 import Util (measureSeconds)
+import PPrint ()
 
 -- === One-shot evaluation ===
 
@@ -69,26 +78,27 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-compileAndEval :: Logger [Output] -> L.Module -> String
+compileAndEval :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval logger ast fname args resultTypes = do
+compileAndEval logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaBytes (length args * cellSize) \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff logger ast fname $
+        evalTime <- compileOneOff logger objFiles ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
-        logThis logger [EvalTime evalTime Nothing]
+        logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
+{-# SCC compileAndEval #-}
 
-compileAndBench :: Bool -> Logger [Output] -> L.Module -> String
+compileAndBench :: Bool -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
+compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaBytes (length args * cellSize) \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff logger ast fname \fPtr -> do
+        compileOneOff logger objFiles ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -96,23 +106,29 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
             let run = do
                   let (CInt fd') = fdFD fd
                   exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-                  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
-                  -- TODO: Free results!
-            exampleDuration <- snd <$> measureSeconds run
+                  unless (exitCode == 0) $ throw RuntimeErr ""
+                  freeLitVals resultPtr resultTypes
+            let sync = when shouldSyncCUDA $ synchronizeCUDA
+            exampleDuration <- snd <$> measureSeconds (run >> sync)
+            test_mode <- (Just "t" ==) <$> E.lookupEnv "DEX_TEST_MODE"
             let timeBudget = 2 -- seconds
-            let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+            let benchRuns = if test_mode
+                  then 1
+                  else (ceiling $ timeBudget / exampleDuration) :: Int
+            sync
             totalTime <- liftM snd $ measureSeconds $ do
               forM_ [1..benchRuns] $ const run
-              when shouldSyncCUDA $ synchronizeCUDA
+              sync
             let avgTime = totalTime / (fromIntegral benchRuns)
             return (avgTime, benchRuns, results)
-          logThis logger [EvalTime avgTime (Just (benchRuns, totalTime))]
+          logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
           return results
+{-# SCC compileAndBench #-}
 
-withPipeToLogger :: Logger [Output] -> (FD -> IO a) -> IO a
+withPipeToLogger :: FilteredLogger PassName [Output] -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
   result <- snd <$> withPipe
-    (\h -> readStream h \s -> logThis logger [TextOut s])
+    (\h -> readStream h \s -> logSkippingFilter logger [TextOut s])
     (\h -> handleToFd h >>= writeAction)
   case result of
     Left e -> E.throw e
@@ -124,41 +140,57 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   (exitCode, duration) <- measureSeconds $ do
     exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
     return exitCode
-  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+  unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
+{-# SCC checkedCallFunPtr #-}
 
-compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
-compileOneOff logger ast name f = do
+compileOneOff :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileOneOff logger objFiles ast name f = do
   withHostTargetMachine \tm ->
-    withJIT tm \jit ->
-      withNativeModule jit ast (standardCompilationPipeline logger [name] tm) \compiled ->
+    withJIT tm \jit -> do
+      let pipeline = standardCompilationPipeline logger [name] tm
+      let objFileContents = [s | ObjectFile s _ _ <- objFiles]
+      withNativeModule jit objFileContents ast pipeline \compiled ->
         f =<< getFunctionPtr compiled name
 
-standardCompilationPipeline :: Logger [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
+standardCompilationPipeline :: FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
 standardCompilationPipeline logger exports tm m = do
-  linkDexrt                 m
-  internalize    exports    m
-  showModule                m >>= logPass JitPass
-  L.verify                  m
-  runDefaultPasses tm       m
-  showModule                m >>= logPass LLVMOpt
-  showAsm          tm       m >>= logPass AsmPass
-  where logPass passName s = logThis logger [PassInfo passName s]
+  linkDexrt m
+  internalize exports m
+  {-# SCC showLLVM   #-} logPass JitPass $ showModule m
+#ifdef DEX_DEBUG
+  {-# SCC verifyLLVM #-} L.verify m
+#endif
+  {-# SCC runPasses  #-} runDefaultPasses tm m
+  {-# SCC showOptimizedLLVM #-} logPass LLVMOpt $ showModule m
+  {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
+  where
+    logPass :: PassName -> IO String -> IO ()
+    logPass passName cont = logFiltered logger passName $ cont >>= \s -> return [PassInfo passName s]
+{-# SCC standardCompilationPipeline #-}
 
 
 -- === object file export ===
 
+exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
+exportObjectFileVal deps m fname = do
+  contents <- exportObjectFile [(m, [fname])] Mod.moduleObject
+  return $ ObjectFile contents [fname] deps
+{-# SCC exportObjectFileVal #-}
+
 -- Each module comes with a list of exported functions
-exportObjectFile :: FilePath -> [(L.Module, [String])] -> IO ()
-exportObjectFile objFile modules = do
+exportObjectFile :: [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
+exportObjectFile modules exportFn = do
   withContext \c -> do
     withHostTargetMachine \tm ->
       withBrackets (fmap (toLLVM c) modules) \mods -> do
         Mod.withModuleFromAST c L.defaultModule \exportMod -> do
           void $ foldM linkModules exportMod mods
           execLogger Nothing \logger ->
-            standardCompilationPipeline logger allExports tm exportMod
-          Mod.writeObjectToFile tm (Mod.File objFile) exportMod
+            standardCompilationPipeline
+              (FilteredLogger (const False) logger)
+              allExports tm exportMod
+          exportFn tm exportMod
   where
     allExports = foldMap snd modules
 
@@ -173,23 +205,30 @@ exportObjectFile objFile modules = do
       where
         go (h:t) args = h \arg -> go t (arg:args)
         go []    args = f args
+{-# SCC exportObjectFile #-}
 
 
 -- === LLVM passes ===
 
+
 runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
 runDefaultPasses t m = do
+#if MIN_VERSION_llvm_hs(15,0,0)
+  P.runPasses (P.PassSetSpec [P.CuratedPassSet 1] (Just t)) m
+#else
   P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
-  -- We are highly dependent on LLVM when it comes to some optimizations such as
-  -- turning a sequence of scalar stores into a vector store, so we execute some
-  -- extra passes to make sure they get simplified correctly.
-  runPasses extraPasses (Just t) m
-  P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
+  case extraPasses of
+    [] -> return ()
+    _  -> runPasses extraPasses (Just t) m
   where
-    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
-    extraPasses = [ P.SuperwordLevelParallelismVectorize
-                  , P.FunctionInlining 0 ]
+    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 1}
+    extraPasses = []
+#endif
 
+#if MIN_VERSION_llvm_hs(15,0,0)
+runPasses :: [P.ModulePass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
+runPasses passes mt m = P.runPasses (P.PassSetSpec passes mt) m
+#else
 runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
 runPasses passes mt m = do
   dl <- case mt of
@@ -197,6 +236,7 @@ runPasses passes mt m = do
          Nothing -> return Nothing
   let passSpec = P.PassSetSpec passes dl Nothing mt
   P.withPassManager passSpec \pm -> void $ P.runPassManager pm m
+#endif
 
 internalize :: [String] -> Mod.Module -> IO ()
 internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeElimination] Nothing m
@@ -253,31 +293,57 @@ withModuleClone ctx m f = do
 
 -- === serializing scalars ===
 
-loadLitVals :: Ptr () -> [BaseType] -> IO [LitVal]
+loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
 loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
-storeLitVals :: Ptr () -> [LitVal] -> IO ()
+freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
+freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+
+storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
 
-loadLitVal :: Ptr () -> BaseType -> IO LitVal
-loadLitVal ptr (Scalar ty) = case ty of
+loadLitVal :: MonadIO m => Ptr () -> BaseType -> m LitVal
+loadLitVal ptr (Scalar ty) = liftIO case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
+  Word32Type  -> Word32Lit  <$> peek (castPtr ptr)
+  Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
-loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
-loadLitVal _ _ = error "not implemented"
+loadLitVal ptrPtr (PtrType t) = do
+  ptr <- liftIO $ peek $ castPtr ptrPtr
+  return $ PtrLit $ PtrLitVal t ptr
+loadLitVal _ (Vector _ _) = error "Vector loads not implemented"
 
-storeLitVal :: Ptr () -> LitVal -> IO ()
-storeLitVal ptr val = case val of
+storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
+storeLitVal ptr val = liftIO case val of
   Int64Lit   x -> poke (castPtr ptr) x
   Int32Lit   x -> poke (castPtr ptr) x
   Word8Lit   x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
-  PtrLit _   x -> poke (castPtr ptr) x
+  PtrLit (PtrLitVal _ x) -> poke (castPtr ptr) x
   _ -> error "not implemented"
+
+foreign import ccall "free_dex"
+  free_cpu :: Ptr () -> IO ()
+#ifdef DEX_CUDA
+foreign import ccall "dex_cuMemFree"
+  free_gpu :: Ptr () -> IO ()
+#else
+free_gpu :: Ptr () -> IO ()
+free_gpu = error "Compiled without GPU support!"
+#endif
+
+freeLitVal :: MonadIO m => Ptr () -> BaseType -> m ()
+freeLitVal litValPtr ty = case ty of
+  Scalar  _ -> return ()
+  PtrType (Heap CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
+  PtrType (Heap GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
+  -- TODO: Handle pointers to pointers
+  _ -> error "not implemented"
+  where loadPtr = peek (castPtr litValPtr)
 
 cellSize :: Int
 cellSize = 8
@@ -285,12 +351,16 @@ cellSize = 8
 ptrArray :: Ptr () -> [Ptr ()]
 ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
 
+allocaCells :: MonadIO m => Int -> (Ptr () -> IO a) -> m a
+allocaCells n cont = liftIO $ allocaBytes (n * cellSize) cont
+
 
 -- === dex runtime ===
 
 {-# NOINLINE dexrtAST #-}
 dexrtAST :: L.Module
 dexrtAST = unsafePerformIO $ do
+  dexrtBC <- B.readFile =<< getDataFileName "src/lib/dexrt.bc"
   withContext \ctx -> do
     Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) \m ->
       stripFunctionAnnotations <$> Mod.moduleAST m
@@ -322,8 +392,11 @@ linkDexrt m = do
 
 data LLVMKernel = LLVMKernel L.Module
 
-compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
-compileCUDAKernel logger (LLVMKernel ast) = do
+cudaPath :: IO String
+cudaPath = maybe "/usr/local/cuda" id <$> E.lookupEnv "CUDA_PATH"
+
+compileCUDAKernel :: FilteredLogger PassName [Output] -> LLVMKernel -> String -> IO CUDAKernel
+compileCUDAKernel logger (LLVMKernel ast) arch = do
   T.initializeAllTargets
   withContext \ctx ->
     Mod.withModuleFromAST ctx ast \m -> do
@@ -331,9 +404,10 @@ compileCUDAKernel logger (LLVMKernel ast) = do
         linkLibdevice m
         standardCompilationPipeline logger ["kernel"] tm m
         ptx <- Mod.moduleTargetAssembly tm m
-        usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
+        usePTXAS <- maybe False (=="1") <$> E.lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
           then do
+            ptxasPath <- (++"/bin/ptxas") <$> cudaPath
             withSystemTempFile "kernel.ptx" \ptxPath ptxH -> do
               B.hPut ptxH ptx
               hClose ptxH
@@ -347,15 +421,13 @@ compileCUDAKernel logger (LLVMKernel ast) = do
                 -- TODO: B.readFile might be faster, but withSystemTempFile seems to lock the file...
                 CUDAKernel <$> B.hGetContents sassH
           else return $ CUDAKernel ptx
-  where
-    ptxasPath = "/usr/local/cuda/bin/ptxas"
-    arch = "sm_60"
+{-# SCC compileCUDAKernel #-}
 
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module
 libdevice = unsafePerformIO $ do
   withContext \ctx -> do
-    let libdeviceDirectory = "/usr/local/cuda/nvvm/libdevice"
+    libdeviceDirectory <- (flip (++) $ "/nvvm/libdevice") <$> cudaPath
     [libdeviceFileName] <- listDirectory libdeviceDirectory
     let libdevicePath = libdeviceDirectory ++ "/" ++ libdeviceFileName
     libdeviceBC <- B.readFile libdevicePath
@@ -388,7 +460,7 @@ zeroNVVMReflect =
                    { L.name = "__nvvm_reflect"
                    , L.returnType = L.IntegerType 32
                    , L.parameters =
-                       ([ L.Parameter (L.PointerType (L.IntegerType 8) (L.AddrSpace 0)) "name" [] ], False)
+                       ([ L.Parameter i8p "name" [] ], False)
                    , L.functionAttributes = [ Right FA.AlwaysInline ]
                    , L.basicBlocks = [
                        L.BasicBlock "entry" [] $ L.Do $ L.Ret (Just $ L.ConstantOperand $ C.Int 32 0) []
@@ -396,6 +468,12 @@ zeroNVVMReflect =
                    }
                ]
            }
+  where
+#if MIN_VERSION_llvm_hs(15,0,0)
+    i8p = L.PointerType (L.AddrSpace 0)
+#else
+    i8p = L.PointerType (L.IntegerType 8) (L.AddrSpace 0)
+#endif
 
 ptxTargetTriple :: ShortByteString
 ptxTargetTriple = "nvptx64-nvidia-cuda"

@@ -14,6 +14,10 @@ license-file:        LICENSE
 build-type:          Simple
 
 data-files:          lib/*.dx
+                   , static/*.css
+                   , static/*.html
+                   , static/*.js
+                   , src/lib/dexrt.bc
 
 flag cuda
   description:         Enables building with CUDA support
@@ -23,49 +27,183 @@ flag optimized
   description:         Enables GHC optimizations
   default:             False
 
-library dex-resources
-  if os(darwin)
-    exposed-modules:   Resources
-  build-depends:       base, bytestring, file-embed
-  hs-source-dirs:      src/resources
-  default-language:    Haskell2010
-  default-extensions:  CPP
+flag live
+  description:         Enables live-editing environments (web notebook and terminal)
+  default:             True
+
+flag llvm-head
+  description:         Use the bleeding-edge version of LLVM
+  default:             False
+
+flag foreign
+  description:         Build the C interface to Dex
+  default:             False
+
+flag debug
+  description:         Enable extra checks and stack trace printing (useful for developers)
+  default:             False
 
 library
-  exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, Imp.Builder, Imp.Optimize,
-                       PPrint, Algebra, Parallelize, Optimize, Serialize
-                       Actor, Builder, Cat, Export,
-                       RenderHtml, LiveOutput, Simplify, TopLevel,
-                       Autodiff, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims
-  build-depends:       base, containers, mtl, bytestring,
-                       llvm-hs-pure, llvm-hs,
-                       -- Parsing
-                       megaparsec, parser-combinators,
-                       -- Text output
-                       prettyprinter, text,
-                       -- Portable system utilities
-                       filepath, directory, ansi-terminal, process, temporary,
-                       -- Serialization
-                       store,
-                       -- Notebook support
-                       warp, wai, blaze-html, aeson, http-types, cmark, binary
+  exposed-modules:     AbstractSyntax
+                     , Algebra
+                     , Builder
+                     , CUDA
+                     , Cat
+                     , CheapReduction
+                     , CheckType
+                     , ConcreteSyntax
+                     , Core
+                     , Err
+                     , Export
+                     , GenericTraversal
+                     , Imp
+                     , Inference
+                     , Interpreter
+                     , JIT
+                     , LLVM.HEAD.JIT
+                     , LLVM.JIT
+                     , LLVM.Shims
+                     , LLVMExec
+                     , LabeledItems
+                     , Lexing
+                     , Linearize
+                     , Logging
+                     , Lower
+                     , MTL1
+                     , Name
+                     , Optimize
+                     , PPrint
+                     , RawName
+                     , Serialize
+                     , Simplify
+                     , SourceRename
+                     , Syntax
+                     , TopLevel
+                     , Transpose
+                     , Types.Core
+                     , Types.Imp
+                     , Types.Primitives
+                     , Types.Source
+                     , QueryType
+                     , Util
+  if flag(live)
+    exposed-modules:   Actor
+                     , Live.Eval
+                     , Live.Terminal
+                     , Live.Web
+                     , RenderHtml
   other-modules:       Paths_dex
-  if !os(darwin)
-    exposed-modules:   Resources
-    hs-source-dirs:    src/resources
-    build-depends:     file-embed
-  else
-    build-depends:     dex-resources
+  build-depends:       base
+                     , bytestring
+                     , containers
+                     , cryptonite
+                     , exceptions
+                     , hashable
+                     , llvm-hs
+                     , llvm-hs-pure
+                     , mtl
+                     , scientific
+                     , transformers
+                     , unordered-containers
+                     , utf8-string
+                       -- Parsing
+                     , megaparsec
+                     , parser-combinators
+                       -- Text output
+                     , prettyprinter
+                     , text
+                       -- Portable system utilities
+                     , ansi-terminal
+                     , directory
+                     , filepath
+                     , haskeline
+                     , process
+                     , temporary
+                       -- Serialization
+                     , aeson
+                     , store
+  if flag(live)
+    build-depends:     binary
+                     , blaze-html
+                     , cmark
+                     , http-types
+                     , wai
+                     , warp
+    cpp-options:       -DDEX_LIVE
+    cxx-options:       -DDEX_LIVE
+  if flag(debug)
+    cpp-options:       -DDEX_DEBUG
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
-  ghc-options:         -Wall -fPIC -threaded -optP-Wno-nonportable-include-path
+  ghc-options:         -Wall
+                       -Wno-unticked-promoted-constructors
+                       -fPIC
+                       -optP-Wno-nonportable-include-path
   cxx-sources:         src/lib/dexrt.cpp
   cxx-options:         -std=c++11 -fPIC
-  default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
-                       TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments
+                       -- Mimicking -XGHC2021 in GHC 8.10.1
+  default-extensions:  BangPatterns
+                     , BinaryLiterals
+                     , ConstrainedClassMethods
+                     , ConstraintKinds
+                     , DeriveDataTypeable
+                     , DeriveFoldable
+                     , DeriveFunctor
+                     , DeriveGeneric
+                     , DeriveLift
+                     , DeriveTraversable
+                     , DoAndIfThenElse
+                     , EmptyCase
+                     , EmptyDataDecls
+                     , EmptyDataDeriving
+                     , ExistentialQuantification
+                     , ExplicitForAll
+                     -- FieldSelectors was introduced in GHC 9.2
+                     , FlexibleContexts
+                     , FlexibleInstances
+                     , ForeignFunctionInterface
+                     , GADTSyntax
+                     , GeneralisedNewtypeDeriving
+                     , HexFloatLiterals
+                     , ImplicitPrelude
+                     , ImportQualifiedPost
+                     , InstanceSigs
+                     , KindSignatures
+                     , MonomorphismRestriction
+                     , MultiParamTypeClasses
+                     , NamedFieldPuns
+                     , NamedWildCards
+                     , NumericUnderscores
+                     , PatternGuards
+                     , PolyKinds
+                     , PostfixOperators
+                     , RankNTypes
+                     , RelaxedPolyRec
+                     , ScopedTypeVariables
+                     , StandaloneDeriving
+                     , StandaloneKindSignatures
+                     , StarIsType
+                     , TraditionalRecordSyntax
+                     , TupleSections
+                     , TypeApplications
+                     , TypeOperators
+                     , TypeSynonymInstances
+                     -- Other extensions
+                     , BlockArguments
+                     , CPP
+                     , DataKinds
+                     , DefaultSignatures
+                     , DerivingVia
+                     , FunctionalDependencies
+                     , GADTs
+                     , LambdaCase
+                     , OverloadedStrings
+                     , PatternSynonyms
+                     , QuantifiedConstraints
+                     , RecordWildCards
+                     , TypeFamilies
+                     , ViewPatterns
+
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
@@ -79,36 +217,153 @@ library
 
 executable dex
   main-is:             dex.hs
-  other-extensions:    OverloadedStrings
-  build-depends:       dex, base, haskeline, prettyprinter, mtl,
-                       optparse-applicative, ansi-wl-pprint,
-                       unix, store, bytestring, directory
-  if os(darwin)
-    build-depends:     dex-resources
+  build-depends:       dex
+                     , ansi-wl-pprint
+                     , base
+                     , bytestring
+                     , containers
+                     , directory
+                     , exceptions
+                     , haskeline
+                     , mtl
+                     , optparse-applicative
+                     , prettyprinter
+                     , store
+                     , text
+                     , unix
   default-language:    Haskell2010
   hs-source-dirs:      src
-  default-extensions:  CPP, LambdaCase, BlockArguments
-  ghc-options:         -optP-Wno-nonportable-include-path
+  ghc-options:         -threaded
+                       -optP-Wno-nonportable-include-path
+                       -rtsopts
+                       "-with-rtsopts=-I0 -A16m"
+  default-extensions:  CPP
+                     , DeriveGeneric
+                     , LambdaCase
+                     , OverloadedStrings
+                     , BlockArguments
+  if flag(cuda)
+    cpp-options:       -DDEX_CUDA
+  if flag(live)
+    cpp-options:       -DDEX_LIVE
   if flag(optimized)
     ghc-options:       -O3
   else
     ghc-options:       -O0
 
 foreign-library Dex
+  if flag(foreign)
+    buildable: True
+  else
+    buildable: False
   type:                native-shared
-  other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
-                     , Dex.Foreign.Context, Dex.Foreign.Serialize
-  build-depends:       base, mtl, containers, llvm-hs, dex, dex-resources
-  if os(darwin)
-    build-depends:     dex-resources
+  other-modules:       Dex.Foreign.API
+                     , Dex.Foreign.Context
+                     , Dex.Foreign.JIT
+                     , Dex.Foreign.Serialize
+                     , Dex.Foreign.Util
+  build-depends:       dex
+                     , base
+                     , bytestring
+                     , containers
+                     , llvm-hs
+                     , mtl
+                     , random
+                     , text
   hs-source-dirs:      src/
   c-sources:           src/Dex/Foreign/rts.c
   cc-options:          -std=c11 -fPIC
-  ghc-options:         -Wall -fPIC -optP-Wno-nonportable-include-path
+  ghc-options:         -Wall
+                       -fPIC
+                       -optP-Wno-nonportable-include-path
   default-language:    Haskell2010
-  default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase,
-                       BlockArguments
+  default-extensions:  BlockArguments
+                     , DataKinds
+                     , FlexibleInstances
+                     , GADTs
+                     , LambdaCase
+                     , OverloadedStrings
+                     , RecordWildCards
+                     , ScopedTypeVariables
+                     , ImportQualifiedPost
+                     , TypeApplications
   if flag(optimized)
     ghc-options:       -O3
   else
     ghc-options:       -O0
+
+test-suite spec
+  type:                exitcode-stdio-1.0
+  main-is:             Spec.hs
+  hs-source-dirs:      tests/unit
+  ghc-options:         -Wall
+  build-depends:       base
+                     , hspec
+                     , QuickCheck
+                     , dex
+  other-modules:       RawNameSpec
+  default-language:    Haskell2010
+  build-tool-depends:  hspec-discover:hspec-discover
+                       -- Mimicking -XGHC2021 in GHC 8.10.1
+  default-extensions:  BangPatterns
+                     , BinaryLiterals
+                     , ConstrainedClassMethods
+                     , ConstraintKinds
+                     , DeriveDataTypeable
+                     , DeriveFoldable
+                     , DeriveFunctor
+                     , DeriveGeneric
+                     , DeriveLift
+                     , DeriveTraversable
+                     , DoAndIfThenElse
+                     , EmptyCase
+                     , EmptyDataDecls
+                     , EmptyDataDeriving
+                     , ExistentialQuantification
+                     , ExplicitForAll
+                     -- FieldSelectors was introduced in GHC 9.2
+                     , FlexibleContexts
+                     , FlexibleInstances
+                     , ForeignFunctionInterface
+                     , GADTSyntax
+                     , GeneralisedNewtypeDeriving
+                     , HexFloatLiterals
+                     , ImplicitPrelude
+                     , ImportQualifiedPost
+                     , InstanceSigs
+                     , KindSignatures
+                     , MonomorphismRestriction
+                     , MultiParamTypeClasses
+                     , NamedFieldPuns
+                     , NamedWildCards
+                     , NumericUnderscores
+                     , PatternGuards
+                     , PolyKinds
+                     , PostfixOperators
+                     , RankNTypes
+                     , RelaxedPolyRec
+                     , ScopedTypeVariables
+                     , StandaloneDeriving
+                     , StandaloneKindSignatures
+                     , StarIsType
+                     , TraditionalRecordSyntax
+                     , TupleSections
+                     , TypeApplications
+                     , TypeOperators
+                     , TypeSynonymInstances
+                     -- Other extensions
+                     , BlockArguments
+                     , CPP
+                     , DataKinds
+                     , DefaultSignatures
+                     , DerivingVia
+                     , FunctionalDependencies
+                     , GADTs
+                     , LambdaCase
+                     , OverloadedStrings
+                     , PatternSynonyms
+                     , QuantifiedConstraints
+                     , RecordWildCards
+                     , TypeFamilies
+                     , ViewPatterns
+

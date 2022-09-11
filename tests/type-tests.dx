@@ -51,19 +51,19 @@ help make the errors more local.
 -- >   (tmp3) (tmp2) ] )
 
 :t
-   myid : a:Type ?-> a -> a = \x. x
+   myid : (a:Type) ?-> a -> a = \x. x
    myid (myid) (myid 1)
-> Int32
+> Nat
 
 :t
    x = iota (Fin 10)
    sum x
-> Int32
+> Nat
 
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   IToF (sum for i. x.i) + IToF (sum for j. y.j)
+   n_to_f (sum for i. x.i) + n_to_f (sum for j. y.j)
 > Float32
 
 :t
@@ -81,10 +81,10 @@ Narr = Fin 10
 
 arr  = iota Narr
 
-xr = map IToF arr
+xr = map n_to_f arr
 
 :t arr
-> ((Fin 10) => Int32)
+> ((Fin 10) => Nat)
 
 :t (\(x, y). x + y) (1.0, 2.0)
 > Float32
@@ -96,25 +96,19 @@ xr = map IToF arr
 > Float32
 
 :t [1, 2, 3]
-> ((Fin 3) => Int32)
+> ((Fin 3) => Nat)
 
 :t [1, [2]]
-> Type error:
-> Expected: Int32
->   Actual: ((Fin 1) => Int32)
-> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+> Type error:Couldn't synthesize a class dictionary for: (FromNatural ((Fin 1) => Nat))
 >
 > :t [1, [2]]
->        ^^^
+>     ^
 
 :t [[1, 2], [3, 4]]
-> ((Fin 2) => (Fin 2) => Int32)
+> ((Fin 2) => (Fin 2) => Nat)
 
 :t [[1, 2], [3]]
-> Type error:
-> Expected: ((Fin 2) => Int32)
->   Actual: ((Fin 1) => Int32)
-> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+> Type error:Literal has 1 element, but required type has 2.
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -156,13 +150,13 @@ MyPair : Type -> Type =
 
 
 -- TODO: put source annotation on effect for a better message here
-fEff : Unit -> {| a} a = todo
+def fEff {a} : Unit -> {| a} a = todo
 > Type error:
 > Expected: Type
 >   Actual: EffKind
 >
-> fEff : Unit -> {| a} a = todo
->                      ^^
+> def fEff {a} : Unit -> {| a} a = todo
+>                              ^^
 
 :p
     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
@@ -205,7 +199,7 @@ fEff : Unit -> {| a} a = todo
 -- > :p (\(u,v). for i:0...u. 1.0) (2, 3)
 -- >     ^^^^^^^^^^^^^^^^^^^^^^^^
 
-g : a -> a = \x. x
+g : (a:Type) ?-> a -> a = \x. x
 
 :t g
 > ((a:Type) ?-> a -> a)
@@ -218,38 +212,33 @@ g : a -> a = \x. x
 :t
    f = \x:Float. x
    f 1
-> Type error:
-> Expected: Float32
->   Actual: Int32
->
->    f 1
->      ^
+> Float32
 
-g1 : (a -> Int) -> (a -> Int) = \x. x
+g1 : (a:Type) ?-> (a -> Int) -> (a -> Int) = \x. x
 
 :t g1
 > ((a:Type) ?-> (a -> Int32) -> a -> Int32)
 
-g2 : a -> a = \x. idiv x x
-> Type error:Couldn't synthesize a class dictionary for: (Integral a)
+g2 : (aaa:Type) ?-> aaa -> aaa = \x. idiv x x
+> Type error:Couldn't synthesize a class dictionary for: (Integral aaa)
 >
-> g2 : a -> a = \x. idiv x x
->                   ^^^^^
+> g2 : (aaa:Type) ?-> aaa -> aaa = \x. idiv x x
+>                                      ^^^^^
 
-h : (a -> b) -> (a -> b) = \x. x
+h : (a:Type) ?-> (b:Type) ?-> (a -> b) -> (a -> b) = \x. x
 
 :t h
 > ((a:Type) ?-> (b:Type) ?-> (a -> b) -> a -> b)
 
-fun : a -> a = \x. sin x
-> Type error:Couldn't synthesize a class dictionary for: (Floating a)
+fun : (aaa:Type) ?-> aaa -> aaa = \x. sin x
+> Type error:Couldn't synthesize a class dictionary for: (Floating aaa)
 >
-> fun : a -> a = \x. sin x
->                    ^^^^
+> fun : (aaa:Type) ?-> aaa -> aaa = \x. sin x
+>                                       ^^^^
 
-data NewPair a:Type b:Type = MkNewPair a b
+data NewPair aa:Type bb:Type = MkNewPair aa bb
 
-fromNewPair : NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
+def fromNewPair {a b}: NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
 
 newPair : NewPair Int Float = MkNewPair 1 2.0
 
@@ -257,7 +246,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > Type error:
 > Expected: (a & b)
 >   Actual: (NewPair Int32 Float32)
-> (Solving for: [a:Type, b:Type])
+> (Solving for: [a, b])
 >
 > :p fst newPair
 >        ^^^^^^^
@@ -266,7 +255,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > 1
 
 :p NewPair
-> NewPair
+> \aa:Type bb:Type. NewPair aa bb
 
 -- TODO: these are broken since switching from newtype mechanism to ADTs
 
@@ -285,17 +274,6 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 
 -- :p fst $ fromNewPair newPair
 -- > 1
-
-good_range : Type = (1@Fin 3)..(2@_)
-
-bad_range : Int = (1@Fin 3)..(2@_)
-> Type error:
-> Expected: Int32
->   Actual: Type
->
-> bad_range : Int = (1@Fin 3)..(2@_)
->                            ^^
-
 
 -- Tests for the Unit index set
 
@@ -320,6 +298,19 @@ bad_range : Int = (1@Fin 3)..(2@_)
 5.0 .* ()
 > ()
 
+
+-- Test for pairs
+
+((2.0, 3.0) + (4.0, 1.1)) ~~ (6.0, 4.1)
+> True
+
+((2.0, 3.0) - (4.0, 1.1)) ~~ (-2.0, 1.9)
+> True
+
+(0.5 .* (2.0, 3.0)) ~~ (1.0, 1.5)
+> True
+
+
 -- Tests for Bool
 :p True == True
 > True
@@ -332,32 +323,32 @@ bad_range : Int = (1@Fin 3)..(2@_)
 > :p (\x:Int. x) == (\x:Int. x)
 >                ^^^
 
-def getFst1 (n:Type) ?-> (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+def getFst1 {n:Type} {b} (xs:n=>b) : b =
+  xs.(from_ordinal n 0)
 
 :p getFst1 [1,2,3]
 > 1
 
-def getFst2 (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+def getFst2 {n b} (xs:n=>b) : b =
+  xs.(from_ordinal n 0)
 
 :p getFst2 [1,2,3]
 > 1
 
-def getFst3 (b:Type) ?-> (n:Type) ?-> (xs:n=>b) : b =
-  xs.(fromOrdinal n 0)
+def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
+  xs.(from_ordinal n 0)
 
 :p getFst3 [1,2,3]
 > 1
 
-def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
+def triRefIndex {h n} (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
   %indexRef ref i
 
 (for i:(Fin 5). for j:(i..). 0.0).(0@_)
 > Type error:Dependent functions can only be applied to fully evaluated expressions. Bind the argument to a name before you apply the function.
 >
 > (for i:(Fin 5). for j:(i..). 0.0).(0@_)
->                                    ^^^
+>                                   ^^^^^
 
 -- Type inference of arguments always happens in checking mode, but the checking
 -- doesn't provide any insight into what the argument is in this case. This checks
@@ -367,15 +358,24 @@ def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
 -- There was a time when this wasn't possible, because checking mode would unify the
 -- input type with a non-dependent function type, leading to a later unification errors.
 id (for i:(Fin 2). for j:(..i). 1.0)
-> [[1.]@(..(0@Fin 2)), [1., 1.]@(..(1@Fin 2))]
+> [[1.]@(..(0@(Fin 2))), [1., 1.]@(..(1@(Fin 2)))]
 
-def weakerInferenceReduction (l : i:n=>(..i)=>Float) (j:n): Unit =
+def weakerInferenceReduction {n} (l : (i:n)=>(..i)=>Float) (j:n): Unit =
   for i:(..j).
-    i' = %inject i
+    i' = inject n i
     for k:(..i').
       l.i'.k
     ()
   ()
+
+-- Regression test for
+-- https://github.com/google-research/dex-lang/issues/833,
+-- simplification of a table of functions whose type mentions
+-- the table index.
+val = for i:(Fin 2). \(x:Float). for j:(..i). 1
+
+:t val
+> ((v#0:(Fin 2)) => Float32 -> (..v#0) => Nat)
 
 -- Tests for table
 
@@ -389,3 +389,167 @@ c = [1, 2]
 
 :p a < c
 > True
+
+:p
+  f = \xy.
+    (x,y) = xy
+    y
+  f (1,2)
+> 2
+
+-- Tests for type inference of table literals
+
+def mkEmpty (a:Type) : (Fin 0)=>a = []
+
+:t [0.0, 1.0]
+> ((Fin 2) => Float32)
+:t [[0.0], [1.0]]
+> ((Fin 2) => (Fin 1) => Float32)
+:t [0.0, 1.0] :: (Fin 2)=>Float
+> ((Fin 2) => Float32)
+:t [0.0, 1.0] :: ((Fin 1) & (Fin 2))=>Float
+> ((Fin 1 & Fin 2) => Float32)
+
+:t [[0.0], [1.0, 2.0]] :: (i:Fin 2)=>(..i)=>Float
+> ((v#0:(Fin 2)) => (..v#0) => Float32)
+:t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] :: (i:Fin 2)=>(..i)=>(Fin 2)=>Float
+> ((v#0:(Fin 2)) => (..v#0) => (Fin 2) => Float32)
+:t [0@_, 1@_]::((i:Fin 2)=>(..i))
+> ((v#0:(Fin 2)) => ..v#0)
+
+def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
+  for i j. x.(i, j)
+
+:t uncurryTable [0.0, 1.0, 2.0, 3.0]  -- We should be able to infer the tuple type here
+> ((Fin 2) => (Fin 2) => Float32)
+:t uncurryTable [0, 1, 2, 3]          -- Extra difficulty: need to default the integer type
+> ((Fin 2) => (Fin 2) => Nat)
+
+
+-- Make sure that the local type alias is unifiable with Int
+def GetInt (n : Int) : Type = Int
+def the (t : Type) (x : t) : t = x
+def ff (n : Int) : Int =
+  i = GetInt n
+  the i 2
+
+ff 0
+> 2
+
+-- The two local aliases for Fin n should be unifiable with each other and Fin n
+def q (n : Nat) : (Fin n)=>Nat =
+  ix1 = Fin n
+  x1 = for i:ix1. ordinal i
+  ix2 = Fin n
+  x2 = for i:ix2. ordinal i
+  for i. x1.i + x2.i
+
+q 5
+> [0, 2, 4, 6, 8]
+
+-- Dereference variable names when resolving table type annotations
+-- This is a regression test for
+-- https://github.com/google-research/dex-lang/issues/563
+:t [0.0, 1.0]::(Bool=>Float)
+> (Bool => Float32)
+
+-- Regression test for
+-- https://github.com/google-research/dex-lang/issues/912.
+-- This should not take a long time, because we should compare sizes
+-- before constructing the indices of the annotated index set.
+:t [0.0, 1.0]::((Fin 100000000)=>Float)
+> Type error:Literal has 2 elements, but required type has 100000000.
+>
+> :t [0.0, 1.0]::((Fin 100000000)=>Float)
+>    ^^^^^^^^^^
+
+:t [0.0, 1.0]::((i: Fin 100000000)=>(..i)=>Float)
+> Type error:Literal has 2 elements, but required type has 100000000.
+>
+> :t [0.0, 1.0]::((i: Fin 100000000)=>(..i)=>Float)
+>    ^^^^^^^^^^
+
+-- Make sure we fail gracefully when the annotated index set doesn't
+-- have a static size.
+def frob {n} (_:Unit) : Unit =
+  [0.0, 1.0]::((Fin n)=>Float)
+  ()
+> Type error:
+> Expected: ((Fin n) => Float32)
+>   Actual: ((Fin 2) => Float32)
+> If attempting to construct a fixed-size table not
+> indexed by 'Fin n' for some static n, this error may
+> indicate there was not enough information to infer
+> a concrete index set; try adding an explicit
+> annotation.
+>
+>   [0.0, 1.0]::((Fin n)=>Float)
+>   ^^^^^^^^^^
+
+'### Parser disambiguation of type annotations
+
+-- Regression tests for https://github.com/google-research/dex-lang/issues/933
+
+-- foo is a function with all-implicit arguments (whether that's a
+-- good idea or not).
+def foo {a} [Ix a] : a=>Float =
+  for z:a. 1.0
+
+:t foo
+> ((a:Type) ?-> (v#0:(Ix a)) ?=> a => Float32)
+
+-- Reference foo with a type annotation (no parens needed)
+foo :: (Fin 3) => Float
+> [1., 1., 1.]
+
+-- Type annotation is an operator
+sum $ foo :: (Fin 3) => Float
+> 3.
+
+-- A pi type that locally binds foo to the index
+(foo : (Fin 3)) => Float
+> (Fin 3) => Float32
+
+-- The equals sign makes it a type-annotated top-level binding for foo
+foo : Fin 3 => Float = [1.0, 2.0, 3.0]
+> Error: variable already defined: foo
+>
+> foo : Fin 3 => Float = [1.0, 2.0, 3.0]
+> ^^^^
+
+'### Tests for function VSpace
+
+:p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
+> True
+:p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
+> True
+:p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
+> True
+
+'### Miscellany
+
+xbool : Bool = arb $ new_key 0
+:p xbool
+> True
+
+-- This is to ensure we don't accidentally implement `Sub Word32` while we
+-- have `Nat` as an alias for `Word32`.
+:p for i:(Fin 4). ordinal i - 1
+> Type error:Couldn't synthesize a class dictionary for: (Sub Nat)
+>
+> :p for i:(Fin 4). ordinal i - 1
+>                             ^^
+
+-- Check that the result passed to :html has type `String`.  This is
+-- also a regression test for
+-- https://github.com/google-research/dex-lang/issues/934
+
+table = [1.0, 2.0]
+
+:html table
+> Type error:
+> Expected: (List Word8)
+>   Actual: ((Fin 2) => Float32)
+>
+> :html table
+>       ^^^^^

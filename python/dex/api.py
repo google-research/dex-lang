@@ -7,22 +7,32 @@
 import ctypes
 import pathlib
 import atexit
+from pkg_resources import resource_filename
 from typing import List
 
-here = pathlib.Path(__file__).parent.absolute()
-
-lib = ctypes.cdll.LoadLibrary(here / 'libDex.so')
+lib = ctypes.cdll.LoadLibrary(resource_filename('dex', 'libDex.so'))
 
 def tagged_union(name: str, members: List[type]):
   named_members = [(f"t{i}", member) for i, member in enumerate(members)]
   payload = type(name + "Payload", (ctypes.Union,), {"_fields_": named_members})
   union = type(name, (ctypes.Structure,), {
     "_fields_": [("tag", ctypes.c_uint64), ("payload", payload)],
-    "value": property(lambda self: getattr(self.payload, f"t{self.tag}")),
+    "value": property(
+        fget=lambda self: getattr(self.payload, f"t{self.tag}"),
+        fset=lambda self, value: setattr(self.payload, f"t{self.tag}", value)),
+    "Payload": payload,
   })
   return union
 
-CLit = tagged_union("Lit", [ctypes.c_int64, ctypes.c_int32, ctypes.c_int8, ctypes.c_double, ctypes.c_float])
+CLit = tagged_union("Lit", [
+  ctypes.c_int64,
+  ctypes.c_int32,
+  ctypes.c_uint8,
+  ctypes.c_double,
+  ctypes.c_float,
+  ctypes.c_uint32,
+  ctypes.c_uint64
+])
 class CRectArray(ctypes.Structure):
   _fields_ = [("data", ctypes.c_void_p),
               ("shape_ptr", ctypes.POINTER(ctypes.c_int64)),
@@ -38,6 +48,16 @@ class NativeFunctionSignature(ctypes.Structure):
   _fields_ = [("arg", ctypes.c_char_p),
               ("res", ctypes.c_char_p),
               ("ccall", ctypes.c_char_p)]
+
+class ExportCC:
+  def __init__(self, value):
+    self._as_parameter_ = ctypes.c_int32(value)
+
+  @classmethod
+  def from_param(cls, p):
+    return p._as_parameter_
+FlatCC = ExportCC(0)
+XLACC = ExportCC(1)
 
 
 HsAtomPtr = ctypes.POINTER(HsAtom)
@@ -60,22 +80,25 @@ getError = dex_func('dexGetError', ctypes.c_char_p)
 
 createContext  = dex_func('dexCreateContext',  HsContextPtr)
 destroyContext = dex_func('dexDestroyContext', HsContextPtr, None)
+forkContext    = dex_func('dexForkContext',    HsContextPtr, HsContextPtr)
 
-eval     = dex_func('dexEval',     HsContextPtr, ctypes.c_char_p,            HsContextPtr)
-insert   = dex_func('dexInsert',   HsContextPtr, ctypes.c_char_p, HsAtomPtr, HsContextPtr)
-evalExpr = dex_func('dexEvalExpr', HsContextPtr, ctypes.c_char_p,            HsAtomPtr)
-lookup   = dex_func('dexLookup',   HsContextPtr, ctypes.c_char_p,            HsAtomPtr)
+eval      = dex_func('dexEval',      HsContextPtr, ctypes.c_char_p, HsContextPtr)
+lookup    = dex_func('dexLookup',    HsContextPtr, ctypes.c_char_p, HsAtomPtr)
+freshName = dex_func('dexFreshName', HsContextPtr, ctypes.c_char_p)
 
-print   = dex_func('dexPrint',   HsAtomPtr,           ctypes.c_char_p)
-toCAtom = dex_func('dexToCAtom', HsAtomPtr, CAtomPtr, ctypes.c_int)
+print     = dex_func('dexPrint',     HsContextPtr, HsAtomPtr, ctypes.c_char_p)
+toCAtom   = dex_func('dexToCAtom',   HsAtomPtr,    CAtomPtr,  ctypes.c_int)
+fromCAtom = dex_func('dexFromCAtom', CAtomPtr,                HsAtomPtr)
 
 createJIT  = dex_func('dexCreateJIT',  HsJITPtr)
 destroyJIT = dex_func('dexDestroyJIT', HsJITPtr, None)
-compile    = dex_func('dexCompile',    HsJITPtr, HsContextPtr, HsAtomPtr, NativeFunction)
+compile    = dex_func('dexCompile',    HsJITPtr, ExportCC, HsContextPtr, HsAtomPtr, NativeFunction)
 unload     = dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
 
 getFunctionSignature  = dex_func('dexGetFunctionSignature', HsJITPtr, NativeFunction, NativeFunctionSignaturePtr)
-freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr)
+freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
+
+xlaCpuTrampoline = lib.dexXLACPUTrampoline
 
 init()
 jit = createJIT()

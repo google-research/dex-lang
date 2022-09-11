@@ -1,0 +1,23 @@
+#!/bin/bash
+
+declare -a possible_filecheck_locations=("FileCheck-12"
+                                         "FileCheck")
+FILECHECK=$(\
+  for fc in "${possible_filecheck_locations[@]}" ; do \
+    if [[ $(command -v "$fc" 2>/dev/null) ]]; \
+      then echo "$fc" ; break ; \
+    fi ; \
+  done)
+
+if [[ -z "$FILECHECK" ]]; then
+  echo "FileCheck not found"
+  exit 1
+fi
+
+if ${@:2} $1 --outfmt result-only | $FILECHECK $1 ; then
+  echo "OK"
+  exit 0
+else
+  exit $?
+fi
+

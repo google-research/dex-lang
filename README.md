@@ -8,8 +8,8 @@ processing. The goal of the project is to explore:
   * Interactive and incremental numerical programming and visualization
 
 To learn more, check out our
-[workshop paper](https://openreview.net/pdf?id=rJxd7vsWPS),
-our [tutorial](https://github.com/google-research/dex-lang/blob/main/examples/tutorial.dx)
+[paper](https://arxiv.org/abs/2104.05372),
+our [tutorial](https://google-research.github.io/dex-lang/examples/tutorial.html)
 or these example programs:
 
   * [Dex prelude](https://google-research.github.io/dex-lang/prelude.html)
@@ -21,6 +21,11 @@ or these example programs:
   * [Sierpinski triangle](https://google-research.github.io/dex-lang/examples/sierpinski.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/examples/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/examples/brownian_motion.html)
+  * [Dynamic programming (Levenshtein distance)](https://google-research.github.io/dex-lang/examples/levenshtein-distance.html)
+
+Or for a more comprehensive look, there's
+
+  * [The InDex](https://google-research.github.io/dex-lang/index.html) of all documents, libraries, and examples included in this repository.
 
 🚨 **Dex is an experimental research project at an early stage of
 development. Expect monstrous bugs and razor-sharp edges!**
@@ -30,27 +35,30 @@ development. Expect monstrous bugs and razor-sharp edges!**
 ## Dependencies
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 9
-    * Ubuntu/Debian: `apt-get install llvm-9-dev`
-    * macOS: `brew install llvm@9`
-      * Make sure `llvm@9` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@9)/bin:$PATH"`
-  * Install clang (may be installed together with llvm)
-    * Ubuntu/Debian: `apt-get install clang`
+  * Install LLVM 12
+    * Ubuntu/Debian: `apt-get install llvm-12-dev`
+    * macOS: `brew install llvm@12`
+      * Make sure `llvm@12` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@12)/bin:$PATH"`
+  * Install clang 12 (may be installed together with llvm)
+    * Ubuntu/Debian: `apt-get install clang-12`
     * macOS: installs with llvm
   * Install libpng (often included by default in *nix platforms)
     * Ubuntu/Debian: `apt-get install libpng-dev`
     * macOS: `brew install libpng`
 
-## Building
+## Installing
 
- * Build Dex in development mode: `make`
- * Run tests in development mode: `make tests`
- * Install a release version of Dex: `make install`
+To build and install a release version of Dex run `make install`.
 
 The default installation directory is `$HOME/.local/bin`, so make sure to add
 that directory to `$PATH` after installing Dex. To install Dex somewhere else,
 set the `PREFIX` environment variable before running `make install`. For
 example, `PREFIX=$HOME make install` installs `dex` in `$HOME/bin`.
+
+## Building
+
+ * Build Dex in development (unoptimized) mode: `make`
+ * Run tests in development mode: `make tests`
 
 It is convenient to set up a `dex` alias (e.g. in `.bashrc`) for running Dex in
 development mode:
@@ -62,6 +70,59 @@ alias dex="stack exec dex -- --lib-path lib"
 # macOS:
 alias dex="stack exec --stack-yaml=stack-macos.yaml dex -- --lib-path lib"
 ```
+
+You might also want to consider other development build targets:
+  * `build-opt` for local optimized builds,
+  * `build-dbg` for local debug builds,
+  * `build-prof` for local optimized builds with profiling enabled.
+
+Those non-standard targets require different aliases. Please consult the documentation
+at the top of the [`makefile`](https://github.com/google-research/dex-lang/blob/main/makefile)
+for detailed instructions.
+
+### Haskell Language Server
+
+In order to use [HLS](https://github.com/haskell/haskell-language-server) with
+the Haskell code in this project:
+
+- Install [ghcup](https://www.haskell.org/ghcup/)
+- Run `ghcup install hls`
+- Create a file in the root `dex` directory called `hie.yaml` with the following
+contents:
+
+```yaml
+cradle:
+  stack:
+    stackYaml: "./stack-macos.yaml"  # Or stack.yaml if not on MacOS
+```
+
+Unfortunately one cannot dynamically select the `stack.yaml` file to use based
+on the environment, and so one has to create an appropriate `hie.yaml` file
+manually. This will be ignored by git.
+
+This should work out of the box with Emacs' `lsp-haskell` package.
+
+### Building with Nix
+
+[Nix](https://nixos.org/) is a functional package manager and build system.
+
+To build with vanilla Nix:
+```bash
+$ nix-build
+```
+
+To build with flakes-enabled Nix:
+```bash
+$ nix build .#dex
+```
+The resulting `dex` binary should be in `result/bin/dex`.
+
+For development purposes, you can use a Nix environment with
+```bash
+$ nix-shell
+$ nix develop  # With flakes
+```
+and use `make` to use Stack to build Dex.
 
 ## Running
 

@@ -4,30 +4,43 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MagicHash #-}
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
-             showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             measureSeconds,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
+             scanM, composeN, mapMaybe, uncons, repeated, splitAtExact,
+             transitiveClosure, transitiveClosureM,
+             showErr, listDiff, splitMap, enumerate, iota, restructure,
+             onSnd, onFst, findReplace, swapAt, uncurry3,
+             measureSeconds, sameConstructor,
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
+             Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
+             whenM, unsnocNonempty, anyM,
+             File (..), FileHash, FileContents, addHash, readFileWithHash,
+             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList) where
 
+import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import qualified Data.List.NonEmpty as NE
+import qualified Data.ByteString    as BS
 import Data.Foldable
+import Data.List.NonEmpty (NonEmpty (..))
 import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
+import Control.Applicative
 import Control.Monad.State.Strict
 import System.CPUTime
-
-import Cat
+import GHC.Base (getTag)
+import GHC.Exts ((==#), tagToEnum#)
 
 class IsBool a where
   toBool :: a -> Bool
+
+iota :: (Enum a, Integral a) => a -> [a]
+iota n = take (fromEnum n) [0..] -- XXX: `[0..(n-1)]` is incorrect for unsigned ints!
+{-# INLINE iota #-}
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"
@@ -39,6 +52,11 @@ onFst f (x, y) = (f x, y)
 
 onSnd :: (a -> b) -> (c, a) -> (c, b)
 onSnd f (x, y) = (x, f y)
+
+unsnocNonempty :: NonEmpty a -> ([a], a)
+unsnocNonempty (x:|xs) = case reverse (x:xs) of
+  (y:ys) -> (reverse ys, y)
+  _ -> error "impossible"
 
 enumerate :: Traversable f => f a -> f (Int, a)
 enumerate xs = evalState (traverse addCount xs) 0
@@ -79,6 +97,13 @@ pad v n xs = xs ++ replicate (n - length(xs)) v
 
 padLeft :: a -> Int -> [a] -> [a]
 padLeft v n xs = replicate (n - length(xs)) v ++ xs
+
+-- Nothing if the exact prefix isn't available
+splitAtExact :: Int -> [a] -> Maybe ([a], [a])
+splitAtExact n xs =
+  if n <= length xs
+    then Just $ splitAt n xs
+    else Nothing
 
 delIdx :: Int -> [a] -> [a]
 delIdx i xs = case splitAt i xs of
@@ -139,38 +164,6 @@ restructure xs structure = evalState (traverse procLeaf structure) xs
                         put rest
                         return x
 
-highlightRegion :: (Int, Int) -> String -> String
-highlightRegion pos@(low, high) s
-  | low > high || high > length s = error $ "Bad region: \n"
-                                              ++ show pos ++ "\n" ++ s
-  | otherwise =
-    -- TODO: flag to control line numbers
-    -- (disabling for now because it makes quine tests tricky)
-    -- "Line " ++ show (1 + lineNum) ++ "\n"
-
-    allLines !! lineNum ++ "\n"
-    ++ take start (repeat ' ') ++ take (stop - start) (repeat '^') ++ "\n"
-  where
-    allLines = lines s
-    (lineNum, start, stop) = getPosTriple pos allLines
-
-getPosTriple :: (Int, Int) -> [String] -> (Int, Int, Int)
-getPosTriple (start, stop) lines_ = (lineNum, start - offset, stop')
-  where
-    lineLengths = map ((+1) . length) lines_
-    lineOffsets = cumsum lineLengths
-    lineNum = maxLT lineOffsets start
-    offset = lineOffsets  !! lineNum
-    stop' = min (stop - offset) (lineLengths !! lineNum)
-
-cumsum :: [Int] -> [Int]
-cumsum xs = scanl (+) 0 xs
-
-maxLT :: Ord a => [a] -> a -> Int
-maxLT [] _ = 0
-maxLT (x:xs) n = if n < x then -1
-                          else 1 + maxLT xs n
-
 -- TODO: find a more efficient implementation
 findReplace :: Eq a => [a] -> [a] -> [a] -> [a]
 findReplace _ _ [] = []
@@ -184,8 +177,7 @@ findReplace old new s@(x:xs) =
 scan :: Traversable t => (a -> s -> (b, s)) -> t a -> s -> (t b, s)
 scan f xs s = runState (traverse (asState . f) xs) s
 
-scanM :: (Monad m, Traversable t)
-  => (a -> s -> m (b, s)) -> t a -> s -> m (t b, s)
+scanM :: (Monad m, Traversable t) => (a -> s -> m (b, s)) -> t a -> s -> m (t b, s)
 scanM f xs s = runStateT (traverse (asStateT . f) xs) s
 
 asStateT :: Monad m => (s -> m (a, s)) -> StateT s m a
@@ -226,14 +218,25 @@ for = flip fmap
 
 transitiveClosure :: forall a. Ord a => (a -> [a]) -> [a] -> [a]
 transitiveClosure getParents seeds =
-  toList $ snd $ runCat (mapM_ go seeds) mempty
+  toList $ execState (mapM_ go seeds) mempty
   where
-    go :: a -> Cat (Set.Set a) ()
+    go :: a -> State (Set.Set a) ()
     go x = do
-      visited <- look
+      visited <- get
       unless (x `Set.member` visited) $ do
-        extend $ Set.singleton x
+        modify $ Set.insert x
         mapM_ go $ getParents x
+
+transitiveClosureM :: forall m a. (Monad m, Ord a) => (a -> m [a]) -> [a] -> m [a]
+transitiveClosureM getParents seeds =
+  toList <$> execStateT (mapM_ go seeds) mempty
+  where
+    go :: a -> StateT (Set.Set a) m ()
+    go x = do
+      visited <- get
+      unless (x `Set.member` visited) $ do
+        modify (<> Set.singleton x)
+        lift (getParents x) >>= mapM_ go
 
 measureSeconds :: MonadIO m => m a -> m (a, Double)
 measureSeconds m = do
@@ -241,3 +244,96 @@ measureSeconds m = do
   ans <- m
   t2 <- liftIO $ getCPUTime
   return (ans, (fromIntegral $ t2 - t1) / 1e12)
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM test doit = test >>= \case
+  True -> doit
+  False -> return ()
+
+anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+anyM f xs = do
+  conds <- mapM f xs
+  return $ any id conds
+
+-- === zippable class ===
+
+class Zippable f where
+  zipWithZ :: MonadFail m => (a -> b -> m c) -> f a -> f b -> m (f c)
+
+instance Zippable [] where
+  zipWithZ _ [] [] = return []
+  zipWithZ f (x:xs) (y:ys) = (:) <$> f x y <*> zipWithZ f xs ys
+  zipWithZ _ _ _ = zipErr
+
+instance Zippable NE.NonEmpty where
+  zipWithZ f xs ys = NE.fromList <$> zipWithZ f (NE.toList xs) (NE.toList ys)
+
+zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
+zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
+
+zipErr :: MonadFail m => m a
+zipErr = fail "zip error"
+
+forMZipped :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m (f c)
+forMZipped xs ys f = zipWithZ f xs ys
+
+forMZipped_ :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m ()
+forMZipped_ xs ys f = void $ forMZipped xs ys f
+
+getAlternative :: Alternative m => [a] -> m a
+getAlternative xs = asum $ map pure xs
+{-# INLINE getAlternative #-}
+
+newtype SnocList a = ReversedList { fromReversedList :: [a] }
+        deriving Functor -- XXX: NOT deriving order-sensitive things like Monoid, Applicative etc
+
+instance Semigroup (SnocList a) where
+  (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
+  {-# INLINE (<>) #-}
+
+instance Monoid (SnocList a) where
+  mempty = ReversedList []
+  {-# INLINE mempty #-}
+
+instance Foldable SnocList where
+  foldMap f (ReversedList xs) = foldMap f (reverse xs)
+  {-# INLINE foldMap #-}
+
+snoc :: SnocList a -> a -> SnocList a
+snoc (ReversedList xs) x = ReversedList (x:xs)
+{-# INLINE snoc #-}
+
+emptySnocList :: SnocList a
+emptySnocList = ReversedList []
+{-# INLINE emptySnocList #-}
+
+unsnoc :: SnocList a -> [a]
+unsnoc (ReversedList x) = reverse x
+{-# INLINE unsnoc #-}
+
+toSnocList :: [a] -> SnocList a
+toSnocList xs = ReversedList $ reverse xs
+{-# INLINE toSnocList #-}
+
+-- === bytestrings paired with their hash digest ===
+
+-- TODO: use something other than a string to store the digest
+type FileHash     = String
+type FileContents = BS.ByteString
+
+-- TODO: consider adding mtime as well for a fast path that doesn't
+-- require reading the file
+data File = File
+  { fContents :: FileContents
+  , fHash     :: FileHash }
+  deriving (Show, Eq, Ord)
+
+addHash :: FileContents -> File
+addHash s = File s $ show (hash s :: Digest SHA256)
+
+readFileWithHash :: MonadIO m => FilePath -> m File
+readFileWithHash path = liftIO $ addHash <$> BS.readFile path
+
+sameConstructor :: a -> a -> Bool
+sameConstructor x y = tagToEnum# (getTag x ==# getTag y)
+{-# INLINE sameConstructor #-}

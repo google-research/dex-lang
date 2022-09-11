@@ -1,8 +1,8 @@
-'# Rejection sampler of a Binomial distribution
+'# Rejection Sampler for a Binomial Distribution
 
 'We implement rejection sampling from a Binomial distribution using a uniform proposal.
 
-def rejectionSample (try: Key -> Maybe a) (k:Key) : a =
+def rejectionSample {a} (try: Key -> Maybe a) (k:Key) : a =
   iter \i. case try $ hash k i of
     Nothing -> Continue
     Just x  -> Done x
@@ -11,16 +11,18 @@ Prob    = Float
 LogProb = Float
 
 -- log probability density of a Binomial distribution
-def logBinomialProb (n:Int) (p:Prob) (counts:Int) : LogProb =
-  pSuccess = log p * IToF counts
-  pFailure = log1p (-p) * IToF (n - counts)
-  normConst = (lbeta (1. + IToF counts) (1. + IToF n - IToF counts) +
-               log1p (IToF n))
+def logBinomialProb (n':Nat) (p:Prob) (counts':Nat) : LogProb =
+  n      = n_to_f n'
+  counts = n_to_f counts'
+  pSuccess = log p * counts
+  pFailure = log1p (-p) * (n - counts)
+  normConst = (lbeta (1. + counts) (1. + n - counts) +
+               log1p (n))
   pSuccess + pFailure - normConst
 
-def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
-  [k1, k2] = splitKey k
-  proposal = FToI $ floor $ rand k1 * IToF (n + 1)
+def trySampleBinomial (n:Nat) (p:Prob) (k:Key) : Maybe Nat =
+  [k1, k2] = split_key k
+  proposal = f_to_n $ floor $ rand k1 * n_to_f (n + 1)
   if proposal > n
     then Nothing
     else
@@ -37,48 +39,48 @@ def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
 n = 10
 p = 0.4
 numSamples = 5000
-k0 = newKey 0
+k0 = new_key 0
 
-rejectionSamples = randVec numSamples (rejectionSample $ trySampleBinomial n p) k0
+rejectionSamples = rand_vec numSamples (rejectionSample $ trySampleBinomial n p) k0
 
 :p slice rejectionSamples 0 $ Fin 10
-> [4, 2, 5, 4, 6, 7, 3, 6, 4, 3]
+> [5, 3, 3, 3, 4, 4, 5, 4, 3, 3]
 
 'The Binomial distribution has mean 4 and variance 2.4.
 
-def meanAndVariance (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
+def meanAndVariance {n} (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
 
-:p meanAndVariance $ map IToF rejectionSamples
-> (3.9984, 2.361596)
+:p meanAndVariance $ map n_to_f rejectionSamples
+> (4.019, 2.434639)
 
 '## Alternative: Inversion sampling
 
 'Alternatively, we can use inversion sampling.
 
-def binomialSample (n:Int) (p:Prob) (k:Key) : Int =
+def binomialSample (n:Nat) (p:Prob) (k:Key) : Nat =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   ordinal $ categorical logprobs k
 
-inversionSamples = randVec numSamples (binomialSample n p) k0
+inversionSamples = rand_vec numSamples (binomialSample n p) k0
 
 :p slice inversionSamples 0 $ Fin 10
-> [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
+> [6, 3, 3, 3, 4, 5, 1, 3, 3, 6]
 
-:p meanAndVariance $ map IToF inversionSamples
-> (3.9978, 2.409796)
+:p meanAndVariance $ map n_to_f inversionSamples
+> (3.9642, 2.468519)
 
 'The following variant is guaranteed to evaluate the CDF only once.
 
-def binomialBatch (n:Int) (p:Prob) (k:Key) : a => Int =
+def binomialBatch {a} [Ix a] (n:Nat) (p:Prob) (k:Key) : a => Nat =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
-  map ordinal $ categoricalBatch logprobs k
+  map ordinal $ categorical_batch logprobs k
 
-inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Int
+inversionBatchSamples = (binomialBatch n p k0) :: Fin numSamples => Nat
 
 :p slice inversionBatchSamples 0 $ Fin 10
-> [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
+> [6, 3, 3, 3, 4, 5, 1, 3, 3, 6]
 
-:p meanAndVariance $ map IToF inversionBatchSamples
-> (3.9978, 2.409796)
+:p meanAndVariance $ map n_to_f inversionBatchSamples
+> (3.9642, 2.468519)

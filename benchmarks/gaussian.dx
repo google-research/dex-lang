@@ -1,0 +1,8 @@
+n = if dex_test_mode() then 100 else 1000 * 1000
+
+%bench "Gaussian"
+res = rand_vec n randn (new_key 0)
+>
+> Gaussian
+> Compile time: 40.102 ms
+> Run time:     8.517 us 	(based on 1 run)

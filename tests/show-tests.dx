@@ -2,49 +2,49 @@
 -- String
 
 :p show "abc"
-> (AsList 3 "abc")
+> "abc"
 
 -- Int32
 
-:p show (1234: Int32)
-> (AsList 4 "1234")
+:p show (1234 :: Int32)
+> "1234"
 
-:p show (-1234: Int32)
-> (AsList 5 "-1234")
+:p show (-1234 :: Int32)
+> "-1234"
 
-:p show ((FToI (-(pow 2. 31.))): Int32)
-> (AsList 11 "-2147483648")
+:p show ((f_to_i (-(pow 2. 31.))) :: Int32)
+> "-2147483648"
 
 -- Int64
 
-:p show (IToI64 1234: Int64)
-> (AsList 4 "1234")
+:p show (i_to_i64 1234 :: Int64)
+> "1234"
 
-:p show (IToI64 (-1234): Int64)
-> (AsList 5 "-1234")
+:p show (i_to_i64 (-1234) :: Int64)
+> "-1234"
 
 -- Float32
 
-:p show (123.456789: Float32)
-> (AsList 10 "123.456787")
+:p show (123.456789 :: Float32)
+> "123.456787"
 
-:p show ((pow 2. 16.): Float32)
-> (AsList 5 "65536")
+:p show ((pow 2. 16.) :: Float32)
+> "65536"
 
 -- FIXME(https://github.com/google-research/dex-lang/issues/316):
 -- Unparenthesized expression with type ascription does not parse.
 -- :p show (nan: Float32)
 
-:p show ((nan): Float32)
-> (AsList 3 "nan")
+:p show (nan :: Float32)
+> "nan"
 
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
 :p nan
 > NaN
 
-:p show ((infinity): Float32)
-> (AsList 3 "inf")
+:p show (infinity :: Float32)
+> "inf"
 
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
@@ -53,24 +53,35 @@
 
 -- Float64
 
-:p show (FToF64 123.456789: Float64)
-> (AsList 16 "123.456787109375")
+:p show (f_to_f64 123.456789:: Float64)
+> "123.456787109375"
 
-:p show (FToF64 (pow 2. 16.): Float64)
-> (AsList 5 "65536")
+:p show (f_to_f64 (pow 2. 16.):: Float64)
+> "65536"
 
-:p show ((FToF64 nan): Float64)
-> (AsList 3 "nan")
+:p show ((f_to_f64 nan):: Float64)
+> "nan"
 
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
-:p (FToF64 nan)
+:p (f_to_f64 nan)
 > NaN
 
-:p show ((FToF64 infinity): Float64)
-> (AsList 3 "inf")
+:p show ((f_to_f64 infinity):: Float64)
+> "inf"
 
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
-:p (FToF64 infinity)
+:p (f_to_f64 infinity)
 > Infinity
+
+-- Tuples
+
+:p show (123, 456)
+> "(123, 456)"
+
+:p show ("abc", 123)
+> "(abc, 123)"
+
+:p show ("abc", 123, ("def", 456))
+> "(abc, (123, (def, 456)))"

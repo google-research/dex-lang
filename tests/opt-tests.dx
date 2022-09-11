@@ -1,0 +1,44 @@
+@noinline
+def id' (x:Int) : Int = x
+
+-- CHECK-LABEL: dce-dead-app
+"dce-dead-app"
+
+%passes opt
+:p
+  x = id' 1
+  5 + 1
+-- CHECK: === Result ===
+-- CHECK-NEXT: 6
+
+def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + off)
+
+-- CHECK-LABEL: unroll-eliminate-table
+"unroll-eliminate-table"
+
+%passes opt
+:p
+  [x0, x1, x2] = arange_f 2
+  (x0, x2)
+-- CHECK: === Result ===
+-- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
+-- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
+-- CHECK-NEXT: ([[x0]], [[x2]])
+
+-- CHECK-LABEL: matmul-single-alloc
+"matmul-single-alloc"
+m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
+
+%passes imp
+m' = m ** m
+-- CHECK: alloc Float32[10000]
+-- CHECK-NOT: alloc
+
+"don't unroll large table literals"
+-- CHECK-LABEL: don't unroll large table literals
+
+%passes opt
+x = for i:(Fin 4). [0, 0, 0, ordinal i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+-- CHECK: [ 0
+-- CHECK: , 0 ]
+-- CHECK-NOT: [0

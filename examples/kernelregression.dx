@@ -1,0 +1,101 @@
+'# Kernel Regression
+
+import linalg
+import plot
+
+-- Conjugate gradients solver
+def solve' {m} (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
+  x0 = for i:m. 0.0
+  ax = mat **. x0
+  r0 = b - ax
+  (xOut, _, _) = fold (x0, r0, r0) $
+     \s:m (x, r, p).
+       ap = mat **. p
+       alpha = vdot r r / vdot p ap
+       x' = x + alpha .* p
+       r' = r - alpha .* ap
+       beta = vdot r' r' / (vdot r r + 0.000001)
+       p' = r' + beta .* p
+       (x', r', p')
+  xOut
+
+def chol_solve {m} (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
+    b' = forward_substitute l b
+    u = transpose_lower_to_upper l
+    backward_substitute u b'
+
+' # Kernel ridge regression
+
+' To learn a function $f_{true}: \mathcal{X} \to \mathbb R$
+from data $(x_1, y_1),\dots,(x_N, y_N)\in \mathcal{X}\times\mathbb R$,\
+in kernel ridge regression the hypothesis takes the form
+$f(x)=\sum_{i=1}^N \alpha_i k(x_i, x)$,\
+where $k:\mathcal X \times \mathcal X \to \mathbb R$ is a positive semidefinite kernel function.\
+The optimal coefficients are found by solving a linear system $\alpha=G^{-1}y$,\
+where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda>0$ and $y = (y_1,\dots,y_N)^\top\in\mathbb R^N$
+
+-- Synthetic data
+Nx = Fin 100
+noise = 0.1
+[k1, k2] = split_key (new_key 0)
+
+def trueFun (x:Float) : Float =
+  x + sin (20.0 * x)
+
+xs : Nx=>Float = for i. rand (ixkey k1 i)
+ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
+
+-- Kernel ridge regression
+def regress {a} (kernel: a -> a -> Float) (xs: Nx=>a) (ys: Nx=>Float) : a -> Float =
+    gram = for i j. kernel xs.i xs.j + select (i==j) 0.0001 0.0
+    alpha = solve' gram ys
+    predict = \x. sum for i. alpha.i * kernel xs.i x
+    predict
+
+def rbf (lengthscale:Float) (x:Float) (y:Float) : Float =
+  exp (-0.5 * sq ((x - y) / lengthscale))
+
+predict = regress (rbf 0.2) xs ys
+
+-- Evaluation
+Nxtest = Fin 1000
+xtest : Nxtest=>Float = for i. rand (ixkey k1 i)
+preds = map predict xtest
+
+:html show_plot $ xy_plot xs ys
+> <html output>
+
+:html show_plot $ xy_plot xtest preds
+> <html output>
+
+' # Gaussian process regression
+
+' GP regression (kriging) works in a similar way. Compared with kernel ridge regression, GP regression assumes Gaussian distributed prior. This, combined
+with the Bayes rule, gives the variance of the prediction.
+
+' In this implementation, the conjugate gradient solver is replaced with the
+cholesky solver from `lib/linalg.dx` for efficiency.
+
+def gp_regress {n a} (kernel: a -> a -> Float) (xs: n=>a) (ys: n=>Float)
+    : (a -> (Float&Float)) =
+    noise_var = 0.0001
+    gram = for i j. kernel xs.i xs.j
+    c = chol (gram + eye *. noise_var)
+    alpha = chol_solve c ys
+    predict = \x.
+        k' = for i. kernel xs.i x
+        mu = sum for i. alpha.i * k'.i
+        alpha' = chol_solve c k'
+        var = kernel x x + noise_var - sum for i. k'.i * alpha'.i
+        (mu, var)
+    predict
+
+gp_predict = gp_regress (rbf 0.2) xs ys
+
+(gp_preds, vars) = unzip (map gp_predict xtest)
+
+:html show_plot $ xyc_plot xtest gp_preds (map sqrt vars)
+> <html output>
+
+:html show_plot $ xy_plot xtest vars
+> <html output>

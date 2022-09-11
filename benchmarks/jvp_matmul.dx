@@ -1,0 +1,14 @@
+n = if dex_test_mode() then 10 else 500
+
+m1 = rand_mat n n randn (new_key 0)
+m2 = rand_mat n n randn (new_key 1)
+
+def mmp' {l m n} (m1:l=>m=>Float) (m2:m=>n=>Float) : l=>n=>Float =
+  jvp ((**) m1) m2 m2
+
+%bench "jvp_matmul"
+res = mmp' m1 m2
+>
+> jvp_matmul
+> Compile time: 82.255 ms
+> Run time:     7.298 us 	(based on 1 run)
