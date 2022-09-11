@@ -15,7 +15,7 @@ import qualified Data.Map.Strict as M
 
 import Data.Aeson (ToJSON, toJSON, (.=))
 import qualified Data.Aeson as A
-import Data.Text.Prettyprint.Doc
+import Prettyprinter
 import System.Directory (getModificationTime)
 
 import Actor

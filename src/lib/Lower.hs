@@ -10,7 +10,7 @@ import Data.Word
 import Data.Functor
 import Data.Set qualified as S
 import Data.List.NonEmpty qualified as NE
-import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
+import Prettyprinter (pretty, viaShow, (<+>))
 import Control.Monad.Reader
 import Unsafe.Coerce
 import GHC.Exts (inline)

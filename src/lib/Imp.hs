@@ -14,7 +14,7 @@ module Imp
 import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
-import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
+import Prettyprinter (Pretty (..), hardline)
 import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Reader

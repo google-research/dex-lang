@@ -13,7 +13,7 @@ module Logging (Logger, LoggerT (..), MonadLogger (..), logIO, runLoggerT,
 
 import Control.Monad
 import Control.Monad.Reader
-import Data.Text.Prettyprint.Doc
+import Prettyprinter
 import Control.Concurrent.MVar
 import Prelude hiding (log)
 import System.IO

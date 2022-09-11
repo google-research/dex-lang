@@ -14,7 +14,7 @@ import Data.Functor
 import Data.Ratio
 import Control.Applicative
 import Data.Map.Strict hiding (foldl, map, empty, (!))
-import Data.Text.Prettyprint.Doc
+import Prettyprinter
 import Data.List (intersperse)
 import Data.Tuple (swap)
 

@@ -18,7 +18,7 @@ import Control.Monad.Reader
 import Data.Maybe
 import Data.List (elemIndex)
 import Data.Foldable (toList)
-import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
+import Prettyprinter (Pretty (..), hardline)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 import GHC.Exts (inline)

@@ -62,7 +62,7 @@ import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
 import Data.List.NonEmpty qualified as NE
-import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
+import Prettyprinter (Pretty (..), group, line, nest)
 import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe

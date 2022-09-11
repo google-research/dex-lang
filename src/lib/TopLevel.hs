@@ -21,7 +21,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import qualified Data.ByteString as BS
 import Data.Text (Text)
-import Data.Text.Prettyprint.Doc
+import Prettyprinter
 import Data.Store (Store (..), encode, decode)
 import Data.List (partition)
 import qualified Data.Map.Strict as M

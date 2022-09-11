@@ -25,7 +25,7 @@ import Data.Foldable
 import qualified Data.Map.Strict       as M
 import Data.String (IsString, fromString)
 import Data.Text (Text)
-import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
+import Prettyprinter (Pretty (..), hardline, (<+>))
 import Data.Word
 
 import GHC.Generics (Generic (..))

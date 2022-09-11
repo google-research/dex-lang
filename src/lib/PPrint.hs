@@ -20,8 +20,8 @@ import Data.Functor ((<&>))
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import Data.Text.Prettyprint.Doc.Render.Text
-import Data.Text.Prettyprint.Doc
+import Prettyprinter.Render.Text
+import Prettyprinter
 import Data.Text (Text, snoc, uncons, unsnoc, unpack)
 import qualified Data.Set        as S
 import Data.String (fromString)

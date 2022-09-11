@@ -23,7 +23,7 @@ import Data.Char
 import Data.Bits
 import Data.Coerce
 import Data.Store
-import Data.Text.Prettyprint.Doc  hiding (nest)
+import Prettyprinter hiding (nest)
 import GHC.Generics (Generic)
 
 -- === RawName ===

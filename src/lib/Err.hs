@@ -27,8 +27,8 @@ import Control.Monad.Reader
 import Data.Coerce
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.Prettyprint.Doc.Render.Text
-import Data.Text.Prettyprint.Doc
+import Prettyprinter.Render.Text
+import Prettyprinter
 import GHC.Stack
 import System.Environment
 import System.IO.Unsafe

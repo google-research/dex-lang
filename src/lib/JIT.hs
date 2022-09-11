@@ -35,7 +35,7 @@ import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.String
 import Data.Foldable
-import Data.Text.Prettyprint.Doc
+import Prettyprinter
 import GHC.Stack
 import qualified Data.Set as S
 

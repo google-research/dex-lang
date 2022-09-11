@@ -18,7 +18,7 @@ import Data.Foldable
 import qualified Data.Map.Strict as M
 import Data.Int
 import Data.Store hiding (size)
-import Data.Text.Prettyprint.Doc  hiding (brackets)
+import Prettyprinter hiding (brackets)
 import Data.Word
 import System.IO (stderr, hPutStrLn)
 import Foreign.Ptr

@@ -26,7 +26,7 @@ import Data.Int
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Prettyprinter (Pretty (..))
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 import GHC.Exts (inline)

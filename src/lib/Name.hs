@@ -101,7 +101,7 @@ import Data.Hashable
 import Data.Kind (Type)
 import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Text.Prettyprint.Doc  hiding (nest)
+import Prettyprinter hiding (nest)
 import GHC.Stack
 import GHC.Exts (Constraint, dataToTag#, tagToEnum#, Int(..))
 import qualified GHC.Exts as GHC.Exts

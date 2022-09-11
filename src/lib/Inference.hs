@@ -25,7 +25,7 @@ import Data.Function ((&))
 import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Prettyprinter (Pretty (..))
 import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
