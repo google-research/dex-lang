@@ -48,11 +48,11 @@ def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
 
 ' # Round 3: Ordered dithering
   Ordered dithering uses a small threshold matrix that is periodically tiled over the target
-  image. We achieve this by wrapping the pixel indices i and j into the range
-  of the small matrix `mat` to retrieve the threshold.
+  image. We achieve this by wrapping the pixel indices i and j into the range of
+  the small matrix `mat` to retrieve the threshold.
 
 def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Bool) =
-  for i j. img.i.j > mat.(wrap mh (ordinal i)).(wrap mw (ordinal j))
+  for i j. img.i.j > mat.(wrap_periodic mh (ordinal i)).(wrap_periodic mw (ordinal j))
 
 bayer = [[1.0,  9,  3, 11], 
          [ 13,  5, 15,  7],
