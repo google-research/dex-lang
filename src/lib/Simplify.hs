@@ -39,7 +39,61 @@ import LabeledItems
 import Types.Primitives
 import Types.Core
 
--- === simplification monad ===
+-- === Simplification ===
+
+-- The purpose of simplification is that we want first-class functions
+-- in the surface language, but we don't want to deal with them when
+-- generating code.  To that end, simplification inlines almost all
+-- functions everywhere they appear.
+
+-- In particular, simplification also carries out AD by discharging
+-- the `Linearize` and `Transpose` constructors of `PrimHof`.
+
+-- The exception is functions explicitly tagged @noinline by the
+-- programmer.  Those, however, are second-class: they are all
+-- toplevel, and get specialized until they are first order.
+
+-- Currently, simplification also discharges `CatchException` by
+-- elaborating the expression into a Maybe-style monad.  Note: the
+-- plan is for `CatchException` to become a user-defined effect, and
+-- for simplification to discharge all of them.
+
+-- Simplification also discharges bulk record and variant operations
+-- by converting them into individual projections and constructors.
+
+-- Simplification also opportunistically does peep-hole optimizations:
+-- some constant folding, case-of-known-constructor, projecting known
+-- elements from products, etc; but is not guaranteed to find all such
+-- opportunities.
+
+-- Simplification happens after dictionary synthesis (`synthTopBlock`)
+-- and before lowering.  Its input invariants are therefore
+-- - PrimCon has no DictHole constructors
+-- - PrimOp has no
+--   - Low-level memory operations (part of Dex Abstract Machine).
+--   - Destination operations (part of Dex Abstract Machine).
+--   - Vector operations (incidental; simplification should handle
+--     these as written, but the input IR happens not to have them due
+--     to phase ordering).
+-- - PrimHof has no Dex abstract machine ops (currently Seq or
+--   RememberDest)
+
+-- The output invariants of simplification are all of the input
+-- invariants, and
+-- - Lambdas are only allowed in
+--   - the result of a top-level Block, or
+--   - immediately as arguments to `PrimHof` constructors
+-- - Non-table applications in decls can only refer to @noinline
+--   functions
+-- - PrimHof has no CatchException, Linearize, or Transpose constructors
+-- - PrimOp has no
+--   - ExplicitDict constructors
+--   - ThrowException constructors
+--   - RecordCons, RecordConsDynamic, RecordSplit, or
+--     RecordSplitDynamic constructors
+--   - VariantLift, VariantSplit, or VariantMake constructors
+
+-- === Simplification monad ===
 
 class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 

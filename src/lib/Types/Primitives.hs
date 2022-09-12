@@ -110,7 +110,7 @@ data PrimOp e =
       | PtrOffset e e
       | PtrLoad e
       | PtrStore e e
-      -- Destination ops
+      -- Destination operations
       | AllocDest e  -- type
       | Place e e    -- reference, value
       | Freeze e     -- reference
