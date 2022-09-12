@@ -1,5 +1,7 @@
 '# Netpbm
 
+'This is a basic loader for the .ppm P6 image format.
+
 import parser
 
 data Image =
