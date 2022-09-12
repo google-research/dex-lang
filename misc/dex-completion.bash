@@ -1,10 +1,5 @@
 #/usr/bin/env bash
 
-_get_dx_files()
-{
-    find . -name "*.dx"
-}
-
 _dex_completions()
 {
     COMPREPLY=();
