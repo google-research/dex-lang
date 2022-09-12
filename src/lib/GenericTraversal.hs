@@ -86,12 +86,15 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
-  EffOp _ _ _ -> substM atom -- TODO(alex): check correctness
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr
   DictTy (DictType sn cn params) ->
     DictTy <$> (DictType sn <$> substM cn <*> mapM tge params)
+  HandlerDictCon (HandlerDictExpr v r args) ->
+    HandlerDictCon <$> (HandlerDictExpr <$> substM v <*> tge r <*> mapM tge args)
+  HandlerDictTy (HandlerDictType sn effName) -> HandlerDictTy <$>
+    (HandlerDictType sn <$> substM effName)
   LabeledRow elems -> LabeledRow <$> traverseGenericE elems
   RecordTy elems -> RecordTy <$> traverseGenericE elems
   VariantTy ext -> VariantTy <$> traverseExtLabeledItems ext
