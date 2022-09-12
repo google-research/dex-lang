@@ -469,6 +469,8 @@ linearizeUnOp op x' = do
     Ceil   -> emitZeroT
     Round  -> emitZeroT
     LGamma -> notImplemented
+    Erf    -> notImplemented
+    Erfc   -> notImplemented
     FNeg   -> withT (neg x) (neg =<< tx)
     BNot   -> emitZeroT
 

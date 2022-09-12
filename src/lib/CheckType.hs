@@ -1034,6 +1034,8 @@ checkUnOp op x = do
       Ceil             -> (f, sr)
       Round            -> (f, sr)
       LGamma           -> (f, sr)
+      Erf              -> (f, sr)
+      Erfc             -> (f, sr)
       FNeg             -> (f, sr)
       BNot             -> (u, sr)
       where

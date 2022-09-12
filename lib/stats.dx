@@ -192,7 +192,12 @@ instance Dist NormalDist Float Float
   density = \(Normal loc scale) x.
     Exp $ -0.5 * (log (2 * pi * (sq scale)) + (sq ((x - loc) / scale)))
 
--- TODO: with some kind of "error function" (and inverse) exposed, could and should also implement OrderedDist
+instance OrderedDist NormalDist Float Float
+  cumulative = \(Normal loc scale) x.
+    Exp $ log (0.5 * erfc ((loc - x) / (scale * sqrt(2.0))))
+  survivor = \(Normal loc scale) x.
+    Exp $ log (0.5 * erfc ((x - loc) / (scale * sqrt(2.0))))
+  quantile = todo  -- Add `erfinv`.
 
 
 '### Poisson distribution
