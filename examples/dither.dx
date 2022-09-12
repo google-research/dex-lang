@@ -12,7 +12,7 @@
 
 import plot
 import png
-import parser
+import netpbm
 
 ' # Round 0: Creating a test image
 
@@ -81,38 +81,7 @@ halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
 
 ' # Dithering a real image
 
--- Image Loading Utilities
-
-data Image =
-  MkImage rows:Nat cols:Nat pixels:(Fin rows => Fin cols => Fin 3 => Word8)
-
-def parse_p6 : Parser Image = MkParser \h.
-  -- Loads a raw PPM file in P6 format.
-  -- The header will look something like:
-  --   P6
-  --   220 220    (width, height)
-  --   255        (max color value)
-  -- followed by a flat block of height x width x 3 chars.
-  parse h $ p_char 'P'
-  parse h $ p_char '6'
-  parse h $ parse_any
-  cols = i32_to_n $ parse h $ parse_unsigned_int
-  parse h $ parse_any
-  rows = i32_to_n $ parse h $ parse_unsigned_int
-  parse h $ parse_any
-  colorsize = i32_to_n $ parse h $ parse_unsigned_int
-  parse h $ parse_any
-  pixels = for r:(Fin rows).
-    for c:(Fin cols).
-      for c:(Fin 3).
-        parse h parse_any
-  MkImage rows cols pixels
-
-def load_image_p6 (filename:String) : Maybe Image =
-  image_raw = unsafe_io do read_file filename
-  run_parser_partial image_raw parse_p6
-
--- Conversion from RGB to grayscale
+-- conversion from RGB to grayscale
 
 def pixel (x:Char) : Float32 =
   r = w8_to_i x
@@ -131,7 +100,7 @@ def linear_to_srgb (c: Float) : Float =
     False -> 1.055 * (pow c (1.0 / 2.4)) - 0.055
 
 def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
-  vals = for c. srgb_to_linear ((pixel pix.c) / 255.0)
+  vals = for c. srgb_to_linear $ (pixel pix.c) / 255.0
   linear_to_srgb $ vdot vals [0.2126, 0.7152, 0.0722]
 
 
