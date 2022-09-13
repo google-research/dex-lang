@@ -922,12 +922,6 @@ instance {a b} Subset a (b|a)
     Left  x -> Nothing
     Right x -> Just x
 
-instance {a b} [NonEmpty b, Eq b] Subset a (a & b)
-  inject' = \x. (x, first_ix)
-  project' = \(x, y). case y == first_ix of
-    True  -> Just x
-    False -> Nothing
-
 instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
   inject' = \(UnsafeMkRangeFrom j).
     unsafe_from_ordinal _ $ j + ordinal i
@@ -2536,10 +2530,7 @@ instance {a b} [Ix a, Ix b] Ix (a=>b)
   ordinal             = reversed_digits_to_int
   unsafe_from_ordinal = int_to_reversed_digits
 
-instance {a b} [NonEmpty a, NonEmpty b] NonEmpty (a=>b)
-  first_ix = unsafe_from_ordinal _ 0
-
-instance {a b} [NonEmpty a, Ix b, Subset a b] NonEmpty b
+instance {a b} [Ix a, NonEmpty b] NonEmpty (a=>b)
   first_ix = unsafe_from_ordinal _ 0
 
 instance {a b} [NonEmpty b, Eq a, Eq b] Subset a (b=>a)
