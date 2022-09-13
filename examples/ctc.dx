@@ -144,4 +144,4 @@ sum for i:((Fin 2)=>Vocab). ls_to_f $ ctc blank logits i
 > 0.245854
 
 sum for i:((Fin 3)=>Vocab). ls_to_f $ ctc blank logits i
-> 0.565374
+> 0.565375
