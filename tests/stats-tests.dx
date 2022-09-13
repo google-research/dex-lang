@@ -163,6 +163,12 @@ ln (density (Normal 1.0 2.0) 3.0) ~~ -2.112086
 rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
 > [-1.93355, 4.198111, 0.529252, 0.018863, 2.921813]
 
+ln (cumulative (Normal 1.0 2.0) 0.5) ~~ -0.9130617
+> True
+
+ln (survivor (Normal 1.0 2.0) 0.1) ~~ -0.3950523
+> True
+
 -- poisson
 
 ln (density (Poisson 5.0) 8) ~~ -2.7291

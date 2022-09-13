@@ -182,7 +182,7 @@ data UnOp = Exp | Exp2
           | Log | Log2 | Log10 | Log1p
           | Sin | Cos | Tan | Sqrt
           | Floor | Ceil | Round
-          | LGamma
+          | LGamma | Erf | Erfc
           | FNeg | BNot
             deriving (Show, Eq, Generic)
 
