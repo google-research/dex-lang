@@ -1052,19 +1052,19 @@ first_ix :: ((Unit | Fin 2) | Fin 3)
 
 first_ix :: (Fin 0)
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0))
-> 
+>
 > first_ix :: (Fin 0)
 > ^^^^^^^^^
 
 first_ix :: (Fin 0 | Fin 0)
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0 | Fin 0))
-> 
+>
 > first_ix :: (Fin 0 | Fin 0)
 > ^^^^^^^^^
 
 first_ix :: (Fin 0 & Unit)
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0 & Unit))
-> 
+>
 > first_ix :: (Fin 0 & Unit)
 > ^^^^^^^^^
 
