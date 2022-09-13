@@ -46,9 +46,9 @@ Computes p(labels | logits), marginalizing over possible alignments and
 and marginalizes over insertion of blanks between characters.
 Todo: add a `[Subset position time]` constraint.
 
-def ctc {vocab time position} [NonEmpty vocab, NonEmpty position, NonEmpty time, Eq time, Eq vocab]
+def ctc_inner {vocab time position} [NonEmpty vocab, NonEmpty position, NonEmpty time, Eq time, Eq vocab]
     (blank: vocab)
-    (logits: time=>vocab=>(LogSpace Float))
+    (logits: time=>vocab=>LogSpace Float)
     (labels: position=>vocab)
       : LogSpace Float =
   ilabels = prepend_and_interleave blank labels
@@ -86,18 +86,45 @@ def ctc {vocab time position} [NonEmpty vocab, NonEmpty position, NonEmpty time,
   last_label + last_space
 
 
+def ctc {vocab time position} [Eq time, Eq vocab]
+    (blank: vocab)
+    (logits: time=>vocab=>LogSpace Float)
+    (labels: position=>vocab)
+      : LogSpace Float =
+
+  -- This is a wrapper function to check if any of the inputs are empty,
+  -- and cast them into a provably `NonEmpty` form if not.
+  -- If the compiler could generate `NonEmpty` instances for all
+  -- Fin N where N > 0, this function would be unnecessary.
+  if ((size vocab) > 0) && ((size time) > 0) && ((size position) > 0)
+    then
+      vocab_size_m1    = unsafe_nat_diff (size vocab) 1
+      time_size_m1     = unsafe_nat_diff (size time) 1
+      position_size_m1 = unsafe_nat_diff (size position) 1
+
+      vocab'    = (Unit | Fin vocab_size_m1)
+      time'     = (Unit | Fin time_size_m1)
+      position' = (Unit | Fin position_size_m1)
+
+      blank'  = unsafe_from_ordinal vocab' (ordinal blank)
+      logits' = for t:time'. for v:vocab'. logits.(unsafe_from_ordinal _ (ordinal t)).(unsafe_from_ordinal _ (ordinal v))
+      labels' = for p:position'.
+        unsafe_from_ordinal _ (ordinal labels.(unsafe_from_ordinal _ (ordinal p)))
+      
+      ctc_inner blank' logits' labels'
+    else zero
+
 '## Demo
 
--- Todo: Produce proofs that Fin N is NonEmpty for all N > 0
-Vocab = (Unit | Fin 5)
-blank:Vocab = first_ix
+Vocab = Fin 6
+blank:Vocab = 0@Vocab
 
 -- Create random logits
-Time = (Unit | Fin 3)
+Time = Fin 4
 logits : Time => Vocab => (LogSpace Float) = arb $ new_key 0
 
 -- Evaluate marginal probability of labels given logits
-labels = [(3@Vocab), (4@Vocab), (1@Vocab)] :: (Unit | Fin 2)=>Vocab
+labels = [(3@Vocab), (4@Vocab), (1@Vocab)]
 :p ls_to_f $ ctc blank logits labels
 > 0.00209
 
@@ -113,8 +140,8 @@ sum for i:Unit=>Vocab. ls_to_f $ ctc blank logits i
 > 0.031206
 
 -- (Fin N)=>Vocab is the set of all combinations of N tokens.
-sum for i:((Unit | Fin 1)=>Vocab). ls_to_f $ ctc blank logits i
+sum for i:((Fin 2)=>Vocab). ls_to_f $ ctc blank logits i
 > 0.245854
 
-sum for i:((Unit | Fin 2)=>Vocab). ls_to_f $ ctc blank logits i
+sum for i:((Fin 3)=>Vocab). ls_to_f $ ctc blank logits i
 > 0.565374
