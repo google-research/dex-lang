@@ -1042,7 +1042,7 @@ first_ix :: (Unit | Fin 2)=>(Unit | Fin 3)
 > [(Left ()), (Left ()), (Left ())]@(Unit | Fin 2)
 
 first_ix :: ((Unit | Fin 2) & (Unit | Fin 3))
-> ((Left ()), (Left (0@(Fin 3))))
+> ((Left ()), (Left ()))
 
 first_ix :: ((Unit | Fin 2) | Fin 3)
 > (Left (Left ()))
@@ -1073,9 +1073,3 @@ first_ix :: (Fin 0 & Unit)
 
 project Unit (inject (Unit | Fin 2) ())
 > (Just ())
-
-project Unit (inject (Unit & (Unit | Fin 2)) ())
-> (Just ())
-
-project Bool (inject (Bool=>Bool) True)
-> (Just True)
