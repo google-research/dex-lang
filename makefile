@@ -197,7 +197,7 @@ example-names := \
   isomorphisms fluidsim \
   sgd psd kernelregression nn \
   quaternions manifold-gradients schrodinger tutorial \
-  latex linear-maps
+  latex linear-maps dither
 # TODO: re-enable
 # fft vega-plotting
 
@@ -248,6 +248,21 @@ tutorial-data: $(tutorial-data)
 
 run-examples/tutorial: tutorial-data
 update-examples/tutorial: tutorial-data
+
+camera-sha256 = c5c69e1bf02f219b6e1c12c13405671425aa1c4dc130c1c380e7416a064341bc
+dither-data = camera
+dither-data := $(dither-data:%=examples/%)
+
+$(dither-data):
+	wget -qO $@.ppm https://gist.github.com/niklasschmitz/03be29c2850ac3bbdf6ce86229b71d8f/raw/300962b117fe8595913fb1f35db546b53974576c/$(@F).ppm
+	@echo $($(@F)-sha256) $@.ppm > $@.sha256
+	sha256sum -c $@.sha256
+	$(RM) $@.sha256
+
+.PHONY: dither-data
+dither-data: $(dither-data)
+run-examples/dither: dither-data
+update-examples/dither: dither-data
 
 tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests
 
@@ -388,3 +403,4 @@ clean:
 	$(STACK) clean
 	$(RM) src/lib/dexrt.bc
 	$(RM) $(tutorial-data)
+	$(RM) $(dither-data)

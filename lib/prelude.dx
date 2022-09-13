@@ -2236,6 +2236,9 @@ def reflect {n} [Ix n] (i:n) : n =
 def reverse {n a} (x:n=>a) : n=>a =
   for i. x.(reflect i)
 
+def wrap_periodic (n:Type) [Ix n] (i:Nat) : n = 
+  unsafe_from_ordinal n  $ mod i (size n)
+
 def pad_to {n a} (m:Type) [Ix m] (x:a) (xs:n=>a) : m=>a =
   n' = size n
   for i.

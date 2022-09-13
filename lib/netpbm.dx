@@ -1,0 +1,34 @@
+'# Netpbm
+
+'This is a basic loader for the .ppm P6 image format.
+
+import parser
+
+data Image =
+  MkImage rows:Nat cols:Nat pixels:(Fin rows => Fin cols => Fin 3 => Word8)
+
+def parse_p6 : Parser Image = MkParser \h.
+  -- Loads a raw PPM file in P6 format.
+  -- The header will look something like:
+  --   P6
+  --   220 220    (width, height)
+  --   255        (max color value)
+  -- followed by a flat block of height x width x 3 chars.
+  parse h $ p_char 'P'
+  parse h $ p_char '6'
+  parse h $ parse_any
+  cols = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  rows = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  colorsize = i32_to_n $ parse h $ parse_unsigned_int
+  parse h $ parse_any
+  pixels = for r:(Fin rows).
+    for c:(Fin cols).
+      for c:(Fin 3).
+        parse h parse_any
+  MkImage rows cols pixels
+
+def load_image_p6 (filename:String) : Maybe Image =
+  image_raw = unsafe_io do read_file filename
+  run_parser_partial image_raw parse_p6

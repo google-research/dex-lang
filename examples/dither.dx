@@ -1,0 +1,126 @@
+' # Dither.dx
+  "A common use of dither is converting a grayscale image to black and white, 
+   such that the density of black dots in the new image approximates 
+   the average gray level in the original." 
+  [From [https://en.wikipedia.org/wiki/Dither](https://en.wikipedia.org/wiki/Dither)]
+
+'Here we represent grayscale images as matrices of floats with continuous
+ values between 0 (white) and 1 (black). The quantized results after dithering 
+ will be matrices of booleans arising from a pixel-wise thresholding. 
+ Each dithering algorithm below uses its own rule of choosing a threshold value,
+ resulting in distinct styles.
+
+import plot
+import png
+import netpbm
+
+' # Round 0: Creating a test image
+
+def bmatshow {h w} (mat: h=>w=>Bool) : Html =
+  matshow for i j. b_to_f mat.i.j
+
+Height = Fin 100
+Width = Fin 300
+key = new_key 1234
+img_ = for i:Height. for j:Width. n_to_f ((ordinal i) + (ordinal j))
+img = img_ / (n_to_f (size Height + size Width))
+
+:t img
+> ((Fin 100) => (Fin 300) => Float32)
+:html matshow img
+> <html output>
+
+' # Round 1: Threshold dithering
+
+def dither_threshold {h w} (img: h=>w=>Float) : (h=>w=>Bool) =
+  for i j. img.i.j > 0.5
+
+:html bmatshow $ dither_threshold img
+> <html output>
+
+' # Round 2: Noise dithering
+
+def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
+  for i j. img.i.j > rand (ixkey k (i, j))
+
+:html bmatshow $ dither_noise key img
+> <html output>
+
+' # Round 3: Ordered dithering
+  Ordered dithering uses a small threshold matrix that is periodically tiled over the target
+  image. We achieve this by wrapping the pixel indices i and j into the range of
+  the small matrix `mat` to retrieve the threshold.
+
+def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Bool) =
+  for i j. img.i.j > mat.(wrap_periodic mh (ordinal i)).(wrap_periodic mw (ordinal j))
+
+bayer = [[1.0,  9,  3, 11], 
+         [ 13,  5, 15,  7],
+         [  4, 12,  2, 10],
+         [ 16,  8, 14,  6]] / 17.0
+
+' This so-called Bayer matrix leads to the distinctive crosshatch pattern
+  that was frequently used in old video games with limited color palettes.
+
+:html bmatshow $ dither_ordered bayer img
+> <html output>
+
+halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
+            [   7,   2,  1,  9, 26, 31, 32, 24],
+            [  11,   3,  4,  5, 22, 30, 29, 28],
+            [  15,   8, 12, 16, 18, 25, 21, 17],
+            [  19,  23, 27, 20, 14, 10,  6, 13],
+            [  26,  31, 32, 24,  7,  2,  1,  9],
+            [  22,  30, 29, 28, 11,  3,  4,  5],
+            [  18,  25, 21, 17, 15,  8, 12, 16]] / 33.0
+
+' Such a "halftone" matrix imitates an [old printing technique for newspapers](https://en.wikipedia.org/wiki/Halftone):
+
+:html bmatshow $ dither_ordered halftone img
+> <html output>
+
+' # Dithering a real image
+
+-- conversion from RGB to grayscale
+
+def pixel (x:Char) : Float32 =
+  r = w8_to_i x
+  i_to_f case r < 0 of
+    True -> 256 + r
+    False -> r
+
+def srgb_to_linear (c: Float) : Float =
+  case c <= 0.04045 of
+    True  -> c / 12.92
+    False -> pow ((c + 0.055) / 1.055) 2.4
+
+def linear_to_srgb (c: Float) : Float = 
+  case c <= 0.0031308 of
+    True  -> c * 12.92
+    False -> 1.055 * (pow c (1.0 / 2.4)) - 0.055
+
+def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
+  vals = for c. srgb_to_linear $ (pixel pix.c) / 255.0
+  linear_to_srgb $ vdot vals [0.2126, 0.7152, 0.0722]
+
+
+' To run this section, move the following .ppm image to examples
+
+'  `wget https://gist.github.com/niklasschmitz/03be29c2850ac3bbdf6ce86229b71d8f/raw/300962b117fe8595913fb1f35db546b53974576c/camera.ppm`
+
+(MkImage rows cols img_camera_rgb) = from_just $ load_image_p6 "examples/camera.ppm"
+img_camera = for i j. rbg_to_gray img_camera_rgb.i.j
+
+:t img_camera
+> ((Fin 427) => (Fin 640) => Float32)
+:html matshow img_camera
+> <html output>
+
+:html bmatshow $ dither_threshold img_camera
+> <html output>
+:html bmatshow $ dither_noise key img_camera
+> <html output>
+:html bmatshow $ dither_ordered bayer img_camera
+> <html output>
+:html bmatshow $ dither_ordered halftone img_camera
+> <html output>
