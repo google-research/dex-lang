@@ -13,6 +13,9 @@ instance {f} [Add f] Mul (LogSpace f)
 instance {f} [Sub f] Fractional (LogSpace f)
   divide = \(Exp la) (Exp lb). Exp $ la - lb
 
+instance Arbitrary (LogSpace Float)
+  arb = \k. Exp (randn k)
+
 instance {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] Add (LogSpace f)
   add = \(Exp la) (Exp lb).
     if (la > lb)
