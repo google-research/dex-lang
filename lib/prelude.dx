@@ -561,6 +561,9 @@ def last_ix {n} [NonEmpty n] : n =
 instance {n} [Ix n] NonEmpty (Post n)
   first_ix = unsafe_from_ordinal (Post n) 0
 
+instance NonEmpty Unit
+  first_ix = unsafe_from_ordinal _ 0
+
 '### Monoid
 A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
 This is a very useful and general calls of things.
@@ -745,6 +748,24 @@ instance Eq Bool
 instance Eq Unit
   (==) = \x y. True
 
+instance {a b} [Eq a, Eq b] Eq (a | b)
+  (==) = \x y. case x of
+    Left x -> case y of
+      Left y -> x == y
+      Right y -> False
+    Right x -> case y of
+      Left y -> False
+      Right y -> x == y
+
+instance {a} [Eq a] Eq (Maybe a)
+  (==) = \x y. case x of
+    Just x -> case y of
+      Just y -> x == y
+      Nothing -> False
+    Nothing -> case y of
+      Just y -> False
+      Nothing -> True
+
 instance Eq RawPtr
   (==) = \x y. raw_ptr_to_i64 x == raw_ptr_to_i64 y
 
@@ -798,6 +819,40 @@ instance {n} Ord (Fin n)
   (>) = \x y. ordinal x > ordinal y
   (<) = \x y. ordinal x < ordinal y
 
+instance Ix Bool
+  size = 2
+  ordinal = \b. case b of
+    False -> 0
+    True -> 1
+  unsafe_from_ordinal = \i. i > 0
+
+instance {a} [Ix a] Ix (Maybe a)
+  size = size a + 1
+  ordinal = \i. case i of
+    Just ai -> ordinal ai
+    Nothing -> size a
+  unsafe_from_ordinal = \o.
+    case o == size a of
+      False -> Just $ unsafe_from_ordinal _ o
+      True  -> Nothing
+
+instance NonEmpty Bool
+  first_ix = unsafe_from_ordinal _ 0
+
+instance {a b} [NonEmpty a, NonEmpty b] NonEmpty (a & b)
+  first_ix = unsafe_from_ordinal _ 0
+
+instance {a b} [Ix b, NonEmpty a] NonEmpty (a|b)
+  first_ix = unsafe_from_ordinal _ 0
+
+-- The below instance is valid, but causes "multiple candidate dictionaries"
+-- errors if both Left and Right are NonEmpty.
+-- instance {a b} [Ix a, NonEmpty b] NonEmpty (a|b)
+--  first_ix = unsafe_from_ordinal _ 0
+
+instance {a} [Ix a] NonEmpty (Maybe a)
+  first_ix = unsafe_from_ordinal _ 0
+
 def scan {a b n} [Ix n] (init:a) (body:n->a->(a&b)) : (a & n=>b) =
   swap $ run_state init \s. for i.
     c = get s
@@ -837,13 +892,6 @@ instance {a n} [Ord a] Ord (n=>a)
         fold EQ $ \i c. c <> (compare xs.i ys.i)
     f == LT
 
-instance Ix Bool
-  size = 2
-  ordinal = \b. case b of
-    False -> 0
-    True -> 1
-  unsafe_from_ordinal = \i. i > 0
-
 '## Subset class
 
 interface Subset a_sub a
@@ -861,6 +909,24 @@ instance {a b c} [Subset a b, Subset b c] Subset a c
   project' = \x. case project b x of
     Nothing -> Nothing
     Just y -> project a y
+
+instance {a b} Subset a (a|b)
+  inject' = \x. Left x
+  project' = \x. case x of
+    Left  x -> Just x
+    Right x -> Nothing
+
+instance {a b} Subset a (b|a)
+  inject' = \x. Right x
+  project' = \x. case x of
+    Left  x -> Nothing
+    Right x -> Just x
+
+instance {a b} [NonEmpty b, Eq b] Subset a (a & b)
+  inject' = \x. (x, first_ix)
+  project' = \(x, y). case y == first_ix of
+    True  -> Just x
+    False -> Nothing
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
   inject' = \(UnsafeMkRangeFrom j).
@@ -2359,3 +2425,15 @@ instance {a b} [Ix a, Ix b] Ix (a=>b)
   size = intpow (size b) (size a)
   ordinal             = reversed_digits_to_int
   unsafe_from_ordinal = int_to_reversed_digits
+
+instance {a b} [NonEmpty a, NonEmpty b] NonEmpty (a=>b)
+  first_ix = unsafe_from_ordinal _ 0
+
+instance {a b} [NonEmpty a, Ix b, Subset a b] NonEmpty b
+  first_ix = unsafe_from_ordinal _ 0
+
+instance {a b} [NonEmpty b, Eq a, Eq b] Subset a (b=>a)
+  inject' = \x. for j. x
+  project' = \table. case all for j. table.j == table.first_ix of
+    True  -> Just table.first_ix
+    False -> Nothing
