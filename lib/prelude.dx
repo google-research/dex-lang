@@ -2532,9 +2532,3 @@ instance {a b} [Ix a, Ix b] Ix (a=>b)
 
 instance {a b} [Ix a, NonEmpty b] NonEmpty (a=>b)
   first_ix = unsafe_from_ordinal _ 0
-
-instance {a b} [NonEmpty b, Eq a, Eq b] Subset a (b=>a)
-  inject' = \x. for j. x
-  project' = \table. case all for j. table.j == table.first_ix of
-    True  -> Just table.first_ix
-    False -> Nothing
