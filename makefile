@@ -384,9 +384,12 @@ pages-prelude: lib/prelude.dx
 	mkdir -p pages
 	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > pages/prelude.html
 
+pages/examples/tutorial.html: tutorial-data
+pages/examples/dither.html: dither-data
+
 pages/examples/%.html: examples/%.dx
 	mkdir -p pages/examples
-	$(dex) script $^ --outfmt html > $@
+	$(dex) script $< --outfmt html > $@
 
 pages/lib/%.html: lib/%.dx
 	mkdir -p pages/lib
