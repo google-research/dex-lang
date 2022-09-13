@@ -848,8 +848,15 @@ instance Pretty (ImpInstr n)  where
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
-  pretty (Alloc Stack t s) = "alloca" <+> p t <> "[" <> p s <> "]"
-  pretty (Alloc _ t s)     = "alloc"  <+> p t <> "[" <> p s <> "]"
+  pretty (Alloc loc t s) =
+    locStr <+> p t <> "[" <> sizeStr <> "]"
+    where
+      locStr = case loc of Stack -> "alloca"
+                           _     -> "alloc"
+      sizeStr = case s of
+        ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
+        _ -> p s
+
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"

@@ -1263,16 +1263,14 @@ unsafeFromOrdinal (IxType _ dict) i = do
 ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
 ordinal (IxType _ dict) idx = do
   f <- projMethod "ordinal" dict
-  natToRep <$> app f idx
+  unwrapNewtype <$> app f idx
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = natToRep <$> projMethod "size" dict
-
-natToRep :: Atom n -> Atom n
-natToRep x = getProjection [0] x
+indexSetSize (IxType _ dict) = unwrapNewtype <$> projMethod "size" dict
 
 repToNat :: Atom n -> Atom n
 repToNat x = Con $ Newtype NatTy x
+{-# INLINE repToNat #-}
 
 -- This works with `Nat` instead of `IndexRepTy` because it's used alongside
 -- user-defined instances.

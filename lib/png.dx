@@ -101,7 +101,7 @@ Html : Type = String
 Png  : Type = String
 Gif  : Type = String
 
-foreign "encodePNG" encodePNG : RawPtr -> NatRep -> NatRep -> {IO} (NatRep & RawPtr)
+foreign "encodePNG" encodePNG : RawPtr -> Word32 -> Word32 -> {IO} (Word32 & RawPtr)
 
 def make_png {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
   (AsList _ imgFlat) = to_list for (i,j,k). img.i.j.k

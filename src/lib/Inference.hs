@@ -948,7 +948,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     (liftM Var $ emit $ App f' (x':|[])) >>= matchRequirement
   UPrimExpr (OpExpr (ProjNewtype x)) -> do
     x' <- inferRho x >>= emitAtomToName
-    return $ ProjectElt (NE.fromList [0]) x'
+    return $ unwrapNewtype $ Var x'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
       xBlock <- buildBlockInf $ inferRho x

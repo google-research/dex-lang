@@ -31,7 +31,7 @@ m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
 
 %passes imp
 m' = m ** m
--- CHECK: alloc Float32[0x2710]
+-- CHECK: alloc Float32[10000]
 -- CHECK-NOT: alloc
 
 "don't unroll large table literals"

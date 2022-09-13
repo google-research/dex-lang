@@ -366,9 +366,11 @@ instance HasType Atom where
 
 isNewtype :: Type n -> Bool
 isNewtype ty = case ty of
-  TC _          -> True
+  TC Nat        -> True
+  TC (Fin _)    -> True
   TypeCon _ _ _ -> True
   RecordTy _    -> True
+  VariantTy _   -> True
   _ -> False
 
 projectNewtype :: Type o -> TypeQueryM i o (Type o)

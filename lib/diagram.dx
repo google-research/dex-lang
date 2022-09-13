@@ -13,7 +13,7 @@ data Geom =
 
 HtmlColor : Type = Fin 3 => Word8
 
-foreign "showHex" showHexFFI : Word8 -> {IO} (NatRep & RawPtr)
+foreign "showHex" showHexFFI : Word8 -> {IO} (Word32 & RawPtr)
 
 def showHex (x:Word8) : String = unsafe_io \().
   (n, ptr) = showHexFFI x
