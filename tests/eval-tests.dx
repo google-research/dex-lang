@@ -1074,7 +1074,7 @@ first_ix :: (Fin 0 & Unit)
 project Unit (inject (Unit | Fin 2) ())
 > (Just ())
 
-project Unit (inject (Unit & (Fin 2 | Unit)) ())
+project Unit (inject (Unit & (Unit | Fin 2)) ())
 > (Just ())
 
 project Bool (inject (Bool=>Bool) True)
