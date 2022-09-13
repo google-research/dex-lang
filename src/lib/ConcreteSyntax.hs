@@ -912,7 +912,7 @@ builtinNames = M.fromList
   , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
   , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
   , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
-  , ("erf", unary Erf), ("erfc", unary Erfc)
+  , ("erf", unary Erf),      ("erfc", unary Erfc)
   , ("sumToVariant"   , OpExpr $ SumToVariant ())
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
