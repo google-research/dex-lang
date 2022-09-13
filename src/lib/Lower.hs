@@ -61,18 +61,11 @@ type DestBlock = Abs Binder Block
 
 lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
-  effs <- extendEffRow (S.singleton IOEffect) <$> getEffects b
   resultDestTy <- RawRefTy <$> getType b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     Abs (destBinder:>resultDestTy) <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
-      -- TODO(apaszke): Do we still need to indirect through this
-      -- RememberDest?  `traverseBlockWithDest` returns an atom for
-      -- the answer now.
-      dest' <- emit . Hof . RememberDest dest =<<
-        buildLam noHint PlainArrow (sink resultDestTy) (sink effs) \dest' ->
-          traverseBlockWithDest (Var dest') b $> UnitVal
-      emitOp $ Freeze $ Var dest'
+      traverseBlockWithDest dest b $> UnitVal
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM LFS

@@ -294,7 +294,8 @@ translateTopLevel cc (Abs bs (Abs (destb:>destTy) body)) = do
       dest <- case destTy of
         RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
         _ -> error "Expected a reference type for body destination"
-      extendSubst (destb @> SubstVal dest) $ translateBlock Nothing body
+      extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
+      destToAtom dest
   refreshAbs ab \bs' ab' -> refreshAbs ab' \decls resultAtom -> do
     (results, recon) <- buildRecon (PairB bs' decls) resultAtom
     let funImpl = Abs bs' $ ImpBlock decls results
