@@ -31,6 +31,8 @@ jobs:
         wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz
         gunzip t10k-images-idx3-ubyte.gz t10k-labels-idx1-ubyte.gz
         mv t10k-images-idx3-ubyte t10k-labels-idx1-ubyte $GITHUB_WORKSPACE/examples/
+        wget https://gist.github.com/niklasschmitz/03be29c2850ac3bbdf6ce86229b71d8f/raw/300962b117fe8595913fb1f35db546b53974576c/camera.ppm
+        mv camera.ppm $GITHUB_WORKSPACE/examples/
 
     - name: Cache
       uses: actions/cache@v2
