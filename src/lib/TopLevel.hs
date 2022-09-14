@@ -551,7 +551,8 @@ evalBlock typed = do
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential opt
+      explicitIx <- emitIx opt
+      lowered <- checkPass LowerPass $ lowerFullySequential explicitIx
       evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}
@@ -650,7 +651,7 @@ toCFunction fname f = do
 mainFuncName :: SourceName
 mainFuncName = "entryFun"
 
-evalLLVM :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
+evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   PassCtx{..} <- getPassCtx
@@ -674,7 +675,7 @@ evalLLVM block = do
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
 
-evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
+evalBackend :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
