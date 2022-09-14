@@ -424,7 +424,7 @@ getTypePrimCon con = case con of
   DictHole _ ty -> substM ty
   HandlerHole _ ty -> substM ty
 
-dictExprType :: DictExpr i -> TypeQueryM i o (DictType o)
+dictExprType :: DictExpr i -> TypeQueryM i o (Type o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -432,20 +432,17 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM substM args
     ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map SubstVal args')
-    return $ DictType sourceName className params'
+    return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
-    DictTy dTy <- typeApp givenTy (toList args)
-    return dTy
+    typeApp givenTy (toList args)
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    DictTy dTy <- applySubst (bs @@> map SubstVal params) $
-                    superclassTypes superclasses !! i
-    return dTy
+    applySubst (bs @@> map SubstVal params) $ superclassTypes superclasses !! i
   IxFin n -> do
     n' <- substM n
-    ixDictType $ TC $ Fin n'
+    liftM DictTy $ ixDictType $ TC $ Fin n'
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -481,7 +478,7 @@ typeTabApp tabTy xs = go tabTy $ toList xs
       go resultTy' rest
 
 instance HasType DictExpr where
-  getTypeE e = DictTy <$> dictExprType e
+  getTypeE e = dictExprType e
 
 instance HasType HandlerDictExpr where
   getTypeE (HandlerDictExpr handlerName _ _) = do

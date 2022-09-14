@@ -383,7 +383,7 @@ instance CheckableE DataDefParams where
   checkE (DataDefParams params dicts) =
     DataDefParams <$> mapM checkE params <*> mapM checkE dicts
 
-dictExprType :: Typer m => DictExpr i -> m i o (DictType o)
+dictExprType :: Typer m => DictExpr i -> m i o (Type o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -392,22 +392,20 @@ dictExprType e = case e of
     args' <- mapM substM args
     checkArgTys bs args'
     ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map SubstVal args')
-    return $ DictType sourceName className params'
+    return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
-    DictTy dTy <- checkApp givenTy (toList args)
-    return dTy
+    checkApp givenTy (toList args)
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    DictTy dTy <- checkedApplyNaryAbs (Abs bs (superclassTypes superclasses !! i)) params
-    return dTy
+    checkedApplyNaryAbs (Abs bs (superclassTypes superclasses !! i)) params
   IxFin n -> do
     n' <- substM n
-    ixDictType $ TC $ Fin n'
+    liftM DictTy $ ixDictType $ TC $ Fin n'
 
 instance HasType DictExpr where
-  getTypeE e = DictTy <$> dictExprType e
+  getTypeE e = dictExprType e
 
 -- TODO(alex): copied from QueryType, need to actually _check_ things.
 instance HasType HandlerDictExpr where

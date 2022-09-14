@@ -24,7 +24,7 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unRNest, toRNest, NonEmptyNest (..),
+  Abs (..), Nest (..), RNest (..), unRNest, unRNestOnto, toRNest, NonEmptyNest (..),
   nonEmptyToNest, nestToNonEmpty,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
@@ -45,7 +45,7 @@ module Name (
   MonadIO1, MonadIO2,
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
-  applyAbs, applySubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
+  applyAbs, applySubst, applySubstPure, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, alphaEqPure,
   AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   AlphaHashableE (..), AlphaHashableB (..), EKey (..), EMap (..), ESet,
@@ -64,9 +64,9 @@ module Name (
   OutReaderT (..), OutReader (..), runOutReaderT,
   toSubstPairs, fromSubstPairs, SubstPair (..),
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..), ExtOutFrag (..),
-  hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept', liftHoistExcept, abstractFreeVars, abstractFreeVar,
-  abstractFreeVarsNoAnn,
+  hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, exchangeNameBinder,
+  HoistableE (..), HoistExcept (..), liftHoistExcept', liftHoistExcept,
+  abstractFreeVars, abstractFreeVar, abstractFreeVarsNoAnn,
   WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV, withScopeFromFreeVars, canonicalizeForPrinting,
   ClosedWithScope (..),
@@ -341,12 +341,13 @@ data RNest (binder::B) (n::S) (l::S) where
   REmpty ::                                   RNest binder n n
 
 unRNest :: RNest b n l -> Nest b n l
-unRNest rn = go Empty rn
-  where
-    go :: Nest b h l -> RNest b n h -> Nest b n l
-    go acc = \case
-      REmpty     -> acc
-      RNest bs b -> go (Nest b acc) bs
+unRNest rn = unRNestOnto Empty rn
+{-# INLINE unRNest #-}
+
+unRNestOnto :: Nest b h l -> RNest b n h -> Nest b n l
+unRNestOnto acc = \case
+  REmpty     -> acc
+  RNest bs b -> unRNestOnto (Nest b acc) bs
 
 toRNest :: Nest b n l -> RNest b n l
 toRNest n = go REmpty n
@@ -680,6 +681,9 @@ class BindsAtMostOneName (b::B) (c::C) | b -> c where
 class BindsAtMostOneName (b::B) (c::C)
   =>  BindsOneName (b::B) (c::C) | b -> c where
   binderName :: b i i' -> Name c i'
+  asNameBinder :: b i i' -> NameBinder c i i'
+  default asNameBinder :: b i i' -> NameBinder c i i'
+  asNameBinder b = UnsafeMakeBinder n where UnsafeMakeName n = binderName b
 
 instance Color c => ProvesExt  (NameBinder c) where
 
@@ -726,17 +730,21 @@ instance HoistableB b => HoistableB (NonEmptyNest b)
 instance SinkableB  b => SinkableB  (NonEmptyNest b)
 instance (BindsNames b, SinkableV v, SubstB v b) => SubstB v (NonEmptyNest b)
 
+applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
+               => Scope o -> SubstFrag v h i o -> e i -> e o
+applySubstPure scope substFrag x = do
+  let fullSubst = sink idSubst <>> substFrag
+  case tryApplyIdentitySubst fullSubst x of
+    Just x' -> x'
+    Nothing -> fmapNames scope (fullSubst !) x
+
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
            => Ext h o
            => SubstFrag v h i o -> e i -> m o (e o)
 applySubst substFrag x = do
   Distinct <- getDistinct
-  let fullSubst = sink idSubst <>> substFrag
-  case tryApplyIdentitySubst fullSubst x of
-    Just x' -> return x'
-    Nothing -> do
-      WithScope scope fullSubst' <- addScope fullSubst
-      sinkM $ fmapNames scope (fullSubst' !) x
+  scope <- unsafeGetScope
+  return $ applySubstPure scope substFrag x
 {-# INLINE applySubst #-}
 
 applyAbs :: ( SinkableV v, SinkableE e
@@ -2814,6 +2822,13 @@ exchangeBs (PairB b1 b2) =
   where
     UnsafeMakeScopeFrag frag = toScopeFrag b1
     fvs2 = freeVarsB b2
+
+-- NameBinder has no free vars, so there's no risk associated with hoisting.
+-- The scope is completely distinct, so their exchange doesn't create any accidental
+-- capture either.
+exchangeNameBinder :: (Distinct l, SinkableB b) => b n p -> NameBinder c p l -> PairB (NameBinder c) b n l
+exchangeNameBinder b nb = PairB (unsafeCoerceB nb) (unsafeCoerceB b)
+{-# INLINE exchangeNameBinder #-}
 
 hoistFilterNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistFilterNameSet b nameSet =
