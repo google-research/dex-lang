@@ -26,7 +26,7 @@ module Syntax (
     fieldRowElemsFromList, prependFieldRowElem, extRowAsFieldRowElems, fieldRowElemsAsExtRow,
     pattern StaticRecordTy, pattern RecordTyWithElems,
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
-    DictExpr (..), DictType (..),
+    DictExpr (..), DictType (..), HandlerDictExpr (..), HandlerDictType (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PtrLitVal (..), PtrSnapshot (..),
     AlwaysEqual (..),
     PrimEffect (..), PrimOp (..), PrimHof (..),

@@ -133,7 +133,7 @@ inferTopUDecl (UEffectDecl opTys effName opNames) result = do
   effName' <- emitEffectDef effDef
   opNames' <-
     forM (enumerate effOpSourceNames) \(i, opName) -> do
-      emitEffectOp effName' i opName
+      emitEffectOpDef effName' i opName
   let subst = effName @> effName' <.> opNames @@> opNames'
   UDeclResultDone <$> applySubst subst result
 -- TODO(alex): handle retEff
@@ -189,7 +189,9 @@ checkHandlerOp :: EmitsInf o
 checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) = do
   opName' <- substM opName
   -- TODO(alex): consider removing following redundancy
-  EffectOpDef effName' (OpIdx opIdx) (EffOp _ {- (UserEffect effName') -} _ (EffectOpType pol' opTy)) <- lookupEffectOpDef opName'
+  EffectOpDef effName' (OpIdx opIdx) <- lookupEffectOpDef opName'
+  EffectDef _ ops <- lookupEffectDef effName'
+  let (_, EffectOpType pol' opTy) = ops !! opIdx
   when (effName /= effName') $ throw TypeErr
     ("operation " ++ pprint opName ++ " does not belong to effect " ++ pprint effName)
   when (pol /= pol') $ throw TypeErr
@@ -1405,10 +1407,32 @@ inferUVar = \case
   UEffectVar _ -> do
     throw NotImplementedErr "inferUVar::UEffectVar"  -- TODO(alex): implement
   UEffectOpVar v -> do
-    EffectOpBinding (EffectOpDef _ _ op) <- lookupEnv v
-    return op
-  UHandlerVar _ -> do
-    throw NotImplementedErr "inferUVar::UHandlerVar"  -- TODO(alex): implement
+    -- the following should never fail due to operation index since
+    -- users cannot name the "return" operation
+    EffectOpBinding (EffectOpDef effName (OpIdx i)) <- lookupEnv v
+    EffectDef effSourceName _ <- lookupEffectDef effName
+    let holeTy = HandlerDictTy (HandlerDictType effSourceName effName)
+    let holeCon = Con (HandlerHole (AlwaysEqual Nothing) holeTy)
+    Var <$> (emit $ Op (Perform holeCon i))
+  UHandlerVar v -> liftBuilder $ buildHandlerLam v
+
+buildHandlerLam :: EmitsBoth n => HandlerName n -> BuilderM n (Atom n)
+buildHandlerLam v = do
+  HandlerBinding (HandlerDef effName _r _ns _hndEff _retTy _ _) <- lookupEnv v
+  -- TODO(alex): my eyes! the goggles do nothing! Probably need an
+  -- instance here or I'm missing something...
+  let hint_r = getNameHint ("r" :: String)
+  let hint_eff = getNameHint ("eff" :: String)
+  let hint_body = getNameHint ("body" :: String)
+  buildLam hint_r ImplicitArrow TyKind Pure $ \r ->
+    buildLam hint_eff ImplicitArrow (TC EffectRowKind) Pure $ \eff -> do
+      let bodyEff = EffectRow (S.singleton (UserEffect (sink effName))) (Just eff)
+      bodyTy <- buildNonDepPi noHint PlainArrow UnitTy bodyEff (Var (sink r))
+      let effRow = EffectRow (S.empty) (Just eff)
+      buildLam hint_body PlainArrow (Pi bodyTy) effRow $ \body -> do
+        -- TODO(alex): handle args to HDE below
+        let hDict = HandlerDictCon $ HandlerDictExpr (sink v) (Var (sink r)) []
+        emitOp $ Handle hDict (Var body)
 
 buildForTypeFromTabType :: EffectRow n -> TabPiType n -> InfererM i n (PiType n)
 buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do

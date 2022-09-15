@@ -265,6 +265,8 @@ instance HasDCE Effect
 instance HasDCE EffectOpType
 instance HasDCE DictExpr
 instance HasDCE DictType
+instance HasDCE HandlerDictExpr
+instance HasDCE HandlerDictType
 instance HasDCE FieldRowElems
 instance HasDCE FieldRowElem
 instance HasDCE DataDefParams

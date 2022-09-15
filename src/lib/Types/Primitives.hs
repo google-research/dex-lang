@@ -73,7 +73,9 @@ data PrimCon e =
       | ConRef (PrimCon e)
       -- Misc hacks
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
-      | DictHole (AlwaysEqual SrcPosCtx) e -- Only used during type inference
+      -- Only used during type inference
+      | DictHole (AlwaysEqual SrcPosCtx) e
+      | HandlerHole (AlwaysEqual SrcPosCtx) e  -- e is HandlerDictTy
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 newtype AlwaysEqual a = AlwaysEqual a
@@ -98,6 +100,7 @@ data PrimOp e =
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | Resume e e                   -- Resume from effect handler (type, arg)
       | Handle e e                   -- Call a handler (handler def, body)
+      | Perform e Int                -- Call an effect operation (handler dict) (op #)
       -- References
       | IndexRef e e
       | ProjRef Int e

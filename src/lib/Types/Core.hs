@@ -42,7 +42,7 @@ import Util (FileHash)
 
 import Types.Primitives
 import Types.Source
-import Types.Imp ( IExpr(ILit), IType, ImpFunName, ImpFunction )
+import Types.Imp
 
 -- === core IR ===
 
@@ -55,15 +55,18 @@ data Atom (n::S) =
  | DepPairTy (DepPairType n)
  | DepPair   (Atom n) (Atom n) (DepPairType n)
  | TypeCon SourceName (DataDefName n) (DataDefParams n)
+ -- TODO(alex): merge HandlerDict* into Dict*?
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
+ | HandlerDictCon (HandlerDictExpr n)
+ | HandlerDictTy (HandlerDictType n)
+ --
  | LabeledRow (FieldRowElems n)
  | RecordTy  (FieldRowElems n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
  | Con (Con n)
  | TC  (TC  n)
  | Eff (EffectRow n)
- | EffOp (Effect n) Int (EffectOpType n)
    -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
@@ -289,7 +292,15 @@ data DictExpr (n::S) =
  | IxFin (Atom n)
    deriving (Show, Generic)
 
-data EffDictType (n::S) = EffDictType SourceName (EffectName n) [Type n]
+data HandlerDictType (n::S) =
+    HandlerDictType SourceName (EffectName n)
+  deriving (Show, Generic)
+
+data HandlerDictExpr (n::S) =
+    HandlerDictExpr
+      (HandlerName n)
+      (Atom n)  -- r parameter (type of block body)
+      [Atom n]  -- other type-and-value parameters (some implicit)
   deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -438,15 +449,14 @@ deriving instance Show (Binding c n)
 data EffectOpDef (n::S) where
   EffectOpDef :: EffectName n  -- name of associated effect
               -> EffectOpIdx   -- index in effect definition
-              -> Atom n
               -> EffectOpDef n
   deriving (Show, Generic)
 
 instance GenericE EffectOpDef where
   type RepE EffectOpDef =
-    EffectName `PairE` LiftE EffectOpIdx `PairE` Atom
-  fromE (EffectOpDef name idx op) = name `PairE` LiftE idx `PairE` op
-  toE (name `PairE` LiftE idx `PairE` op) = EffectOpDef name idx op
+    EffectName `PairE` LiftE EffectOpIdx
+  fromE (EffectOpDef name idx) = name `PairE` LiftE idx
+  toE (name `PairE` LiftE idx) = EffectOpDef name idx
 
 instance SinkableE   EffectOpDef
 instance HoistableE  EffectOpDef
@@ -1065,15 +1075,16 @@ instance GenericE Atom where
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
-            ) (EitherE3
-  {- LabeledRow -} ( FieldRowElems )
-  {- RecordTy -}   ( FieldRowElems )
-  {- VariantTy -}  ( ExtLabeledItemsE Type AtomName )
             ) (EitherE5
+  {- HandlerDictCon -} ( HandlerDictExpr )
+  {- HandlerDictTy -}  ( HandlerDictType )
+  {- LabeledRow -}     ( FieldRowElems )
+  {- RecordTy -}       ( FieldRowElems )
+  {- VariantTy -}      ( ExtLabeledItemsE Type AtomName )
+            ) (EitherE4
   {- Con -}        (ComposeE PrimCon Atom)
   {- TC -}         (ComposeE PrimTC  Atom)
   {- Eff -}        EffectRow
-  {- EffOp -}      ( Effect `PairE` LiftE Int `PairE` EffectOpType )
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
             ) (EitherE2
   {- BoxedRef -}   ( Abs (NonDepNest BoxPtr) Atom )
@@ -1092,14 +1103,15 @@ instance GenericE Atom where
       LiftE sourceName `PairE` defName `PairE` params
     DictCon d -> Case2 $ Case3 d
     DictTy  d -> Case2 $ Case4 d
-    LabeledRow elems    -> Case3 $ Case0 $ elems
-    RecordTy elems -> Case3 $ Case1 elems
-    VariantTy extItems  -> Case3 $ Case2 $ ExtLabeledItemsE extItems
+    HandlerDictCon d -> Case3 $ Case0 $ d
+    HandlerDictTy d -> Case3 $ Case1 $ d
+    LabeledRow elems    -> Case3 $ Case2 $ elems
+    RecordTy elems -> Case3 $ Case3 elems
+    VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
-    EffOp eff idx ty -> Case4 $ Case3 $ eff `PairE` LiftE idx `PairE` ty
-    ACase scrut alts ty -> Case4 $ Case4 $ scrut `PairE` ListE alts `PairE` ty
+    ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
     BoxedRef ab -> Case5 $ Case0 ab
     DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
   {-# INLINE fromE #-}
@@ -1124,16 +1136,17 @@ instance GenericE Atom where
       Case4 d -> DictTy  d
       _ -> error "impossible"
     Case3 val -> case val of
-      Case0 elems -> LabeledRow elems
-      Case1 elems -> RecordTy elems
-      Case2 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case0 d     -> HandlerDictCon d
+      Case1 d     -> HandlerDictTy d
+      Case2 elems -> LabeledRow elems
+      Case3 elems -> RecordTy elems
+      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
       Case1 (ComposeE con) -> TC con
       Case2 effs -> Eff effs
-      Case3 (eff `PairE` LiftE idx `PairE` ty) -> EffOp eff idx ty
-      Case4 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
+      Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       _ -> error "impossible"
     Case5 val -> case val of
       Case0 ab -> BoxedRef ab
@@ -1424,6 +1437,30 @@ instance AlphaEqE            DictExpr
 instance AlphaHashableE      DictExpr
 instance SubstE Name         DictExpr
 instance SubstE AtomSubstVal DictExpr
+
+instance GenericE HandlerDictType where
+  type RepE HandlerDictType = LiftE SourceName `PairE` EffectName
+  fromE (HandlerDictType name effName) = (LiftE name `PairE` effName)
+  toE (LiftE name `PairE` effName) = HandlerDictType name effName
+
+instance SinkableE           HandlerDictType
+instance HoistableE          HandlerDictType
+instance AlphaEqE            HandlerDictType
+instance AlphaHashableE      HandlerDictType
+instance SubstE Name         HandlerDictType
+instance SubstE AtomSubstVal HandlerDictType
+
+instance GenericE HandlerDictExpr where
+  type RepE HandlerDictExpr = HandlerName `PairE` Atom `PairE` ListE Atom
+  fromE (HandlerDictExpr name r params) = (name `PairE` r `PairE` ListE params)
+  toE (name `PairE` r `PairE` ListE params) = (HandlerDictExpr name r params)
+
+instance SinkableE           HandlerDictExpr
+instance HoistableE          HandlerDictExpr
+instance AlphaEqE            HandlerDictExpr
+instance AlphaHashableE      HandlerDictExpr
+instance SubstE Name         HandlerDictExpr
+instance SubstE AtomSubstVal HandlerDictExpr
 
 instance GenericE Cache where
   type RepE Cache =
@@ -2174,6 +2211,8 @@ instance Store (InstanceBody n)
 instance Store (MethodType   n)
 instance Store (DictType n)
 instance Store (DictExpr n)
+instance Store (HandlerDictType n)
+instance Store (HandlerDictExpr n)
 instance Store (EffectDef n)
 instance Store (EffectOpDef n)
 instance Store (HandlerDef n)

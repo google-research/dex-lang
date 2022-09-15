@@ -979,11 +979,14 @@ instance (Color c, SinkableE atom, SubstE Name atom)
 instance (SinkableE atom, SubstE Name atom) => SubstV Name (SubstVal cMatch atom)
 
 -- TODO: we can fill out the full (N^2) set of instances if we need to
-instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
-instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
-instance ColorsNotEqual AtomNameC InstanceNameC   where notEqProof = \case
-instance ColorsNotEqual AtomNameC ImpFunNameC     where notEqProof = \case
-instance ColorsNotEqual AtomNameC PtrNameC        where notEqProof = \case
+instance ColorsNotEqual AtomNameC DataDefNameC  where notEqProof = \case
+instance ColorsNotEqual AtomNameC ClassNameC    where notEqProof = \case
+instance ColorsNotEqual AtomNameC EffectNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC EffectOpNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
+instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 

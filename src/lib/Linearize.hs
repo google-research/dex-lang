@@ -264,6 +264,10 @@ linearizeAtom atom = case atom of
           extendSubst (b@>i) $ linearizeBlock body
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
+  -- TODO(alex): check correctness
+  HandlerDictCon _ -> notImplemented
+  HandlerDictTy _ -> notImplemented
+  --
   DepPair _ _ _     -> notImplemented
   TypeCon _ _ _   -> emitZeroT
   LabeledRow _    -> emitZeroT
@@ -274,7 +278,6 @@ linearizeAtom atom = case atom of
   DepPairTy _     -> emitZeroT
   TC _            -> emitZeroT
   Eff _           -> emitZeroT
-  EffOp _ _ _     -> emitZeroT  -- TODO(alex): check correctness
   ProjectElt idxs v ->
     linearizeAtom (Var v) `bindLin` \x ->
       return $ getProjection (toList idxs) x
@@ -535,6 +538,7 @@ linearizePrimCon con = case con of
   ConRef _       -> error "Unexpected ref"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
+  HandlerHole _ _ -> error "Unexpected HandlerHole"
   where emitZeroT = withZeroT $ substM $ Con con
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom

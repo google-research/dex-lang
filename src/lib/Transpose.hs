@@ -250,6 +250,7 @@ transposeOp op ct = case op of
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
+  Perform _ _           -> unreachable
   ProjMethod _ _        -> unreachable
   ExplicitApply _ _     -> unreachable
   MonoLiteral _         -> unreachable
@@ -286,6 +287,8 @@ transposeAtom atom ct = case atom of
   TabLam _        -> notTangent
   DictCon _       -> notTangent
   DictTy _        -> notTangent
+  HandlerDictCon _ -> notTangent  -- TODO(alex): check correctness
+  HandlerDictTy _ -> notTangent   -- TODO(alex): check correctness
   TypeCon _ _ _   -> notTangent
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent
@@ -295,7 +298,6 @@ transposeAtom atom ct = case atom of
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
-  EffOp _ _ _     -> notTangent  -- TODO(alex): check correctness
   ACase _ _ _     -> error "Unexpected ACase"
   BoxedRef _       -> error "Unexpected ref"
   DepPairRef _ _ _ -> error "Unexpected ref"
@@ -362,6 +364,7 @@ transposeCon con ct = case con of
   ConRef _       -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
+  HandlerHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a
