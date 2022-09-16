@@ -2,7 +2,23 @@
 Probability distributions and other functions useful for statistical computing.
 
 '## Log-space floating point numbers
-When working with probability densities, mass functions, distributions, likelihoods, etc., we often work on a logarithmic scale to prevent floating point overflow/underflow. Working on the log scale makes `product` operations safe, since they correspond to addition on the log scale. However, when it comes to `sum` operations on the raw probability scale, care must be taken to avoid underflow by using a safe [log-sum-exp](https://en.wikipedia.org/wiki/LogSumExp) function. `LogSpace` stores the log value internally, but is "safe" for both `sum` and `product`, since addition is implemented using the log-sum-exp trick. Several of the functions in this library return values as a `LogSpace Float`. The internally stored logarithmic value can be extracted with `ln`, and the actual value being represented (the raw probability) can be computed with `ls_to_f`. Although it is safe to use `sum` on a value of type `n=>LogSpace f`, it may be slightly more accurate and/or performant to instead use `ls_sum`, which applies the standard max-sweep log-sum-exp trick directly, rather than relying on monoid reduction using `add`.
+When working with probability densities, mass functions, distributions,
+likelihoods, etc., we often work on a logarithmic scale to prevent floating
+point overflow/underflow. Working on the log scale makes `product` operations
+safe, since they correspond to addition on the log scale. However, when it
+comes to `sum` operations on the raw probability scale, care must be taken to
+avoid underflow by using a safe
+[log-sum-exp](https://en.wikipedia.org/wiki/LogSumExp) function.
+`LogSpace` stores the log value internally, but is "safe" for both `sum` and
+`product`, since addition is implemented using the log-sum-exp trick.
+
+'Several of the functions in this library return values as a `LogSpace Float`.
+The internally stored logarithmic value can be extracted with `ln`, and the
+actual value being represented (the raw probability) can be computed with
+`ls_to_f`. Although it is safe to use `sum` on a value of type
+`n=>LogSpace f`, it may be slightly more accurate and/or performant to instead
+ use `ls_sum`, which applies the standard max-sweep log-sum-exp trick directly,
+rather than relying on monoid reduction using `add`.
 
 data LogSpace f = Exp f
 
@@ -16,11 +32,25 @@ instance {f} [Sub f] Fractional (LogSpace f)
 instance Arbitrary (LogSpace Float)
   arb = \k. Exp (randn k)
 
+def is_finite {f} [Fractional f, Sub f, Mul f, Ord f] (x:f) : Bool =
+  -- Todo: Make polymorphic versions of these and put them in the prelude.
+  infinity = (divide one zero)
+  neg_infinity = sub zero infinity
+  not (x == infinity || x == neg_infinity)
+
+def log_add_exp {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] (la:f) (lb:f) : f =
+  infinity = (divide one zero)
+  neg_infinity = sub zero infinity
+  if la == infinity && lb == infinity
+    then infinity
+    else if la == neg_infinity && lb == neg_infinity
+      then neg_infinity
+      else if (la > lb)
+        then la + log1p (exp (lb - la))
+        else lb + log1p (exp (la - lb))
+
 instance {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] Add (LogSpace f)
-  add = \(Exp la) (Exp lb).
-    if (la > lb)
-      then Exp $ la + log1p (exp (lb - la))
-      else Exp $ lb + log1p (exp (la - lb))
+  add = \(Exp la) (Exp lb). Exp $ log_add_exp la lb
   zero = Exp (zero - (divide one zero))
 
 def f_to_ls {f} [Floating f] (a:f) : LogSpace f = Exp $ log a
@@ -29,11 +59,16 @@ def ls_to_f {f} [Floating f] ((Exp la):LogSpace f) : f = exp la
 
 def ln {f} [Floating f] ((Exp la):LogSpace f) : f = la
 
-def ls_sum {n f} [Floating f, Add f, Sub f, Ord f] (x:n=>LogSpace f) : LogSpace f =
-  lx = map ln x
-  m = maximum lx
-  Exp $ m + (log $ sum for i. exp (lx.i - m))
+def log_sum_exp {n f} [Fractional f, Sub f, Floating f, Mul f, Ord f] (xs:n=>f) : f =
+  m_raw = maximum xs
+  m = case is_finite m_raw of
+    True  -> m_raw
+    False -> zero
+  m + (log $ sum for i. exp (xs.i - m))
 
+def ls_sum {n f} [Fractional f, Sub f, Floating f, Mul f, Ord f] (x:n=>LogSpace f) : LogSpace f =
+  lx = map ln x
+  Exp $ log_sum_exp lx
 
 '## Probability distributions
 Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions which can be sampled should implement `Random`, and those which can be evaluated should implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.

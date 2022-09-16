@@ -36,6 +36,18 @@ ls_to_f (f_to_ls 0.4 * f_to_ls 0.5) ~~ 0.2
 ls_to_f (divide (f_to_ls 0.4) (f_to_ls 0.5)) ~~ 0.8
 > True
 
+Exp (-infinity) + Exp (-infinity)  -- ok
+> (Exp -Infinity)
+
+Exp (infinity) + Exp (infinity)
+> (Exp Infinity)
+
+ls_sum [Exp (-infinity), Exp (-infinity)]
+> (Exp -Infinity)
+
+ls_sum [Exp (infinity), Exp (infinity)]
+> (Exp Infinity)
+
 
 -- mainly cross-checking against results from R
 
