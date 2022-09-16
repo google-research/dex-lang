@@ -264,10 +264,6 @@ linearizeAtom atom = case atom of
           extendSubst (b@>i) $ linearizeBlock body
   DictCon _ -> notImplemented
   DictTy _  -> notImplemented
-  -- TODO(alex): check correctness
-  HandlerDictCon _ -> notImplemented
-  HandlerDictTy _ -> notImplemented
-  --
   DepPair _ _ _     -> notImplemented
   TypeCon _ _ _   -> emitZeroT
   LabeledRow _    -> emitZeroT
@@ -377,6 +373,7 @@ linearizeExpr expr = case expr of
           extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do
           applyLinToTangents $ sink linLam
+  Handle _ _ _ -> error "handlers should be gone by now"
 
 linearizeOp :: Emits o => Op i -> LinM i o Atom Atom
 linearizeOp op = case op of
@@ -538,7 +535,6 @@ linearizePrimCon con = case con of
   ConRef _       -> error "Unexpected ref"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
-  HandlerHole _ _ -> error "Unexpected HandlerHole"
   where emitZeroT = withZeroT $ substM $ Con con
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom

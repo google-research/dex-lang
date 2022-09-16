@@ -36,7 +36,6 @@ import Types.Core
 import Syntax
 import Name
 import PPrint ()
-import Core (lookupHandlerDef)
 
 -- === top-level API ===
 
@@ -260,8 +259,6 @@ instance HasType Atom where
       params' <- mapM substM params
       checkArgTys paramBs params'
       return TyKind
-    HandlerDictCon dictExpr -> getTypeE dictExpr
-    HandlerDictTy (HandlerDictType _ _) -> return TyKind
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     VariantTy row -> checkLabeledRow row $> TyKind
@@ -324,6 +321,13 @@ instance HasType Expr where
     Op   op  -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof
     Case e alts resultTy effs -> checkCase e alts resultTy effs
+    -- TODO(alex): actually check something here? this is a QueryType copy/paste
+    Handle hndName [] body -> do
+      hndName' <- substM hndName
+      r <- getTypeE body
+      instantiateHandlerType hndName' r []
+    -- TODO(alex): implement
+    Handle _ _ _  -> error "not implemented"
 
 instance HasType Block where
   getTypeE (Block NoBlockAnn Empty expr) = do
@@ -408,14 +412,6 @@ dictExprType e = case e of
 
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e
-
--- TODO(alex): copied from QueryType, need to actually _check_ things.
-instance HasType HandlerDictExpr where
-  getTypeE (HandlerDictExpr handlerName _ _) = do
-    handlerName' <- substM handlerName
-    (HandlerDef effName _ _ _ _ _ _) <- lookupHandlerDef handlerName'
-    (EffectDef effSourceName _) <- lookupEffectDef effName
-    return (HandlerDictTy $ HandlerDictType effSourceName effName)
 
 instance HasType DepPairType where
   getTypeE (DepPairType b ty) = do
@@ -533,7 +529,6 @@ typeCheckPrimCon con = case con of
     method |: methodTy
     return dictTy'
   DictHole _ ty -> checkTypeE TyKind ty
-  HandlerHole _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
@@ -721,9 +716,9 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  Perform hndDict i -> do
-    HandlerDictTy (HandlerDictType _ effName) <- getTypeE hndDict
-    EffectDef _ ops <- lookupEffectDef effName
+  Perform eff i -> do
+    Eff (OneEffect (UserEffect effName)) <- return eff
+    EffectDef _ ops <- substM effName >>= lookupEffectDef
     let (_, EffectOpType _pol lamTy) = ops !! i
     return lamTy
   ProjMethod dict i -> do
@@ -761,11 +756,6 @@ typeCheckPrimOp op = case op of
   -- TODO(alex): check the argument
   Resume retTy _argTy -> do
     checkTypeE TyKind retTy
-  -- TODO(alex): actually _check_ things (this is QueryType c&p)
-  Handle (HandlerDictCon hde) _ -> do
-    HandlerDictExpr hndName r args <- substM hde
-    instantiateHandlerType hndName r args
-  Handle _ _ -> error "Handler did not have literal dict as first arg"
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
@@ -1114,7 +1104,7 @@ instance CheckableE EffectRow where
     substM effRow
 
 declareEff :: Typer m => Effect o -> m i o ()
-declareEff eff = declareEffs $ oneEffect eff
+declareEff eff = declareEffs $ OneEffect eff
 
 declareEffs :: Typer m => EffectRow o -> m i o ()
 declareEffs effs = do
@@ -1204,7 +1194,7 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
   argTy <- checkScalar $ binderType b
   case bs of
     Empty -> do
-      assertEq eff (oneEffect IOEffect) ""
+      assertEq eff (OneEffect IOEffect) ""
       resultTys <- checkScalarOrPairType resultTy
       let cc = case length resultTys of
                  0 -> error "Not implemented"
