@@ -95,10 +95,6 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   TC  tc  -> TC  <$> mapM rec tc
   DictCon _ -> substM atom
   DictTy  _ -> substM atom
-  -- TODO(alex): check correctness
-  HandlerDictCon _ -> substM atom
-  HandlerDictTy  _ -> substM atom
-  --
   Eff _ -> substM atom
   TypeCon sn defName (DataDefParams params dicts) -> do
     defName' <- substM defName
@@ -167,6 +163,8 @@ evalExpr expr = case expr of
       extendSubst (b @> SubstVal UnitTy) $
         evalBlock body
     _ -> error $ "Not implemented: " ++ pprint expr
+  -- TODO(alex): implement
+  Handle _ _ _ -> error $ "Not implemented: " ++ pprint expr
 {-# SCC evalExpr #-}
 
 evalOp :: Interp m => Op i -> m i o (Atom o)

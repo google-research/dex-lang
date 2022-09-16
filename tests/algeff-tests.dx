@@ -53,23 +53,23 @@ def checkFloatNonNegative (x:Float) : {Exn} Float =
   check $ x >= 0.0
   x
 
--- catch_ \_.
---   checkFloatNonNegative (3.14)
--- > Compiler bug!
--- > Please report this at github.com/google-research/dex-lang/issues
--- >
--- > Expected scalar, got: (HandlerDictExpr catch_ Float32 [])
--- > CallStack (from HasCallStack):
--- >   error, called at src/lib/Imp.hs:1515:8 in dex-0.1.0.0-8hDfthyGTXmzhkTo2ydOn:Imp
+catch_ \_.
+  checkFloatNonNegative (3.14)
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Not implemented
+> CallStack (from HasCallStack):
+>   error, called at src/lib/Simplify.hs:214:19 in dex-0.1.0.0-8hDfthyGTXmzhkTo2ydOn:Simplify
 
--- catch_ \_.
---   checkFloatNonNegative (-1.0)
--- > Compiler bug!
--- > Please report this at github.com/google-research/dex-lang/issues
--- >
--- > Expected scalar, got: (HandlerDictExpr catch_ Float32 [])
--- > CallStack (from HasCallStack):
--- >   error, called at src/lib/Imp.hs:1515:8 in dex-0.1.0.0-8hDfthyGTXmzhkTo2ydOn:Imp
+catch_ \_.
+  checkFloatNonNegative (-1.0)
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Not implemented
+> CallStack (from HasCallStack):
+>   error, called at src/lib/Simplify.hs:214:19 in dex-0.1.0.0-8hDfthyGTXmzhkTo2ydOn:Simplify
 
 effect Counter
   def inc : Unit -> Unit

@@ -304,6 +304,7 @@ instance BindsEnv LamBinder where
                    (Just $ sink effects)
 
 instance BindsEnv PiBinder where
+  toEnvFrag :: Distinct l => PiBinder n l -> EnvFrag n l
   toEnvFrag (PiBinder b ty arr) =
     withExtEvidence b do
       let binding = toBinding $ sink $ PiBinding arr ty
