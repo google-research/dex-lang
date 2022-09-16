@@ -187,9 +187,7 @@ checkHandlerOp :: EmitsInf o
                -> UEffectOpDef i
                -> InfererM i o (Int, Block o)
 checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) = do
-  opName' <- substM opName
-  -- TODO(alex): consider removing following redundancy
-  EffectOpDef effName' (OpIdx opIdx) <- lookupEffectOpDef opName'
+  EffectOpDef effName' (OpIdx opIdx) <- substM opName >>= lookupEffectOpDef
   EffectDef _ ops <- lookupEffectDef effName'
   let (_, EffectOpType pol' opTy) = ops !! opIdx
   when (effName /= effName') $ throw TypeErr
@@ -202,7 +200,6 @@ checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) 
     -- TODO(alex): Pure is wrong... handle effects from handler def
     return $ naryPiTypeAsType (NaryPiType bs' Pure (sink retTy))
   -- TODO(alex): introduce resume into scope (with correct type)
-
   -- TODO(alex): handle pol
   opBody' <- buildBlockInf $ checkSigma opBody (sink internalOpTy)
   return (opIdx, opBody')
