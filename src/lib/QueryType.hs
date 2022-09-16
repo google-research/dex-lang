@@ -795,8 +795,8 @@ exprEffects expr = case expr of
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
     RememberDest _ f -> functionEffs f
-    where ioEff = (OneEffect IOEffect :: EffectRow o)
-          maybeIO d = case d of Just _ -> (<>ioEff); Nothing -> id
+    where maybeIO :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
+          maybeIO d = case d of Just _ -> (<>OneEffect IOEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
   Handle v _ body -> do
     HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef
