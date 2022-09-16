@@ -50,7 +50,6 @@ import Types.Core
 import Builder
 import CheckType ( CheckableE (..), asFFIFunType, checkHasType, asSpecializableFunction)
 #ifdef DEX_DEBUG
-import Types.Primitives
 import CheckType (checkTypesM)
 #endif
 import SourceRename
