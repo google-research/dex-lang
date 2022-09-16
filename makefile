@@ -271,6 +271,9 @@ tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests doc-f
 unit-tests:
 	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS)
 
+watch-unit-tests:
+	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS) --file-watch
+
 opt-tests: just-build
 	misc/file-check tests/opt-tests.dx $(dex) -O script
 
