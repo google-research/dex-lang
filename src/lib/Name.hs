@@ -36,7 +36,7 @@ module Name (
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowV, ShowB,
-  runScopeReaderT, runScopeReaderM, runSubstReaderT, liftSubstReaderT,
+  runScopeReaderT, runScopeReaderM, ScopeReaderM, runSubstReaderT, liftSubstReaderT,
   liftScopeReaderT, liftScopeReaderM, tryExtDistinct,
   ScopeReaderT (..), SubstReaderT (..),
   lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM, traverseNames,
