@@ -35,6 +35,8 @@ import System.CPUTime
 import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)
 
+import Err
+
 class IsBool a where
   toBool :: a -> Bool
 
@@ -272,7 +274,7 @@ zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
 zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
 
 zipErr :: MonadFail m => m a
-zipErr = fail "zip error"
+zipErr = fail $ "zip error. Call stack:\n" ++ printCurrentCallStack (getCurrentCallStack ())
 
 forMZipped :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m (f c)
 forMZipped xs ys f = zipWithZ f xs ys

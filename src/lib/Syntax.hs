@@ -104,7 +104,7 @@ module Syntax (
     naryLamExprAsAtom, naryPiTypeAsType,
     ObjectFile (..), ObjectFileName, CFunName, CFun (..),
     pattern IdxRepTy, pattern IdxRepVal,
-    pattern IIdxRepTy, pattern IIdxRepVal,
+    pattern IIdxRepTy, pattern IIdxRepVal, pattern IdxRepScalarBaseTy,
     pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy, pattern NatTy, pattern NatVal,

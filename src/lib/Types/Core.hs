@@ -643,6 +643,8 @@ instance HasArgType TabLamExpr where
   argType (TabLamExpr (_:>IxType ty _) _) = ty
 
 -- === Pattern synonyms ===
+pattern IdxRepScalarBaseTy :: ScalarBaseType
+pattern IdxRepScalarBaseTy = Word32Type
 
 -- Type used to represent indices and sizes at run-time
 pattern IdxRepTy :: Type n

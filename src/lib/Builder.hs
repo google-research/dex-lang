@@ -1278,10 +1278,10 @@ projectIxFinMethod :: EnvReader m => Int -> Atom n -> m n (Atom n)
 projectIxFinMethod methodIx n = liftBuilder do
   case methodIx of
     -- size
-    0 -> return n
+    0 -> return n  -- return type is Nat, not IdxRepTy
     -- ordinal
     1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
-           return $ ProjectElt (0 NE.:| []) ix
+           return $ ProjectElt (0 NE.:| []) ix  -- return type is Nat, not IdxRepTy
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow NatTy \ix ->
            return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix

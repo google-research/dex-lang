@@ -137,10 +137,10 @@ toImpExportedFunction cc lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs b
   let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
   dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
     (args, ptrs)   <- ccUnpackActuals ccCtx ccActuals
-    resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
-    resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
       traverse (translateBlock Nothing) $ fromListE argRecons
+    resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) (map SubstVal argAtoms)
+    resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []

@@ -67,7 +67,7 @@ class FinTabType(Type):
   size: int  # TODO Expr
   ty: Type
   def pprint(self) -> str:
-    return f'((Fin (%monoLit {self.size}))=>{self.ty.pprint()})'
+    return f'((Fin (%newtype Nat (%monoLit {self.size})))=>{self.ty.pprint()})'
 
 @dataclass
 class FinType(Type):
@@ -145,7 +145,7 @@ class NaryApp(Expr):
       fun_str = self.fun.pprint()
     else:
       fun_str = f'({self.fun.pprint()})'
-    return f'{fun_str} {arg_strs}'
+    return f'({fun_str} {arg_strs})'
 
 def App(fun, *args):
   return NaryApp(fun, args)
@@ -339,7 +339,7 @@ def dex_atom(jaxpr: core.Jaxpr) -> Atom:
   for v in jaxpr.outvars:
     if v.aval.dtype not in _io_dtypes:
       raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit output")
-  fin_decls = [Decl(v.name, FinType(IxRepLiteral(n))) for n, v in fin_cache.items()]
+  fin_decls = [Decl(v.name, FinType(NatLiteral(n))) for n, v in fin_cache.items()]
   block = Block(fin_decls + decls, expr)
   for v in reversed([*jaxpr.constvars, *jaxpr.invars]):
     if v.aval.dtype not in _io_dtypes:
@@ -410,11 +410,13 @@ expr_makers[lax.exp_p] = lambda ctx, x: App(Var('exp'), x)
 
 IX_REP_DTYPE = np.dtype('uint32')
 def IxRepLiteral(n): return Literal(n, IX_REP_DTYPE)
+def MkNat(n): return App(Prim('newtype'), Prim('Nat'), n)
+def NatLiteral(n): return MkNat(Literal(n, IX_REP_DTYPE))
 
 def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   idx_names = [ctx.fresh('i') for _ in range(len(shape))]
   dyn = iter(dyn_shape)
-  tys = [FinType(next(dyn) if d is None else IxRepLiteral(d)) for d in shape]
+  tys = [FinType(MkNat(next(dyn)) if d is None else NatLiteral(d)) for d in shape]
   idxs = [Var(idx_names[i]) for i in broadcast_dimensions]
   x_indexed = Idx(x, tuple(idxs)) if idxs else x
   return For(tuple(idx_names), tuple(tys), x_indexed)
@@ -448,7 +450,7 @@ def _make_bcast_expr(ctx, idx_names, out_shape, in_shape, x):
           in zip(idx_names[-ndim:], out_shape[-ndim:], in_shape)]
   return Idx(x, tuple(idxs))
 def unitIdx(ctx):
-  return App(Var('unsafe_from_ordinal'), ctx.Fin(1), IxRepLiteral(0))
+  return App(Var('unsafe_from_ordinal'), ctx.Fin(1), NatLiteral(0))
 
 expr_makers[lax.add_p] = partial(_broadcasting_binop, Prim('iadd'), Prim('fadd'))
 expr_makers[lax.sub_p] = partial(_broadcasting_binop, Prim('isub'), Prim('fsub'))
@@ -502,7 +504,7 @@ def _slice_lowering(ctx, x, start_indices, limit_indices, strides):
                               for sz in out_aval.shape)
   input_ixs = [Var(ix) if in_size == out_size else
                App(App(Var('unsafe_from_ordinal'), ctx.Fin(in_size)),
-                   BinOp(IxRepLiteral(start), '+', App(Var('ordinal'), Var(ix))))
+                   BinOp(NatLiteral(start), '+', App(Var('ordinal'), Var(ix))))
                for ix, in_size, out_size, start
                in zip(idx_names, in_aval.shape, out_aval.shape, start_indices)]
   return For(tuple(idx_names), tuple(idx_tys), Idx(x, tuple(input_ixs)))

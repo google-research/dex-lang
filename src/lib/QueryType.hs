@@ -17,7 +17,7 @@ module QueryType (
   numNaryPiArgs, naryLamExprType, specializedFunType,
   oneEffect, projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
-  isNewtype
+  isNewtype, wrapNewtypes, unwrapNewtypes
   ) where
 
 import Control.Category ((>>>))
@@ -364,6 +364,8 @@ instance HasType Atom where
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty
 
+-- === newtype conversion ===
+
 isNewtype :: Type n -> Bool
 isNewtype ty = case ty of
   TC Nat        -> True
@@ -384,6 +386,16 @@ projectNewtype ty = case ty of
   StaticRecordTy types -> return $ ProdTy $ toList types
   RecordTy _ -> throw CompilerErr "Can't project partially-known records"
   _ -> error $ "not a newtype: " ++ pprint ty
+
+-- adds newtypes (deeply) to a newtype-stripped atom
+wrapNewtypes :: EnvReader m => Type n -> Atom n -> m n (Atom n)
+wrapNewtypes ty x = do
+  case ty of
+    NatTy -> return $ Con $ Newtype NatTy x
+    _ -> return x -- TODO: handle other newtypes
+
+unwrapNewtypes :: EnvReader m => Atom n -> m n (Atom n)
+unwrapNewtypes = undefined -- TODO!
 
 getTypeRef :: HasType e => e i -> TypeQueryM i o (Type o)
 getTypeRef x = do

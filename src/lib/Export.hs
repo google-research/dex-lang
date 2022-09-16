@@ -14,7 +14,6 @@ module Export (
 
 import Data.List (intercalate)
 import Control.Monad
-
 import Name
 import Err
 import Syntax
@@ -48,7 +47,7 @@ prepareFunctionForExport' cc f = do
   argRecon <- case sig of
     ExportedSignature argSig _ _ -> do
       case sinkFromTop $ EmptyAbs argSig of
-        Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon argSig'
+        Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon naryPi argSig'
   f' <- asNaryLam naryPi f
   -- TODO: figure out how to handle specialization cache emissions when compiling for export
   fSimp <- simplifyTopFunctionAssumeNoTopEmissions f'
@@ -96,25 +95,45 @@ prepareFunctionForExport' cc f = do
             ety <- toExportType ty
             cont $ Nest (ExportResult (b:>ety)) Empty
 
-    exportArgRecon :: (EnvReader m, EnvExtender m) => Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Block) n)
-    exportArgRecon topArgs = go [] topArgs
+    exportArgRecon
+      :: (EnvReader m, EnvExtender m)
+      => NaryPiType n
+      -> Nest ExportArg n l
+      -> m n (Abs (Nest IBinder) (ListE Block) n)
+    exportArgRecon (NaryPiType (NonEmptyNest tb tbs) _ _) topArgs =
+      go [] (Abs (Nest tb tbs) UnitE) topArgs
       where
         go :: (EnvReader m, EnvExtender m)
-           => [Block n] -> Nest ExportArg n l -> m n (Abs (Nest IBinder) (ListE Block) n)
-        go argRecons = \case
-          Empty -> return $ Abs Empty $ ListE argRecons
+           => [Block n]
+           -> Abs (Nest PiBinder) UnitE n
+           -> Nest ExportArg n l
+           -> m n (Abs (Nest IBinder) (ListE Block) n)
+        go argRecons dexArgs = \case
+          Empty -> case dexArgs of
+            Abs Empty UnitE -> return $ Abs Empty $ ListE argRecons
+            _ -> error "zip error: dex args should correspond 1-to-1 with export args"
           Nest (ExportArg _ b) bs ->
-            refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) -> do
-              (ity, block) <- typeRecon (sink ety) $ Var $ binderName v'
-              Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) bs'
-              return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+            refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) ->
+              sinkM dexArgs >>= \case
+                Abs (Nest (PiBinder dexB dexArgTy _) restDexArgs) UnitE -> do
+                  -- get the current newtype-wrapped arg type
+                  -- pass it to type recon (who will use it to call `wrapWithNewtype` on the result
+                  -- to recur, wrap the var in the newtype and apply the subst
+                  (ity, block) <- typeRecon (sink ety) dexArgTy $ Var $ binderName v'
+                  dexArgAtom <- wrapNewtypes dexArgTy (Var $ binderName v')
+                  restDexArgs' <- applySubst (dexB@>SubstVal dexArgAtom) $ Abs restDexArgs UnitE
+                  Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) restDexArgs' bs'
+                  return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+                _ -> error "zip error: dex args should correspond 1-to-1 with export args"
 
-        typeRecon :: EnvExtender m => ExportType n -> Atom n -> m n (IType, Block n)
-        typeRecon ety v = case ety of
-          ScalarType sbt ->
-            return (Scalar sbt, Block (BlockAnn (BaseTy $ Scalar sbt) Pure) Empty v)
+        typeRecon :: EnvExtender m => ExportType n -> Type n -> Atom n -> m n (IType, Block n)
+        typeRecon ety dexTy v = case ety of
+          ScalarType sbt -> do
+            resultWrapped <- wrapNewtypes dexTy v
+            return (Scalar sbt, Block (BlockAnn (BaseTy $ Scalar sbt) Pure) Empty resultWrapped)
           RectContArrayPtr sbt shape -> do
-              block <- liftBuilder $ buildBlock $ tableAtom (sink v) (sink $ ListE shape) []
+              block <- liftBuilder $ buildBlock do
+                wrapNewtypes (sink dexTy) =<< tableAtom (sink v) (sink $ ListE shape) []
               return (PtrType (Heap CPU, Scalar sbt), block)
             where
               tableAtom :: Emits n => Atom n -> ListE ExportDim n
@@ -131,15 +150,17 @@ prepareFunctionForExport' cc f = do
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   unsafePtrLoad =<< ptrOffset basePtr offset
 
-              indexSetSizeFin n = projectIxFinMethod 0 n
+              indexSetSizeFin n = unwrapNewtype <$> projectIxFinMethod 0 n
               ordinalFin n ix = do
                 Lam (LamExpr b body) <- projectIxFinMethod 1 n
-                emitBlock =<< applySubst (b@>SubstVal ix) body
+                ordNat <- emitBlock =<< applySubst (b@>SubstVal ix) body
+                return $ unwrapNewtype ordNat
               dup x = (x, x)
 
     toExportType :: Fallible m => Type n -> m (ExportType n)
     toExportType ty = case ty of
       BaseTy (Scalar sbt) -> return $ ScalarType sbt
+      NatTy               -> return $ ScalarType IdxRepScalarBaseTy
       TabTy  _ _          -> case parseTabTy ty of
         Nothing  -> unsupported
         Just ety -> return ety
@@ -151,12 +172,12 @@ prepareFunctionForExport' cc f = do
       where
         go shape = \case
           BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
-
+          NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
           TabTy  (b:>(IxType (TC (Fin n)) _)) a -> do
             dim <- case n of
-              Var v       -> Just (ExportDimVar v)
-              IdxRepVal s -> Just (ExportDimLit $ fromIntegral s)
-              _           -> Nothing
+              Var v    -> Just (ExportDimVar v)
+              NatVal s -> Just (ExportDimLit $ fromIntegral s)
+              _        -> Nothing
             case hoist b a of
               HoistSuccess a' -> go (shape ++ [dim]) a'
               HoistFailure _  -> Nothing
@@ -173,8 +194,8 @@ exportDimToIxType dim = IxType (TC (Fin dim')) (DictCon $ IxFin dim')
 
 finArg :: ExportDim n -> Atom n
 finArg dim = case dim of
-  ExportDimVar v -> Var v
-  ExportDimLit n -> IdxRepVal (fromIntegral n)
+  ExportDimVar v -> Con $ Newtype NatTy $ Var v
+  ExportDimLit n -> NatVal $ fromIntegral n
 
 data ExportDim n =
    ExportDimVar (AtomName n)
