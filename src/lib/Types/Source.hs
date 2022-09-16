@@ -176,7 +176,8 @@ data UDecl (n::S) (l::S) where
     -> UDecl n l
   UHandlerDecl
     :: SourceNameOr (Name EffectNameC) n  -- effect name
-    -> Nest UPatAnnArrow n l'             -- type args
+    -> UBinder AtomNameC n b              -- body type argument
+    -> Nest UPatAnnArrow b l'             -- type args
     ->   UEffectRow l'                    -- returning effect
     ->   UType l'                         -- returning type
     ->   [UEffectOpDef l']                -- operation definitions

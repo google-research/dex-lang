@@ -160,11 +160,12 @@ topDecl = dropSrc topDecl' where
     methodTys' <- mapM expr methodTys
     return $ UEffectDecl (zipWith UEffectOpType methodPolicies methodTys')
       (fromString name) (toNest $ map fromString methodNames)
-  topDecl' (CHandlerDecl hName effName args ty methods) = do
+  topDecl' (CHandlerDecl hName effName bodyTyArg args ty methods) = do
+    let bodyTyArg' = fromString bodyTyArg
     args' <- concat <$> (mapM argument $ nary Juxtapose args)
     (effs, returnTy) <- optEffects $ effectsToTop ty
     methods' <- mapM effectOpDef methods
-    return $ UHandlerDecl (fromString effName) (toNest args')
+    return $ UHandlerDecl (fromString effName) bodyTyArg' (toNest args')
       effs returnTy methods' (fromString hName)
 
 -- This corresponds to tyConDef in the original parser.

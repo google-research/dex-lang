@@ -36,6 +36,7 @@ import Types.Core
 import Syntax
 import Name
 import PPrint ()
+import Core (lookupHandlerDef)
 
 -- === top-level API ===
 
@@ -157,17 +158,21 @@ instance CheckableB EnvFrag where
 
 instance Color c => CheckableE (Binding c) where
   checkE binding = case binding of
-    AtomNameBinding   atomNameBinding   -> AtomNameBinding <$> checkE atomNameBinding
-    DataDefBinding    dataDef           -> DataDefBinding  <$> checkE dataDef
-    TyConBinding      dataDefName     e -> TyConBinding    <$> substM dataDefName              <*> substM e
-    DataConBinding    dataDefName idx e -> DataConBinding  <$> substM dataDefName <*> pure idx <*> substM e
-    ClassBinding      classDef          -> ClassBinding    <$> substM classDef
-    InstanceBinding   instanceDef       -> InstanceBinding <$> substM instanceDef
-    MethodBinding className idx f       -> MethodBinding     <$> substM className <*> pure idx <*> substM f
+    AtomNameBinding   atomNameBinding   -> AtomNameBinding   <$> checkE atomNameBinding
+    DataDefBinding    dataDef           -> DataDefBinding    <$> checkE dataDef
+    TyConBinding      dataDefName     e -> TyConBinding      <$> substM dataDefName              <*> substM e
+    DataConBinding    dataDefName idx e -> DataConBinding    <$> substM dataDefName <*> pure idx <*> substM e
+    ClassBinding      classDef          -> ClassBinding      <$> substM classDef
+    InstanceBinding   instanceDef       -> InstanceBinding   <$> substM instanceDef
+    MethodBinding     className idx f   -> MethodBinding     <$> substM className   <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
     ModuleBinding     md                -> ModuleBinding     <$> substM md
     PtrBinding        ptr               -> PtrBinding        <$> return ptr
+    -- TODO(alex): consider checkE below?
+    EffectBinding     eff               -> EffectBinding     <$> substM eff
+    HandlerBinding    h                 -> HandlerBinding    <$> substM h
+    EffectOpBinding   op                -> EffectOpBinding   <$> substM op
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -224,6 +229,9 @@ instance HasType AtomName where
     atomBindingType <$> lookupEnv name'
   {-# INLINE getTypeE #-}
 
+instance HasType EffectOpType where
+  getTypeE (EffectOpType _ ty) = getTypeE ty
+
 instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> getTypeE name
@@ -252,6 +260,8 @@ instance HasType Atom where
       params' <- mapM substM params
       checkArgTys paramBs params'
       return TyKind
+    HandlerDictCon dictExpr -> getTypeE dictExpr
+    HandlerDictTy (HandlerDictType _ _) -> return TyKind
     LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     VariantTy row -> checkLabeledRow row $> TyKind
@@ -399,6 +409,14 @@ dictExprType e = case e of
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e
 
+-- TODO(alex): copied from QueryType, need to actually _check_ things.
+instance HasType HandlerDictExpr where
+  getTypeE (HandlerDictExpr handlerName _ _) = do
+    handlerName' <- substM handlerName
+    (HandlerDef effName _ _ _ _ _ _) <- lookupHandlerDef handlerName'
+    (EffectDef effSourceName _) <- lookupEffectDef effName
+    return (HandlerDictTy $ HandlerDictType effSourceName effName)
+
 instance HasType DepPairType where
   getTypeE (DepPairType b ty) = do
     checkB b \_ -> ty |: TyKind
@@ -515,6 +533,7 @@ typeCheckPrimCon con = case con of
     method |: methodTy
     return dictTy'
   DictHole _ ty -> checkTypeE TyKind ty
+  HandlerHole _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
@@ -702,6 +721,11 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  Perform hndDict i -> do
+    HandlerDictTy (HandlerDictType _ effName) <- getTypeE hndDict
+    EffectDef _ ops <- lookupEffectDef effName
+    let (_, EffectOpType _pol lamTy) = ops !! i
+    return lamTy
   ProjMethod dict i -> do
     DictTy (DictType _ className params) <- getTypeE dict
     def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
@@ -734,7 +758,14 @@ typeCheckPrimOp op = case op of
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
     return ty'
-  Resume _ _ -> throw NotImplementedErr "typeCheckPrimOp.Resume"
+  -- TODO(alex): check the argument
+  Resume retTy _argTy -> do
+    checkTypeE TyKind retTy
+  -- TODO(alex): actually _check_ things (this is QueryType c&p)
+  Handle (HandlerDictCon hde) _ -> do
+    HandlerDictExpr hndName r args <- substM hde
+    instantiateHandlerType hndName r args
+  Handle _ _ -> error "Handler did not have literal dict as first arg"
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

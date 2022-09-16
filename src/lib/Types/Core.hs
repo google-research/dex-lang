@@ -55,14 +55,19 @@ data Atom (n::S) =
  | DepPairTy (DepPairType n)
  | DepPair   (Atom n) (Atom n) (DepPairType n)
  | TypeCon SourceName (DataDefName n) (DataDefParams n)
+ -- TODO(alex): merge HandlerDict* into Dict*?
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
+ | HandlerDictCon (HandlerDictExpr n)
+ | HandlerDictTy (HandlerDictType n)
+ --
  | LabeledRow (FieldRowElems n)
  | RecordTy  (FieldRowElems n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
  | Con (Con n)
  | TC  (TC  n)
  | Eff (EffectRow n)
+   -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
  | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
@@ -94,6 +99,8 @@ type AtomName     = Name AtomNameC
 type ClassName    = Name ClassNameC
 type DataDefName  = Name DataDefNameC
 type EffectName   = Name EffectNameC
+type EffectOpName = Name EffectOpNameC
+type HandlerName  = Name HandlerNameC
 type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
@@ -285,6 +292,17 @@ data DictExpr (n::S) =
  | IxFin (Atom n)
    deriving (Show, Generic)
 
+data HandlerDictType (n::S) =
+    HandlerDictType SourceName (EffectName n)
+  deriving (Show, Generic)
+
+data HandlerDictExpr (n::S) =
+    HandlerDictExpr
+      (HandlerName n)
+      (Atom n)  -- r parameter (type of block body)
+      [Atom n]  -- other type-and-value parameters (some implicit)
+  deriving (Show, Generic)
+
 -- TODO: Use an IntMap
 newtype CustomRules (n::S) = CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
                              deriving (Semigroup, Monoid, Store)
@@ -418,12 +436,101 @@ data Binding (c::C) (n::S) where
   DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
   ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
   InstanceBinding   :: InstanceDef n                  -> Binding InstanceNameC   n
-  MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
+  MethodBinding     :: ClassName n   -> Int -> Atom n -> Binding MethodNameC     n
+  EffectBinding     :: EffectDef n                    -> Binding EffectNameC     n
+  HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
+  EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
   ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
   ObjectFileBinding :: ObjectFile n                   -> Binding ObjectFileNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
 deriving instance Show (Binding c n)
+
+data EffectOpDef (n::S) where
+  EffectOpDef :: EffectName n  -- name of associated effect
+              -> EffectOpIdx   -- index in effect definition
+              -> EffectOpDef n
+  deriving (Show, Generic)
+
+instance GenericE EffectOpDef where
+  type RepE EffectOpDef =
+    EffectName `PairE` LiftE EffectOpIdx
+  fromE (EffectOpDef name idx) = name `PairE` LiftE idx
+  toE (name `PairE` LiftE idx) = EffectOpDef name idx
+
+instance SinkableE   EffectOpDef
+instance HoistableE  EffectOpDef
+instance SubstE Name EffectOpDef
+
+data EffectOpIdx = ReturnOp | OpIdx Int
+  deriving (Show, Eq, Generic)
+
+data EffectDef (n::S) where
+  EffectDef :: SourceName
+            -> [(SourceName, EffectOpType n)]
+            -> EffectDef n
+
+instance GenericE EffectDef where
+  type RepE EffectDef =
+    LiftE SourceName `PairE` ListE (LiftE SourceName `PairE` EffectOpType)
+  fromE (EffectDef name ops) =
+    LiftE name `PairE` ListE (map (\(x, y) -> LiftE x `PairE` y) ops)
+  toE (LiftE name `PairE` ListE ops) =
+    EffectDef name (map (\(LiftE x `PairE` y)->(x,y)) ops)
+
+instance SinkableE EffectDef
+instance HoistableE  EffectDef
+instance AlphaEqE EffectDef
+instance AlphaHashableE EffectDef
+instance SubstE Name EffectDef
+instance SubstE AtomSubstVal EffectDef
+deriving instance Show (EffectDef n)
+deriving via WrapE EffectDef n instance Generic (EffectDef n)
+
+data HandlerDef (n::S) where
+  HandlerDef :: EffectName n
+             -> PiBinder n r -- body type arg
+             -> Nest PiBinder r l
+               -> EffectRow l
+               -> Type l     -- return type
+               -> [Block l]  -- effect operations
+               -> Block l    -- return body
+             -> HandlerDef n
+
+instance GenericE HandlerDef where
+  type RepE HandlerDef =
+    EffectName `PairE` Abs (PiBinder `PairB` Nest PiBinder) (EffectRow `PairE` Type `PairE` ListE Block `PairE` Block)
+  fromE (HandlerDef name bodyTyArg bs effs ty ops ret) =
+    name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)
+  toE (name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)) =
+    HandlerDef name bodyTyArg bs effs ty ops ret
+
+instance SinkableE HandlerDef
+instance HoistableE  HandlerDef
+instance AlphaEqE HandlerDef
+instance AlphaHashableE HandlerDef
+instance SubstE Name HandlerDef
+-- instance SubstE AtomSubstVal HandlerDef
+deriving instance Show (HandlerDef n)
+deriving via WrapE HandlerDef n instance Generic (HandlerDef n)
+
+data EffectOpType (n::S) where
+  EffectOpType :: UResumePolicy -> Type n -> EffectOpType n
+
+instance GenericE EffectOpType where
+  type RepE EffectOpType =
+    LiftE UResumePolicy `PairE` Type
+  fromE (EffectOpType pol ty) = LiftE pol `PairE` ty
+  toE (LiftE pol `PairE` ty) = EffectOpType pol ty
+
+instance SinkableE EffectOpType
+instance HoistableE  EffectOpType
+instance AlphaEqE EffectOpType
+instance AlphaHashableE EffectOpType
+instance SubstE Name EffectOpType
+instance SubstE AtomSubstVal EffectOpType
+deriving instance Show (EffectOpType n)
+deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
 data AtomBinding (n::S) =
    LetBound    (DeclBinding   n)
@@ -968,10 +1075,12 @@ instance GenericE Atom where
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
-            ) (EitherE3
-  {- LabeledRow -} ( FieldRowElems )
-  {- RecordTy -}   ( FieldRowElems )
-  {- VariantTy -}  ( ExtLabeledItemsE Type AtomName )
+            ) (EitherE5
+  {- HandlerDictCon -} ( HandlerDictExpr )
+  {- HandlerDictTy -}  ( HandlerDictType )
+  {- LabeledRow -}     ( FieldRowElems )
+  {- RecordTy -}       ( FieldRowElems )
+  {- VariantTy -}      ( ExtLabeledItemsE Type AtomName )
             ) (EitherE4
   {- Con -}        (ComposeE PrimCon Atom)
   {- TC -}         (ComposeE PrimTC  Atom)
@@ -994,9 +1103,11 @@ instance GenericE Atom where
       LiftE sourceName `PairE` defName `PairE` params
     DictCon d -> Case2 $ Case3 d
     DictTy  d -> Case2 $ Case4 d
-    LabeledRow elems    -> Case3 $ Case0 $ elems
-    RecordTy elems -> Case3 $ Case1 elems
-    VariantTy extItems  -> Case3 $ Case2 $ ExtLabeledItemsE extItems
+    HandlerDictCon d -> Case3 $ Case0 $ d
+    HandlerDictTy d -> Case3 $ Case1 $ d
+    LabeledRow elems    -> Case3 $ Case2 $ elems
+    RecordTy elems -> Case3 $ Case3 elems
+    VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
@@ -1025,9 +1136,11 @@ instance GenericE Atom where
       Case4 d -> DictTy  d
       _ -> error "impossible"
     Case3 val -> case val of
-      Case0 elems -> LabeledRow elems
-      Case1 elems -> RecordTy elems
-      Case2 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case0 d     -> HandlerDictCon d
+      Case1 d     -> HandlerDictTy d
+      Case2 elems -> LabeledRow elems
+      Case3 elems -> RecordTy elems
+      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
@@ -1324,6 +1437,30 @@ instance AlphaEqE            DictExpr
 instance AlphaHashableE      DictExpr
 instance SubstE Name         DictExpr
 instance SubstE AtomSubstVal DictExpr
+
+instance GenericE HandlerDictType where
+  type RepE HandlerDictType = LiftE SourceName `PairE` EffectName
+  fromE (HandlerDictType name effName) = (LiftE name `PairE` effName)
+  toE (LiftE name `PairE` effName) = HandlerDictType name effName
+
+instance SinkableE           HandlerDictType
+instance HoistableE          HandlerDictType
+instance AlphaEqE            HandlerDictType
+instance AlphaHashableE      HandlerDictType
+instance SubstE Name         HandlerDictType
+instance SubstE AtomSubstVal HandlerDictType
+
+instance GenericE HandlerDictExpr where
+  type RepE HandlerDictExpr = HandlerName `PairE` Atom `PairE` ListE Atom
+  fromE (HandlerDictExpr name r params) = (name `PairE` r `PairE` ListE params)
+  toE (name `PairE` r `PairE` ListE params) = (HandlerDictExpr name r params)
+
+instance SinkableE           HandlerDictExpr
+instance HoistableE          HandlerDictExpr
+instance AlphaEqE            HandlerDictExpr
+instance AlphaHashableE      HandlerDictExpr
+instance SubstE Name         HandlerDictExpr
+instance SubstE AtomSubstVal HandlerDictExpr
 
 instance GenericE Cache where
   type RepE Cache =
@@ -1718,19 +1855,23 @@ instance AlphaHashableE SolverBinding
 instance Color c => GenericE (Binding c) where
   type RepE (Binding c) =
     EitherE2
-      (EitherE6
+      (EitherE7
           AtomBinding
           DataDef
           (DataDefName `PairE` Atom)
           (DataDefName `PairE` LiftE Int `PairE` Atom)
           (ClassDef)
-          (InstanceDef))
-      (EitherE5
-          (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
+          (InstanceDef)
+          (ClassName `PairE` LiftE Int `PairE` Atom))
+      (EitherE7
           (ImpFunction)
           (ObjectFile)
           (Module)
-          (LiftE PtrLitVal))
+          (LiftE PtrLitVal)
+          (EffectDef)
+          (HandlerDef)
+          (EffectOpDef)
+      )
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
@@ -1738,11 +1879,14 @@ instance Color c => GenericE (Binding c) where
     DataConBinding    dataDefName idx e -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx `PairE` e
     ClassBinding      classDef          -> Case0 $ Case4 $ classDef
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ instanceDef
-    MethodBinding     className idx f   -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` f
-    ImpFunBinding     fun               -> Case1 $ Case1 $ fun
-    ObjectFileBinding objfile           -> Case1 $ Case2 $ objfile
-    ModuleBinding m                     -> Case1 $ Case3 $ m
-    PtrBinding p                        -> Case1 $ Case4 $ LiftE p
+    MethodBinding     className idx f   -> Case0 $ Case6 $ className `PairE` LiftE idx `PairE` f
+    ImpFunBinding     fun               -> Case1 $ Case0 $ fun
+    ObjectFileBinding objfile           -> Case1 $ Case1 $ objfile
+    ModuleBinding m                     -> Case1 $ Case2 $ m
+    PtrBinding p                        -> Case1 $ Case3 $ LiftE p
+    EffectBinding   effDef              -> Case1 $ Case4 $ effDef
+    HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
+    EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -1752,11 +1896,14 @@ instance Color c => GenericE (Binding c) where
     Case0 (Case3 (dataDefName `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx e
     Case0 (Case4 (classDef))                                -> fromJust $ tryAsColor $ ClassBinding      classDef
     Case0 (Case5 (instanceDef))                             -> fromJust $ tryAsColor $ InstanceBinding   instanceDef
-    Case1 (Case0 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
-    Case1 (Case1 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
-    Case1 (Case2 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
-    Case1 (Case3 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
-    Case1 (Case4 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
+    Case0 (Case6 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
+    Case1 (Case0 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
+    Case1 (Case1 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
+    Case1 (Case2 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
+    Case1 (Case3 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
+    Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
+    Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
+    Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2064,6 +2211,13 @@ instance Store (InstanceBody n)
 instance Store (MethodType   n)
 instance Store (DictType n)
 instance Store (DictExpr n)
+instance Store (HandlerDictType n)
+instance Store (HandlerDictExpr n)
+instance Store (EffectDef n)
+instance Store (EffectOpDef n)
+instance Store (HandlerDef n)
+instance Store (EffectOpType n)
+instance Store (EffectOpIdx)
 instance Store (SynthCandidates n)
 instance Store (ObjectFiles n)
 instance Store (Module n)

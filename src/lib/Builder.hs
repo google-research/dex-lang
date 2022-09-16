@@ -25,6 +25,7 @@ module Builder (
   buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr, asNaryLam,
   buildAlt, buildUnaryAtomAlt,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
+  emitEffectDef, emitHandlerDef, emitEffectOpDef,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
@@ -1037,6 +1038,20 @@ emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =
   emitBinding hint $ DataDefBinding dataDef
   where hint = getNameHint sourceName
+
+emitEffectDef :: (Mut n, TopBuilder m) => EffectDef n -> m n (EffectName n)
+emitEffectDef effectDef@(EffectDef name _) =
+  emitBinding (getNameHint name) $ EffectBinding effectDef
+
+emitHandlerDef :: (Mut n, TopBuilder m) => SourceName -> HandlerDef n -> m n (HandlerName n)
+emitHandlerDef name handlerDef =
+  emitBinding (getNameHint name) $ HandlerBinding handlerDef
+
+emitEffectOpDef :: (Mut n, TopBuilder m) => EffectName n -> Int -> SourceName -> m n (Name EffectOpNameC n)
+emitEffectOpDef effName i opName = do
+  let hint = getNameHint opName
+  let opDef = EffectOpDef effName (OpIdx i)
+  emitBinding hint $ EffectOpBinding opDef
 
 emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> m n (Name ClassNameC n)
 emitClassDef classDef@(ClassDef name _ _ _ _) =

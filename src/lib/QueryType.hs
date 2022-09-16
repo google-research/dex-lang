@@ -16,7 +16,8 @@ module QueryType (
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType, specializedFunType,
   oneEffect, projectionIndices, sourceNameType, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict
+  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
+  instantiateHandlerType,
   ) where
 
 import Control.Category ((>>>))
@@ -213,6 +214,9 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
 oneEffect :: Effect n -> EffectRow n
 oneEffect eff = EffectRow (S.singleton eff) Nothing
 
+userEffect :: EffectName n -> Atom n
+userEffect v = Eff (oneEffect (UserEffect v))
+
 projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Int]]
 projectionIndices ty = case ty of
   TypeCon _ defName _ -> do
@@ -236,9 +240,9 @@ sourceNameType v = do
       UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
       UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def -> return $ getClassTy def
       UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
-      UEffectVar   _ -> error "not implemented: sourceNameType::UEffectVar"
-      UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"
-      UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"
+      UEffectVar  v' -> getType $ userEffect v'
+      UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"  -- TODO(alex): implement
+      UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"   -- TODO(alex): implement
 
 typeBinOp :: BinOp -> BaseType -> BaseType
 typeBinOp binop xTy = case binop of
@@ -334,6 +338,9 @@ instance HasType Atom where
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
+    -- TODO(alex): check correctness
+    HandlerDictCon d -> getTypeE d
+    HandlerDictTy _ -> return TyKind
     LabeledRow _ -> return LabeledRowKind
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
@@ -415,6 +422,7 @@ getTypePrimCon con = case con of
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
+  HandlerHole _ ty -> substM ty
 
 dictExprType :: DictExpr i -> TypeQueryM i o (DictType o)
 dictExprType e = case e of
@@ -474,6 +482,13 @@ typeTabApp tabTy xs = go tabTy $ toList xs
 
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e
+
+instance HasType HandlerDictExpr where
+  getTypeE (HandlerDictExpr handlerName _ _) = do
+    handlerName' <- substM handlerName
+    (HandlerDef effName _ _ _ _ _ _) <- lookupHandlerDef handlerName'
+    (EffectDef effSourceName _) <- lookupEffectDef effName
+    return (HandlerDictTy $ HandlerDictType effSourceName effName)
 
 instance HasType Expr where
   getTypeE expr = case expr of
@@ -610,6 +625,11 @@ getTypePrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  Perform hndDict i -> do
+    HandlerDictTy (HandlerDictType _ effName) <- getTypeE hndDict
+    EffectDef _ ops <- lookupEffectDef effName
+    let (_, EffectOpType _pol lamTy) = ops !! i
+    return lamTy
   ProjMethod dict i -> do
     DictTy (DictType _ className params) <- getTypeE dict
     def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
@@ -630,7 +650,16 @@ getTypePrimOp op = case op of
   VectorSubref ref _ vty -> getTypeE ref >>= \case
     TC (RefType h _) -> TC . RefType h <$> substM vty
     ty -> error $ "Not a reference type: " ++ pprint ty
-  Resume _ _ -> throw NotImplementedErr "getTypePrimOp.Resume"
+  Resume retTy _ -> substM retTy
+  Handle (HandlerDictCon hde) _ -> do
+    HandlerDictExpr hndName r args <- substM hde
+    instantiateHandlerType hndName r args
+  Handle _ _ -> error "Handler did not have literal dict as first arg"
+
+instantiateHandlerType :: EnvReader m => HandlerName n -> Atom n -> [Atom n] -> m n (Type n)
+instantiateHandlerType hndName r args = do
+  HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
+  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =

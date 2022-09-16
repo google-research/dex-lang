@@ -70,6 +70,7 @@ data CTopDecl'
   | CEffectDecl SourceName [(SourceName, UResumePolicy, Group)]
   | CHandlerDecl SourceName -- Handler name
       SourceName -- Effect name
+      SourceName -- Body type parameter
       Group -- Handler arguments
       Group -- Handler type annotation
       [(SourceName, Maybe UResumePolicy, CBlock)] -- Handler methods
@@ -417,12 +418,13 @@ handlerDef = withSrc do
   handlerName <- anyName
   keyWord OfKW
   effectName <- anyName
+  bodyTyArg <- anyName
   args <- cGroupNoColon <|> pure (WithSrc Nothing CEmpty)
   void $ sym ":"
-  typeAnn <- cGroupNoEqual
+  retTy <- cGroupNoEqual
   methods <- onePerLine effectOpDef
   return $ CHandlerDecl (fromString handlerName) (fromString effectName)
-    args typeAnn methods
+    (fromString bodyTyArg) args retTy methods
 
 effectOpDef :: Parser (SourceName, Maybe UResumePolicy, CBlock)
 effectOpDef = do
@@ -705,7 +707,7 @@ leafGroupNoBrackets = do
     -- For exprs include view, for, rof, for_, rof_
     'v'  -> cFor  <|> CIdentifier <$> anyName
     'f'  -> cFor  <|> CIdentifier <$> anyName
-    'r'  -> cFor  <|> CIdentifier <$> anyName
+    'r'  -> cFor  <|> CIdentifier <$> (anyName <|> (keyWord ResumeKW >> return "resume"))
     'c'  -> cCase <|> CIdentifier <$> anyName
     'i'  -> cIf   <|> CIdentifier <$> anyName
     'd'  -> (CDo <$> (mayNotBreak $ keyWord DoKW >> cBlock)) <|> CIdentifier <$> anyName

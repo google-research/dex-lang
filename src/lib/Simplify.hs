@@ -493,6 +493,10 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   TypeCon _ _ _ -> substM atom
   DictCon d -> DictCon <$> substM d
   DictTy  t -> DictTy  <$> substM t
+  -- TODO(alex): check correctness
+  HandlerDictCon d -> HandlerDictCon <$> substM d
+  HandlerDictTy  t -> HandlerDictTy  <$> substM t
+  --
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
     _ -> error $ "Failed to simplify a record with a dynamic label: " ++ pprint atom'
