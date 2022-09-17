@@ -54,7 +54,7 @@ instance {a} Ix (AllButFirst a)
 instance {a} Subset (AllButFirst a) a
   inject' = \x. unsafe_from_ordinal _ ((ordinal x) + 1)
   project' = \x. case (ordinal x) < (size a) of
-    True  -> unsafe_from_ordinal _ ((ordinal x))
+    True  -> unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
     False -> Nothing
 
 
