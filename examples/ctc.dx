@@ -15,7 +15,9 @@ most implementations.
 
 import stats  -- for log-space representation of probabilities.
 
-'### Custom index set
+'## Custom index sets
+
+'### Fence and Posts
 Here we create a custom datatype and index set
 that interleaves the elements of a table with another set
 of values representing all the spaces in between those elements.
@@ -36,6 +38,24 @@ instance {a} [Ix a] Ix (FenceAndPosts a)
 
 instance {a} [NonEmpty a] NonEmpty (FenceAndPosts a)
   first_ix = unsafe_from_ordinal _ 0
+
+'### All but First
+Next we make an index set from any non-empty set
+that doesn't contain the first element.
+
+data AllButFirst n [NonEmpty n] =
+  MkAllButFirst n
+
+instance {a} Ix (AllButFirst a)
+  size = unsafe_nat_diff (size a) 1
+  ordinal = \(MkAllButFirst i). ordinal i
+  unsafe_from_ordinal = \o. MkAllButFirst $ unsafe_from_ordinal _ o
+
+instance {a} Subset (AllButFirst a) a
+  inject' = \x. unsafe_from_ordinal _ ((ordinal x) + 1)
+  project' = \x. case (ordinal x) < (size a) of
+    True  -> unsafe_from_ordinal _ ((ordinal x))
+    False -> Nothing
 
 
 '### Helper functions
@@ -82,19 +102,17 @@ def ctc_inner {vocab time position}
       ilabels.s == ilabels.s_minus_2
     else False
 
-  prob_seq_final = fold zero \time prev.
-    case time == first_ix of
-      True -> prob_seq_at_start
-      False -> for s.
-        prob_stay_same       = prev.s
-        prob_from_blank      = safe_idx_sub prev s 1
-        prob_from_last_token = safe_idx_sub prev s 2
+  prob_seq_final = fold prob_seq_at_start \t:(AllButFirst time) prev.
+    for s.
+      prob_stay_same       = prev.s
+      prob_from_blank      = safe_idx_sub prev s 1
+      prob_from_last_token = safe_idx_sub prev s 2
 
-        -- Equation 6 from CTC paper.
-        ans = if ilabels.s == blank || same_as_last s
-          then prob_stay_same + prob_from_blank
-          else prob_stay_same + prob_from_blank + prob_from_last_token
-        ans * label_probs.time.(ilabels.s)
+      -- Equation 6 from CTC paper.
+      ans = if ilabels.s == blank || same_as_last s
+        then prob_stay_same + prob_from_blank
+        else prob_stay_same + prob_from_blank + prob_from_last_token
+      ans * label_probs.(inject _ t).(ilabels.s)
 
   -- Sum over last two entries in the table.  Eq 8 from paper.
   end_with_label = prob_seq_final.(Fence last_ix)
