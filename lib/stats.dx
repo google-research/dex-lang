@@ -32,11 +32,12 @@ instance {f} [Sub f] Fractional (LogSpace f)
 instance Arbitrary (LogSpace Float)
   arb = \k. Exp (randn k)
 
-def is_finite {f} [Fractional f, Sub f, Mul f, Ord f] (x:f) : Bool =
+def is_infinite {f} [Fractional f, Sub f, Mul f, Ord f] (x:f) : Bool =
+  -- Note: According to this function, nan is not infinite.
   -- Todo: Make polymorphic versions of these and put them in the prelude.
   infinity = (divide one zero)
   neg_infinity = sub zero infinity
-  not (x == infinity || x == neg_infinity)
+  x == infinity || x == neg_infinity
 
 def log_add_exp {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] (la:f) (lb:f) : f =
   infinity = (divide one zero)
@@ -61,9 +62,9 @@ def ln {f} [Floating f] ((Exp la):LogSpace f) : f = la
 
 def log_sum_exp {n f} [Fractional f, Sub f, Floating f, Mul f, Ord f] (xs:n=>f) : f =
   m_raw = maximum xs
-  m = case is_finite m_raw of
-    True  -> m_raw
-    False -> zero
+  m = case is_infinite m_raw of
+    False -> m_raw
+    True  -> zero
   m + (log $ sum for i. exp (xs.i - m))
 
 def ls_sum {n f} [Fractional f, Sub f, Floating f, Mul f, Ord f] (x:n=>LogSpace f) : LogSpace f =
