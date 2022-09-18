@@ -36,10 +36,13 @@ ls_to_f (f_to_ls 0.4 * f_to_ls 0.5) ~~ 0.2
 ls_to_f (divide (f_to_ls 0.4) (f_to_ls 0.5)) ~~ 0.8
 > True
 
-Exp (-infinity) + Exp (-infinity)  -- ok
+
+-- Log-sum-exp
+
+Exp (-infinity) + Exp (-infinity)
 > (Exp -Infinity)
 
-Exp (infinity) + Exp (infinity)
+Exp infinity + Exp infinity
 > (Exp Infinity)
 
 ls_sum [Exp (-infinity), Exp (-infinity)]
@@ -47,6 +50,27 @@ ls_sum [Exp (-infinity), Exp (-infinity)]
 
 ls_sum [Exp (infinity), Exp (infinity)]
 > (Exp Infinity)
+
+Exp infinity + Exp (nan)
+> (Exp NaN)
+
+ls_sum [Exp (-infinity), Exp nan]
+> (Exp NaN)
+
+ln $ Exp nan
+> NaN
+
+is_infinite infinity
+> True
+
+is_infinite (-infinity)
+> True
+
+is_infinite 0.0
+> False
+
+is_infinite nan
+> False
 
 
 -- mainly cross-checking against results from R
@@ -262,7 +286,3 @@ variance_matrix (transpose [[1.0,2.0,3.0],[4.0,8.0,6.0]]) ~~ [[1,1],[1,4]]
 
 correlation_matrix (transpose [[1.0,2.0,3.0],[4.0,8.0,6.0]]) ~~ [[1,0.5],[0.5,1]]
 > True
-
-
--- eof
-
