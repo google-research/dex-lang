@@ -1,5 +1,6 @@
 '# Mandelbrot Set
 
+import complex
 import plot
 
 'Escape time algorithm
