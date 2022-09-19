@@ -120,17 +120,15 @@ instance SubstReader AtomSubstVal SimplifyM where
   getSubst :: SimplifyM i o (Subst AtomSubstVal i o)
   getSubst = SimplifyM (SubstReaderT ask)
 
+  -- TODO(alex): check that subst does not contain any effect/handler names?
   withSubst :: Subst AtomSubstVal i' o -> SimplifyM i' o a -> SimplifyM i o a
-  withSubst subst (SimplifyM (SubstReaderT (ReaderT f))) = 
-    SimplifyM $ SubstReaderT $ ReaderT \_ ->
-      DoubleBuilderT $ UnsafeMakeDoubleInplaceT $ StateT \scope -> 
-        UnsafeMakeInplaceT \env bs ->
-          ReaderT \simp ->
-            let (DoubleBuilderT (UnsafeMakeDoubleInplaceT (StateT st))) = f subst
-                (UnsafeMakeInplaceT inpl) = st scope
-                (ReaderT r) = inpl env bs
-             -- TODO(alex): check that subst does not contain any effect/handler names?
-             in r (unsafeCoerceE simp)
+  withSubst subst m =
+    let SimplifyM (SubstReaderT (ReaderT f)) = m
+     in SimplifyM $ SubstReaderT $ ReaderT \_ ->
+          let DoubleBuilderT (UnsafeMakeDoubleInplaceT (StateT st)) = f subst
+           in DoubleBuilderT $ UnsafeMakeDoubleInplaceT $ StateT \scope ->
+                let UnsafeMakeInplaceT inpl = st scope
+                 in UnsafeMakeInplaceT \env bs -> withReaderT unsafeCoerceE (inpl env bs)
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
