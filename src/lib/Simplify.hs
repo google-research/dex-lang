@@ -21,6 +21,7 @@ import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
+import qualified Data.Map as M
 import GHC.Exts (inline)
 
 import Err
@@ -38,12 +39,16 @@ import Transpose
 import LabeledItems
 import Types.Primitives
 import Types.Core
+import Control.Monad.Trans.State.Strict
 
 -- === simplification monad ===
 
 class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
 data WillLinearize = WillLinearize | NoLinearize
+
+type HandlerDict n = M.Map (EffectName n) (HandlerDef n)
+data SimplifyState n = SimplifyState WillLinearize (HandlerDict n)
 
 -- Note that the substitution carried in this monad generally maps AtomName i to
 -- simplified Atom o, but with one notable exception: top-level function names.
@@ -52,17 +57,32 @@ data WillLinearize = WillLinearize | NoLinearize
 -- elimination form for function is application, we do some extra handling in simplifyApp.
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM'
-    :: SubstReaderT AtomSubstVal (DoubleBuilderT  (ReaderT WillLinearize HardFailM)) i o a }
+    :: SubstReaderT AtomSubstVal (DoubleBuilderT (ReaderT (SimplifyState i) HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
-           , EnvReader, SubstReader AtomSubstVal, MonadFail
-           , Builder, HoistingTopBuilder)
+           , EnvReader, MonadFail, Builder, HoistingTopBuilder )
+
+instance SubstReader AtomSubstVal SimplifyM where
+  getSubst :: SimplifyM i o (Subst AtomSubstVal i o)
+  getSubst = SimplifyM (SubstReaderT ask)
+
+  withSubst :: Subst AtomSubstVal i' o -> SimplifyM i' o a -> SimplifyM i o a
+  withSubst subst (SimplifyM (SubstReaderT (ReaderT f))) = 
+    SimplifyM $ SubstReaderT $ ReaderT \_ ->
+      DoubleBuilderT $ UnsafeMakeDoubleInplaceT $ StateT \scope -> 
+        UnsafeMakeInplaceT \env bs ->
+          ReaderT \simp ->
+            let (DoubleBuilderT (UnsafeMakeDoubleInplaceT (StateT st))) = f subst
+                (UnsafeMakeInplaceT inpl) = st scope
+                (ReaderT r) = inpl env bs
+             -- TODO(alex): check that subst does not contain any effect/handler names?
+             in r (unsafeCoerceE simp)
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
   => (forall l. DExt n l => SimplifyM n l (e l))
   -> m n (e n)
 liftSimplifyM cont = do
-  Abs envFrag e <- liftM (runHardFail . flip runReaderT NoLinearize) $
+  Abs envFrag e <- liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize (M.empty))) $
     liftDoubleBuilderT $ runSubstReaderT (sink idSubst) $ runSimplifyM' cont
   emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
@@ -74,7 +94,7 @@ liftSimplifyMAssumeNoTopEmissions
   => (forall l. DExt n l => SimplifyM l l (e l))
   -> m n (e n)
 liftSimplifyMAssumeNoTopEmissions cont =
-  liftM (runHardFail . flip runReaderT NoLinearize) $
+  liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize (M.empty))) $
     liftDoubleBuilderTAssumeNoTopEmissions $
       runSubstReaderT (sink idSubst) $ runSimplifyM' cont
 {-# INLINE liftSimplifyMAssumeNoTopEmissions #-}
@@ -103,7 +123,7 @@ buildBlockSimplified m = do
 
 instance Simplifier SimplifyM
 
-instance MonadReader WillLinearize (SimplifyM i o) where
+instance MonadReader (SimplifyState i) (SimplifyM i o) where
   ask = SimplifyM $ SubstReaderT $ ReaderT \_ -> ask
   local f m = SimplifyM $ SubstReaderT $ ReaderT \s -> local f $ runSubstReaderT s $ runSimplifyM' m
 
@@ -343,11 +363,11 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
       -- We simplify all applications, except those that have custom linearizations
       -- and are inside a linearization operation.
       ask >>= \case
-        WillLinearize -> do
+        SimplifyState WillLinearize _ -> do
           lookupCustomRules v >>= \case
             Just (CustomLinearize _ _ _) -> return $ Var v
             Nothing -> doInline
-        NoLinearize -> doInline
+        SimplifyState NoLinearize _ -> doInline
       where
         doInline = do
           lookupAtomName v >>= \case
@@ -821,7 +841,7 @@ simplifyHof hof = case hof of
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
   Linearize lam -> do
-    (lam', IdentityReconAbs) <- local (const WillLinearize) $ simplifyLam lam
+    (lam', IdentityReconAbs) <- local (\(SimplifyState _ hnd) -> SimplifyState WillLinearize hnd) $ simplifyLam lam
     linearize lam'
   Transpose lam -> do
     (lam', IdentityReconAbs) <- simplifyLam lam
