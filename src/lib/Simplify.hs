@@ -104,7 +104,9 @@ data WillLinearize = WillLinearize | NoLinearize
 
 data HandlerInstance n = HandlerInstance (HandlerName n) [Atom n]
 type HandlerDict n = M.Map (EffectName n) (HandlerInstance n)
-data SimplifyState n = SimplifyState WillLinearize (HandlerDict n)
+data SimplifyState n = SimplifyState
+  { ssLinear :: WillLinearize
+  , ssHandlers :: HandlerDict n }
 
 emptySimplifyState :: SimplifyState n
 emptySimplifyState = SimplifyState NoLinearize M.empty
@@ -118,8 +120,7 @@ instance SinkableE SimplifyState where
 -- them, and we try to preserve their identity for as long as we can. Since the only
 -- elimination form for function is application, we do some extra handling in simplifyApp.
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
-  { runSimplifyM'
-    :: SubstReaderT AtomSubstVal (ReaderT1 SimplifyState (DoubleBuilderT HardFailM)) i o a }
+  { runSimplifyM' :: SubstReaderT AtomSubstVal (ReaderT1 SimplifyState (DoubleBuilderT HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, MonadFail, Builder, HoistingTopBuilder, SubstReader AtomSubstVal )
 
@@ -178,6 +179,13 @@ instance Simplifier SimplifyM
 instance MonadReader (SimplifyState o) (SimplifyM i o) where
   ask = SimplifyM $ SubstReaderT $ ReaderT \_ -> ask
   local f m = SimplifyM $ mapSubstReaderT (local f) (runSimplifyM' m)
+
+askHandlers :: SimplifyM i o (HandlerDict o)
+askHandlers = ssHandlers <$> ask
+
+extendHandlers :: EffectName o -> HandlerName o -> [Atom o] -> SimplifyM i o a -> SimplifyM i o a
+extendHandlers effName hndName args m = local extend' m
+  where extend' ss = ss { ssHandlers = M.insert effName (HandlerInstance hndName args) (ssHandlers ss)}
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance ScopableBuilder (SimplifyM i) where
@@ -285,8 +293,15 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
                   buildBlock $ simplifyBlock body
             liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
-  -- TODO(alex): implement
-  Handle _ _ _ -> error "Not implemented"
+  Handle hndName args blk -> do
+    -- TODO(alex): there is probably a bug with selecting the right
+    -- handler stack for performs inside of _ops, rather than inside of
+    -- blk
+    hndName' <- substM hndName
+    HandlerDef effName _r _params _effs _retTy _ops _retBody <- lookupHandlerDef hndName'
+    args' <- mapM simplifyAtom args
+    extendHandlers effName hndName' args' do
+      simplifyBlock blk
 
 caseComputingEffs
   :: forall m n. (MonadFail1 m, EnvReader m)
