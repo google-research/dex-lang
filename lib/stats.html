@@ -308,7 +308,22 @@ function render(renderMode) {
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Stats</h1>
 <p>Probability distributions and other functions useful for statistical computing.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Log-space floating point numbers</h2>
-<p>When working with probability densities, mass functions, distributions, likelihoods, etc., we often work on a logarithmic scale to prevent floating point overflow/underflow. Working on the log scale makes <code>product</code> operations safe, since they correspond to addition on the log scale. However, when it comes to <code>sum</code> operations on the raw probability scale, care must be taken to avoid underflow by using a safe <a href="https://en.wikipedia.org/wiki/LogSumExp">log-sum-exp</a> function. <code>LogSpace</code> stores the log value internally, but is &quot;safe&quot; for both <code>sum</code> and <code>product</code>, since addition is implemented using the log-sum-exp trick. Several of the functions in this library return values as a <code>LogSpace Float</code>. The internally stored logarithmic value can be extracted with <code>ln</code>, and the actual value being represented (the raw probability) can be computed with <code>ls_to_f</code>. Although it is safe to use <code>sum</code> on a value of type <code>n=&gt;LogSpace f</code>, it may be slightly more accurate and/or performant to instead use <code>ls_sum</code>, which applies the standard max-sweep log-sum-exp trick directly, rather than relying on monoid reduction using <code>add</code>.</p>
+<p>When working with probability densities, mass functions, distributions,
+likelihoods, etc., we often work on a logarithmic scale to prevent floating
+point overflow/underflow. Working on the log scale makes <code>product</code> operations
+safe, since they correspond to addition on the log scale. However, when it
+comes to <code>sum</code> operations on the raw probability scale, care must be taken to
+avoid underflow by using a safe
+<a href="https://en.wikipedia.org/wiki/LogSumExp">log-sum-exp</a> function.
+<code>LogSpace</code> stores the log value internally, but is &quot;safe&quot; for both <code>sum</code> and
+<code>product</code>, since addition is implemented using the log-sum-exp trick.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Several of the functions in this library return values as a <code>LogSpace Float</code>.
+The internally stored logarithmic value can be extracted with <code>ln</code>, and the
+actual value being represented (the raw probability) can be computed with
+<code>ls_to_f</code>. Although it is safe to use <code>sum</code> on a value of type
+<code>n=&gt;LogSpace f</code>, it may be slightly more accurate and/or performant to instead
+use <code>ls_sum</code>, which applies the standard max-sweep log-sum-exp trick directly,
+rather than relying on monoid reduction using <code>add</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span> <span class="type-name">Exp</span> f
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {f} [<span class="type-name">Add</span> f] <span class="type-name">Mul</span> (<span class="type-name">LogSpace</span> f)
@@ -318,11 +333,29 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {f} [<span class="type-name">Sub</span> f] <span class="type-name">Fractional</span> (<span class="type-name">LogSpace</span> f)
   divide <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> la <span class="symbol">-</span> lb
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">LogSpace</span> <span class="type-name">Float</span>)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">Exp</span> (randn k)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_infinite {f} [<span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (x<span class="command">:f</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  <span class="comment">-- Note: According to this function, nan is not infinite.
+</span>  <span class="comment">-- Todo: Make polymorphic versions of these and put them in the prelude.
+</span>  infinity <span class="symbol">=</span> (divide one zero)
+  neg_infinity <span class="symbol">=</span> sub zero infinity
+  x <span class="symbol">==</span> infinity <span class="symbol">||</span> x <span class="symbol">==</span> neg_infinity
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log_add_exp {f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (la<span class="command">:f</span>) (lb<span class="command">:f</span>) <span class="symbol">:</span> f <span class="symbol">=</span>
+  infinity <span class="symbol">=</span> (divide one zero)
+  neg_infinity <span class="symbol">=</span> sub zero infinity
+  <span class="keyword">if</span> la <span class="symbol">==</span> infinity <span class="symbol">&amp;&amp;</span> lb <span class="symbol">==</span> infinity
+    <span class="keyword">then</span> infinity
+    <span class="keyword">else</span> <span class="keyword">if</span> la <span class="symbol">==</span> neg_infinity <span class="symbol">&amp;&amp;</span> lb <span class="symbol">==</span> neg_infinity
+      <span class="keyword">then</span> neg_infinity
+      <span class="keyword">else</span> <span class="keyword">if</span> (la <span class="symbol">&gt;</span> lb)
+        <span class="keyword">then</span> la <span class="symbol">+</span> log1p (exp (lb <span class="symbol">-</span> la))
+        <span class="keyword">else</span> lb <span class="symbol">+</span> log1p (exp (la <span class="symbol">-</span> lb))
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] <span class="type-name">Add</span> (<span class="type-name">LogSpace</span> f)
-  add <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span>
-    <span class="keyword">if</span> (la <span class="symbol">&gt;</span> lb)
-      <span class="keyword">then</span> <span class="type-name">Exp</span> <span class="symbol">$</span> la <span class="symbol">+</span> log1p (exp (lb <span class="symbol">-</span> la))
-      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> lb <span class="symbol">+</span> log1p (exp (la <span class="symbol">-</span> lb))
+  add <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log_add_exp la lb
   zero <span class="symbol">=</span> <span class="type-name">Exp</span> (zero <span class="symbol">-</span> (divide one zero))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_ls {f} [<span class="type-name">Floating</span> f] (a<span class="command">:f</span>) <span class="symbol">:</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log a
@@ -331,12 +364,17 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ln {f} [<span class="type-name">Floating</span> f] ((<span class="type-name">Exp</span> la)<span class="symbol">:</span><span class="type-name">LogSpace</span> f) <span class="symbol">:</span> f <span class="symbol">=</span> la
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ls_sum {n f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> f) <span class="symbol">:</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span>
-  lx <span class="symbol">=</span> map ln x
-  m <span class="symbol">=</span> maximum lx
-  <span class="type-name">Exp</span> <span class="symbol">$</span> m <span class="symbol">+</span> (log <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> exp (lx<span class="symbol">.</span>i <span class="symbol">-</span> m))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log_sum_exp {n f} [<span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>f) <span class="symbol">:</span> f <span class="symbol">=</span>
+  m_raw <span class="symbol">=</span> maximum xs
+  m <span class="symbol">=</span> <span class="keyword">case</span> is_infinite m_raw <span class="keyword">of</span>
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> m_raw
+    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> zero
+  m <span class="symbol">+</span> (log <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> exp (xs<span class="symbol">.</span>i <span class="symbol">-</span> m))
 </div></div><div class="cell"><div class="code-block">
-
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ls_sum {n f} [<span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> f) <span class="symbol">:</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span>
+  lx <span class="symbol">=</span> map ln x
+  <span class="type-name">Exp</span> <span class="symbol">$</span> log_sum_exp lx
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Probability distributions</h2>
 <p>Simulation and evaluation of <a href="https://en.wikipedia.org/wiki/Probability_distribution">probability distributions</a>. Probability distributions which can be sampled should implement <code>Random</code>, and those which can be evaluated should implement the <code>Dist</code> interface. Distributions over an ordered space (such as typical <em>univariate</em> distributions) should also implement <code>OrderedDist</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Random</span> d a

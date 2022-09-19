@@ -16,7 +16,7 @@
 - [examples/particle-swarm-optimizer.dx](examples/particle-swarm-optimizer.html): Particle Swarm Optimizer
 - [examples/ode-integrator.dx](examples/ode-integrator.html): ODE Integrator
 - [examples/mcmc.dx](examples/mcmc.html): Markov Chain Monte Carlo
-- [examples/ctc.dx](examples/ctc.html): Connectionist Temporal Classification
+- [examples/ctc.dx](examples/ctc.html): [Connectionist Temporal Classification](https://www.cs.toronto.edu/~graves/icml_2006.pdf)
 - [examples/raytrace.dx](examples/raytrace.html): Multi-step Ray Tracer
 - [examples/particle-filter.dx](examples/particle-filter.html): Particle Filter
 - [examples/isomorphisms.dx](examples/isomorphisms.html): Isomorphisms in Dex

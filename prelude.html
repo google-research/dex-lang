@@ -849,6 +849,9 @@ Here we define several basic kinds, and some operators on them.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} [<span class="type-name">Ix</span> n] <span class="type-name">NonEmpty</span> (<span class="type-name">Post</span> n)
   first_ix <span class="symbol">=</span> unsafe_from_ordinal (<span class="type-name">Post</span> n) 0
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> <span class="type-name">Unit</span>
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Monoid</h3>
 <p>A <a href="https://en.wikipedia.org/wiki/Monoid">monoid</a> is a things that have an associative binary operator and an identity element.
 This is a very useful and general calls of things.
@@ -1028,6 +1031,24 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> <span class="type-name">Unit</span>
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">True</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Eq</span> a<span class="symbol">,</span> <span class="type-name">Eq</span> b] <span class="type-name">Eq</span> (a <span class="symbol">|</span> b)
+  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">Left</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
+      <span class="type-name">Left</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
+      <span class="type-name">Right</span> y <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+    <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
+      <span class="type-name">Left</span> y <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      <span class="type-name">Right</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (<span class="type-name">Maybe</span> a)
+  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">Just</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
+      <span class="type-name">Just</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
+      <span class="type-name">Just</span> y <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">True</span>
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> <span class="type-name">RawPtr</span>
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> raw_ptr_to_i64 x <span class="symbol">==</span> raw_ptr_to_i64 y
 </div></div><div class="cell"><div class="code-block">
@@ -1081,6 +1102,40 @@ i.e. things that can be compared to other things to find if larger, smaller or e
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&gt;</span> ordinal y
   (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&lt;</span> ordinal y
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> <span class="type-name">Bool</span>
+  size <span class="symbol">=</span> 2
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>b<span class="symbol">.</span> <span class="keyword">case</span> b <span class="keyword">of</span>
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> 0
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> i <span class="symbol">&gt;</span> 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Ix</span> a] <span class="type-name">Ix</span> (<span class="type-name">Maybe</span> a)
+  size <span class="symbol">=</span> size a <span class="symbol">+</span> 1
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
+    <span class="type-name">Just</span> ai <span class="symbol">-&gt;</span> ordinal ai
+    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> size a
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span>
+    <span class="keyword">case</span> o <span class="symbol">==</span> size a <span class="keyword">of</span>
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> unsafe_from_ordinal _ o
+      <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> <span class="type-name">Bool</span>
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">NonEmpty</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b] <span class="type-name">NonEmpty</span> (a <span class="symbol">&amp;</span> b)
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">NonEmpty</span> a] <span class="type-name">NonEmpty</span> (a<span class="symbol">|</span>b)
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- The below instance is valid, but causes &quot;multiple candidate dictionaries&quot;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- errors if both Left and Right are NonEmpty.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance {a b} [Ix a, NonEmpty b] NonEmpty (a|b)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--  first_ix = unsafe_from_ordinal _ 0
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Ix</span> a] <span class="type-name">NonEmpty</span> (<span class="type-name">Maybe</span> a)
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan {a b n} [<span class="type-name">Ix</span> n] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span>
   swap <span class="symbol">$</span> run_state init <span class="symbol">\</span>s<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span>
     c <span class="symbol">=</span> get s
@@ -1120,13 +1175,6 @@ i.e. things that can be compared to other things to find if larger, smaller or e
         fold <span class="type-name">EQ</span> <span class="symbol">$</span> <span class="symbol">\</span>i c<span class="symbol">.</span> c <span class="symbol">&lt;&gt;</span> (compare xs<span class="symbol">.</span>i ys<span class="symbol">.</span>i)
     f <span class="symbol">==</span> <span class="type-name">LT</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> <span class="type-name">Bool</span>
-  size <span class="symbol">=</span> 2
-  ordinal <span class="symbol">=</span> <span class="symbol">\</span>b<span class="symbol">.</span> <span class="keyword">case</span> b <span class="keyword">of</span>
-    <span class="type-name">False</span> <span class="symbol">-&gt;</span> 0
-    <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
-  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> i <span class="symbol">&gt;</span> 0
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Subset class</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Subset</span> a_sub a
   inject&#39; <span class="symbol">:</span> a_sub <span class="symbol">-&gt;</span> a
@@ -1143,6 +1191,18 @@ i.e. things that can be compared to other things to find if larger, smaller or e
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> project b x <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
     <span class="type-name">Just</span> y <span class="symbol">-&gt;</span> project a y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} <span class="type-name">Subset</span> a (a<span class="symbol">|</span>b)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Left</span> x
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">Left</span>  x <span class="symbol">-&gt;</span> <span class="type-name">Just</span> x
+    <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} <span class="type-name">Subset</span> a (b<span class="symbol">|</span>a)
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Right</span> x
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">Left</span>  x <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+    <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> <span class="type-name">Just</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeFrom</span> q i) q
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeFrom</span> j)<span class="symbol">.</span>
@@ -2581,4 +2641,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </span>  size <span class="symbol">=</span> intpow (size b) (size a)
   ordinal             <span class="symbol">=</span> reversed_digits_to_int
   unsafe_from_ordinal <span class="symbol">=</span> int_to_reversed_digits
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b] <span class="type-name">NonEmpty</span> (a<span class="symbol">=&gt;</span>b)
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div></div></body></html>
