@@ -17,7 +17,7 @@ module Name (
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
-  DoubleInplaceT (..), liftDoubleInplaceT,
+  DoubleInplaceT (..), liftDoubleInplaceT, mapDoubleInplaceT,
   emitDoubleInplaceTHoisted, unsafeEmitDoubleInplaceTHoisted,
   runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
@@ -37,7 +37,7 @@ module Name (
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowV, ShowB,
   runScopeReaderT, runScopeReaderM, runSubstReaderT, liftSubstReaderT,
-  liftScopeReaderT, liftScopeReaderM,
+  liftScopeReaderT, liftScopeReaderM, mapSubstReaderT,
   ScopeReaderT (..), SubstReaderT (..),
   lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM, traverseNames,
   MonadKind, MonadKind1, MonadKind2,
@@ -1381,6 +1381,13 @@ deriving instance CtxReader1 m => CtxReader (SubstReaderT v m i o)
 
 type ScopedSubstReader (v::V) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
 
+mapSubstReaderT :: 
+  (Monad1 m, Monad1 m')
+  => (m' o a' -> m o a)
+  -> SubstReaderT v m' i o a'
+  -> SubstReaderT v m  i o a
+mapSubstReaderT f (SubstReaderT m) = SubstReaderT $ mapReaderT f m
+
 liftSubstReaderT :: Monad1 m => m o a -> SubstReaderT v m i o a
 liftSubstReaderT m = SubstReaderT $ lift m
 {-# INLINE liftSubstReaderT #-}
@@ -1805,6 +1812,14 @@ liftDoubleInplaceT
   :: (Monad m, ExtOutMap bindings d2, OutFrag d2)
   => InplaceT bindings d2 m n a -> DoubleInplaceT bindings d1 d2 m n a
 liftDoubleInplaceT m = UnsafeMakeDoubleInplaceT $ lift m
+
+mapDoubleInplaceT ::
+  (Monad m, Monad m', ExtOutMap b d1, ExtOutMap b d2, OutFrag d1, OutFrag d2)
+  => (forall a'. m' a' -> m a')
+  -> DoubleInplaceT b d1 d2 m' n a
+  -> DoubleInplaceT b d1 d2 m  n a
+mapDoubleInplaceT f (UnsafeMakeDoubleInplaceT m) =
+  UnsafeMakeDoubleInplaceT $ mapStateT (mapInplaceT f) m
 
 -- Emits top-level bindings, `d1`, failing if it can't be hoisted to the top,
 -- and sinks an expression, `e`, that may mention those bindings, back to the

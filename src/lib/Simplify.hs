@@ -39,7 +39,6 @@ import Transpose
 import LabeledItems
 import Types.Primitives
 import Types.Core
-import Control.Monad.Trans.State.Strict
 
 -- === simplification monad ===
 
@@ -65,14 +64,12 @@ instance SubstReader AtomSubstVal SimplifyM where
   getSubst :: SimplifyM i o (Subst AtomSubstVal i o)
   getSubst = SimplifyM (SubstReaderT ask)
 
-  -- TODO(alex): check that subst does not contain any effect/handler names?
+  -- subst only contains atom names while SimplifyState contains only
+  -- handler and effect names, so it is okay to unsafeCoerceE here.
   withSubst :: Subst AtomSubstVal i' o -> SimplifyM i' o a -> SimplifyM i o a
-  withSubst subst m =
-    let SimplifyM (SubstReaderT (ReaderT f)) = m
-     in SimplifyM $ SubstReaderT $ ReaderT \_ ->
-          let DoubleBuilderT (UnsafeMakeDoubleInplaceT (StateT st)) = f subst
-           in DoubleBuilderT $ UnsafeMakeDoubleInplaceT $ StateT \scope ->
-                mapInplaceT (withReaderT unsafeCoerceE) (st scope)
+  withSubst subst (SimplifyM sr) = 
+    SimplifyM $ mapSubstReaderT coerceHandlerDicts (withSubst subst sr)
+    where coerceHandlerDicts = mapDoubleBuilderT (withReaderT unsafeCoerceE)
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)

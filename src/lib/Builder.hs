@@ -49,7 +49,7 @@ module Builder (
   buildEffLam, catMaybesE, runMaybeWhile,
   ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
   HoistingTopBuilder (..), liftTopBuilderHoisted,
-  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT, runDoubleBuilderT,
+  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT, runDoubleBuilderT, mapDoubleBuilderT,
   ) where
 
 import Control.Applicative
@@ -152,6 +152,13 @@ newtype DoubleBuilderT (m::MonadKind) (n::S) (a:: *) =
            , CtxReader, ScopeReader, MonadIO, Catchable, MonadReader r)
 
 type DoubleBuilder = DoubleBuilderT HardFailM
+
+mapDoubleBuilderT ::
+  (Monad m, Monad m')
+  => (forall a'. m' a' -> m a')
+  -> DoubleBuilderT m' n a
+  -> DoubleBuilderT m  n a
+mapDoubleBuilderT f (DoubleBuilderT m) = DoubleBuilderT $ mapDoubleInplaceT f m
 
 -- TODO: do we really need to play these rank-2 games here?
 liftDoubleBuilderT
