@@ -40,6 +40,7 @@ import Transpose
 import LabeledItems
 import Types.Primitives
 import Types.Core
+import MTL1
 
 -- === Simplification ===
 
@@ -101,8 +102,15 @@ class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
 data WillLinearize = WillLinearize | NoLinearize
 
-type HandlerDict n = M.Map (EffectName n) (HandlerDef n)
+data HandlerInstance n = HandlerInstance (HandlerName n) [Atom n]
+type HandlerDict n = M.Map (EffectName n) (HandlerInstance n)
 data SimplifyState n = SimplifyState WillLinearize (HandlerDict n)
+
+emptySimplifyState :: SimplifyState n
+emptySimplifyState = SimplifyState NoLinearize M.empty
+
+instance SinkableE SimplifyState where
+  sinkingProofE = error "Todo"
 
 -- Note that the substitution carried in this monad generally maps AtomName i to
 -- simplified Atom o, but with one notable exception: top-level function names.
@@ -111,33 +119,21 @@ data SimplifyState n = SimplifyState WillLinearize (HandlerDict n)
 -- elimination form for function is application, we do some extra handling in simplifyApp.
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM'
-    :: SubstReaderT AtomSubstVal (DoubleBuilderT (ReaderT (SimplifyState i) HardFailM)) i o a }
+    :: SubstReaderT AtomSubstVal (ReaderT1 SimplifyState (DoubleBuilderT HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
-           , EnvReader, MonadFail, Builder, HoistingTopBuilder )
-
-instance SubstReader AtomSubstVal SimplifyM where
-  getSubst :: SimplifyM i o (Subst AtomSubstVal i o)
-  getSubst = SimplifyM (SubstReaderT ask)
-
-  -- subst only contains atom names while SimplifyState contains only
-  -- handler and effect names, so it is okay to unsafeCoerceE here.
-  withSubst :: Subst AtomSubstVal i' o -> SimplifyM i' o a -> SimplifyM i o a
-  withSubst subst m = 
-    SimplifyM $ mapSubstReaderT coerceHandlerDicts (withSubst subst (runSimplifyM' m))
-
-coerceHandlerDicts
-  :: DoubleBuilderT (ReaderT (SimplifyState o) HardFailM) n a
-  -> DoubleBuilderT (ReaderT (SimplifyState i) HardFailM) n a
-coerceHandlerDicts = mapDoubleBuilderT (withReaderT unsafeCoerceE)
+           , EnvReader, MonadFail, Builder, HoistingTopBuilder, SubstReader AtomSubstVal )
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
   => (forall l. DExt n l => SimplifyM n l (e l))
   -> m n (e n)
 liftSimplifyM cont = do
-  Abs envFrag e <- liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize M.empty)) $
-    liftDoubleBuilderT $ 
-      runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+  Abs envFrag e <-
+    liftM runHardFail $
+      liftDoubleBuilderT $
+        runReaderT1 emptySimplifyState $
+          runSubstReaderT (sink idSubst) $
+            runSimplifyM' cont
   emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
 
@@ -148,9 +144,11 @@ liftSimplifyMAssumeNoTopEmissions
   => (forall l. DExt n l => SimplifyM l l (e l))
   -> m n (e n)
 liftSimplifyMAssumeNoTopEmissions cont =
-  liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize M.empty)) $
-    liftDoubleBuilderTAssumeNoTopEmissions $ 
-      coerceHandlerDicts $ runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+  liftM runHardFail $
+    liftDoubleBuilderTAssumeNoTopEmissions $
+      runReaderT1 emptySimplifyState $
+        runSubstReaderT (sink idSubst) $
+          runSimplifyM' cont
 {-# INLINE liftSimplifyMAssumeNoTopEmissions #-}
 
 liftDoubleBuilderTAssumeNoTopEmissions
@@ -177,7 +175,7 @@ buildBlockSimplified m = do
 
 instance Simplifier SimplifyM
 
-instance MonadReader (SimplifyState i) (SimplifyM i o) where
+instance MonadReader (SimplifyState o) (SimplifyM i o) where
   ask = SimplifyM $ SubstReaderT $ ReaderT \_ -> ask
   local f m = SimplifyM $ mapSubstReaderT (local f) (runSimplifyM' m)
 
