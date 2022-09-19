@@ -67,17 +67,22 @@ instance SubstReader AtomSubstVal SimplifyM where
   -- subst only contains atom names while SimplifyState contains only
   -- handler and effect names, so it is okay to unsafeCoerceE here.
   withSubst :: Subst AtomSubstVal i' o -> SimplifyM i' o a -> SimplifyM i o a
-  withSubst subst (SimplifyM sr) = 
-    SimplifyM $ mapSubstReaderT coerceHandlerDicts (withSubst subst sr)
-    where coerceHandlerDicts = mapDoubleBuilderT (withReaderT unsafeCoerceE)
+  withSubst subst m = 
+    SimplifyM $ mapSubstReaderT coerceHandlerDicts (withSubst subst (runSimplifyM' m))
+
+coerceHandlerDicts
+  :: DoubleBuilderT (ReaderT (SimplifyState o) HardFailM) n a
+  -> DoubleBuilderT (ReaderT (SimplifyState i) HardFailM) n a
+coerceHandlerDicts = mapDoubleBuilderT (withReaderT unsafeCoerceE)
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
   => (forall l. DExt n l => SimplifyM n l (e l))
   -> m n (e n)
 liftSimplifyM cont = do
-  Abs envFrag e <- liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize (M.empty))) $
-    liftDoubleBuilderT $ runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+  Abs envFrag e <- liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize M.empty)) $
+    liftDoubleBuilderT $ 
+      runSubstReaderT (sink idSubst) $ runSimplifyM' cont
   emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
 
@@ -88,13 +93,13 @@ liftSimplifyMAssumeNoTopEmissions
   => (forall l. DExt n l => SimplifyM l l (e l))
   -> m n (e n)
 liftSimplifyMAssumeNoTopEmissions cont =
-  liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize (M.empty))) $
-    liftDoubleBuilderTAssumeNoTopEmissions $
-      runSubstReaderT (sink idSubst) $ runSimplifyM' cont
+  liftM (runHardFail . flip runReaderT (SimplifyState NoLinearize M.empty)) $
+    liftDoubleBuilderTAssumeNoTopEmissions $ 
+      coerceHandlerDicts $ runSubstReaderT (sink idSubst) $ runSimplifyM' cont
 {-# INLINE liftSimplifyMAssumeNoTopEmissions #-}
 
 liftDoubleBuilderTAssumeNoTopEmissions
-  :: (Fallible m', EnvReader m, SinkableE e, SubstE Name e)
+  :: (EnvReader m, Fallible m', SinkableE e, SubstE Name e)
   => (forall l. DExt n l => DoubleBuilderT m' l (e l))
   -> m n (m' (e n))
 liftDoubleBuilderTAssumeNoTopEmissions cont = do
@@ -119,7 +124,7 @@ instance Simplifier SimplifyM
 
 instance MonadReader (SimplifyState i) (SimplifyM i o) where
   ask = SimplifyM $ SubstReaderT $ ReaderT \_ -> ask
-  local f m = SimplifyM $ SubstReaderT $ ReaderT \s -> local f $ runSubstReaderT s $ runSimplifyM' m
+  local f m = SimplifyM $ mapSubstReaderT (local f) (runSimplifyM' m)
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance ScopableBuilder (SimplifyM i) where
