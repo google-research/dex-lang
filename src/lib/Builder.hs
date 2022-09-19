@@ -509,6 +509,18 @@ instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
     ReaderT1 $ lift $ emitDecl hint ann expr
   {-# INLINE emitDecl #-}
 
+instance (SinkableE e, TopBuilder m) => TopBuilder (ReaderT1 e m) where
+  emitBinding hint b = ReaderT1 $ lift $ emitBinding hint b
+  emitEnv b = ReaderT1 $ lift $ emitEnv b
+  emitNamelessEnv env = ReaderT1 $ lift $ emitNamelessEnv env
+  localTopBuilder cont = ReaderT1 $ ReaderT \env ->
+    localTopBuilder do
+      env' <- sinkM env
+      runReaderT (runReaderT1' cont) env'
+
+instance (SinkableE e, HoistingTopBuilder m) => HoistingTopBuilder (ReaderT1 e m) where
+  emitHoistedEnv b = ReaderT1 $ lift $ emitHoistedEnv b
+
 instance (SinkableE e, HoistableState e, Builder m) => Builder (StateT1 e m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
   {-# INLINE emitDecl #-}
