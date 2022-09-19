@@ -36,13 +36,13 @@
 ## Libraries
 
 - [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)
-- [lib/linalg.dx](lib/linalg.html): Linear Algebra
+- [lib/netpbm.dx](lib/netpbm.html): Netpbm
 - [lib/sort.dx](lib/sort.html): Monoidal Merge Sort
-- [lib/png.dx](lib/png.html): PNG Rendering
-- [lib/plot.dx](lib/plot.html): Plotting
 - [lib/parser.dx](lib/parser.html): Parser Combinators
 - [lib/fft.dx](lib/fft.html): Fast Fourier Transform
 - [lib/diagram.dx](lib/diagram.html): Vector Graphics
 - [lib/stats.dx](lib/stats.html): Stats
-- [lib/netpbm.dx](lib/netpbm.html): Netpbm
+- [lib/png.dx](lib/png.html): PNG Rendering
+- [lib/plot.dx](lib/plot.html): Plotting
+- [lib/linalg.dx](lib/linalg.html): Linear Algebra
 - [lib/set.dx](lib/set.html): Sets and Set-Indexed Arrays

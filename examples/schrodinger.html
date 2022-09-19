@@ -315,6 +315,7 @@ i\frac{\partial\psi(x, y, t)}{\partial t}$</p>
 </div></div><div class="cell"><div class="prose-block"><p>Here we approximate this for small $\Delta x$ and $\Delta t$ by the finite difference method in two dimensions:<br />
 $$ \psi(x, y, t + \Delta t) = \\ \psi(x, y, t) \\ + \frac{i}{2}\frac{\Delta t}{\Delta x^2}(\psi(x-\Delta x, y, t) + \psi(x+\Delta x, y, t) + 4\psi(x, y, t) + \psi(x, y-\Delta y, t) + \psi(x, y+\Delta y, t)) \\ - i \Delta t V(x, y)\psi(x, y, t) $$</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Imports</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> complex
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
 </div></div><div class="cell"><div class="code-block">
