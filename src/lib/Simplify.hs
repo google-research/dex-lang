@@ -72,8 +72,7 @@ instance SubstReader AtomSubstVal SimplifyM where
      in SimplifyM $ SubstReaderT $ ReaderT \_ ->
           let DoubleBuilderT (UnsafeMakeDoubleInplaceT (StateT st)) = f subst
            in DoubleBuilderT $ UnsafeMakeDoubleInplaceT $ StateT \scope ->
-                let UnsafeMakeInplaceT inpl = st scope
-                 in UnsafeMakeInplaceT \env bs -> withReaderT unsafeCoerceE (inpl env bs)
+                mapInplaceT (withReaderT unsafeCoerceE) (st scope)
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)

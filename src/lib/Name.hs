@@ -76,7 +76,7 @@ module Name (
   unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
-  locallyMutableInplaceT, liftBetweenInplaceTs,
+  locallyMutableInplaceT, liftBetweenInplaceTs, mapInplaceT,
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
@@ -1654,6 +1654,13 @@ liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
       let envOuter' = extendOutMap (unsafeCoerceE envOuter) dOuter
       return (result, catOutFrags (toScope envOuter') declsOuter dOuter, envOuter')
 {-# INLINE liftBetweenInplaceTs #-}
+
+mapInplaceT
+  :: (Monad m, ExtOutMap bs ds, OutFrag ds)
+  => (forall a'. m' a' -> m a')
+  -> InplaceT bs ds m' n a
+  -> InplaceT bs ds m  n a
+mapInplaceT f inpl = liftBetweenInplaceTs f id id inpl
 
 -- === predicates for mutable and immutable scope parameters ===
 
