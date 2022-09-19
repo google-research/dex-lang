@@ -7,6 +7,8 @@ That demo also uses types to enforce internally that the array sizes are powers 
 [Bluestein's Algorithm](https://en.wikipedia.org/wiki/Chirp_Z-transform),
 which calls the power-of-2 FFT as a subroutine.
 
+import complex
+
 '## Helper functions
 
 def odd_sized_palindrome {a n} (mid:a) (seq:n=>a) : ((n|Unit|n)=>a) =

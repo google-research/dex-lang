@@ -1,0 +1,126 @@
+data Complex = MkComplex Float Float  -- real, imaginary
+
+instance HasAllClose Complex
+  allclose = \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
+
+instance HasDefaultTolerance Complex
+  atol = MkComplex atol atol
+  rtol = MkComplex rtol rtol
+
+instance Eq Complex
+  (==) = \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
+
+instance Add Complex
+  add = \(MkComplex a b) (MkComplex c d). MkComplex (a + c) (b + d)
+  zero = MkComplex 0.0 0.0
+instance Sub Complex
+  sub = \(MkComplex a b) (MkComplex c d). MkComplex (a - c) (b - d)
+
+instance Mul Complex
+  mul = \(MkComplex a b) (MkComplex c d).
+    MkComplex (a * c - b * d) (a * d + b * c)
+  one = MkComplex 1.0 0.0
+
+instance VSpace Complex
+  scale_vec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+
+instance Arbitrary Complex
+  arb = \key. (MkComplex (randn key) (randn key))
+
+-- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
+def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
+  MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
+
+def complex_exp (MkComplex a b:Complex) : Complex =
+  expx = exp a
+  MkComplex (expx * cos b) (expx * sin b)
+
+def complex_exp2 (MkComplex a b:Complex) : Complex =
+  exp2x = exp2 a
+  b' = b * log 2.0
+  MkComplex (exp2x * cos b') (exp2x * sin b')
+
+def complex_conj (MkComplex a b:Complex) : Complex = MkComplex a (-b)
+def complex_abs  (MkComplex a b:Complex) : Float = a * a + b * b
+def complex_mag  (MkComplex a b:Complex) : Float = sqrt (a * a + b * b)
+def complex_arg  (MkComplex a b:Complex) : Float = atan2 b a
+
+complex_log   = \x:Complex. MkComplex (log (complex_mag x)) (complex_arg x)
+complex_log2  = \x:Complex. (complex_log x) / log 2.0
+complex_log10 = \x:Complex. (complex_log x) / log 10.0
+complex_pow = \base:Complex power:Complex. complex_exp (power * complex_log base)
+
+def complex_sqrt (MkComplex a b:Complex) : Complex =
+  m = complex_mag $ MkComplex a b
+  MkComplex (sqrt ((a + m) / 2.0)) (sign b * sqrt ((m - a) / 2.0))
+
+def complex_sin  (MkComplex a b:Complex) : Complex = MkComplex (sin  a * cosh b) (cos   a * sinh b)
+def complex_sinh (MkComplex a b:Complex) : Complex = MkComplex (sinh a *  cos b) (cosh  a * sin  b)
+def complex_cos  (MkComplex a b:Complex) : Complex = MkComplex (cos  a * cosh b) (-sin  a * sinh b)
+def complex_cosh (MkComplex a b:Complex) : Complex = MkComplex (cosh a *  cos b) (-sinh a * sin  b)
+def complex_tan  (x:Complex) : Complex = complex_division (complex_sin  x) (complex_cos  x)
+def complex_tanh (MkComplex a b:Complex) : Complex =
+  num = MkComplex (sinh a * cos b) (cosh a * sin  b)
+  den = MkComplex (cosh a * cos b) (sinh a * sin  b)
+  complex_division num den
+
+instance Fractional Complex
+  divide = complex_division
+
+def complex_floor (MkComplex re im:Complex) : Complex =
+  -- from "Complex Floor" by Eugene McDonnell
+  -- https://www.jsoftware.com/papers/eem/complexfloor.htm
+  fr = floor re
+  fi = floor im
+  x = re - fr
+  y = im - fi
+  case (x + y) < 1.0 of
+    True -> MkComplex fr fi
+    False -> case x >= y of
+      True  -> MkComplex (fr + 1.0) fi
+      False -> MkComplex fr (fi + 1.0)
+
+complex_ceil =  \x:Complex. -(complex_floor (-x))
+complex_round = \x:Complex. complex_floor $ MkComplex 0.5 0.0
+
+complex_lgamma : Complex -> Complex = \x:Complex.
+  todo  -- This one is pretty hairy.
+        -- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
+
+complex_erf : Complex -> Complex = \x:Complex.
+  todo
+
+complex_erfc : Complex -> Complex = \x:Complex.
+  todo
+
+def complex_log1p (x:Complex) : Complex =
+  (MkComplex a b) = x
+  case a == 0.0 of
+    True -> x
+    False ->
+      u = x + MkComplex 1.0 0.0
+      case a <= -1.0 of
+        True -> complex_log u
+        False -> divide ((complex_log u) * x) x
+
+instance Floating Complex
+  exp    = complex_exp
+  exp2   = complex_exp2
+  log    = complex_log
+  log2   = complex_log2
+  log10  = complex_log10
+  log1p  = complex_log1p
+  sin    = complex_sin
+  cos    = complex_cos
+  tan    = complex_tan
+  sinh   = complex_sinh
+  cosh   = complex_cosh
+  tanh   = complex_tanh
+  floor  = complex_floor
+  ceil   = complex_ceil
+  round  = complex_round
+  sqrt   = complex_sqrt
+  pow    = complex_pow
+  lgamma = complex_lgamma
+  erf    = complex_erf
+  erfc   = complex_erfc
