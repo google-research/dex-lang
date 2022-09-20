@@ -139,6 +139,8 @@ toImpExportedFunction cc lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs b
     (args, ptrs)   <- ccUnpackActuals ccCtx ccActuals
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
       traverse (translateBlock Nothing) $ fromListE argRecons
+    -- XXX: for type preservation, it's important that we use the post-recon
+    -- atoms, `argAtoms`, in the substitution
     resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) (map SubstVal argAtoms)
     resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     extendSubst (bs @@> map SubstVal argAtoms) do

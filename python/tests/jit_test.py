@@ -84,6 +84,15 @@ class JITTest(unittest.TestCase):
     for dex_array, ref_array in zip(dex_output, reference_output):
       np.testing.assert_allclose(dex_array, ref_array)
 
+  def test_arrays_of_nats(self):
+    dex_func = dex.eval(r"\x: ((Fin 10) => Nat). x + x")
+    reference = lambda x: x + x
+
+    x = np.arange(10, dtype=np.uint32)
+
+    dex_output = dex_func.compile()(x)
+    reference_output = reference(x)
+    np.testing.assert_allclose(dex_output, reference_output)
 
 if __name__ == "__main__":
   unittest.main()

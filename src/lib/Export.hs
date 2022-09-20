@@ -116,39 +116,41 @@ prepareFunctionForExport' cc f = do
             refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) ->
               sinkM dexArgs >>= \case
                 Abs (Nest (PiBinder dexB dexArgTy _) restDexArgs) UnitE -> do
-                  -- get the current newtype-wrapped arg type
-                  -- pass it to type recon (who will use it to call `wrapWithNewtype` on the result
-                  -- to recur, wrap the var in the newtype and apply the subst
                   (ity, block) <- typeRecon (sink ety) dexArgTy $ Var $ binderName v'
-                  dexArgAtom <- wrapNewtypes dexArgTy (Var $ binderName v')
-                  restDexArgs' <- applySubst (dexB@>SubstVal dexArgAtom) $ Abs restDexArgs UnitE
-                  Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) restDexArgs' bs'
-                  return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+                  case block of
+                    AtomicBlock dexArgAtom -> do
+                      restDexArgs' <- applySubst (dexB@>SubstVal dexArgAtom) $ Abs restDexArgs UnitE
+                      Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) restDexArgs' bs'
+                      return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+                    _ -> error "Expected an atomic block"
                 _ -> error "zip error: dex args should correspond 1-to-1 with export args"
 
         typeRecon :: EnvExtender m => ExportType n -> Type n -> Atom n -> m n (IType, Block n)
         typeRecon ety dexTy v = case ety of
           ScalarType sbt -> do
-            resultWrapped <- wrapNewtypes dexTy v
-            return (Scalar sbt, Block (BlockAnn (BaseTy $ Scalar sbt) Pure) Empty resultWrapped)
+            resultWrapped <- wrapScalarNewtypes dexTy v
+            return (Scalar sbt, AtomicBlock resultWrapped)
           RectContArrayPtr sbt shape -> do
+              resultEltTy <- case tabTyElementTy dexTy of
+                Nothing -> error $ "Not a non-dependent table type: " ++ pprint dexTy
+                Just t -> return t
               block <- liftBuilder $ buildBlock do
-                wrapNewtypes (sink dexTy) =<< tableAtom (sink v) (sink $ ListE shape) []
+                tableAtom (sink resultEltTy) (sink v) (sink $ ListE shape) []
               return (PtrType (Heap CPU, Scalar sbt), block)
             where
-              tableAtom :: Emits n => Atom n -> ListE ExportDim n
+              tableAtom :: Emits n => Type n -> Atom n -> ListE ExportDim n
                         -> [(Atom n, ExportDim n)] -> BuilderM n (Atom n)
-              tableAtom basePtr (ListE shapeTail) typedIdxs = case shapeTail of
+              tableAtom eltTy basePtr (ListE shapeTail) typedIdxs = case shapeTail of
                 (ity:rest) -> buildTabLam noHint (exportDimToIxType ity) \i -> do
                   let typedIdxs' = [(sink ix, sink t) | (ix, t) <- typedIdxs]
-                  tableAtom (sink basePtr) (sink $ ListE rest) (typedIdxs' ++ [(Var i, sink ity)])
+                  tableAtom (sink eltTy) (sink basePtr) (sink $ ListE rest) (typedIdxs' ++ [(Var i, sink ity)])
                 [] -> do
                   sizes <- mapM (indexSetSizeFin . finArg . snd) typedIdxs
                   strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
                                                      (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
                   ords <- forM typedIdxs \(i, ity) -> ordinalFin (finArg ity) i
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
-                  unsafePtrLoad =<< ptrOffset basePtr offset
+                  wrapScalarNewtypes eltTy =<< unsafePtrLoad =<< ptrOffset basePtr offset
 
               indexSetSizeFin n = unwrapNewtype <$> projectIxFinMethod 0 n
               ordinalFin n ix = do
@@ -167,6 +169,12 @@ prepareFunctionForExport' cc f = do
       _ -> unsupported
       where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 
+    wrapScalarNewtypes :: EnvReader m => Type n -> Atom n -> m n (Atom n)
+    wrapScalarNewtypes ty x = case ty of
+      NatTy             -> return $ Con $ Newtype NatTy x
+      BaseTy (Scalar _) -> return x
+      _ -> error $ "not a scalar type: " ++ pprint ty
+
     parseTabTy :: Type n -> Maybe (ExportType n)
     parseTabTy = go []
       where
@@ -182,6 +190,16 @@ prepareFunctionForExport' cc f = do
               HoistSuccess a' -> go (shape ++ [dim]) a'
               HoistFailure _  -> Nothing
           _ -> Nothing
+
+    tabTyElementTy :: Type n -> Maybe (Type n)
+    tabTyElementTy ty = case ty of
+      BaseTy (Scalar _) -> return ty
+      NatTy             -> return ty
+      TabTy b a -> do
+        HoistSuccess a' <- return $ hoist b a
+        tabTyElementTy a'
+      _ -> Nothing
+
 {-# SCC prepareFunctionForExport #-}
 
 -- === Exported function signature ===
