@@ -23,7 +23,7 @@ import Data.Coerce
 import Data.Foldable (toList, asum)
 import Data.Function ((&))
 import Data.Functor (($>), (<&>))
-import Data.List (sortOn, intercalate)
+import Data.List (sortOn, intercalate, partition)
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import Data.Word
@@ -125,9 +125,104 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     applyDefaults
     return val
   return $ UDeclResultWorkRemaining block $ Abs decl result
-inferTopUDecl (UEffectDecl _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UEffectDecl"
-inferTopUDecl (UHandlerDecl _ _ _ _ _ _) _ = throw NotImplementedErr "inferTopUDecl::UHandlerDecl"
+inferTopUDecl (UEffectDecl opTys effName opNames) result = do
+  opTys' <- forM opTys $ \opTy -> liftInfererM $ solveLocal $ inferEffOpType opTy
+  let effSourceName = uBinderSourceName effName
+  let effOpSourceNames = nestToList uBinderSourceName opNames
+  let effDef = EffectDef effSourceName (zip effOpSourceNames opTys')
+  effName' <- emitEffectDef effDef
+  opNames' <-
+    forM (enumerate effOpSourceNames) \(i, opName) -> do
+      emitEffectOpDef effName' i opName
+  let subst = effName @> effName' <.> opNames @@> opNames'
+  UDeclResultDone <$> applySubst subst result
+-- TODO(alex): handle retEff
+inferTopUDecl (UHandlerDecl effName bodyTyArg tyArgs _retEff retTy opDefs handlerName) result =
+  do let (InternalName _ effName') = effName
+     let handlerSourceName = uBinderSourceName handlerName
+     Abs Empty (Abs bodyTyArg' (Abs tyArgs' (retTy' `PairE` retOp' `PairE` ListE ops'))) <-
+      liftInfererM $ solveLocal $ buildDeclsInf do
+        checkHandlerBodyTyArg bodyTyArg \r -> do
+          checkHandlerArgs tyArgs do
+            effName'' <- sinkM effName'
+            retTy' <- checkUType retTy
+            (retOp, ops') <- checkHandlerBody effName'' (sink r) retTy' opDefs
+            return (retTy' `PairE` retOp `PairE` ListE ops')
+     -- TODO(alex): replace Pure with actual effects
+     let handler = HandlerDef effName' bodyTyArg' tyArgs' Pure retTy' ops' retOp'
+     handlerName' <- emitHandlerDef handlerSourceName handler
+     let subst = handlerName @> handlerName'
+     UDeclResultDone <$> applySubst subst result
 {-# SCC inferTopUDecl #-}
+
+checkHandlerBody :: EmitsInf o
+                 => EffectName o
+                 -> AtomName o
+                 -> Type o
+                 -> [UEffectOpDef i]
+                 -> InfererM i o (Block o, [Block o])
+checkHandlerBody effName r retTy opDefs = do
+  EffectDef _ effBody <- lookupEffectDef effName
+  let (rets, ops) = partition isReturnOpDef opDefs
+  retOp <- case rets of
+    [UReturnOpDef retOp] -> do
+      retOpTy <- mkRetOpTy r retTy
+      buildBlockInf $ checkSigma retOp (sink retOpTy)
+    [] -> throw TypeErr "missing return"
+    _ -> throw TypeErr "multiple returns"
+
+  ops' <- forM ops (checkHandlerOp effName retTy)
+  let (idxs, ops'') = unzip $ sortOn fst ops'
+  let opNames = fst $ unzip effBody
+  forM_ (repeated idxs) \i ->
+    throw TypeErr $ "Duplicate operation: " ++ pprint (opNames!!i)
+  forM_ ([0..(length effBody - 1)] `listDiff` idxs) \i ->
+    throw TypeErr $ "Missing operation: " ++ pprint (opNames!!i)
+
+  return (retOp, ops'')
+
+checkHandlerOp :: EmitsInf o
+               => EffectName o
+               -> Type o
+               -> UEffectOpDef i
+               -> InfererM i o (Int, Block o)
+checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) = do
+  opName' <- substM opName
+  -- TODO(alex): consider removing following redundancy
+  EffectOpDef effName' (OpIdx opIdx) <- lookupEffectOpDef opName'
+  EffectDef _ ops <- lookupEffectDef effName'
+  let (_, EffectOpType pol' opTy) = ops !! opIdx
+  when (effName /= effName') $ throw TypeErr
+    ("operation " ++ pprint opName ++ " does not belong to effect " ++ pprint effName)
+  when (pol /= pol') $ throw TypeErr
+    ("operation " ++ pprint opName ++ " was declared with " ++ pprint pol ++ " but defined with " ++ pprint pol')
+  -- need expected type of lambda
+  Just (NaryPiType bs _ _) <- return $ asNaryPiType opTy
+  internalOpTy <- refreshAbs (Abs bs UnitE) \bs' UnitE ->
+    -- TODO(alex): Pure is wrong... handle effects from handler def
+    return $ naryPiTypeAsType (NaryPiType bs' Pure (sink retTy))
+  -- TODO(alex): introduce resume into scope (with correct type)
+
+  -- TODO(alex): handle pol
+  opBody' <- buildBlockInf $ checkSigma opBody (sink internalOpTy)
+  return (opIdx, opBody')
+
+mkRetOpTy :: (EnvReader m, Fallible1 m) => AtomName n -> Type n -> m n (Type n)
+mkRetOpTy r retTy =
+  Pi <$> (liftBuilder $ buildPi noHint PlainArrow (Var r) \_ -> do
+    retTy' <- sinkM retTy
+    return (Pure, retTy'))
+
+isReturnOpDef :: UEffectOpDef n -> Bool
+isReturnOpDef (UReturnOpDef _) = True
+isReturnOpDef _ = False
+
+inferEffOpType
+  :: EmitsInf o
+  => UEffectOpType i
+  -> InfererM i o (EffectOpType o)
+inferEffOpType (UEffectOpType policy ty) = do
+  EffectOpType policy <$> checkUType ty
 
 -- We use this to finish the processing the decl after we've completely
 -- evaluated the right-hand side
@@ -1312,9 +1407,35 @@ inferUVar = \case
   UMethodVar v -> do
     MethodBinding _ _ f <- lookupEnv v
     return f
-  UEffectVar _ -> throw NotImplementedErr "inferUVar::UEffectVar"
-  UEffectOpVar _ -> throw NotImplementedErr "inferUVar::UEffectOpVar"
-  UHandlerVar _ -> throw NotImplementedErr "inferUVar::UHandlerVar"
+  UEffectVar _ -> do
+    throw NotImplementedErr "inferUVar::UEffectVar"  -- TODO(alex): implement
+  UEffectOpVar v -> do
+    -- the following should never fail due to operation index since
+    -- users cannot name the "return" operation
+    EffectOpBinding (EffectOpDef effName (OpIdx i)) <- lookupEnv v
+    EffectDef effSourceName _ <- lookupEffectDef effName
+    let holeTy = HandlerDictTy (HandlerDictType effSourceName effName)
+    let holeCon = Con (HandlerHole (AlwaysEqual Nothing) holeTy)
+    Var <$> (emit $ Op (Perform holeCon i))
+  UHandlerVar v -> liftBuilder $ buildHandlerLam v
+
+buildHandlerLam :: EmitsBoth n => HandlerName n -> BuilderM n (Atom n)
+buildHandlerLam v = do
+  HandlerBinding (HandlerDef effName _r _ns _hndEff _retTy _ _) <- lookupEnv v
+  -- TODO(alex): my eyes! the goggles do nothing! Probably need an
+  -- instance here or I'm missing something...
+  let hint_r = getNameHint ("r" :: String)
+  let hint_eff = getNameHint ("eff" :: String)
+  let hint_body = getNameHint ("body" :: String)
+  buildLam hint_r ImplicitArrow TyKind Pure $ \r ->
+    buildLam hint_eff ImplicitArrow (TC EffectRowKind) Pure $ \eff -> do
+      let bodyEff = EffectRow (S.singleton (UserEffect (sink effName))) (Just eff)
+      bodyTy <- buildNonDepPi noHint PlainArrow UnitTy bodyEff (Var (sink r))
+      let effRow = EffectRow (S.empty) (Just eff)
+      buildLam hint_body PlainArrow (Pi bodyTy) effRow $ \body -> do
+        -- TODO(alex): handle args to HDE below
+        let hDict = HandlerDictCon $ HandlerDictExpr (sink v) (Var (sink r)) []
+        emitOp $ Handle hDict (Var body)
 
 buildForTypeFromTabType :: EffectRow n -> TabPiType n -> InfererM i n (PiType n)
 buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
@@ -1563,9 +1684,11 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ argTy arr) 
 checkInstanceArgs
   :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
   => Nest UPatAnnArrow i i'
-  -> (forall o'. (EmitsInf o', Ext o o') => InfererM i' o' (e o'))
+  -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest PiBinder) e o)
-checkInstanceArgs Empty cont = Abs Empty <$> cont
+checkInstanceArgs Empty cont = do
+  Distinct <- getDistinct
+  Abs Empty <$> cont
 checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
   case arrow of
     ImplicitArrow -> return ()
@@ -1582,6 +1705,26 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
             cont
   Abs bs (Abs b (Abs bs' e)) <- return ab
   return $ Abs (bs >>> Nest b Empty >>> bs') e
+
+-- Nothing about the implementation was instance-specific. This seems
+-- right. If not, at least we only need to change this definition.
+checkHandlerArgs
+  :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
+  => Nest UPatAnnArrow i i'
+  -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
+  -> InfererM i o (Abs (Nest PiBinder) e o)
+checkHandlerArgs = checkInstanceArgs
+
+checkHandlerBodyTyArg
+  :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
+  => UBinder AtomNameC i i'
+  -> (forall o'. (EmitsInf o', Ext o o') => AtomName o' -> InfererM i' o' (e o'))
+  -> InfererM i o (Abs PiBinder e o)
+checkHandlerBodyTyArg b cont = do
+  argTy <- freshType TyKind
+  buildPiAbsInf (getNameHint b) ImplicitArrow argTy \v -> do
+    extendSubst (b@>v) $
+      cont v
 
 checkInstanceParams
   :: forall i o e.
@@ -2759,7 +2902,7 @@ instance GenericTraverser DictSynthTraverserS where
 
 buildBlockInf
   :: EmitsInf n
-  => (forall l. (EmitsBoth l, Ext n l) => InfererM i l (Atom l))
+  => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (Atom l))
   -> InfererM i n (Block n)
 buildBlockInf cont = buildDeclsInf (cont >>= withType) >>= computeAbsEffects >>= absToBlock
 {-# INLINE buildBlockInf #-}

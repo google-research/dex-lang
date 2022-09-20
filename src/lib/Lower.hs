@@ -26,7 +26,8 @@ import Builder
 import PPrint
 import QueryType
 import GenericTraversal
-import Util (foldMapM)
+import Simplify (buildBlockSimplified)
+import Util (foldMapM, enumerate)
 
 type DestBlock = Abs Binder Block
 
@@ -61,18 +62,11 @@ type DestBlock = Abs Binder Block
 
 lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
-  effs <- extendEffRow (S.singleton IOEffect) <$> getEffects b
   resultDestTy <- RawRefTy <$> getType b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     Abs (destBinder:>resultDestTy) <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
-      -- TODO(apaszke): Do we still need to indirect through this
-      -- RememberDest?  `traverseBlockWithDest` returns an atom for
-      -- the answer now.
-      dest' <- emit . Hof . RememberDest dest =<<
-        buildLam noHint PlainArrow (sink resultDestTy) (sink effs) \dest' ->
-          traverseBlockWithDest (Var dest') b $> UnitVal
-      emitOp $ Freeze $ Var dest'
+      traverseBlockWithDest dest b $> UnitVal
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM LFS
@@ -86,6 +80,7 @@ instance HoistableState LFS where
 -- annotations manually... The only interesting case below is really the For.
 instance GenericTraverser LFS where
   traverseExpr expr = case expr of
+    Op (TabCon ty els) -> traverseTabCon Nothing ty els
     Hof (For dir ixDict (Lam body)) -> traverseFor Nothing dir ixDict body
     Case _ _ _ _ -> do
       Case e alts ty _ <- traverseExprDefault expr
@@ -120,6 +115,22 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
     return UnitVal
   let seqHof = Hof $ Seq dir ixDict' initDest body'
   Op . Freeze . Var <$> emit seqHof
+
+traverseTabCon :: Emits o => Maybe (Dest o) -> Type i -> [Atom i] -> LowerM i o (Expr o)
+traverseTabCon maybeDest tabTy elems = do
+  tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
+  dest <- case maybeDest of
+    Just  d -> return d
+    Nothing -> emitOp $ AllocDest tabTy'
+  Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
+    buildBlockSimplified $ unsafeFromOrdinal (sink ixTy') $ Var $ sink ord
+  forM_ (enumerate elems) \(ord, e) -> do
+    i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
+      traverseBlock ufoBlock
+    idest <- indexRef dest i
+    place (FullDest idest) =<< traverseAtom e
+  return $ Op $ Freeze dest
+
 
 -- Destination-passing traversals
 --
@@ -196,9 +207,8 @@ traverseDeclNestWithDestS destMap s = \case
 
 traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> Expr i -> LowerM i o (Expr o)
 traverseExprWithDest dest expr = case expr of
-  Hof (For dir ixDict (Lam body)) -> do
-    let dest' = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
-    traverseFor dest' dir ixDict body
+  Op (TabCon ty els) -> traverseTabCon tabDest ty els
+  Hof (For dir ixDict (Lam body)) -> traverseFor tabDest dir ixDict body
   Hof (RunWriter Nothing m body) -> traverseRWS Writer body \ref' body' -> do
     m' <- traverse traverseGenericE m
     return $ RunWriter ref' m' body'
@@ -207,6 +217,8 @@ traverseExprWithDest dest expr = case expr of
     return $ RunState ref' s' body'
   _ -> generic
   where
+    tabDest = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
+
     generic = do
       expr' <- traverseExprDefault expr
       case dest of

@@ -25,13 +25,6 @@ jobs:
         ${{ matrix.install_deps }}
         echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
 
-    - name: Get example files
-      run: |
-        wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-images-idx3-ubyte.gz
-        wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz
-        gunzip t10k-images-idx3-ubyte.gz t10k-labels-idx1-ubyte.gz
-        mv t10k-images-idx3-ubyte t10k-labels-idx1-ubyte $GITHUB_WORKSPACE/examples/
-
     - name: Cache
       uses: actions/cache@v2
       with:

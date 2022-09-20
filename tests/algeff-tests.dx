@@ -1,28 +1,85 @@
-%passes
 effect Exn
   ctl raise : (a: Type) ?-> Unit -> a
 
-%passes
-handler catch_ of Exn {r} : Maybe r
+handler catch_ of Exn r : Maybe r
   ctl raise = \_. Nothing
   return = \x. Just x
 
-%passes
+handler bad_catch_1 of Exn r : Maybe r
+  ctl raise = \_. Nothing
+  ctl raise = \_. Nothing -- duplicate!
+  return = \x. Just x
+> Type error:Duplicate operation: raise
+
+handler bad_catch_2 of Exn r : Maybe r
+  ctl raise = \_. Nothing
+> Type error:missing return
+  -- return = \x. Just x -- missing!
+
+handler bad_catch_3 of Exn r : Maybe r
+  -- ctl raise = \_. Nothing -- missing!
+  return = \x. Just x
+> Type error:Missing operation: raise
+
+handler bad_catch_4 of Exn r : Maybe r
+  ctl raise = \_. 42.0 -- definitely not Maybe
+  return = \x. Just x
+> Type error:
+> Expected: (Maybe r)
+>   Actual: Float32
+>
+>   ctl raise = \_. 42.0 -- definitely not Maybe
+>                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+handler bad_catch_5 of Exn r : Maybe r
+  ctl raise = \_. Nothing
+  return = \x. 42.0 -- definitely not Maybe
+> Type error:
+> Expected: (Maybe r)
+>   Actual: Float32
+>
+>   return = \x. 42.0 -- definitely not Maybe
+>                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+handler bad_catch_6 of Exn r : Maybe r
+  def raise = \_. Nothing -- wrong policy!
+  return = \x. Just x
+> Type error:operation raise was declared with def but defined with ctl
+
 def check (b:Bool) : {Exn} Unit =
   if not b then raise ()
 
-%passes
 def checkFloatNonNegative (x:Float) : {Exn} Float =
   check $ x >= 0.0
   x
 
-%passes
+-- catch_ \_.
+--   checkFloatNonNegative (3.14)
+-- > Compiler bug!
+-- > Please report this at github.com/google-research/dex-lang/issues
+-- >
+-- > Expected scalar, got: (HandlerDictExpr catch_ Float32 [])
+-- > CallStack (from HasCallStack):
+-- >   error, called at src/lib/Imp.hs:1515:8 in dex-0.1.0.0-8hDfthyGTXmzhkTo2ydOn:Imp
+
+-- catch_ \_.
+--   checkFloatNonNegative (-1.0)
+-- > Compiler bug!
+-- > Please report this at github.com/google-research/dex-lang/issues
+-- >
+-- > Expected scalar, got: (HandlerDictExpr catch_ Float32 [])
+-- > CallStack (from HasCallStack):
+-- >   error, called at src/lib/Imp.hs:1515:8 in dex-0.1.0.0-8hDfthyGTXmzhkTo2ydOn:Imp
+
 effect Counter
   def inc : Unit -> Unit
 
-%passes
-handler runCounter of Counter {r h} (ref : Ref h Nat) : {State h} (r & Nat)
+handler runCounter of Counter r {h} (ref : Ref h Nat) : {State h} (r & Nat)
   def inc = \_.
     ref := (1 + get ref)
     resume ()
   return = \x. (x, get ref)
+> Error: variable not in scope: resume
+>
+>     resume ()
+>     ^^^^^^^

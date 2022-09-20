@@ -595,6 +595,22 @@ def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
 :p (for i:(Fin 4). 1.0) == (for i:(Fin 4). 2.0)
 > False
 
+((Left 1) :: (Int | Bool)) == (Left 1 :: (Int | Bool))
+> True
+
+((Right False) :: (Int | Bool)) == (Left 1 :: (Int | Bool))
+> False
+
+((Right False) :: (Bool | Bool)) == (Left False :: (Bool | Bool))
+> False
+
+Just 1 == Just 1
+> True
+
+Just 1 == Just 0
+> False
+
+
 -- Userspace-Bool breaks these
 
 -- -- Needed to avoid ambiguous type variables if both sides use the same constructor
@@ -988,6 +1004,10 @@ all for x:((Bool & Fin 3)=>(Fin 4)).
   x == (unsafe_from_ordinal _ (ordinal x))
 > True
 
+all $ for i:(Maybe (Fin 2)).
+  i == (unsafe_from_ordinal _ (ordinal i))
+> True
+
 def all_prefixes (s:String)  : List String =
   (AsList _ s') = s
   to_list for i. post_slice s' first_ix i
@@ -1006,3 +1026,50 @@ def scan_over {n} (xs:n=>Float) : n=>Float =
 
 scan_over [1.0, 2.0, 3.0]
 > [1., 2., 4.]
+
+-- NonEmpty tests
+
+first_ix :: Unit
+> ()
+
+first_ix :: (Unit | Fin 2)
+> (Left ())
+
+first_ix :: Bool
+> False
+
+first_ix :: (Unit | Fin 2)=>(Unit | Fin 3)
+> [(Left ()), (Left ()), (Left ())]@(Unit | Fin 2)
+
+first_ix :: ((Unit | Fin 2) & (Unit | Fin 3))
+> ((Left ()), (Left ()))
+
+first_ix :: ((Unit | Fin 2) | Fin 3)
+> (Left (Left ()))
+
+
+-- Check that empty sets can't satisfy NonEmpty
+
+first_ix :: (Fin 0)
+> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0))
+>
+> first_ix :: (Fin 0)
+> ^^^^^^^^^
+
+first_ix :: (Fin 0 | Fin 0)
+> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0 | Fin 0))
+>
+> first_ix :: (Fin 0 | Fin 0)
+> ^^^^^^^^^
+
+first_ix :: (Fin 0 & Unit)
+> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0 & Unit))
+>
+> first_ix :: (Fin 0 & Unit)
+> ^^^^^^^^^
+
+
+-- Subset tests
+
+project Unit (inject (Unit | Fin 2) ())
+> (Just ())

@@ -231,10 +231,21 @@ instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
     p classSourceName <+> spaced params
 
+instance Pretty (HandlerDictExpr n) where
+  pretty (HandlerDictExpr name r args) =
+    "HandlerDictExpr" <+> p name <+> p r <+> p args
+
+instance Pretty (HandlerDictType n) where
+  pretty (HandlerDictType handlerSourceName effectName) =
+    "HandlerDictType" <+> p handlerSourceName <+> p effectName
+
 instance Pretty (DepPairType n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (DepPairType n) where
   prettyPrec (DepPairType b rhs) =
     atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
+
+instance Pretty (EffectOpType n) where
+  pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
 
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
@@ -263,6 +274,8 @@ instance PrettyPrec (Atom n) where
       _  -> atPrec LowestPrec $ pAppArg (p name) params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
+    HandlerDictCon d -> atPrec LowestPrec $ p d
+    HandlerDictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
@@ -465,6 +478,10 @@ instance Pretty (Binding s n) where
     ObjectFileBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding     _ -> "<ptr>"
+    -- TODO(alex): do something actually useful here
+    EffectBinding _ -> "<effect-binding>"
+    HandlerBinding _ -> "<handler-binding>"
+    EffectOpBinding _ -> "<effect-op-binding>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
@@ -712,8 +729,8 @@ instance Pretty (UDecl n l) where
     "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
     where ops = [ p pol <+> p (UAnnBinder b (unsafeCoerceE ty))
                  | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
-  pretty (UHandlerDecl effName tyArgs retEff retTy opDefs name) =
-    "handler" <+> p name <+> "of" <+> p effName <+> prettyBinderNest tyArgs
+  pretty (UHandlerDecl effName bodyTyArg tyArgs retEff retTy opDefs name) =
+    "handler" <+> p name <+> "of" <+> p effName <+> p bodyTyArg <+> prettyBinderNest tyArgs
     <+> ":" <+> p retEff <+> p retTy <> hardline
     <> foldMap ((<>hardline) . p) opDefs
 
@@ -948,6 +965,7 @@ prettyPrecPrimCon con = case con of
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
+  HandlerHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where

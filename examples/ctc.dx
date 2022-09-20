@@ -1,144 +1,216 @@
-'# Connectionist Temporal Classification
-By Alex Graves et alia.
+'# [Connectionist Temporal Classification](https://www.cs.toronto.edu/~graves/icml_2006.pdf)
+By Alex Graves *et alia*, 2006.
 
-'[Link to paper](https://www.cs.toronto.edu/~graves/icml_2006.pdf).
-
-' This dynamic programming algorithm computes the probability of a particular sequences of labels
+'This algorithm computes the probability of a sequence of labels
 (without pauses included) given another sequence of label probabilities
 (with pauses included), marginalizing over all possible combination of
 pause lengths.
 It's used for training speech-to-text models on unaligned training data.
 
-'Most implementations of CTC compute the marginal logprob
-and its gradients combining a forward and a backward pass.
-However, as mentioned in the original paper, we should only
-need the last step of the forward pass to compute the marginal
-probability, and Dex's autodiff should produce the backward
+'Most implementations of CTC compute the log marginal likelihood
+and its gradients through a separate forward and a backward pass.
+However, Dex's autodiff can produce the backward
 pass automatically.  That makes this code much shorter than
 most implementations.
 
+import stats  -- for log-space representation of probabilities.
 
-def interleave {m v} (blank:v) (labels: m=>v) : (m & (Fin 2))=>v =
-  -- Turns "text" into "t e x t " by first pairing each letter with a blank,
-  -- then flattening the pairs back into a single-index table.
-  pairs = for i. [labels.i, blank]
-  for (i, j). pairs.i.j
 
-def prepend {m v} (first: v) (seq: m=>v) : ((Unit|m)=>v) =
-  -- Concatenates a single element to the beginning of a sequence.
+'## Custom index sets
+
+'### Fence and Posts
+Here we create a custom datatype and index set
+that interleaves the elements of a table with another set
+of values representing all the spaces in between those elements.
+
+data FenceAndPosts n [Ix n] =
+  Fence n
+  Posts (Post n)
+
+instance {a} Ix (FenceAndPosts a)
+  size = 2 * size a + 1
+  ordinal = \i. case i of
+    Fence j -> 2 * ordinal j + 1
+    Posts j -> 2 * ordinal j
+  unsafe_from_ordinal = \o.
+    case is_odd o of
+      True  -> Fence $ unsafe_from_ordinal _ (intdiv2 o)
+      False -> Posts $ unsafe_from_ordinal _ (intdiv2 o)
+
+instance {a} NonEmpty (FenceAndPosts a)
+  first_ix = unsafe_from_ordinal _ 0
+
+instance {a} [Eq a] Eq (FenceAndPosts a)
+  (==) = \x y. case x of
+    Fence x -> case y of
+      Fence y -> x == y
+      Posts y -> False
+    Posts x -> case y of
+      Fence y -> False
+      Posts y -> ordinal x == ordinal y
+
+'#### Test FenceAndPosts
+
+all $ for i:(FenceAndPosts Bool).
+  i == (unsafe_from_ordinal _ $ ordinal i)
+> True
+
+
+'### All but First
+Next we make an index set from any non-empty set
+that doesn't contain the first element.
+
+data AllButFirst n [NonEmpty n] =
+  MkAllButFirst n
+
+instance {a} Ix (AllButFirst a)
+  size = unsafe_nat_diff (size a) 1
+  ordinal = \(MkAllButFirst i). ordinal i
+  unsafe_from_ordinal = \o. MkAllButFirst $ unsafe_from_ordinal _ o
+
+instance {a} Subset (AllButFirst a) a
+  inject' = \x. unsafe_from_ordinal _ ((ordinal x) + 1)
+  project' = \x. case ordinal x == 0 of
+    True  -> Nothing
+    False -> unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
+
+instance {a} [Eq a] Eq (AllButFirst a)
+  (==) = \(MkAllButFirst x) (MkAllButFirst y). x == y
+
+'#### Test AllButFirst
+
+all $ for i:(AllButFirst (Unit | Fin 2)).
+  i == (unsafe_from_ordinal _ $ ordinal i)
+> True
+
+all $ for i:(AllButFirst (Bool | Bool)).
+  Just i == (project _ $ inject (Bool | Bool) i)
+> True
+
+for i:(AllButFirst (Bool | Bool)).
+  inject (Bool | Bool) i
+> [(Left True), (Right False), (Right True)]@(AllButFirst (Bool | Bool))
+
+project (AllButFirst (Bool | Bool)) (0@(Bool | Bool))
+> Nothing
+
+
+'### Helper functions
+
+def interleave_blanks {m v} (blank:v) (seq: m=>v) : ((FenceAndPosts m)=>v) =
+  -- Turns "text" into " t e x t ".
   for idx. case idx of
-    Left () -> first
-    Right i -> seq.i
+    Fence i -> seq.i
+    Posts i -> blank
 
-def prepend_and_interleave {m v} (blank:v) (seq: m=>v) : ((Unit|(m & (Fin 2)))=>v) =
-  -- Turns "text" into " t e x t".
-  -- The output of this function has a slightly complicated output type, which
-  -- has size 1 + 2 * (size m).
-  interleaved = interleave blank seq
-  prepend blank interleaved
+def normalize {n v} [Fractional v, Add v] (xs:n=>v) : n=>v =
+  total = sum xs
+  for i. divide xs.i total
 
-def clipidx (n:Type) [Ix n] (i:Int) : n =
-  -- Returns element at 0 if less than zero.
-  -- Ideally we could have an alternative
-  -- to Fin that just clips the index at its bounds.
-  from_ordinal n $ unsafe_i_to_n (select (i < 0) 0 i)
 
-def logaddexp (x:Float) (y:Float) : Float =
-  m = max x y
-  m + ( log ( (exp (x - m) + exp (y - m))))
+'### Main CTC algorithm
+Computes `p(labels | logits)`, marginalizing over possible alignments,
+and over insertion of blanks between characters.
+Todo: add a `[Subset position time]` constraint.
 
-def ctc {vocab time position} [Eq vocab, Eq position, Eq time]
-      (blank:  vocab)
-      (logits: time=>vocab=>Float)
-      (labels: position=>vocab)
-      : Float =
-  -- Computes log p(labels | logits), marginalizing over possible alignments.
-  -- Todo: remove unnecessary implicit type annotations once
-  -- Dex starts putting implicit types in scope.
+def ctc_non_empty {vocab time position}
+  [NonEmpty vocab, NonEmpty position, NonEmpty time, Eq time, Eq vocab]
+    (blank: vocab)
+    (logits: time=>vocab=>LogSpace Float)
+    (labels: position=>vocab)
+      : LogSpace Float =
+  ilabels = interleave_blanks blank labels
+  label_probs = for t. normalize logits.t
 
-  ilabels = prepend_and_interleave blank labels
+  -- Initialize dynamic programming table to all zeros
+  -- except for starting with either a blank or the first token.
+  prob_seq_at_start = yield_state zero \lpRef.
+    lpRef!(Posts first_ix) := label_probs.first_ix.blank
+    lpRef!(Fence first_ix) := label_probs.first_ix.(labels.first_ix)
 
-  normalized_logits = for t. logsoftmax logits.t
+  safe_idx_sub = \prev s y.
+    if (ordinal s) < y
+      then zero
+      else prev.(unsafe_from_ordinal _ (unsafe_nat_diff (ordinal s) y))
 
-  -- Initialization rules
-  logprob_start_with_blank = normalized_logits.(0@_).blank
-  logprob_of_first_label   = normalized_logits.(0@_).(labels.(0@_))
-  log_prob_seq_t0 = for pos.
-    -- TODO: allow pattern-matching on integer literals
-    case ordinal pos == 0 of
-      True -> logprob_start_with_blank
-      False -> case ordinal pos == 1 of
-        True  -> logprob_of_first_label
-        False -> log 0.000001
+  same_token_as_last = \s. if (ordinal s) >= 2
+    then
+      s_minus_2 = unsafe_from_ordinal _ (unsafe_nat_diff (ordinal s) 2)
+      ilabels.s == ilabels.s_minus_2
+    else False
 
-  same_as_last = \ilabels s.
-    o = n_to_i $ ordinal s
-    select (o >= 2) (ilabels.s == ilabels.(clipidx _ (o - 2))) False
+  prob_seq_final = fold prob_seq_at_start \t:(AllButFirst time) prev.
+    for s.
+      prob_no_transition              = prev.s
+      prob_transition_from_blank      = safe_idx_sub prev s 1
+      prob_transition_from_last_token = safe_idx_sub prev s 2
 
-  safe_idx = \prev s.
-    select (s >= 0) prev.(clipidx _ s) (log 0.0)
+      -- Equation 6 from CTC paper.
+      transition_prob = if ilabels.s == blank || same_token_as_last s
+        then prob_no_transition + prob_transition_from_blank
+        else prob_no_transition + prob_transition_from_blank +
+          prob_transition_from_last_token
+      transition_prob * label_probs.(inject _ t).(ilabels.s)
 
-  -- Todo: As suggested by Adam Paske, we could get rid of these
-  -- logaddexp calls with a newtype that overloads + and *
-  update = \t prev.
-    case ordinal t == 0 of
-      True -> log_prob_seq_t0
-      False -> for s.
-        cond = ilabels.s == blank || same_as_last ilabels s
-        labar = logaddexp prev.s (safe_idx prev (n_to_i (ordinal s) - 1))
-        other = logaddexp labar  (safe_idx prev (n_to_i (ordinal s) - 2))
-        ans = select cond labar other
-        ans + normalized_logits.t.(ilabels.s)
+  -- Sum over last two entries in the table.  Eq 8 from paper.
+  end_with_label = prob_seq_final.(Fence last_ix)
+  end_with_space = prob_seq_final.(Posts last_ix)
+  end_with_label + end_with_space
 
-  log_prob_seq_final = fold log_prob_seq_t0 update
+'### Wrapper function to provide proof of `NonEmpty`
+This is a wrapper function to check if any of the inputs are empty,
+and if not, casts them to an equivalent but provably `NonEmpty` form.
 
-  -- Todo: nicer way to get last two elements of log_prob_seq_final.
-  seq_length = 1 + size (position & (Fin 2))
-  endlabel = log_prob_seq_final.((unsafe_nat_diff seq_length 2)@_)
-  endspace = log_prob_seq_final.((unsafe_nat_diff seq_length 1)@_)
-  logaddexp endlabel endspace
+'If the compiler could generate `NonEmpty` instances for all
+`Fin N` where `N > 0`, this function would be unnecessary.
 
+def ctc {vocab time position} [Eq time, Eq vocab]
+    (blank: vocab)
+    (logits: time=>vocab=>LogSpace Float)
+    (labels: position=>vocab)
+      : LogSpace Float =
+  if ((size vocab) > 0) && ((size time) > 0) && ((size position) > 0)
+    then
+      vocab_size_m1    = unsafe_nat_diff (size vocab) 1
+      time_size_m1     = unsafe_nat_diff (size time) 1
+      position_size_m1 = unsafe_nat_diff (size position) 1
+
+      vocab'    = (Unit | Fin vocab_size_m1)
+      time'     = (Unit | Fin time_size_m1)
+      position' = (Unit | Fin position_size_m1)
+
+      blank'  = unsafe_from_ordinal vocab' (ordinal blank)
+      logits' = view t:time' v:vocab'.
+        logits.(unsafe_from_ordinal _ (ordinal t)).(unsafe_from_ordinal _ (ordinal v))
+      labels' = view p:position'.
+        unsafe_from_ordinal _ (ordinal labels.(unsafe_from_ordinal _ (ordinal p)))
+      
+      ctc_non_empty blank' logits' labels'
+    else zero
 
 '## Demo
-
-def randIdxNoZero (n:Type) [Ix n] (k:Key) : n =
-  unif = rand k
-  from_ordinal n $ unsafe_i_to_n $
-    (1 + (f_to_i (floor ( unif * i_to_f ((n_to_i $ size n) - 1)))))
+Evaluate marginal probability of some labels given logits.
 
 Vocab = Fin 6
-position = Fin 3
 blank = 0@Vocab
-
--- Create random logits
 Time = Fin 4
-logits : Time => Vocab => Float = arb $ new_key 0
 
--- Create random labels
-labels = for i:position. randIdxNoZero Vocab (new_key (ordinal i))
-:p labels
-> [(3@(Fin 6)), (4@(Fin 6)), (1@(Fin 6))]
+-- Create random logits and labels
+logits : Time => Vocab => (LogSpace Float) = arb $ new_key 0
+labels = [(3@Vocab), (4@Vocab), (1@Vocab)]
 
--- Evaluate marginal probability of labels given logits
-:p exp $ ctc blank logits labels
+-- Evaluate probability.
+:p ls_to_f $ ctc blank logits labels
 > 0.00209
 
 
-
 '### Test
+The CTC paper claims that the output of the above algorithm
+computes `p(labels|logits)`, which should sum to 1.0 over all possible labels.
+They don't sum to one.  Maybe there is a bug in the above code
+or the paper.
 
--- Check that the sum of p(labels|logits) sums to 1.0 over all possible labels.
--- They don't yet sum to one, however I'm not 100% sure about the
--- semantics of the marginal likelihood being computed, and whether
--- e.g. the summed-over labels should include blanks.
-
-sum for i:Vocab. exp $ ctc blank logits [i]
-> 0.031206
-
--- (Fin N)=>Vocab is all combinations of N tokens.
-sum for i:((Fin 2)=>Vocab). exp $ ctc blank logits i
-> 0.245855
-
-sum for i:((Fin 3)=>Vocab). exp $ ctc blank logits i
-> 0.565388
-
+-- Fin N=>Vocab is the set of all combinations of N tokens.
+sum for i:(Fin 3=>Vocab).
+  ls_to_f $ ctc blank logits i
+> 0.565375

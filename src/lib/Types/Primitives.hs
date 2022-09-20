@@ -74,7 +74,9 @@ data PrimCon e =
       | ConRef (PrimCon e)
       -- Misc hacks
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
-      | DictHole (AlwaysEqual SrcPosCtx) e -- Only used during type inference
+      -- Only used during type inference
+      | DictHole (AlwaysEqual SrcPosCtx) e
+      | HandlerHole (AlwaysEqual SrcPosCtx) e  -- e is HandlerDictTy
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 newtype AlwaysEqual a = AlwaysEqual a
@@ -98,6 +100,8 @@ data PrimOp e =
       | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | Resume e e                   -- Resume from effect handler (type, arg)
+      | Handle e e                   -- Call a handler (handler def, body)
+      | Perform e Int                -- Call an effect operation (handler dict) (op #)
       -- References
       | IndexRef e e
       | ProjRef Int e
@@ -107,7 +111,7 @@ data PrimOp e =
       | PtrOffset e e
       | PtrLoad e
       | PtrStore e e
-      -- Destination ops
+      -- Destination operations
       | AllocDest e  -- type
       | Place e e    -- reference, value
       | Freeze e     -- reference
@@ -184,7 +188,7 @@ data UnOp = Exp | Exp2
           | Log | Log2 | Log10 | Log1p
           | Sin | Cos | Tan | Sqrt
           | Floor | Ceil | Round
-          | LGamma
+          | LGamma | Erf | Erfc
           | FNeg | BNot
             deriving (Show, Eq, Generic)
 

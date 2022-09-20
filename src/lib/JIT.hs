@@ -658,6 +658,8 @@ gpuUnaryIntrinsic op x = case typeOf x of
       Ceil   -> callFloatIntrinsic ty $ "__nv_ceil"   ++ suffix
       Round  -> callFloatIntrinsic ty $ "__nv_round"  ++ suffix
       LGamma -> callFloatIntrinsic ty $ "__nv_lgamma" ++ suffix
+      Erf    -> callFloatIntrinsic ty $ "__nv_erf"    ++ suffix
+      Erfc   -> callFloatIntrinsic ty $ "__nv_erfc"   ++ suffix
       _   -> error $ "Unsupported GPU operation: " ++ show op
     floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty]
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x]
@@ -982,6 +984,8 @@ cpuUnaryIntrinsic op x = case typeOf x of
       Ceil            -> callFloatIntrinsic ty $ "llvm.ceil"  ++ llvmSuffix
       Round           -> callFloatIntrinsic ty $ "llvm.round" ++ llvmSuffix
       LGamma          -> callFloatIntrinsic ty $ "lgamma"     ++ libmSuffix
+      Erf             -> callFloatIntrinsic ty $ "erf"        ++ libmSuffix
+      Erfc            -> callFloatIntrinsic ty $ "erfc"       ++ libmSuffix
       _ -> error $ "Unsupported CPU operation: " ++ show op
     floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty]
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x]

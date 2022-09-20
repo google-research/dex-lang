@@ -251,6 +251,7 @@ transposeOp op ct = case op of
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
   ProjNewtype _         -> unreachable
+  Perform _ _           -> unreachable
   ProjMethod _ _        -> unreachable
   ExplicitApply _ _     -> unreachable
   MonoLiteral _         -> unreachable
@@ -261,6 +262,7 @@ transposeOp op ct = case op of
   VectorIota _          -> unreachable
   VectorSubref _ _ _    -> unreachable
   Resume _ _            -> notLinear
+  Handle _ _            -> notLinear
   where
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
     unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
@@ -286,6 +288,8 @@ transposeAtom atom ct = case atom of
   TabLam _        -> notTangent
   DictCon _       -> notTangent
   DictTy _        -> notTangent
+  HandlerDictCon _ -> notTangent  -- TODO(alex): check correctness
+  HandlerDictTy _ -> notTangent   -- TODO(alex): check correctness
   TypeCon _ _ _   -> notTangent
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent
@@ -361,6 +365,7 @@ transposeCon con ct = case con of
   ConRef _       -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
+  HandlerHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a

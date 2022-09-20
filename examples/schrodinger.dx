@@ -13,6 +13,7 @@ $$ \psi(x, y, t + \Delta t) = \\\\ \psi(x, y, t) \\\\ + \frac{i}{2}\frac{\Delta 
 
 '## Imports
 
+import complex
 import plot
 import png
 

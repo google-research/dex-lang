@@ -95,6 +95,10 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   TC  tc  -> TC  <$> mapM rec tc
   DictCon _ -> substM atom
   DictTy  _ -> substM atom
+  -- TODO(alex): check correctness
+  HandlerDictCon _ -> substM atom
+  HandlerDictTy  _ -> substM atom
+  --
   Eff _ -> substM atom
   TypeCon sn defName (DataDefParams params dicts) -> do
     defName' <- substM defName
