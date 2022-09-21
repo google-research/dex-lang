@@ -13,6 +13,7 @@ import Data.Word
 import Data.Functor
 import Data.Set qualified as S
 import Data.List.NonEmpty qualified as NE
+import Data.HashMap.Strict qualified as HM
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
 import Control.Category
 import Control.Monad.Reader
@@ -65,11 +66,11 @@ emitIx :: EnvReader m => Block n -> m n (IxBlock n)
 emitIx block = do
   Distinct <- getDistinct
   env <- unsafeGetEnv
-  (ems, Abs (EmitIxEmissions ds nodecls) outBlock) <-
-    return $ runHardFail $ runInplaceT env $ locallyMutableInplaceT $
+  (ems, Abs (EmitIxEmissions ds _ nodecls) outBlock) <-
+    return $ runHardFail $ runInplaceT (IxEnv env mempty) $ locallyMutableInplaceT $
       runSubstReaderT idSubst $ runEmitIxM $ emitIxE $ sink block
   return $ case ems of
-    EmitIxEmissions REmpty REmpty -> case nodecls of
+    EmitIxEmissions REmpty _ REmpty -> case nodecls of
       REmpty -> Abs (unRNest ds) outBlock
       _ -> error "unexpected decl emissions!"
     _ -> error "unexpected emissions"
@@ -96,10 +97,12 @@ instance HasEmitIx Atom where
     DictCon de -> do
       de' <- emitIxDict de
       dictTy' <- getType de'
+      IxEnv _ dTys <- EmitIxM $ liftSubstReaderT $ getOutMapInplaceT
       case dictTy' of
-        DictTy (DictType "Ix" _ _) -> do
-          EmitIxM $ SubstReaderT $ lift $ freshExtendSubInplaceT noHint \b ->
+        DictTy (DictType "Ix" _ _) -> case lookupEMap dTys dictTy' of
+          Nothing -> EmitIxM $ SubstReaderT $ lift $ freshExtendSubInplaceT noHint \b ->
             (EmitIxDictEmission $ Let b $ DeclBinding PlainLet dictTy' $ Atom $ DictCon de', Var $ binderName b)
+          Just v -> return $ Var v
         -- Non-Ix dicts can be embedded in TypeCon params
         _ -> return $ DictCon de'
     atom -> toE <$> emitIxE (fromE atom)
@@ -129,7 +132,7 @@ instance (BindsEnv b, SubstB Name b, SubstE Name e, SubstE AtomSubstVal e, Sinka
       bodyEms <- emitIxScoped $ emitIxE body
       -- We only emit decls while traversing Blocks, and the implementation for
       -- emitIxE should handle that locally. No other place should emit!
-      refreshAbs bodyEms \(EmitIxEmissions ds REmpty) body' -> do
+      refreshAbs bodyEms \(EmitIxEmissions ds _ REmpty) body' -> do
         (PairB ds' b'', s, _) <- return $ generalizeIxDicts (unsafeCoerceE scope) b' ds
         body'' <- applySubst s body'
         return $ Abs ds' $ Abs b'' body''
@@ -179,9 +182,36 @@ generalizeIxDicts scope topB dicts = go REmpty scope topB emptyInFrag $ unRNest 
 
 --- The monad ---
 
+-- We do not assume that the set of Types accurately reflects all the bound dicts.
+-- It can be an underapproximation that we use for best-effort deduplication.
+type IxCache = EMap Type AtomName
+data IxEnv (n::S) = IxEnv (Env n) (IxCache n)
+instance HasScope IxEnv where
+  toScope (IxEnv env _) = toScope env
+  {-# INLINE toScope #-}
+instance OutMap IxEnv where
+  emptyOutMap = IxEnv emptyOutMap mempty
+
 newtype EmitIxM (i::S) (o::S) (a:: *) =
-  EmitIxM { runEmitIxM :: SubstReaderT Name (InplaceT Env EmitIxEmissions HardFailM) i o a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible, ScopeReader, SubstReader Name, EnvReader, EnvExtender)
+  EmitIxM { runEmitIxM :: SubstReaderT Name (InplaceT IxEnv EmitIxEmissions HardFailM) i o a }
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible, ScopeReader, SubstReader Name, EnvExtender, EnvReader)
+instance (Monad m, ExtOutMap IxEnv decls, OutFrag decls)
+        => EnvReader (InplaceT IxEnv decls m) where
+  unsafeGetEnv = do
+    IxEnv env _ <- getOutMapInplaceT
+    return env
+  {-# INLINE unsafeGetEnv #-}
+instance (Monad m, ExtOutMap IxEnv decls, OutFrag decls)
+         => EnvExtender (InplaceT IxEnv decls m) where
+  refreshAbs ab cont = UnsafeMakeInplaceT \env decls ->
+    refreshAbsPure (toScope env) ab \_ b e -> do
+      let subenv = extendOutMap env $ toEnvFrag b
+      (ans, d, _) <- unsafeRunInplaceT (cont b e) subenv emptyOutFrag
+      case fabricateDistinctEvidence @UnsafeS of
+        Distinct -> do
+          let env' = extendOutMap (unsafeCoerceE env) d
+          return (ans, catOutFrags (toScope env') decls d, env')
+  {-# INLINE refreshAbs #-}
 
 emitIxScoped :: SinkableE e
              => (forall o'. (Mut o', DExt o o') => EmitIxM i o' (e o'))
@@ -197,30 +227,30 @@ emitIxDecl hint ann expr = do
     (EmitIxDeclEmission $ Let b $ DeclBinding ann ty expr, binderName b)
 {-# INLINE emitIxDecl #-}
 
--- TODO: We know they're fresh! Avoid the unnecessary checks
+-- OPTIMIZE: We know they're fresh! Avoid the unnecessary checks
 reemitIxDicts :: (Mut o, SubstE Name e) => Abs (RNest Decl) e o -> EmitIxM i o (e o)
 reemitIxDicts (Abs dicts e) =
-  EmitIxM $ liftSubstReaderT $ extendInplaceT $ Abs (EmitIxEmissions dicts emptyOutFrag) e
+  EmitIxM $ liftSubstReaderT $ extendInplaceT $ Abs (EmitIxEmissions dicts mempty emptyOutFrag) e
 
 buildEmitIxBlock :: Mut o  -- Re-emits hoisted dictionaries
                  => (forall o'. (Mut o', DExt o o') => EmitIxM i o' (Atom o'))
                  -> EmitIxM i o (Block o)
 buildEmitIxBlock cont = do
-  Abs (EmitIxEmissions ds decls) ansWithTy <- emitIxScoped $ withType =<< cont
+  Abs (EmitIxEmissions ds dTys decls) ansWithTy <- emitIxScoped $ withType =<< cont
   Abs decls' ansWithTy' <- EmitIxM $ liftSubstReaderT $
-    extendInplaceT $ Abs (EmitIxEmissions ds REmpty) $ Abs decls ansWithTy
+    extendInplaceT $ Abs (EmitIxEmissions ds dTys REmpty) $ Abs decls ansWithTy
   absToBlock =<< computeAbsEffects (Abs (unRNest decls') ansWithTy')
 
 --- Emission types ---
 
 data EmitIxEmissions (n::S) (l::S) where
   -- hoisted dicts, local decls
-  EmitIxEmissions :: RNest Decl n p -> RNest Decl p l -> EmitIxEmissions n l
+  EmitIxEmissions :: RNest Decl n p -> IxCache p -> RNest Decl p l -> EmitIxEmissions n l
 instance GenericB EmitIxEmissions where
-  type RepB EmitIxEmissions = PairB (RNest Decl) (RNest Decl)
-  fromB (EmitIxEmissions ds dcls) = PairB ds dcls
+  type RepB EmitIxEmissions = RNest Decl `PairB` LiftB IxCache `PairB` RNest Decl
+  fromB (EmitIxEmissions ds dsTys dcls) = ds `PairB` LiftB dsTys `PairB` dcls
   {-# INLINE fromB #-}
-  toB   (PairB ds dcls) = EmitIxEmissions ds dcls
+  toB   (ds `PairB` LiftB dsTys `PairB` dcls) = EmitIxEmissions ds dsTys dcls
   {-# INLINE toB #-}
 instance ProvesExt   EmitIxEmissions
 instance BindsNames  EmitIxEmissions
@@ -228,16 +258,26 @@ instance SinkableB   EmitIxEmissions
 instance HoistableB  EmitIxEmissions
 instance SubstB Name EmitIxEmissions
 instance OutFrag EmitIxEmissions where
-  emptyOutFrag = EmitIxEmissions emptyOutFrag emptyOutFrag
-  catOutFrags _ (EmitIxEmissions ds dcls) (EmitIxEmissions ds' dcls') =
-    case withSubscopeDistinct dcls' $ tryHoist dcls ds' of
-      PairB ds'' dcls'' -> EmitIxEmissions (ds >>> ds'') (dcls'' >>> dcls')
+  emptyOutFrag = EmitIxEmissions emptyOutFrag mempty emptyOutFrag
+  catOutFrags _ (EmitIxEmissions ds dsTys dcls) (EmitIxEmissions ds' _ dcls') =
+    withSubscopeDistinct dcls' $ case tryHoist dcls ds' of
+      PairB ds'' dcls'' -> do
+        let (ds''', dsTys''') = withSubscopeDistinct dcls'' $ appendDicts ds dsTys $ unRNest ds''
+        EmitIxEmissions ds''' dsTys''' (dcls'' >>> dcls')
+
+appendDicts :: Distinct p => RNest Decl n l -> IxCache l -> Nest Decl l p -> (RNest Decl n p, EMap Type AtomName p)
+appendDicts !ds !dsTys = \case
+  Empty -> (ds, dsTys)
+  Nest b@(Let nb (DeclBinding ann dTy _)) bs ->
+    withSubscopeDistinct bs $ withExtEvidence nb $ case lookupEMap dsTys dTy of
+      Nothing -> appendDicts (RNest ds b) (insertEMap (sink dTy) (binderName nb) $ sink dsTys) bs
+      Just v  -> appendDicts (RNest ds $ Let nb $ DeclBinding ann dTy $ Atom $ Var v) (sink dsTys) bs
 
 tryHoist :: Distinct q => RNest Decl n p -> RNest Decl p q -> PairB (RNest Decl) (RNest Decl) n q
 tryHoist REmpty  ds    = PairB ds REmpty
 tryHoist topDcls topDs = go REmpty topDcls $ unRNest topDs
   where
-    -- TODO: Optimize this: we repeatedly query free vars and bound names in exchangeBs!
+    -- OPTIMIZE: Optimize this: we repeatedly query free vars and bound names in exchangeBs!
     go :: Distinct q => RNest Decl n l -> RNest Decl l p -> Nest Decl p q -> PairB (RNest Decl) (RNest Decl) n q
     go ds dcls = \case
       Empty -> PairB ds dcls
@@ -245,31 +285,50 @@ tryHoist topDcls topDs = go REmpty topDcls $ unRNest topDs
         HoistSuccess (PairB d'' dcls') -> go (RNest ds d'') dcls' ds'
         HoistFailure _                 -> go ds (RNest dcls d') ds'
 
+instance ExtOutMap IxEnv EnvFrag where
+  extendOutMap (IxEnv env dsTys) frag =
+    withExtEvidence frag $ IxEnv (env `extendOutMap` frag) $ sink dsTys
+
 instance BindsEnv EmitIxEmissions where
-  toEnvFrag (EmitIxEmissions ds dcls) =
+  toEnvFrag (EmitIxEmissions ds _ dcls) =
     withSubscopeDistinct dcls $ toEnvFrag ds `catEnvFrags` toEnvFrag dcls
-instance ExtOutMap Env EmitIxEmissions where
-  extendOutMap env ems = env `extendOutMap` toEnvFrag ems
+instance ExtOutMap IxEnv EmitIxEmissions where
+  -- XXX: There might be unhoistable dicts in decls
+  extendOutMap (IxEnv env envDsTys) (EmitIxEmissions ds dsTys decls) =
+    withExtEvidence ds $ withExtEvidence decls $ withSubscopeDistinct decls $
+      IxEnv (env `extendOutMap` toEnvFrag ds `extendOutMap` toEnvFrag decls)
+            (sink envDsTys <> sink dsTys)
 
 newtype EmitIxDeclEmission (n::S) (l::S) = EmitIxDeclEmission (Decl n l)
   deriving (ProvesExt, BindsNames, SinkableB, SubstB Name, BindsEnv)
-instance ExtOutMap Env EmitIxDeclEmission where
-  extendOutMap env ems = env `extendOutMap` toEnvFrag ems
+instance ExtOutMap IxEnv EmitIxDeclEmission where
+  extendOutMap (IxEnv env tys) ems =
+    withExtEvidence ems $ IxEnv (env `extendOutMap` toEnvFrag ems) $ sink tys
 instance ExtOutFrag EmitIxEmissions EmitIxDeclEmission where
-  extendOutFrag (EmitIxEmissions ds dcls) (EmitIxDeclEmission d) = EmitIxEmissions ds $ RNest dcls d
+  extendOutFrag (EmitIxEmissions ds dsTys dcls) (EmitIxDeclEmission d) =
+    EmitIxEmissions ds dsTys $ RNest dcls d
   {-# INLINE extendOutFrag #-}
 
 newtype EmitIxDictEmission (n::S) (l::S) = EmitIxDictEmission (Decl n l)
   deriving (ProvesExt, BindsNames, SinkableB, SubstB Name, BindsEnv)
-instance ExtOutMap Env EmitIxDictEmission where
-  extendOutMap env ems = env `extendOutMap` toEnvFrag ems
--- TODO: Cache bound vars?
+-- XXX: The following two expressions are not equivalent!
+--   env `extendOutMap` (emptyOutFrag `extendOutFrag` EmitIxDictEmission d)
+--   env `extendOutMap` EmitIxDictEmission d
+instance ExtOutMap IxEnv EmitIxDictEmission where
+  extendOutMap (IxEnv env dsTys) em = withExtEvidence em $
+    IxEnv (env `extendOutMap` toEnvFrag em) $
+      insertEMap (sink dTy) (binderName b) $ sink dsTys
+    where EmitIxDictEmission (Let b (DeclBinding _ dTy _)) = em
 instance ExtOutFrag EmitIxEmissions EmitIxDictEmission where
-  extendOutFrag (EmitIxEmissions ds dcls) (EmitIxDictEmission d) =
+  -- OPTIMIZE: Cache bound vars of decls?
+  extendOutFrag (EmitIxEmissions ds dsTys dcls) (EmitIxDictEmission d) =
     case exchangeBs $ PairB dcls d of
-      HoistSuccess (PairB d' dcls') -> EmitIxEmissions (RNest ds d') dcls'
-      HoistFailure _                -> EmitIxEmissions ds $ RNest dcls d
+      HoistSuccess (PairB d' dcls') -> withExtEvidence d' $ withSubscopeDistinct dcls' $ EmitIxEmissions (RNest ds d') (insertEMap (sink dTy') (binderName db') $ sink dsTys) dcls'
+        where Let db' (DeclBinding _ dTy' _) = d'
+      HoistFailure _                -> EmitIxEmissions ds dsTys $ RNest dcls d
 
+insertEMap :: (HoistableE k, AlphaEqE k, AlphaHashableE k) => k n -> v n -> EMap k v n -> EMap k v n
+insertEMap k v (EMap m) = EMap $ HM.insert (EKey k) v m
 
 --- The generic instances ---
 
