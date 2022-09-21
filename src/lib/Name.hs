@@ -101,7 +101,7 @@ import Data.Hashable
 import Data.Kind (Type)
 import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Text.Prettyprint.Doc  hiding (nest)
+import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import GHC.Exts (Constraint, dataToTag#, tagToEnum#, Int(..))
 import qualified GHC.Exts as GHC.Exts
@@ -789,7 +789,7 @@ forEachNestItemM (Nest b rest) f = Nest <$> f b <*> forEachNestItemM rest f
 forEachNestItem :: Nest b i i'
                 -> (forall ii ii'. b ii ii' -> b' ii ii')
                 -> Nest b' i i'
-forEachNestItem nest f = runIdentity $ forEachNestItemM nest (return . f)
+forEachNestItem n f = runIdentity $ forEachNestItemM n (return . f)
 
 -- TODO: make a more general E-kinded Traversable?
 traverseSubstFrag :: forall v v' i i' o o' m .
@@ -2200,7 +2200,8 @@ instance SubstE v e => SubstE v (NonEmptyListE e) where
   substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
-  pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"
+  pretty (Abs b body) = group $
+    "(Abs " <> nest 2 (pretty b <> line <> pretty body) <> line <> ")"
 
 instance Pretty a => Pretty (LiftE a n) where
   pretty (LiftE x) = pretty x
@@ -3104,8 +3105,11 @@ instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
   show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
 
 instance (forall (n'::S) (l'::S). Pretty (b n' l')) => Pretty (Nest b n l) where
-  pretty Empty = ""
-  pretty (Nest b rest) = "(Nest " <> pretty b <> " in " <> pretty rest <> ")"
+  pretty = group . go
+    where
+      go :: (forall (n'::S) (l'::S). Pretty (b n' l')) => Nest b n l -> Doc ann
+      go Empty = ""
+      go (Nest b rest) = line <> pretty b <> pretty rest
 
 instance SinkableB b => SinkableB (Nest b) where
   sinkingProofB fresh Empty cont = cont fresh Empty
@@ -3138,7 +3142,7 @@ instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
   from = from . listFromNest
     where
       listFromNest :: Nest b n' l' -> [b UnsafeS UnsafeS]
-      listFromNest nest = case nest of
+      listFromNest n = case n of
         Empty -> []
         Nest b rest -> unsafeCoerceB b : listFromNest rest
 
