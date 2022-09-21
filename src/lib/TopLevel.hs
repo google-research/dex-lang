@@ -50,7 +50,6 @@ import Types.Core
 import Builder
 import CheckType ( CheckableE (..), asFFIFunType, checkHasType, asSpecializableFunction)
 #ifdef DEX_DEBUG
-import Types.Primitives
 import CheckType (checkTypesM)
 #endif
 import SourceRename
@@ -699,7 +698,7 @@ checkPass name cont = do
     return result
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
-  let allowedEffs = case name of LowerPass -> singletonEffRow IOEffect; _ -> mempty
+  let allowedEffs = case name of LowerPass -> OneEffect IOEffect; _ -> mempty
   {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
     withAllowedEffects allowedEffs $ checkTypesM result
   logTop $ MiscLog $ "Checks passed"

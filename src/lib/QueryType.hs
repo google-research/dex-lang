@@ -15,7 +15,7 @@ module QueryType (
   instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType, specializedFunType,
-  oneEffect, projectionIndices, sourceNameType, typeBinOp, typeUnOp,
+  projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
   instantiateHandlerType,
   ) where
@@ -211,11 +211,8 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
         return $ NaryPiType allBs effs resultTy
       _ -> error "should only be specializing top-level functions"
 
-oneEffect :: Effect n -> EffectRow n
-oneEffect eff = EffectRow (S.singleton eff) Nothing
-
 userEffect :: EffectName n -> Atom n
-userEffect v = Eff (oneEffect (UserEffect v))
+userEffect v = Eff (OneEffect (UserEffect v))
 
 projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Int]]
 projectionIndices ty = case ty of
@@ -338,9 +335,6 @@ instance HasType Atom where
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
-    -- TODO(alex): check correctness
-    HandlerDictCon d -> getTypeE d
-    HandlerDictTy _ -> return TyKind
     LabeledRow _ -> return LabeledRowKind
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
@@ -422,7 +416,6 @@ getTypePrimCon con = case con of
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
-  HandlerHole _ ty -> substM ty
 
 dictExprType :: DictExpr i -> TypeQueryM i o (DictType o)
 dictExprType e = case e of
@@ -483,13 +476,6 @@ typeTabApp tabTy xs = go tabTy $ toList xs
 instance HasType DictExpr where
   getTypeE e = DictTy <$> dictExprType e
 
-instance HasType HandlerDictExpr where
-  getTypeE (HandlerDictExpr handlerName _ _) = do
-    handlerName' <- substM handlerName
-    (HandlerDef effName _ _ _ _ _ _) <- lookupHandlerDef handlerName'
-    (EffectDef effSourceName _) <- lookupEffectDef effName
-    return (HandlerDictTy $ HandlerDictType effSourceName effName)
-
 instance HasType Expr where
   getTypeE expr = case expr of
     App f xs -> do
@@ -502,6 +488,17 @@ instance HasType Expr where
     Op   op  -> getTypePrimOp op
     Hof  hof -> getTypePrimHof hof
     Case _ _ resultTy _ -> substM resultTy
+    Handle hndName [] body -> do
+      hndName' <- substM hndName
+      r <- getTypeE body
+      instantiateHandlerType hndName' r []
+    -- TODO(alex): implement
+    Handle _ _ _  -> error "not implemented"
+
+instantiateHandlerType :: EnvReader m => HandlerName n -> Atom n -> [Atom n] -> m n (Type n)
+instantiateHandlerType hndName r args = do
+  HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
+  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
 
 getTypePrimOp :: PrimOp (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimOp op = case op of
@@ -625,9 +622,9 @@ getTypePrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  Perform hndDict i -> do
-    HandlerDictTy (HandlerDictType _ effName) <- getTypeE hndDict
-    EffectDef _ ops <- lookupEffectDef effName
+  Perform eff i -> do
+    Eff (OneEffect (UserEffect effName)) <- return eff
+    EffectDef _ ops <- substM effName >>= lookupEffectDef
     let (_, EffectOpType _pol lamTy) = ops !! i
     return lamTy
   ProjMethod dict i -> do
@@ -651,15 +648,6 @@ getTypePrimOp op = case op of
     TC (RefType h _) -> TC . RefType h <$> substM vty
     ty -> error $ "Not a reference type: " ++ pprint ty
   Resume retTy _ -> substM retTy
-  Handle (HandlerDictCon hde) _ -> do
-    HandlerDictExpr hndName r args <- substM hde
-    instantiateHandlerType hndName r args
-  Handle _ _ -> error "Handler did not have literal dict as first arg"
-
-instantiateHandlerType :: EnvReader m => HandlerName n -> Atom n -> [Atom n] -> m n (Type n)
-instantiateHandlerType hndName r args = do
-  HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
-  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
@@ -778,18 +766,18 @@ exprEffects expr = case expr of
       getTypeSubst ref >>= \case
         RefTy (Var h) _ ->
           return $ case m of
-            MGet      -> oneEffect (RWSEffect State  $ Just h)
-            MPut    _ -> oneEffect (RWSEffect State  $ Just h)
-            MAsk      -> oneEffect (RWSEffect Reader $ Just h)
+            MGet      -> OneEffect (RWSEffect State  $ Just h)
+            MPut    _ -> OneEffect (RWSEffect State  $ Just h)
+            MAsk      -> OneEffect (RWSEffect Reader $ Just h)
             -- XXX: We don't verify the base monoid. See note about RunWriter.
-            MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
+            MExtend _ _ -> OneEffect (RWSEffect Writer $ Just h)
         _ -> error "References must have reference type"
-    ThrowException _ -> return $ oneEffect ExceptionEffect
-    IOAlloc  _ _  -> return $ oneEffect IOEffect
-    IOFree   _    -> return $ oneEffect IOEffect
-    PtrLoad  _    -> return $ oneEffect IOEffect
-    PtrStore _ _  -> return $ oneEffect IOEffect
-    Place    _ _  -> return $ oneEffect IOEffect
+    ThrowException _ -> return $ OneEffect ExceptionEffect
+    IOAlloc  _ _  -> return $ OneEffect IOEffect
+    IOFree   _    -> return $ OneEffect IOEffect
+    PtrLoad  _    -> return $ OneEffect IOEffect
+    PtrStore _ _  -> return $ OneEffect IOEffect
+    Place    _ _  -> return $ OneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
@@ -807,8 +795,12 @@ exprEffects expr = case expr of
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
     RememberDest _ f -> functionEffs f
-    where maybeIO d = case d of Just _ -> (<>oneEffect IOEffect); Nothing -> id
+    where maybeIO :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
+          maybeIO d = case d of Just _ -> (<>OneEffect IOEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
+  Handle v _ body -> do
+    HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef
+    deleteEff (UserEffect eff) <$> getEffectsImpl body
 
 instance HasEffectsE Block where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs

@@ -385,6 +385,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
                  void $ extendSubst (b @> SubstVal (sink xs)) $
                    translateBlock (Just $ sink dest) body
             destToAtom dest
+  Handle _ _ _ -> error "handlers should be gone by now"
   where
     notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of

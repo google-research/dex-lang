@@ -55,12 +55,8 @@ data Atom (n::S) =
  | DepPairTy (DepPairType n)
  | DepPair   (Atom n) (Atom n) (DepPairType n)
  | TypeCon SourceName (DataDefName n) (DataDefParams n)
- -- TODO(alex): merge HandlerDict* into Dict*?
  | DictCon (DictExpr n)
  | DictTy  (DictType n)
- | HandlerDictCon (HandlerDictExpr n)
- | HandlerDictTy (HandlerDictType n)
- --
  | LabeledRow (FieldRowElems n)
  | RecordTy  (FieldRowElems n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
@@ -87,6 +83,7 @@ data Expr n =
  | Atom (Atom n)
  | Op  (Op  n)
  | Hof (Hof n)
+ | Handle (HandlerName n) [Atom n] (Block n)
    deriving (Show, Generic)
 
 data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
@@ -291,17 +288,6 @@ data DictExpr (n::S) =
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (Atom n)
    deriving (Show, Generic)
-
-data HandlerDictType (n::S) =
-    HandlerDictType SourceName (EffectName n)
-  deriving (Show, Generic)
-
-data HandlerDictExpr (n::S) =
-    HandlerDictExpr
-      (HandlerName n)
-      (Atom n)  -- r parameter (type of block body)
-      [Atom n]  -- other type-and-value parameters (some implicit)
-  deriving (Show, Generic)
 
 -- TODO: Use an IntMap
 newtype CustomRules (n::S) = CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
@@ -1075,9 +1061,7 @@ instance GenericE Atom where
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
   {- DictCon  -}   DictExpr
   {- DictTy  -}    DictType
-            ) (EitherE5
-  {- HandlerDictCon -} ( HandlerDictExpr )
-  {- HandlerDictTy -}  ( HandlerDictType )
+            ) (EitherE3
   {- LabeledRow -}     ( FieldRowElems )
   {- RecordTy -}       ( FieldRowElems )
   {- VariantTy -}      ( ExtLabeledItemsE Type AtomName )
@@ -1103,11 +1087,9 @@ instance GenericE Atom where
       LiftE sourceName `PairE` defName `PairE` params
     DictCon d -> Case2 $ Case3 d
     DictTy  d -> Case2 $ Case4 d
-    HandlerDictCon d -> Case3 $ Case0 $ d
-    HandlerDictTy d -> Case3 $ Case1 $ d
-    LabeledRow elems    -> Case3 $ Case2 $ elems
-    RecordTy elems -> Case3 $ Case3 elems
-    VariantTy extItems  -> Case3 $ Case4 $ ExtLabeledItemsE extItems
+    LabeledRow elems -> Case3 $ Case0 $ elems
+    RecordTy elems -> Case3 $ Case1 elems
+    VariantTy extItems  -> Case3 $ Case2 $ ExtLabeledItemsE extItems
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
@@ -1136,11 +1118,9 @@ instance GenericE Atom where
       Case4 d -> DictTy  d
       _ -> error "impossible"
     Case3 val -> case val of
-      Case0 d     -> HandlerDictCon d
-      Case1 d     -> HandlerDictTy d
-      Case2 elems -> LabeledRow elems
-      Case3 elems -> RecordTy elems
-      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case0 elems -> LabeledRow elems
+      Case1 elems -> RecordTy elems
+      Case2 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
@@ -1207,13 +1187,14 @@ getProjection (i:is) a = case getProjection is a of
 
 instance GenericE Expr where
   type RepE Expr =
-     EitherE6
+     EitherE7
         (Atom `PairE` Atom `PairE` ListE Atom)
         (Atom `PairE` Atom `PairE` ListE Atom)
         (Atom `PairE` ListE Alt `PairE` Type `PairE` EffectRow)
         (Atom)
         (ComposeE PrimOp Atom)
         (ComposeE PrimHof Atom)
+        (HandlerName `PairE` ListE Atom `PairE` Block)
   fromE = \case
     App    f (x:|xs)  -> Case0 (f `PairE` x `PairE` ListE xs)
     TabApp f (x:|xs)  -> Case1 (f `PairE` x `PairE` ListE xs)
@@ -1221,6 +1202,7 @@ instance GenericE Expr where
     Atom x         -> Case3 (x)
     Op op          -> Case4 (ComposeE op)
     Hof hof        -> Case5 (ComposeE hof)
+    Handle v args body -> Case6 (v `PairE` ListE args `PairE` body)
   {-# INLINE fromE #-}
   toE = \case
     Case0 (f `PairE` x `PairE` ListE xs)    -> App    f (x:|xs)
@@ -1229,6 +1211,7 @@ instance GenericE Expr where
     Case3 (x)                               -> Atom x
     Case4 (ComposeE op)                     -> Op op
     Case5 (ComposeE hof)                    -> Hof hof
+    Case6 (v `PairE` ListE args `PairE` body) -> Handle v args body
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1437,30 +1420,6 @@ instance AlphaEqE            DictExpr
 instance AlphaHashableE      DictExpr
 instance SubstE Name         DictExpr
 instance SubstE AtomSubstVal DictExpr
-
-instance GenericE HandlerDictType where
-  type RepE HandlerDictType = LiftE SourceName `PairE` EffectName
-  fromE (HandlerDictType name effName) = (LiftE name `PairE` effName)
-  toE (LiftE name `PairE` effName) = HandlerDictType name effName
-
-instance SinkableE           HandlerDictType
-instance HoistableE          HandlerDictType
-instance AlphaEqE            HandlerDictType
-instance AlphaHashableE      HandlerDictType
-instance SubstE Name         HandlerDictType
-instance SubstE AtomSubstVal HandlerDictType
-
-instance GenericE HandlerDictExpr where
-  type RepE HandlerDictExpr = HandlerName `PairE` Atom `PairE` ListE Atom
-  fromE (HandlerDictExpr name r params) = (name `PairE` r `PairE` ListE params)
-  toE (name `PairE` r `PairE` ListE params) = (HandlerDictExpr name r params)
-
-instance SinkableE           HandlerDictExpr
-instance HoistableE          HandlerDictExpr
-instance AlphaEqE            HandlerDictExpr
-instance AlphaHashableE      HandlerDictExpr
-instance SubstE Name         HandlerDictExpr
-instance SubstE AtomSubstVal HandlerDictExpr
 
 instance GenericE Cache where
   type RepE Cache =
@@ -2211,8 +2170,6 @@ instance Store (InstanceBody n)
 instance Store (MethodType   n)
 instance Store (DictType n)
 instance Store (DictExpr n)
-instance Store (HandlerDictType n)
-instance Store (HandlerDictExpr n)
 instance Store (EffectDef n)
 instance Store (EffectOpDef n)
 instance Store (HandlerDef n)
