@@ -71,6 +71,11 @@ class DexRuntime:
     return Python(self.name, self.repeats, RUNTIME_BASELINES[self.name])
 
 
+class DexRuntimeVsDex(DexRuntime):
+  def baseline(self):
+    return DexRuntimeVsDex(self.name, self.repeats, 'baseline')
+
+
 @dataclass
 class Python:
   name: str
@@ -127,6 +132,7 @@ BENCHMARKS = [
     DexRuntime('matvec_small', 5),
     DexRuntime('poly', 5),
     DexRuntime('vjp_matmul', 5),
+    DexRuntimeVsDex('conv', 10),
 ]
 RUNTIME_BASELINES = {
     'fused_sum': numpy_sum,
