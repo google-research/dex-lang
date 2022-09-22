@@ -551,8 +551,9 @@ evalBlock typed = do
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
-      explicitIx <- emitIx opt
-      lowered <- checkPass LowerPass $ lowerFullySequential explicitIx
+      explicitIx <- checkPass JAXPass $ emitIx opt
+      instIx <- checkPass JAXSimpPass $ simplifyIx explicitIx
+      lowered <- checkPass LowerPass $ lowerFullySequential instIx
       evalBackend lowered
   applyRecon recon result
 {-# SCC evalBlock #-}

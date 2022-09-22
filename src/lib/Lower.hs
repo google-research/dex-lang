@@ -6,7 +6,10 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module Lower (lowerFullySequential, IxBlock, IxDestBlock, vectorizeLoops, emitIx) where
+module Lower
+  ( lowerFullySequential, IxBlock, IxDestBlock, vectorizeLoops
+  , emitIx, simplifyIx
+  ) where
 
 import Prelude hiding (id, (.))
 import Data.Word
@@ -17,11 +20,13 @@ import Data.HashMap.Strict qualified as HM
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
 import Control.Category
 import Control.Monad.Reader
+import Control.Monad.State
 import Unsafe.Coerce
 import GHC.Exts (inline)
 
 import Types.Core
 import Types.Primitives
+import Types.Source
 
 import Err
 import Name
@@ -101,7 +106,7 @@ instance HasEmitIx Atom where
       case dictTy' of
         DictTy (DictType "Ix" _ _) -> case lookupEMap dTys dictTy' of
           Nothing -> EmitIxM $ SubstReaderT $ lift $ freshExtendSubInplaceT noHint \b ->
-            (EmitIxDictEmission $ Let b $ DeclBinding PlainLet dictTy' $ Atom $ DictCon de', Var $ binderName b)
+            (EmitIxDictEmission $ Let b $ DeclBinding NoInlineLet dictTy' $ Atom $ DictCon de', Var $ binderName b)
           Just v -> return $ Var v
         -- Non-Ix dicts can be embedded in TypeCon params
         _ -> return $ DictCon de'
@@ -410,6 +415,49 @@ instance HasEmitIx e => HasEmitIx (ListE e) where
   emitIxE (ListE xs) = ListE <$> traverse emitIxE xs
   {-# INLINE emitIxE #-}
 
+-- === Ix dict simplification ===
+
+newtype SIM (n::S) = SIM (ClassName n)
+instance SinkableE SIM where
+  sinkingProofE fresh (SIM n) = SIM $ sinkingProofE fresh n
+instance HoistableState SIM where
+  hoistState s _ _ = s
+  {-# INLINE hoistState #-}
+
+instance GenericTraverser SIM where
+  traverseAtom = \case
+    DictCon de -> do
+      de' <- substM de
+      let dict = DictCon de'
+      SIM ixClsName <- get
+      getType de' >>= \case
+        dTy@(DictTy (DictType _ clsName params)) | clsName == ixClsName -> do
+          let ixTy = head params
+          case ixTy of
+            TC (Fin _) -> return dict
+            _ -> do
+              size <- buildLam noHint PlainArrow UnitTy Pure \_ ->
+                emitBlock =<< buildBlockSimplified do
+                  emitOp $ ProjMethod (sink dict) 0
+              ord <- buildLam noHint PlainArrow ixTy Pure \i ->
+                emitBlock =<< buildBlockSimplified do
+                  meth <- emitOp $ ProjMethod (sink dict) 1
+                  app meth $ Var $ sink i
+              ufo <- buildLam noHint PlainArrow NatTy Pure \o ->
+                emitBlock =<< buildBlockSimplified do
+                  meth <- emitOp $ ProjMethod (sink dict) 2
+                  app meth $ Var $ sink o
+              return $ Con $ Newtype dTy $ ProdVal [size, ord, ufo]
+        _ -> return dict
+    atom -> traverseAtomDefault atom
+
+simplifyIx :: EnvReader m => IxBlock n -> m n (IxBlock n)
+simplifyIx (Abs ixs block) =
+  lookupSourceMap "Ix" >>= \case
+    Just (UClassVar ixName) -> liftM fst $ liftGenericTraverserM (SIM ixName) $ buildScoped $
+      traverseDeclNest ixs $ traverseGenericE block
+    _ -> error "Ix is not a defined interface?"
+
 -- === For loop resolution ===
 
 -- The `lowerFullySequential` pass makes two related changes:
@@ -457,7 +505,7 @@ instance HoistableState LFS where
   {-# INLINE hoistState #-}
 
 -- It would be nice to figure out a way to not have to update the effect
--- annotations manually... The only interesting case below is really the For.
+-- annotations manually... The only interesting cases below are really For and TabCon.
 instance GenericTraverser LFS where
   traverseExpr expr = case expr of
     Op (TabCon ty els) -> traverseTabCon Nothing ty els
@@ -474,6 +522,29 @@ instance GenericTraverser LFS where
           let eff' = case ann of BlockAnn _ e -> e; NoBlockAnn -> Pure
           return $ Lam $ LamExpr (LamBinder b ty arr eff') body
         _ -> error "Expected a lambda"
+    -- Ix methods have to be pure, but this pass might introduce the IO effect
+    -- if they contain loops. In that case, we wrap the generated body in RunIO.
+    Con (Newtype dty@(DictTy _) (ProdVal methods)) -> do
+      dty'@(DictTy (DictType _ clsName _)) <- traverseAtom dty
+      -- Make sure that we're actually dealing with Ix. Other typeclasses might have
+      -- methods with IO and we shouldn't handle those prematurely.
+      lookupSourceMap "Ix" >>= \case
+        Just (UClassVar ixClsName) -> unless (clsName == ixClsName) $
+          throw CompilerErr "Unexpected non-Ix dict newtype?"
+        _ -> error "Ix not a defined interface?"
+      methods' <- forM methods \(Lam (LamExpr b block)) -> do
+        traverseLamBinder b \b' -> Lam . LamExpr b' <$> do
+          block'@(Block ann decls ans) <- traverseGenericE block
+          case ann of
+            BlockAnn bTy bEffs@(EffectRow effs _) | IOEffect `S.member` effs ->
+              buildBlock $ Var <$> do
+                emit . Hof . RunIO =<< withFreshBinder noHint UnitTy \iob -> do
+                  bEffs' <- sinkM bEffs
+                  Abs decls' ans' <- sinkM $ Abs decls ans
+                  return $ Lam $ LamExpr (LamBinder iob UnitTy PlainArrow bEffs') $
+                    Block (BlockAnn (sink bTy) bEffs') decls' ans'
+            _ -> return block'
+      return $ Con $ Newtype dty' $ ProdVal methods'
     _ -> traverseAtomDefault atom
 
 type Dest = Atom

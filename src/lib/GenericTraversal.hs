@@ -9,7 +9,7 @@ module GenericTraversal
   ( GenericTraverser (..), GenericallyTraversableE (..)
   , GenericTraverserM (..), liftGenericTraverserM
   , traverseExprDefault, traverseAtomDefault
-  , traverseDeclNest, traverseBlock ) where
+  , traverseDeclNest, traverseBlock, traverseLamBinder ) where
 
 import Control.Monad
 import Control.Monad.State.Class
@@ -58,16 +58,7 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
 traverseAtomDefault :: GenericTraverser s => Atom i -> GenericTraverserM s i o (Atom o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
-  Lam (LamExpr (LamBinder b ty arr eff) body) -> do
-    ty' <- tge ty
-    let hint = getNameHint b
-    effAbs <- withFreshBinder hint ty' \b' ->
-      extendRenamer (b@>binderName b') do
-        Abs (b':>ty') <$> substM eff
-    withFreshLamBinder hint (LamBinding arr ty') effAbs \b' -> do
-      extendRenamer (b@>binderName b') do
-        body' <- tge body
-        return $ Lam $ LamExpr b' body'
+  Lam (LamExpr b body) -> traverseLamBinder b \b' -> Lam . LamExpr b' <$> tge body
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty
     withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
@@ -190,6 +181,20 @@ traverseAlt
 traverseAlt (Abs (b:>ty) body) = do
   ty' <- tge ty
   buildAbs (getNameHint b) ty' \v -> extendRenamer (b@>v) $ tge body
+
+traverseLamBinder
+  :: GenericTraverser s
+  => LamBinder i i'
+  -> (forall o'. DExt o o' => LamBinder o o' -> GenericTraverserM s i' o' a)
+  -> GenericTraverserM s i o a
+traverseLamBinder (LamBinder b ty arr eff) cont = do
+  ty' <- tge ty
+  let hint = getNameHint b
+  effAbs <- withFreshBinder hint ty' \b' ->
+    extendRenamer (b@>binderName b') do
+      Abs (b':>ty') <$> substM eff
+  withFreshLamBinder hint (LamBinding arr ty') effAbs \b' -> do
+    extendRenamer (b@>binderName b') $ cont b'
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)
