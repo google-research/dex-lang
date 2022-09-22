@@ -25,6 +25,7 @@ import Data.Coerce
 import Data.Store
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Generics (Generic)
+import Data.String
 
 -- === RawName ===
 
@@ -149,6 +150,9 @@ instance HasNameHint RawName where
 
 instance HasNameHint String where
   getNameHint = hintFromString
+
+instance IsString NameHint where
+  fromString = hintFromString
 
 hintFromString :: String -> NameHint
 hintFromString s = NameHint $ goFromString (nameRepBits - 8) zeroBits s'

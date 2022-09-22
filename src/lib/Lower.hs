@@ -4,13 +4,17 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Lower (lowerFullySequential, DestBlock, vectorizeLoops) where
+{-# LANGUAGE UndecidableInstances #-}
 
+module Lower (lowerFullySequential, IxBlock, IxDestBlock, vectorizeLoops, emitIx) where
+
+import Prelude hiding (id, (.))
 import Data.Word
 import Data.Functor
 import Data.Set qualified as S
 import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
+import Control.Category
 import Control.Monad.Reader
 import Unsafe.Coerce
 import GHC.Exts (inline)
@@ -29,7 +33,323 @@ import GenericTraversal
 import Simplify (buildBlockSimplified)
 import Util (foldMapM, enumerate)
 
-type DestBlock = Abs Binder Block
+-- A block preceded by a bunch of Ix instance bindings (all Decls bind Atoms)
+type IxBlock = Abs (Nest Decl) Block
+-- A bunch of Ix instance bindings, a binder for the destination of block result, body.
+type IxDestBlock = Abs (Nest Decl) (Abs Binder Block)
+
+-- === Ix dictionary hoisting ===
+--
+-- Up until this pass, Ix dictionaries are embedded deep inside the table types
+-- and for loops. That's ok for as long as we don't particularly care about the low-level
+-- details of array lowering. However, when simplifying the invariants and constructors
+-- of our IR, we can't just ignore those dicts! They can contain arbitrary user code!
+-- This pass hoists all of the DictExprs that construct Ix dicts out of the types and emits
+-- them as proper decls. It also hoists them as far up the block (and super-blocks) as
+-- possible. This makes it easier to subsequently perform CSE on those afterwards.
+--
+-- Note that while this pass has the capability to abstract Ix dicts, it only uses it
+-- when hoisting above all binders other than Decls. It is never necessary to hoist above
+-- a Decl: all arrays that use this Ix cannot escape the block in which this Decl is anyway
+-- (or else the type of that block would leak variables!).
+
+-- XXX: Re-deriving the block type might fail, due to the extra local dictionary decls!!
+-- We might need to recreate the result atom...
+--
+-- The same thing should never happen in sub-blocks of the outer block. If a block
+-- result would contain a block-local dict, then that dict must be unhoistable. But
+-- the only reason why the dict would be unhoistable is because it references a local
+-- piece of data that must appear in the array type itself. So the array type must have
+-- been unhoistable itself, which means that the input wasn't well-typed in the first place.
+emitIx :: EnvReader m => Block n -> m n (IxBlock n)
+emitIx block = do
+  Distinct <- getDistinct
+  env <- unsafeGetEnv
+  (ems, Abs (EmitIxEmissions ds nodecls) outBlock) <-
+    return $ runHardFail $ runInplaceT env $ locallyMutableInplaceT $
+      runSubstReaderT idSubst $ runEmitIxM $ emitIxE $ sink block
+  return $ case ems of
+    EmitIxEmissions REmpty REmpty -> case nodecls of
+      REmpty -> Abs (unRNest ds) outBlock
+      _ -> error "unexpected decl emissions!"
+    _ -> error "unexpected emissions"
+{-# INLINE emitIx #-}
+
+--- The interesting instances ---
+
+class HasEmitIx (e::E) where
+  -- Ideally, we'd use an EmitsDicts predicate, kind of how we use EmitsInf within Inference.
+  -- But for now we just go with the slightly unsafe path and dynamic checks that verify
+  -- no unexpected emissions took place.
+  emitIxE :: Mut o => e i -> EmitIxM i o (e o)
+  default emitIxE :: (GenericE e, HasEmitIx (RepE e), Mut o) => e i -> EmitIxM i o (e o)
+  emitIxE e = confuseGHC >>= \_ -> toE <$> emitIxE (fromE e)
+
+class HasEmitIxB (b::B) where
+  emitIxB :: Mut o => b i i' -> (forall o'. DExt o o' => b o o' -> EmitIxM i' o' a) -> EmitIxM i o a
+
+-- DictExprs should appear in the IR only through DictCon, which we handle below.
+instance HasEmitIx DictExpr where
+  emitIxE _ = error "unhandled dict!"
+instance HasEmitIx Atom where
+  emitIxE = \case
+    DictCon de -> do
+      de' <- emitIxDict de
+      dictTy' <- getType de'
+      case dictTy' of
+        DictTy (DictType "Ix" _ _) -> do
+          EmitIxM $ SubstReaderT $ lift $ freshExtendSubInplaceT noHint \b ->
+            (EmitIxDictEmission $ Let b $ DeclBinding PlainLet dictTy' $ Atom $ DictCon de', Var $ binderName b)
+        -- Non-Ix dicts can be embedded in TypeCon params
+        _ -> return $ DictCon de'
+    atom -> toE <$> emitIxE (fromE atom)
+    where emitIxDict dict = toE <$> emitIxE (fromE dict)
+
+instance HasEmitIx Block where
+  emitIxE (Block _ idecls (ians :: Atom i')) = buildEmitIxBlock $ go idecls
+    where
+      go :: Mut o => Nest Decl i i' -> EmitIxM i o (Atom o)
+      go = \case
+        Empty -> emitIxE ians
+        Nest (Let b (DeclBinding ann _ e)) ds -> do
+          b' <- emitIxDecl (getNameHint b) ann =<< emitIxE e
+          extendSubst (b@>b') $ go ds
+
+-- TODO: This might unnecessarily hoist dicts above e.g. lambda binders.
+-- We could avoid doing that by specializing the LamExpr instance below.
+instance (BindsEnv b, SubstB Name b, SubstE Name e, SubstE AtomSubstVal e, SinkableE e, HasEmitIx e, HasEmitIxB b, BindsOneAtomName b) => HasEmitIx (Abs b e) where
+  emitIxE (Abs b body) = do
+    reemitIxDicts =<< emitIxB b \b' -> do
+      -- This scope is an overapproximation of the scope we need, because it also
+      -- includes b. It's unclear to me how to get rid of those casts, since we do
+      -- want the scope after all emissions coming from b's annotations, but before
+      -- b itself. And there's no easy way to get it with the way the code is set up
+      -- right now.
+      scope <- unsafeGetScope
+      bodyEms <- emitIxScoped $ emitIxE body
+      -- We only emit decls while traversing Blocks, and the implementation for
+      -- emitIxE should handle that locally. No other place should emit!
+      refreshAbs bodyEms \(EmitIxEmissions ds REmpty) body' -> do
+        (PairB ds' b'', s, _) <- return $ generalizeIxDicts (unsafeCoerceE scope) b' ds
+        body'' <- applySubst s body'
+        return $ Abs ds' $ Abs b'' body''
+  {-# INLINE emitIxE #-}
+
+-- Like exchangeBs, but generalizes whenever hoisting fails.
+generalizeIxDicts :: (Distinct p, BindsNames b, SinkableB b, BindsOneAtomName b)
+                  => Scope n -> b n l -> RNest Decl l p -> (PairB (RNest Decl) b n p, SubstFrag AtomSubstVal n p p, Scope p)
+generalizeIxDicts scope topB dicts = go REmpty scope topB emptyInFrag $ unRNest dicts
+  where
+    go :: (Distinct p, BindsNames b, SinkableB b, BindsOneAtomName b)
+       => RNest Decl n l                -- hoisted Ix dict decls
+       -> Scope l                       -- scope, for substitutions
+       -> b l q                         -- the binder we're hoisting above
+       -> SubstFrag AtomSubstVal n l q  -- a substitution instantiating abstracted dicts
+       -> Nest Decl q p                 -- Ix dicts left to hoist
+       -> (PairB (RNest Decl) b n p, SubstFrag AtomSubstVal n p p, Scope p)
+    go acc !sc !b !s rest = withSubscopeDistinct rest $ case rest of
+      Empty -> (PairB acc b, s <.> b@>Rename (binderName b), sc `extScope` b)
+      Nest d@(Let db binding) ds -> withSubscopeDistinct ds do
+        -- We have to apply the substitution derived from the dict decls above to to current one.
+        let env = withExtEvidence acc $ withExtEvidence b $
+                    (sc `extScope` b, substFromFrag $ s <.> b@>Rename (binderName b))
+        let DeclBinding ann ty (Atom da) = substE env binding
+        -- Now we try to hoist.
+        case exchangeBs $ PairB b d of
+          HoistSuccess (PairB d'@(Let db' _) b') -> withSubscopeDistinct b' do
+            let s' = withExtEvidence d $ sink s <.> db' @> Rename (sink $ binderName db')
+            go (RNest acc d') (sc `extScope` db') b' s' ds
+          -- If hoisting fails, we wrap the decl in a lambda that abstracts the binder
+          -- and create a subst that replaces any occurence of the dict with the application.
+          HoistFailure _ -> case exchangeNameBinder b db of
+            PairB db' b' -> withSubscopeDistinct b' $ go acc' (sc `extScope` db') b' s' ds
+              where
+                ty' = Pi $ PiType (PiBinder (asNameBinder b) (binderType b) PlainArrow) Pure ty
+                expr' = Atom $ Lam $ LamExpr (LamBinder (asNameBinder b) (binderType b) PlainArrow Pure) $ AtomicBlock da
+                acc' = RNest acc $ Let db' $ DeclBinding ann ty' expr'
+
+                sv = withExtEvidence b' $ DictCon $ InstantiatedGiven (Var $ sink $ binderName db') $ (Var $ binderName b') NE.:| []
+                s' = withExtEvidence d $ sink s <.> db' @> SubstVal sv
+
+    extScope :: (BindsNames b, Distinct l) => Scope n -> b n l -> Scope l
+    extScope s b = s `extendOutMap` toScopeFrag b
+
+    substFromFrag :: (FromName v, SinkableV v, DExt n l) => SubstFrag v n l l -> Subst v l l
+    substFromFrag = (sink idSubst <>>)
+
+--- The monad ---
+
+newtype EmitIxM (i::S) (o::S) (a:: *) =
+  EmitIxM { runEmitIxM :: SubstReaderT Name (InplaceT Env EmitIxEmissions HardFailM) i o a }
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible, ScopeReader, SubstReader Name, EnvReader, EnvExtender)
+
+emitIxScoped :: SinkableE e
+             => (forall o'. (Mut o', DExt o o') => EmitIxM i o' (e o'))
+             -> EmitIxM i o (Abs EmitIxEmissions e o)
+emitIxScoped cont = EmitIxM $ SubstReaderT $ ReaderT \env ->
+  locallyMutableInplaceT $ runSubstReaderT (sink env) $ runEmitIxM cont
+{-# INLINE emitIxScoped #-}
+
+emitIxDecl :: Mut o => NameHint -> LetAnn -> Expr o -> EmitIxM i o (AtomName o)
+emitIxDecl hint ann expr = do
+  ty <- getType expr
+  EmitIxM $ liftSubstReaderT $ freshExtendSubInplaceT hint \b ->
+    (EmitIxDeclEmission $ Let b $ DeclBinding ann ty expr, binderName b)
+{-# INLINE emitIxDecl #-}
+
+-- TODO: We know they're fresh! Avoid the unnecessary checks
+reemitIxDicts :: (Mut o, SubstE Name e) => Abs (RNest Decl) e o -> EmitIxM i o (e o)
+reemitIxDicts (Abs dicts e) =
+  EmitIxM $ liftSubstReaderT $ extendInplaceT $ Abs (EmitIxEmissions dicts emptyOutFrag) e
+
+buildEmitIxBlock :: Mut o  -- Re-emits hoisted dictionaries
+                 => (forall o'. (Mut o', DExt o o') => EmitIxM i o' (Atom o'))
+                 -> EmitIxM i o (Block o)
+buildEmitIxBlock cont = do
+  Abs (EmitIxEmissions ds decls) ansWithTy <- emitIxScoped $ withType =<< cont
+  Abs decls' ansWithTy' <- EmitIxM $ liftSubstReaderT $
+    extendInplaceT $ Abs (EmitIxEmissions ds REmpty) $ Abs decls ansWithTy
+  absToBlock =<< computeAbsEffects (Abs (unRNest decls') ansWithTy')
+
+--- Emission types ---
+
+data EmitIxEmissions (n::S) (l::S) where
+  -- hoisted dicts, local decls
+  EmitIxEmissions :: RNest Decl n p -> RNest Decl p l -> EmitIxEmissions n l
+instance GenericB EmitIxEmissions where
+  type RepB EmitIxEmissions = PairB (RNest Decl) (RNest Decl)
+  fromB (EmitIxEmissions ds dcls) = PairB ds dcls
+  {-# INLINE fromB #-}
+  toB   (PairB ds dcls) = EmitIxEmissions ds dcls
+  {-# INLINE toB #-}
+instance ProvesExt   EmitIxEmissions
+instance BindsNames  EmitIxEmissions
+instance SinkableB   EmitIxEmissions
+instance HoistableB  EmitIxEmissions
+instance SubstB Name EmitIxEmissions
+instance OutFrag EmitIxEmissions where
+  emptyOutFrag = EmitIxEmissions emptyOutFrag emptyOutFrag
+  catOutFrags _ (EmitIxEmissions ds dcls) (EmitIxEmissions ds' dcls') =
+    case withSubscopeDistinct dcls' $ tryHoist dcls ds' of
+      PairB ds'' dcls'' -> EmitIxEmissions (ds >>> ds'') (dcls'' >>> dcls')
+
+tryHoist :: Distinct q => RNest Decl n p -> RNest Decl p q -> PairB (RNest Decl) (RNest Decl) n q
+tryHoist REmpty  ds    = PairB ds REmpty
+tryHoist topDcls topDs = go REmpty topDcls $ unRNest topDs
+  where
+    -- TODO: Optimize this: we repeatedly query free vars and bound names in exchangeBs!
+    go :: Distinct q => RNest Decl n l -> RNest Decl l p -> Nest Decl p q -> PairB (RNest Decl) (RNest Decl) n q
+    go ds dcls = \case
+      Empty -> PairB ds dcls
+      Nest d' ds' -> withSubscopeDistinct ds' $ case exchangeBs $ PairB dcls d' of
+        HoistSuccess (PairB d'' dcls') -> go (RNest ds d'') dcls' ds'
+        HoistFailure _                 -> go ds (RNest dcls d') ds'
+
+instance BindsEnv EmitIxEmissions where
+  toEnvFrag (EmitIxEmissions ds dcls) =
+    withSubscopeDistinct dcls $ toEnvFrag ds `catEnvFrags` toEnvFrag dcls
+instance ExtOutMap Env EmitIxEmissions where
+  extendOutMap env ems = env `extendOutMap` toEnvFrag ems
+
+newtype EmitIxDeclEmission (n::S) (l::S) = EmitIxDeclEmission (Decl n l)
+  deriving (ProvesExt, BindsNames, SinkableB, SubstB Name, BindsEnv)
+instance ExtOutMap Env EmitIxDeclEmission where
+  extendOutMap env ems = env `extendOutMap` toEnvFrag ems
+instance ExtOutFrag EmitIxEmissions EmitIxDeclEmission where
+  extendOutFrag (EmitIxEmissions ds dcls) (EmitIxDeclEmission d) = EmitIxEmissions ds $ RNest dcls d
+  {-# INLINE extendOutFrag #-}
+
+newtype EmitIxDictEmission (n::S) (l::S) = EmitIxDictEmission (Decl n l)
+  deriving (ProvesExt, BindsNames, SinkableB, SubstB Name, BindsEnv)
+instance ExtOutMap Env EmitIxDictEmission where
+  extendOutMap env ems = env `extendOutMap` toEnvFrag ems
+-- TODO: Cache bound vars?
+instance ExtOutFrag EmitIxEmissions EmitIxDictEmission where
+  extendOutFrag (EmitIxEmissions ds dcls) (EmitIxDictEmission d) =
+    case exchangeBs $ PairB dcls d of
+      HoistSuccess (PairB d' dcls') -> EmitIxEmissions (RNest ds d') dcls'
+      HoistFailure _                -> EmitIxEmissions ds $ RNest dcls d
+
+
+--- The generic instances ---
+
+instance (HasEmitIx e1, HasEmitIx e2) => HasEmitIx (ExtLabeledItemsE e1 e2)
+instance HasEmitIx Expr
+instance HasEmitIx LamExpr
+instance HasEmitIx TabLamExpr
+instance HasEmitIx PiType
+instance HasEmitIx TabPiType
+instance HasEmitIx DepPairType
+instance HasEmitIx EffectRow
+instance HasEmitIx Effect
+instance HasEmitIx DictType
+instance HasEmitIx FieldRowElems
+instance HasEmitIx FieldRowElem
+instance HasEmitIx DataDefParams
+instance HasEmitIx DeclBinding
+instance HasEmitIx IxType
+
+instance (HasEmitIx ann, Color c, ToBinding ann c) => HasEmitIxB (BinderP c ann) where
+  emitIxB (b:>ann) cont = do
+    ann' <- emitIxE ann
+    withFreshBinder (getNameHint b) ann' \b' ->
+      extendRenamer (b@>binderName b') $ cont $ b':>ann'
+instance HasEmitIxB LamBinder where
+  emitIxB (LamBinder b ty arr eff) cont = do
+    ty' <- emitIxE ty
+    withFreshBinder (getNameHint b) (LamBinding arr ty') \b' ->
+      extendRenamer (b@>binderName b') $ cont . LamBinder b' ty' arr =<< substM eff
+instance HasEmitIxB PiBinder where
+  emitIxB (PiBinder b ty arr) cont = do
+    ty' <- emitIxE ty
+    withFreshBinder (getNameHint b) (PiBinding arr ty') \b' ->
+      extendRenamer (b@>binderName b') $ cont $ PiBinder b' ty' arr
+-- Only used for the traversal of reference constructors that should never appear at this stage.
+instance HasEmitIxB (NonDepNest BoxPtr) where
+  emitIxB _ _ = error "not implemented"
+instance {-# OVERLAPPING #-} HasEmitIx (Abs (NonDepNest BoxPtr) e) where
+  emitIxE = error "should be unreachable"
+
+--- The instances for RepE types ---
+
+instance Color c => HasEmitIx (Name c) where
+  emitIxE = substM
+instance (HasEmitIx e1, HasEmitIx e2) => HasEmitIx (PairE e1 e2) where
+  emitIxE (PairE l r) = PairE <$> emitIxE l <*> emitIxE r
+  {-# INLINE emitIxE #-}
+instance (HasEmitIx e1, HasEmitIx e2) => HasEmitIx (EitherE e1 e2) where
+  emitIxE = \case
+    LeftE  l -> LeftE  <$> emitIxE l
+    RightE r -> RightE <$> emitIxE r
+  {-# INLINE emitIxE #-}
+instance ( HasEmitIx e0, HasEmitIx e1, HasEmitIx e2, HasEmitIx e3
+         , HasEmitIx e4, HasEmitIx e5, HasEmitIx e6, HasEmitIx e7
+         ) => HasEmitIx (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
+  emitIxE = \case
+    Case0 x0 -> Case0 <$> emitIxE x0
+    Case1 x1 -> Case1 <$> emitIxE x1
+    Case2 x2 -> Case2 <$> emitIxE x2
+    Case3 x3 -> Case3 <$> emitIxE x3
+    Case4 x4 -> Case4 <$> emitIxE x4
+    Case5 x5 -> Case5 <$> emitIxE x5
+    Case6 x6 -> Case6 <$> emitIxE x6
+    Case7 x7 -> Case7 <$> emitIxE x7
+  {-# INLINE emitIxE #-}
+instance HasEmitIx (LiftE a) where
+  emitIxE (LiftE x) = return $ LiftE x
+  {-# INLINE emitIxE #-}
+instance HasEmitIx VoidE where
+  emitIxE _ = error "impossible"
+  {-# INLINE emitIxE #-}
+instance HasEmitIx UnitE where
+  emitIxE UnitE = return UnitE
+  {-# INLINE emitIxE #-}
+instance (Traversable f, HasEmitIx e) => HasEmitIx (ComposeE f e) where
+  emitIxE (ComposeE xs) = ComposeE <$> traverse emitIxE xs
+  {-# INLINE emitIxE #-}
+instance HasEmitIx e => HasEmitIx (ListE e) where
+  emitIxE (ListE xs) = ListE <$> traverse emitIxE xs
+  {-# INLINE emitIxE #-}
 
 -- === For loop resolution ===
 
@@ -60,13 +380,14 @@ type DestBlock = Abs Binder Block
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
-lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
-  resultDestTy <- RawRefTy <$> getType b
-  withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
-    Abs (destBinder:>resultDestTy) <$> buildBlock do
-      let dest = Var $ sink $ binderName destBinder
-      traverseBlockWithDest dest b $> UnitVal
+lowerFullySequential :: EnvReader m => IxBlock n -> m n (IxDestBlock n)
+lowerFullySequential (Abs ixs b) = liftM fst $ liftGenericTraverserM LFS do
+  buildScoped $ traverseDeclNest ixs do
+    resultDestTy <- RawRefTy <$> getTypeSubst b
+    withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
+      Abs (destBinder:>resultDestTy) <$> buildBlock do
+        let dest = Var $ sink $ binderName destBinder
+        traverseBlockWithDest dest b $> UnitVal
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM LFS
@@ -493,3 +814,8 @@ isDistinctNest :: Nest Decl n l -> Maybe (DistinctBetweenEvidence n l)
 isDistinctNest nest = case noShadows $ toScopeFrag nest of
   True  -> Just $ fabricateDistinctBetweenEvidence
   False -> Nothing
+
+-- See Note [Confuse GHC] from Simplify.hs
+confuseGHC :: EnvReader m => m n (DistinctEvidence n)
+confuseGHC = getDistinct
+{-# INLINE confuseGHC #-}

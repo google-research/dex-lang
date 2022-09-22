@@ -15,7 +15,7 @@ module QueryType (
   instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType, lamExprTy,
   numNaryPiArgs, naryLamExprType, specializedFunType,
-  oneEffect, projectionIndices, sourceNameType, typeBinOp, typeUnOp,
+  projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
   isNewtype, instantiateHandlerType,
   ) where
@@ -211,11 +211,8 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
         return $ NaryPiType allBs effs resultTy
       _ -> error "should only be specializing top-level functions"
 
-oneEffect :: Effect n -> EffectRow n
-oneEffect eff = EffectRow (S.singleton eff) Nothing
-
 userEffect :: EffectName n -> Atom n
-userEffect v = Eff (oneEffect (UserEffect v))
+userEffect v = Eff (OneEffect (UserEffect v))
 
 projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Int]]
 projectionIndices ty = case ty of
@@ -338,9 +335,6 @@ instance HasType Atom where
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
-    -- TODO(alex): check correctness
-    HandlerDictCon d -> getTypeE d
-    HandlerDictTy _ -> return TyKind
     LabeledRow _ -> return LabeledRowKind
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
@@ -438,9 +432,8 @@ getTypePrimCon con = case con of
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
-  HandlerHole _ ty -> substM ty
 
-dictExprType :: DictExpr i -> TypeQueryM i o (DictType o)
+dictExprType :: DictExpr i -> TypeQueryM i o (Type o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -448,20 +441,17 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM substM args
     ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map SubstVal args')
-    return $ DictType sourceName className params'
+    return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
-    DictTy dTy <- typeApp givenTy (toList args)
-    return dTy
+    typeApp givenTy (toList args)
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    DictTy dTy <- applySubst (bs @@> map SubstVal params) $
-                    superclassTypes superclasses !! i
-    return dTy
+    applySubst (bs @@> map SubstVal params) $ superclassTypes superclasses !! i
   IxFin n -> do
     n' <- substM n
-    ixDictType $ TC $ Fin n'
+    liftM DictTy $ ixDictType $ TC $ Fin n'
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -497,14 +487,7 @@ typeTabApp tabTy xs = go tabTy $ toList xs
       go resultTy' rest
 
 instance HasType DictExpr where
-  getTypeE e = DictTy <$> dictExprType e
-
-instance HasType HandlerDictExpr where
-  getTypeE (HandlerDictExpr handlerName _ _) = do
-    handlerName' <- substM handlerName
-    (HandlerDef effName _ _ _ _ _ _) <- lookupHandlerDef handlerName'
-    (EffectDef effSourceName _) <- lookupEffectDef effName
-    return (HandlerDictTy $ HandlerDictType effSourceName effName)
+  getTypeE e = dictExprType e
 
 instance HasType Expr where
   getTypeE expr = case expr of
@@ -518,6 +501,17 @@ instance HasType Expr where
     Op   op  -> getTypePrimOp op
     Hof  hof -> getTypePrimHof hof
     Case _ _ resultTy _ -> substM resultTy
+    Handle hndName [] body -> do
+      hndName' <- substM hndName
+      r <- getTypeE body
+      instantiateHandlerType hndName' r []
+    -- TODO(alex): implement
+    Handle _ _ _  -> error "not implemented"
+
+instantiateHandlerType :: EnvReader m => HandlerName n -> Atom n -> [Atom n] -> m n (Type n)
+instantiateHandlerType hndName r args = do
+  HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
+  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
 
 getTypePrimOp :: PrimOp (Atom i) -> TypeQueryM i o (Type o)
 getTypePrimOp op = case op of
@@ -644,9 +638,9 @@ getTypePrimOp op = case op of
   ProjNewtype x -> do
     ty <- getTypeE x
     projectNewtype ty
-  Perform hndDict i -> do
-    HandlerDictTy (HandlerDictType _ effName) <- getTypeE hndDict
-    EffectDef _ ops <- lookupEffectDef effName
+  Perform eff i -> do
+    Eff (OneEffect (UserEffect effName)) <- return eff
+    EffectDef _ ops <- substM effName >>= lookupEffectDef
     let (_, EffectOpType _pol lamTy) = ops !! i
     return lamTy
   ProjMethod dict i -> do
@@ -670,15 +664,6 @@ getTypePrimOp op = case op of
     TC (RefType h _) -> TC . RefType h <$> substM vty
     ty -> error $ "Not a reference type: " ++ pprint ty
   Resume retTy _ -> substM retTy
-  Handle (HandlerDictCon hde) _ -> do
-    HandlerDictExpr hndName r args <- substM hde
-    instantiateHandlerType hndName r args
-  Handle _ _ -> error "Handler did not have literal dict as first arg"
-
-instantiateHandlerType :: EnvReader m => HandlerName n -> Atom n -> [Atom n] -> m n (Type n)
-instantiateHandlerType hndName r args = do
-  HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
-  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
 
 getSuperclassDicts :: ClassDef n -> Atom n -> [Atom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
@@ -797,18 +782,18 @@ exprEffects expr = case expr of
       getTypeSubst ref >>= \case
         RefTy (Var h) _ ->
           return $ case m of
-            MGet      -> oneEffect (RWSEffect State  $ Just h)
-            MPut    _ -> oneEffect (RWSEffect State  $ Just h)
-            MAsk      -> oneEffect (RWSEffect Reader $ Just h)
+            MGet      -> OneEffect (RWSEffect State  $ Just h)
+            MPut    _ -> OneEffect (RWSEffect State  $ Just h)
+            MAsk      -> OneEffect (RWSEffect Reader $ Just h)
             -- XXX: We don't verify the base monoid. See note about RunWriter.
-            MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
+            MExtend _ _ -> OneEffect (RWSEffect Writer $ Just h)
         _ -> error "References must have reference type"
-    ThrowException _ -> return $ oneEffect ExceptionEffect
-    IOAlloc  _ _  -> return $ oneEffect IOEffect
-    IOFree   _    -> return $ oneEffect IOEffect
-    PtrLoad  _    -> return $ oneEffect IOEffect
-    PtrStore _ _  -> return $ oneEffect IOEffect
-    Place    _ _  -> return $ oneEffect IOEffect
+    ThrowException _ -> return $ OneEffect ExceptionEffect
+    IOAlloc  _ _  -> return $ OneEffect IOEffect
+    IOFree   _    -> return $ OneEffect IOEffect
+    PtrLoad  _    -> return $ OneEffect IOEffect
+    PtrStore _ _  -> return $ OneEffect IOEffect
+    Place    _ _  -> return $ OneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
@@ -826,8 +811,12 @@ exprEffects expr = case expr of
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
     RememberDest _ f -> functionEffs f
-    where maybeIO d = case d of Just _ -> (<>oneEffect IOEffect); Nothing -> id
+    where maybeIO :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
+          maybeIO d = case d of Just _ -> (<>OneEffect IOEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
+  Handle v _ body -> do
+    HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef
+    deleteEff (UserEffect eff) <$> getEffectsImpl body
 
 instance HasEffectsE Block where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs

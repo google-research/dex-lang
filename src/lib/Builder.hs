@@ -1253,7 +1253,7 @@ ptrOffset x i = emitOp $ PtrOffset x i
 
 unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 unsafePtrLoad x = do
-  lam <- liftEmitBuilder $ buildLam noHint PlainArrow UnitTy (oneEffect IOEffect) \_ ->
+  lam <- liftEmitBuilder $ buildLam noHint PlainArrow UnitTy (OneEffect IOEffect) \_ ->
     emitOp . PtrLoad =<< sinkM x
   liftM Var $ emit $ Hof $ RunIO $ lam
 

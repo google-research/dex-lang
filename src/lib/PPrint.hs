@@ -165,6 +165,8 @@ instance PrettyPrec (Expr n) where
     atPrec LowestPrec $ "remember" <+> pApp d <+> prettyLam ("\\" <> p b <> ".") effs body
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
+  prettyPrec (Handle v args body) =
+      atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." Pure body
 
 prettyPrecCase :: PrettyE e => Doc ann -> Atom n -> [AltP e n] -> EffectRow n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
@@ -231,14 +233,6 @@ instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
     p classSourceName <+> spaced params
 
-instance Pretty (HandlerDictExpr n) where
-  pretty (HandlerDictExpr name r args) =
-    "HandlerDictExpr" <+> p name <+> p r <+> p args
-
-instance Pretty (HandlerDictType n) where
-  pretty (HandlerDictType handlerSourceName effectName) =
-    "HandlerDictType" <+> p handlerSourceName <+> p effectName
-
 instance Pretty (DepPairType n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (DepPairType n) where
   prettyPrec (DepPairType b rhs) =
@@ -274,8 +268,6 @@ instance PrettyPrec (Atom n) where
       _  -> atPrec LowestPrec $ pAppArg (p name) params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
-    HandlerDictCon d -> atPrec LowestPrec $ p d
-    HandlerDictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
@@ -965,7 +957,6 @@ prettyPrecPrimCon con = case con of
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
-  HandlerHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where

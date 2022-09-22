@@ -76,7 +76,6 @@ data PrimCon e =
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
       -- Only used during type inference
       | DictHole (AlwaysEqual SrcPosCtx) e
-      | HandlerHole (AlwaysEqual SrcPosCtx) e  -- e is HandlerDictTy
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 newtype AlwaysEqual a = AlwaysEqual a
@@ -100,8 +99,7 @@ data PrimOp e =
       | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | Resume e e                   -- Resume from effect handler (type, arg)
-      | Handle e e                   -- Call a handler (handler def, body)
-      | Perform e Int                -- Call an effect operation (handler dict) (op #)
+      | Perform e Int                -- Call an effect operation (effect name) (op #)
       -- References
       | IndexRef e e
       | ProjRef Int e
@@ -220,6 +218,10 @@ pattern Pure :: OrdV name => EffectRowP name n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
   where Pure = EffectRow mempty Nothing
 
+pattern OneEffect :: OrdV name => EffectP name n -> EffectRowP name n
+pattern OneEffect eff <- ((\(EffectRow effs t) -> (S.toList effs, t)) -> ([eff], Nothing))
+  where OneEffect eff = EffectRow (S.singleton eff) Nothing
+
 instance OrdV name => Semigroup (EffectRowP name n) where
   EffectRow effs t <> EffectRow effs' t' =
     EffectRow (S.union effs effs') newTail
@@ -236,9 +238,6 @@ instance OrdV name => Monoid (EffectRowP name n) where
 extendEffRow :: OrdV name => S.Set (EffectP name n) -> EffectRowP name n -> EffectRowP name n
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 {-# INLINE extendEffRow #-}
-
-singletonEffRow :: EffectP name n -> EffectRowP name n
-singletonEffRow eff = EffectRow (S.singleton eff) Nothing
 
 data Arrow =
    PlainArrow

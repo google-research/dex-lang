@@ -26,7 +26,7 @@ module Syntax (
     fieldRowElemsFromList, prependFieldRowElem, extRowAsFieldRowElems, fieldRowElemsAsExtRow,
     pattern StaticRecordTy, pattern RecordTyWithElems,
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
-    DictExpr (..), DictType (..), HandlerDictExpr (..), HandlerDictType (..),
+    DictExpr (..), DictType (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PtrLitVal (..), PtrSnapshot (..),
     AlwaysEqual (..),
     PrimEffect (..), PrimOp (..), PrimHof (..),
@@ -119,6 +119,7 @@ module Syntax (
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern SISourceName, pattern SIInternalName,
+    pattern OneEffect,
     (-->), (?-->), (--@), (==>)) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
