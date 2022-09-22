@@ -26,12 +26,16 @@ import numpy as np
 import csv
 
 
+BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
+
+
 @dataclass
 class DexEndToEnd:
   """Measures end-to-end time and memory on a published example."""
   name: str
   repeats: int
   variant: str = 'latest'
+  baseline_commit: str = BASELINE
 
   def clean(self, code, xdg_home):
     run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
@@ -55,6 +59,7 @@ class DexRuntime:
   name: str
   repeats: int
   variant: str = 'latest'
+  baseline_commit: str = BASELINE
 
   def clean(self, code, xdg_home):
     run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
@@ -117,7 +122,6 @@ def numpy_poly(n):
   return lambda: np.polynomial.Polynomial([0.0, 1.0, 2.0, 3.0, 4.0])(xs)
 
 
-BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
 BENCHMARKS = [
     DexEndToEnd('kernelregression', 10),
     DexEndToEnd('psd', 10),
@@ -132,7 +136,7 @@ BENCHMARKS = [
     DexRuntime('matvec_small', 5),
     DexRuntime('poly', 5),
     DexRuntime('vjp_matmul', 5),
-    DexRuntimeVsDex('conv', 10),
+    DexRuntimeVsDex('conv', 10, baseline_commit='531832c0e18a64c1cab10fc16270b930eed5ed2b'),
 ]
 RUNTIME_BASELINES = {
     'fused_sum': numpy_sum,
@@ -181,13 +185,12 @@ def build(commit):
   return install_path
 
 
-def benchmark(baseline_path, latest_path, benchmarks):
+def benchmark(baselines, latest_path, benchmarks):
   with tempfile.TemporaryDirectory() as tmp:
     results = []
-    for test in BENCHMARKS:
-      if benchmarks and test.name not in benchmarks:
-        continue
+    for test in benchmarks:
       baseline = test.baseline()
+      baseline_path = baselines[test.baseline_commit]
       # Warm up the caches
       baseline.clean(baseline_path, tmp)
       baseline.bench(baseline_path, tmp)
@@ -280,12 +283,20 @@ def main(argv):
   if len(argv) < 3:
     raise ValueError("Expected at least three arguments!")
   datapath, commitpath, commit = argv[:3]
-  benchmarks = argv[3:]
-  print('Building baseline: {BASELINE}')
-  baseline_path = build(BASELINE)
+  benchmark_names = argv[3:]
+  benchmarks = []
+  for test in BENCHMARKS:
+    if not benchmark_names or test.name in benchmark_names:
+      benchmarks.append(test)
+  baselines = {}
+  for test in benchmarks:
+    baseline_commit = test.baseline_commit
+    if baseline_commit not in baselines:
+      baseline_path = build(baseline_commit)
+      baselines[baseline_commit] = baseline_path
   print(f'Building latest: {commit}')
   latest_path = build(commit)
-  results = benchmark(baseline_path, latest_path, benchmarks)
+  results = benchmark(baselines, latest_path, benchmarks)
   save(commit, results, datapath, commitpath)
   print('DONE!')
 
