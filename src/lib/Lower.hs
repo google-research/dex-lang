@@ -288,8 +288,6 @@ instance HasEmitIx FieldRowElem
 instance HasEmitIx DataDefParams
 instance HasEmitIx DeclBinding
 instance HasEmitIx IxType
-instance HasEmitIx HandlerDictExpr
-instance HasEmitIx HandlerDictType
 
 instance (HasEmitIx ann, Color c, ToBinding ann c) => HasEmitIxB (BinderP c ann) where
   emitIxB (b:>ann) cont = do
