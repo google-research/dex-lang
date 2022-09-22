@@ -336,7 +336,10 @@ instance Pretty (PiType n) where
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
-    in prettyBinder <> (group $ line <> p arr <+> prettyBody)
+    prettyEff = case eff of
+      Pure -> space
+      _    -> space <> pretty eff <> space
+    in prettyBinder <> (group $ line <> p arr <> prettyEff <> prettyBody)
 
 instance Pretty (TabPiType n) where
   pretty (TabPiType (b :> IxType ty _) body) = let
