@@ -29,7 +29,7 @@ import csv
 @dataclass
 class DexEndToEnd:
   """Measures end-to-end time and memory on a published example."""
-  example: str
+  name: str
   repeats: int
   variant: str = 'latest'
 
@@ -37,16 +37,16 @@ class DexEndToEnd:
     run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
 
   def bench(self, code, xdg_home):
-    source = code / 'examples' / (self.example + '.dx')
+    source = code / 'examples' / (self.name + '.dx')
     total_alloc, total_time = parse_result(
         read_stderr(code / 'dex', '--lib-path', code / 'lib',
                     'script', source, '+RTS', '-s',
                     env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
-    return [Result(self.example, 'alloc', total_alloc),
-            Result(self.example, 'time', total_time)]
+    return [Result(self.name, 'alloc', total_alloc),
+            Result(self.name, 'time', total_time)]
 
   def baseline(self):
-    return DexEndToEnd(self.example, self.repeats, 'baseline')
+    return DexEndToEnd(self.name, self.repeats, 'baseline')
 
 
 @dataclass
@@ -181,10 +181,12 @@ def build(commit):
   return install_path
 
 
-def benchmark(baseline_path, latest_path):
+def benchmark(baseline_path, latest_path, benchmarks):
   with tempfile.TemporaryDirectory() as tmp:
     results = []
     for test in BENCHMARKS:
+      if benchmarks and test.name not in benchmarks:
+        continue
       baseline = test.baseline()
       # Warm up the caches
       baseline.clean(baseline_path, tmp)
@@ -275,14 +277,15 @@ def save(commit, results: Sequence[Result], datapath, commitpath):
 
 
 def main(argv):
-  if len(argv) != 3:
-    raise ValueError("Expected three arguments!")
-  datapath, commitpath, commit = argv
+  if len(argv) < 3:
+    raise ValueError("Expected at least three arguments!")
+  datapath, commitpath, commit = argv[:3]
+  benchmarks = argv[3:]
   print('Building baseline: {BASELINE}')
   baseline_path = build(BASELINE)
   print(f'Building latest: {commit}')
   latest_path = build(commit)
-  results = benchmark(baseline_path, latest_path)
+  results = benchmark(baseline_path, latest_path, benchmarks)
   save(commit, results, datapath, commitpath)
   print('DONE!')
 
