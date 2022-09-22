@@ -333,8 +333,6 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Int</span> <span class="symbol">=</span> <span class="type-name">Int32</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">Float32</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="type-name">Nat</span> <span class="symbol">=</span> <span class="type-name">Word32</span>
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Casting</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> internal_cast {a} (b<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span> %cast b x
 </div></div><div class="cell"><div class="code-block">
@@ -345,45 +343,67 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i64_to_i (x <span class="symbol">:</span> <span class="type-name">Int64</span>)   <span class="symbol">:</span> <span class="type-name">Int</span>     <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i32_to_i (x <span class="symbol">:</span> <span class="type-name">Int32</span>)   <span class="symbol">:</span> <span class="type-name">Int</span>     <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w8_to_i  (x <span class="symbol">:</span> <span class="type-name">Word8</span>)   <span class="symbol">:</span> <span class="type-name">Int</span>     <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w8_to_n  (x <span class="symbol">:</span> <span class="type-name">Word8</span>)   <span class="symbol">:</span> <span class="type-name">Nat</span>     <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_i64 (x <span class="symbol">:</span> <span class="type-name">Int</span>)     <span class="symbol">:</span> <span class="type-name">Int64</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_i32 (x <span class="symbol">:</span> <span class="type-name">Int</span>)     <span class="symbol">:</span> <span class="type-name">Int32</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_w8  (x <span class="symbol">:</span> <span class="type-name">Int</span>)     <span class="symbol">:</span> <span class="type-name">Word8</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_w32 (x <span class="symbol">:</span> <span class="type-name">Int</span>)     <span class="symbol">:</span> <span class="type-name">Word32</span>  <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_w64 (x <span class="symbol">:</span> <span class="type-name">Int</span>)     <span class="symbol">:</span> <span class="type-name">Word64</span>  <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w32_to_w64 (x <span class="symbol">:</span> <span class="type-name">Word32</span>)<span class="symbol">:</span> <span class="type-name">Word64</span>  <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_f (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_f (x<span class="symbol">:</span><span class="type-name">Int</span>)   <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_i (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Int</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i64_to_raw_ptr (x<span class="symbol">:</span><span class="type-name">Int64</span> ) <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> raw_ptr_to_i64 (x<span class="symbol">:</span><span class="type-name">RawPtr</span>) <span class="symbol">:</span> <span class="type-name">Int64</span>  <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_i64 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Int64</span> <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_i32 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Int32</span> <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_w32 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Word32</span>  <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_w64 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Word64</span>  <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i64_to_n (x <span class="symbol">:</span> <span class="type-name">Int64</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i32_to_n (x <span class="symbol">:</span> <span class="type-name">Int32</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_i (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_n (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_f (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_w8 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Word8</span>   <span class="symbol">=</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Nat</span> <span class="symbol">=</span> %<span class="type-name">Nat</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">NatRep</span> <span class="symbol">=</span> <span class="type-name">Word32</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">FromNatural</span> a
-  from_natural <span class="symbol">:</span> <span class="type-name">Word64</span> <span class="symbol">-&gt;</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> nat_to_rep (x <span class="symbol">:</span> <span class="type-name">Nat</span>)    <span class="symbol">:</span> <span class="type-name">NatRep</span> <span class="symbol">=</span> %projNewtype x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rep_to_nat (x <span class="symbol">:</span> <span class="type-name">NatRep</span>) <span class="symbol">:</span> <span class="type-name">Nat</span>    <span class="symbol">=</span> %newtype <span class="type-name">Nat</span> x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromNatural</span> <span class="type-name">Float32</span>
-  from_natural <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_w8  (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Word8</span>   <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_w32 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Word32</span>  <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_w64 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Word64</span>  <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_i32 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Int32</span>   <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_i64 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Int64</span>   <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_f32 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_f64 (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Float64</span> <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_f   (x <span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Float</span>   <span class="symbol">=</span> internal_cast _ <span class="symbol">$</span> nat_to_rep x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromNatural</span> <span class="type-name">Float64</span>
-  from_natural <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w8_to_n  (x <span class="symbol">:</span> <span class="type-name">Word8</span>)   <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w32_to_n (x <span class="symbol">:</span> <span class="type-name">Word32</span>)  <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w64_to_n (x <span class="symbol">:</span> <span class="type-name">Word64</span>)  <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i32_to_n (x <span class="symbol">:</span> <span class="type-name">Int32</span>)   <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i64_to_n (x <span class="symbol">:</span> <span class="type-name">Int64</span>)   <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f32_to_n (x <span class="symbol">:</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f64_to_n (x <span class="symbol">:</span> <span class="type-name">Float64</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_n   (x <span class="symbol">:</span> <span class="type-name">Float</span>)   <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromNatural</span> <span class="type-name">Int32</span>
-  from_natural <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">FromUnsignedInteger</span> a
+  from_unsigned_integer <span class="symbol">:</span> <span class="type-name">Word64</span> <span class="symbol">-&gt;</span> a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromNatural</span> <span class="type-name">Word32</span>
-  from_natural <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Word8</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromNatural</span> <span class="type-name">Word64</span>
-  from_natural <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Word32</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Word64</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Int32</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Int64</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Float32</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Float64</span>
+  from_unsigned_integer <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> internal_cast _ x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">FromUnsignedInteger</span> <span class="type-name">Nat</span>
+  from_unsigned_integer <span class="symbol">=</span> w64_to_n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">FromInteger</span> a
   from_integer <span class="symbol">:</span> <span class="type-name">Int64</span> <span class="symbol">-&gt;</span> a
@@ -448,44 +468,49 @@ This defines the <code>Add</code> <a href="https://en.wikipedia.org/wiki/Group_(
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Float64</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %fadd x y
-  zero <span class="symbol">=</span> f_to_f64 0<span class="symbol">.</span>0
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Float64</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %fsub x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Float32</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %fadd x y
-  zero <span class="symbol">=</span> f_to_f32 0<span class="symbol">.</span>0
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Float32</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %fsub x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Int64</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %iadd x y
-  zero <span class="symbol">=</span> i_to_i64 0
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Int64</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %isub x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Int32</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %iadd x y
-  zero <span class="symbol">=</span> i_to_i32 0
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Int32</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %isub x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Word8</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %iadd x y
-  zero <span class="symbol">=</span> i_to_w8 0
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Word8</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %isub x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Word32</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %iadd x y
-  zero <span class="symbol">=</span> i_to_w32 0
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- XXX: we don&#39;t implement `Sub Word32` because we use `Word32` as `Nat`
-</span></div></div><div class="cell"><div class="code-block">
+  zero <span class="symbol">=</span> 0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Word32</span>
+  sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %isub x y
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Word64</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %iadd x y
-  zero <span class="symbol">=</span> i_to_w64 0
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Word64</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %isub x y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Nat</span>
+  add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> rep_to_nat <span class="symbol">$</span> %iadd (nat_to_rep x) (nat_to_rep y)
+  zero <span class="symbol">=</span> 0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Unit</span>
   add <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
@@ -518,23 +543,27 @@ This defines the <code>Mul</code> <a href="https://en.wikipedia.org/wiki/Monoid"
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Int64</span>
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %imul x y
-  one <span class="symbol">=</span> i_to_i64 1
+  one <span class="symbol">=</span> 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Int32</span>
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %imul x y
-  one <span class="symbol">=</span> i_to_i32 1
+  one <span class="symbol">=</span> 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Word8</span>
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %imul x y
-  one <span class="symbol">=</span> i_to_w8 1
+  one <span class="symbol">=</span> 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Word32</span>
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %imul x y
-  one <span class="symbol">=</span> i_to_w32 1
+  one <span class="symbol">=</span> 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Word64</span>
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %imul x y
-  one <span class="symbol">=</span> i_to_w64 1
+  one <span class="symbol">=</span> 1
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Nat</span>
+  mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> rep_to_nat <span class="symbol">$</span> %imul (nat_to_rep x) (nat_to_rep y)
+  one <span class="symbol">=</span> 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Unit</span>
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
@@ -570,6 +599,10 @@ This defines the <code>Mul</code> <a href="https://en.wikipedia.org/wiki/Monoid"
   idiv <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span>  %idiv x y
   rem  <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span>  %irem x y
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Integral</span> <span class="type-name">Nat</span>
+  idiv <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> rep_to_nat <span class="symbol">$</span> %idiv (nat_to_rep x) (nat_to_rep y)
+  rem  <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> rep_to_nat <span class="symbol">$</span> %irem (nat_to_rep x) (nat_to_rep y)
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Fractional</h4>
 <p>Rational-like things.
 Includes floating point and two field rational representations.</p>
@@ -592,10 +625,15 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- version of subtraction on Nats that clamps at zero
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">-|</span>) (x<span class="symbol">:</span> <span class="type-name">Nat</span>) (y<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
-  requires_clamp <span class="symbol">=</span> %ilt x y
-  %select requires_clamp 0 (%isub x y)
+  x&#39; <span class="symbol">=</span> nat_to_rep x
+  y&#39; <span class="symbol">=</span> nat_to_rep y
+  requires_clamp <span class="symbol">=</span> %ilt x&#39; y&#39;
+  rep_to_nat <span class="symbol">$</span> %select requires_clamp 0 (%isub x&#39; y&#39;)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_nat_diff (x<span class="symbol">:</span><span class="type-name">Nat</span>) (y<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> %isub x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_nat_diff (x<span class="symbol">:</span><span class="type-name">Nat</span>) (y<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+  x&#39; <span class="symbol">=</span> nat_to_rep x
+  y&#39; <span class="symbol">=</span> nat_to_rep y
+  rep_to_nat <span class="symbol">$</span> %isub x&#39; y&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- `(i..)` parses as `RangeFrom _ i`
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">RangeFrom</span> q<span class="symbol">:</span><span class="type-name">Type</span> i<span class="command">:q</span> <span class="symbol">=</span> <span class="type-name">UnsafeMkRangeFrom</span> <span class="type-name">Nat</span>
@@ -806,20 +844,21 @@ Here we define several basic kinds, and some operators on them.</p>
     <span class="type-name">Left</span> ai  <span class="symbol">-&gt;</span> ordinal ai
     <span class="type-name">Right</span> bi <span class="symbol">-&gt;</span> ordinal bi <span class="symbol">+</span> size a
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span>
-    as <span class="symbol">=</span> size a
+    as <span class="symbol">=</span> nat_to_rep <span class="symbol">$</span> size a
+    o&#39; <span class="symbol">=</span> nat_to_rep o
     <span class="comment">-- TODO: Reshuffle the prelude to be able to use (&lt;) here
-</span>    <span class="keyword">case</span> w8_to_b <span class="symbol">$</span> %ilt o as <span class="keyword">of</span>
+</span>    <span class="keyword">case</span> w8_to_b <span class="symbol">$</span> %ilt o&#39; as <span class="keyword">of</span>
       <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Left</span> <span class="symbol">$</span> unsafe_from_ordinal a o
       <span class="comment">-- TODO: Reshuffle the prelude to be able to use `diff_nat` here
-</span>      <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Right</span> <span class="symbol">$</span> unsafe_from_ordinal b (%isub o as)
+</span>      <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Right</span> <span class="symbol">$</span> unsafe_from_ordinal b (rep_to_nat (%isub o&#39; as))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Subtraction on Nats</h2>
 <p>-- TODO: think more about the right API here</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_i_to_n (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
-  internal_cast _ x
+  rep_to_nat <span class="symbol">$</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> n_to_i (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
-  internal_cast _ x
+  internal_cast _ <span class="symbol">$</span> nat_to_rep x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_n (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   <span class="keyword">if</span> w8_to_b <span class="symbol">$</span> %ilt x (0<span class="symbol">::</span><span class="type-name">Int</span>)
@@ -1093,6 +1132,14 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> <span class="type-name">Ordering</span>
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> o_to_w8 x <span class="symbol">==</span> o_to_w8 y
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> <span class="type-name">Nat</span>
+  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> nat_to_rep x <span class="symbol">==</span> nat_to_rep y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> <span class="type-name">Nat</span>
+  (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> nat_to_rep x <span class="symbol">&gt;</span> nat_to_rep y
+  (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> nat_to_rep x <span class="symbol">&lt;</span> nat_to_rep y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: we want Eq and Ord for all index sets, not just `Fin n`
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Eq</span> (<span class="type-name">Fin</span> n)
@@ -1368,6 +1415,11 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   load <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)   <span class="symbol">.</span> %ptrLoad  (internal_cast %<span class="type-name">Float32Ptr</span> ptr)
   storage_size <span class="symbol">=</span> 4
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Nat</span>
+  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> store (<span class="type-name">MkPtr</span> ptr) <span class="symbol">$</span> nat_to_rep x
+  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> rep_to_nat <span class="symbol">$</span> load (<span class="type-name">MkPtr</span> ptr)
+  storage_size <span class="symbol">=</span> storage_size <span class="type-name">NatRep</span>
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">Storable</span> (<span class="type-name">Ptr</span> a)
   store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) (<span class="type-name">MkPtr</span> x)<span class="symbol">.</span>         %ptrStore (internal_cast %<span class="type-name">PtrPtr</span> ptr) x
   load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)          <span class="symbol">.</span> <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrLoad  (internal_cast %<span class="type-name">PtrPtr</span> ptr)
@@ -1377,7 +1429,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> malloc {a} [<span class="type-name">Storable</span> a] (n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} (<span class="type-name">Ptr</span> a) <span class="symbol">=</span>
   numBytes <span class="symbol">=</span> storage_size a <span class="symbol">*</span> n
-  <span class="type-name">MkPtr</span> <span class="symbol">$</span> %alloc numBytes
+  <span class="type-name">MkPtr</span> <span class="symbol">$</span> %alloc (nat_to_rep numBytes)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> free {a} (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> a) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   (<span class="type-name">MkPtr</span> ptr&#39;) <span class="symbol">=</span> ptr
@@ -1385,7 +1437,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+&gt;&gt;</span>) {a} [<span class="type-name">Storable</span> a] (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> a) (i<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">=</span>
   (<span class="type-name">MkPtr</span> ptr&#39;) <span class="symbol">=</span> ptr
-  i&#39; <span class="symbol">=</span> i <span class="symbol">*</span> storage_size a
+  i&#39; <span class="symbol">=</span> nat_to_rep <span class="symbol">$</span> i <span class="symbol">*</span> storage_size a
   <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrOffset ptr&#39; i&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: consider making a Storable instance for tables instead
@@ -1793,8 +1845,8 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
 </div></div><div class="cell"><div class="prose-block"><h2>Strings and Characters</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">String</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">List</span> <span class="type-name">Char</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> string_from_char_ptr (n<span class="symbol">:</span><span class="type-name">Nat</span>) (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> <span class="type-name">Char</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">String</span> <span class="symbol">=</span>
-  <span class="type-name">AsList</span> n <span class="symbol">$</span> table_from_ptr _ ptr
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> string_from_char_ptr (n<span class="symbol">:</span><span class="type-name">Word32</span>) (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> <span class="type-name">Char</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">String</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span> (rep_to_nat n) <span class="symbol">$</span> table_from_ptr _ ptr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> codepoint (c<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> w8_to_i c
@@ -1817,35 +1869,31 @@ Nor does it promise a particular level of precision for numeric values.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">String</span>
   show <span class="symbol">=</span> id
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showNat32&quot; showNat32 <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Nat</span>
-  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_io <span class="keyword">do</span>
-    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showNat32 x
-    string_from_char_ptr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showInt32&quot; showInt32 <span class="symbol">:</span> <span class="type-name">Int32</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showInt32&quot; showInt32 <span class="symbol">:</span> <span class="type-name">Int32</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Int32</span>
   show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_io <span class="keyword">do</span>
     (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showInt32 x
     string_from_char_ptr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showInt64&quot; showInt64 <span class="symbol">:</span> <span class="type-name">Int64</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showInt64&quot; showInt64 <span class="symbol">:</span> <span class="type-name">Int64</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Int64</span>
   show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_io <span class="keyword">do</span>
     (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showInt64 x
     string_from_char_ptr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showFloat32&quot; showFloat32 <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Nat</span>
+  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> show <span class="symbol">$</span> n_to_i64 x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showFloat32&quot; showFloat32 <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Float32</span>
   show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_io <span class="keyword">do</span>
     (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showFloat32 x
     string_from_char_ptr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showFloat64&quot; showFloat64 <span class="symbol">:</span> <span class="type-name">Float64</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showFloat64&quot; showFloat64 <span class="symbol">:</span> <span class="type-name">Float64</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Float64</span>
   show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_io <span class="keyword">do</span>
@@ -2019,9 +2067,9 @@ Nor does it promise a particular level of precision for numeric values.</p>
     with_dynamic_buffer <span class="symbol">\</span>buf<span class="symbol">.</span>
       iter <span class="symbol">\</span>_<span class="symbol">.</span>
         (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
-        numRead <span class="symbol">=</span> i64_to_n <span class="symbol">$</span> freadFFI rawPtr (i_to_i64 1) (n_to_i64 n) stream&#39;
+        numRead <span class="symbol">=</span> i_to_w32 <span class="symbol">$</span> i64_to_i <span class="symbol">$</span> freadFFI rawPtr (i_to_i64 1) (n_to_i64 n) stream&#39;
         extend_dynamic_buffer buf <span class="symbol">$</span> string_from_char_ptr numRead ptr
-        <span class="keyword">if</span> numRead <span class="symbol">==</span> n
+        <span class="keyword">if</span> numRead <span class="symbol">==</span> n_to_w32 n
           <span class="keyword">then</span> <span class="type-name">Continue</span>
           <span class="keyword">else</span> <span class="type-name">Done</span> ()
       load_dynamic_buffer buf
@@ -2251,7 +2299,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">Int32</span>
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> f_to_i <span class="symbol">$</span> randn key <span class="symbol">*</span> 5<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">Word32</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">Nat</span>
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> f_to_n <span class="symbol">$</span> randn key <span class="symbol">*</span> 5<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (n<span class="symbol">=&gt;</span>a)
@@ -2423,8 +2471,8 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
       <span class="type-name">False</span> <span class="symbol">-&gt;</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> idiv_ceil (x<span class="symbol">:</span><span class="type-name">Nat</span>) (y<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> idiv x y <span class="symbol">+</span> b_to_n (rem x y <span class="symbol">/=</span> 0)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intdiv2 (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> %shr x (1 <span class="symbol">::</span> <span class="type-name">Nat</span>)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow2 (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> %shl (1 <span class="symbol">::</span> <span class="type-name">Nat</span>) power
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intdiv2 (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> %shr (nat_to_rep x) (1 <span class="symbol">::</span> <span class="type-name">NatRep</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow2 (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> rep_to_nat <span class="symbol">$</span> %shl (1 <span class="symbol">::</span> <span class="type-name">NatRep</span>) (nat_to_rep power)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_odd  (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> rem x 2 <span class="symbol">==</span> 1
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_even (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> rem x 2 <span class="symbol">==</span> 0
 </div></div><div class="cell"><div class="code-block">
@@ -2434,9 +2482,10 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </span>  <span class="comment">-- Note: The bitwise and operator (.&amp;.)
 </span>  <span class="comment">-- is only defined for Byte, which is why
 </span>  <span class="comment">-- we use %and here. TODO: Make (.&amp;.) polymorphic.
-</span>  <span class="keyword">if</span> x <span class="symbol">==</span> 0
+</span>  x&#39; <span class="symbol">=</span> nat_to_rep x
+  <span class="keyword">if</span> x&#39; <span class="symbol">==</span> 0
     <span class="keyword">then</span> <span class="type-name">False</span>
-    <span class="keyword">else</span> 0 <span class="symbol">==</span> %and x (unsafe_nat_diff x 1)
+    <span class="keyword">else</span> 0 <span class="symbol">==</span> %and x&#39; (%isub x&#39; (1<span class="symbol">::</span><span class="type-name">NatRep</span>))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> natlog2 (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   tmp <span class="symbol">=</span> yield_state 0 <span class="symbol">\</span>ansRef<span class="symbol">.</span>
@@ -2445,7 +2494,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
         <span class="keyword">if</span> x <span class="symbol">&gt;=</span> (get cmpRef)
           <span class="keyword">then</span>
             ansRef <span class="symbol">:=</span> (get ansRef) <span class="symbol">+</span> 1
-            cmpRef <span class="symbol">:=</span> %shl (get cmpRef) (1 <span class="symbol">::</span> <span class="type-name">Nat</span>)
+            cmpRef <span class="symbol">:=</span> rep_to_nat <span class="symbol">$</span> %shl (nat_to_rep <span class="symbol">$</span> get cmpRef) (1 <span class="symbol">::</span> <span class="type-name">NatRep</span>)
             <span class="type-name">True</span>
           <span class="keyword">else</span>
             <span class="type-name">False</span>
