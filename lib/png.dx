@@ -101,14 +101,14 @@ Html : Type = String
 Png  : Type = String
 Gif  : Type = String
 
-foreign "encodePNG" encodePNG : RawPtr -> Nat -> Nat -> {IO} (Nat & RawPtr)
+foreign "encodePNG" encodePNG : RawPtr -> Word32 -> Word32 -> {IO} (Word32 & RawPtr)
 
 def make_png {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafe_io \().
   (AsList _ imgFlat) = to_list for (i,j,k). img.i.j.k
   with_table_ptr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
-    (n, ptr') = encodePNG rawPtr (size m) (size n)
-    to_list $ table_from_ptr (Fin n) $ MkPtr ptr'
+    (n, ptr') = encodePNG rawPtr (nat_to_rep $ size m) (nat_to_rep $ size n)
+    to_list $ table_from_ptr (Fin $ rep_to_nat n) $ MkPtr ptr'
 
 def pngs_to_gif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafe_io \().
   with_temp_files \pngFiles.

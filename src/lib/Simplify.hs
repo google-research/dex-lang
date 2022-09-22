@@ -466,8 +466,8 @@ generalizeDataComponentsNestRec _ _ _ = error "length mismatch"
 
 generalizeType :: Type n -> EnvReaderM n (Generalized Type n)
 generalizeType (TC (Fin n)) = do
-  withFreshBinder noHint IdxRepTy \b -> do
-    let bs = Nest (b:>IdxRepTy) Empty
+  withFreshBinder noHint NatTy \b -> do
+    let bs = Nest (b:>NatTy) Empty
     let generalizedTy = TC $ Fin $ Var $ binderName b
     let args = [n]
     return (Abs bs generalizedTy, args)

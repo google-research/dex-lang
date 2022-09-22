@@ -48,6 +48,7 @@ data PrimTC e =
         BaseType BaseType
       | ProdType [e]
       | SumType [e]
+      | Nat
       | Fin e
       | RefType (Maybe e) e
       | TypeKind
@@ -145,6 +146,7 @@ data PrimOp e =
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
       -- Odds, ends and hacks.
+      | ProjNewtype e     -- shouldn't appear after inference
       | ProjMethod e Int  -- project a method from the dict
       | ExplicitApply e e
       | MonoLiteral e

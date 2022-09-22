@@ -2212,6 +2212,9 @@ instance Pretty (UnitE n) where
 instance (PrettyE e1, PrettyE e2) => Pretty (PairE e1 e2 n) where
   pretty (PairE e1 e2) = pretty (e1, e2)
 
+instance PrettyE e => Pretty (ListE e n) where
+  pretty (ListE e) = pretty e
+
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )
          => Generic (Abs b body n) where

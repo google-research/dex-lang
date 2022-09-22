@@ -251,6 +251,7 @@ transposeOp op ct = case op of
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
+  ProjNewtype _         -> unreachable
   Perform _ _           -> unreachable
   ProjMethod _ _        -> unreachable
   ExplicitApply _ _     -> unreachable

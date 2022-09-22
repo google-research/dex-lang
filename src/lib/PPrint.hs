@@ -253,6 +253,7 @@ instance PrettyPrec (Atom n) where
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <> ",>" <+> p y
     TC  e -> prettyPrec e
+    NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
     TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
@@ -856,8 +857,15 @@ instance Pretty (ImpInstr n)  where
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
-  pretty (Alloc Stack t s) = "alloca" <+> p t <> "[" <> p s <> "]"
-  pretty (Alloc _ t s)     = "alloc"  <+> p t <> "[" <> p s <> "]"
+  pretty (Alloc loc t s) =
+    locStr <+> p t <> "[" <> sizeStr <> "]"
+    where
+      locStr = case loc of Stack -> "alloca"
+                           _     -> "alloc"
+      sizeStr = case s of
+        ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
+        _ -> p s
+
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"
@@ -885,9 +893,7 @@ instance PrettyPrec ScalarBaseType where
     Float64Type -> "Float64"
     Float32Type -> "Float32"
     Word8Type   -> "Word8"
-    -- TODO: we currently use Word32 for `Nat` but we should move to a new type,
-    -- at least at the user-visible level
-    Word32Type  -> "Nat"
+    Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
 instance PrettyPrec e => Pretty (PrimExpr e) where pretty = prettyFromPrettyPrec
@@ -908,6 +914,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
       encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
+    Nat   -> atPrec ArgPrec $ "Nat"
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
@@ -1009,8 +1016,7 @@ instance PrettyPrec LitVal where
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-  -- print in decimal rather than hex because we use this for the `Nat` alias
-  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p x
+  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (PtrLit (PtrLitVal ty x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)

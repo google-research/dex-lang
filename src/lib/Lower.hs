@@ -624,10 +624,10 @@ vectorizeLoopsRec frag = \case
     let narrowestTypeByteWidth = 1  -- TODO: This is too conservative! Find the shortest type in the loop.
     let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
     v <- case expr of
-      Hof (Seq dir (DictCon (IxFin (IdxRepVal n))) dest (Lam body))
+      Hof (Seq dir (DictCon (IxFin (NatVal n))) dest (Lam body))
         | n `mod` loopWidth == 0 -> do
           Distinct <- getDistinct
-          let vn = IdxRepVal $ n `div` loopWidth
+          let vn = NatVal $ n `div` loopWidth
           body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
           dest' <- applySubst frag dest
           emit $ Hof $ Seq dir (DictCon $ IxFin vn) dest' body'

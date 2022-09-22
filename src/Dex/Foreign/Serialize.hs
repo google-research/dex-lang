@@ -78,12 +78,16 @@ instance Storable CAtom where
 dexToCAtom :: Ptr AtomEx -> Ptr CAtom -> IO CInt
 dexToCAtom atomPtr resultPtr = do
   AtomEx atom <- fromStablePtr atomPtr
-  case atom of
-    Con con -> case con of
-      Lit l          -> poke resultPtr (CLit l) $> 1
-      _ -> notSerializable
-    _ -> notSerializable
+  scalarAtomToCAtom atom
   where
+    scalarAtomToCAtom :: Atom n -> IO CInt
+    scalarAtomToCAtom atom = case atom of
+      Con con -> case con of
+        Lit l          -> poke resultPtr (CLit l) $> 1
+        Newtype NatTy rep -> scalarAtomToCAtom rep
+        _ -> notSerializable
+      _ -> notSerializable
+
     notSerializable = setError "Unserializable atom" $> 0
 
 dexFromCAtom :: Ptr CAtom -> IO (Ptr AtomEx)

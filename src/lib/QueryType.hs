@@ -17,7 +17,7 @@ module QueryType (
   numNaryPiArgs, naryLamExprType, specializedFunType,
   projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
-  instantiateHandlerType,
+  isNewtype, instantiateHandlerType,
   ) where
 
 import Control.Category ((>>>))
@@ -359,17 +359,33 @@ instance HasType Atom where
                                      (Var v') -> return v'
                                      _ -> error "!?"
                                    instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
-        -- Newtypes
-        TC (Fin _) | i == 0 -> return IdxRepTy
-        StaticRecordTy types | i == 0 -> return $ ProdTy $ toList types
-        TypeCon _ defName params | i == 0 -> do
-          def <- lookupDataDef defName
-          [DataConDef _ repTy _] <- instantiateDataDef def params
-          return repTy
-        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
+        _ | isNewtype ty && i == 0 -> projectNewtype ty
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty
+
+-- === newtype conversion ===
+
+isNewtype :: Type n -> Bool
+isNewtype ty = case ty of
+  TC Nat        -> True
+  TC (Fin _)    -> True
+  TypeCon _ _ _ -> True
+  RecordTy _    -> True
+  VariantTy _   -> True
+  _ -> False
+
+projectNewtype :: Type o -> TypeQueryM i o (Type o)
+projectNewtype ty = case ty of
+  TC Nat     -> return IdxRepTy
+  TC (Fin _) -> return NatTy
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
+    [DataConDef _ repTy _] <- instantiateDataDef def params
+    return repTy
+  StaticRecordTy types -> return $ ProdTy $ toList types
+  RecordTy _ -> throw CompilerErr "Can't project partially-known records"
+  _ -> error $ "not a newtype: " ++ pprint ty
 
 getTypeRef :: HasType e => e i -> TypeQueryM i o (Type o)
 getTypeRef x = do
@@ -619,6 +635,9 @@ getTypePrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  ProjNewtype x -> do
+    ty <- getTypeE x
+    projectNewtype ty
   Perform eff i -> do
     Eff (OneEffect (UserEffect effName)) <- return eff
     EffectDef _ ops <- substM effName >>= lookupEffectDef

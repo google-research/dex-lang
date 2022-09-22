@@ -137,10 +137,12 @@ toImpExportedFunction cc lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs b
   let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
   dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
     (args, ptrs)   <- ccUnpackActuals ccCtx ccActuals
-    resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) args
-    resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
       traverse (translateBlock Nothing) $ fromListE argRecons
+    -- XXX: for type preservation, it's important that we use the post-recon
+    -- atoms, `argAtoms`, in the substitution
+    resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) (map SubstVal argAtoms)
+    resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
     extendSubst (bs @@> map SubstVal argAtoms) do
       void $ translateBlock (Just $ sink resDest) body
       return []
@@ -1018,8 +1020,11 @@ makeDestRec idxs depVars ty = confuseGHC >>= \_ -> case ty of
       return $ Con $ BaseTypeRef ptr
     SumType cases -> recSumType cases
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
-    Fin n -> do
+    Nat -> do
       x <- rec IdxRepTy
+      return $ Con $ ConRef $ Newtype NatTy x
+    Fin n -> do
+      x <- rec NatTy
       return $ Con $ ConRef $ Newtype (TC $ Fin n) x
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty

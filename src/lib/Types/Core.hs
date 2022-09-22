@@ -736,6 +736,8 @@ instance HasArgType TabLamExpr where
   argType (TabLamExpr (_:>IxType ty _) _) = ty
 
 -- === Pattern synonyms ===
+pattern IdxRepScalarBaseTy :: ScalarBaseType
+pattern IdxRepScalarBaseTy = Word32Type
 
 -- Type used to represent indices and sizes at run-time
 pattern IdxRepTy :: Type n
@@ -802,6 +804,15 @@ pattern RawRefTy a = TC (RefType Nothing a)
 pattern TabTy :: IxBinder n l -> Type l -> Type n
 pattern TabTy b body = TabPi (TabPiType b body)
 
+pattern FinTy :: Atom n -> Type n
+pattern FinTy n = TC (Fin n)
+
+pattern NatTy :: Type n
+pattern NatTy = TC Nat
+
+pattern NatVal :: Word32 -> Atom n
+pattern NatVal n = Con (Newtype NatTy (IdxRepVal n))
+
 pattern TabVal :: IxBinder n l -> Block l -> Atom n
 pattern TabVal b body = TabLam (TabLamExpr b body)
 
@@ -815,7 +826,7 @@ pattern LabeledRowKind :: Kind n
 pattern LabeledRowKind = TC LabeledRowKindTC
 
 pattern FinConst :: Word32 -> Type n
-pattern FinConst n = TC (Fin (IdxRepVal n))
+pattern FinConst n = TC (Fin (NatVal n))
 
 pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))

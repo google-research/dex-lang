@@ -12,7 +12,7 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftExceptAlt,
             assertEq, ignoreExcept,
-            pprint, docAsStr,
+            pprint, docAsStr, getCurrentCallStack, printCurrentCallStack,
             FallibleApplicativeWrapper, traverseMergingErrs,
             SearcherM (..), Searcher (..), runSearcherM) where
 
@@ -25,6 +25,7 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Coerce
+import Data.Foldable (fold)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Prettyprint.Doc.Render.Text
@@ -244,12 +245,25 @@ addCompilerStackCtx :: Err -> Err
 addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
   where
 #ifdef DEX_DEBUG
-    compilerStack = case reverse (unsafePerformIO currentCallStack) of
-      []    -> Nothing
-      stack -> Just stack
+    compilerStack = getCurrentCallStack ()
 #else
     compilerStack = stackCtx ctx
 #endif
+
+getCurrentCallStack :: () -> Maybe [String]
+getCurrentCallStack () =
+#ifdef DEX_DEBUG
+  case reverse (unsafePerformIO currentCallStack) of
+    []    -> Nothing
+    stack -> Just stack
+#else
+  Nothing
+#endif
+{-# NOINLINE getCurrentCallStack #-}
+
+printCurrentCallStack :: Maybe [String] -> String
+printCurrentCallStack Nothing = "<no call stack available>"
+printCurrentCallStack (Just frames) = fold frames
 
 addContext :: Fallible m => String -> m a -> m a
 addContext s m = addErrCtx (mempty {messageCtx = [s]}) m

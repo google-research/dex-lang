@@ -99,7 +99,7 @@ xr = map n_to_f arr
 > ((Fin 3) => Nat)
 
 :t [1, [2]]
-> Type error:Couldn't synthesize a class dictionary for: (FromNatural ((Fin 1) => Nat))
+> Type error:Couldn't synthesize a class dictionary for: (FromUnsignedInteger ((Fin 1) => Nat))
 >
 > :t [1, [2]]
 >     ^
