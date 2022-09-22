@@ -241,6 +241,12 @@ evalProjectDictMethod d i = cheapNormalize d >>= \case
       0 -> return method
       _ -> error "ExplicitDict only supports single-method classes"
   DictCon (IxFin n) -> projectIxFinMethod i n
+  Con (Newtype (DictTy (DictType _ clsName _)) (ProdVal mts)) -> do
+    ClassDef _ _ _ _ mTys <- lookupClassDef clsName
+    let (m, MethodType _ mTy) = (mts !! i, mTys !! i)
+    case mTy of
+      Pi _ -> return m
+      _    -> dropSubst $ evalExpr $ App (head mts) (UnitVal NE.:| [])
   _ -> error $ "Not a simplified dict: " ++ pprint d
 
 matchUPat :: Interp m => UPat i i' -> Atom o -> m i o (SubstFrag AtomSubstVal i i' o)

@@ -225,8 +225,11 @@ simplifyDecls topDecls cont = do
 simpDeclsSubst :: Emits o => Subst AtomSubstVal l o -> Nest Decl l i' -> SimplifyM i o (Subst AtomSubstVal i' o)
 simpDeclsSubst !s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding _ _ expr)) rest -> do
-    x <- withSubst s $ simplifyExpr expr
+  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+    x <- withSubst s $ case (ann, expr) of
+      (NoInlineLet, Atom a) ->
+        liftM Var $ emitDecl noHint NoInlineLet =<< (Atom <$> simplifyAtom a)
+      _ -> simplifyExpr expr
     simpDeclsSubst (s <>> (b@>SubstVal x)) rest
 
 simplifyExpr :: Emits o => Expr i -> SimplifyM i o (Atom o)
@@ -823,6 +826,15 @@ projectDictMethod d i = do
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
     DictCon (IxFin n) -> projectIxFinMethod i n
+    Con (Newtype (DictTy (DictType _ clsName _)) (ProdVal els)) -> do
+      ClassDef _ _ _ _ mTys <- lookupClassDef clsName
+      let (e, MethodType _ mTy) = (els !! i, mTys !! i)
+      case (mTy, e) of
+        (Pi _, _) -> return e
+        -- Non-function methods are thunked, so we have to apply
+        (_, Lam (LamExpr b body)) ->
+          dropSubst $ extendSubst (b @> SubstVal UnitVal) $ simplifyBlock body
+        _ -> error $ "Not a simplified dict: " ++ pprint e
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
