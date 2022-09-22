@@ -9,8 +9,8 @@
 module Simplify
   ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
   , simplifyTopFunctionAssumeNoTopEmissions
-  , buildBlockSimplified, emitSimplified
-  , dceApproxBlock) where
+  , buildBlockSimplified
+  ) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -980,18 +980,6 @@ hasExceptions expr = do
   case t of
     Nothing -> return $ ExceptionEffect `S.member` effs
     Just _  -> error "Shouldn't have tail left"
-
-emitSimplified
-  :: (Emits n, Builder m)
-  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> m n (Atom n)
-emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
-{-# INLINE emitSimplified #-}
-
-dceApproxBlock :: Block n -> Block n
-dceApproxBlock block@(Block _ decls expr) = case hoist decls expr of
-  HoistSuccess expr' -> Block NoBlockAnn Empty expr'
-  HoistFailure _     -> block
 
 -- === GHC performance hacks ===
 
