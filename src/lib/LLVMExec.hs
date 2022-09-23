@@ -6,12 +6,13 @@
 
 {-# LANGUAGE DuplicateRecordFields #-}
 
-module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
+module LLVMExec (LLVMKernel (..), DexJIT (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
                  exportObjectFileVal,
                  standardCompilationPipeline,
                  compileCUDAKernel,
-                 storeLitVals, loadLitVals, allocaCells, loadLitVal) where
+                 storeLitVals, loadLitVals, allocaCells, loadLitVal,
+                 createDexJIT) where
 
 #ifdef DEX_DEBUG
 import qualified LLVM.Analysis as L
@@ -34,6 +35,7 @@ import qualified LLVM.PassManager as P
 import qualified LLVM.Transforms as P
 #endif
 import qualified LLVM.Target as T
+import qualified LLVM.Shims
 import LLVM.Context
 import Data.Int
 import GHC.IO.FD
@@ -70,6 +72,10 @@ import LLVM.JIT
 import Util (measureSeconds)
 import PPrint ()
 
+data DexJIT = DexJIT
+  { llvmJIT :: JIT
+  , jitTargetMachine :: T.TargetMachine}
+
 -- === One-shot evaluation ===
 
 foreign import ccall "dynamic"
@@ -78,27 +84,35 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-compileAndEval :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
+createDexJIT :: IO DexJIT
+createDexJIT = do
+  tm <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
+  jit <- LLVM.JIT.createJIT tm
+  return $ DexJIT jit tm
+
+compileAndEval :: DexJIT -> FilteredLogger PassName [Output] -> [ObjectFile n]
+               -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval logger objFiles ast fname args resultTypes = do
+compileAndEval jit logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff logger objFiles ast fname $
+        evalTime <- compileOneOff jit logger objFiles ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
         logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 {-# SCC compileAndEval #-}
 
-compileAndBench :: Bool -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
+compileAndBench :: Bool -> DexJIT -> FilteredLogger PassName [Output]
+                -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
+compileAndBench shouldSyncCUDA jit logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff logger objFiles ast fname \fPtr -> do
+        compileOneOff jit logger objFiles ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -144,14 +158,16 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   return duration
 {-# SCC checkedCallFunPtr #-}
 
-compileOneOff :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
-compileOneOff logger objFiles ast name f = do
-  withHostTargetMachine \tm ->
-    withJIT tm \jit -> do
-      let pipeline = standardCompilationPipeline logger [name] tm
-      let objFileContents = [s | ObjectFile s _ _ <- objFiles]
-      withNativeModule jit objFileContents ast pipeline \compiled ->
-        f =<< getFunctionPtr compiled name
+compileOneOff
+  :: DexJIT -> FilteredLogger PassName [Output]
+  -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileOneOff dexJIT logger objFiles ast name f = do
+  let tm  = jitTargetMachine dexJIT
+  let jit = llvmJIT dexJIT
+  let pipeline = standardCompilationPipeline logger [name] tm
+  let objFileContents = [s | ObjectFile s _ _ <- objFiles]
+  withNativeModule jit objFileContents ast pipeline \compiled ->
+    f =<< getFunctionPtr compiled name
 
 standardCompilationPipeline :: FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
 standardCompilationPipeline logger exports tm m = do

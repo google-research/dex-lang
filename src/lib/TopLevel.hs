@@ -10,7 +10,8 @@ module TopLevel (
   EvalConfig (..), Topper, runTopperM,
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
-  evalSourceBlockIO, loadCache, storeCache, clearCache) where
+  evalSourceBlockIO, loadCache, storeCache, clearCache, createDexJIT,
+  DexJIT) where
 
 import Data.Maybe
 import Data.Foldable (toList)
@@ -77,6 +78,9 @@ data EvalConfig = EvalConfig
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
+class Monad m => JITReader m where
+  getDexJIT :: m DexJIT
+
 data PassCtx = PassCtx
   { requiresBench :: Bool
   , shouldLogPass :: PassName -> Bool
@@ -95,13 +99,19 @@ class ( forall n. Fallible (m n)
       , forall n. MonadLogger [Output] (m n)
       , forall n. Catchable (m n)
       , forall n. ConfigReader (m n)
+      , forall n. JITReader (m n)
       , forall n. PassCtxReader (m n)
       , forall n. MonadIO (m n)  -- TODO: something more restricted here
       , TopBuilder m )
       => Topper m
 
+data TopperReaderData = TopperReaderData
+  { topperPassCtx    :: PassCtx
+  , topperEvalConfig :: EvalConfig
+  , topperDexJIT     :: DexJIT }
+
 newtype TopperM (n::S) a = TopperM
-  { runTopperM' :: TopBuilderT (ReaderT (PassCtx, EvalConfig) (LoggerT [Output] IO)) n a }
+  { runTopperM' :: TopBuilderT (ReaderT TopperReaderData (LoggerT [Output] IO)) n a }
     deriving ( Functor, Applicative, Monad, MonadIO, MonadFail
              , Fallible, EnvReader, ScopeReader, Catchable)
 
@@ -109,13 +119,13 @@ newtype TopperM (n::S) a = TopperM
 data TopStateEx where
   TopStateEx :: Distinct n => Env n -> TopStateEx
 
-runTopperM :: EvalConfig -> TopStateEx
+runTopperM :: EvalConfig -> DexJIT -> TopStateEx
            -> (forall n. Mut n => TopperM n a)
            -> IO (a, TopStateEx)
-runTopperM opts (TopStateEx env) cont = do
+runTopperM opts jit (TopStateEx env) cont = do
   let maybeLogFile = logFile opts
   (Abs frag (LiftE result), _) <- runLogger maybeLogFile \l -> runLoggerT l $
-    flip runReaderT (initPassCtx, opts) $
+    flip runReaderT (TopperReaderData initPassCtx opts jit) $
       runTopBuilderT env $ runTopperM' do
         localTopBuilder $ LiftE <$> cont
   return (result, extendTopEnv env frag)
@@ -130,8 +140,8 @@ initTopState = TopStateEx emptyOutMap
 
 -- ======
 
-evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, TopStateEx)
-evalSourceBlockIO opts env block = runTopperM opts env $ evalSourceBlockRepl block
+evalSourceBlockIO :: EvalConfig -> DexJIT -> TopStateEx -> SourceBlock -> IO (Result, TopStateEx)
+evalSourceBlockIO opts jit env block = runTopperM opts jit env $ evalSourceBlockRepl block
 
 -- Used for the top-level source file (rather than imported modules)
 evalSourceText :: (Topper m, Mut n) => Text -> (SourceBlock -> IO ()) -> (Result -> IO Bool) -> m n [(SourceBlock, Result)]
@@ -669,7 +679,8 @@ evalLLVM block = do
   objFiles <- forM objFileNames  \objFileName -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile
-  resultVals <- liftIO $ llvmEvaluate filteredLogger objFiles
+  jit <- getDexJIT
+  resultVals <- liftIO $ llvmEvaluate jit filteredLogger objFiles
                   llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
@@ -840,18 +851,21 @@ abstractPtrLiterals block = do
 -- -- === instances ===
 
 instance PassCtxReader (TopperM n) where
-  getPassCtx = TopperM $ asks fst
+  getPassCtx = TopperM $ asks topperPassCtx
   withPassCtx ctx cont = TopperM $
-    liftTopBuilderTWith (local \(_, config) -> (ctx, config)) $
+    liftTopBuilderTWith (local \r -> r {topperPassCtx = ctx}) $
       runTopperM' cont
 
 instance ConfigReader (TopperM n) where
-  getConfig = TopperM $ asks snd
+  getConfig = TopperM $ asks topperEvalConfig
 
 instance (Monad1 m, ConfigReader (m n)) => ConfigReader (StateT1 s m n) where
   getConfig = lift11 getConfig
 
 instance Topper TopperM
+
+instance JITReader (TopperM n) where
+  getDexJIT = TopperM $ asks topperDexJIT
 
 instance TopBuilder TopperM where
   -- Log bindings as they are emitted
