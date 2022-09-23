@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module TopLevel (
-  EvalConfig (..), Topper, runTopperM,
+  EvalConfig (..), Topper, TopperM, runTopperM,
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache, createDexJIT,

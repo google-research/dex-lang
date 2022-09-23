@@ -36,7 +36,6 @@ import Name
 import Logging
 import Builder
 import LLVMExec
-import TopLevel
 import JIT
 import Export
 import Syntax  hiding (sizeOf)
@@ -89,10 +88,9 @@ intAsCC _ = error "Unrecognized calling convention"
 dexCompile :: Ptr JIT -> CInt -> Ptr Context -> Ptr AtomEx -> IO NativeFunctionAddr
 dexCompile jitPtr ccInt ctxPtr funcAtomPtr = catchErrors $ do
   ForeignJIT{..} <- fromStablePtr jitPtr
-  Context evalConfig initEnv <- fromStablePtr ctxPtr
   AtomEx funcAtom <- fromStablePtr funcAtomPtr
   let cc = intAsCC ccInt
-  fst <$> runTopperM evalConfig initEnv do
+  fst <$> runTopperMFromContext ctxPtr do
     -- TODO: Check if atom is compatible with context! Use module name?
     (impFunc, nativeSignature) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
     filteredLogger <- FilteredLogger (const False) <$> getLogger
