@@ -99,7 +99,8 @@
                 tooltip: {
                   callbacks: {
                     label: context => {
-                      return yFormat.format(context.parsed.y);
+                      cmt = ord_to_commit[context.parsed.x].slice(0, 10);
+                      return yFormat.format(context.parsed.y) + ' - ' + cmt;
                     }
                   },
                 },
