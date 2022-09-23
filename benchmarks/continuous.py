@@ -284,10 +284,8 @@ def main(argv):
     raise ValueError("Expected at least three arguments!")
   datapath, commitpath, commit = argv[:3]
   benchmark_names = argv[3:]
-  benchmarks = []
-  for test in BENCHMARKS:
-    if not benchmark_names or test.name in benchmark_names:
-      benchmarks.append(test)
+  benchmarks = BENCHMARKS if not benchmark_names \
+    else [b for b in BENCHMARKS if b.name in benchmark_names]
   baselines = {}
   for test in benchmarks:
     baseline_commit = test.baseline_commit
