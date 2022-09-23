@@ -264,7 +264,7 @@ dither-data: $(dither-data)
 run-examples/dither: dither-data
 update-examples/dither: dither-data
 
-tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests
+tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests doc-format-test
 
 # Keep the unit tests in their own working directory too, due to
 # https://github.com/commercialhaskell/stack/issues/4977
@@ -273,6 +273,9 @@ unit-tests:
 
 opt-tests: just-build
 	misc/file-check tests/opt-tests.dx $(dex) -O script
+
+doc-format-test: $(doc-files) $(example-files) $(lib-files)
+	python3 misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > /dev/null
 
 quine-tests: $(quine-test-targets)
 
@@ -396,7 +399,7 @@ pages/lib/%.html: lib/%.dx
 	$(dex) script $^ --outfmt html > $@
 
 pages/index.md: $(doc-files) $(example-files) $(lib-files)
-	misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > $@
+	python3 misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > $@
 
 ${pages-doc-files}:pages/%.html: doc/%.dx
 	mkdir -p pages
