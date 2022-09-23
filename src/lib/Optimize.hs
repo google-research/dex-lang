@@ -6,9 +6,10 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module Optimize (earlyOptimize, optimize) where
+module Optimize (earlyOptimize, optimize, peepholeOp) where
 
 import Data.Functor
+import Data.Word
 import Data.List.NonEmpty qualified as NE
 import Control.Monad
 import Control.Monad.State.Strict
@@ -74,15 +75,71 @@ unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE
 
 -- === Peephole optimizations ===
 
-peepholeExpr :: GenericTraverser s => Expr o -> GenericTraverserM s i o (Either (Atom o) (Expr o))
+peepholeOp :: Op o -> Either (Atom o) (Op o)
+peepholeOp op = case op of
+  CastOp (BaseTy (Scalar sTy)) (Con (Lit l)) -> case sTy of
+    -- TODO: Support all casts.
+    Int32Type -> case l of
+      Int32Lit  _  -> lit l
+      Int64Lit  i  -> lit $ Int32Lit  $ fromIntegral i
+      Word8Lit  i  -> lit $ Int32Lit  $ fromIntegral i
+      Word32Lit i  -> lit $ Int32Lit  $ fromIntegral i
+      Word64Lit i  -> lit $ Int32Lit  $ fromIntegral i
+      Float32Lit _ -> noop
+      Float64Lit _ -> noop
+      PtrLit     _ -> noop
+    Int64Type -> case l of
+      Int32Lit  i  -> lit $ Int64Lit  $ fromIntegral i
+      Int64Lit  _  -> lit l
+      Word8Lit  i  -> lit $ Int64Lit  $ fromIntegral i
+      Word32Lit i  -> lit $ Int64Lit  $ fromIntegral i
+      Word64Lit i  -> lit $ Int64Lit  $ fromIntegral i
+      Float32Lit _ -> noop
+      Float64Lit _ -> noop
+      PtrLit     _ -> noop
+    Word8Type -> case l of
+      Int32Lit  i  -> lit $ Word8Lit  $ fromIntegral i
+      Int64Lit  i  -> lit $ Word8Lit  $ fromIntegral i
+      Word8Lit  _  -> lit l
+      Word32Lit i  -> lit $ Word8Lit  $ fromIntegral i
+      Word64Lit i  -> lit $ Word8Lit  $ fromIntegral i
+      Float32Lit _ -> noop
+      Float64Lit _ -> noop
+      PtrLit     _ -> noop
+    Word32Type -> case l of
+      Int32Lit  i  -> lit $ Word32Lit $ fromIntegral i
+      Int64Lit  i  -> lit $ Word32Lit $ fromIntegral i
+      Word8Lit  i  -> lit $ Word32Lit $ fromIntegral i
+      Word32Lit _  -> lit l
+      Word64Lit i  -> lit $ Word32Lit $ fromIntegral i
+      Float32Lit _ -> noop
+      Float64Lit _ -> noop
+      PtrLit     _ -> noop
+    Word64Type -> case l of
+      Int32Lit  i  -> lit $ Word64Lit $ fromIntegral (fromIntegral i :: Word32)
+      Int64Lit  i  -> lit $ Word64Lit $ fromIntegral i
+      Word8Lit  i  -> lit $ Word64Lit $ fromIntegral i
+      Word32Lit i  -> lit $ Word64Lit $ fromIntegral i
+      Word64Lit _  -> lit l
+      Float32Lit _ -> noop
+      Float64Lit _ -> noop
+      PtrLit     _ -> noop
+    _ -> noop
+  -- TODO: Support more unary and binary ops.
+  BinOp IAdd l r -> case (l, r) of
+    -- TODO: Shortcut when either side is zero.
+    (Con (Lit ll), Con (Lit rl)) -> case (ll, rl) of
+      (Word32Lit lv, Word32Lit lr) -> lit $ Word32Lit $ lv + lr
+      _ -> noop
+    _ -> noop
+  _ -> noop
+  where
+    noop = Right op
+    lit = Left . Con . Lit
+
+peepholeExpr :: Expr o -> EnvReaderM o (Either (Atom o) (Expr o))
 peepholeExpr expr = case expr of
-  -- TODO: Support more casts!
-  Op (CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Word32Lit x)))) ->
-    return $ Left $ Con $ Lit $ Int32Lit $ fromIntegral x
-  Op (CastOp (BaseTy (Scalar Word64Type)) (Con (Lit (Word32Lit x)))) ->
-    return $ Left $ Con $ Lit $ Word64Lit $ fromIntegral x
-  -- TODO: Support more unary and binary ops!
-  Op (BinOp IAdd (IdxRepVal a) (IdxRepVal b)) -> return $ Left $ IdxRepVal $ a + b
+  Op op -> return $ Op <$> peepholeOp op
   TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
     lookupAtomName t <&> \case
       LetBound (DeclBinding PlainLet _ (Op (TabCon _ elems))) ->
@@ -140,7 +197,7 @@ instance GenericTraverser ULS where
     _ -> nothingSpecial
     where
       inc i = modify \(ULS n) -> ULS (n + i)
-      nothingSpecial = inc 1 >> (traverseExprDefault expr >>= peepholeExpr)
+      nothingSpecial = inc 1 >> (traverseExprDefault expr >>= liftEnvReaderM . peepholeExpr)
       unrollBlowupThreshold = 12
       withLocalAccounting m = do
         oldCost <- get
