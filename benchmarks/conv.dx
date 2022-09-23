@@ -1,0 +1,46 @@
+'# Diagonal convolution
+
+'This computes a diagonally-indexed summation:
+```
+result.i.j = input.(i-1).(j-1) + input.i.j + input.(i+1).(j+1)
+```
+This computation is interesting because it occurs in the inner
+loop of computing the Neural Tangent Kernel of a convolutional
+layer.
+
+def unsafe_from_integer {n} [Ix n] (i:Int) : n =
+  unsafe_from_ordinal _ $ unsafe_i_to_n i
+
+def conv_1d {d1 d2} (kernel: (Fin d1)=>(Fin d2)=>Float)
+    (size: Nat) : (Fin d1)=>(Fin d2)=>Float =
+  half_kernel_size = (f_to_i $ (n_to_f size) / 2.0)
+  for i j. sum for k: (Fin size).
+    i' = n_to_i $ ordinal i
+    j' = n_to_i $ ordinal j
+    k' = n_to_i $ ordinal k
+    i'' = i' + k' - half_kernel_size
+    j'' = j' + k' - half_kernel_size
+    if i'' < 0 || i'' >= (n_to_i d1) || j'' < 0 || j'' >= (n_to_i d2)
+      then 0
+      else kernel.(unsafe_from_integer i'').(unsafe_from_integer j'')
+
+def conv {n c h w} (kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float)
+  (size: Int) : (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float =
+  for n' c'.
+    conv_1d kernel.n'.c' (unsafe_i_to_n size)
+
+'We benchmark it on a roughly representative input.
+
+width = 3
+side = 32
+n = 100
+
+x1 = for i:(Fin n) m:(Fin width) j:(Fin side) k:(Fin side).
+  randn (ixkey (new_key 0) (i, m, j, k))
+
+:t x1
+
+%bench "Diagonal convolution"
+res = conv x1 3
+
+:t res

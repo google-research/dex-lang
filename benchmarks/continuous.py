@@ -26,27 +26,31 @@ import numpy as np
 import csv
 
 
+BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
+
+
 @dataclass
 class DexEndToEnd:
   """Measures end-to-end time and memory on a published example."""
-  example: str
+  name: str
   repeats: int
   variant: str = 'latest'
+  baseline_commit: str = BASELINE
 
   def clean(self, code, xdg_home):
     run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
 
   def bench(self, code, xdg_home):
-    source = code / 'examples' / (self.example + '.dx')
+    source = code / 'examples' / (self.name + '.dx')
     total_alloc, total_time = parse_result(
         read_stderr(code / 'dex', '--lib-path', code / 'lib',
                     'script', source, '+RTS', '-s',
                     env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
-    return [Result(self.example, 'alloc', total_alloc),
-            Result(self.example, 'time', total_time)]
+    return [Result(self.name, 'alloc', total_alloc),
+            Result(self.name, 'time', total_time)]
 
   def baseline(self):
-    return DexEndToEnd(self.example, self.repeats, 'baseline')
+    return DexEndToEnd(self.name, self.repeats, 'baseline')
 
 
 @dataclass
@@ -55,6 +59,7 @@ class DexRuntime:
   name: str
   repeats: int
   variant: str = 'latest'
+  baseline_commit: str = BASELINE
 
   def clean(self, code, xdg_home):
     run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
@@ -69,6 +74,11 @@ class DexRuntime:
 
   def baseline(self):
     return Python(self.name, self.repeats, RUNTIME_BASELINES[self.name])
+
+
+class DexRuntimeVsDex(DexRuntime):
+  def baseline(self):
+    return DexRuntimeVsDex(self.name, self.repeats, 'baseline')
 
 
 @dataclass
@@ -112,7 +122,6 @@ def numpy_poly(n):
   return lambda: np.polynomial.Polynomial([0.0, 1.0, 2.0, 3.0, 4.0])(xs)
 
 
-BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
 BENCHMARKS = [
     DexEndToEnd('kernelregression', 10),
     DexEndToEnd('psd', 10),
@@ -127,6 +136,7 @@ BENCHMARKS = [
     DexRuntime('matvec_small', 5),
     DexRuntime('poly', 5),
     DexRuntime('vjp_matmul', 5),
+    DexRuntimeVsDex('conv', 10, baseline_commit='531832c0e18a64c1cab10fc16270b930eed5ed2b'),
 ]
 RUNTIME_BASELINES = {
     'fused_sum': numpy_sum,
@@ -175,11 +185,12 @@ def build(commit):
   return install_path
 
 
-def benchmark(baseline_path, latest_path):
+def benchmark(baselines, latest_path, benchmarks):
   with tempfile.TemporaryDirectory() as tmp:
     results = []
-    for test in BENCHMARKS:
+    for test in benchmarks:
       baseline = test.baseline()
+      baseline_path = baselines[test.baseline_commit]
       # Warm up the caches
       baseline.clean(baseline_path, tmp)
       baseline.bench(baseline_path, tmp)
@@ -269,14 +280,21 @@ def save(commit, results: Sequence[Result], datapath, commitpath):
 
 
 def main(argv):
-  if len(argv) != 3:
-    raise ValueError("Expected three arguments!")
-  datapath, commitpath, commit = argv
-  print('Building baseline: {BASELINE}')
-  baseline_path = build(BASELINE)
+  if len(argv) < 3:
+    raise ValueError("Expected at least three arguments!")
+  datapath, commitpath, commit = argv[:3]
+  benchmark_names = argv[3:]
+  benchmarks = BENCHMARKS if not benchmark_names \
+    else [b for b in BENCHMARKS if b.name in benchmark_names]
+  baselines = {}
+  for test in benchmarks:
+    baseline_commit = test.baseline_commit
+    if baseline_commit not in baselines:
+      baseline_path = build(baseline_commit)
+      baselines[baseline_commit] = baseline_path
   print(f'Building latest: {commit}')
   latest_path = build(commit)
-  results = benchmark(baseline_path, latest_path)
+  results = benchmark(baselines, latest_path, benchmarks)
   save(commit, results, datapath, commitpath)
   print('DONE!')
 
