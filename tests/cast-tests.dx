@@ -8,7 +8,7 @@
 -- resizing that representation (depending on the target signedness), and interpreting
 -- the resulting bit pattern in the target type.
 --
--- The rules for resizing the bit pattern are as follow:
+-- The rules for resizing the bit pattern are as follows:
 --   1. If the target bitwidth is smaller than source bitwidth, the maximum number of
 --      least significant bits are preserved.
 --   2. If the target bitwidth is equal to the source bitwidth, nothing happens.
