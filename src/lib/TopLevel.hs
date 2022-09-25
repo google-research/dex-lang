@@ -37,7 +37,8 @@ import Paths_dex  (getDataFileName)
 import Err
 import MTL1
 import Logging
-import LLVMExec
+import LLVMExec hiding (OptLevel)
+import LLVMExec qualified
 import PPrint (pprintCanonicalized)
 import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
@@ -643,7 +644,8 @@ toCFunction fname f = do
   PassCtx{..} <- getPassCtx
   logger  <- getLogger
   (deps, m) <- impToLLVM (FilteredLogger shouldLogPass logger) fname f
-  objFile <- liftIO $ exportObjectFileVal deps m fname
+  llvmOpt <- getLLVMOptLevel
+  objFile <- liftIO $ exportObjectFileVal llvmOpt deps m fname
   objFileName <- emitObjFile (getNameHint fname) objFile
   return $ CFun fname objFileName
 
@@ -652,9 +654,15 @@ toCFunction fname f = do
 mainFuncName :: SourceName
 mainFuncName = "entryFun"
 
+getLLVMOptLevel :: Topper m => m n (LLVMExec.OptLevel)
+getLLVMOptLevel = getConfig <&> optLevel <&> \case
+  NoOptimize -> LLVMExec.OptALittle
+  Optimize   -> LLVMExec.OptAggressively
+
 evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
+  llvmOpt <- getLLVMOptLevel
   PassCtx{..} <- getPassCtx
   logger  <- getLogger
   let filteredLogger = FilteredLogger shouldLogPass logger
@@ -670,7 +678,7 @@ evalLLVM block = do
   objFiles <- forM objFileNames  \objFileName -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile
-  resultVals <- liftIO $ llvmEvaluate filteredLogger objFiles
+  resultVals <- liftIO $ llvmEvaluate llvmOpt filteredLogger objFiles
                   llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs

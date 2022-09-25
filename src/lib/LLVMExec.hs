@@ -9,7 +9,7 @@
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
                  exportObjectFileVal,
-                 standardCompilationPipeline,
+                 standardCompilationPipeline, OptLevel (..),
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal) where
 
@@ -78,27 +78,30 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-compileAndEval :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
+data OptLevel = OptALittle       -- -O1
+              | OptAggressively  -- -O3, incl. auto vectorization
+
+compileAndEval :: OptLevel -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval logger objFiles ast fname args resultTypes = do
+compileAndEval opt logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff logger objFiles ast fname $
+        evalTime <- compileOneOff opt logger objFiles ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
         logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 {-# SCC compileAndEval #-}
 
-compileAndBench :: Bool -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
+compileAndBench :: Bool -> OptLevel -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
+compileAndBench shouldSyncCUDA opt logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff logger objFiles ast fname \fPtr -> do
+        compileOneOff opt logger objFiles ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -144,24 +147,24 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   return duration
 {-# SCC checkedCallFunPtr #-}
 
-compileOneOff :: FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
-compileOneOff logger objFiles ast name f = do
+compileOneOff :: OptLevel -> FilteredLogger PassName [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileOneOff opt logger objFiles ast name f = do
   withHostTargetMachine \tm ->
     withJIT tm \jit -> do
-      let pipeline = standardCompilationPipeline logger [name] tm
+      let pipeline = standardCompilationPipeline opt logger [name] tm
       let objFileContents = [s | ObjectFile s _ _ <- objFiles]
       withNativeModule jit objFileContents ast pipeline \compiled ->
         f =<< getFunctionPtr compiled name
 
-standardCompilationPipeline :: FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
-standardCompilationPipeline logger exports tm m = do
+standardCompilationPipeline :: OptLevel -> FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
+standardCompilationPipeline opt logger exports tm m = do
   linkDexrt m
   internalize exports m
   {-# SCC showLLVM   #-} logPass JitPass $ showModule m
 #ifdef DEX_DEBUG
   {-# SCC verifyLLVM #-} L.verify m
 #endif
-  {-# SCC runPasses  #-} runDefaultPasses tm m
+  {-# SCC runPasses  #-} runDefaultPasses opt tm m
   {-# SCC showOptimizedLLVM #-} logPass LLVMOpt $ showModule m
   {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
   where
@@ -172,15 +175,15 @@ standardCompilationPipeline logger exports tm m = do
 
 -- === object file export ===
 
-exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
-exportObjectFileVal deps m fname = do
-  contents <- exportObjectFile [(m, [fname])] Mod.moduleObject
+exportObjectFileVal :: OptLevel -> [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
+exportObjectFileVal opt deps m fname = do
+  contents <- exportObjectFile opt [(m, [fname])] Mod.moduleObject
   return $ ObjectFile contents [fname] deps
 {-# SCC exportObjectFileVal #-}
 
 -- Each module comes with a list of exported functions
-exportObjectFile :: [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
-exportObjectFile modules exportFn = do
+exportObjectFile :: OptLevel -> [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
+exportObjectFile opt modules exportFn = do
   withContext \c -> do
     withHostTargetMachine \tm ->
       withBrackets (fmap (toLLVM c) modules) \mods -> do
@@ -188,6 +191,7 @@ exportObjectFile modules exportFn = do
           void $ foldM linkModules exportMod mods
           execLogger Nothing \logger ->
             standardCompilationPipeline
+              opt
               (FilteredLogger (const False) logger)
               allExports tm exportMod
           exportFn tm exportMod
@@ -211,17 +215,27 @@ exportObjectFile modules exportFn = do
 -- === LLVM passes ===
 
 
-runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
-runDefaultPasses t m = do
+runDefaultPasses :: OptLevel -> T.TargetMachine -> Mod.Module -> IO ()
+runDefaultPasses opt t m = do
 #if MIN_VERSION_llvm_hs(15,0,0)
-  P.runPasses (P.PassSetSpec [P.CuratedPassSet 1] (Just t)) m
+  -- TODO: Modify llvm-hs to request vectorization
+  P.runPasses (P.PassSetSpec [P.CuratedPassSet lvl] (Just t)) m
+  where lvl = case opt of OptALittle -> 1; OptAggressively -> 3
 #else
   P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
   case extraPasses of
     [] -> return ()
     _  -> runPasses extraPasses (Just t) m
   where
-    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 1}
+    defaultPasses = case opt of
+      OptALittle ->
+        P.defaultCuratedPassSetSpec {P.optLevel = Just 1, P.targetMachine = Just t}
+      OptAggressively ->
+        P.defaultCuratedPassSetSpec
+          { P.optLevel = Just 3
+          , P.loopVectorize = Just True
+          , P.superwordLevelParallelismVectorize = Just True
+          , P.targetMachine = Just t }
     extraPasses = []
 #endif
 
@@ -402,7 +416,7 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
     Mod.withModuleFromAST ctx ast \m -> do
       withGPUTargetMachine (pack arch) \tm -> do
         linkLibdevice m
-        standardCompilationPipeline logger ["kernel"] tm m
+        standardCompilationPipeline OptAggressively logger ["kernel"] tm m
         ptx <- Mod.moduleTargetAssembly tm m
         usePTXAS <- maybe False (=="1") <$> E.lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
