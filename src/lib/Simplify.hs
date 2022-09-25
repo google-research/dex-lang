@@ -28,6 +28,7 @@ import Name
 import Core
 import Builder
 import Syntax
+import Optimize (peepholeOp)
 import CheckType (CheckableE (..), isData)
 import Util ( enumerate, foldMapM, restructure, toSnocList
             , splitAtExact, SnocList, snoc, emptySnocList)
@@ -790,11 +791,8 @@ simplifyOp op = case op of
   VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
     return $ Con $ Newtype ty $ SumVal (toList tys) ix v
-  CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
-    return $ Con $ Lit $ Int32Lit $ fromIntegral val
-  CastOp (BaseTy (Scalar Word32Type)) (Con (Lit (Word64Lit val))) ->
-    return $ Con $ Lit $ Word32Lit $ fromIntegral val
   -- Those are not no-ops! Builder methods do algebraic simplification!
+  -- TODO: Move peephole optimizations to peepholeOp in Optimize
   BinOp ISub x y -> isub x y
   BinOp IAdd x y -> iadd x y
   BinOp IMul x y -> imul x y
@@ -803,7 +801,9 @@ simplifyOp op = case op of
   BinOp (ICmp Equal) x y -> ieq x y
   Select c x y -> select c x y
   ProjMethod dict i -> projectDictMethod dict i
-  _ -> emitOp op
+  _ -> case peepholeOp op of
+    Left  a   -> return a
+    Right op' -> emitOp op'
 
 pattern IdentityReconAbs :: Abs binder ReconstructAtom n
 pattern IdentityReconAbs <- Abs _ IdentityRecon
