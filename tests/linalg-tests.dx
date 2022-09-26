@@ -46,7 +46,7 @@ grad (\x. snd $ sign_and_log_determinant [[x]]) 2.0
 def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
   for i j.
     if (ordinal j)<=(ordinal i)
-      then mat.i.(unsafe_cast j)
+      then mat.i.(unsafe_project _ j)
       else zero
 
 lower : LowerTriMat (Fin 4) Float = arb $ new_key 0
