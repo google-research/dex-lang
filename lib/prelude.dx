@@ -895,17 +895,12 @@ instance {a n} [Ord a] Ord (n=>a)
 '## Subset class
 
 interface Subset a_sub a
-  inject'              : a_sub -> a
-  can_project' a_sub a : a -> Bool
-  unsafe_project'      : a -> a_sub
-
-def can_project {a} (a_sub:Type) [Subset a_sub a] (x:a) : Bool =
-  can_project' a_sub a x
+  inject'         : a_sub -> a
+  project'        : a -> Maybe a_sub
+  unsafe_project' : a -> a_sub
 
 def project {a} (a_sub:Type) [Subset a_sub a] (x:a) : Maybe a_sub =
-  case can_project a_sub x of
-    True  -> Just $ unsafe_project' x
-    False -> Nothing
+  project' x
 
 def unsafe_project {a} (a_sub:Type) [Subset a_sub a] (x:a) : a_sub =
   unsafe_project' x
@@ -915,38 +910,65 @@ def inject {a_sub} (a:Type) [Subset a_sub a] (x:a_sub) : a =
 
 instance {a b c} [Subset a b, Subset b c] Subset a c
   inject' = \x. inject c $ inject b x
-  can_project' = \x. case can_project b x of
-    False -> False
-    True -> can_project a $ unsafe_project b x
+  project' = \x. case project b x of
+    Nothing -> Nothing
+    Just y -> project a y
   unsafe_project' = \x. unsafe_project a $ unsafe_project b x
+
+def unsafe_project_rangefrom {q:Type} {i:q} [Ix q] (j:q) : RangeFrom q i =
+  UnsafeMkRangeFrom $ unsafe_nat_diff (ordinal j) (ordinal i)
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
   inject' = \(UnsafeMkRangeFrom j).
     unsafe_from_ordinal _ $ j + ordinal i
-  can_project' = \j. ordinal j >= ordinal i
-  unsafe_project' = \j.
-    UnsafeMkRangeFrom $ unsafe_nat_diff (ordinal j) (ordinal i)
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' < i'
+      then Nothing
+      else Just $ UnsafeMkRangeFrom $ unsafe_nat_diff j' i'
+  unsafe_project' = \j. UnsafeMkRangeFrom $ unsafe_nat_diff (ordinal j) (ordinal i)
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeFromExc q i) q
   inject' = \(UnsafeMkRangeFromExc j).
     unsafe_from_ordinal _ $ j + ordinal i + 1
-  can_project' = \j. ordinal j > ordinal i
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' <= i'
+      then Nothing
+      else Just $ UnsafeMkRangeFromExc $ unsafe_nat_diff j' (i' + 1)
   unsafe_project' = \j.
-    UnsafeMkRangeFromExc $ unsafe_nat_diff (ordinal j) (ordinal i + 1)
+    UnsafeMkRangeFromExc $ unsafe_nat_diff (ordinal j) ((ordinal i) + 1)
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeTo q i) q
   inject' = \(UnsafeMkRangeTo j). unsafe_from_ordinal _ j
-  can_project' = \j. ordinal j <= ordinal j
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' > i'
+      then Nothing
+      else Just $ UnsafeMkRangeTo j'
   unsafe_project' = \j. UnsafeMkRangeTo (ordinal j)
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) q
   inject' = \(UnsafeMkRangeToExc j). unsafe_from_ordinal _ j
-  can_project' = \j. ordinal j < ordinal i
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' >= i'
+      then Nothing
+      else Just $ UnsafeMkRangeToExc j'
   unsafe_project' = \j. UnsafeMkRangeToExc (ordinal j)
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) (RangeTo q i)
   inject' = \(UnsafeMkRangeToExc j). unsafe_from_ordinal _ j
-  can_project' = \j. ordinal j < ordinal i
+  project' = \j.
+    j' = ordinal j
+    i' = ordinal i
+    if j' >= i'
+      then Nothing
+      else Just $ UnsafeMkRangeToExc j'
   unsafe_project' = \j. UnsafeMkRangeToExc (ordinal j)
 
 '## Elementary/Special Functions
@@ -2371,21 +2393,21 @@ def assert (b:Bool) : {Except} Unit =
 
 instance {a b} Subset a (a|b)
   inject' = \x. Left x
-  can_project' = \x. case x of
-    Left  x -> True
-    Right x -> False
+  project' = \x. case x of
+    Left  y -> Just y
+    Right x -> Nothing
   unsafe_project' = \x. case x of
     Left  x -> x
-    Right x -> todo   -- Impossible
+    Right x -> error "Can't project Right branch to Left branch"
 
 instance {a b} Subset a (b|a)
   inject' = \x. Right x
-  can_project' = \x. case x of
-    Left  x -> False
-    Right x -> True
+  project' = \x. case x of
+    Left  x -> Nothing
+    Right y -> Just y
   unsafe_project' = \x. case x of
     Left  x -> todo   -- Impossible
-    Right x -> x
+    Right x -> error "Can't project Left branch to Right branch"
 
 
 '## Testing Helpers

@@ -1073,3 +1073,9 @@ first_ix :: (Fin 0 & Unit)
 
 project Unit (inject (Unit | Fin 2) ())
 > (Just ())
+
+project Unit (inject (Unit | Fin 2) (0@(Fin 2)))
+> Nothing
+
+unsafe_project Unit (inject (Unit | Fin 2) ())
+> ()
