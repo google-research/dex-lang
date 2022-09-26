@@ -15,7 +15,7 @@ def refl_more {n} [Ix n] (i:n) : (i..) = unsafe_project _ i
 def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = view i. u.i.(refl_more i)
 def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = view i. l.i.(refl_less i)
 
-def is_last {n} [Ix n] (x:n) : Bool = ordinal x + 1 == size n
+def is_last {n} [Ix n] (x:n) : Bool = (ordinal x + 1) == size n
 
 def lower_tri_identity {a n} [Ix n, Add a, Mul a] : LowerTriMat n a =
   for i j. select (is_last j) one zero
