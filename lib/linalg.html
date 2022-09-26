@@ -311,30 +311,18 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 <li>LU Decomposition</li>
 <li>Matrix Inversion</li>
 </ul>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_cast {a m} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> m] (d<span class="command">:a</span>) <span class="symbol">:</span> m <span class="symbol">=</span> unsafe_from_ordinal m (ordinal d)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>The three functions below are safe because one can't produce an element of type n
-if there isn't at least one possible value in its type. So being able
-to produce x to call this function is proof that <code>n</code> is non-empty,
-even though we don't use the <code>NonEmpty</code> constraint.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> first_ix_<span class="keyword">of</span> {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> n <span class="symbol">=</span> unsafe_from_ordinal n 0
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> last_ix_<span class="keyword">of</span>  {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> n <span class="symbol">=</span> unsafe_from_ordinal n (unsafe_nat_diff (size n) 1)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_last {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> ((ordinal x) <span class="symbol">+</span> 1) <span class="symbol">==</span> size n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Triangular matrices</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">LowerTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span>v
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">UpperTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span>v
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> refl_less {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> (<span class="symbol">..</span>i) <span class="symbol">=</span>
-  from_just <span class="symbol">$</span> project _ i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> refl_less {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> (<span class="symbol">..</span>i) <span class="symbol">=</span> unsafe_project _ i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> refl_more {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> (i<span class="symbol">..</span>) <span class="symbol">=</span> unsafe_project _ i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> refl_more {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) <span class="symbol">:</span> (i<span class="symbol">..</span>) <span class="symbol">=</span>
-  from_just <span class="symbol">$</span> project _ i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upper_tri_diag {n v} (u<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span> <span class="keyword">view</span> i<span class="symbol">.</span> u<span class="symbol">.</span>i<span class="symbol">.</span>(refl_more i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_diag {n v} (l<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span> <span class="keyword">view</span> i<span class="symbol">.</span> l<span class="symbol">.</span>i<span class="symbol">.</span>(refl_less i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upper_tri_diag {n v} (u<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
-  <span class="keyword">view</span> i<span class="symbol">.</span> u<span class="symbol">.</span>i<span class="symbol">.</span>(refl_more i)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_diag {n v} (l<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
-  <span class="keyword">view</span> i<span class="symbol">.</span> l<span class="symbol">.</span>i<span class="symbol">.</span>(refl_less i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_last {n} [<span class="type-name">Ix</span> n] (x<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> (ordinal x <span class="symbol">+</span> 1) <span class="symbol">==</span> size n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_identity {a n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] <span class="symbol">:</span> <span class="type-name">LowerTriMat</span> n a <span class="symbol">=</span>
   <span class="keyword">for</span> i j<span class="symbol">.</span> select (is_last j) one zero
@@ -350,22 +338,22 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Put these in instances of an Isomorphism interface?
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_upper_ix {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(i<span class="symbol">..</span>)) <span class="symbol">:</span> <span class="type-name">LowerTriIx</span> n <span class="symbol">=</span>
   j&#39; <span class="symbol">=</span> inject n j
-  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  i&#39; <span class="symbol">=</span> unsafe_project _ i
   <span class="type-name">MkLowerTriIx</span> j&#39; i&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_ix {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(<span class="symbol">..</span>i)) <span class="symbol">:</span> <span class="type-name">UpperTriIx</span> n <span class="symbol">=</span>
   j&#39; <span class="symbol">=</span> inject n j
-  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  i&#39; <span class="symbol">=</span> unsafe_project _ i
   <span class="type-name">MkUpperTriIx</span> j&#39; i&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_upper_ix_exc {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(i<span class="symbol">&lt;..</span>)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
   j&#39; <span class="symbol">=</span> inject n j
-  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  i&#39; <span class="symbol">=</span> unsafe_project _ i
   <span class="type-name">MkLowerTriIxExc</span> j&#39; i&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_ix_exc {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)) <span class="symbol">:</span> <span class="type-name">UpperTriIxExc</span> n <span class="symbol">=</span>
   j&#39; <span class="symbol">=</span> inject n j
-  i&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ i
+  i&#39; <span class="symbol">=</span> unsafe_project _ i
   <span class="type-name">MkUpperTriIxExc</span> j&#39; i&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_lower_to_upper {n v} (lower<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> <span class="type-name">UpperTriMat</span> n v <span class="symbol">=</span>
@@ -389,75 +377,95 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">LowerTriIx</span> m) (<span class="type-name">LowerTriIx</span> n)
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
-    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
     <span class="type-name">MkLowerTriIx</span> i&#39; j&#39;
-  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span> 
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span>
     <span class="keyword">case</span> project m i <span class="keyword">of</span>
       <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
       (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
         j&#39; <span class="symbol">=</span> inject n j
-        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
-        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+        j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
+  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> unsafe_project m i
+    j&#39; <span class="symbol">=</span> inject n j
+    j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+    <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">UpperTriIx</span> m) (<span class="type-name">UpperTriIx</span> n)
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
-    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
     <span class="type-name">MkUpperTriIx</span> i&#39; j&#39;
-  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span> 
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span>
     <span class="keyword">case</span> project m i <span class="keyword">of</span>
       <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
       (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
         j&#39; <span class="symbol">=</span> inject n j
-        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
-        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkUpperTriIx</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+        j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkUpperTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
+  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> unsafe_project m i
+    j&#39; <span class="symbol">=</span> inject n j
+    j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+    <span class="type-name">MkUpperTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">LowerTriIxExc</span> m) (<span class="type-name">LowerTriIxExc</span> n)
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
-    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
     <span class="type-name">MkLowerTriIxExc</span> i&#39; j&#39;
-  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span> 
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span>
     <span class="keyword">case</span> project m i <span class="keyword">of</span>
       <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
       (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
         j&#39; <span class="symbol">=</span> inject n j
-        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
-        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+        j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
+  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> unsafe_project m i
+    j&#39; <span class="symbol">=</span> inject n j
+    j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+    <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">UpperTriIxExc</span> m) (<span class="type-name">UpperTriIxExc</span> n)
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
-    j&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
+    j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
     <span class="type-name">MkUpperTriIxExc</span> i&#39; j&#39;
-  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span> 
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span>
     <span class="keyword">case</span> project m i <span class="keyword">of</span>
       <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
       (<span class="type-name">Just</span> i&#39;) <span class="symbol">-&gt;</span>
         j&#39; <span class="symbol">=</span> inject n j
-        j&#39;&#39; <span class="symbol">=</span> from_just <span class="symbol">$</span> project m j&#39;
-        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkUpperTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;&#39;
+        j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+        <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkUpperTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
+  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> unsafe_project m i
+    j&#39; <span class="symbol">=</span> inject n j
+    j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
+    <span class="type-name">MkUpperTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Chaining inequalities between indices</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ii {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p <span class="symbol">..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..</span> p)) <span class="symbol">:</span> <span class="type-name">LowerTriIx</span> n <span class="symbol">=</span>
   i&#39; <span class="symbol">=</span> inject n i
   j&#39; <span class="symbol">=</span> inject n j
-  <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+  <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ei {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p<span class="symbol">&lt;..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..</span> p)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
   i&#39; <span class="symbol">=</span> inject n i
   j&#39; <span class="symbol">=</span> inject n j
-  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ie {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p <span class="symbol">..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>p)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
   i&#39; <span class="symbol">=</span> inject n i
   j&#39; <span class="symbol">=</span> inject n j
-  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relax_ee {n} {p<span class="command">:n</span>} [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span>(p<span class="symbol">&lt;..</span>)) (j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>p)) <span class="symbol">:</span> <span class="type-name">LowerTriIxExc</span> n <span class="symbol">=</span>
   i&#39; <span class="symbol">=</span> inject n i
   j&#39; <span class="symbol">=</span> inject n j
-  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> from_just <span class="symbol">$</span> project _ j&#39;
+  <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Linalg helpers</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> skew_symmetric_prod {v n} [<span class="type-name">VSpace</span> v]
@@ -507,7 +515,7 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
         <span class="keyword">then</span>
           mat i j <span class="symbol">:=</span> sqrt a
         <span class="keyword">else</span>
-          b <span class="symbol">=</span> get <span class="symbol">$</span> mat j&#39; (from_just <span class="symbol">$</span> project (<span class="symbol">..</span>j&#39;) j&#39;)
+          b <span class="symbol">=</span> get <span class="symbol">$</span> mat j&#39; (refl_less j&#39;)
           mat i j <span class="symbol">:=</span> a <span class="symbol">/</span> b
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Permutations</h2>
@@ -530,7 +538,7 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
   signRef <span class="symbol">:=</span> <span class="symbol">-</span>(get signRef)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_to_table {n} ((perm<span class="symbol">,</span> _)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n <span class="symbol">=</span> perm
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_sign    {n} ((_<span class="symbol">,</span> sign)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> <span class="type-name">PermutationSign</span> <span class="symbol">=</span> sign
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_sign     {n} ((_<span class="symbol">,</span> sign)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> <span class="type-name">PermutationSign</span> <span class="symbol">=</span> sign
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>LU decomposition functions</h2>
@@ -538,7 +546,7 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
   <span class="comment">-- Gives a row permutation that makes Gaussian elimination more stable.
 </span>  yield_state identity_permutation <span class="symbol">\</span>permRef<span class="symbol">.</span>
     <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span>
-      row_with_largest <span class="symbol">=</span> argmin <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> (<span class="symbol">-</span>(abs a<span class="symbol">.</span>(inject n i)<span class="symbol">.</span>j))
+      row_with_largest <span class="symbol">=</span> argmax <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> abs a<span class="symbol">.</span>(inject n i)<span class="symbol">.</span>j
       <span class="keyword">if</span> (ordinal j) <span class="symbol">/=</span> (ordinal row_with_largest) <span class="keyword">then</span>
         swap_in_place permRef j (inject n row_with_largest)
 </div></div><div class="cell"><div class="code-block">
@@ -549,8 +557,7 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
 </span>  permutation <span class="symbol">=</span> pivotize a
   a <span class="symbol">=</span> apply_permutation permutation a
 
-  <span class="comment">-- TODO Why is this type annotation needed?
-</span>  init_lower <span class="symbol">:</span> (<span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>) <span class="symbol">=</span> lower_tri_identity
+  init_lower <span class="symbol">:</span> (<span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>) <span class="symbol">=</span> lower_tri_identity
   init_upper <span class="symbol">=</span> zero
 
   (lower<span class="symbol">,</span> upper) <span class="symbol">=</span> yield_state (init_lower<span class="symbol">,</span> init_upper) <span class="symbol">\</span>stateRef<span class="symbol">.</span>
@@ -558,7 +565,7 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
     uRef <span class="symbol">=</span> snd_ref stateRef
 
   <span class="comment">-- For reference, here&#39;s code to compute the LU decomposition
-</span>  <span class="comment">-- without dependent tables (i.e. with standard flat matrices):
+</span>  <span class="comment">-- with standard flat matrices:
 </span>  <span class="comment">--  for j:n.
 </span>  <span class="comment">--    for i:(..j).
 </span>  <span class="comment">--      i = inject _ i
@@ -578,7 +585,7 @@ even though we don't use the <code>NonEmpty</code> constraint.</p>
     <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span>
       <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="symbol">..</span>j)<span class="symbol">.</span>
         s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>
-          (<span class="type-name">MkUpperTriIx</span> k2 _) <span class="symbol">=</span> transpose_lower_ix i k
+          (<span class="type-name">MkUpperTriIx</span> k2 _)  <span class="symbol">=</span> transpose_lower_ix i k
           (<span class="type-name">MkUpperTriIx</span> k3 j3) <span class="symbol">=</span> transpose_lower_ix j k2
           ukj <span class="symbol">=</span> get <span class="symbol">$</span> upper_tri_mat uRef k3 j3
           (<span class="type-name">MkLowerTriIx</span> i4 k4) <span class="symbol">=</span> inject _ <span class="symbol">$</span> <span class="type-name">MkLowerTriIx</span> i k
