@@ -3,7 +3,6 @@
 - LU Decomposition
 - Matrix Inversion
 
-def is_last {n} [Ix n] (x:n) : Bool = ((ordinal x) + 1) == size n
 
 '## Triangular matrices
 
@@ -15,6 +14,8 @@ def refl_more {n} [Ix n] (i:n) : (i..) = unsafe_project _ i
 
 def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = view i. u.i.(refl_more i)
 def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = view i. l.i.(refl_less i)
+
+def is_last {n} [Ix n] (x:n) : Bool = ((ordinal x) + 1) == size n
 
 def lower_tri_identity {a n} [Ix n, Add a, Mul a] : LowerTriMat n a =
   for i j. select (is_last j) one zero
@@ -74,7 +75,13 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIx m) (LowerTriIx n)
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
     MkLowerTriIx i' j'
-  can_project' = \(MkLowerTriIx i j). can_project m i
+  project' = \(MkLowerTriIx i j).
+    case project m i of
+      Nothing -> Nothing
+      (Just i') ->
+        j' = inject n j
+        j'' = unsafe_project m j'
+        Just $ MkLowerTriIx i' $ unsafe_project _ j''
   unsafe_project' = \(MkLowerTriIx i j).
     i' = unsafe_project m i
     j' = inject n j
@@ -86,7 +93,13 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIx m) (UpperTriIx n)
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
     MkUpperTriIx i' j'
-  can_project' = \(MkUpperTriIx i j). can_project m i
+  project' = \(MkUpperTriIx i j).
+    case project m i of
+      Nothing -> Nothing
+      (Just i') ->
+        j' = inject n j
+        j'' = unsafe_project m j'
+        Just $ MkUpperTriIx i' $ unsafe_project _ j''
   unsafe_project' = \(MkUpperTriIx i j).
     i' = unsafe_project m i
     j' = inject n j
@@ -98,7 +111,13 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIxExc m) (LowerTriIxExc 
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
     MkLowerTriIxExc i' j'
-  can_project' = \(MkLowerTriIxExc i j). can_project m i
+  project' = \(MkLowerTriIxExc i j).
+    case project m i of
+      Nothing -> Nothing
+      (Just i') ->
+        j' = inject n j
+        j'' = unsafe_project m j'
+        Just $ MkLowerTriIxExc i' $ unsafe_project _ j''
   unsafe_project' = \(MkLowerTriIxExc i j).
     i' = unsafe_project m i
     j' = inject n j
@@ -110,7 +129,13 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIxExc m) (UpperTriIxExc 
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
     MkUpperTriIxExc i' j'
-  can_project' = \(MkUpperTriIxExc i j). can_project m i
+  project' = \(MkUpperTriIxExc i j).
+    case project m i of
+      Nothing -> Nothing
+      (Just i') ->
+        j' = inject n j
+        j'' = unsafe_project m j'
+        Just $ MkUpperTriIxExc i' $ unsafe_project _ j''
   unsafe_project' = \(MkUpperTriIxExc i j).
     i' = unsafe_project m i
     j' = inject n j
@@ -213,7 +238,7 @@ def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Un
   signRef := -(get signRef)
 
 def perm_to_table {n} ((perm, _):Permutation n) : n=>n = perm
-def perm_sign    {n} ((_, sign):Permutation n) : PermutationSign = sign
+def perm_sign     {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 
 '## LU decomposition functions
@@ -222,7 +247,7 @@ def pivotize {n} (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yield_state identity_permutation \permRef.
     for j:n.
-      row_with_largest = argmin for i:(j..). (-(abs a.(inject n i).j))
+      row_with_largest = argmax for i:(j..). abs a.(inject n i).j
       if (ordinal j) /= (ordinal row_with_largest) then
         swap_in_place permRef j (inject n row_with_largest)
 
@@ -233,7 +258,6 @@ def lu {n} (a: n=>n=>Float) :
   permutation = pivotize a
   a = apply_permutation permutation a
 
-  -- TODO Why is this type annotation needed?
   init_lower : (LowerTriMat n Float) = lower_tri_identity
   init_upper = zero
 
@@ -242,7 +266,7 @@ def lu {n} (a: n=>n=>Float) :
     uRef = snd_ref stateRef
 
   -- For reference, here's code to compute the LU decomposition
-  -- without dependent tables (i.e. with standard flat matrices):
+  -- with standard flat matrices:
   --  for j:n.
   --    for i:(..j).
   --      i = inject _ i
