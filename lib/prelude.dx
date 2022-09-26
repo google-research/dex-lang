@@ -2406,9 +2406,8 @@ instance {a b} Subset a (b|a)
     Left  x -> Nothing
     Right y -> Just y
   unsafe_project' = \x. case x of
-    Left  x -> todo   -- Impossible
-    Right x -> error "Can't project Left branch to Right branch"
-
+    Left  x -> error "Can't project Left branch to Right branch"
+    Right x -> x
 
 '## Testing Helpers
 

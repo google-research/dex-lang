@@ -1079,3 +1079,6 @@ project Unit (inject (Unit | Fin 2) (0@(Fin 2)))
 
 unsafe_project Unit (inject (Unit | Fin 2) ())
 > ()
+
+unsafe_project Unit (inject (Fin 2 | Unit) ())
+> ()
