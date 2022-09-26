@@ -6,7 +6,7 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module Optimize (earlyOptimize, optimize, peepholeOp) where
+module Optimize (earlyOptimize, optimize, peepholeOp, hoistLoopInvariant, dceIxDestBlock) where
 
 import Data.Functor
 import Data.Word
@@ -211,6 +211,92 @@ instance GenericTraverser ULS where
 emitSubstBlock :: Emits o => Block i -> ULM i o (Atom o)
 emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 
+-- === Loop invariant code motion ===
+
+-- TODO: Resolve import cycle with Lower
+type IxDestBlock = Abs (Nest Decl) (Abs Binder Block)
+
+hoistLoopInvariant :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
+hoistLoopInvariant (Abs ixs (Abs (db:>dTy) body)) =
+  liftM fst $ liftGenericTraverserM LICMS $
+    buildScoped $ traverseDeclNest ixs do
+      dTy' <- traverseGenericE dTy
+      buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+
+data LICMS (n::S) = LICMS
+instance SinkableE LICMS where
+  sinkingProofE _ LICMS = LICMS
+instance HoistableState LICMS where
+  hoistState _ _ LICMS = LICMS
+
+instance GenericTraverser LICMS where
+  traverseExpr = \case
+    Hof (Seq dir ix (ProdVal dests) (Lam (LamExpr b body@(Block ann _ _)))) -> do
+      Distinct <- getDistinct
+      ix' <- traverseAtom ix
+      dests' <- traverse traverseAtom dests
+      let numCarries = length dests
+      Abs hdecls destsAndBody <- traverseLamBinder b \b' -> do
+        -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
+        Block _ decls ans <- traverseGenericE body
+        -- Now, we process the decls and decide which ones to hoist.
+        liftEnvReaderM $ runSubstReaderT idSubst $
+            seqLICM numCarries REmpty mempty (asNameBinder b') REmpty decls ans
+      PairE (ListE extraDests) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
+      -- Append the destinations of hoisted Allocs as loop carried values.
+      let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
+      carryTy <- getType dests''
+      lbTy <- getType ix' <&> \case
+        DictTy (DictType _ _ [ixTy]) -> PairTy ixTy carryTy
+        _ -> error "Expected a dict"
+      body' <- refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
+        extendRenamer (b@>binderName lb) do
+          ann'@(BlockAnn _ eff') <- case ann of
+            BlockAnn ty eff -> BlockAnn <$> substM ty <*> substM eff
+            NoBlockAnn -> BlockAnn <$> getTypeSubst body <*> pure Pure
+          let b'' = LamBinder (asNameBinder lb) (sink lbTy) PlainArrow eff'
+          return $ Lam $ LamExpr b'' $ Block ann' decls ans
+      return $ Hof $ Seq dir ix' dests'' body'
+    expr -> traverseExprDefault expr
+
+seqLICM :: Int
+        -> RNest Decl n1 n2      -- hoisted decls
+        -> [AtomName n2]         -- hoisted dests
+        -> AtomNameBinder n2 n3  -- loop binder
+        -> RNest Decl n3 n4      -- loop-dependent decls
+        -> Nest Decl m1 m2       -- decls remaining to process
+        -> Atom m2               -- loop result
+        -> SubstReaderT AtomSubstVal EnvReaderM m1 n4
+             (Abs (Nest Decl)
+                (PairE (ListE AtomName)
+                       (Abs AtomNameBinder (Abs (Nest Decl) Atom))) n1)
+seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
+  Empty -> do
+    ans' <- substM ans
+    return $ Abs (unRNest top) $ PairE (ListE $ reverse topDestNames) $ Abs lb $ Abs (unRNest reg) ans'
+  Nest (Let bb binding) bs -> do
+    binding' <- substM binding
+    effs <- getEffects binding'
+    withFreshBinder (getNameHint bb) binding' \bb' -> do
+      let b = Let bb' binding'
+      let moveOn = extendRenamer (bb@>binderName bb') $
+                     seqLICM nextProj top topDestNames lb (RNest reg b) bs ans
+      case effs of
+        -- OPTIMIZE: We keep querying the ScopeFrag of lb and reg here, leading to quadratic runtime
+        Pure -> case exchangeBs $ PairB (PairB lb reg) b of
+          HoistSuccess (PairB b' lbreg@(PairB lb' reg')) -> extendSubst (bb@>bsv') $
+              seqLICM nextProj' (RNest top b') topDestNames' lb' reg' bs ans
+              where
+                (nextProj', topDestNames', bsv') =
+                  withSubscopeDistinct lbreg $ withExtEvidence b' $ case b' of
+                    Let bn (DeclBinding _ _ (Op (AllocDest _))) ->
+                      ( nextProj + 1
+                      , binderName bn : sinkList topDestNames
+                      , SubstVal $ ProjectElt (nextProj NE.:| [1]) $ withExtEvidence reg' $ sink $ binderName lb')
+                    _ -> (nextProj, sinkList topDestNames, Rename $ sink $ binderName b')
+          HoistFailure _ -> moveOn
+        _ -> moveOn
+
 -- === Dead code elimination ===
 
 newtype FV n = FV (NameSet n) deriving (Semigroup, Monoid)
@@ -221,6 +307,11 @@ instance HoistableState FV where
   {-# INLINE hoistState #-}
 
 type DCEM = StateT1 FV EnvReaderM
+
+dceIxDestBlock :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
+dceIxDestBlock idb = liftEnvReaderM $
+  refreshAbs idb \ixs db ->
+    refreshAbs db \d b -> Abs ixs . Abs d <$> dceBlock b
 
 dceBlock :: EnvReader m => Block n -> m n (Block n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty

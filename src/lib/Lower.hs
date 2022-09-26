@@ -554,7 +554,7 @@ type Dest = Atom
 
 traverseFor :: Emits o => Maybe (Dest o) -> ForAnn -> Atom i -> LamExpr i -> LowerM i o (Expr o)
 traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = do
-  initDest <- case maybeDest of
+  initDest <- ProdVal . (:[]) <$> case maybeDest of
     Just  d -> return d
     Nothing -> emitOp . AllocDest =<< getTypeSubst (Hof $ For dir ixDict (Lam lam))
   destTy <- getType initDest
@@ -563,12 +563,13 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
   eff' <- substM $ ignoreHoistFailure $ hoist ib eff
   let eff'' = extendEffRow (S.singleton IOEffect) eff'
   body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
-    (i, dest) <- fromPair $ Var b'
+    (i, destProd) <- fromPair $ Var b'
+    let dest = getProjection [0] destProd
     idest <- emitOp $ IndexRef dest i
     void $ extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
     return UnitVal
   let seqHof = Hof $ Seq dir ixDict' initDest body'
-  Op . Freeze . Var <$> emit seqHof
+  Op . Freeze . ProjectElt (0 NE.:| []) <$> emit seqHof
 
 traverseTabCon :: Emits o => Maybe (Dest o) -> Type i -> [Atom i] -> LowerM i o (Expr o)
 traverseTabCon maybeDest tabTy elems = do
@@ -757,7 +758,7 @@ vectorizeLoopsRec frag = \case
     let narrowestTypeByteWidth = 1  -- TODO: This is too conservative! Find the shortest type in the loop.
     let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
     v <- case expr of
-      Hof (Seq dir (DictCon (IxFin (NatVal n))) dest (Lam body))
+      Hof (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) (Lam body))
         | n `mod` loopWidth == 0 -> do
           Distinct <- getDistinct
           let vn = NatVal $ n `div` loopWidth
@@ -784,7 +785,7 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
           viOrd <- emitOp $ CastOp IdxRepTy vi
           iOrd <- emitOp $ BinOp IMul viOrd (IdxRepVal loopWidth)
           i <- emitOp $ CastOp (sink newIxTy) iOrd
-          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, Uniform]) (PairVal i dest)
+          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
     _ -> error "Effectful loop vectorization not implemented!"
   where

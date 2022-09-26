@@ -37,7 +37,7 @@ module Name (
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowV, ShowB,
   runScopeReaderT, runScopeReaderM, runSubstReaderT, liftSubstReaderT,
-  liftScopeReaderT, liftScopeReaderM,
+  liftScopeReaderT, liftScopeReaderM, tryExtDistinct,
   ScopeReaderT (..), SubstReaderT (..),
   lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM, traverseNames,
   MonadKind, MonadKind1, MonadKind2,
@@ -309,6 +309,12 @@ extendSubst frag cont = do
   env <- (<>>frag) <$> getSubst
   withSubst env cont
 {-# INLINE extendSubst #-}
+
+tryExtDistinct :: (ScopeReader m, BindsNames b) => b n l -> m n (Maybe (DistinctEvidence l))
+tryExtDistinct b = do
+  scope <- unsafeGetScope
+  return $ fst <$> extendIfDistinct scope (toScopeFrag b)
+{-# INLINE tryExtDistinct #-}
 
 -- === extending envs with name-only substitutions ===
 

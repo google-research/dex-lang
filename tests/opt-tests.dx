@@ -57,3 +57,18 @@ _ = for i:(Fin 50). [1, 2, 3]
 _ = for i:(Fin 20) j:(Fin 4). ordinal j
 -- CHECK: [0, 1, 2, 3]
 -- CHECK-NOT: [0, 1, 2, 3]
+
+"alloc hoisting"
+-- CHECK-LABEL: alloc hoisting
+
+%passes lower-opt
+_ = for i:(Fin 10).
+  n = ordinal i + 2
+  for j:(Fin 4). sum for k:(Fin n). ordinal j
+-- The alloc for the (ordinal i + 2)-sized array should happen in the i loop,
+-- not in the j loop
+-- CHECK: [[n:v#[0-9]+]]:Word32 = %iadd {{.*}} 0x2
+-- CHECK-NOT: seq
+-- CHECK: alloc {{.*}}Fin{{.*}}[[n]]
+-- CHECK: seq
+-- CHECK: seq
