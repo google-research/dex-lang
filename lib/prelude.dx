@@ -939,7 +939,7 @@ instance {q:Type} {i:q} [Ix q] Subset (RangeFromExc q i) q
       then Nothing
       else Just $ UnsafeMkRangeFromExc $ unsafe_nat_diff j' (i' + 1)
   unsafe_project' = \j.
-    UnsafeMkRangeFromExc $ unsafe_nat_diff (ordinal j) ((ordinal i) + 1)
+    UnsafeMkRangeFromExc $ unsafe_nat_diff (ordinal j) (ordinal i + 1)
 
 instance {q:Type} {i:q} [Ix q] Subset (RangeTo q i) q
   inject' = \(UnsafeMkRangeTo j). unsafe_from_ordinal _ j
@@ -2389,7 +2389,7 @@ def throw {a} (_:Unit) : {Except} a =
 def assert (b:Bool) : {Except} Unit =
   if not b then throw ()
 
-'### Misc instances that require `todo`
+'### Misc instances that require `error`
 
 instance {a b} Subset a (a|b)
   inject' = \x. Left x
