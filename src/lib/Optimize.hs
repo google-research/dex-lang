@@ -22,6 +22,7 @@ import Core
 import GenericTraversal
 import Builder
 import QueryType
+import Util (iota)
 
 earlyOptimize :: EnvReader m => Block n -> m n (Block n)
 earlyOptimize = unrollTrivialLoops
@@ -178,9 +179,10 @@ instance GenericTraverser ULS where
           case bodyCost * (fromIntegral n) <= unrollBlowupThreshold of
             True -> case body' of
               Lam (LamExpr b' block') -> do
-                vals <- dropSubst $ forM [0..(fromIntegral n :: Int) - 1] \ord -> do
-                  let i = Con $ Newtype (FinConst n) (NatVal $ fromIntegral ord)
+                vals <- dropSubst $ forM (iota n) \ord -> do
+                  let i = Con $ Newtype (FinConst n) (NatVal ord)
                   extendSubst (b' @> SubstVal i) $ emitSubstBlock block'
+                inc $ fromIntegral n  -- To account for the TabCon we emit below
                 getType body' >>= \case
                   Pi (PiType (PiBinder tb _ _) _ valTy) -> do
                     let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy

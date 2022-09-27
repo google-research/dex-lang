@@ -46,6 +46,14 @@ x = for i:(Fin 4). [0, 0, 0, ordinal i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 "basic destination passing for scalar array literals"
 -- CHECK-LABEL: basic destination passing for scalar array literals
 
-%passes opt lower
+%passes lower
 _ = for i:(Fin 50). [1, 2, 3]
 -- CHECK-NOT: alloc
+
+"no excessive nested unrolling"
+-- CHECK-LABEL: no excessive nested unrolling
+
+%passes opt
+_ = for i:(Fin 20) j:(Fin 4). ordinal j
+-- CHECK: [0, 1, 2, 3]
+-- CHECK-NOT: [0, 1, 2, 3]
