@@ -27,7 +27,7 @@ m' = m ** m
 -- CHECK-LABEL: basic destination passing for scalar array literals
 
 %passes lower
-_ = for i:(Fin 50). [1, 2, 3]
+_ = for i:(Fin 50). [ordinal i, 2, 3]
 -- CHECK-NOT: alloc
 
 "no destinations for singleton values"
@@ -95,3 +95,12 @@ _ = for i:(Fin 10).
 -- CHECK: alloc {{.*}}Fin{{.*}}[[n]]
 -- CHECK: seq
 -- CHECK: seq
+
+"loop hoisting"
+-- CHECK-LABEL: loop hoisting
+
+%passes opt
+_ = for i:(Fin 20) j:(Fin 4). ordinal j
+-- CHECK-NOT: for
+-- CHECK: [[x:v#[0-9]+]]:{{.*}} = [0, 1, 2, 3]
+-- CHECK: for {{.*}}:{{.*}}. [[x]]
