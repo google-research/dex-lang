@@ -99,6 +99,9 @@ instance HasEmitIx DictExpr where
   emitIxE _ = error "unhandled dict!"
 instance HasEmitIx Atom where
   emitIxE = \case
+    -- We don't emit the Fin dicts, since they're small and built in,
+    -- so they don't need to be simplified.
+    DictCon (IxFin n) -> DictCon . IxFin <$> emitIxE n
     DictCon de -> do
       de' <- emitIxDict de
       dictTy' <- getType de'
