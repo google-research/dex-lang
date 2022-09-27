@@ -1,0 +1,202 @@
+import plot
+
+'## Molecular Dynamics in Dex
+This is more-or-less a port of Jax MD into Dex to see how molecular dynamics looks in
+Dex. For now, the structure of the two implementations is pretty close. However, details
+look different and the evolution will depend on what is or is not ergonomic in dex vs jax.
+
+'### Math
+
+def truncate (x: Float): Float =
+  case x < 0.0 of
+    True -> -floor(-x)
+    False -> floor x
+
+-- A mod that matches np.mod and python mod.
+def pmod (x: Float) (y: Float): Float =
+  x - floor(x / y) * y
+
+-- A mod that matches np.fmod and c fmod.
+def fmod (x: Float) (y: Float): Float =
+  x - truncate (x / y) * y
+
+def Vec (dim:Type) [Ix dim] : Type = dim=>Float
+
+def sq_norm {dim} (r: Vec dim) : Float =
+  sum $ for i. r.i * r.i
+
+def norm {dim} (r: Vec dim) : Float =
+  sqrt $ sq_norm r
+
+'### Useful Quantities
+
+def box_size_at_number_density (particle_count: Int) (density: Float) (dim: Int) : Float =
+  pow ((i_to_f particle_count) / density) (1.0 / (i_to_f dim))
+
+'### Spaces
+
+def Displacement (dim:Type) : Type = Vec dim -> Vec dim -> Vec dim
+def Shift        (dim:Type) : Type = Vec dim -> Vec dim -> Vec dim
+
+free_displacement: ((dim:Type) ?-> Displacement dim) = \r_1 r_2. r_1 - r_2
+free_shift: ((dim:Type) ?-> Shift dim) = \r dr. r + dr 
+
+def periodic_wrap {dim} (box: Float) (dr: dim=>Float) : (dim=>Float) =
+  for i. (pmod (dr.i + box / 2.0) box) - box / 2.0   
+
+periodic_displacement: ((dim:Type) ?-> Float -> Displacement dim) =
+  \box r_1 r_2. periodic_wrap box (r_1 - r_2) 
+periodic_shift:        ((dim:Type) ?-> Float -> Shift dim)        =
+  \box r dr. for i. pmod (r.i + dr.i) box 
+
+'### Energy Functions
+
+def Energy (n: Type) (dim: Type) : Type = (n=>Vec dim) -> Float
+
+def soft_sphere (ε: Float) (α: Float) (σ: Float) (r: Float) : Float =
+  case r < σ of
+    True  -> ε / α * pow (1 - r / σ) α
+    False -> 0.0
+
+harmonic_soft_sphere = \sigma r. soft_sphere 1.0 2.0 sigma r
+
+def pair_energy {dim n}
+  (energy: Float -> Float)
+  (displacement: Displacement dim)
+  (r: n=>Vec dim)
+  : Float =
+  sum for (i, j).
+    case (ordinal i) < (ordinal j) of
+      True  -> energy $ norm $ displacement r.i r.j
+      False -> 0.0
+
+'### Minimization Functions
+
+data FireDescentState n:Type dim:Type [Ix n, Ix dim] = MkFireDescentState {
+     R:     (n=>Vec dim) &
+     V:     (n=>Vec dim) &
+     F:     (n=>Vec dim) &
+     dt:    Float        &
+     alpha: Float        &
+     n_pos: Int
+}
+
+def get_position {dim n} (state: FireDescentState n dim) : (n=>Vec dim) =
+  (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
+  R
+
+def fire_descent_init {dim n}
+  (dt: Float)
+  (alpha: Float)
+  (energy: Energy n dim)
+  (r: n=>Vec dim)
+  : FireDescentState n dim =
+  force = \rp. -(grad energy) rp
+  V = for i:n j:dim. 0.0
+  F = force r
+  n_pos: Int = 0
+  MkFireDescentState {R=r, V, F, dt, alpha, n_pos}
+
+def fire_descent_step {dim n}
+  (shift: Shift dim)
+  (energy: Energy n dim)
+  (state: FireDescentState n dim)
+  : FireDescentState n dim =
+  -- Constants that parameterize the FIRE algorithm.
+  -- TODO: Thread these constants through somehow.
+  -- dougalm@ is there a canonical way to do this?
+  dt_start = 0.1
+  dt_max = 0.4
+  n_min = 5
+  f_inc = 1.1
+  f_dec = 0.5
+  f_alpha = 0.99
+  alpha_start = 0.1
+
+  ε = 0.000000001
+
+  force = \r. -(grad energy) r
+
+  -- FIRE algorithm.
+  (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
+
+  -- Do a Velocity-Verlet step.
+  R = for i. shift R.i (V.i *. dt + F.i *. pow dt 2)
+  F_old = F
+  F = force R
+  V = V + dt * 0.5 .* (F_old + F)
+
+  -- Rescale the velocity.
+  F_norm = sqrt $ sum for (i, j). pow F.i.j 2
+  V_norm = sqrt $ sum for (i, j). pow V.i.j 2
+ 
+  V = V + alpha .* (F *. V_norm / (F_norm + ε) - V)
+
+  -- Check whether the force is aligned with the velocity.
+  FdotV = sum for (i, j). F.i.j * V.i.j
+
+  -- Decide whether to increase the speed of the simulation or reduce it.
+  (n_pos, dt, alpha) = if FdotV >= 0.0
+    then
+      dt' = if n_pos >= n_min then (min (dt * f_inc) dt_max) else dt
+      alpha' = if n_pos >= n_min then (alpha * f_alpha) else alpha
+      (n_pos + 1, dt', alpha')
+    else (0, dt * f_dec, alpha_start)
+  V = if FdotV >= 0.0 then V else zero
+
+  MkFireDescentState { R, V, F, dt, alpha, n_pos } 
+
+'### Drawing
+
+import png
+import diagram
+
+TwoDimensions = Fin 2
+
+def draw_system {n} (r: n=>Vec TwoDimensions) : Diagram =
+  disks = concat_diagrams for i.
+    circle 0.5 |> move_xy (r.i.(0 @ TwoDimensions), r.i.(1 @ TwoDimensions))
+  disks
+
+'### Example 
+Initialize a system randomly.
+
+N = 256
+d = 2
+L = box_size_at_number_density (n_to_i N) 1.2 (n_to_i d)
+
+R = rand_mat N d (\k. L * rand k) (new_key 0)
+
+'Define energy and force function.
+
+def energy {n d} (pos: n=>d=>Float) : Float
+  = pair_energy (harmonic_soft_sphere 1.0) (periodic_displacement L) pos
+
+:t energy R
+
+energy R
+
+force: (n:Type) ?-> (dim:Type) ?-> (n=>Vec dim) -> (n=>Vec dim) = \r. -(grad energy) r
+
+:t force R
+
+forces = force R
+
+'Run 100 steps of minimization.
+
+state = fire_descent_init 0.1 0.1 energy R
+
+energy R
+energy $ get_position $ fire_descent_step free_shift energy state
+
+%time
+(state', energies) = scan state \i:(Fin 100) s.
+  s' = fire_descent_step (periodic_shift L) energy s
+  (s', energy $ get_position s')
+
+%time
+:html show_plot $ y_plot energies
+
+%time
+:html render_svg (draw_system (get_position state')) ((0.0, 0.0), (L, L))
+
