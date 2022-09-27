@@ -6,7 +6,10 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module Optimize (earlyOptimize, optimize, peepholeOp, hoistLoopInvariant, dceIxDestBlock) where
+module Optimize
+  ( earlyOptimize, optimize
+  , peepholeOp, hoistLoopInvariantIxDest, dceIxDestBlock
+  ) where
 
 import Data.Functor
 import Data.Word
@@ -31,6 +34,7 @@ optimize :: EnvReader m => Block n -> m n (Block n)
 optimize = dceBlock     -- Clean up user code
        >=> unrollLoops
        >=> dceBlock     -- Clean up peephole-optimized code after unrolling
+       >=> hoistLoopInvariant
 
 -- === Trivial loop unrolling ===
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
@@ -217,12 +221,15 @@ emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 -- TODO: Resolve import cycle with Lower
 type IxDestBlock = Abs (Nest Decl) (Abs Binder Block)
 
-hoistLoopInvariant :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
-hoistLoopInvariant (Abs ixs (Abs (db:>dTy) body)) =
+hoistLoopInvariantIxDest :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
+hoistLoopInvariantIxDest (Abs ixs (Abs (db:>dTy) body)) =
   liftM fst $ liftGenericTraverserM LICMS $
     buildScoped $ traverseDeclNest ixs do
       dTy' <- traverseGenericE dTy
       buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+
+hoistLoopInvariant :: EnvReader m => Block n -> m n (Block n)
+hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
 
 data LICMS (n::S) = LICMS
 instance SinkableE LICMS where
@@ -232,8 +239,7 @@ instance HoistableState LICMS where
 
 instance GenericTraverser LICMS where
   traverseExpr = \case
-    Hof (Seq dir ix (ProdVal dests) (Lam (LamExpr b body@(Block ann _ _)))) -> do
-      Distinct <- getDistinct
+    Hof (Seq dir ix (ProdVal dests) (Lam (LamExpr b body))) -> do
       ix' <- traverseAtom ix
       dests' <- traverse traverseAtom dests
       let numCarries = length dests
@@ -250,15 +256,32 @@ instance GenericTraverser LICMS where
       lbTy <- getType ix' <&> \case
         DictTy (DictType _ _ [ixTy]) -> PairTy ixTy carryTy
         _ -> error "Expected a dict"
-      body' <- refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
-        extendRenamer (b@>binderName lb) do
-          ann'@(BlockAnn _ eff') <- case ann of
-            BlockAnn ty eff -> BlockAnn <$> substM ty <*> substM eff
-            NoBlockAnn -> BlockAnn <$> getTypeSubst body <*> pure Pure
-          let b'' = LamBinder (asNameBinder lb) (sink lbTy) PlainArrow eff'
-          return $ Lam $ LamExpr b'' $ Block ann' decls ans
+      body' <- rebuildBody b body lnb lbTy bodyAbs
       return $ Hof $ Seq dir ix' dests'' body'
+    Hof (For dir ix (Lam (LamExpr b body))) -> do
+      ix' <- traverseAtom ix
+      Abs hdecls destsAndBody <- traverseLamBinder b \b' -> do
+        Block _ decls ans <- traverseGenericE body
+        liftEnvReaderM $ runSubstReaderT idSubst $
+            seqLICM 0 REmpty mempty (asNameBinder b') REmpty decls ans
+      PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
+      ixTy <- substM $ binderType b
+      body' <- rebuildBody b body lnb ixTy bodyAbs
+      return $ Hof $ For dir ix' body'
     expr -> traverseExprDefault expr
+    where
+      rebuildBody :: LamBinder i i' -> Block i'
+                  -> AtomNameBinder n l -> Type n -> Abs (Nest Decl) Atom l
+                  -> GenericTraverserM LICMS i n (Atom n)
+      rebuildBody b body@(Block ann _ _) lnb lbTy bodyAbs = do
+        Distinct <- getDistinct
+        refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
+          extendRenamer (b@>binderName lb) do
+            ann'@(BlockAnn _ eff') <- case ann of
+              BlockAnn ty eff -> BlockAnn <$> substM ty <*> substM eff
+              NoBlockAnn -> BlockAnn <$> getTypeSubst body <*> pure Pure
+            let b'' = LamBinder (asNameBinder lb) (sink lbTy) PlainArrow eff'
+            return $ Lam $ LamExpr b'' $ Block ann' decls ans
 
 seqLICM :: Int
         -> RNest Decl n1 n2      -- hoisted decls
