@@ -158,6 +158,7 @@ traversePrimOp = inline traverse
 
 data PrimHof e =
         For ForAnn e e        -- ix dict, body lambda
+      | Map e                 -- body tab-lambda
       | While e
       | RunReader e e
       | RunWriter (Maybe e) (BaseMonoidP e) e

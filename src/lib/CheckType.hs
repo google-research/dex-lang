@@ -777,6 +777,7 @@ typeCheckPrimOp op = case op of
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
+  Map f -> getTypeE f
   For _ ixDict f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f

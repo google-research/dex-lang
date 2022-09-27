@@ -1,0 +1,22 @@
+def my_map {a:Type} {b:Type} {n:Type} [Ix n]
+    (f:a -> b)
+    (x:n => a) : n => b =
+  for i:n. f x.i
+
+x0 = [1, 2, 3, 4, 5]
+
+my_map (\x. x+x) x0
+map_ (\x. x+x) over_ x0
+
+my_map (\x. 2*x) x0
+map_ (\x. 2*x) over_ x0
+
+my_map (\x. 2*x) (x0 + x0)
+map_ (\x. 2*x) over_ (x0 + x0)
+-- The following is also parsed as `map_ (\x. 2*x) over_ (x0 + x0)` ... not
+-- intentionally so.
+map_ (\x. 2*x) over_ x0 + x0
+
+my_map (\x. 2*x) x0 + x0
+(map_ (\x. 2*x) over_ x0) + x0
+

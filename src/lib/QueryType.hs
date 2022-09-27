@@ -698,6 +698,7 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     Pi (PiType (PiBinder b _ _) _ eltTy) <- getTypeE f
     ixTy <- ixTyFromDict =<< substM dict
     return $ TabTy (b:>ixTy) eltTy
+  Map f -> getTypeE f
   While _ -> return UnitTy
   Linearize f -> do
     Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
@@ -797,6 +798,7 @@ exprEffects expr = case expr of
     _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
+    Map _         -> return Pure
     While body    -> functionEffs body
     Linearize _   -> return Pure  -- Body has to be a pure function
     Transpose _   -> return Pure  -- Body has to be a pure function
