@@ -6,7 +6,7 @@
 
 module LLVM.JIT (
   JIT, createJIT, destroyJIT, withJIT,
-  NativeModule, compileModule, unloadNativeModule, withNativeModule,
+  NativeModule, compileModule, loadNativeModule, unloadNativeModule, withNativeModule,
   getFunctionPtr
   ) where
 

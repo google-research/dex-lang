@@ -13,6 +13,7 @@ import Foreign.Ptr
 import Data.IORef
 import Data.String
 import Data.List (sortBy)
+import qualified Data.Map.Strict as M
 import System.IO
 import System.IO.Temp
 import qualified Data.ByteString.Char8 as C8BS
@@ -20,6 +21,7 @@ import qualified Data.ByteString.Short as SBS
 import qualified Data.ByteString       as BS
 
 import qualified LLVM.OrcJIT as OrcJIT
+import qualified LLVM.Internal.OrcJIT as OrcJIT
 import qualified LLVM.Target as T
 
 import qualified LLVM.AST
@@ -34,6 +36,9 @@ data JIT =
         , compileLayer :: OrcJIT.IRCompileLayer
         , nextDylibId  :: IORef Int
         }
+
+
+type ExplicitLinkMap = M.Map String (Ptr ()) 
 
 -- XXX: The target machine cannot be destroyed before JIT is destroyed
 createJIT :: T.TargetMachine -> IO JIT
@@ -61,23 +66,22 @@ type CompilationPipeline = LLVM.Module -> IO ()
 type ObjectFileContents = BS.ByteString
 
 -- TODO: This leaks resources if we fail halfway
-compileModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module
+compileModule :: JIT -> ExplicitLinkMap -> LLVM.AST.Module
               -> CompilationPipeline -> IO NativeModule
-compileModule moduleJIT@JIT{..} objFiles ast compilationPipeline = do
+compileModule moduleJIT@JIT{..} linkMap ast compilationPipeline = do
   tsModule <- LLVM.withContext \c ->
     LLVM.withModuleFromAST c ast \m -> do
       compilationPipeline m
       OrcJIT.cloneAsThreadSafeModule m
   moduleDylib <- newDylib moduleJIT
-  mapM_ (loadObjectFile moduleJIT moduleDylib) objFiles
-  OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer moduleDylib
-  OrcJIT.addModule tsModule moduleDylib compileLayer
-
-  moduleDtors <- forM dtorNames \dtorName -> do
-    Right (OrcJIT.JITSymbol dtorAddr _) <-
-      OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
-    return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
-  return NativeModule{..}
+  withExplicitLinkMap compileLayer moduleDylib linkMap do
+    OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer moduleDylib
+    OrcJIT.addModule tsModule moduleDylib compileLayer
+    moduleDtors <- forM dtorNames \dtorName -> do
+      Right (OrcJIT.JITSymbol dtorAddr _) <-
+        OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
+      return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
+    return NativeModule{..}
   where
     -- Unfortunately the JIT layers we use here don't handle the destructors properly,
     -- so we have to find and call them ourselves.
@@ -101,6 +105,31 @@ compileModule moduleJIT@JIT{..} objFiles ast compilationPipeline = do
 foreign import ccall "dynamic"
   callDtor :: FunPtr (IO ()) -> IO ()
 
+loadNativeModule :: JIT -> ExplicitLinkMap -> ObjectFileContents -> IO NativeModule
+loadNativeModule moduleJIT linkingMap objFileContents = do
+  moduleDylib <- newDylib moduleJIT
+  let cl = compileLayer moduleJIT
+  withExplicitLinkMap cl moduleDylib linkingMap do
+    OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess cl moduleDylib
+    let moduleDtors = [] -- TODO(dougalm): handle destructors (with help from Adam)
+    loadObjectFile moduleJIT moduleDylib objFileContents
+    return NativeModule{..}
+
+withExplicitLinkMap :: OrcJIT.IRCompileLayer -> OrcJIT.JITDylib -> ExplicitLinkMap -> IO a -> IO a
+withExplicitLinkMap l dylib linkMap cont = do
+  let (linkedNames, linkedPtrs) = unzip $ M.toList linkMap
+  let flags = OrcJIT.defaultJITSymbolFlags { OrcJIT.jitSymbolAbsolute = True }
+  let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr ptr) flags | ptr <- linkedPtrs]
+  withMangledSymbols l (map fromString linkedNames) \linkedNames' -> do
+    OrcJIT.defineAbsoluteSymbols dylib $ zip linkedNames' ptrSymbols
+    cont
+
+withMangledSymbols :: OrcJIT.IRLayer l => l -> [SBS.ShortByteString] -> ([OrcJIT.MangledSymbol] -> IO a) -> IO a
+withMangledSymbols _ [] cont = cont []
+withMangledSymbols l (s:ss) cont =
+  OrcJIT.withMangledSymbol l s \ms ->
+    withMangledSymbols l ss \mss -> cont (ms:mss)
+
 -- TODO: This might not release everything if it fails halfway
 unloadNativeModule :: NativeModule -> IO ()
 unloadNativeModule NativeModule{..} = do
@@ -108,8 +137,8 @@ unloadNativeModule NativeModule{..} = do
   forM_ moduleDtors callDtor
 {-# SCC unloadNativeModule #-}
 
-withNativeModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
-withNativeModule jit objs m p = bracket (compileModule jit objs m p) unloadNativeModule
+withNativeModule :: JIT -> ExplicitLinkMap -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
+withNativeModule jit linkMap m p = bracket (compileModule jit linkMap m p) unloadNativeModule
 
 getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
 getFunctionPtr NativeModule{..} funcName = do

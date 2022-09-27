@@ -7,9 +7,8 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
 module LLVMExec (LLVMKernel (..), DexJIT (..), ptxDataLayout, ptxTargetTriple,
-                 compileAndEval, compileAndBench, exportObjectFile,
-                 exportObjectFileVal,
-                 standardCompilationPipeline,
+                 compileAndEval, compileAndBench, compileLLVMModule,
+                 standardCompilationPipeline, loadObjectFileExplicitLinks,
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal,
                  createDexJIT) where
@@ -37,6 +36,7 @@ import qualified LLVM.Transforms as P
 import qualified LLVM.Target as T
 import qualified LLVM.Shims
 import LLVM.Context
+import qualified Data.ByteString       as BS
 import Data.Int
 import GHC.IO.FD
 import GHC.IO.Handle.FD
@@ -90,29 +90,41 @@ createDexJIT = do
   jit <- LLVM.JIT.createJIT tm
   return $ DexJIT jit tm
 
-compileAndEval :: DexJIT -> FilteredLogger PassName [Output] -> [ObjectFile n]
-               -> L.Module -> String
+compileLLVMModule :: DexJIT -> L.Module -> LocalCName -> IO ObjectFileContents
+compileLLVMModule jit ast exportName = do
+  let tm = jitTargetMachine jit
+  withContext \c -> do
+    Mod.withModuleFromAST c ast \m -> do
+      internalize [exportName] m  -- TODO(dougalm): I don't know what this does. Is it needed?
+      execLogger Nothing \logger ->
+        standardCompilationPipeline
+          (FilteredLogger (const False) logger)
+          [exportName] tm m
+      Mod.moduleObject tm m
+
+compileAndEval :: DexJIT -> FilteredLogger PassName [Output]
+               -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ())
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval jit logger objFiles ast fname args resultTypes = do
+compileAndEval jit logger ast fname deps args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff jit logger objFiles ast fname $
+        evalTime <- compileOneOff jit logger ast fname deps $
           checkedCallFunPtr fd argsPtr resultPtr
         logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 {-# SCC compileAndEval #-}
 
 compileAndBench :: Bool -> DexJIT -> FilteredLogger PassName [Output]
-                -> [ObjectFile n] -> L.Module -> String
+                -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ())
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA jit logger objFiles ast fname args resultTypes = do
+compileAndBench shouldSyncCUDA jit logger ast fname deps args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff jit logger objFiles ast fname \fPtr -> do
+        compileOneOff jit logger ast fname deps \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -160,14 +172,20 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
 
 compileOneOff
   :: DexJIT -> FilteredLogger PassName [Output]
-  -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
-compileOneOff dexJIT logger objFiles ast name f = do
+  -> L.Module -> String -> M.Map LocalCName (Ptr ())
+  -> (DexExecutable -> IO a) -> IO a
+compileOneOff dexJIT logger ast name deps f = do
   let tm  = jitTargetMachine dexJIT
   let jit = llvmJIT dexJIT
   let pipeline = standardCompilationPipeline logger [name] tm
-  let objFileContents = [s | ObjectFile s _ _ <- objFiles]
-  withNativeModule jit objFileContents ast pipeline \compiled ->
+  withNativeModule jit deps ast pipeline \compiled ->
     f =<< getFunctionPtr compiled name
+
+-- only links against dex functions provided by the explicit map
+loadObjectFileExplicitLinks :: DexJIT -> LocalCName -> M.Map LocalCName (Ptr ()) -> BS.ByteString -> IO (Ptr ())
+loadObjectFileExplicitLinks dexJIT mainName ptrsToLink moduleContents = do
+  nativeModule <- loadNativeModule (llvmJIT dexJIT) ptrsToLink moduleContents
+  castFunPtrToPtr <$> getFunctionPtr nativeModule mainName
 
 standardCompilationPipeline :: FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
 standardCompilationPipeline logger exports tm m = do
@@ -185,47 +203,7 @@ standardCompilationPipeline logger exports tm m = do
     logPass passName cont = logFiltered logger passName $ cont >>= \s -> return [PassInfo passName s]
 {-# SCC standardCompilationPipeline #-}
 
-
--- === object file export ===
-
-exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
-exportObjectFileVal deps m fname = do
-  contents <- exportObjectFile [(m, [fname])] Mod.moduleObject
-  return $ ObjectFile contents [fname] deps
-{-# SCC exportObjectFileVal #-}
-
--- Each module comes with a list of exported functions
-exportObjectFile :: [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
-exportObjectFile modules exportFn = do
-  withContext \c -> do
-    withHostTargetMachine \tm ->
-      withBrackets (fmap (toLLVM c) modules) \mods -> do
-        Mod.withModuleFromAST c L.defaultModule \exportMod -> do
-          void $ foldM linkModules exportMod mods
-          execLogger Nothing \logger ->
-            standardCompilationPipeline
-              (FilteredLogger (const False) logger)
-              allExports tm exportMod
-          exportFn tm exportMod
-  where
-    allExports = foldMap snd modules
-
-    toLLVM :: Context -> (L.Module, [String]) -> (Mod.Module -> IO a) -> IO a
-    toLLVM c (ast, exports) cont = do
-      Mod.withModuleFromAST c ast \m -> internalize exports m >> cont m
-
-    linkModules a b = a <$ Mod.linkModules a b
-
-    withBrackets :: [(a -> IO b) -> IO b] -> ([a] -> IO b) -> IO b
-    withBrackets brackets f = go brackets []
-      where
-        go (h:t) args = h \arg -> go t (arg:args)
-        go []    args = f args
-{-# SCC exportObjectFile #-}
-
-
 -- === LLVM passes ===
-
 
 runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
 runDefaultPasses t m = do
@@ -268,8 +246,8 @@ internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeE
 --      hurt performance if we were to end up doing a lot of function calls.
 -- TODO: Consider changing the linking layer, as suggested in:
 --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
-withHostTargetMachine :: (T.TargetMachine -> IO a) -> IO a
-withHostTargetMachine f =
+_withHostTargetMachine :: (T.TargetMachine -> IO a) -> IO a
+_withHostTargetMachine f =
   T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive f
 
 withGPUTargetMachine :: B.ByteString -> (T.TargetMachine -> IO a) -> IO a

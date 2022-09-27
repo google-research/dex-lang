@@ -34,6 +34,7 @@ import qualified Data.Set              as S
 import GHC.Stack
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
+import Foreign.Ptr
 
 import Name
 import Err
@@ -309,7 +310,8 @@ data TopEnv (n::S) = TopEnv
   { envDefs  :: RecSubst Binding n
   , envCustomRules :: CustomRules n
   , envCache :: Cache n
-  , envLoadedModules :: LoadedModules n }
+  , envLoadedModules :: LoadedModules n
+  , envLoadedObjects :: LoadedObjects n }
   deriving (Generic)
 
 -- TODO: consider splitting this further into `ModuleEnv` (the env that's
@@ -323,7 +325,6 @@ data ModuleEnv (n::S) = ModuleEnv
   { envImportStatus    :: ImportStatus n
   , envSourceMap       :: SourceMap n
   , envSynthCandidates :: SynthCandidates n
-  , envObjectFiles     :: ObjectFiles n
   -- TODO: should these live elsewhere?
   , allowedEffects       :: EffectRow n }
   deriving (Generic)
@@ -333,11 +334,10 @@ data Module (n::S) = Module
   , moduleDirectDeps :: S.Set (ModuleName n)
   , moduleTransDeps  :: S.Set (ModuleName n)  -- XXX: doesn't include the module itself
   , moduleExports    :: SourceMap n
-    -- these are just the synth candidates and object files required by this
+    -- these are just the synth candidates required by this
     -- module by itself. We'll usually also need those required by the module's
     -- (transitive) dependencies, which must be looked up separately.
-  , moduleSynthCandidates :: SynthCandidates n
-  , moduleObjectFiles     :: ObjectFiles n }
+  , moduleSynthCandidates :: SynthCandidates n }
   deriving (Show, Generic)
 
 data LoadedModules (n::S) = LoadedModules
@@ -345,10 +345,17 @@ data LoadedModules (n::S) = LoadedModules
   deriving (Show, Generic)
 
 emptyModuleEnv :: ModuleEnv n
-emptyModuleEnv = ModuleEnv emptyImportStatus (SourceMap mempty) mempty mempty Pure
+emptyModuleEnv = ModuleEnv emptyImportStatus (SourceMap mempty) mempty Pure
 
 emptyLoadedModules :: LoadedModules n
 emptyLoadedModules = LoadedModules mempty
+
+data LoadedObjects (n::S) = LoadedObjects
+  { fromLoadedObjects :: M.Map (ObjectFileName n) (Ptr ())}
+  deriving (Show, Generic)
+
+emptyLoadedObjects :: LoadedObjects n
+emptyLoadedObjects = LoadedObjects mempty
 
 data ImportStatus (n::S) = ImportStatus
   { directImports :: S.Set (ModuleName n)
@@ -364,6 +371,7 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
   { fragCache           :: Cache n
   , fragCustomRules     :: CustomRules n
   , fragLoadedModules   :: LoadedModules n
+  , fragLoadedObjects   :: LoadedObjects n
   , fragLocalModuleEnv  :: ModuleEnv n }
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
@@ -381,7 +389,7 @@ emptyImportStatus = ImportStatus mempty mempty
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
   , impCache  :: EMap AtomName ImpFunName n
-  , objCache  :: EMap ImpFunName CFun n
+  , objCache  :: EMap ImpFunName ObjectFileName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
     -- only want to store one entry per module name as a simple cache eviction
     -- policy, so we store it keyed on the module name, with the text hash for
@@ -392,25 +400,31 @@ data Cache (n::S) = Cache
 
 -- === object file representations ===
 
--- TODO: think about the naming discipline for compiled function names. We can't
--- use our standard naming systems because these need to interact with the
--- outside world, LLVM etc.
+-- Object files contain the object code for a single specialized function. All
+-- that remains to make it callable is to link it, load it into memory and
+-- obtain its pointer. But there's a mismatch between the way we handle names in
+-- the Dex compiler (well-scoped, alpha-renamable) vs the C/LLVM world (global,
+-- fixed). To reconcile the two approaches, we use C/LLVM names that are
+-- completely local to the object file itself, with no requirements for any sort
+-- of uniqueness beyond it. The function itself gets called
+-- `dexObjectFileMain_foo`, and the Dex functions it calls are called
+-- `dexCalledFunction_0_bar`, `dexCalledFunction_1_baz` (The `_foo` suffixes are
+-- just for readability and don't need to be unique.) The only way we use these
+-- names is to link the object code against known pointers to the functions it
+-- calls, and then to obtain its own pointer.
 
-type CFunName = String
-data CFun n = CFun CFunName (ObjectFileName n)
-              deriving (Show, Generic)
-
-type ObjectFileName = Name ObjectFileNameC
-
-data ObjectFile n = ObjectFile
-  { objectFileContents :: BS.ByteString
-  , objectFileFunsDefined :: [CFunName]
-  -- XXX: direct dependencies only
-  , objectFileDeps :: [ObjectFileName n] }
+type LocalCName = String -- has no meaning beyond a single LLVM module or object file
+data CNameMap (e::E) (n::S) = CNameMap
+  { mainFunName    :: LocalCName
+  , calledFunNames :: M.Map LocalCName (e n) }
   deriving (Show, Generic)
 
-newtype ObjectFiles n = ObjectFiles (S.Set (ObjectFileName n))
-        deriving (Show, Generic, Semigroup, Monoid)
+type ObjectFileName = Name ObjectFileNameC
+type ObjectFileContents = BS.ByteString
+data ObjectFile n = ObjectFile
+  { objectFileContents :: ObjectFileContents
+  , objectFileNameMap  :: CNameMap ObjectFileName n }
+  deriving (Show, Generic)
 
 -- === bindings - static information we carry about a lexical scope ===
 
@@ -586,26 +600,26 @@ instance OutFrag EnvFrag where
 
 instance OutMap Env where
   emptyOutMap =
-    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules)
+    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules emptyLoadedObjects)
         emptyModuleEnv
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv defs rules cache loaded)
-                    (ModuleEnv imports sm scs objs effs)) frag =
+  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO)
+                    (ModuleEnv imports sm scs effs)) frag =
     withExtEvidence frag $ Env
       (TopEnv
         (defs  `extendRecSubst` frag)
         (sink rules)
         (sink cache)
-        (sink loaded))
+        (sink loadedM)
+        (sink loadedO))
       (ModuleEnv
         (sink imports)
         (sink sm)
         (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag Nothing))
-        (sink objs)
         (sink effs))
   {-# INLINE extendOutMap #-}
 
@@ -616,11 +630,11 @@ instance ExtOutMap Env EnvFrag where
 extendEnv :: Distinct l => Env n -> EnvFrag n l -> Env l
 extendEnv env (EnvFrag newEnv maybeNewEff) = do
   case extendOutMap env newEnv of
-    Env envTop (ModuleEnv imports sm scs obs oldEff) -> do
+    Env envTop (ModuleEnv imports sm scs oldEff) -> do
       let newEff = case maybeNewEff of
                      Nothing  -> sink oldEff
                      Just eff -> eff
-      Env envTop (ModuleEnv imports sm scs obs newEff)
+      Env envTop (ModuleEnv imports sm scs newEff)
 {-# NOINLINE [1] extendEnv #-}
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
@@ -1436,7 +1450,7 @@ instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec AtomName
     `PairE` EMap AtomName ImpFunName
-    `PairE` EMap ImpFunName CFun
+    `PairE` EMap ImpFunName ObjectFileName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
     `PairE` ListE (        LiftE ModuleSourceName
                    `PairE` LiftE FileHash
@@ -1939,10 +1953,13 @@ instance GenericE PartialTopEnvFrag where
   type RepE PartialTopEnvFrag = Cache
                               `PairE` CustomRules
                               `PairE` LoadedModules
+                              `PairE` LoadedObjects
                               `PairE` ModuleEnv
-  fromE (PartialTopEnvFrag cache rules loaded env) = cache `PairE` rules `PairE` loaded `PairE` env
+  fromE (PartialTopEnvFrag cache rules loadedM loadedO env) =
+    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env
   {-# INLINE fromE #-}
-  toE (cache `PairE` rules `PairE` loaded `PairE` env) = PartialTopEnvFrag cache rules loaded env
+  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env) =
+    PartialTopEnvFrag cache rules loadedM loadedO env
   {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
@@ -1951,11 +1968,11 @@ instance AlphaEqE       PartialTopEnvFrag
 instance SubstE Name    PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 x4 <> PartialTopEnvFrag y1 y2 y3 y4=
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4)
+  PartialTopEnvFrag x1 x2 x3 x4 x5 <> PartialTopEnvFrag y1 y2 y3 y4 y5 =
+    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5)
 
 instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty mempty
+  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance GenericB TopEnvFrag where
@@ -1984,32 +2001,33 @@ instance OutFrag TopEnvFrag where
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap env (TopEnvFrag (EnvFrag frag _) (PartialTopEnvFrag cache' rules' loaded' mEnv')) = result
+  extendOutMap env
+    (TopEnvFrag (EnvFrag frag _)
+    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv')) = result
     where
-      Env (TopEnv defs rules cache loaded) mEnv = env
+      Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
       result = Env newTopEnv newModuleEnv
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
         (sink rules <> rules')
         (sink cache <> cache')
-        (sink loaded <> loaded')
+        (sink loadedM <> loadedM')
+        (sink loadedO <> loadedO')
 
       newModuleEnv =
         ModuleEnv
           (imports <> imports')
           (sm   <> sm'   <> newImportedSM)
           (scs  <> scs'  <> newImportedSC)
-          (objs <> objs' <> newImportedObj)
           (effs <> effs')
         where
-          ModuleEnv imports sm scs objs effs = withExtEvidence frag $ sink mEnv
-          ModuleEnv imports' sm' scs' objs' effs' = mEnv'
+          ModuleEnv imports sm scs effs = withExtEvidence frag $ sink mEnv
+          ModuleEnv imports' sm' scs' effs' = mEnv'
           newDirectImports = S.difference (directImports imports') (directImports imports)
           newTransImports  = S.difference (transImports  imports') (transImports  imports)
           newImportedSM  = flip foldMap newDirectImports $ moduleExports         . lookupModulePure
           newImportedSC  = flip foldMap newTransImports  $ moduleSynthCandidates . lookupModulePure
-          newImportedObj = flip foldMap newTransImports  $ moduleObjectFiles     . lookupModulePure
 
       lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
 
@@ -2022,16 +2040,15 @@ instance GenericE Module where
                    `PairE` ListE ModuleName
                    `PairE` SourceMap
                    `PairE` SynthCandidates
-                   `PairE` ObjectFiles
 
-  fromE (Module name deps transDeps sm sc objs) =
+  fromE (Module name deps transDeps sm sc) =
     LiftE name `PairE` ListE (S.toList deps) `PairE` ListE (S.toList transDeps)
-      `PairE` sm `PairE` sc `PairE` objs
+      `PairE` sm `PairE` sc
   {-# INLINE fromE #-}
 
   toE (LiftE name `PairE` ListE deps `PairE` ListE transDeps
-         `PairE` sm `PairE` sc `PairE` objs) =
-    Module name (S.fromList deps) (S.fromList transDeps) sm sc objs
+         `PairE` sm `PairE` sc) =
+    Module name (S.fromList deps) (S.fromList transDeps) sm sc
   {-# INLINE toE #-}
 
 instance SinkableE      Module
@@ -2078,11 +2095,41 @@ instance AlphaEqE       LoadedModules
 instance AlphaHashableE LoadedModules
 instance SubstE Name    LoadedModules
 
-instance GenericE ObjectFile where
-  type RepE ObjectFile = LiftE (BS.ByteString, [CFunName]) `PairE` ListE ObjectFileName
-  fromE (ObjectFile contents fs deps) = LiftE (contents, fs) `PairE` ListE deps
+instance GenericE LoadedObjects where
+  type RepE LoadedObjects = ListE (PairE ObjectFileName (LiftE (Ptr ())))
+  fromE (LoadedObjects m) =
+    ListE $ M.toList m <&> \(v,p) -> PairE v (LiftE p)
   {-# INLINE fromE #-}
-  toE   (LiftE (contents, fs) `PairE` ListE deps) = ObjectFile contents fs deps
+  toE (ListE pairs) =
+    LoadedObjects $ M.fromList $ pairs <&> \(PairE v (LiftE p)) -> (v, p)
+  {-# INLINE toE #-}
+
+instance SinkableE      LoadedObjects
+instance HoistableE     LoadedObjects
+instance AlphaEqE       LoadedObjects
+instance AlphaHashableE LoadedObjects
+instance SubstE Name    LoadedObjects
+
+instance GenericE (CNameMap e) where
+  type RepE (CNameMap e) =
+    LiftE (LocalCName, [LocalCName]) `PairE` ListE e
+  fromE (CNameMap fname deps) = LiftE (fname, depNames) `PairE` ListE depVals
+    where (depNames, depVals) = unzip $ M.toList deps
+  {-# INLINE fromE #-}
+  toE   (LiftE (fname, depNames) `PairE` ListE depVals) = CNameMap fname deps
+    where deps = M.fromList $ zip depNames depVals
+  {-# INLINE toE #-}
+
+instance Store (e n) => Store (CNameMap e n)
+instance SubstE Name e => SubstE Name (CNameMap e)
+instance SinkableE   e => SinkableE   (CNameMap e)
+instance HoistableE  e => HoistableE  (CNameMap e)
+
+instance GenericE ObjectFile where
+  type RepE ObjectFile = LiftE BS.ByteString `PairE` CNameMap ObjectFileName
+  fromE (ObjectFile contents m) = LiftE contents `PairE` m
+  {-# INLINE fromE #-}
+  toE   (LiftE contents `PairE` m) = ObjectFile contents m
   {-# INLINE toE #-}
 
 instance Store (ObjectFile n)
@@ -2090,43 +2137,16 @@ instance SubstE Name ObjectFile
 instance SinkableE  ObjectFile
 instance HoistableE ObjectFile
 
-instance GenericE CFun where
-  type RepE CFun = LiftE CFunName `PairE` ObjectFileName
-  fromE (CFun name obj) = LiftE name `PairE` obj
-  {-# INLINE fromE #-}
-  toE   (LiftE name `PairE` obj) = CFun name obj
-  {-# INLINE toE #-}
-
-instance Store (CFun n)
-instance SubstE Name CFun
-instance AlphaEqE CFun
-instance SinkableE  CFun
-instance HoistableE CFun
-
-instance GenericE ObjectFiles where
-  type RepE ObjectFiles = ListE ObjectFileName
-  fromE (ObjectFiles xs) = ListE $ S.toList xs
-  {-# INLINE fromE #-}
-  toE   (ListE xs) = ObjectFiles $ S.fromList xs
-  {-# INLINE toE #-}
-
-instance SinkableE      ObjectFiles
-instance HoistableE     ObjectFiles
-instance AlphaEqE       ObjectFiles
-instance AlphaHashableE ObjectFiles
-instance SubstE Name    ObjectFiles
-
 instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
                 `PairE` SourceMap
                 `PairE` SynthCandidates
-                `PairE` ObjectFiles
                 `PairE` EffectRow
-  fromE (ModuleEnv imports sm sc obj eff) =
-    imports `PairE` sm `PairE` sc `PairE` obj `PairE` eff
+  fromE (ModuleEnv imports sm sc eff) =
+    imports `PairE` sm `PairE` sc `PairE` eff
   {-# INLINE fromE #-}
-  toE (imports `PairE` sm `PairE` sc `PairE` obj `PairE` eff) =
-    ModuleEnv imports sm sc obj eff
+  toE (imports `PairE` sm `PairE` sc `PairE` eff) =
+    ModuleEnv imports sm sc eff
   {-# INLINE toE #-}
 
 instance SinkableE      ModuleEnv
@@ -2136,17 +2156,23 @@ instance AlphaHashableE ModuleEnv
 instance SubstE Name    ModuleEnv
 
 instance Semigroup (ModuleEnv n) where
-  ModuleEnv x1 x2 x3 x4 x5 <> ModuleEnv y1 y2 y3 y4 y5 =
-    ModuleEnv (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5)
+  ModuleEnv x1 x2 x3 x4 <> ModuleEnv y1 y2 y3 y4 =
+    ModuleEnv (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4)
 
 instance Monoid (ModuleEnv n) where
-  mempty = ModuleEnv mempty mempty mempty mempty mempty
+  mempty = ModuleEnv mempty mempty mempty mempty
 
 instance Semigroup (LoadedModules n) where
   LoadedModules m1 <> LoadedModules m2 = LoadedModules (m2 <> m1)
 
 instance Monoid (LoadedModules n) where
   mempty = LoadedModules mempty
+
+instance Semigroup (LoadedObjects n) where
+  LoadedObjects m1 <> LoadedObjects m2 = LoadedObjects (m2 <> m1)
+
+instance Monoid (LoadedObjects n) where
+  mempty = LoadedObjects mempty
 
 instance Store (Atom n)
 instance Store (Expr n)
@@ -2187,10 +2213,10 @@ instance Store (HandlerDef n)
 instance Store (EffectOpType n)
 instance Store (EffectOpIdx)
 instance Store (SynthCandidates n)
-instance Store (ObjectFiles n)
 instance Store (Module n)
 instance Store (ImportStatus n)
 instance Store (LoadedModules n)
+instance Store (LoadedObjects n)
 instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
 instance Store (TopEnv n)

@@ -475,10 +475,10 @@ evalPartiallyParsedUModule partiallyParsed = do
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
-  TopEnvFrag envFrag (PartialTopEnvFrag cache rules loadedModules moduleEnv) <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs objs _ <- return moduleEnv
-  let fragToReEmit = TopEnvFrag envFrag $ PartialTopEnvFrag cache rules loadedModules mempty
-  let evaluatedModule = Module name directDeps transDeps sm scs objs
+  TopEnvFrag envFrag moduleEnvFrag <- return topFrag
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs _ <- return $ fragLocalModuleEnv moduleEnvFrag
+  let fragToReEmit = TopEnvFrag envFrag $ moduleEnvFrag { fragLocalModuleEnv = mempty }
+  let evaluatedModule = Module name directDeps transDeps sm scs
   emitEnv $ Abs fragToReEmit evaluatedModule
 
 importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
@@ -486,7 +486,7 @@ importModule name = do
   lookupLoadedModule name >>= \case
     Nothing -> throw ModuleImportErr $ "Couldn't import " ++ pprint name
     Just name' -> do
-      Module _ _ transImports' _ _ _ <- lookupModule name'
+      Module _ _ transImports' _ _ <- lookupModule name'
       let importStatus = ImportStatus (S.singleton name') (S.singleton name' <> transImports')
       emitLocalModuleEnv $ mempty { envImportStatus = importStatus }
 {-# SCC importModule #-}
@@ -609,9 +609,7 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun
-  :: (Topper m, Mut n)
-  => AtomName n -> m n ()
+compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
@@ -619,11 +617,26 @@ compileTopLevelFun fname = do
   fImp <- toImpStandaloneFunction fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
-  -- TODO: this is a hack! We need a better story for C/LLVM names.
-  let cFunName = pprint fImpName
-  fObj <- toCFunction cFunName fImp
+  fObj <- toCFunction (getNameHint fImpName) fImp
   extendObjCache fImpName fObj
+  void $ loadObject fObj
 {-# SCC compileTopLevelFun #-}
+
+loadObject :: (Topper m, Mut n) => ObjectFileName n -> m n (Ptr ())
+loadObject fname =
+  lookupLoadedObject fname >>= \case
+    Nothing -> do
+      ptr <- loadObjectNoCache fname
+      extendLoadedObjects fname ptr
+      return ptr
+    Just p -> return p
+
+loadObjectNoCache :: (Topper m, Mut n) => ObjectFileName n -> m n (Ptr ())
+loadObjectNoCache name = do
+  ObjectFile contents (CNameMap mainName depNames) <- lookupObjectFile name
+  ptrs <- mapM loadObject depNames
+  jit <- getDexJIT
+  liftIO $ loadObjectFileExplicitLinks jit mainName ptrs contents
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
@@ -647,19 +660,15 @@ forceDeferredInlining v =
     TopFunBound _ (UnspecializedTopFun _ f) -> return f
     _ -> return $ Var v
 
-toCFunction :: (Topper m, Mut n) => SourceName -> ImpFunction n -> m n (CFun n)
-toCFunction fname f = do
+toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (ObjectFileName n)
+toCFunction nameHint f = do
   PassCtx{..} <- getPassCtx
   logger  <- getLogger
-  (deps, m) <- impToLLVM (FilteredLogger shouldLogPass logger) fname f
-  objFile <- liftIO $ exportObjectFileVal deps m fname
-  objFileName <- emitObjFile (getNameHint fname) objFile
-  return $ CFun fname objFileName
-
--- TODO: there's no guarantee this name isn't already taken. Need a better story
--- for C/LLVM function names
-mainFuncName :: SourceName
-mainFuncName = "entryFun"
+  (llvmModule, nameMap) <- impToLLVM (FilteredLogger shouldLogPass logger) nameHint f
+  jit <- getDexJIT
+  obj <- liftIO $ compileLLVMModule jit llvmModule (mainFunName nameMap)
+  nameMap' <- nameMapImpToObj nameMap
+  emitObjFile nameHint $ ObjectFile obj nameMap'
 
 evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
@@ -672,16 +681,14 @@ evalLLVM block = do
                                         _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
                                              toImpFunction backend cc blockAbs
-  (_, llvmAST) <- impToLLVM filteredLogger mainFuncName impFun
+  (llvmAST, nameMap) <- impToLLVM filteredLogger "main" impFun
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if requiresBench then compileAndBench needsSync else compileAndEval
-  objFileNames <- getAllRequiredObjectFiles
-  objFiles <- forM objFileNames  \objFileName -> do
-    ObjectFileBinding objFile <- lookupEnv objFileName
-    return objFile
   jit <- getDexJIT
-  resultVals <- liftIO $ llvmEvaluate jit filteredLogger objFiles
-                  llvmAST mainFuncName ptrVals resultTypes
+  CNameMap mainName depNames <- nameMapImpToObj nameMap
+  depPtrs <- mapM loadObject depNames
+  resultVals <- liftIO $ llvmEvaluate jit filteredLogger
+                  llvmAST mainName depPtrs ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
@@ -760,6 +767,14 @@ loadModuleSource config moduleName = do
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
+nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap ObjectFileName n)
+nameMapImpToObj (CNameMap fname calledNames) = do
+  calledNames' <- forM calledNames \v -> do
+    queryObjCache v >>= \case
+      Just v' -> return v'
+      Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint fname
+  return $ CNameMap fname calledNames'
+
 -- === saving cache to disk ===
 
 -- None of this is safe in the presence of multiple processes trying to interact
@@ -802,11 +817,11 @@ clearCache = liftIO do
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
 stripEnvForSerialization :: TopStateEx -> TopStateEx
-stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _) _)) =
+stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _)) =
   collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
     let liveNames = toNameSet $ toScopeFrag defsFrag'
     let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
-    TopStateEx $ Env (TopEnv (RecSubst defs') rules' cache' mempty) emptyModuleEnv
+    TopStateEx $ Env (TopEnv (RecSubst defs') rules' cache' mempty mempty) emptyModuleEnv
   where
     ruleFreeVars v = case M.lookup v rules of
       Nothing -> mempty
