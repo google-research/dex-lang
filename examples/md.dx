@@ -244,7 +244,7 @@ def bd_push {h n a} [Ix n] (lst_ref: Ref h (BoundedList n a)) (x: a) : {State h}
       buf_ref!sz := x
       sz_ref := unsafe_next_index sz
     else
-      todo
+      todo -- throw ()
 
 -- Once we're done pushing, we can compact a `BoundedList` into a standard `List`.
 def as_list {n a} (lst: BoundedList n a) : List a =
@@ -298,3 +298,46 @@ tbl = cell_table grid_size bucket_size cell_size $ get_position state'
 :t tbl
 
 as_list tbl.(unsafe_from_ordinal _ 0)
+
+'### Now let's compute pairs of neighbors from our cell list
+
+cell_neighbors_2d = [[-1, -1], [-1, 0], [-1, 1], [0, -1],
+                     [0, 1], [1, -1], [1, 0], [1, 1]]
+
+:t cell_neighbors_2d
+
+def torus_offset {n} (ix: (Fin n)) (offset: Int) : (Fin n) =
+  unsafe_from_ordinal _ $ unsafe_i_to_n $
+    mod (n_to_i (ordinal ix) + offset) (n_to_i n)
+
+neighbor_list_size = 1000
+
+%time
+def neighbor_list {grid_size bucket_size atom_ix}
+  neighbor_list_size
+  (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
+  (atoms: atom_ix => Vec TwoDimensions)
+  : BoundedList (Fin neighbor_list_size) (atom_ix & atom_ix) =
+  -- catch do
+    yield_state (empty_bounded_list $ (from_ordinal _ 0, from_ordinal _ 0)) \ref.
+      for cell_ix : (GridIx TwoDimensions grid_size).
+        for nb.
+          displacement = cell_neighbors_2d.nb
+          neighbor_ix = for dim. torus_offset cell_ix.dim displacement.dim
+          (AsList sz_atoms_1 atoms_1) = as_list tbl.cell_ix
+          for atom1_ix : (Fin sz_atoms_1).
+            atom1 = atoms_1.atom1_ix
+            (AsList sz_atoms_2 atoms_2) = as_list tbl.neighbor_ix
+            for atom2_ix : (Fin sz_atoms_2).
+              atom2 = atoms_2.atom2_ix
+              dist = norm $ periodic_displacement L atoms.atom1 atoms.atom2
+              if dist < 1 then
+                num = get $ fst_ref ref
+                bd_push ref (atom1, atom2)
+            ()
+          ()
+
+%time
+res = neighbor_list neighbor_list_size tbl $ get_position state'
+
+as_list res
