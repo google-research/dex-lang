@@ -14,6 +14,7 @@ module Lower
 import Prelude hiding (id, (.))
 import Data.Word
 import Data.Functor
+import Data.Maybe (fromJust)
 import Data.Set qualified as S
 import Data.List.NonEmpty qualified as NE
 import Data.HashMap.Strict qualified as HM
@@ -554,22 +555,30 @@ type Dest = Atom
 
 traverseFor :: Emits o => Maybe (Dest o) -> ForAnn -> Atom i -> LamExpr i -> LowerM i o (Expr o)
 traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = do
-  initDest <- ProdVal . (:[]) <$> case maybeDest of
-    Just  d -> return d
-    Nothing -> emitOp . AllocDest =<< getTypeSubst (Hof $ For dir ixDict (Lam lam))
-  destTy <- getType initDest
-  ty' <- substM ty
+  ansTy <- getTypeSubst $ Hof $ For dir ixDict $ Lam lam
   ixDict' <- substM ixDict
+  ty' <- substM ty
   eff' <- substM $ ignoreHoistFailure $ hoist ib eff
   let eff'' = extendEffRow (S.singleton IOEffect) eff'
-  body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
-    (i, destProd) <- fromPair $ Var b'
-    let dest = getProjection [0] destProd
-    idest <- emitOp $ IndexRef dest i
-    void $ extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body
-    return UnitVal
-  let seqHof = Hof $ Seq dir ixDict' initDest body'
-  Op . Freeze . ProjectElt (0 NE.:| []) <$> emit seqHof
+  case isSingletonType ansTy of
+    True -> do
+      body' <- buildLam noHint arr (PairTy ty' UnitTy) eff'' \b' -> do
+        (i, _) <- fromPair $ Var b'
+        extendSubst (ib @> SubstVal i) $ traverseBlock body $> UnitVal
+      void $ emit $ Hof $ Seq dir ixDict' UnitVal body'
+      Atom . fromJust <$> singletonTypeVal ansTy
+    False -> do
+      initDest <- ProdVal . (:[]) <$> case maybeDest of
+        Just  d -> return d
+        Nothing -> emitOp $ AllocDest ansTy
+      destTy <- getType initDest
+      body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
+        (i, destProd) <- fromPair $ Var b'
+        let dest = getProjection [0] destProd
+        idest <- emitOp $ IndexRef dest i
+        extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body $> UnitVal
+      let seqHof = Hof $ Seq dir ixDict' initDest body'
+      Op . Freeze . ProjectElt (0 NE.:| []) <$> emit seqHof
 
 traverseTabCon :: Emits o => Maybe (Dest o) -> Type i -> [Atom i] -> LowerM i o (Expr o)
 traverseTabCon maybeDest tabTy elems = do

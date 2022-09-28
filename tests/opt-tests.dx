@@ -30,6 +30,14 @@ m' = m ** m
 _ = for i:(Fin 50). [1, 2, 3]
 -- CHECK-NOT: alloc
 
+"no destinations for singleton values"
+-- CHECK-LABEL: no destinations for singleton values
+
+%passes lower
+yield_state 0 \ref.
+  for i:(Fin 10). ref := get ref + 1
+-- CHECK-NOT: alloc
+
 -- === Loop unrolling ===
 
 -- CHECK-LABEL: unroll-eliminate-table
