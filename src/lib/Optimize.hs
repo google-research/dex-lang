@@ -176,7 +176,8 @@ instance GenericTraverser ULS where
       case binderType b of
         FinConst n -> do
           (body', bodyCost) <- withLocalAccounting $ traverseAtom body
-          case bodyCost * (fromIntegral n) <= unrollBlowupThreshold of
+          -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
+          case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
             True -> case body' of
               Lam (LamExpr b' block') -> do
                 vals <- dropSubst $ forM (iota n) \ord -> do
