@@ -557,17 +557,17 @@ toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (Atom i) -> SubstImpM i o (Atom
 toImpHof maybeDest hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
-    Map (TabLam (TabLamExpr (b:>ixTy) body)) -> do
-      -- TODO: The following code block is identical to the `For` case below.
-      -- Reuse the code for the `For` case by generating  `For (Lam ...)`, with
-      -- suitable `Lam ...`, when currently a `Map (TabLam ...)` is generated.
+    Map (Lam (LamExpr b body)) array -> do
       rDest <- allocDest maybeDest resultTy
-      ixTy' <- substM ixTy
-      n <- indexSetSizeImp ixTy'
+      TabPi (TabPiType (_:>ixTy) _) <- getTypeSubst array
+      array' <- substM array
+      n <- indexSetSizeImp ixTy
       emitLoop noHint Fwd n \i -> do
-        idx <- unsafeFromOrdinalImp (sink ixTy') i
+        idx <- unsafeFromOrdinalImp (sink ixTy) i
+        ithArg <- dropSubst $ translateExpr Nothing $
+                    TabApp (sink array') $ idx :| []
         ithDest <- destGet (sink rDest) idx
-        void $ extendSubst (b @> SubstVal idx) $
+        void $ extendSubst (b @> SubstVal ithArg) $
           translateBlock (Just ithDest) body
       destToAtom rDest
     For d ixDict (Lam (LamExpr b body)) -> do

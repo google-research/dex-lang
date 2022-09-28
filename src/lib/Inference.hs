@@ -949,62 +949,27 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     funTy <- naryNonDepPiType PlainArrow Pure [argElemVar] resElemVar
     fun' <- checkOrInferRho fun (Check funTy)
 
+    -- Eta-expand `fun'` into a `Lam` (if it is not already a `Lam`). Later on
+    -- we make use of the invariant that the first argument of `Map` is a `Lam`.
+    fun'' <- case fun' of
+        Lam _ -> return fun'
+        _ -> buildLamInf noHint PlainArrow argElemVar (const $ return Pure)
+                \x -> do
+                  Distinct <- getDistinct
+                  app (sink fun') (Var x)
+
     arrayReqTy <- case reqTy of
       Check (TabPi (TabPiType (b:>ixTy) resElemTy)) -> do
-        -- TODO: Throw a graceful error if `resElemTy` depends on `b`.
-        let resElemTy' = ignoreHoistFailure $ hoist b resElemTy
+        resElemTy' <- case hoist b resElemTy of
+          HoistSuccess ty -> return ty
+          HoistFailure _ -> throw TypeErr " expected non-dependent array type"
         constrainEq resElemVar resElemTy'
         liftM (Check . TabPi) $ nonDepTabPiType ixTy argElemVar
       Check _ -> return Infer
       Infer -> return Infer
     array' <- checkOrInferRho array arrayReqTy
 
-    -- Construct the `TabLam` for `Map`. This should probably not be done here
-    -- alongside the inference code; perhaps `AbstractSyntax.hs` would be a
-    -- better place for this. However, if we replaced replaced the `fun` and
-    -- `array` arguments to `UMap` with a `UTabLam`, this would make typing
-    -- failures less informative at the source code level (since the source code
-    -- contains concrete syntax for `fun` and `array`, but not for the
-    -- constructed `UTabLam`.) The cleanest alternative, however, would probably
-    -- be to place the construction of the `TabLam` (or of an equivalent block
-    -- paired with binders for its free variables) in `Lower.hs` or `Imp.hs`.
-    -- However, at that point we would require the expressions in the block
-    -- (including the expressions in the decls inside the block) to be
-    -- simplified; and the `TabApp` and `App` expressions below are apparently
-    -- not simplified.
-    TabPi (TabPiType (bA:>ixTy) argElemTy) <- getType array'
-    -- TODO: Throw a graceful error if `argElemTy` depends on `bA`.
-    let argElemTy' = ignoreHoistFailure $ hoist bA argElemTy
-    -- NOTE: In the definition of `arrayReqTy` we have already introduced a
-    -- constaint for `resElemVar`; but we still need to constrain `argElemVar`.
-    -- (Additionally `resElemVar` should also be constrained by the
-    -- `matchRequirement` below, but this is not the case for `argElemVar`.)
-    constrainEq argElemVar argElemTy'
-    Pi (PiType (PiBinder bF _ _) _ resElemTy) <- getType fun'
-    -- TODO: Throw a graceful error if `resElemTy` depends on `bF`.
-    let resElemTy' = ignoreHoistFailure $ hoist bF resElemTy
-
-    f <- withFreshBinder noHint ixTy \b0 -> do
-      let binder = b0:>ixTy
-      -- I am having trouble getting the following to work when trying to use a
-      -- single call to `withFreshBinders` (plural!) only. The problem appears
-      -- to be that `withFreshBinders` does not make available evidence of
-      -- `Distinct` for the intermediate scope, i.e. the scope that has `b1` but
-      -- not `b2`. Without this evidence, `sink fun'` in the let-block below is
-      -- not valid.
-      body <- withFreshBinder noHint (sink argElemTy') \b1 ->
-        withFreshBinder noHint (sink resElemTy') \b2 ->
-          let indexName = binderName b0
-              argElem = TabApp (sink array') $ (Var indexName) :| []
-              declArgElem = Let b1 (DeclBinding PlainLet (sink argElemTy') argElem)
-              funApp = App (sink fun') $ (Var $ binderName b1) :| []
-              declResElem = Let b2 (DeclBinding PlainLet (sink resElemTy') funApp)
-              ann = BlockAnn (sink resElemTy') Pure
-              block = Block ann (Nest declArgElem (Nest declResElem Empty)) (Var $ binderName b2)
-          in return block
-      return $ TabLam $ TabLamExpr binder body
-
-    result <- liftM Var $ emit $ Hof $ Map f
+    result <- liftM Var $ emit $ Hof $ Map fun'' array'
     matchRequirement result
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects

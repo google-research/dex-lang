@@ -839,9 +839,10 @@ projectDictMethod d i = do
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
-  Map f -> do
-    f' <- simplifyAtom f
-    liftM Var $ emit $ Hof $ Map f'
+  Map fun array -> do
+    (fun', Abs _ IdentityRecon) <- simplifyLam fun
+    array' <- simplifyAtom array
+    liftM Var $ emit $ Hof $ Map fun' array'
   For d ixDict lam -> do
     ixTy@(IxType _ ixDict') <- ixTyFromDict =<< substM ixDict
     (lam', Abs b recon) <- simplifyLam lam
