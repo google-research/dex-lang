@@ -755,27 +755,44 @@ replaceOp name op tbl = map (map replace) tbl where
 
 ops :: PrecTable Group
 ops =
-  [ [symOpL ".", symOpL "!"]
-  , [("space", Expr.InfixL $ opWithSrc $ sc $> (binApp Juxtapose))]
-  , [unOpPre "-", unOpPre "+"]
-  , [("other", anySymOp)] -- other ops with default fixity
-  , [symOpL "+", symOpL "-", symOpL "||", symOpL "&&",
-     symOpR "=>",
-     ("backquote", Expr.InfixL $ opWithSrc $ backquoteName >>= (return . binApp . EvalBinOp)),
-     symOpL "<<<", symOpL ">>>", symOpL "<<&", symOpL "&>>"]
-  , [unOpPre "..", unOpPre "..<",
-     unOpPost "..", unOpPost "<.."]
-  , [symOpR "->", symOpR "--o", symOpR "?->", symOpR "?=>"]
-  , [symOpL "@"]
+  [ [symOpL   ".", symOpL   "!"]
+  , [juxtaposition]
+  , [unOpPre  "-", unOpPre  "+"]
+  , [backquote]
+  -- Other ops with default fixity
+  , [other]
+  , [symOpL   "*", symOpL   "/"]
+  , [symOpL  ".*", symOpL  "*."]
+  , [symOpL ".**", symOpL "**."]
+  , [symOpL  "**"]
+  , [symOpL   "+", symOpL   "-"]
+  , [symOpL  "-|"]
+  , [symOpL "+>>"]
+  , [symOpL  "<>"]
+  , [symOpN  "~~"]
+  , [symOpN   "<", symOpN  "<=", symOpN ">", symOpN ">="]
+  , [symOpN  "==", symOpN  "!="]
+  , [symOpL  "&&"]
+  , [symOpL  "||"]
+  , [unOpPre "..", unOpPre "..<", unOpPost "..", unOpPost "<.."]
+  , [symOpR  "=>"]
+  , [symOpR  "->", symOpR "--o", symOpR "?->", symOpR "?=>"]
+  , [symOpL ">>>"]
+  , [symOpL "<<<"]
+  , [symOpL "&>>"]
+  , [symOpL "<<&"]
+  , [symOpL   "@"]
+  , [unOpPre  "@"]
   , [unOpPre "@..."]
   , [unOpPre "..."]
-  , [symOpL "::"]
-  , [symOpR "$"]
-  , [symOpL "+=", symOpL ":="]
+  , [symOpN  "::"]
+  , [symOpL  "|>"]
+  , [symOpR   "$"]
+  , [symOpN  "+=", symOpN  ":="]
   -- Associate right so the mistaken utterance foo : i:Fin 4 => (..i)
   -- groups as a bad pi type rather than a bad binder
-  , [symOpR ":"]
-  , [symOpL "="]
+  , [symOpR   ":"]
+  , [symOpL   "="]
   -- Single-expression bodies for if, lambda, for, case, and do
   -- notionally have this precedence.
   -- This means that, for example,
@@ -786,14 +803,17 @@ ops =
   --   \x y. (foo bar baz, stuff)
   -- We do this so that lambdas may be written inside pairs and records.
   -- This is achieved by cBlock invoking cGroupNoSeparators rather than cGroup.
-  , [symOpL "?"]
+  , [symOpL   "?"]
   -- Weak decision to associate `,` and `&` to the right because n-ary
   -- tuples are internally represented curried, so this puts the new
   -- element in front.
-  , [symOpR ","]
-  , [symOpR "&"]
-  , [symOpL "|"]
-  ]
+  , [symOpR   ","]
+  , [symOpR   "&"]
+  , [symOpL   "|"]
+  ] where
+  juxtaposition = ("space", Expr.InfixL $ opWithSrc $ sc $> (binApp Juxtapose))
+  other = ("other", anySymOp)
+  backquote = ("backquote", Expr.InfixL $ opWithSrc $ backquoteName >>= (return . binApp . EvalBinOp))
 
 labelPrefix :: Parser LabelPrefix
 labelPrefix = sym "#" $> RecordIsoLabel
@@ -816,6 +836,9 @@ anySymOp = Expr.InfixL $ opWithSrc $ do
 
 infixSym :: SourceName -> Parser ()
 infixSym s = mayBreak $ sym $ T.pack s
+
+symOpN :: SourceName -> (SourceName, Expr.Operator Parser Group)
+symOpN s = (s, Expr.InfixN $ symOp s)
 
 symOpL :: SourceName -> (SourceName, Expr.Operator Parser Group)
 symOpL s = (s, Expr.InfixL $ symOp s)

@@ -27,6 +27,7 @@ tightest-binding to loosest-binding.
 | . !                   | indexing, reference slicing              | Left          |
 | juxtaposition (space) | function application                     | Left          |
 | unary + -             | negation, integer literals               | Prefix        |
+| backquoted functions  | infix application of binary functions    | Left          |
 | other                 | user-defined operators                   | Left          |
 | * /                   | scalar multiplication, division          | Left          |
 | .* *.                 | scalar * vector and vector * scalar      | Left          |
@@ -212,8 +213,14 @@ Specifially, we want the following things:
       record with anonymous fields.
 
   - The double colon `::` type-annotates an arbitrary expression without
-    otherwise changing its meaning.  Since it can go anywhere, we follow Haskell
-    in making it looser than all expression operators, including `$`.
+    otherwise changing its meaning.  Since it can go anywhere, we make it looser
+    than all expression operators, except `|>` and `$`.  The exception supports
+    the common concept that `$` breaks up formulas completely (by being the
+    loosest expression-like operator).
+    
+  - We make backquoted functions and user-defined operators bind tightly by
+    default, but for no particularly good reason.  They are currently rare in
+    Dex, so it doesn't really matter.
 
 6. Next, we have the special snowflakes that interact with almost nothing
 
