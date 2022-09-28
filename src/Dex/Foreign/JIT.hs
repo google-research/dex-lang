@@ -34,11 +34,11 @@ import qualified LLVM.Shims
 
 import Name
 import Logging
-import Builder
 import LLVMExec
 import JIT
 import Export
 import Syntax  hiding (sizeOf)
+import TopLevel
 
 import Dex.Foreign.Util
 import Dex.Foreign.Context
@@ -94,17 +94,15 @@ dexCompile jitPtr ccInt ctxPtr funcAtomPtr = catchErrors $ do
     -- TODO: Check if atom is compatible with context! Use module name?
     (impFunc, nativeSignature) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
     filteredLogger <- FilteredLogger (const False) <$> getLogger
-    (_, llvmAST) <- impToLLVM filteredLogger "userFunc" impFunc
-    objFileNames <- getAllRequiredObjectFiles
-    objFiles <- forM objFileNames \objFileName -> do
-      ObjectFileBinding (ObjectFile bytes _ _) <- lookupEnv objFileName
-      return bytes
+    (llvmAST, nameMap) <- impToLLVM filteredLogger "userFunc" impFunc
+    CNameMap mainName depNames <- nameMapImpToObj nameMap
+    depPtrs <- mapM loadObject depNames
     liftIO do
-      nativeModule <- LLVM.JIT.compileModule jit objFiles llvmAST $
+      nativeModule <- LLVM.JIT.compileModule jit depPtrs llvmAST $
           standardCompilationPipeline
             filteredLogger
-            ["userFunc"] jitTargetMachine
-      funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
+            [mainName] jitTargetMachine
+      funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule mainName
       modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
       return $ funcPtr
 

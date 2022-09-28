@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache, createDexJIT,
-  DexJIT) where
+  DexJIT, loadObject, nameMapImpToObj) where
 
 import Data.Maybe
 import Data.Foldable (toList)
