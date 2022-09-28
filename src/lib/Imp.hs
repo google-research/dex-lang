@@ -24,11 +24,11 @@ import GHC.Exts (inline)
 import Err
 import MTL1
 import Name
-import Builder
+-- If you want to touch Ix methods, use the *FromSimp variants defined in this module
+import Builder hiding (unsafeFromOrdinal, ordinal, indexSetSize)
 import Syntax
 import CheckType (CheckableE (..))
 import Lower (IxDestBlock)
-import Simplify (buildBlockSimplified, dceApproxBlock, emitSimplified)
 import LabeledItems
 import QueryType
 import Util (enumerate, SnocList (..), unsnoc)
@@ -56,7 +56,11 @@ toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
 {-# SCC toImpStandaloneFunction #-}
 
 toImpStandaloneFunction' :: NaryLamExpr o -> SubstImpM i o (ImpFunction o)
-toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
+toImpStandaloneFunction' lam@(NaryLamExpr bs effs body) = do
+  case effs of
+    Pure -> return ()
+    OneEffect IOEffect -> return ()
+    _ -> error "effectful functions not implemented"
   ty <- naryLamExprType lam
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty Unmanaged
   let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
@@ -66,7 +70,6 @@ toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
     extendSubst (bs @@> map SubstVal args) do
       void $ translateBlock (Just $ sink resultDest) body
       return []
-toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not implemented"
 
 -- | Calling convention for exported function.
 data ExportCC = FlatExportCC
@@ -118,34 +121,34 @@ ccUnpackActuals cc actual = case cc of
 
 toImpExportedFunction :: EnvReader m
                       => ExportCC
-                      -> NaryLamExpr n
+                      -> Abs (Nest Binder) IxDestBlock n
                       -> (Abs (Nest IBinder) (ListE Block) n)
                       -> m n (ImpFunction n)
-toImpExportedFunction cc lam@(NaryLamExpr (NonEmptyNest fb tb) effs body) (Abs baseArgBs argRecons) = liftImpM do
-  case effs of
-    Pure -> return ()
-    _    -> throw TypeErr "Can only export pure functions"
-  let bs = Nest fb tb
-  NaryPiType tbs _ resTy <- naryLamExprType lam
-  (resDestAbsArgsPtrs, ptrFormals) <- refreshAbs (Abs tbs resTy) \tbs' resTy' -> do
-    -- WARNING! This ties the makeDest implementation to the C API expected in export.
-    -- In particular, every array has to be backend by a single pointer and pairs
-    -- should be traversed left-to-right.
-    AbsPtrs (Abs ptrBs' resDest') ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
-    let ptrFormals = ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
-    return (Abs tbs' (Abs ptrBs' resDest'), ptrFormals)
+toImpExportedFunction cc def@(Abs bs (Abs ixDecls (Abs d body))) (Abs baseArgBs argRecons) = liftImpM do
+  -- XXX: We assume that makeDest is deterministic in here! We first run it outside of
+  -- the Imp function to infer the set of arguments, and then once again inside the
+  -- Imp function to get the destination atom. We could pass it around, but it would have
+  -- been more complicated.
+  ptrFormals <- refreshAbs def \_ def' -> do
+    refreshAbs def' \_ (Abs (_:>RawRefTy resTy') _) -> do
+      -- WARNING! This ties the makeDest implementation to the C API expected in export.
+      -- In particular, every array has to be backend by a single pointer and pairs
+      -- should be traversed left-to-right.
+      AbsPtrs _ ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
+      return $ ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
   let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
   dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
-    (args, ptrs)   <- ccUnpackActuals ccCtx ccActuals
+    (args, ptrs) <- ccUnpackActuals ccCtx ccActuals
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
       traverse (translateBlock Nothing) $ fromListE argRecons
-    -- XXX: for type preservation, it's important that we use the post-recon
-    -- atoms, `argAtoms`, in the substitution
-    resDestAbsPtrs <- applyNaryAbs (sink resDestAbsArgsPtrs) (map SubstVal argAtoms)
-    resDest        <- applyNaryAbs resDestAbsPtrs            ptrs
-    extendSubst (bs @@> map SubstVal argAtoms) do
-      void $ translateBlock (Just $ sink resDest) body
-      return []
+    extendSubst (bs @@> map SubstVal argAtoms) $
+      translateDeclNest ixDecls do
+        let RawRefTy dTy = binderType d
+        AbsPtrs resDestAbsPtrs _ <- makeDest (LLVM, CPU, Unmanaged) =<< substM dTy
+        resDest <- applyNaryAbs resDestAbsPtrs ptrs
+        extendSubst (d @> SubstVal resDest) $
+          translateBlock Nothing body $> []
+
 {-# SCC toImpExportedFunction #-}
 
 loadArgDests :: Emits n => NaryLamDest n -> SubstImpM i n ([Atom n], Dest n)
@@ -952,7 +955,11 @@ makeNaryLamDest piTy mgmt = do
 
 makeNaryLamDestRec :: forall n. Emits n => DestIdxs n -> DepVars n
                    -> NaryPiType n -> DestM n (NaryLamDest n)
-makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) Pure resultTy) = do
+makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) effs resultTy) = do
+  case effs of
+    Pure -> return ()
+    OneEffect IOEffect -> return ()
+    _ -> error "effectful functions not implemented"
   let argTy = binderType b
   argDest <- makeDestRec idxs depVars argTy
   Abs (b':>_) (Abs bs' resultDest) <-
@@ -965,7 +972,6 @@ makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) Pure resultTy) =
           restPiTy <- applySubst (b@>v) $ NaryPiType (NonEmptyNest b1 bsRest) Pure resultTy
           makeNaryLamDestRec idxs' depVars' restPiTy
   return $ Abs (Nest (b':>argDest) bs') resultDest
-makeNaryLamDestRec _ _ _ = error "effectful functions not implemented"
 
 -- TODO: should we put DestIdxs/DepVars in the monad? And maybe it should also
 -- be a substituting one.
@@ -1304,16 +1310,16 @@ computeElemCount (EmptyAbs Empty) =
   return $ IdxRepVal 1
 computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
-  sizes <- forM idxList \ixTy -> emitSimplified $ indexSetSize $ sink ixTy
+  sizes <- forM idxList indexSetSizeFromSimp
   listSize <- foldM imul (IdxRepVal 1) sizes
-  nestSize <- emitSimplified $ elemCountPoly (sink idxNest)
+  nestSize <- elemCountPoly idxNest
   imul listSize nestSize
 
 elemCountPoly :: Emits n => IndexStructure n -> SimpleBuilderM n (Atom n)
 elemCountPoly (Abs bs UnitE) = case bs of
   Empty -> return $ IdxRepVal 1
   Nest b@(_:>ixTy) rest -> do
-   curSize <- emitSimplified $ indexSetSize $ sink ixTy
+   curSize <- indexSetSizeFromSimp ixTy
    restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
    sumUsingPolysImp curSize restSizes
 
@@ -1322,8 +1328,8 @@ computeSizeGivenOrdinal
   => IxBinder n l -> IndexStructure l -> m n (Abs Binder SimpleBlock n)
 computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
-    Abs (bOrdinal:>IdxRepTy) <$> buildBlockSimplified do
-      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
+    Abs (bOrdinal:>IdxRepTy) <$> buildBlock do
+      i <- unsafeFromOrdinalFromSimp (sink idxTy) $ Var $ sink $ binderName bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
 
@@ -1350,15 +1356,14 @@ computeOffset idxNest' idxs = do
   let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
   nestOffset   <- rec idxNest nestIdxs
   nestSize     <- computeElemCount idxNest
-  listOrds     <- forM listIdxs \i -> emitSimplified do
+  listOrds     <- forM listIdxs \i -> do
     i' <- sinkM i
     ixTy <- getIxType i'
-    ordinal ixTy (Var i')
+    ordinalFromSimp ixTy (Var i')
   -- We don't compute the first size (which we don't need!) to avoid emitting unnecessary decls.
   idxListSizes <- case idxList of
     [] -> return []
-    _  -> (IdxRepVal 0:) <$> forM (tail idxList) \ixTy -> do
-      emitSimplified $ indexSetSize $ sink ixTy
+    _  -> (IdxRepVal 0:) <$> forM (tail idxList) indexSetSizeFromSimp
   listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
   iadd listOffset nestOffset
   where
@@ -1369,7 +1374,7 @@ computeOffset idxNest' idxs = do
    rec (Abs (Nest b@(_:>ixTy) bs) UnitE) (i:is) = do
      let rest = EmptyAbs bs
      rhsElemCounts <- computeSizeGivenOrdinal b rest
-     iOrd <- emitSimplified $ ordinal (sink ixTy) (Var $ sink i)
+     iOrd <- ordinalFromSimp ixTy $ Var i
      significantOffset <- sumUsingPolysImp iOrd rhsElemCounts
      remainingIdxStructure <- applySubst (b@>i) rest
      otherOffsets <- rec remainingIdxStructure is
@@ -1526,8 +1531,6 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
--- === Type classes ===
-
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
 liftBuilderImp :: (Emits n, SubstE AtomSubstVal e, SinkableE e)
@@ -1538,25 +1541,61 @@ liftBuilderImp cont = do
   dropSubst $ translateDeclNest decls $ substM result
 {-# INLINE liftBuilderImp #-}
 
--- TODO: should we merge this with `liftBuilderImp`? Not much harm in
--- simplifying even if it's not needed.
-liftBuilderImpSimplify
-  :: Emits n
-  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> SubstImpM i n (Atom n)
-liftBuilderImpSimplify cont = do
-  block <- dceApproxBlock <$> buildBlockSimplified cont
-  dropSubst $ translateBlock Nothing block
-{-# INLINE liftBuilderImpSimplify #-}
+-- === Type classes ===
 
 unsafeFromOrdinalImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
-unsafeFromOrdinalImp ixTy i = liftBuilderImpSimplify do
+unsafeFromOrdinalImp (IxType _ dict) i = do
   i' <- toScalarAtom =<< sinkM i
-  unsafeFromOrdinal (sink ixTy) i'
+  liftEnvReaderM (projSimpDictThunk dict 2) >>=
+    (`appReduceImp` (Con $ Newtype NatTy i'))
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
-indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImpSimplify do
-  indexSetSize $ sink ty
+indexSetSizeImp (IxType _ dict) = fromScalarAtom . unwrapNewtype =<< case dict of
+  DictCon (IxFin n) -> return n
+  _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduceImp` UnitVal)
+
+indexSetSizeFromSimp :: Emits n => IxType n -> BuilderM n (Atom n)
+indexSetSizeFromSimp (IxType _ dict) = unwrapNewtype <$> case dict of
+  DictCon (IxFin n) -> return n
+  _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduce` UnitVal)
+
+ordinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
+ordinalFromSimp (IxType _ dict) i =
+  liftM unwrapNewtype $ liftEnvReaderM (projSimpDictThunk dict 1) >>= (`appReduce` i)
+
+unsafeFromOrdinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
+unsafeFromOrdinalFromSimp (IxType _ dict) o =
+  liftEnvReaderM (projSimpDictThunk dict 2) >>= (`appReduce` (Con $ Newtype NatTy o))
+
+projSimpDictThunk :: Atom n -> Int -> EnvReaderM n (Atom n)
+projSimpDictThunk topDict methodIx = go topDict []
+  where
+    go dict args = case dict of
+      Lam _ ->  do
+        case fromNaryLamExact (length args) dict of
+          Just (NaryLamExpr bs Pure (AtomicBlock d)) -> do
+            d' <- applySubst (bs @@> (SubstVal <$> args)) d
+            go d' []
+          Just _ -> error "Not a pure atomic lam?"
+          Nothing -> error "Failed to get a dict nary lam?"
+      DictCon (InstantiatedGiven d extraArgs) -> go d $ toList extraArgs ++ args
+      Con (Newtype _ _) -> return $ getProjection [methodIx, 0] dict
+      DictCon (IxFin n) -> case methodIx == 0 of
+        True -> do
+          Abs b n' <- toConstAbs n
+          return $ Lam $ LamExpr (LamBinder b UnitTy PlainArrow Pure) $ AtomicBlock n'
+        False -> projectIxFinMethod methodIx n
+      _ -> error $ "Not a pre-simplified dict atom: " ++ pprint dict
+
+appReduce :: Emits n => Atom n -> Atom n -> BuilderM n (Atom n)
+appReduce f x = case f of
+  Lam (LamExpr b body) -> emitBlock =<< applySubst (b@>SubstVal x) body
+  _ -> error "couldn't reduce immediately!"
+
+appReduceImp :: Emits o => Atom o -> Atom o -> SubstImpM i o (Atom o)
+appReduceImp f x = case f of
+  Lam (LamExpr b body) -> dropSubst $ extendSubst (b@>SubstVal x) $ translateBlock Nothing body
+  _ -> error "couldn't reduce immediately!"
 
 -- === type checking imp programs ===
 

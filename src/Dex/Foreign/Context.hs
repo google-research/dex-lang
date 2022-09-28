@@ -45,7 +45,7 @@ dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do
   let evalConfig = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize
   cachedEnv <- loadCache
-  jit <- createDexJIT
+  jit <- createDexJIT (getLLVMOptLevel evalConfig)
   runTopperM evalConfig jit cachedEnv (evalSourceBlockRepl preludeImportBlock) >>= \case
     (Result _  (Success  ()), preludeEnv) -> toStablePtr $ Context evalConfig jit preludeEnv
     (Result _  (Failure err), _         ) -> nullPtr <$

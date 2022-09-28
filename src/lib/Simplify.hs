@@ -9,8 +9,8 @@
 module Simplify
   ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
   , simplifyTopFunctionAssumeNoTopEmissions
-  , buildBlockSimplified, emitSimplified
-  , dceApproxBlock) where
+  , buildBlockSimplified
+  ) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -28,6 +28,7 @@ import Name
 import Core
 import Builder
 import Syntax
+import Optimize (peepholeOp)
 import CheckType (CheckableE (..), isData)
 import Util ( enumerate, foldMapM, restructure, toSnocList
             , splitAtExact, SnocList, snoc, emptySnocList)
@@ -224,8 +225,11 @@ simplifyDecls topDecls cont = do
 simpDeclsSubst :: Emits o => Subst AtomSubstVal l o -> Nest Decl l i' -> SimplifyM i o (Subst AtomSubstVal i' o)
 simpDeclsSubst !s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding _ _ expr)) rest -> do
-    x <- withSubst s $ simplifyExpr expr
+  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+    x <- withSubst s $ case (ann, expr) of
+      (NoInlineLet, Atom a) ->
+        liftM Var $ emitDecl noHint NoInlineLet =<< (Atom <$> simplifyAtom a)
+      _ -> simplifyExpr expr
     simpDeclsSubst (s <>> (b@>SubstVal x)) rest
 
 simplifyExpr :: Emits o => Expr i -> SimplifyM i o (Atom o)
@@ -790,11 +794,8 @@ simplifyOp op = case op of
   VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
     return $ Con $ Newtype ty $ SumVal (toList tys) ix v
-  CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
-    return $ Con $ Lit $ Int32Lit $ fromIntegral val
-  CastOp (BaseTy (Scalar Word32Type)) (Con (Lit (Word64Lit val))) ->
-    return $ Con $ Lit $ Word32Lit $ fromIntegral val
   -- Those are not no-ops! Builder methods do algebraic simplification!
+  -- TODO: Move peephole optimizations to peepholeOp in Optimize
   BinOp ISub x y -> isub x y
   BinOp IAdd x y -> iadd x y
   BinOp IMul x y -> imul x y
@@ -803,7 +804,9 @@ simplifyOp op = case op of
   BinOp (ICmp Equal) x y -> ieq x y
   Select c x y -> select c x y
   ProjMethod dict i -> projectDictMethod dict i
-  _ -> emitOp op
+  _ -> case peepholeOp op of
+    Left  a   -> return a
+    Right op' -> emitOp op'
 
 pattern IdentityReconAbs :: Abs binder ReconstructAtom n
 pattern IdentityReconAbs <- Abs _ IdentityRecon
@@ -823,6 +826,15 @@ projectDictMethod d i = do
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
     DictCon (IxFin n) -> projectIxFinMethod i n
+    Con (Newtype (DictTy (DictType _ clsName _)) (ProdVal els)) -> do
+      ClassDef _ _ _ _ mTys <- lookupClassDef clsName
+      let (e, MethodType _ mTy) = (els !! i, mTys !! i)
+      case (mTy, e) of
+        (Pi _, _) -> return e
+        -- Non-function methods are thunked, so we have to apply
+        (_, Lam (LamExpr b body)) ->
+          dropSubst $ extendSubst (b @> SubstVal UnitVal) $ simplifyBlock body
+        _ -> error $ "Not a simplified dict: " ++ pprint e
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
@@ -968,18 +980,6 @@ hasExceptions expr = do
   case t of
     Nothing -> return $ ExceptionEffect `S.member` effs
     Just _  -> error "Shouldn't have tail left"
-
-emitSimplified
-  :: (Emits n, Builder m)
-  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> m n (Atom n)
-emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
-{-# INLINE emitSimplified #-}
-
-dceApproxBlock :: Block n -> Block n
-dceApproxBlock block@(Block _ decls expr) = case hoist decls expr of
-  HoistSuccess expr' -> Block NoBlockAnn Empty expr'
-  HoistFailure _     -> block
 
 -- === GHC performance hacks ===
 

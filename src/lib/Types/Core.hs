@@ -1497,12 +1497,15 @@ instance GenericB LamBinder where
 
 instance BindsAtMostOneName LamBinder AtomNameC where
   LamBinder b _ _ _ @> x = b @> x
+  {-# INLINE (@>) #-}
 
 instance BindsOneName LamBinder AtomNameC where
   binderName (LamBinder b _ _ _) = binderName b
+  {-# INLINE binderName #-}
 
 instance HasNameHint (LamBinder n l) where
   getNameHint (LamBinder b _ _ _) = getNameHint b
+  {-# INLINE getNameHint #-}
 
 instance ProvesExt  LamBinder
 instance BindsNames LamBinder
@@ -1581,12 +1584,15 @@ instance GenericB PiBinder where
 
 instance BindsAtMostOneName PiBinder AtomNameC where
   PiBinder b _ _ @> x = b @> x
+  {-# INLINE (@>) #-}
 
 instance BindsOneName PiBinder AtomNameC where
   binderName (PiBinder b _ _) = binderName b
+  {-# INLINE binderName #-}
 
 instance HasNameHint (PiBinder n l) where
   getNameHint (PiBinder b _ _) = getNameHint b
+  {-# INLINE getNameHint #-}
 
 instance ProvesExt  PiBinder
 instance BindsNames PiBinder
@@ -1916,7 +1922,9 @@ instance AlphaHashableE DeclBinding
 instance GenericB Decl where
   type RepB Decl = AtomBinderP DeclBinding
   fromB (Let b binding) = b :> binding
+  {-# INLINE fromB #-}
   toB   (b :> binding) = Let b binding
+  {-# INLINE toB #-}
 
 instance SinkableB Decl
 instance HoistableB  Decl
@@ -1926,6 +1934,14 @@ instance AlphaEqB Decl
 instance AlphaHashableB Decl
 instance ProvesExt  Decl
 instance BindsNames Decl
+
+instance BindsAtMostOneName Decl AtomNameC where
+  Let b _ @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance BindsOneName Decl AtomNameC where
+  binderName (Let b _) = binderName b
+  {-# INLINE binderName #-}
 
 instance Semigroup (SynthCandidates n) where
   SynthCandidates xs ys <> SynthCandidates xs' ys' =

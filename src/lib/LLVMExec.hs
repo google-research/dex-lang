@@ -8,7 +8,7 @@
 
 module LLVMExec (LLVMKernel (..), DexJIT (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, compileLLVMModule,
-                 standardCompilationPipeline, loadObjectFileExplicitLinks,
+                 standardCompilationPipeline, loadObjectFileExplicitLinks, OptLevel (..),
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal,
                  createDexJIT) where
@@ -74,7 +74,8 @@ import PPrint ()
 
 data DexJIT = DexJIT
   { llvmJIT :: JIT
-  , jitTargetMachine :: T.TargetMachine}
+  , jitTargetMachine :: T.TargetMachine
+  , jitOptLevel :: OptLevel }
 
 -- === One-shot evaluation ===
 
@@ -84,11 +85,14 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-createDexJIT :: IO DexJIT
-createDexJIT = do
+data OptLevel = OptALittle       -- -O1
+              | OptAggressively  -- -O3, incl. auto vectorization
+
+createDexJIT :: OptLevel -> IO DexJIT
+createDexJIT opt = do
   tm <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
   jit <- LLVM.JIT.createJIT tm
-  return $ DexJIT jit tm
+  return $ DexJIT jit tm opt
 
 compileLLVMModule :: DexJIT -> L.Module -> LocalCName -> IO ObjectFileContents
 compileLLVMModule jit ast exportName = do
@@ -97,7 +101,7 @@ compileLLVMModule jit ast exportName = do
     Mod.withModuleFromAST c ast \m -> do
       internalize [exportName] m  -- TODO(dougalm): I don't know what this does. Is it needed?
       execLogger Nothing \logger ->
-        standardCompilationPipeline
+        standardCompilationPipeline (jitOptLevel jit)
           (FilteredLogger (const False) logger)
           [exportName] tm m
       Mod.moduleObject tm m
@@ -177,7 +181,7 @@ compileOneOff
 compileOneOff dexJIT logger ast name deps f = do
   let tm  = jitTargetMachine dexJIT
   let jit = llvmJIT dexJIT
-  let pipeline = standardCompilationPipeline logger [name] tm
+  let pipeline = standardCompilationPipeline (jitOptLevel dexJIT) logger [name] tm
   withNativeModule jit deps ast pipeline \compiled ->
     f =<< getFunctionPtr compiled name
 
@@ -187,15 +191,15 @@ loadObjectFileExplicitLinks dexJIT mainName ptrsToLink moduleContents = do
   nativeModule <- loadNativeModule (llvmJIT dexJIT) ptrsToLink moduleContents
   castFunPtrToPtr <$> getFunctionPtr nativeModule mainName
 
-standardCompilationPipeline :: FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
-standardCompilationPipeline logger exports tm m = do
+standardCompilationPipeline :: OptLevel -> FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
+standardCompilationPipeline opt logger exports tm m = do
   linkDexrt m
   internalize exports m
   {-# SCC showLLVM   #-} logPass JitPass $ showModule m
 #ifdef DEX_DEBUG
   {-# SCC verifyLLVM #-} L.verify m
 #endif
-  {-# SCC runPasses  #-} runDefaultPasses tm m
+  {-# SCC runPasses  #-} runDefaultPasses opt tm m
   {-# SCC showOptimizedLLVM #-} logPass LLVMOpt $ showModule m
   {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
   where
@@ -205,17 +209,27 @@ standardCompilationPipeline logger exports tm m = do
 
 -- === LLVM passes ===
 
-runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
-runDefaultPasses t m = do
+runDefaultPasses :: OptLevel -> T.TargetMachine -> Mod.Module -> IO ()
+runDefaultPasses opt t m = do
 #if MIN_VERSION_llvm_hs(15,0,0)
-  P.runPasses (P.PassSetSpec [P.CuratedPassSet 1] (Just t)) m
+  -- TODO: Modify llvm-hs to request vectorization
+  P.runPasses (P.PassSetSpec [P.CuratedPassSet lvl] (Just t)) m
+  where lvl = case opt of OptALittle -> 1; OptAggressively -> 3
 #else
   P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
   case extraPasses of
     [] -> return ()
     _  -> runPasses extraPasses (Just t) m
   where
-    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 1}
+    defaultPasses = case opt of
+      OptALittle ->
+        P.defaultCuratedPassSetSpec {P.optLevel = Just 1, P.targetMachine = Just t}
+      OptAggressively ->
+        P.defaultCuratedPassSetSpec
+          { P.optLevel = Just 3
+          , P.loopVectorize = Just True
+          , P.superwordLevelParallelismVectorize = Just True
+          , P.targetMachine = Just t }
     extraPasses = []
 #endif
 
@@ -396,7 +410,7 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
     Mod.withModuleFromAST ctx ast \m -> do
       withGPUTargetMachine (pack arch) \tm -> do
         linkLibdevice m
-        standardCompilationPipeline logger ["kernel"] tm m
+        standardCompilationPipeline OptAggressively logger ["kernel"] tm m
         ptx <- Mod.moduleTargetAssembly tm m
         usePTXAS <- maybe False (=="1") <$> E.lookupEnv "DEX_USE_PTXAS"
         if usePTXAS

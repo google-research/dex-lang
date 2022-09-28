@@ -1,0 +1,130 @@
+-- ==== Integral casts ====
+--
+-- Semantics of internal_cast on integral types are based on the bit representation
+-- of the values in question. All WordX types have a bit representation equal to their
+-- value in standard binary format. All IntX types use two's complement representation.
+--
+-- The cast is always performed by taking the source value to its bit representation,
+-- resizing that representation (depending on the target signedness), and interpreting
+-- the resulting bit pattern in the target type.
+--
+-- The rules for resizing the bit pattern are as follows:
+--   1. If the target bitwidth is smaller than source bitwidth, the maximum number of
+--      least significant bits are preserved.
+--   2. If the target bitwidth is equal to the source bitwidth, nothing happens.
+--   3. If the target bitwidth is greater than the source bitwidth, and:
+--     3a. the target type is signed, the representation is sign-extended (the
+--         MSB is used to pad the value up to the desired width).
+--     3b. the target type is unsigned, the representation is zero-extended.
+
+-- Casts to Int32
+
+internal_cast Int32 (2147483647 :: Int64)
+> 2147483647
+
+internal_cast Int32 (2147483648 :: Int64)
+> -2147483648
+
+internal_cast Int32 (8589935826 :: Int64)  -- 2^33 + 1234
+> 1234
+
+internal_cast Int32 (123 :: Word8)
+> 123
+
+internal_cast Int32 (1234 :: Word32)
+> 1234
+
+internal_cast Int32 (4294967295 :: Word32)
+> -1
+
+internal_cast Int32 (1234 :: Word64)
+> 1234
+
+internal_cast Int32 (4294967295 :: Word64)
+> -1
+
+internal_cast Int32 (4294967296 :: Word64)
+> 0
+
+internal_cast Int32 (5000000000 :: Word64)
+> 705032704
+
+-- Casts to Int64
+
+internal_cast Int64 (123 :: Int32)
+> 123
+
+internal_cast Int64 (-123 :: Int32)
+> -123
+
+internal_cast Int64 (123 :: Word8)
+> 123
+
+internal_cast Int64 (1234 :: Word32)
+> 1234
+
+internal_cast Int64 (4294967296 :: Word64) -- 2^32
+> 4294967296
+
+-- Casts to Word8
+
+internal_cast Word8 (1234 :: Int32)
+> '\210'
+
+internal_cast Word8 (1234 :: Int)
+> '\210'
+
+internal_cast Word8 (1234 :: Word32)
+> '\210'
+
+internal_cast Word8 (1234 :: Word64)
+> '\210'
+
+-- Casts to Word32
+
+internal_cast Word32 (1234 :: Int32)
+> 0x4d2
+
+internal_cast Word32 (-2147483648 :: Int32)
+> 0x80000000
+
+internal_cast Word32 (1234 :: Int64)
+> 0x4d2
+
+internal_cast Word32 (4294968530 :: Int64)  -- 2^32 + 1234
+> 0x4d2
+
+internal_cast Word32 (-1 :: Int64)
+> 0xffffffff
+
+internal_cast Word32 (123 :: Word8)
+> 0x7b
+
+internal_cast Word32 (1234 :: Word64)
+> 0x4d2
+
+internal_cast Word32 (4294967296 :: Word64)
+> 0x0
+
+-- Casts to Word64
+
+internal_cast Word64 (1234 :: Int32)
+> 0x4d2
+
+internal_cast Word64 (-1 :: Int32)
+> 0xffffffff
+
+internal_cast Word64 (1234 :: Int64)
+> 0x4d2
+
+internal_cast Word64 (-1 :: Int64)
+> 0xffffffffffffffff
+
+internal_cast Word64 (123 :: Word8)
+> 0x7b
+
+internal_cast Word64 (1234 :: Word32)
+> 0x4d2
+
+internal_cast Word64 (4294967295 :: Word32)
+> 0xffffffff

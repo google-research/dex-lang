@@ -100,6 +100,7 @@ dexCompile jitPtr ccInt ctxPtr funcAtomPtr = catchErrors $ do
     liftIO do
       nativeModule <- LLVM.JIT.compileModule jit depPtrs llvmAST $
           standardCompilationPipeline
+            OptAggressively
             filteredLogger
             [mainName] jitTargetMachine
       funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule mainName

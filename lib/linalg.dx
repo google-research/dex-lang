@@ -3,32 +3,19 @@
 - LU Decomposition
 - Matrix Inversion
 
-def unsafe_cast {a m} [Ix a, Ix m] (d:a) : m = unsafe_from_ordinal m (ordinal d)
-
-'The three functions below are safe because one can't produce an element of type n
-if there isn't at least one possible value in its type. So being able
-to produce x to call this function is proof that `n` is non-empty,
-even though we don't use the `NonEmpty` constraint.
-
-def first_ix_of {n} [Ix n] (x:n) : n = unsafe_from_ordinal n 0
-def last_ix_of  {n} [Ix n] (x:n) : n = unsafe_from_ordinal n (unsafe_nat_diff (size n) 1)
-def is_last {n} [Ix n] (x:n) : Bool = ((ordinal x) + 1) == size n
 
 '## Triangular matrices
 
 def LowerTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(..i)=>v
 def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(i..)=>v
 
-def refl_less {n} [Ix n] (i:n) : (..i) =
-  from_just $ project _ i
+def refl_less {n} [Ix n] (i:n) : (..i) = unsafe_project _ i
+def refl_more {n} [Ix n] (i:n) : (i..) = unsafe_project _ i
 
-def refl_more {n} [Ix n] (i:n) : (i..) =
-  from_just $ project _ i
+def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = view i. u.i.(refl_more i)
+def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = view i. l.i.(refl_less i)
 
-def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v =
-  view i. u.i.(refl_more i)
-def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v =
-  view i. l.i.(refl_less i)
+def is_last {n} [Ix n] (x:n) : Bool = (ordinal x + 1) == size n
 
 def lower_tri_identity {a n} [Ix n, Add a, Mul a] : LowerTriMat n a =
   for i j. select (is_last j) one zero
@@ -46,22 +33,22 @@ data UpperTriIxExc n = MkUpperTriIxExc i:n j:(i<..)
 -- TODO: Put these in instances of an Isomorphism interface?
 def transpose_upper_ix {n} [Ix n] (i:n) (j:(i..)) : LowerTriIx n =
   j' = inject n j
-  i' = from_just $ project _ i
+  i' = unsafe_project _ i
   MkLowerTriIx j' i'
 
 def transpose_lower_ix {n} [Ix n] (i:n) (j:(..i)) : UpperTriIx n =
   j' = inject n j
-  i' = from_just $ project _ i
+  i' = unsafe_project _ i
   MkUpperTriIx j' i'
 
 def transpose_upper_ix_exc {n} [Ix n] (i:n) (j:(i<..)) : LowerTriIxExc n =
   j' = inject n j
-  i' = from_just $ project _ i
+  i' = unsafe_project _ i
   MkLowerTriIxExc j' i'
 
 def transpose_lower_ix_exc {n} [Ix n] (i:n) (j:(..<i)) : UpperTriIxExc n =
   j' = inject n j
-  i' = from_just $ project _ i
+  i' = unsafe_project _ i
   MkUpperTriIxExc j' i'
 
 def transpose_lower_to_upper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
@@ -86,76 +73,96 @@ def transpose_lower_to_upper_no_diag {n v}
 instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIx m) (LowerTriIx n)
   inject' = \(MkLowerTriIx i j).
     i' = inject n i
-    j' = from_just $ project _ $ inject n $ inject m j
+    j' = unsafe_project _ $ inject n $ inject m j
     MkLowerTriIx i' j'
-  project' = \(MkLowerTriIx i j). 
+  project' = \(MkLowerTriIx i j).
     case project m i of
       Nothing -> Nothing
       (Just i') ->
         j' = inject n j
-        j'' = from_just $ project m j'
-        Just $ MkLowerTriIx i' $ from_just $ project _ j''
+        j'' = unsafe_project m j'
+        Just $ MkLowerTriIx i' $ unsafe_project _ j''
+  unsafe_project' = \(MkLowerTriIx i j).
+    i' = unsafe_project m i
+    j' = inject n j
+    j'' = unsafe_project m j'
+    MkLowerTriIx i' $ unsafe_project _ j''
 
 instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIx m) (UpperTriIx n)
   inject' = \(MkUpperTriIx i j).
     i' = inject n i
-    j' = from_just $ project _ $ inject n $ inject m j
+    j' = unsafe_project _ $ inject n $ inject m j
     MkUpperTriIx i' j'
-  project' = \(MkUpperTriIx i j). 
+  project' = \(MkUpperTriIx i j).
     case project m i of
       Nothing -> Nothing
       (Just i') ->
         j' = inject n j
-        j'' = from_just $ project m j'
-        Just $ MkUpperTriIx i' $ from_just $ project _ j''
+        j'' = unsafe_project m j'
+        Just $ MkUpperTriIx i' $ unsafe_project _ j''
+  unsafe_project' = \(MkUpperTriIx i j).
+    i' = unsafe_project m i
+    j' = inject n j
+    j'' = unsafe_project m j'
+    MkUpperTriIx i' $ unsafe_project _ j''
 
 instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIxExc m) (LowerTriIxExc n)
   inject' = \(MkLowerTriIxExc i j).
     i' = inject n i
-    j' = from_just $ project _ $ inject n $ inject m j
+    j' = unsafe_project _ $ inject n $ inject m j
     MkLowerTriIxExc i' j'
-  project' = \(MkLowerTriIxExc i j). 
+  project' = \(MkLowerTriIxExc i j).
     case project m i of
       Nothing -> Nothing
       (Just i') ->
         j' = inject n j
-        j'' = from_just $ project m j'
-        Just $ MkLowerTriIxExc i' $ from_just $ project _ j''
+        j'' = unsafe_project m j'
+        Just $ MkLowerTriIxExc i' $ unsafe_project _ j''
+  unsafe_project' = \(MkLowerTriIxExc i j).
+    i' = unsafe_project m i
+    j' = inject n j
+    j'' = unsafe_project m j'
+    MkLowerTriIxExc i' $ unsafe_project _ j''
 
 instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIxExc m) (UpperTriIxExc n)
   inject' = \(MkUpperTriIxExc i j).
     i' = inject n i
-    j' = from_just $ project _ $ inject n $ inject m j
+    j' = unsafe_project _ $ inject n $ inject m j
     MkUpperTriIxExc i' j'
-  project' = \(MkUpperTriIxExc i j). 
+  project' = \(MkUpperTriIxExc i j).
     case project m i of
       Nothing -> Nothing
       (Just i') ->
         j' = inject n j
-        j'' = from_just $ project m j'
-        Just $ MkUpperTriIxExc i' $ from_just $ project _ j''
+        j'' = unsafe_project m j'
+        Just $ MkUpperTriIxExc i' $ unsafe_project _ j''
+  unsafe_project' = \(MkUpperTriIxExc i j).
+    i' = unsafe_project m i
+    j' = inject n j
+    j'' = unsafe_project m j'
+    MkUpperTriIxExc i' $ unsafe_project _ j''
 
 '## Chaining inequalities between indices
 
 def relax_ii {n} {p:n} [Ix n] (i:(p ..)) (j:(.. p)) : LowerTriIx n =
   i' = inject n i
   j' = inject n j
-  MkLowerTriIx i' $ from_just $ project _ j'
+  MkLowerTriIx i' $ unsafe_project _ j'
 
 def relax_ei {n} {p:n} [Ix n] (i:(p<..)) (j:(.. p)) : LowerTriIxExc n =
   i' = inject n i
   j' = inject n j
-  MkLowerTriIxExc i' $ from_just $ project _ j'
+  MkLowerTriIxExc i' $ unsafe_project _ j'
 
 def relax_ie {n} {p:n} [Ix n] (i:(p ..)) (j:(..<p)) : LowerTriIxExc n =
   i' = inject n i
   j' = inject n j
-  MkLowerTriIxExc i' $ from_just $ project _ j'
+  MkLowerTriIxExc i' $ unsafe_project _ j'
 
 def relax_ee {n} {p:n} [Ix n] (i:(p<..)) (j:(..<p)) : LowerTriIxExc n =
   i' = inject n i
   j' = inject n j
-  MkLowerTriIxExc i' $ from_just $ project _ j'
+  MkLowerTriIxExc i' $ unsafe_project _ j'
 
 '## Linalg helpers
 
@@ -207,7 +214,7 @@ def chol {n} (x:n=>n=>Float) : LowerTriMat n Float =
         then
           mat i j := sqrt a
         else
-          b = get $ mat j' (from_just $ project (..j') j')
+          b = get $ mat j' (refl_less j')
           mat i j := a / b
 
 '## Permutations
@@ -231,7 +238,7 @@ def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Un
   signRef := -(get signRef)
 
 def perm_to_table {n} ((perm, _):Permutation n) : n=>n = perm
-def perm_sign    {n} ((_, sign):Permutation n) : PermutationSign = sign
+def perm_sign     {n} ((_, sign):Permutation n) : PermutationSign = sign
 
 
 '## LU decomposition functions
@@ -240,7 +247,7 @@ def pivotize {n} (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yield_state identity_permutation \permRef.
     for j:n.
-      row_with_largest = argmin for i:(j..). (-(abs a.(inject n i).j))
+      row_with_largest = argmax for i:(j..). abs a.(inject n i).j
       if (ordinal j) /= (ordinal row_with_largest) then
         swap_in_place permRef j (inject n row_with_largest)
 
@@ -251,7 +258,6 @@ def lu {n} (a: n=>n=>Float) :
   permutation = pivotize a
   a = apply_permutation permutation a
 
-  -- TODO Why is this type annotation needed?
   init_lower : (LowerTriMat n Float) = lower_tri_identity
   init_upper = zero
 
@@ -260,7 +266,7 @@ def lu {n} (a: n=>n=>Float) :
     uRef = snd_ref stateRef
 
   -- For reference, here's code to compute the LU decomposition
-  -- without dependent tables (i.e. with standard flat matrices):
+  -- with standard flat matrices:
   --  for j:n.
   --    for i:(..j).
   --      i = inject _ i
@@ -280,7 +286,7 @@ def lu {n} (a: n=>n=>Float) :
     for j:n.
       for i:(..j).
         s = sum for k:(..i).
-          (MkUpperTriIx k2 _) = transpose_lower_ix i k
+          (MkUpperTriIx k2 _)  = transpose_lower_ix i k
           (MkUpperTriIx k3 j3) = transpose_lower_ix j k2
           ukj = get $ upper_tri_mat uRef k3 j3
           (MkLowerTriIx i4 k4) = inject _ $ MkLowerTriIx i k

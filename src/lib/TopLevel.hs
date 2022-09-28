@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache, createDexJIT,
-  DexJIT, loadObject, nameMapImpToObj) where
+  DexJIT, loadObject, nameMapImpToObj, getLLVMOptLevel) where
 
 import Data.Maybe
 import Data.Foldable (toList)
@@ -38,7 +38,8 @@ import Paths_dex  (getDataFileName)
 import Err
 import MTL1
 import Logging
-import LLVMExec
+import LLVMExec hiding (OptLevel)
+import LLVMExec qualified
 import PPrint (pprintCanonicalized)
 import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
@@ -548,6 +549,11 @@ evalUExpr expr = do
   evalBlock typed
 {-# SCC evalUExpr #-}
 
+whenOpt :: Topper m => a -> (a -> m n a) -> m n a
+whenOpt x act = getConfig <&> optLevel >>= \case
+  NoOptimize -> return x
+  Optimize   -> act x
+
 evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
 evalBlock typed = do
   eopt <- checkPass EarlyOptPass $ earlyOptimize typed
@@ -555,15 +561,16 @@ evalBlock typed = do
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   evalRequiredSpecializations simplifiedBlock
   SimplifiedBlock simp recon <- return simplifiedBlock
-  opt <- (fmap optLevel getConfig) >>= \case
-    Optimize   -> checkPass OptPass $ optimize simp
-    NoOptimize -> return simp
+  opt <- whenOpt simp $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
       explicitIx <- emitIx opt
-      lowered <- checkPass LowerPass $ lowerFullySequential explicitIx
-      evalBackend lowered
+      instIx <- simplifyIx explicitIx
+      lowered <- checkPass LowerPass $ lowerFullySequential instIx
+      lopt <- whenOpt lowered $ checkPass LowerOptPass .
+        (dceIxDestBlock >=> hoistLoopInvariant)
+      evalBackend lopt
   applyRecon recon result
 {-# SCC evalBlock #-}
 
@@ -670,6 +677,11 @@ toCFunction nameHint f = do
   nameMap' <- nameMapImpToObj nameMap
   emitObjFile nameHint $ ObjectFile obj nameMap'
 
+getLLVMOptLevel :: EvalConfig -> LLVMExec.OptLevel
+getLLVMOptLevel cfg = case optLevel cfg of
+  NoOptimize -> LLVMExec.OptALittle
+  Optimize   -> LLVMExec.OptAggressively
+
 evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
@@ -717,7 +729,10 @@ checkPass name cont = do
     return result
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
-  let allowedEffs = case name of LowerPass -> OneEffect IOEffect; _ -> mempty
+  let allowedEffs = case name of
+                      LowerPass    -> OneEffect IOEffect
+                      LowerOptPass -> OneEffect IOEffect
+                      _            -> mempty
   {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
     withAllowedEffects allowedEffs $ checkTypesM result
   logTop $ MiscLog $ "Checks passed"

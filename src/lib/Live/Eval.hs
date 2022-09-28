@@ -157,7 +157,7 @@ data DriverEvent = FileChanged SourceContents
 
 runDriver :: DriverCfg -> TopStateEx -> Actor DriverEvent
 runDriver cfg env self = do
-  jit <- createDexJIT
+  jit <- createDexJIT (getLLVMOptLevel $ fst cfg)
   liftM fst
     $ flip runStateT (initialEvalState env, emptyCache)
     $ flip runReaderT jit

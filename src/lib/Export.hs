@@ -23,6 +23,7 @@ import Builder
 import Simplify
 import Imp
 import Util (scanM)
+import Lower
 
 exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
@@ -50,8 +51,13 @@ prepareFunctionForExport' cc f = do
         Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon naryPi argSig'
   f' <- asNaryLam naryPi f
   -- TODO: figure out how to handle specialization cache emissions when compiling for export
-  fSimp <- simplifyTopFunctionAssumeNoTopEmissions f'
-  fImp <- toImpExportedFunction cc fSimp argRecon
+  NaryLamExpr bs Pure body <- simplifyTopFunctionAssumeNoTopEmissions f'
+  -- TODO: Optimize the function!
+  loweredAbs <- refreshAbs (Abs bs body) \(NonEmptyNest b' bs') body' -> do
+    explicitIx <- emitIx body'
+    instIx <- simplifyIx explicitIx
+    Abs (Nest b' bs') <$> lowerFullySequential instIx
+  fImp <- toImpExportedFunction cc loweredAbs argRecon
   return (fImp, sig)
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)

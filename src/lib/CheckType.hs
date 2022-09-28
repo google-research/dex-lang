@@ -498,6 +498,18 @@ typeCheckPrimCon con = case con of
         def <- lookupDataDef defName
         cons <- checkedInstantiateDataDef def params
         e |: dataDefRep cons
+      DictTy (DictType _ clsName allParams) -> do
+        ClassDef _ _ pbs sbs methodTys <- lookupClassDef clsName
+        let (params, superclasses) = splitAt (nestLength pbs) allParams
+        Abs sbs' methodTys' <- checkedApplyNaryAbs (Abs pbs $ Abs sbs $ ListE methodTys) params
+        -- TODO: Check that this subst is well typed
+        ListE methodTys'' <- applySubst (sbs' @@> (SubstVal <$> superclasses)) methodTys'
+        thunkedMethodTys <- forM methodTys'' \(MethodType _ mty) -> case mty of
+          Pi _ -> return mty
+          _    -> do
+            Abs b mty' <- toConstAbs mty
+            return $ Pi $ PiType (PiBinder b UnitTy PlainArrow) Pure mty'
+        e |: ProdTy thunkedMethodTys
       _ -> error $ "Unsupported newtype: " ++ pprint ty
     return ty'
   BaseTypeRef p -> do
@@ -519,7 +531,7 @@ typeCheckPrimCon con = case con of
           def <- lookupDataDef defName
           cons <- checkedInstantiateDataDef def params
           e |: RawRefTy (dataDefRep cons)
-        _ -> error $ "Unsupported newtype: " ++ pprint ty
+        _ -> error $ "Unsupported newtype reference: " ++ pprint ty
       return $ RawRefTy ty'
     SumAsProd tys tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
@@ -827,10 +839,13 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   Seq _ ixDict carry f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     carryTy' <- getTypeE carry
+    let badCarry = throw TypeErr $ "Seq carry should be a product of raw references, got: " ++ pprint carryTy'
+    case carryTy' of
+      ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
+      _ -> badCarry
     Pi (PiType (PiBinder b argTy PlainArrow) eff UnitTy) <- getTypeE f
     checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') argTy
     declareEffs =<< liftHoistExcept (hoist b eff)
-    RawRefTy _ <- return carryTy'  -- We might need allow products of references too.
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d

@@ -13,6 +13,33 @@ def id' (x:Int) : Int = x
 
 def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + off)
 
+
+-- CHECK-LABEL: matmul-single-alloc
+"matmul-single-alloc"
+m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
+
+%passes imp
+m' = m ** m
+-- CHECK: alloc Float32[10000]
+-- CHECK-NOT: alloc
+
+"basic destination passing for scalar array literals"
+-- CHECK-LABEL: basic destination passing for scalar array literals
+
+%passes lower
+_ = for i:(Fin 50). [1, 2, 3]
+-- CHECK-NOT: alloc
+
+"no destinations for singleton values"
+-- CHECK-LABEL: no destinations for singleton values
+
+%passes lower
+yield_state 0 \ref.
+  for i:(Fin 10). ref := get ref + 1
+-- CHECK-NOT: alloc
+
+-- === Loop unrolling ===
+
 -- CHECK-LABEL: unroll-eliminate-table
 "unroll-eliminate-table"
 
@@ -25,15 +52,6 @@ def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + o
 -- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
 -- CHECK-NEXT: ([[x0]], [[x2]])
 
--- CHECK-LABEL: matmul-single-alloc
-"matmul-single-alloc"
-m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
-
-%passes imp
-m' = m ** m
--- CHECK: alloc Float32[10000]
--- CHECK-NOT: alloc
-
 "don't unroll large table literals"
 -- CHECK-LABEL: don't unroll large table literals
 
@@ -43,9 +61,37 @@ x = for i:(Fin 4). [0, 0, 0, ordinal i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 -- CHECK: , 0 ]
 -- CHECK-NOT: [0
 
-"basic destination passing for scalar array literals"
--- CHECK-LABEL: basic destination passing for scalar array literals
+"no excessive nested unrolling"
+-- CHECK-LABEL: no excessive nested unrolling
 
-%passes opt lower
-_ = for i:(Fin 50). [1, 2, 3]
--- CHECK-NOT: alloc
+%passes opt
+_ = for i:(Fin 20) j:(Fin 4). ordinal j
+-- CHECK: [0, 1, 2, 3]
+-- CHECK-NOT: [0, 1, 2, 3]
+
+"no excessive atom body unrolling"
+-- CHECK-LABEL: no excessive atom body unrolling
+
+one_f32 : Float32 = 1.0
+
+%passes simp
+_ = for i:(Fin 100). one_f32
+-- CHECK: 1.
+-- CHECK-NOT: 1.
+
+-- === Loop invariant code motion ===
+
+"alloc hoisting"
+-- CHECK-LABEL: alloc hoisting
+
+%passes lower-opt
+_ = for i:(Fin 10).
+  n = ordinal i + 2
+  for j:(Fin 4). sum for k:(Fin n). ordinal j
+-- The alloc for the (ordinal i + 2)-sized array should happen in the i loop,
+-- not in the j loop
+-- CHECK: [[n:v#[0-9]+]]:Word32 = %iadd {{.*}} 0x2
+-- CHECK-NOT: seq
+-- CHECK: alloc {{.*}}Fin{{.*}}[[n]]
+-- CHECK: seq
+-- CHECK: seq
