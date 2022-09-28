@@ -36,6 +36,7 @@ import qualified Data.ByteString.Char8 as B
 import Data.Functor ((<&>))
 import Data.String
 import Data.Foldable
+import Data.Maybe (catMaybes)
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import qualified Data.Set as S
@@ -440,26 +441,33 @@ compileInstr instr = case instr of
     let dt = scalarTy idt
     emitInstr dt $ L.BitCast x dt []
   ICall f args -> do
-    (f', lTy, IFunType cc _ impResultTys) <- lookupImpFunVar f
-    let resultTys = map scalarTy impResultTys
     args' <- mapM compileExpr args
-    case cc of
-      FFIFun -> do
-        ans <- emitCallInstr lTy f' args'
-        return [ans]
-      FFIMultiResultFun -> do
-        resultPtr <- makeMultiResultAlloc resultTys
-        emitVoidCallInstr lTy f' (resultPtr : args')
-        loadMultiResultAlloc resultTys resultPtr
-      CEntryFun -> do
-        exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
-        compileIf exitCode throwRuntimeError (return ())
-        return []
-      CInternalFun -> do
-        exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
-        compileIf exitCode throwRuntimeError (return ())
-        return []
-      _ -> error $ "Unsupported calling convention: " ++ show cc
+    lookupSubstM f >>= \case
+      FunctionSubstVal f' lTy (IFunType cc _ _) -> do
+        case cc of
+          CEntryFun -> do
+            exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
+            compileIf exitCode throwRuntimeError (return ())
+            return []
+          CInternalFun -> do
+            exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
+            compileIf exitCode throwRuntimeError (return ())
+            return []
+          _ -> error $ "Unsupported calling convention: " ++ show cc
+      RenameOperandSubstVal v -> do
+        lookupImpFun v >>= \case
+          ImpFunction _ _ -> error "Imp functions should be abstracted at this point"
+          FFIFunction ty@(IFunType cc _ impResultTys) fname -> do
+            let resultTys = map scalarTy impResultTys
+            case cc of
+              FFIFun -> do
+                ans <- emitExternCall (makeFunSpec fname ty) args'
+                return [ans]
+              FFIMultiResultFun -> do
+                resultPtr <- makeMultiResultAlloc resultTys
+                emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
+                loadMultiResultAlloc resultTys resultPtr
+              _ -> error $ "Unsupported calling convention: " ++ show cc
 
 -- TODO: use a careful naming discipline rather than strings
 -- (this is only used on the CUDA path which is currently broken anyway)
@@ -916,8 +924,8 @@ emitCallInstr ::LLVMBuilder m => LLVMFunType -> L.Operand -> [L.Operand] -> m Op
 emitCallInstr (retTy, argTys) f xs = emitInstr retTy $ callInstr fTy' (Right f) xs
   where fTy' = funTy retTy argTys
 
-emitVoidCallInstr ::LLVMBuilder m => LLVMFunType -> L.Operand -> [L.Operand] -> m ()
-emitVoidCallInstr (retTy, argTys) f xs =
+_emitVoidCallInstr ::LLVMBuilder m => LLVMFunType -> L.Operand -> [L.Operand] -> m ()
+_emitVoidCallInstr (retTy, argTys) f xs =
   addInstr $ L.Do $ callInstr fTy' (Right f) xs
   where fTy' = funTy retTy argTys
 
@@ -1098,11 +1106,6 @@ lookupImpVar v = lookupSubstM v <&> \case
   OperandSubstVal x -> x
   RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"
 
-lookupImpFunVar :: Compiler m => ImpFunName i -> m i o (Operand, LLVMFunType, IFunType)
-lookupImpFunVar v = lookupSubstM v <&> \case
-  FunctionSubstVal f lTy iTy -> (f, lTy, iTy)
-  RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"
-
 finishBlock :: LLVMBuilder m => L.Terminator -> L.Name -> m ()
 finishBlock term name = do
   oldName <- gets blockName
@@ -1235,9 +1238,13 @@ abstractLinktimeObjects
   :: EnvReader m => ImpFunction n -> m n (LinkableImpFunction n, [ImpFunName n])
 abstractLinktimeObjects f = do
   let vs = freeVarsList f
-  Abs bs f' <- return $ abstractFreeVarsNoAnn vs f
-  tys <- forM vs \v -> impFunType <$> lookupImpFun v
-  return (LinkableImpFunction tys bs f', vs)
+  vsToAbs <- catMaybes <$> forM vs \v ->
+    lookupImpFun v <&> \case
+      ImpFunction _ _ -> Just v
+      FFIFunction _ _ -> Nothing
+  Abs bs f' <- return $ abstractFreeVarsNoAnn vsToAbs f
+  tys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
+  return (LinkableImpFunction tys bs f', vsToAbs)
 
 -- === Module building ===
 

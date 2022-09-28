@@ -38,7 +38,7 @@ data JIT =
         }
 
 
-type ExplicitLinkMap = M.Map String (Ptr ()) 
+type ExplicitLinkMap = M.Map String (Ptr ())
 
 -- XXX: The target machine cannot be destroyed before JIT is destroyed
 createJIT :: T.TargetMachine -> IO JIT

@@ -772,7 +772,7 @@ nameMapImpToObj (CNameMap fname calledNames) = do
   calledNames' <- forM calledNames \v -> do
     queryObjCache v >>= \case
       Just v' -> return v'
-      Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint fname
+      Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
   return $ CNameMap fname calledNames'
 
 -- === saving cache to disk ===
