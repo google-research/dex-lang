@@ -629,7 +629,7 @@ compileTopLevelFun fname = do
   void $ loadObject fObj
 {-# SCC compileTopLevelFun #-}
 
-loadObject :: (Topper m, Mut n) => ObjectFileName n -> m n (Ptr ())
+loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n (Ptr ())
 loadObject fname =
   lookupLoadedObject fname >>= \case
     Nothing -> do
@@ -638,12 +638,12 @@ loadObject fname =
       return ptr
     Just p -> return p
 
-loadObjectNoCache :: (Topper m, Mut n) => ObjectFileName n -> m n (Ptr ())
+loadObjectNoCache :: (Topper m, Mut n) => FunObjCodeName n -> m n (Ptr ())
 loadObjectNoCache name = do
-  ObjectFile contents (CNameMap mainName depNames) <- lookupObjectFile name
+  FunObjCode contents (CNameMap mainName depNames) <- lookupFunObjCode name
   ptrs <- mapM loadObject depNames
   jit <- getDexJIT
-  liftIO $ loadObjectFileExplicitLinks jit mainName ptrs contents
+  liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs contents
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
@@ -667,7 +667,7 @@ forceDeferredInlining v =
     TopFunBound _ (UnspecializedTopFun _ f) -> return f
     _ -> return $ Var v
 
-toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (ObjectFileName n)
+toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
 toCFunction nameHint f = do
   PassCtx{..} <- getPassCtx
   logger  <- getLogger
@@ -675,7 +675,7 @@ toCFunction nameHint f = do
   jit <- getDexJIT
   obj <- liftIO $ compileLLVMModule jit llvmModule (mainFunName nameMap)
   nameMap' <- nameMapImpToObj nameMap
-  emitObjFile nameHint $ ObjectFile obj nameMap'
+  emitObjFile nameHint $ FunObjCode obj nameMap'
 
 getLLVMOptLevel :: EvalConfig -> LLVMExec.OptLevel
 getLLVMOptLevel cfg = case optLevel cfg of
@@ -782,7 +782,7 @@ loadModuleSource config moduleName = do
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
-nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap ObjectFileName n)
+nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap FunObjCodeName n)
 nameMapImpToObj (CNameMap fname calledNames) = do
   calledNames' <- forM calledNames \v -> do
     queryObjCache v >>= \case

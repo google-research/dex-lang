@@ -277,12 +277,12 @@ lookupLoadedModule name = do
   loadedModules <- withEnv $ envLoadedModules . topEnv
   return $ M.lookup name $ fromLoadedModules loadedModules
 
-lookupLoadedObject :: EnvReader m => ObjectFileName n -> m n (Maybe (Ptr ()))
+lookupLoadedObject :: EnvReader m => FunObjCodeName n -> m n (Maybe (Ptr ()))
 lookupLoadedObject name = do
   loadedObjects <- withEnv $ envLoadedObjects . topEnv
   return $ M.lookup name $ fromLoadedObjects loadedObjects
 
-extendLoadedObjects :: (Mut n, TopBuilder m) => ObjectFileName n -> Ptr () -> m n ()
+extendLoadedObjects :: (Mut n, TopBuilder m) => FunObjCodeName n -> Ptr () -> m n ()
 extendLoadedObjects name ptr = do
   let loaded = LoadedObjects $ M.singleton name ptr
   emitPartialTopEnvFrag $ mempty {fragLoadedObjects = loaded}
@@ -308,18 +308,18 @@ querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
 
-extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> ObjectFileName n -> m n ()
+extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> FunObjCodeName n -> m n ()
 extendObjCache fImp fObj =
   extendCache $ mempty { objCache = eMapSingleton fImp fObj }
 
-queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (ObjectFileName n))
+queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (FunObjCodeName n))
 queryObjCache v = do
   cache <- objCache <$> getCache
   return $ lookupEMap cache v
 
-emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
+emitObjFile :: (Mut n, TopBuilder m) => NameHint -> FunObjCode n -> m n (FunObjCodeName n)
 emitObjFile hint objFile = do
-  v <- emitBinding hint $ ObjectFileBinding objFile
+  v <- emitBinding hint $ FunObjCodeBinding objFile
   return v
 
 getCache :: EnvReader m => m n (Cache n)

@@ -408,9 +408,9 @@ lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = lookupEnv name >>= \case ModuleBinding m -> return m
 {-# INLINE lookupModule #-}
 
-lookupObjectFile :: EnvReader m => ObjectFileName n -> m n (ObjectFile n)
-lookupObjectFile name = lookupEnv name >>= \case ObjectFileBinding m -> return m
-{-# INLINE lookupObjectFile #-}
+lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (FunObjCode n)
+lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding m -> return m
+{-# INLINE lookupFunObjCode #-}
 
 lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
 lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x

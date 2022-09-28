@@ -8,7 +8,7 @@
 
 module LLVMExec (LLVMKernel (..), DexJIT (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, compileLLVMModule,
-                 standardCompilationPipeline, loadObjectFileExplicitLinks, OptLevel (..),
+                 standardCompilationPipeline, loadFunObjCodeExplicitLinks, OptLevel (..),
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal,
                  createDexJIT) where
@@ -94,7 +94,7 @@ createDexJIT opt = do
   jit <- LLVM.JIT.createJIT tm
   return $ DexJIT jit tm opt
 
-compileLLVMModule :: DexJIT -> L.Module -> LocalCName -> IO ObjectFileContents
+compileLLVMModule :: DexJIT -> L.Module -> LocalCName -> IO FunObjCodeContents
 compileLLVMModule jit ast exportName = do
   let tm = jitTargetMachine jit
   withContext \c -> do
@@ -186,8 +186,8 @@ compileOneOff dexJIT logger ast name deps f = do
     f =<< getFunctionPtr compiled name
 
 -- only links against dex functions provided by the explicit map
-loadObjectFileExplicitLinks :: DexJIT -> LocalCName -> M.Map LocalCName (Ptr ()) -> BS.ByteString -> IO (Ptr ())
-loadObjectFileExplicitLinks dexJIT mainName ptrsToLink moduleContents = do
+loadFunObjCodeExplicitLinks :: DexJIT -> LocalCName -> M.Map LocalCName (Ptr ()) -> BS.ByteString -> IO (Ptr ())
+loadFunObjCodeExplicitLinks dexJIT mainName ptrsToLink moduleContents = do
   nativeModule <- loadNativeModule (llvmJIT dexJIT) ptrsToLink moduleContents
   castFunPtrToPtr <$> getFunctionPtr nativeModule mainName
 

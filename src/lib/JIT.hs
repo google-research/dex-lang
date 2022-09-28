@@ -81,7 +81,7 @@ data CompileState = CompileState
   , globalDefs  :: [L.Definition]
   , curDevice   :: Device
   -- TODO: use safe names for object files
-  , _objFileDeps :: S.Set (ObjectFileName VoidS) }
+  , _objFileDeps :: S.Set (FunObjCodeName VoidS) }
 
 newtype CompileM i o a =
   CompileM { runCompileM' ::

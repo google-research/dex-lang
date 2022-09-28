@@ -351,7 +351,8 @@ emptyLoadedModules :: LoadedModules n
 emptyLoadedModules = LoadedModules mempty
 
 data LoadedObjects (n::S) = LoadedObjects
-  { fromLoadedObjects :: M.Map (ObjectFileName n) (Ptr ())}
+  -- the pointer points to the actual runtime function
+  { fromLoadedObjects :: M.Map (FunObjCodeName n) (Ptr ())}
   deriving (Show, Generic)
 
 emptyLoadedObjects :: LoadedObjects n
@@ -389,7 +390,7 @@ emptyImportStatus = ImportStatus mempty mempty
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
   , impCache  :: EMap AtomName ImpFunName n
-  , objCache  :: EMap ImpFunName ObjectFileName n
+  , objCache  :: EMap ImpFunName FunObjCodeName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
     -- only want to store one entry per module name as a simple cache eviction
     -- policy, so we store it keyed on the module name, with the text hash for
@@ -419,11 +420,11 @@ data CNameMap (e::E) (n::S) = CNameMap
   , calledFunNames :: M.Map LocalCName (e n) }
   deriving (Show, Generic)
 
-type ObjectFileName = Name ObjectFileNameC
-type ObjectFileContents = BS.ByteString
-data ObjectFile n = ObjectFile
-  { objectFileContents :: ObjectFileContents
-  , objectFileNameMap  :: CNameMap ObjectFileName n }
+type FunObjCodeName = Name FunObjCodeNameC
+type FunObjCodeContents = BS.ByteString
+data FunObjCode n = FunObjCode
+  { objectFileContents :: FunObjCodeContents
+  , objectFileNameMap  :: CNameMap FunObjCodeName n }
   deriving (Show, Generic)
 
 -- === bindings - static information we carry about a lexical scope ===
@@ -441,7 +442,7 @@ data Binding (c::C) (n::S) where
   HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
   EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
   ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
-  ObjectFileBinding :: ObjectFile n                   -> Binding ObjectFileNameC n
+  FunObjCodeBinding :: FunObjCode n                   -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
 deriving instance Show (Binding c n)
@@ -1450,7 +1451,7 @@ instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec AtomName
     `PairE` EMap AtomName ImpFunName
-    `PairE` EMap ImpFunName ObjectFileName
+    `PairE` EMap ImpFunName FunObjCodeName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
     `PairE` ListE (        LiftE ModuleSourceName
                    `PairE` LiftE FileHash
@@ -1855,7 +1856,7 @@ instance Color c => GenericE (Binding c) where
           (ClassName `PairE` LiftE Int `PairE` Atom))
       (EitherE7
           (ImpFunction)
-          (ObjectFile)
+          (FunObjCode)
           (Module)
           (LiftE PtrLitVal)
           (EffectDef)
@@ -1871,7 +1872,7 @@ instance Color c => GenericE (Binding c) where
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ instanceDef
     MethodBinding     className idx f   -> Case0 $ Case6 $ className `PairE` LiftE idx `PairE` f
     ImpFunBinding     fun               -> Case1 $ Case0 $ fun
-    ObjectFileBinding objfile           -> Case1 $ Case1 $ objfile
+    FunObjCodeBinding objfile           -> Case1 $ Case1 $ objfile
     ModuleBinding m                     -> Case1 $ Case2 $ m
     PtrBinding p                        -> Case1 $ Case3 $ LiftE p
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
@@ -1888,7 +1889,7 @@ instance Color c => GenericE (Binding c) where
     Case0 (Case5 (instanceDef))                             -> fromJust $ tryAsColor $ InstanceBinding   instanceDef
     Case0 (Case6 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
     Case1 (Case0 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
-    Case1 (Case1 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
+    Case1 (Case1 objfile)                                   -> fromJust $ tryAsColor $ FunObjCodeBinding objfile
     Case1 (Case2 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
     Case1 (Case3 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
@@ -2112,7 +2113,7 @@ instance AlphaHashableE LoadedModules
 instance SubstE Name    LoadedModules
 
 instance GenericE LoadedObjects where
-  type RepE LoadedObjects = ListE (PairE ObjectFileName (LiftE (Ptr ())))
+  type RepE LoadedObjects = ListE (PairE FunObjCodeName (LiftE (Ptr ())))
   fromE (LoadedObjects m) =
     ListE $ M.toList m <&> \(v,p) -> PairE v (LiftE p)
   {-# INLINE fromE #-}
@@ -2141,17 +2142,17 @@ instance SubstE Name e => SubstE Name (CNameMap e)
 instance SinkableE   e => SinkableE   (CNameMap e)
 instance HoistableE  e => HoistableE  (CNameMap e)
 
-instance GenericE ObjectFile where
-  type RepE ObjectFile = LiftE BS.ByteString `PairE` CNameMap ObjectFileName
-  fromE (ObjectFile contents m) = LiftE contents `PairE` m
+instance GenericE FunObjCode where
+  type RepE FunObjCode = LiftE BS.ByteString `PairE` CNameMap FunObjCodeName
+  fromE (FunObjCode contents m) = LiftE contents `PairE` m
   {-# INLINE fromE #-}
-  toE   (LiftE contents `PairE` m) = ObjectFile contents m
+  toE   (LiftE contents `PairE` m) = FunObjCode contents m
   {-# INLINE toE #-}
 
-instance Store (ObjectFile n)
-instance SubstE Name ObjectFile
-instance SinkableE  ObjectFile
-instance HoistableE ObjectFile
+instance Store (FunObjCode n)
+instance SubstE Name FunObjCode
+instance SinkableE  FunObjCode
+instance HoistableE FunObjCode
 
 instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
