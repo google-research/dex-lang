@@ -56,7 +56,11 @@ toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
 {-# SCC toImpStandaloneFunction #-}
 
 toImpStandaloneFunction' :: NaryLamExpr o -> SubstImpM i o (ImpFunction o)
-toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
+toImpStandaloneFunction' lam@(NaryLamExpr bs effs body) = do
+  case effs of
+    Pure -> return ()
+    OneEffect IOEffect -> return ()
+    _ -> error "effectful functions not implemented"
   ty <- naryLamExprType lam
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty Unmanaged
   let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
@@ -66,7 +70,6 @@ toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
     extendSubst (bs @@> map SubstVal args) do
       void $ translateBlock (Just $ sink resultDest) body
       return []
-toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not implemented"
 
 -- | Calling convention for exported function.
 data ExportCC = FlatExportCC
@@ -952,7 +955,11 @@ makeNaryLamDest piTy mgmt = do
 
 makeNaryLamDestRec :: forall n. Emits n => DestIdxs n -> DepVars n
                    -> NaryPiType n -> DestM n (NaryLamDest n)
-makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) Pure resultTy) = do
+makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) effs resultTy) = do
+  case effs of
+    Pure -> return ()
+    OneEffect IOEffect -> return ()
+    _ -> error "effectful functions not implemented"
   let argTy = binderType b
   argDest <- makeDestRec idxs depVars argTy
   Abs (b':>_) (Abs bs' resultDest) <-
@@ -965,7 +972,6 @@ makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) Pure resultTy) =
           restPiTy <- applySubst (b@>v) $ NaryPiType (NonEmptyNest b1 bsRest) Pure resultTy
           makeNaryLamDestRec idxs' depVars' restPiTy
   return $ Abs (Nest (b':>argDest) bs') resultDest
-makeNaryLamDestRec _ _ _ = error "effectful functions not implemented"
 
 -- TODO: should we put DestIdxs/DepVars in the monad? And maybe it should also
 -- be a substituting one.
