@@ -61,6 +61,7 @@ runTopperMFromContext :: Ptr Context -> (forall n. Mut n => TopperM n a) -> IO (
 runTopperMFromContext ctxPtr cont = do
   Context evalConfig jit env <- fromStablePtr ctxPtr
   runTopperM evalConfig jit env cont
+{-# INLINE runTopperMFromContext #-}
 
 dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do

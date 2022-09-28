@@ -632,18 +632,14 @@ compileTopLevelFun fname = do
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n (Ptr ())
 loadObject fname =
   lookupLoadedObject fname >>= \case
+    Just p -> return p
     Nothing -> do
-      ptr <- loadObjectNoCache fname
+      FunObjCode contents (CNameMap mainName depNames) <- lookupFunObjCode fname
+      ptrs <- mapM loadObject depNames
+      jit <- getDexJIT
+      ptr <- liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs contents
       extendLoadedObjects fname ptr
       return ptr
-    Just p -> return p
-
-loadObjectNoCache :: (Topper m, Mut n) => FunObjCodeName n -> m n (Ptr ())
-loadObjectNoCache name = do
-  FunObjCode contents (CNameMap mainName depNames) <- lookupFunObjCode name
-  ptrs <- mapM loadObject depNames
-  jit <- getDexJIT
-  liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs contents
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition

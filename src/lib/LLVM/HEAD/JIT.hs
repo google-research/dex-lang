@@ -74,14 +74,14 @@ compileModule moduleJIT@JIT{..} linkMap ast compilationPipeline = do
       compilationPipeline m
       OrcJIT.cloneAsThreadSafeModule m
   moduleDylib <- newDylib moduleJIT
-  withExplicitLinkMap compileLayer moduleDylib linkMap do
-    OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer moduleDylib
-    OrcJIT.addModule tsModule moduleDylib compileLayer
-    moduleDtors <- forM dtorNames \dtorName -> do
-      Right (OrcJIT.JITSymbol dtorAddr _) <-
-        OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
-      return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
-    return NativeModule{..}
+  addExplicitLinkMap compileLayer moduleDylib linkMap
+  OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer moduleDylib
+  OrcJIT.addModule tsModule moduleDylib compileLayer
+  moduleDtors <- forM dtorNames \dtorName -> do
+    Right (OrcJIT.JITSymbol dtorAddr _) <-
+      OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
+    return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
+  return NativeModule{..}
   where
     -- Unfortunately the JIT layers we use here don't handle the destructors properly,
     -- so we have to find and call them ourselves.
@@ -109,20 +109,19 @@ loadNativeModule :: JIT -> ExplicitLinkMap -> ObjectFileContents -> IO NativeMod
 loadNativeModule moduleJIT linkingMap objFileContents = do
   moduleDylib <- newDylib moduleJIT
   let cl = compileLayer moduleJIT
-  withExplicitLinkMap cl moduleDylib linkingMap do
-    OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess cl moduleDylib
-    let moduleDtors = [] -- TODO(dougalm): handle destructors (with help from Adam)
-    loadObjectFile moduleJIT moduleDylib objFileContents
-    return NativeModule{..}
+  addExplicitLinkMap cl moduleDylib linkingMap
+  OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess cl moduleDylib
+  let moduleDtors = [] -- TODO(dougalm): handle destructors (with help from Adam)
+  loadObjectFile moduleJIT moduleDylib objFileContents
+  return NativeModule{..}
 
-withExplicitLinkMap :: OrcJIT.IRCompileLayer -> OrcJIT.JITDylib -> ExplicitLinkMap -> IO a -> IO a
-withExplicitLinkMap l dylib linkMap cont = do
+addExplicitLinkMap :: OrcJIT.IRCompileLayer -> OrcJIT.JITDylib -> ExplicitLinkMap -> IO ()
+addExplicitLinkMap l dylib linkMap = do
   let (linkedNames, linkedPtrs) = unzip $ M.toList linkMap
   let flags = OrcJIT.defaultJITSymbolFlags { OrcJIT.jitSymbolAbsolute = True }
   let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr ptr) flags | ptr <- linkedPtrs]
   withMangledSymbols l (map fromString linkedNames) \linkedNames' -> do
     OrcJIT.defineAbsoluteSymbols dylib $ zip linkedNames' ptrSymbols
-    cont
 
 withMangledSymbols :: OrcJIT.IRLayer l => l -> [SBS.ShortByteString] -> ([OrcJIT.MangledSymbol] -> IO a) -> IO a
 withMangledSymbols _ [] cont = cont []
