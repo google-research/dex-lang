@@ -107,25 +107,32 @@ instance Compiler CompileM
 
 impToLLVM :: (EnvReader m, MonadIO1 m)
           => FilteredLogger PassName [Output] -> NameHint -> ImpFunction n
-          -> m n (L.Module, CNameMap ImpFunName n)
+          -> m n (L.Module, CNameMap (EitherE ImpFunName PtrName) n)
 impToLLVM logger fNameHint f = do
   let fName = makeMainFunName fNameHint
-  (LinkableImpFunction calledTys calledBs f', calledFunctionNames) <- abstractLinktimeObjects f
-  let internalCalledNames = makeInternalCalledNames $ map getNameHint calledFunctionNames
-  (internalDefns, substVals) <- unzip <$> forM (zip internalCalledNames calledTys) \(v, ty) -> do
+  (LinkableImpFunction calledTys ptrTys calledBs ptrBs f', calledFunctionNames, ptrNames) <- abstractLinktimeObjects f
+  let internalCalledNames = makeInternalNames "dexCalled_" $ map getNameHint calledFunctionNames
+  (calledInternalDefns, calledSubstVals) <- unzip <$> forM (zip internalCalledNames calledTys) \(v, ty) -> do
     let llvmTy = impFunTyToLLVMTy ty
     let v' = L.Name $ fromString v
     let defn = makeCalledFunDefn v' llvmTy
     let sv = FunctionSubstVal (makeCalledFunOperand v' llvmTy) llvmTy ty
     return (defn, sv)
-  let nameMap = CNameMap fName (M.fromList $ zip internalCalledNames calledFunctionNames)
-  let initEnv = idSubst <>> calledBs @@> substVals
+  let internalPtrNames = makeInternalNames "dexPtr_" $ map getNameHint ptrNames
+  (ptrInternalDefns, ptrSubstVals) <- unzip <$> forM (zip internalPtrNames ptrTys) \(v, ty) -> do
+    let v' = L.Name $ fromString v
+    let defn = ptrDecl v' ty
+    let sv = OperandSubstVal $ L.ConstantOperand $ globalReference (ptrTypeToLLVM ty) v'
+    return (defn, sv)
+  let nameMap = CNameMap fName (M.fromList $    zip internalCalledNames (map LeftE calledFunctionNames)
+                                             ++ zip internalPtrNames    (map RightE ptrNames))
+  let initEnv = idSubst <>> calledBs @@> calledSubstVals <>> ptrBs @@> ptrSubstVals
   (defns, externSpecs, globalDtors) <- compileFunction logger (L.Name $ fromString fName) initEnv f'
   let externDefns = map externDecl $ toList externSpecs
   let dtorDef = defineGlobalDtors globalDtors
   let resultModule = L.defaultModule
         { L.moduleName = "dexModule"
-        , L.moduleDefinitions = dtorDef : internalDefns ++ defns ++ externDefns }
+        , L.moduleDefinitions = dtorDef : calledInternalDefns ++ ptrInternalDefns ++ defns ++ externDefns }
   return (resultModule, nameMap)
   where
     dtorType = L.FunctionType L.VoidType [] False
@@ -148,9 +155,9 @@ impToLLVM logger fNameHint f = do
     makeMainFunName :: NameHint -> LocalCName
     makeMainFunName hint = "dexMainFunction_" <> fromString (show hint)
 
-    makeInternalCalledNames :: [NameHint] -> [LocalCName]
-    makeInternalCalledNames hints =
-      ["dexCalled_" <> fromString (show h) <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
+    makeInternalNames :: String -> [NameHint] -> [LocalCName]
+    makeInternalNames prefix hints =
+      [prefix <> show h <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
 
     makeCalledFunDefn :: L.Name -> LLVMFunType -> L.Definition
     makeCalledFunDefn name (retTy, argTys) =
@@ -957,7 +964,10 @@ scalarTy b = case b of
     Float32Type -> fp32
   Vector [n] sb -> L.VectorType n $ scalarTy $ Scalar sb
   Vector _   _  -> error "Expected a 1D vector type"
-  PtrType (s, t) -> pointerType (scalarTy t) (lAddress s)
+  PtrType t -> ptrTypeToLLVM t
+
+ptrTypeToLLVM :: PtrType -> L.Type
+ptrTypeToLLVM (s, t) = pointerType (scalarTy t) (lAddress s)
 
 pointeeType :: BaseType -> L.Type
 pointeeType b = case b of
@@ -1009,6 +1019,12 @@ externDecl (ExternFunSpec fname retTy retAttrs funAttrs argTys) =
   , L.functionAttributes = fmap Right funAttrs
   }
   where argName i = L.Name $ "arg" <> fromString (show i)
+
+ptrDecl :: L.Name -> PtrType -> L.Definition
+ptrDecl v ty = L.GlobalDefinition $ L.globalVariableDefaults
+  { L.name = v
+  , L.type' = ptrTypeToLLVM ty
+  , L.linkage = L.Private }
 
 cpuUnaryIntrinsic :: LLVMBuilder m => UnOp -> Operand -> m Operand
 cpuUnaryIntrinsic op x = case typeOf x of
@@ -1229,22 +1245,31 @@ funTy retTy argTys = L.FunctionType retTy argTys False
 -- pointers
 data LinkableImpFunction (n::S) where
   LinkableImpFunction
-    :: [IFunType]                         -- types of required functions
-    -> Nest (NameBinder ImpFunNameC) n l  -- names of required functions
-    -> ImpFunction l
+    :: [IFunType]                          -- types of required functions
+    -> [PtrType]                           -- types of required pointers
+    -> Nest (NameBinder ImpFunNameC) n l1  -- binders for required functions
+    -> Nest (NameBinder AtomNameC) l1 l2   -- binders for required pointer constants
+    -> ImpFunction l2
     -> LinkableImpFunction n
 
 abstractLinktimeObjects
-  :: EnvReader m => ImpFunction n -> m n (LinkableImpFunction n, [ImpFunName n])
+  :: EnvReader m => ImpFunction n -> m n (LinkableImpFunction n, [ImpFunName n], [PtrName n])
 abstractLinktimeObjects f = do
-  let vs = freeVarsList f
-  vsToAbs <- catMaybes <$> forM vs \v ->
+  let ptrVs = freeAtomVarsList f
+  (atomNames, ptrNames, ptrTys) <- unzip3 <$> catMaybes <$> forM ptrVs \v ->
+    lookupAtomName v >>= \case
+      PtrLitBound ty ptrName -> do
+        return $ Just (v, ptrName, ty)
+      _ -> return Nothing
+  f' <- return $ abstractFreeVarsNoAnn atomNames f
+  let funVs = freeVarsList f'
+  vsToAbs <- catMaybes <$> forM funVs \v ->
     lookupImpFun v <&> \case
       ImpFunction _ _ -> Just v
       FFIFunction _ _ -> Nothing
-  Abs bs f' <- return $ abstractFreeVarsNoAnn vsToAbs f
-  tys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
-  return (LinkableImpFunction tys bs f', vsToAbs)
+  Abs calledFunBs (Abs ptrBs f'') <- return $ abstractFreeVarsNoAnn vsToAbs f'
+  funTys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
+  return (LinkableImpFunction funTys ptrTys calledFunBs ptrBs f'', vsToAbs, ptrNames)
 
 -- === Module building ===
 

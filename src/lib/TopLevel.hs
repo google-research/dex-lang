@@ -11,9 +11,8 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache, createDexJIT,
-  DexJIT, loadObject, nameMapImpToObj, getLLVMOptLevel) where
+  DexJIT, loadLinktimeObject, nameMapImpToObj, getLLVMOptLevel) where
 
-import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
 import Control.Exception (throwIO, catch)
@@ -626,20 +625,24 @@ compileTopLevelFun fname = do
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
   extendObjCache fImpName fObj
-  void $ loadObject fObj
+  void $ loadLinktimeObject (LeftE fObj)
 {-# SCC compileTopLevelFun #-}
 
-loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n (Ptr ())
-loadObject fname =
+loadLinktimeObject :: (Topper m, Mut n) => EitherE FunObjCodeName PtrName n -> m n (Ptr ())
+loadLinktimeObject (LeftE fname) =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
       FunObjCode contents (CNameMap mainName depNames) <- lookupFunObjCode fname
-      ptrs <- mapM loadObject depNames
+      ptrs <- mapM loadLinktimeObject depNames
       jit <- getDexJIT
       ptr <- liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs contents
       extendLoadedObjects fname ptr
       return ptr
+loadLinktimeObject (RightE ptrName) =
+  lookupEnv ptrName >>= \case
+    PtrBinding (PtrLitVal _ ptr) -> return ptr
+    PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
@@ -684,19 +687,16 @@ evalLLVM block = do
   PassCtx{..} <- getPassCtx
   logger  <- getLogger
   let filteredLogger = FilteredLogger shouldLogPass logger
-  (blockAbs, ptrVals) <- abstractPtrLiterals block
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
-  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-                                             toImpFunction backend cc blockAbs
+  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $ toImpFunction backend cc block
   (llvmAST, nameMap) <- impToLLVM filteredLogger "main" impFun
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if requiresBench then compileAndBench needsSync else compileAndEval
   jit <- getDexJIT
   CNameMap mainName depNames <- nameMapImpToObj nameMap
-  depPtrs <- mapM loadObject depNames
-  resultVals <- liftIO $ llvmEvaluate jit filteredLogger
-                  llvmAST mainName depPtrs ptrVals resultTypes
+  depPtrs <- mapM loadLinktimeObject depNames
+  resultVals <- liftIO $ llvmEvaluate jit filteredLogger llvmAST mainName depPtrs resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
@@ -778,12 +778,16 @@ loadModuleSource config moduleName = do
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
-nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap FunObjCodeName n)
+nameMapImpToObj
+  :: (EnvReader m, Fallible1 m)
+  => CNameMap (EitherE ImpFunName PtrName) n
+  -> m n (CNameMap (EitherE FunObjCodeName PtrName) n)
 nameMapImpToObj (CNameMap fname calledNames) = do
-  calledNames' <- forM calledNames \v -> do
-    queryObjCache v >>= \case
-      Just v' -> return v'
-      Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
+  calledNames' <- forM calledNames \case
+      LeftE v -> queryObjCache v >>= \case
+        Just v' -> return $ LeftE v'
+        Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
+      RightE v -> return $ RightE v
   return $ CNameMap fname calledNames'
 
 -- === saving cache to disk ===
@@ -857,22 +861,6 @@ traverseBindingsTopStateEx
 traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
   defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
   return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv)
-
-abstractPtrLiterals
-  :: (EnvReader m, HoistableE e)
-  => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
-abstractPtrLiterals block = do
-  let fvs = freeAtomVarsList block
-  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
-    lookupAtomName v >>= \case
-      PtrLitBound _ name -> lookupEnv name >>= \case
-        PtrBinding (PtrLitVal ty ptr) ->
-          return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
-        PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
-      _ -> return Nothing
-  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
-  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
-  return (Abs ptrBinders block', ptrVals)
 
 -- -- === instances ===
 

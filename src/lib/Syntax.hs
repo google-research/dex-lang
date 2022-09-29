@@ -96,7 +96,7 @@ module Syntax (
     ImpFunction (..), ImpBlock (..), ImpDecl (..),
     ImpInstr (..), iBinderType,
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
-    Output (..), PassName (..), Result (..), BenchStats,
+    Output (..), PassName (..), Result (..), BenchStats, PtrName,
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam,
     fromNaryTabLam, fromNaryTabLamExact,

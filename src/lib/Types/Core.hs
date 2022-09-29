@@ -424,7 +424,7 @@ type FunObjCodeName = Name FunObjCodeNameC
 type FunObjCodeContents = BS.ByteString
 data FunObjCode n = FunObjCode
   { objectFileContents :: FunObjCodeContents
-  , objectFileNameMap  :: CNameMap FunObjCodeName n }
+  , objectFileNameMap  :: CNameMap (EitherE FunObjCodeName PtrName) n }
   deriving (Show, Generic)
 
 -- === bindings - static information we carry about a lexical scope ===
@@ -2143,7 +2143,7 @@ instance SinkableE   e => SinkableE   (CNameMap e)
 instance HoistableE  e => HoistableE  (CNameMap e)
 
 instance GenericE FunObjCode where
-  type RepE FunObjCode = LiftE BS.ByteString `PairE` CNameMap FunObjCodeName
+  type RepE FunObjCode = LiftE BS.ByteString `PairE` CNameMap (EitherE FunObjCodeName PtrName)
   fromE (FunObjCode contents m) = LiftE contents `PairE` m
   {-# INLINE fromE #-}
   toE   (LiftE contents `PairE` m) = FunObjCode contents m

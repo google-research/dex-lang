@@ -45,10 +45,9 @@ type PtrBinder = IBinder
 -- TODO: make it purely a function of the type and avoid the AtomRecon
 toImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> Abs (Nest PtrBinder) IxDestBlock n
+              -> IxDestBlock n
               -> m n (ImpFunctionWithRecon n)
-toImpFunction _ cc absBlock = liftImpM $
-  translateTopLevel cc absBlock
+toImpFunction _ cc block = liftImpM $ translateTopLevel cc block
 {-# SCC toImpFunction #-}
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
@@ -290,12 +289,11 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> Abs (Nest PtrBinder) IxDestBlock i
+                  -> IxDestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs bs (Abs ixs (Abs (destb:>destTy) body))) = do
-  let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  ab  <- buildImpNaryAbs argTys \vs ->
-    extendSubst (bs @@> map Rename vs) $ translateDeclNest ixs do
+translateTopLevel cc (Abs ixs (Abs (destb:>destTy) body)) = do
+  ab  <- buildImpNaryAbs [] \_ ->
+    translateDeclNest ixs do
       dest <- case destTy of
         RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
         _ -> error "Expected a reference type for body destination"

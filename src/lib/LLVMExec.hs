@@ -108,12 +108,12 @@ compileLLVMModule jit ast exportName = do
 
 compileAndEval :: DexJIT -> FilteredLogger PassName [Output]
                -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ())
-               -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval jit logger ast fname deps args resultTypes = do
+               -> [BaseType] -> IO [LitVal]
+compileAndEval jit logger ast fname deps resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaCells (length args) \argsPtr ->
+    allocaCells 0 \argsPtr ->
+      -- TODO: no need to actually do this since we always have an emtpy list
       allocaCells (length resultTypes) \resultPtr -> do
-        storeLitVals argsPtr args
         evalTime <- compileOneOff jit logger ast fname deps $
           checkedCallFunPtr fd argsPtr resultPtr
         logSkippingFilter logger [EvalTime evalTime Nothing]
@@ -122,12 +122,11 @@ compileAndEval jit logger ast fname deps args resultTypes = do
 
 compileAndBench :: Bool -> DexJIT -> FilteredLogger PassName [Output]
                 -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ())
-                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA jit logger ast fname deps args resultTypes = do
+                -> [BaseType] -> IO [LitVal]
+compileAndBench shouldSyncCUDA jit logger ast fname deps resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaCells (length args) \argsPtr ->
+    allocaCells 0 \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
-        storeLitVals argsPtr args
         compileOneOff jit logger ast fname deps \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
