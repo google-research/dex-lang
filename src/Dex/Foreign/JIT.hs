@@ -95,10 +95,10 @@ dexCompile jitPtr ccInt ctxPtr funcAtomPtr = catchErrors $ do
     (impFunc, nativeSignature) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
     filteredLogger <- FilteredLogger (const False) <$> getLogger
     (llvmAST, nameMap) <- impToLLVM filteredLogger "userFunc" impFunc
-    CNameMap mainName depNames <- nameMapImpToObj nameMap
+    CNameMap mainName depNames dtors <- nameMapImpToObj nameMap
     depPtrs <- mapM loadObject depNames
     liftIO do
-      nativeModule <- LLVM.JIT.compileModule jit depPtrs llvmAST $
+      nativeModule <- LLVM.JIT.compileModule jit depPtrs dtors llvmAST $
           standardCompilationPipeline
             OptAggressively
             filteredLogger

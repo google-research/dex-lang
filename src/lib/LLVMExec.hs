@@ -107,28 +107,28 @@ compileLLVMModule jit ast exportName = do
       Mod.moduleObject tm m
 
 compileAndEval :: DexJIT -> FilteredLogger PassName [Output]
-               -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ())
+               -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ()) -> [String]
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval jit logger ast fname deps args resultTypes = do
+compileAndEval jit logger ast fname deps dtors args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff jit logger ast fname deps $
+        evalTime <- compileOneOff jit logger ast fname deps dtors $
           checkedCallFunPtr fd argsPtr resultPtr
         logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 {-# SCC compileAndEval #-}
 
 compileAndBench :: Bool -> DexJIT -> FilteredLogger PassName [Output]
-                -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ())
+                -> L.Module -> LocalCName -> M.Map LocalCName (Ptr ()) -> [String]
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA jit logger ast fname deps args resultTypes = do
+compileAndBench shouldSyncCUDA jit logger ast fname deps dtors args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff jit logger ast fname deps \fPtr -> do
+        compileOneOff jit logger ast fname deps dtors \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -176,19 +176,21 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
 
 compileOneOff
   :: DexJIT -> FilteredLogger PassName [Output]
-  -> L.Module -> String -> M.Map LocalCName (Ptr ())
+  -> L.Module -> String -> M.Map LocalCName (Ptr ()) -> [String]
   -> (DexExecutable -> IO a) -> IO a
-compileOneOff dexJIT logger ast name deps f = do
+compileOneOff dexJIT logger ast name deps dtors f = do
   let tm  = jitTargetMachine dexJIT
   let jit = llvmJIT dexJIT
   let pipeline = standardCompilationPipeline (jitOptLevel dexJIT) logger [name] tm
-  withNativeModule jit deps ast pipeline \compiled ->
+  withNativeModule jit deps dtors ast pipeline \compiled ->
     f =<< getFunctionPtr compiled name
 
 -- only links against dex functions provided by the explicit map
-loadFunObjCodeExplicitLinks :: DexJIT -> LocalCName -> M.Map LocalCName (Ptr ()) -> BS.ByteString -> IO (Ptr ())
-loadFunObjCodeExplicitLinks dexJIT mainName ptrsToLink moduleContents = do
-  nativeModule <- loadNativeModule (llvmJIT dexJIT) ptrsToLink moduleContents
+loadFunObjCodeExplicitLinks
+  :: DexJIT -> LocalCName
+  -> M.Map LocalCName (Ptr ()) -> [String] -> BS.ByteString -> IO (Ptr ())
+loadFunObjCodeExplicitLinks dexJIT mainName ptrsToLink dtors moduleContents = do
+  nativeModule <- loadNativeModule (llvmJIT dexJIT) ptrsToLink dtors moduleContents
   castFunPtrToPtr <$> getFunctionPtr nativeModule mainName
 
 standardCompilationPipeline :: OptLevel -> FilteredLogger PassName [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()

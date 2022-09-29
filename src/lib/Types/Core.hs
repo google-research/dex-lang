@@ -417,7 +417,8 @@ data Cache (n::S) = Cache
 type LocalCName = String -- has no meaning beyond a single LLVM module or object file
 data CNameMap (e::E) (n::S) = CNameMap
   { mainFunName    :: LocalCName
-  , calledFunNames :: M.Map LocalCName (e n) }
+  , calledFunNames :: M.Map LocalCName (e n)
+  , dtorList       :: [LocalCName] }
   deriving (Show, Generic)
 
 type FunObjCodeName = Name FunObjCodeNameC
@@ -2129,11 +2130,11 @@ instance SubstE Name    LoadedObjects
 
 instance GenericE (CNameMap e) where
   type RepE (CNameMap e) =
-    LiftE (LocalCName, [LocalCName]) `PairE` ListE e
-  fromE (CNameMap fname deps) = LiftE (fname, depNames) `PairE` ListE depVals
+    LiftE (LocalCName, [LocalCName]) `PairE` ListE e `PairE` LiftE [LocalCName]
+  fromE (CNameMap fname deps dtors) = LiftE (fname, depNames) `PairE` ListE depVals `PairE` LiftE dtors
     where (depNames, depVals) = unzip $ M.toList deps
   {-# INLINE fromE #-}
-  toE   (LiftE (fname, depNames) `PairE` ListE depVals) = CNameMap fname deps
+  toE   (LiftE (fname, depNames) `PairE` ListE depVals `PairE` LiftE dtors) = CNameMap fname deps dtors
     where deps = M.fromList $ zip depNames depVals
   {-# INLINE toE #-}
 

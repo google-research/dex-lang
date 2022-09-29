@@ -31,6 +31,7 @@ import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import qualified Data.ByteString.Short as SBS
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.Functor ((<&>))
@@ -116,7 +117,6 @@ impToLLVM logger fNameHint f = do
     let defn = makeCalledFunDefn v' llvmTy
     let sv = FunctionSubstVal (makeCalledFunOperand v' llvmTy) llvmTy ty
     return (defn, sv)
-  let nameMap = CNameMap fName (M.fromList $ zip internalCalledNames calledFunctionNames)
   let initEnv = idSubst <>> calledBs @@> substVals
   (defns, externSpecs, globalDtors) <- compileFunction logger (L.Name $ fromString fName) initEnv f'
   let externDefns = map externDecl $ toList externSpecs
@@ -124,6 +124,10 @@ impToLLVM logger fNameHint f = do
   let resultModule = L.defaultModule
         { L.moduleName = "dexModule"
         , L.moduleDefinitions = dtorDef : internalDefns ++ defns ++ externDefns }
+  let nameMap = CNameMap
+                  fName
+                  (M.fromList $ zip internalCalledNames calledFunctionNames)
+                  (map (\(L.Name s) -> B.unpack $ SBS.fromShort s) globalDtors)
   return (resultModule, nameMap)
   where
     dtorType = L.FunctionType L.VoidType [] False

@@ -634,10 +634,10 @@ loadObject fname =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
-      FunObjCode contents (CNameMap mainName depNames) <- lookupFunObjCode fname
+      FunObjCode contents (CNameMap mainName depNames dtors) <- lookupFunObjCode fname
       ptrs <- mapM loadObject depNames
       jit <- getDexJIT
-      ptr <- liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs contents
+      ptr <- liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs dtors contents
       extendLoadedObjects fname ptr
       return ptr
 
@@ -693,10 +693,10 @@ evalLLVM block = do
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if requiresBench then compileAndBench needsSync else compileAndEval
   jit <- getDexJIT
-  CNameMap mainName depNames <- nameMapImpToObj nameMap
+  CNameMap mainName depNames _ <- nameMapImpToObj nameMap
   depPtrs <- mapM loadObject depNames
   resultVals <- liftIO $ llvmEvaluate jit filteredLogger
-                  llvmAST mainName depPtrs ptrVals resultTypes
+                  llvmAST mainName depPtrs (dtorList nameMap) ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
@@ -779,12 +779,12 @@ loadModuleSource config moduleName = do
 {-# SCC loadModuleSource #-}
 
 nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap FunObjCodeName n)
-nameMapImpToObj (CNameMap fname calledNames) = do
+nameMapImpToObj (CNameMap fname calledNames dtors) = do
   calledNames' <- forM calledNames \v -> do
     queryObjCache v >>= \case
       Just v' -> return v'
       Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
-  return $ CNameMap fname calledNames'
+  return $ CNameMap fname calledNames' dtors
 
 -- === saving cache to disk ===
 
