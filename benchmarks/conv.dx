@@ -26,8 +26,13 @@ def conv_1d {d1 d2} (kernel: (Fin d1)=>(Fin d2)=>Float)
 
 def conv {n c h w} (kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float)
   (size: Int) : (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float =
-  for n' c'.
-    conv_1d kernel.n'.c' (unsafe_i_to_n size)
+  for n' c'. conv_1d kernel.n'.c' (unsafe_i_to_n size)
+
+def conv_spec {n c h w} (kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float)
+  (size: Int) : (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float =
+  if size == 3
+    then conv kernel 3
+    else conv kernel size
 
 'We benchmark it on a roughly representative input.
 
@@ -40,7 +45,9 @@ x1 = for i:(Fin n) m:(Fin width) j:(Fin side) k:(Fin side).
 
 :t x1
 
+filter_size = +3
+
 %bench "Diagonal convolution"
-res = conv x1 3
+res = conv x1 filter_size
 
 :t res
