@@ -99,7 +99,7 @@ compileLLVMModule jit ast exportName = do
   let tm = jitTargetMachine jit
   withContext \c -> do
     Mod.withModuleFromAST c ast \m -> do
-      internalize [exportName] m  -- TODO(dougalm): I don't know what this does. Is it needed?
+      internalize [exportName] m
       execLogger Nothing \logger ->
         standardCompilationPipeline (jitOptLevel jit)
           (FilteredLogger (const False) logger)
@@ -260,9 +260,6 @@ internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeE
 --      hurt performance if we were to end up doing a lot of function calls.
 -- TODO: Consider changing the linking layer, as suggested in:
 --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
-_withHostTargetMachine :: (T.TargetMachine -> IO a) -> IO a
-_withHostTargetMachine f =
-  T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive f
 
 withGPUTargetMachine :: B.ByteString -> (T.TargetMachine -> IO a) -> IO a
 withGPUTargetMachine computeCapability next = do
@@ -278,7 +275,6 @@ withGPUTargetMachine computeCapability next = do
       CM.Default
       CGO.Aggressive
       next
-
 
 -- === printing ===
 

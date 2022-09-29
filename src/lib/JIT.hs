@@ -60,7 +60,7 @@ import Util (IsBool (..), bindM2, enumerate)
 data OperandSubstVal (c::C) (n::S) where
   OperandSubstVal  :: L.Operand -> OperandSubstVal AtomNameC n
   FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal ImpFunNameC   n
-  RenameOperandSubstVal :: Name c n -> OperandSubstVal c n
+  RenameOperandSubstVal :: Name c n -> OperandSubstVal c n -- only used for top-level FFI names
 
 type OperandEnv     = Subst     OperandSubstVal
 type OperandEnvFrag = SubstFrag OperandSubstVal
@@ -79,9 +79,7 @@ data CompileState = CompileState
   , usedNames   :: R.RawNameMap ()
   , funSpecs    :: S.Set ExternFunSpec
   , globalDefs  :: [L.Definition]
-  , curDevice   :: Device
-  -- TODO: use safe names for object files
-  , _objFileDeps :: S.Set (FunObjCodeName VoidS) }
+  , curDevice   :: Device }
 
 newtype CompileM i o a =
   CompileM { runCompileM' ::
@@ -445,15 +443,12 @@ compileInstr instr = case instr of
     lookupSubstM f >>= \case
       FunctionSubstVal f' lTy (IFunType cc _ _) -> do
         case cc of
-          CEntryFun -> do
-            exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
-            compileIf exitCode throwRuntimeError (return ())
-            return []
-          CInternalFun -> do
-            exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
-            compileIf exitCode throwRuntimeError (return ())
-            return []
+          CEntryFun    -> return ()
+          CInternalFun -> return ()
           _ -> error $ "Unsupported calling convention: " ++ show cc
+        exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
+        compileIf exitCode throwRuntimeError (return ())
+        return []
       RenameOperandSubstVal v -> do
         lookupImpFun v >>= \case
           ImpFunction _ _ -> error "Imp functions should be abstracted at this point"
@@ -1096,7 +1091,7 @@ liftCompile dev subst m =
        runCompileM' m
   where
     -- TODO: figure out naming discipline properly
-    initState = CompileState [] [] [] "start_block" mempty mempty mempty dev mempty
+    initState = CompileState [] [] [] "start_block" mempty mempty mempty dev
 
 opSubstVal :: Operand -> OperandSubstVal AtomNameC n
 opSubstVal x = OperandSubstVal x
