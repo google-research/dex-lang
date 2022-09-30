@@ -918,6 +918,20 @@ getImplicitArg (PiBinder _ argTy arr) = case arr of
     return $ Just $ Con $ DictHole (AlwaysEqual ctx) argTy
   _ -> return Nothing
 
+etaExpand :: EmitsInf n => Atom n -> InfererM i n (Atom n)
+etaExpand fun = do
+  ty <- getType fun
+  case ty of
+    Pi (PiType (PiBinder b argTy arr) eff _) -> do
+      case fun of
+        Lam _ -> pure fun
+        _ -> buildLamInf noHint arr argTy
+              (\b' -> applySubst (b @> b') eff)
+              (\x -> do
+                Distinct <- getDistinct
+                app (sink fun) (Var x))
+    _ -> error "atom must have pi type"
+
 checkOrInferRho :: forall i o. EmitsBoth o
                 => UExpr i -> RequiredTy RhoType o -> InfererM i o (Atom o)
 checkOrInferRho (WithSrcE pos expr) reqTy = do
@@ -944,33 +958,22 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     ixTy <- asIxType ty'
     matchRequirement $ TabLam $ TabLamExpr (b':>ixTy) body'
   UMap fun array -> do
-    argElemVar <- liftM Var $ freshInferenceName (TC TypeKind)
-    resElemVar <- liftM Var $ freshInferenceName (TC TypeKind)
-    funTy <- naryNonDepPiType PlainArrow Pure [argElemVar] resElemVar
-    fun' <- checkOrInferRho fun (Check funTy)
-
-    -- Eta-expand `fun'` into a `Lam` (if it is not already a `Lam`). Later on
-    -- we make use of the invariant that the first argument of `Map` is a `Lam`.
-    fun'' <- case fun' of
-        Lam _ -> return fun'
-        _ -> buildLamInf noHint PlainArrow argElemVar (const $ return Pure)
-                \x -> do
-                  Distinct <- getDistinct
-                  app (sink fun') (Var x)
-
-    arrayReqTy <- case reqTy of
-      Check (TabPi (TabPiType (b:>ixTy) resElemTy)) -> do
-        resElemTy' <- case hoist b resElemTy of
+    array' <- inferRho array
+    arrayTy <- getType array'
+    case arrayTy of
+      TabPi (TabPiType (b:>_) argElemTy) -> do
+        argElemTy' <- case hoist b argElemTy of
           HoistSuccess ty -> return ty
-          HoistFailure _ -> throw TypeErr " expected non-dependent array type"
-        constrainEq resElemVar resElemTy'
-        liftM (Check . TabPi) $ nonDepTabPiType ixTy argElemVar
-      Check _ -> return Infer
-      Infer -> return Infer
-    array' <- checkOrInferRho array arrayReqTy
-
-    result <- liftM Var $ emit $ Hof $ Map fun'' array'
-    matchRequirement result
+          HoistFailure _ -> throw TypeErr "expected non-dependent array type"
+        resElemVar <- liftM Var $ freshInferenceName (TC TypeKind)
+        funTy <- naryNonDepPiType PlainArrow Pure [argElemTy'] resElemVar
+        fun' <- checkOrInferRho fun (Check funTy)
+        -- Eta-expand `fun'` into a `Lam`. Later on we make use of the invariant
+        -- that the first argument of `Map` is a `Lam`.
+        fun'' <- etaExpand fun'
+        result <- liftM Var $ emit $ Hof $ Map fun'' array'
+        matchRequirement result
+      _ -> throw TypeErr "expected array type"
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
