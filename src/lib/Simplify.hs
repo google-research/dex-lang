@@ -840,9 +840,18 @@ projectDictMethod d i = do
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
 simplifyHof hof = case hof of
   Map fun array -> do
-    (fun', Abs _ IdentityRecon) <- simplifyLam fun
+    (fun', Abs b recon) <- simplifyLam fun
     array' <- simplifyAtom array
-    liftM Var $ emit $ Hof $ Map fun' array'
+    ans <- liftM Var $ emit $ Hof $ Map fun' array'
+    case recon of
+      IdentityRecon -> return ans
+      LamRecon reconAbs -> do
+        TabPi (TabPiType (_:>ixTy) _) <- getType array'
+        buildTabLam noHint ixTy \i -> do
+          locals <- tabApp (sink ans) $ Var i
+          ithArg <- emitAtomToName =<< (tabApp (sink array') $ Var i)
+          reconAbs' <- applySubst (b @> ithArg) reconAbs
+          applyReconAbs reconAbs' locals
   For d ixDict lam -> do
     ixTy@(IxType _ ixDict') <- ixTyFromDict =<< substM ixDict
     (lam', Abs b recon) <- simplifyLam lam
