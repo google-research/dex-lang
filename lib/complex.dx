@@ -1,3 +1,5 @@
+'# Complex number support
+
 data Complex = MkComplex Float Float  -- real, imaginary
 
 instance HasAllClose Complex

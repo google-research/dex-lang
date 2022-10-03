@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
 # This script constructs a Markdown file (on standard output) that constitutes
 # an index of all web-rendered pages of Dex examples, documentation, and
@@ -17,33 +17,42 @@
 # detect when a file lacks such a title and fail loudly, instead of just
 # omitting that file from the index.
 
-set -e
+import re
+import sys
 
-# The non-quotation is intentional: I am trying to get bash to split on words so
-# that `grep` takes the arguments as separate even though they were passed as
-# one thing to this script.
-docs=$1
-examples=$2
-libraries=$3
+def file_block(files):
+  for fname in files:
+    if fname.startswith("doc/"):
+      link_name = fname[len("doc/"):]
+    else:
+      link_name = fname
+    with open(fname, 'r') as f:
+      line = f.readline()
+      title = re.match(r"' *# ?(.*)", line)
+      if title:
+        print(f"- [{fname}]({link_name}.html) {title.group(1)}")
+      else:
+        raise ValueError(f"First line of file {fname} was not a title (top-level Markdown heading)")
 
-echo "# InDex"; echo ""
+def main():
+  docs, examples, libraries = sys.argv[1:4]
 
-echo "## Documentation"; echo ""
+  print("# InDex"); print("")
 
-grep -F "'# " $docs \
- | sed -e 's/^doc\/\(.*\).dx/- [doc\/\1.dx](\1.html)/' \
- | sed -e "s/'#//"
+  print("## Documentation"); print("")
 
-echo ""; echo "## Examples"; echo ""
+  file_block(docs.split())
 
-grep -F "'# " $examples \
- | sed -e 's/^\(.*\).dx/- [\1.dx](\1.html)/' \
- | sed -e "s/'#//"
+  print(""); print("## Examples"); print("")
 
-echo ""; echo "## Libraries"; echo ""
+  file_block(examples.split())
 
-echo "- [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)"
+  print(""); print("## Libraries"); print("")
 
-grep -F "'# " $libraries \
- | sed -e 's/^\(.*\).dx/- [\1.dx](\1.html)/' \
- | sed -e "s/'#//"
+  print("- [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)")
+
+  file_block(libraries.split())
+
+
+if __name__ == '__main__':
+  main()

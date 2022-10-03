@@ -686,25 +686,21 @@ simplifyAbs
   => Abs b Block i -> SimplifyM i o (Abs b Block o, Abs b ReconstructAtom o)
 simplifyAbs (Abs bs body@(Block ann _ _)) = fromPairE <$> do
   substBinders bs \bs' -> do
-    ab <- buildScoped $ simplifyBlock body
-    refreshAbs ab \decls result -> do
-      -- Reuse the input effect annotations, because simplifyBlock
-      -- never changes them.
-      effs <- case ann of
-        (BlockAnn _ origEffs) -> substM origEffs
-        NoBlockAnn -> return Pure
-      ty <- getType result
-      isData ty >>= \case
-        True -> do
-          ty' <- {-# SCC blockTypeNormalization #-} cheapNormalize ty
-          let block = makeBlock decls effs result ty'
-          return $ PairE (Abs bs' block) (Abs bs' IdentityRecon)
-        False -> do
-          let locals = toScopeFrag decls
-          (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
-          let effs' = ignoreHoistFailure $ hoist decls effs
-          let block = Block (BlockAnn (sink newResultTy) effs') decls newResult
-          return $ PairE (Abs bs' block) (Abs bs' (LamRecon reconAbs))
+    Abs decls (PairE result ansTy) <- buildScoped $ simplifyBlock body >>= withType
+    -- Reuse the input effect annotations, because simplifyBlock never changes them.
+    effs <- case ann of
+      (BlockAnn _ origEffs) -> substM origEffs
+      NoBlockAnn -> return Pure
+    let ansTy' = ignoreHoistFailure $ hoist decls ansTy
+    isData ansTy' >>= \case
+      True -> do
+        let block = Block (BlockAnn ansTy' effs) decls result
+        return $ PairE (Abs bs' block) (Abs bs' IdentityRecon)
+      False -> refreshAbs (Abs decls result) \decls' result' -> do
+        let locals = toScopeFrag decls'
+        (newResult, newResultTy, reconAbs) <- telescopicCapture locals result'
+        let block = Block (BlockAnn (sink newResultTy) (sink effs)) decls' newResult
+        return $ PairE (Abs bs' block) (Abs bs' (LamRecon reconAbs))
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Emits o => Op o -> SimplifyM i o (Atom o)

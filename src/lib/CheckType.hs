@@ -847,10 +847,13 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   Seq _ ixDict carry f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     carryTy' <- getTypeE carry
+    let badCarry = throw TypeErr $ "Seq carry should be a product of raw references, got: " ++ pprint carryTy'
+    case carryTy' of
+      ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
+      _ -> badCarry
     Pi (PiType (PiBinder b argTy PlainArrow) eff UnitTy) <- getTypeE f
     checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') argTy
     declareEffs =<< liftHoistExcept (hoist b eff)
-    RawRefTy _ <- return carryTy'  -- We might need allow products of references too.
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d
