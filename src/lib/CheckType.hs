@@ -165,7 +165,7 @@ instance Color c => CheckableE (Binding c) where
     InstanceBinding   instanceDef       -> InstanceBinding   <$> substM instanceDef
     MethodBinding     className idx f   -> MethodBinding     <$> substM className   <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
-    FunObjCodeBinding objfile           -> FunObjCodeBinding <$> substM objfile
+    FunObjCodeBinding objfile m         -> FunObjCodeBinding <$> pure objfile <*> substM m
     ModuleBinding     md                -> ModuleBinding     <$> substM md
     PtrBinding        ptr               -> PtrBinding        <$> return ptr
     -- TODO(alex): consider checkE below?

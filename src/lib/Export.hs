@@ -12,11 +12,15 @@ module Export (
     ExportCC (..),
   ) where
 
+import Foreign.Storable
+import Foreign.C.String
+import Foreign.Ptr
+
 import Data.List (intercalate)
 import Control.Monad
 import Name
 import Err
-import Syntax
+import Syntax hiding (sizeOf)
 import CheckType (asFirstOrderFunction)
 import QueryType
 import Builder
@@ -325,3 +329,14 @@ instance Show (ExportArg n l) where
 
 instance Show (ExportResult n l) where
   show (ExportResult (name:>ty)) = pprint name <> ":" <> show ty
+
+instance Storable (ExportedSignature 'VoidS) where
+  sizeOf _ = 3 * sizeOf (undefined :: Ptr ())
+  alignment _ = alignment (undefined :: Ptr ())
+  peek _ = error "peek not implemented for ExportedSignature"
+  poke addr sig = do
+    let strAddr = castPtr @(ExportedSignature 'VoidS) @CString addr
+    let (arg, res, ccall) = exportedSignatureDesc sig
+    pokeElemOff strAddr 0 =<< newCString arg
+    pokeElemOff strAddr 1 =<< newCString res
+    pokeElemOff strAddr 2 =<< newCString ccall

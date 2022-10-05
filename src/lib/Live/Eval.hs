@@ -86,8 +86,7 @@ initialEvalState env = (SourceEvalState (WithId 0 env) Nothing [])
 newtype DriverM a = DriverM
   { drive :: (ReaderT DriverCfg
               (ReaderT (PChan DriverEvent)
-               (ReaderT DexJIT
-                 (StateT (SourceEvalState, CacheState) IO))) a)
+               (StateT (SourceEvalState, CacheState) IO)) a)
   }
   deriving (Functor, Applicative, Monad, MonadIO)
 
@@ -104,7 +103,6 @@ class (Monad m, MonadIO m) => Driver m where
   askOptions :: m EvalConfig
   askResultsOutput :: m (PChan RFragment)
   askSelf :: m (PChan DriverEvent)
-  askDexJIT :: m DexJIT
   getTopState :: m (WithId TopStateEx)
   putTopState :: WithId TopStateEx -> m ()
   -- Resets the evaluation state to initial, from the given TopStateEx.
@@ -157,10 +155,8 @@ data DriverEvent = FileChanged SourceContents
 
 runDriver :: DriverCfg -> TopStateEx -> Actor DriverEvent
 runDriver cfg env self = do
-  jit <- createDexJIT (getLLVMOptLevel $ fst cfg)
   liftM fst
     $ flip runStateT (initialEvalState env, emptyCache)
-    $ flip runReaderT jit
     $ flip runReaderT (sendOnly self)
     $ flip runReaderT cfg
     $ drive $ forever $ do
@@ -277,14 +273,13 @@ maybeLaunchWorker = do
     curState <- getTopState
     opts <- askOptions
     self <- askSelf
-    jit <- askDexJIT
-    tid <- liftIO $ forkWorker opts jit curState next self
+    tid <- liftIO $ forkWorker opts curState next self
     putWorker $ Just (tid, next)
 
-forkWorker :: EvalConfig -> DexJIT -> WithId TopStateEx -> WithId SourceBlock
+forkWorker :: EvalConfig -> WithId TopStateEx -> WithId SourceBlock
            -> PChan DriverEvent -> IO ThreadId
-forkWorker opts jit curState block chan = forkIO $ do
-  result <- evalSourceBlockIO opts jit (withoutId curState) (withoutId block)
+forkWorker opts curState block chan = forkIO $ do
+  result <- evalSourceBlockIO opts (withoutId curState) (withoutId block)
   chan `sendPChan` (WorkComplete curState block result)
 
 makeNewBlockId :: Driver m => SourceBlock -> m (WithId SourceBlock)
@@ -343,7 +338,6 @@ instance Driver DriverM where
   askOptions = DriverM $ asks fst
   askResultsOutput = DriverM $ asks snd
   askSelf = DriverM $ lift $ ask
-  askDexJIT = DriverM $ lift $ lift $ ask
   getTopState = DriverM $ do
     (SourceEvalState s _ _) <- gets fst
     return s

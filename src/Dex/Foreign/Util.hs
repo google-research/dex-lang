@@ -4,7 +4,9 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Dex.Foreign.Util (fromStablePtr, toStablePtr, putOnHeap, setError, catchErrors) where
+module Dex.Foreign.Util (fromStablePtr, toStablePtr, putOnHeap, setError, catchErrors, copyMVar) where
+
+import Control.Concurrent.MVar
 
 import Data.Int
 import Data.Functor
@@ -39,3 +41,6 @@ foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> I
 setError :: String -> IO ()
 setError msg = withCStringLen msg $ \(ptr, len) ->
   internalSetErrorPtr ptr (fromIntegral len)
+
+copyMVar :: MVar a -> IO (MVar a)
+copyMVar mvar = readMVar mvar >>= newMVar

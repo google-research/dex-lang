@@ -57,8 +57,7 @@ runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = case evalMode of
   ScriptMode fname fmt onErr -> do
     env <- loadCache
-    jit <- createDexJIT (getLLVMOptLevel opts)
-    (litProg, finalEnv) <- runTopperM opts jit env do
+    (litProg, finalEnv) <- runTopperM opts env do
       source <- liftIO $ T.readFile fname
       evalSourceText source (printIncrementalSource fmt) \result@(Result _ errs) -> do
         printIncrementalResult fmt result
@@ -67,8 +66,7 @@ runMode evalMode opts = case evalMode of
     storeCache finalEnv
   ReplMode prompt -> do
     env <- loadCache
-    jit <- createDexJIT (getLLVMOptLevel opts)
-    void $ runTopperM opts jit env do
+    void $ runTopperM opts env do
       evalBlockRepl preludeImportBlock
       forever do
          block <- readSourceBlock prompt

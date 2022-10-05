@@ -1,0 +1,158 @@
+-- Copyright 2022 Google LLC
+--
+-- Use of this source code is governed by a BSD-style
+-- license that can be found in the LICENSE file or at
+-- https://developers.google.com/open-source/licenses/bsd
+
+module Runtime (loadLitVal, callNativeFun) where
+
+import Data.Int
+import GHC.IO.FD
+import GHC.IO.Handle.FD
+import System.IO
+import System.Process
+
+import Foreign.Marshal.Alloc
+import Foreign.Ptr
+import Foreign.C.Types (CInt (..))
+import Foreign.Storable hiding (alignment)
+import Control.Monad.IO.Class
+import Control.Monad
+import Control.Concurrent
+import Control.Exception hiding (throw)
+import qualified Control.Exception as E
+
+import Err
+import Logging
+import Syntax
+import Util (measureSeconds)
+import PPrint ()
+
+-- === One-shot evaluation ===
+
+foreign import ccall "dynamic"
+  callFunPtr :: DexExecutable -> Int32 -> Ptr () -> Ptr () -> IO DexExitCode
+
+type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
+type DexExitCode = Int
+
+callNativeFun :: NativeFunction -> PassLogger -> [LitVal] -> [BaseType] -> IO [LitVal]
+callNativeFun f logger args resultTypes = do
+  withPipeToLogger logger \fd ->
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
+        storeLitVals argsPtr args
+        _ <- checkedCallFunPtr fd argsPtr resultPtr $ castPtrToFunPtr $ nativeFunPtr f
+        -- logSkippingFilter logger [EvalTime evalTime Nothing]
+        loadLitVals resultPtr resultTypes
+
+checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr fd argsPtr resultPtr fPtr = do
+  let (CInt fd') = fdFD fd
+  (exitCode, duration) <- measureSeconds $ do
+    exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
+    return exitCode
+  unless (exitCode == 0) $ throw RuntimeErr ""
+  return duration
+{-# SCC checkedCallFunPtr #-}
+
+withPipeToLogger :: PassLogger -> (FD -> IO a) -> IO a
+withPipeToLogger logger writeAction = do
+  result <- snd <$> withPipe
+    (\h -> readStream h \s -> logSkippingFilter logger [TextOut s])
+    (\h -> handleToFd h >>= writeAction)
+  case result of
+    Left e -> E.throw e
+    Right ans -> return ans
+
+-- === serializing scalars ===
+
+loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
+loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
+
+_freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
+_freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+
+storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
+storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
+
+loadLitVal :: MonadIO m => Ptr () -> BaseType -> m LitVal
+loadLitVal ptr (Scalar ty) = liftIO case ty of
+  Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
+  Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
+  Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
+  Word32Type  -> Word32Lit  <$> peek (castPtr ptr)
+  Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
+  Float64Type -> Float64Lit <$> peek (castPtr ptr)
+  Float32Type -> Float32Lit <$> peek (castPtr ptr)
+loadLitVal ptrPtr (PtrType t) = do
+  ptr <- liftIO $ peek $ castPtr ptrPtr
+  return $ PtrLit $ PtrLitVal t ptr
+loadLitVal _ (Vector _ _) = error "Vector loads not implemented"
+
+storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
+storeLitVal ptr val = liftIO case val of
+  Int64Lit   x -> poke (castPtr ptr) x
+  Int32Lit   x -> poke (castPtr ptr) x
+  Word8Lit   x -> poke (castPtr ptr) x
+  Float64Lit x -> poke (castPtr ptr) x
+  Float32Lit x -> poke (castPtr ptr) x
+  PtrLit (PtrLitVal _ x) -> poke (castPtr ptr) x
+  _ -> error "not implemented"
+
+foreign import ccall "free_dex"
+  free_cpu :: Ptr () -> IO ()
+#ifdef DEX_CUDA
+foreign import ccall "dex_cuMemFree"
+  free_gpu :: Ptr () -> IO ()
+#else
+free_gpu :: Ptr () -> IO ()
+free_gpu = error "Compiled without GPU support!"
+#endif
+
+freeLitVal :: MonadIO m => Ptr () -> BaseType -> m ()
+freeLitVal litValPtr ty = case ty of
+  Scalar  _ -> return ()
+  PtrType (Heap CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
+  PtrType (Heap GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
+  -- TODO: Handle pointers to pointers
+  _ -> error "not implemented"
+  where loadPtr = peek (castPtr litValPtr)
+
+cellSize :: Int
+cellSize = 8
+
+ptrArray :: Ptr () -> [Ptr ()]
+ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
+
+allocaCells :: MonadIO m => Int -> (Ptr () -> IO a) -> m a
+allocaCells n cont = liftIO $ allocaBytes (n * cellSize) cont
+
+-- ==== unix pipe utilities ===
+
+type IOExcept a = Either SomeException a
+
+withPipe :: (Handle -> IO a) -> (Handle -> IO b) -> IO (IOExcept a, IOExcept b)
+withPipe readAction writeAction = do
+  (readHandle, writeHandle) <- createPipe
+  waitForReader <- forkWithResult $ readAction  readHandle
+  waitForWriter <- forkWithResult $ writeAction writeHandle
+  y <- waitForWriter `finally` hClose writeHandle
+  x <- waitForReader `finally` hClose readHandle
+  return (x, y)
+
+forkWithResult :: IO a -> IO (IO (IOExcept a))
+forkWithResult action = do
+  resultMVar <- newEmptyMVar
+  void $ forkIO $ catch (do result <- action
+                            putMVar resultMVar $ Right result)
+                        (\e -> putMVar resultMVar $ Left (e::SomeException))
+  return $ takeMVar resultMVar
+
+readStream :: Handle -> (String -> IO ()) -> IO ()
+readStream h action = go
+  where
+    go :: IO ()
+    go = do
+      eof <- hIsEOF h
+      unless eof $ hGetLine h >>= action >> go

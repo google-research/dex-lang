@@ -7,7 +7,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (impToLLVM) where
+module ImpToLLVM (impToLLVM) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import LLVM.Prelude (ShortByteString, Word32)
@@ -31,7 +31,6 @@ import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import qualified Data.ByteString.Short as SBS
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.Functor ((<&>))
@@ -52,9 +51,9 @@ import Name
 import Imp
 import PPrint
 import Logging
-import LLVMExec
 import Types.Primitives
 import Util (IsBool (..), bindM2, enumerate)
+import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
 
 -- === Compile monad ===
 
@@ -106,7 +105,7 @@ instance Compiler CompileM
 
 impToLLVM :: (EnvReader m, MonadIO1 m)
           => FilteredLogger PassName [Output] -> NameHint -> ImpFunction n
-          -> m n (L.Module, CNameMap ImpFunName n)
+          -> m n (L.Module, LocalCName, CNameMap ImpFunName n)
 impToLLVM logger fNameHint f = do
   let fName = makeMainFunName fNameHint
   (LinkableImpFunction calledTys calledBs f', calledFunctionNames) <- abstractLinktimeObjects f
@@ -124,11 +123,8 @@ impToLLVM logger fNameHint f = do
   let resultModule = L.defaultModule
         { L.moduleName = "dexModule"
         , L.moduleDefinitions = dtorDef : internalDefns ++ defns ++ externDefns }
-  let nameMap = CNameMap
-                  fName
-                  (M.fromList $ zip internalCalledNames calledFunctionNames)
-                  (map (\(L.Name s) -> B.unpack $ SBS.fromShort s) globalDtors)
-  return (resultModule, nameMap)
+  let nameMap = CNameMap $ M.fromList $ zip internalCalledNames calledFunctionNames
+  return (resultModule, fName, nameMap)
   where
     dtorType = L.FunctionType L.VoidType [] False
     dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]

@@ -277,12 +277,12 @@ lookupLoadedModule name = do
   loadedModules <- withEnv $ envLoadedModules . topEnv
   return $ M.lookup name $ fromLoadedModules loadedModules
 
-lookupLoadedObject :: EnvReader m => FunObjCodeName n -> m n (Maybe (Ptr ()))
+lookupLoadedObject :: EnvReader m => FunObjCodeName n -> m n (Maybe NativeFunction)
 lookupLoadedObject name = do
   loadedObjects <- withEnv $ envLoadedObjects . topEnv
   return $ M.lookup name $ fromLoadedObjects loadedObjects
 
-extendLoadedObjects :: (Mut n, TopBuilder m) => FunObjCodeName n -> Ptr () -> m n ()
+extendLoadedObjects :: (Mut n, TopBuilder m) => FunObjCodeName n -> NativeFunction -> m n ()
 extendLoadedObjects name ptr = do
   let loaded = LoadedObjects $ M.singleton name ptr
   emitPartialTopEnvFrag $ mempty {fragLoadedObjects = loaded}
@@ -317,9 +317,9 @@ queryObjCache v = do
   cache <- objCache <$> getCache
   return $ lookupEMap cache v
 
-emitObjFile :: (Mut n, TopBuilder m) => NameHint -> FunObjCode n -> m n (FunObjCodeName n)
-emitObjFile hint objFile = do
-  v <- emitBinding hint $ FunObjCodeBinding objFile
+emitObjFile :: (Mut n, TopBuilder m) => NameHint -> FunObjCode -> FunObjCodeNameMap n -> m n (FunObjCodeName n)
+emitObjFile hint objFile nameMap = do
+  v <- emitBinding hint $ FunObjCodeBinding objFile nameMap
   return v
 
 getCache :: EnvReader m => m n (Cache n)

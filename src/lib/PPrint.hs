@@ -470,7 +470,7 @@ instance Pretty (Binding s n) where
     InstanceBinding instanceDef -> pretty instanceDef
     MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
-    FunObjCodeBinding _ -> "<object file>"
+    FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding     _ -> "<ptr>"
     -- TODO(alex): do something actually useful here

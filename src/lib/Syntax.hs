@@ -37,7 +37,7 @@ module Syntax (
     ForAnn, Val, Op, Con, Hof, TC, SuperclassBinders (..),
     ClassDef (..), InstanceDef (..), InstanceBody (..), MethodType (..),
     EffectDef (..), EffectOpType (..), EffectName,
-    SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..),
+    SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..), SerializedEnv (..),
     ImportStatus (..), emptyModuleEnv,
     ModuleSourceName (..), LoadedModules (..), LoadedObjects (..), Cache (..),
     BindsEnv (..), BindsOneAtomName (..), AtomNameBinder,
@@ -96,14 +96,15 @@ module Syntax (
     ImpFunction (..), ImpBlock (..), ImpDecl (..),
     ImpInstr (..), iBinderType,
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
-    Output (..), PassName (..), Result (..), BenchStats,
+    Output (..), PassLogger, PassName (..), Result (..), BenchStats,
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam,
     fromNaryTabLam, fromNaryTabLamExact,
     fromNaryLamExact, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
-    FunObjCode (..), FunObjCodeContents, FunObjCodeName, CNameMap (..), LocalCName,
+    FunObjCode (..), FunObjCodeName, CNameMap (..),
+    LocalCName, NativeFunction (..), OptLevel (..),
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal, pattern IdxRepScalarBaseTy,
     pattern TagRepTy,
@@ -129,6 +130,7 @@ import GHC.Generics (Generic (..))
 
 import Name
 import Err
+import Logging
 
 import Core
 import Types.Core
@@ -156,3 +158,5 @@ data Output =
   | MiscLog String
   -- Used to have | ExportedFun String Atom
     deriving (Show, Eq, Generic)
+
+type PassLogger = FilteredLogger PassName [Output]

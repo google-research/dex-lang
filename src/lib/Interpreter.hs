@@ -24,7 +24,7 @@ import Foreign.Marshal.Alloc
 import System.IO.Unsafe
 
 import CUDA
-import LLVMExec
+import Runtime
 import Err
 import LabeledItems
 import Types.Core

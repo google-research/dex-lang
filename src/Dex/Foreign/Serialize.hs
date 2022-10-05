@@ -28,7 +28,7 @@ import Dex.Foreign.Util
 dexPrint :: Ptr Context -> Ptr AtomEx -> IO CString
 dexPrint contextPtr atomPtr = do
   AtomEx atom <- fromStablePtr atomPtr
-  fst <$> runTopperMFromContext contextPtr do
+  runTopperMFromContext contextPtr do
     -- TODO: Check consistency of atom and context
     liftIO . newCString =<< pprintVal (unsafeCoerceE atom)
 

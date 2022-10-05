@@ -141,11 +141,11 @@ class Binder:
 
 
 class NativeFunction:
-  def __init__(self, jit, ptr, calling_convention):
+  def __init__(self, ctx, ptr, calling_convention):
     self._as_parameter_ = ptr
-    self._jit = jit
+    self._ctx = ctx
     self.calling_convention = calling_convention
-    sig_ptr = api.getFunctionSignature(jit, ptr)
+    sig_ptr = api.getFunctionSignature(ctx, ptr)
     if not sig_ptr:
       raise RuntimeError("Failed to retrieve the function signature")
     try:
@@ -172,9 +172,8 @@ class NativeFunction:
     self.callable = func_type(ctypes.cast(ptr, ctypes.c_void_p).value)
 
   def __del__(self):
-    if api.nofree: return
     if hasattr(self, '_as_parameter_'):
-      api.unload(self._jit, self)
+      api.unload(self._ctx, self)
 
   def __call__(self, *args):
     name_to_cval = {}
