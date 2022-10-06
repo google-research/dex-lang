@@ -559,7 +559,7 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
   ixDict' <- substM ixDict
   ty' <- substM ty
   eff' <- substM $ ignoreHoistFailure $ hoist ib eff
-  let eff'' = extendEffRow (S.singleton IOEffect) eff'
+  let eff'' = extendEffRow (S.singleton InitEffect) eff'
   case isSingletonType ansTy of
     True -> do
       body' <- buildLam noHint arr (PairTy ty' UnitTy) eff'' \b' -> do
@@ -777,12 +777,18 @@ vectorizeLoopsRec frag = \case
       _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
     vectorizeLoopsRec (frag <.> b @> v) rest
 
+atMostOneEffect :: Effect n -> EffectRow n -> Bool
+atMostOneEffect eff scrutinee = case scrutinee of
+  Pure -> True
+  OneEffect eff' -> eff' == eff
+  _ -> False
+
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> Type o -> SubstFrag Name i i' o -> LamExpr i'
              -> TopVectorizeM o (Atom o)
 vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
-  case eff of
-    Pure -> do
+  if atMostOneEffect InitEffect eff
+    then do
       ty' <- case ty of
         ProdTy [_, ref] -> do
           ref' <- applySubst frag ref
@@ -796,7 +802,7 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
           i <- emitOp $ CastOp (sink newIxTy) iOrd
           let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
-    _ -> error "Effectful loop vectorization not implemented!"
+    else error "Effectful loop vectorization not implemented!"
   where
     iSubst :: (DExt o o', Color c) => Name c i' -> VSubstValC c o'
     iSubst v = case lookupSubstFragProjected frag v of
