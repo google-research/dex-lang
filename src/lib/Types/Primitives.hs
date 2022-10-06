@@ -198,9 +198,12 @@ type ForAnn = Direction
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data EffectP (name::V) (n::S) =
-  RWSEffect RWS (Maybe (name AtomNameC n)) | ExceptionEffect | IOEffect | UserEffect (name EffectNameC n)
-  deriving (Generic)
+data EffectP (name::V) (n::S) = RWSEffect RWS (Maybe (name AtomNameC n))
+                              | ExceptionEffect
+                              | IOEffect
+                              | UserEffect (name EffectNameC n)
+                              | InitEffect
+                                deriving (Generic)
 
 deriving instance ShowV name => Show (EffectP name n)
 deriving instance EqV name => Eq (EffectP name n)
@@ -347,20 +350,23 @@ getFloatLit l = case l of
 
 instance GenericE (EffectP name) where
   type RepE (EffectP name) =
-    EitherE3 (PairE (LiftE RWS) (MaybeE (name AtomNameC)))
+    EitherE4 (PairE (LiftE RWS) (MaybeE (name AtomNameC)))
              (LiftE (Either () ()))
              (name EffectNameC)
+             UnitE
   fromE = \case
     RWSEffect rws name -> Case0 (PairE (LiftE rws) $ toMaybeE name)
     ExceptionEffect    -> Case1 (LiftE (Left  ()))
     IOEffect           -> Case1 (LiftE (Right ()))
     UserEffect name    -> Case2 name
+    InitEffect         -> Case3 UnitE
   {-# INLINE fromE #-}
   toE = \case
     Case0 (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
     Case1 (LiftE (Left  ())) -> ExceptionEffect
     Case1 (LiftE (Right ())) -> IOEffect
     Case2 name -> UserEffect name
+    Case3 UnitE -> InitEffect
     _ -> error "unreachable"
   {-# INLINE toE #-}
 

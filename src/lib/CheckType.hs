@@ -1118,6 +1118,7 @@ instance CheckableE EffectRow where
       ExceptionEffect -> return ()
       IOEffect        -> return ()
       UserEffect _    -> return ()
+      InitEffect      -> return ()
     forM_ effTail \v -> do
       v' <- substM v
       ty <- atomBindingType <$> lookupEnv v'
