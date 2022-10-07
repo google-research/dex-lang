@@ -712,8 +712,11 @@ typeCheckPrimOp op = case op of
     unless (0 <= i && i < length labelTys) $ throw TypeErr "Invalid variant index"
     e |: (labelTys !! i)
     return ty'
-  DataConTag x -> do
-    TypeCon _ _ _ <- getTypeE x
+  SumTag x -> do
+    getTypeE x >>= \case
+      TypeCon _ _ _ -> return ()
+      SumTy _ -> return ()
+      xTy -> throw TypeErr $ "SumTag expected a data-type or a sum type, got: " ++ pprint xTy
     return TagRepTy
   ToEnum t x -> do
     x |: Word8Ty

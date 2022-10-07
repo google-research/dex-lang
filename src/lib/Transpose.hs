@@ -247,7 +247,7 @@ transposeOp op ct = case op of
   IOAlloc _ _           -> notLinear
   IOFree _              -> notLinear
   ThrowError   _        -> notLinear
-  DataConTag _          -> notLinear
+  SumTag _              -> notLinear
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear

@@ -401,7 +401,7 @@ linearizeOp op = case op of
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
   ThrowError _           -> emitZeroT
-  DataConTag _           -> emitZeroT
+  SumTag _               -> emitZeroT
   ToEnum _ _             -> emitZeroT
   TabCon ty xs -> do
     ty' <- substM ty
