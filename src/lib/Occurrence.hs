@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE StrictData #-}
 
 module Occurrence where
 
@@ -13,6 +14,7 @@ import Prelude qualified
 
 import Control.Monad.State.Strict
 import Data.IntMap.Strict qualified as M
+import Data.List (foldl')
 
 import Name
 
@@ -360,8 +362,8 @@ interp :: Access iter -> Use iter
 interp = \case
   Location [] ct -> Const ct
   Location (expr:exprs) ct -> At expr $ interp $ Location exprs ct
-  Any accesses -> foldl  max zero $ map interp accesses
-  All accesses -> foldl plus zero $ map interp accesses
+  Any accesses -> foldl'  max zero $ map interp accesses
+  All accesses -> foldl' plus zero $ map interp accesses
   ForEach b access -> iterate False b $ interp access
 
 -- The interesting function is resolution of iteration-space loops.
@@ -390,7 +392,7 @@ iterate injective ib (At expr use) = At expr' use' where
   use' = iterate injective' ib use
 iterate injective ib (Max uses) =
   -- TODO This can be an underapproximation if the upstream structure
-  -- is expressive enough, but I think it's OK for now.  To wit,
+  -- becomes expressive enough, but it's OK for now.  For example,
   -- consider the access pattern
   --   for i.
   --     if ...
@@ -412,12 +414,16 @@ iterate injective ib (Max uses) =
   -- However, the current Access structure cannot actually _prove_
   -- that inlining `xs` into the latter expression is safe, because
   -- the addition will register as an unknown function of `i`.  The
-  -- distribution bug is therefore masked.  I further conjecture that
-  -- there are as yet no Access-representable expressions that
-  -- actually trigger a problem here.
-  foldl max zero $ map (iterate injective ib) uses
+  -- distribution bug is therefore masked.
+  --
+  -- In fact, that currently always happens.  All distinct functions
+  -- that produce indices of type n that Access can currently
+  -- represent are either `Unknown` or have disjoint ranges, so this
+  -- kind of underapproximation cannot yet lead to a mistaken
+  -- assertion that some binding is safe to inline.
+  foldl' max zero $ map (iterate injective ib) uses
 iterate injective ib (Sum uses) =
-  foldl plus zero $ map (iterate injective ib) uses
+  foldl' plus zero $ map (iterate injective ib) uses
 
 iterateIxExpr :: NameBinder AtomNameC iter iter'
               -> IxExpr iter' -> State Bool (IxExpr iter)
@@ -463,6 +469,12 @@ iterateIxExpr _ IxAll = return IxAll
 -- latter case, the object is not accessed outside that subset.  The
 -- Subset structure maintains a map of further subsets, and how later
 -- dimensions are accessed in each of them.
+
+-- Note that we care not just about which elements are used, but also
+-- the indexing depth of the object.  That is `CConst One` and
+-- `CSubset (SAll (CConst One))` both mean "used everywhere exactly
+-- once", but the latter also means "do not inline unless you have an
+-- explicit `for` to cancel against indexing".
 data CollapsedUse =
     CConst Count
   | CSubset (Subset CollapsedUse)
@@ -494,8 +506,8 @@ collapse (At expr use) =
   let use' = collapse use in
   if use' == zero then zero
   else CSubset $ exprToSubset expr use'
-collapse (Sum uses) = foldl plus zero $ map collapse uses
-collapse (Max uses) = foldl max zero $ map collapse uses
+collapse (Sum uses) = foldl' plus zero $ map collapse uses
+collapse (Max uses) = foldl' max zero $ map collapse uses
 
 exprToSubset :: IxExpr n -> a -> Subset a
 -- An iteration-space variable approximates to "all", because at this
@@ -631,7 +643,7 @@ instance ApproxConst a => ApproxConst (Subset a) where
   approxConst (Prod _ use) = approxConst use
 
 instance ApproxConst v => ApproxConst (M.IntMap v) where
-  approxConst uses = foldl max zero $ map approxConst $ M.elems uses
+  approxConst uses = foldl' max zero $ map approxConst $ M.elems uses
 
 -- === Notes ===
 
