@@ -1113,10 +1113,14 @@ instance Pretty CDecl' where
   pretty (CDef name args Nothing blk) =
     "def " <> fromString name <> " " <> pArg args <> " ="
       <> nest 2 (hardline <> p blk)
-  pretty (CInstance header methods name) =
-    case name of
-      Nothing  -> "instance " <> p header <> prettyLines methods
-      (Just n) -> "named-instance " <> p n <+> p header <> prettyLines methods
+  pretty (CInstance header givens methods name) =
+    name' <> p header <> givens' <> prettyLines methods where
+    name' = case name of
+      Nothing  -> "instance "
+      (Just n) -> "named-instance " <> p n <> " "
+    givens' = case givens of
+      (WithSrc _ CEmpty) -> ""
+      _ -> " given" <+> p givens <> " "
   pretty (CExpr e) = p e
 
 instance Pretty CBlock where

@@ -22,11 +22,11 @@ rather than relying on monoid reduction using `add`.
 
 data LogSpace f = Exp f
 
-instance {f} [Add f] Mul (LogSpace f)
+instance Mul (LogSpace f) given {f} [Add f]
   mul = \(Exp la) (Exp lb). Exp $ la + lb
   one = Exp zero
 
-instance {f} [Sub f] Fractional (LogSpace f)
+instance Fractional (LogSpace f) given {f} [Sub f]
   divide = \(Exp la) (Exp lb). Exp $ la - lb
 
 instance Arbitrary (LogSpace Float)
@@ -50,7 +50,7 @@ def log_add_exp {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] (la:f
         then la + log1p (exp (lb - la))
         else lb + log1p (exp (la - lb))
 
-instance {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] Add (LogSpace f)
+instance Add (LogSpace f) given {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f]
   add = \(Exp la) (Exp lb). Exp $ log_add_exp la lb
   zero = Exp (zero - (divide one zero))
 

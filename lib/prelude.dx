@@ -216,10 +216,10 @@ instance Add Unit
 instance Sub Unit
   sub = \x y. ()
 
-instance {n a} [Add a] Add (n->a)
+instance Add (n->a) given {n a} [Add a]
   add = \f g. \x. (f x) + (g x)
   zero = \x. zero
-instance {n a} [Sub a] Sub (n->a)
+instance Sub (n->a) given {n a} [Sub a]
   sub = \f g. \x. (f x) - (g x)
 
 '#### Mul
@@ -268,7 +268,7 @@ instance Mul Unit
   mul = \x y. ()
   one = ()
 
-instance {n a} [Mul a] Mul (n->a)
+instance Mul (n->a) given {n a} [Mul a]
   mul = \f g. \x. (f x) * (g x)
   one = \x. one
 
@@ -349,22 +349,22 @@ data RangeTo q:Type i:q = UnsafeMkRangeTo Nat
 -- `(..<i)` parses as `RangeToExc _ i`
 data RangeToExc q:Type i:q = UnsafeMkRangeToExc Nat
 
-instance {q:Type} {i:q} [Ix q] Ix (RangeFrom q i)
+instance Ix (RangeFrom q i) given {q:Type} {i:q} [Ix q]
   size = unsafe_nat_diff (size q) (ordinal i)
   ordinal = \(UnsafeMkRangeFrom j). j
   unsafe_from_ordinal = \j. UnsafeMkRangeFrom j
 
-instance {q:Type} {i:q} [Ix q] Ix (RangeFromExc q i)
+instance Ix (RangeFromExc q i) given {q:Type} {i:q} [Ix q]
   size = unsafe_nat_diff (size q) (ordinal i + 1)
   ordinal = \(UnsafeMkRangeFromExc j). j
   unsafe_from_ordinal = \j. UnsafeMkRangeFromExc j
 
-instance {q:Type} {i:q} [Ix q] Ix (RangeTo q i)
+instance Ix (RangeTo q i) given {q:Type} {i:q} [Ix q]
   size = ordinal i + 1
   ordinal = \(UnsafeMkRangeTo j). j
   unsafe_from_ordinal = \j. UnsafeMkRangeTo j
 
-instance {q:Type} {i:q} [Ix q] Ix (RangeToExc q i)
+instance Ix (RangeToExc q i) given {q:Type} {i:q} [Ix q]
   size = ordinal i
   ordinal = \(UnsafeMkRangeToExc j). j
   unsafe_from_ordinal = \j. UnsafeMkRangeToExc j
@@ -378,37 +378,37 @@ def iota (n:Type) [Ix n] : n=>Nat = view i. ordinal i
 
 '## Arithmetic instances for table types
 
-instance {a n} [Add a] Add (n=>a)
+instance Add (n=>a) given {a n} [Add a]
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub (n=>a)
+instance Sub (n=>a) given {a n} [Sub a]
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add ((i:n) => (i..) => a)  -- Upper triangular tables
+instance Add ((i:n) => (i..) => a) given {a n} [Add a]  -- Upper triangular tables
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub ((i:n) => (i..) => a)  -- Upper triangular tables
+instance Sub ((i:n) => (i..) => a) given {a n} [Sub a]  -- Upper triangular tables
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add ((i:n) => (..i) => a)  -- Lower triangular tables
+instance Add ((i:n) => (..i) => a) given {a n} [Add a]  -- Lower triangular tables
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub ((i:n) => (..i) => a)  -- Lower triangular tables
+instance Sub ((i:n) => (..i) => a) given {a n} [Sub a]  -- Lower triangular tables
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add ((i:n) => (..<i) => a)
+instance Add ((i:n) => (..<i) => a) given {a n} [Add a]
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub ((i:n) => (..<i) => a)
+instance Sub ((i:n) => (..<i) => a) given {a n} [Sub a]
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Add a] Add ((i:n) => (i<..) => a)
+instance Add ((i:n) => (i<..) => a) given {a n} [Add a]
   add = \xs ys. for i. xs.i + ys.i
   zero = for _. zero
-instance {a n} [Sub a] Sub ((i:n) => (i<..) => a)
+instance Sub ((i:n) => (i<..) => a) given {a n} [Sub a]
   sub = \xs ys. for i. xs.i - ys.i
 
-instance {a n} [Mul a] Mul (n=>a)
+instance Mul (n=>a) given {a n} [Mul a]
   mul = \xs ys. for i. xs.i * ys.i
   one = for _. one
 
@@ -420,14 +420,14 @@ def fst {a b} ((x, _): (a & b)) : a = x
 def snd {a b} ((_, y): (a & b)) : b = y
 def swap {a b} ((x, y):(a&b)) : (b&a) = (y, x)
 
-instance {a b} [Add a, Add b] Add (a & b)
+instance Add (a & b) given {a b} [Add a, Add b]
   add = \(a, b) (c, d). ( (a + c), (b + d))
   zero = (zero, zero)
 
-instance {a b} [Sub a, Sub b] Sub (a & b)
+instance Sub (a & b) given {a b} [Sub a, Sub b]
   sub = \(a, b) (c, d). ( (a - c), (b - d))
 
-instance {a b} [Ix a, Ix b] Ix (a & b)
+instance Ix (a & b) given {a b} [Ix a, Ix b]
   size = size a * size b
   ordinal = \(i, j). (ordinal i * size b) + ordinal j
   unsafe_from_ordinal = \o.
@@ -454,25 +454,25 @@ def neg  {a} [VSpace a] (v:a) : a = (-1.0) .* v
 instance VSpace Float
   scale_vec = \x y. x * y
 
-instance {a n} [VSpace a] VSpace (n=>a)
+instance VSpace (n=>a) given {a n} [VSpace a]
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a b} [VSpace a, VSpace b] VSpace (a & b)
+instance VSpace (a & b) given {a b} [VSpace a, VSpace b]
   scale_vec = \ s (a, b) . (scale_vec s a, scale_vec s b)
 
-instance {a n} [VSpace a] VSpace ((i:n) => (..i) => a)
+instance VSpace ((i:n) => (..i) => a) given {a n} [VSpace a]
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace ((i:n) => (i..) => a)
+instance VSpace ((i:n) => (i..) => a) given {a n} [VSpace a]
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace ((i:n) => (..<i) => a)
+instance VSpace ((i:n) => (..<i) => a) given {a n} [VSpace a]
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace ((i:n) => (i<..) => a)
+instance VSpace ((i:n) => (i<..) => a) given {a n} [VSpace a]
   scale_vec = \s xs. for i. s .* xs.i
 
-instance {a n} [VSpace a] VSpace (n->a)
+instance VSpace (n->a) given {a n} [VSpace a]
   scale_vec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
@@ -547,7 +547,7 @@ data (|) a b =
   Left  a
   Right b
 
-instance {a b} [Ix a, Ix b] Ix (a | b)
+instance Ix (a | b) given {a b} [Ix a, Ix b]
   size = size a + size b
   ordinal = \i. case i of
     Left ai  -> ordinal ai
@@ -579,7 +579,7 @@ def i_to_n (x:Int) : Maybe Nat =
 
 data Post segment:Type = UnsafeMkPost Nat
 
-instance {segment} [Ix segment] Ix (Post segment)
+instance Ix (Post segment) given {segment} [Ix segment]
   size = size segment + 1
   ordinal = \(UnsafeMkPost i). i
   unsafe_from_ordinal = \i. UnsafeMkPost i
@@ -596,7 +596,7 @@ interface [Ix n] NonEmpty n
 def last_ix {n} [NonEmpty n] : n =
   unsafe_from_ordinal _ $ unsafe_i_to_n $ n_to_i (size n) - 1
 
-instance {n} [Ix n] NonEmpty (Post n)
+instance NonEmpty (Post n) given {n} [Ix n]
   first_ix = unsafe_from_ordinal (Post n) 0
 
 instance NonEmpty Unit
@@ -617,7 +617,7 @@ interface Monoid a
 
 def (<>) {a} [Monoid a] : a -> a -> a = mcombine
 
-instance {a n} [Monoid a] Monoid (n=>a)
+instance Monoid (n=>a) given {a n} [Monoid a]
   mempty = for i. mempty
   mcombine = \x y. for i. mcombine x.i y.i
 
@@ -629,11 +629,11 @@ named-instance OrMonoid : Monoid Bool
   mempty = False
   mcombine = (||)
 
-named-instance AddMonoid : (a:Type) [Add a] Monoid a
+named-instance AddMonoid : Monoid a given (a:Type) [Add a]
   mempty = zero
   mcombine = add
 
-named-instance MulMonoid : (a:Type) [Mul a] Monoid a
+named-instance MulMonoid : Monoid a given (a:Type) [Mul a]
   mempty = one
   mcombine = mul
 
@@ -651,7 +651,7 @@ data AccumMonoidData h w =
 interface AccumMonoid h w
   getAccumMonoidData : AccumMonoidData h w
 
-instance {n h w} [Ix n] [am : AccumMonoid h w] AccumMonoid h (n=>w)
+instance AccumMonoid h (n=>w) given {n h w} [Ix n] [am : AccumMonoid h w]
   getAccumMonoidData =
     (UnsafeMkAccumMonoidData b bm) = %projMethod0 am
     UnsafeMkAccumMonoidData b bm
@@ -786,7 +786,7 @@ instance Eq Bool
 instance Eq Unit
   (==) = \x y. True
 
-instance {a b} [Eq a, Eq b] Eq (a | b)
+instance Eq (a | b) given {a b} [Eq a, Eq b]
   (==) = \x y. case x of
     Left x -> case y of
       Left y -> x == y
@@ -795,7 +795,7 @@ instance {a b} [Eq a, Eq b] Eq (a | b)
       Left y -> False
       Right y -> x == y
 
-instance {a} [Eq a] Eq (Maybe a)
+instance Eq (Maybe a) given {a} [Eq a]
   (==) = \x y. case x of
     Just x -> case y of
       Just y -> x == y
@@ -839,10 +839,10 @@ instance Ord Unit
   (>) = \x y. False
   (<) = \x y. False
 
-instance {a b} [Eq a, Eq b] Eq (a & b)
+instance Eq (a & b) given {a b} [Eq a, Eq b]
   (==) = \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
 
-instance {a b} [Ord a, Ord b] Ord (a & b)
+instance Ord (a & b) given {a b} [Ord a, Ord b]
   (>) = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
   (<) = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
 
@@ -858,10 +858,10 @@ instance Ord Nat
   (<) = \x y. nat_to_rep x < nat_to_rep y
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
-instance {n} Eq (Fin n)
+instance Eq (Fin n) given {n}
   (==) = \x y. ordinal x == ordinal y
 
-instance {n} Ord (Fin n)
+instance Ord (Fin n) given {n}
   (>) = \x y. ordinal x > ordinal y
   (<) = \x y. ordinal x < ordinal y
 
@@ -872,7 +872,7 @@ instance Ix Bool
     True -> 1
   unsafe_from_ordinal = \i. i > 0
 
-instance {a} [Ix a] Ix (Maybe a)
+instance Ix (Maybe a) given {a} [Ix a]
   size = size a + 1
   ordinal = \i. case i of
     Just ai -> ordinal ai
@@ -885,18 +885,18 @@ instance {a} [Ix a] Ix (Maybe a)
 instance NonEmpty Bool
   first_ix = unsafe_from_ordinal _ 0
 
-instance {a b} [NonEmpty a, NonEmpty b] NonEmpty (a & b)
+instance NonEmpty (a & b) given {a b} [NonEmpty a, NonEmpty b]
   first_ix = unsafe_from_ordinal _ 0
 
-instance {a b} [Ix b, NonEmpty a] NonEmpty (a|b)
+instance NonEmpty (a|b) given {a b} [Ix b, NonEmpty a]
   first_ix = unsafe_from_ordinal _ 0
 
 -- The below instance is valid, but causes "multiple candidate dictionaries"
 -- errors if both Left and Right are NonEmpty.
--- instance {a b} [Ix a, NonEmpty b] NonEmpty (a|b)
+-- instance NonEmpty (a|b) given {a b} [Ix a, NonEmpty b]
 --  first_ix = unsafe_from_ordinal _ 0
 
-instance {a} [Ix a] NonEmpty (Maybe a)
+instance NonEmpty (Maybe a) given {a} [Ix a]
   first_ix = unsafe_from_ordinal _ 0
 
 def scan {a b n} [Ix n] (init:a) (body:n->a->(a&b)) : (a & n=>b) =
@@ -923,12 +923,12 @@ instance Monoid Ordering
       GT -> GT
       EQ -> y
 
-instance {a n} [Eq a] Eq (n=>a)
+instance Eq (n=>a) given {a n} [Eq a]
   (==) = \xs ys.
     yield_accum AndMonoid \ref.
       for i. ref += xs.i == ys.i
 
-instance {a n} [Ord a] Ord (n=>a)
+instance Ord (n=>a) given {a n} [Ord a]
   (>) = \xs ys.
     f: Ordering =
         fold EQ $ \i c. c <> (compare xs.i ys.i)
@@ -954,7 +954,7 @@ def unsafe_project {a} (a_sub:Type) [Subset a_sub a] (x:a) : a_sub =
 def inject {a_sub} (a:Type) [Subset a_sub a] (x:a_sub) : a =
   inject' x
 
-instance {a b c} [Subset a b, Subset b c] Subset a c
+instance Subset a c given {a b c} [Subset a b, Subset b c]
   inject' = \x. inject c $ inject b x
   project' = \x. case project b x of
     Nothing -> Nothing
@@ -964,7 +964,7 @@ instance {a b c} [Subset a b, Subset b c] Subset a c
 def unsafe_project_rangefrom {q:Type} {i:q} [Ix q] (j:q) : RangeFrom q i =
   UnsafeMkRangeFrom $ unsafe_nat_diff (ordinal j) (ordinal i)
 
-instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
+instance Subset (RangeFrom q i) q given {q:Type} {i:q} [Ix q]
   inject' = \(UnsafeMkRangeFrom j).
     unsafe_from_ordinal _ $ j + ordinal i
   project' = \j.
@@ -975,7 +975,7 @@ instance {q:Type} {i:q} [Ix q] Subset (RangeFrom q i) q
       else Just $ UnsafeMkRangeFrom $ unsafe_nat_diff j' i'
   unsafe_project' = \j. UnsafeMkRangeFrom $ unsafe_nat_diff (ordinal j) (ordinal i)
 
-instance {q:Type} {i:q} [Ix q] Subset (RangeFromExc q i) q
+instance Subset (RangeFromExc q i) q given {q:Type} {i:q} [Ix q]
   inject' = \(UnsafeMkRangeFromExc j).
     unsafe_from_ordinal _ $ j + ordinal i + 1
   project' = \j.
@@ -987,7 +987,7 @@ instance {q:Type} {i:q} [Ix q] Subset (RangeFromExc q i) q
   unsafe_project' = \j.
     UnsafeMkRangeFromExc $ unsafe_nat_diff (ordinal j) (ordinal i + 1)
 
-instance {q:Type} {i:q} [Ix q] Subset (RangeTo q i) q
+instance Subset (RangeTo q i) q given {q:Type} {i:q} [Ix q]
   inject' = \(UnsafeMkRangeTo j). unsafe_from_ordinal _ j
   project' = \j.
     j' = ordinal j
@@ -997,7 +997,7 @@ instance {q:Type} {i:q} [Ix q] Subset (RangeTo q i) q
       else Just $ UnsafeMkRangeTo j'
   unsafe_project' = \j. UnsafeMkRangeTo (ordinal j)
 
-instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) q
+instance Subset (RangeToExc q i) q given {q:Type} {i:q} [Ix q]
   inject' = \(UnsafeMkRangeToExc j). unsafe_from_ordinal _ j
   project' = \j.
     j' = ordinal j
@@ -1007,7 +1007,7 @@ instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) q
       else Just $ UnsafeMkRangeToExc j'
   unsafe_project' = \j. UnsafeMkRangeToExc (ordinal j)
 
-instance {q:Type} {i:q} [Ix q] Subset (RangeToExc q i) (RangeTo q i)
+instance Subset (RangeToExc q i) (RangeTo q i) given {q:Type} {i:q} [Ix q]
   inject' = \(UnsafeMkRangeToExc j). unsafe_from_ordinal _ j
   project' = \j.
     j' = ordinal j
@@ -1141,7 +1141,7 @@ instance Storable Nat
   load  = \(MkPtr ptr)  . rep_to_nat $ load (MkPtr ptr)
   storage_size = storage_size NatRep
 
-instance {a} Storable (Ptr a)
+instance Storable (Ptr a) given {a}
   store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast %PtrPtr ptr) x
   load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast %PtrPtr ptr)
   storage_size = 8  -- TODO: something more portable?
@@ -1202,7 +1202,7 @@ def mod {a} [Add a, Integral a] (x:a) (y:a) : a = rem (y + rem x y) y
 
 '## Table Operations
 
-instance {a n} [Floating a] Floating (n=>a)
+instance Floating (n=>a) given {a n} [Floating a]
   exp    = map exp
   exp2   = map exp2
   log    = map log
@@ -1356,19 +1356,19 @@ instance HasDefaultTolerance Float64
   atol = f_to_f64 0.00000001
   rtol = f_to_f64 0.00001
 
-instance {a b} [HasDefaultTolerance a, HasDefaultTolerance b,
-                HasAllClose a, HasAllClose b] HasAllClose (a & b)
+instance HasAllClose (a & b) given {a b} [ HasDefaultTolerance a, HasDefaultTolerance b
+                                         , HasAllClose a, HasAllClose b] 
   allclose = \atol rtol (a, b) (c, d). (a ~~ c) && (b ~~ d)
 
-instance {a b} [HasDefaultTolerance a, HasDefaultTolerance b] HasDefaultTolerance (a & b)
+instance HasDefaultTolerance (a & b) given {a b} [HasDefaultTolerance a, HasDefaultTolerance b]
   atol = (atol, atol)
   rtol = (rtol, rtol)
 
-instance {n t} [HasAllClose t] HasAllClose (n=>t)
+instance HasAllClose (n=>t) given {n t} [HasAllClose t]
   allclose = \atol rtol a b.
     all for i:n. allclose atol.i rtol.i a.i b.i
 
-instance {n t} [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
+instance HasDefaultTolerance (n=>t) given {n t} [HasDefaultTolerance t]
   atol = for i. atol
   rtol = for i. rtol
 
@@ -1389,7 +1389,7 @@ def check_deriv (f:Float->Float) (x:Float) : Bool =
 data List a =
   AsList n:Nat elements:(Fin n => a)
 
-instance {a} [Eq a] Eq (List a)
+instance Eq (List a) given {a} [Eq a]
   (==) = \(AsList nx xs) (AsList ny ys).
     if nx /= ny
       then False
@@ -1403,7 +1403,7 @@ def to_list {n a} (xs:n=>a) : List a =
   n' = size n
   AsList _ $ unsafe_cast_table (Fin n') xs
 
-instance {a} Monoid (List a)
+instance Monoid (List a) given {a}
   mempty = AsList _ []
   mcombine = \x y.
     (AsList nx xs) = x
@@ -1415,7 +1415,7 @@ instance {a} Monoid (List a)
         True  -> xs.(unsafe_from_ordinal _ i')
         False -> ys.(unsafe_from_ordinal _ $ unsafe_nat_diff i' nx)
 
-named-instance ListMonoid : (a:Type) Monoid (List a)
+named-instance ListMonoid : Monoid (List a) given (a:Type)
   mempty = mempty
   mcombine = mcombine
 
@@ -1645,7 +1645,7 @@ instance Show Float64
     (n, ptr) = showFloat64 x
     string_from_char_ptr n $ MkPtr ptr
 
-instance {a b} [Show a, Show b] Show (a & b)
+instance Show (a & b) given {a b} [Show a, Show b]
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
 
 '### Parse interface
@@ -2046,7 +2046,7 @@ interface [VSpace v] InnerProd v
 instance InnerProd Float
   inner_prod = \x y. x * y
 
-instance {a n} [InnerProd a] InnerProd (n=>a)
+instance InnerProd (n=>a) given {a n} [InnerProd a]
   inner_prod = \x y. sum for i. inner_prod x.i y.i
 
 
@@ -2068,27 +2068,27 @@ instance Arbitrary Int32
 instance Arbitrary Nat
   arb = \key. f_to_n $ randn key * 5.0
 
-instance {n a} [Arbitrary a] Arbitrary (n=>a)
+instance Arbitrary (n=>a) given {n a} [Arbitrary a]
   arb = \key. for i. arb $ ixkey key i
 
-instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(..<i) => a)
+instance Arbitrary ((i:n)=>(..<i) => a) given {n a} [Arbitrary a]
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(..i) => a)
+instance Arbitrary ((i:n)=>(..i) => a) given {n a} [Arbitrary a]
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(i..) => a)
+instance Arbitrary ((i:n)=>(i..) => a) given {n a} [Arbitrary a]
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {n a} [Arbitrary a] Arbitrary ((i:n)=>(i<..) => a)
+instance Arbitrary ((i:n)=>(i<..) => a) given {n a} [Arbitrary a]
   arb = \x. for i. arb $ new_key (ordinal i)
 
-instance {a b} [Arbitrary a, Arbitrary b] Arbitrary (a & b)
+instance Arbitrary (a & b) given {a b} [Arbitrary a, Arbitrary b]
   arb = \key.
     [k1, k2] = split_key key
     (arb k1, arb k2)
 
-instance {n} Arbitrary (Fin n)
+instance Arbitrary (Fin n) given {n}
   arb = rand_idx
 
 '## Ord on Arrays
@@ -2170,7 +2170,7 @@ def lexical_order {n} [Ord n]
             True -> Continue
             False -> Done False
 
-instance {n} [Ord n] Ord (List n)
+instance Ord (List n) given {n} [Ord n]
   (>) = lexical_order (>) (>)
   (<) = lexical_order (<) (<)
 
@@ -2440,7 +2440,7 @@ def assert (b:Bool) : {Except} Unit =
 
 '### Misc instances that require `error`
 
-instance {a b} Subset a (a|b)
+instance Subset a (a|b) given {a b}
   inject' = \x. Left x
   project' = \x. case x of
     Left  y -> Just y
@@ -2449,7 +2449,7 @@ instance {a b} Subset a (a|b)
     Left  x -> x
     Right x -> error "Can't project Right branch to Left branch"
 
-instance {a b} Subset a (b|a)
+instance Subset a (b|a) given {a b}
   inject' = \x. Right x
   project' = \x. case x of
     Left  x -> Nothing
@@ -2483,12 +2483,12 @@ def reversed_digits_to_int {a b} [Ix a, Ix b] (digits: a=>b) : Nat =
     next_base = cur_base * base
     (next_k, next_base)
 
-instance {a b} [Ix a, Ix b] Ix (a=>b)
+instance Ix (a=>b) given {a b} [Ix a, Ix b]
   -- 0@a is the least significant digit,
   -- while (size a - 1)@a is the most significant digit.
   size = intpow (size b) (size a)
   ordinal             = reversed_digits_to_int
   unsafe_from_ordinal = int_to_reversed_digits
 
-instance {a b} [Ix a, NonEmpty b] NonEmpty (a=>b)
+instance NonEmpty (a=>b) given {a b} [Ix a, NonEmpty b]
   first_ix = unsafe_from_ordinal _ 0

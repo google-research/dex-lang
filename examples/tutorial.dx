@@ -587,14 +587,14 @@ tableMean' [(1.0, 0.5), (0.5, 0.8)]
 ' tuple types.
 
 ' ```
-instance {v w} [Add v, Add w] Add (v & w)
+instance Add (v & w) given {v w} [Add v, Add w]
   add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
   zero = (zero, zero)
  
-instance {v w} [Sub v, Sub w] Sub (v & w)
+instance Sub (v & w) given {v w} [Sub v, Sub w]
   sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
  
-instance {v w} [VSpace v, VSpace w] VSpace (v & w)
+instance VSpace (v & w) given {v w} [VSpace v, VSpace w]
   scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
 
 '## More Fashion MNist

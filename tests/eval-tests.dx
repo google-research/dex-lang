@@ -552,7 +552,7 @@ def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
     Right x -> {|biases=x|}
   MkIso {fwd, bwd}
 
-instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
+instance Ix {weights:n | biases:m} given {n m} [Ix n, Ix m]
   size = size n + size m
   ordinal = ordinal <<< app_iso wbToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso wbToEither
