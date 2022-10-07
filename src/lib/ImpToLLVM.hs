@@ -7,7 +7,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (impToLLVM) where
+module ImpToLLVM (impToLLVM) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import LLVM.Prelude (ShortByteString, Word32)
@@ -26,22 +26,22 @@ import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.IRBuilder.Module as MB
 
+
 import System.IO.Unsafe
 import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import qualified Data.ByteString.Short as SBS
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.Functor ((<&>))
 import Data.String
 import Data.Foldable
-import Data.Maybe (catMaybes)
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
+import qualified Data.ByteString.Char8 as C8BS
+import qualified Data.ByteString.Short as SBS
 import qualified Data.Set as S
-import qualified Data.Map.Strict as M
 
 import CUDA (getCudaArchitecture)
 
@@ -52,9 +52,9 @@ import Name
 import Imp
 import PPrint
 import Logging
-import LLVMExec
 import Types.Primitives
 import Util (IsBool (..), bindM2, enumerate)
+import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
 
 -- === Compile monad ===
 
@@ -105,30 +105,27 @@ instance Compiler CompileM
 -- === Imp to LLVM ===
 
 impToLLVM :: (EnvReader m, MonadIO1 m)
-          => FilteredLogger PassName [Output] -> NameHint -> ImpFunction n
-          -> m n (L.Module, CNameMap ImpFunName n)
-impToLLVM logger fNameHint f = do
+          => FilteredLogger PassName [Output] -> NameHint
+          -> ClosedImpFunction n
+          -> m n (WithCNameInterface L.Module)
+impToLLVM logger fNameHint (ClosedImpFunction calledTys calledBs impFun) = do
   let fName = makeMainFunName fNameHint
-  (LinkableImpFunction calledTys calledBs f', calledFunctionNames) <- abstractLinktimeObjects f
-  let internalCalledNames = makeInternalCalledNames $ map getNameHint calledFunctionNames
-  (internalDefns, substVals) <- unzip <$> forM (zip internalCalledNames calledTys) \(v, ty) -> do
+  let calledNames = makeInternalCalledNames $ nestToList getNameHint calledBs
+  (internalDefns, substVals) <- unzip <$> forM (zip calledNames calledTys) \(v, ty) -> do
     let llvmTy = impFunTyToLLVMTy ty
     let v' = L.Name $ fromString v
     let defn = makeCalledFunDefn v' llvmTy
     let sv = FunctionSubstVal (makeCalledFunOperand v' llvmTy) llvmTy ty
     return (defn, sv)
   let initEnv = idSubst <>> calledBs @@> substVals
-  (defns, externSpecs, globalDtors) <- compileFunction logger (L.Name $ fromString fName) initEnv f'
+  (defns, externSpecs, globalDtors) <- compileFunction logger (L.Name $ fromString fName) initEnv impFun
   let externDefns = map externDecl $ toList externSpecs
   let dtorDef = defineGlobalDtors globalDtors
   let resultModule = L.defaultModule
         { L.moduleName = "dexModule"
         , L.moduleDefinitions = dtorDef : internalDefns ++ defns ++ externDefns }
-  let nameMap = CNameMap
-                  fName
-                  (M.fromList $ zip internalCalledNames calledFunctionNames)
-                  (map (\(L.Name s) -> B.unpack $ SBS.fromShort s) globalDtors)
-  return (resultModule, nameMap)
+  let dtorNames = map (\(L.Name dname) -> C8BS.unpack $ SBS.fromShort dname) globalDtors
+  return $ WithCNameInterface resultModule fName calledNames dtorNames
   where
     dtorType = L.FunctionType L.VoidType [] False
     dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]
@@ -147,10 +144,10 @@ impToLLVM logger fNameHint f = do
     -- This name is only used for extracting the pointer to the main function. There
     -- are no requirements for uniqueness beyond the current LLVM module. The hint
     -- is just for readability and could be ignored without affecting correctness.
-    makeMainFunName :: NameHint -> LocalCName
+    makeMainFunName :: NameHint -> CName
     makeMainFunName hint = "dexMainFunction_" <> fromString (show hint)
 
-    makeInternalCalledNames :: [NameHint] -> [LocalCName]
+    makeInternalCalledNames :: [NameHint] -> [CName]
     makeInternalCalledNames hints =
       ["dexCalled_" <> fromString (show h) <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
 
@@ -1218,33 +1215,6 @@ deviceVoidp = devicePtrTy i8
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.FunctionType retTy argTys False
 
--- === Abstracting link-time objects ===
-
--- `LinkableImpFunction` makes the dependence on link-time objects explicit.
--- Called functions and pointers* are abstracted so that we don't depend on
--- their actual values at object-code-generation time, and they can be supplied
--- instead at link time. We could probably have the whole thing in `VoidS` but
--- we might want to allow free variables of other name colors. * TODO: implement
--- pointers
-data LinkableImpFunction (n::S) where
-  LinkableImpFunction
-    :: [IFunType]                         -- types of required functions
-    -> Nest (NameBinder ImpFunNameC) n l  -- names of required functions
-    -> ImpFunction l
-    -> LinkableImpFunction n
-
-abstractLinktimeObjects
-  :: EnvReader m => ImpFunction n -> m n (LinkableImpFunction n, [ImpFunName n])
-abstractLinktimeObjects f = do
-  let vs = freeVarsList f
-  vsToAbs <- catMaybes <$> forM vs \v ->
-    lookupImpFun v <&> \case
-      ImpFunction _ _ -> Just v
-      FFIFunction _ _ -> Nothing
-  Abs bs f' <- return $ abstractFreeVarsNoAnn vsToAbs f
-  tys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
-  return (LinkableImpFunction tys bs f', vsToAbs)
-
 -- === Module building ===
 
 -- XXX: this tries to simulate the older, pure, version of `typeOf` by passing
@@ -1255,6 +1225,27 @@ typeOf x = case fst $ MB.runModuleBuilder emptyState $ L.typeOf x of
   Right ty -> ty
   Left e -> error e
   where emptyState = MB.ModuleBuilderState mempty mempty
+
+-- === querying module destructors ===
+
+-- moduleDestructorNames :: L.Module
+--   moduleDtors <- forM dtorNames \dtorName -> do
+--     Right (OrcJIT.JITSymbol dtorAddr _) <-
+--       OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
+--     return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
+--   return NativeModule{..}
+--   where
+--     -- Unfortunately the JIT layers we use here don't handle the destructors properly,
+--     -- so we have to find and call them ourselves.
+--     dtorNames = do
+--       let dtorStructs = flip foldMap (LLVM.AST.moduleDefinitions ast) \case
+--             LLVM.AST.GlobalDefinition
+--               LLVM.AST.GlobalVariable{
+--                 name="llvm.global_dtors",
+--                 initializer=Just (C.Array _ elems)} -> elems
+--             _ -> []
+--       -- Sort in the order of decreasing priority!
+--       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
 
 -- === Module building ===
 

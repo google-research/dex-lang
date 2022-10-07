@@ -10,8 +10,8 @@ module TopLevel (
   EvalConfig (..), Topper, TopperM, runTopperM,
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, initTopState, TopStateEx (..), LibPath (..),
-  evalSourceBlockIO, loadCache, storeCache, clearCache, createDexJIT,
-  DexJIT, loadObject, nameMapImpToObj, getLLVMOptLevel) where
+  evalSourceBlockIO, loadCache, storeCache, clearCache,
+  loadObject, toCFunction) where
 
 import Data.Maybe
 import Data.Foldable (toList)
@@ -23,10 +23,11 @@ import Control.Monad.Reader
 import qualified Data.ByteString as BS
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
-import Data.Store (Store (..), encode, decode)
+import Data.Store (encode, decode)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
+import Foreign.Ptr
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -35,11 +36,13 @@ import System.IO.Error (isDoesNotExistError)
 
 import Paths_dex  (getDataFileName)
 
+import LLVM.Link
+import LLVM.Compile
+import qualified LLVM.AST
+
 import Err
 import MTL1
 import Logging
-import LLVMExec hiding (OptLevel)
-import LLVMExec qualified
 import PPrint (pprintCanonicalized)
 import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
@@ -59,14 +62,14 @@ import Inference
 import Simplify
 import Lower
 import Imp
-import JIT
+import ImpToLLVM
 import Optimize
+import Runtime
 import QueryType
 
 -- === top-level monad ===
 
 data LibPath = LibDirectory FilePath | LibBuiltinPath
-data OptLevel = NoOptimize | Optimize
 
 data EvalConfig = EvalConfig
   { backendName   :: Backend
@@ -79,11 +82,8 @@ data EvalConfig = EvalConfig
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
-class Monad m => JITReader m where
-  getDexJIT :: m DexJIT
-
 data PassCtx = PassCtx
-  { requiresBench :: Bool
+  { _requiresBench :: Bool
   , shouldLogPass :: PassName -> Bool
   }
 
@@ -100,7 +100,6 @@ class ( forall n. Fallible (m n)
       , forall n. MonadLogger [Output] (m n)
       , forall n. Catchable (m n)
       , forall n. ConfigReader (m n)
-      , forall n. JITReader (m n)
       , forall n. PassCtxReader (m n)
       , forall n. MonadIO (m n)  -- TODO: something more restricted here
       , TopBuilder m )
@@ -108,8 +107,7 @@ class ( forall n. Fallible (m n)
 
 data TopperReaderData = TopperReaderData
   { topperPassCtx    :: PassCtx
-  , topperEvalConfig :: EvalConfig
-  , topperDexJIT     :: DexJIT }
+  , topperEvalConfig :: EvalConfig }
 
 newtype TopperM (n::S) a = TopperM
   { runTopperM' :: TopBuilderT (ReaderT TopperReaderData (LoggerT [Output] IO)) n a }
@@ -120,13 +118,17 @@ newtype TopperM (n::S) a = TopperM
 data TopStateEx where
   TopStateEx :: Distinct n => Env n -> TopStateEx
 
-runTopperM :: EvalConfig -> DexJIT -> TopStateEx
+-- Hides the `n` parameter as an existential
+data TopSerializedStateEx where
+  TopSerializedStateEx :: Distinct n => SerializedEnv n -> TopSerializedStateEx
+
+runTopperM :: EvalConfig -> TopStateEx
            -> (forall n. Mut n => TopperM n a)
            -> IO (a, TopStateEx)
-runTopperM opts jit (TopStateEx env) cont = do
+runTopperM opts (TopStateEx env) cont = do
   let maybeLogFile = logFile opts
   (Abs frag (LiftE result), _) <- runLogger maybeLogFile \l -> runLoggerT l $
-    flip runReaderT (TopperReaderData initPassCtx opts jit) $
+    flip runReaderT (TopperReaderData initPassCtx opts) $
       runTopBuilderT env $ runTopperM' do
         localTopBuilder $ LiftE <$> cont
   return (result, extendTopEnv env frag)
@@ -141,8 +143,8 @@ initTopState = TopStateEx emptyOutMap
 
 -- ======
 
-evalSourceBlockIO :: EvalConfig -> DexJIT -> TopStateEx -> SourceBlock -> IO (Result, TopStateEx)
-evalSourceBlockIO opts jit env block = runTopperM opts jit env $ evalSourceBlockRepl block
+evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, TopStateEx)
+evalSourceBlockIO opts env block = runTopperM opts env $ evalSourceBlockRepl block
 
 -- Used for the top-level source file (rather than imported modules)
 evalSourceText :: (Topper m, Mut n) => Text -> (SourceBlock -> IO ()) -> (Result -> IO Bool) -> m n [(SourceBlock, Result)]
@@ -629,17 +631,28 @@ compileTopLevelFun fname = do
   void $ loadObject fObj
 {-# SCC compileTopLevelFun #-}
 
-loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n (Ptr ())
+loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction
 loadObject fname =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
-      FunObjCode contents (CNameMap mainName depNames dtors) <- lookupFunObjCode fname
-      ptrs <- mapM loadObject depNames
-      jit <- getDexJIT
-      ptr <- liftIO $ loadFunObjCodeExplicitLinks jit mainName ptrs dtors contents
-      extendLoadedObjects fname ptr
-      return ptr
+      (objCode, depNames) <- lookupFunObjCode fname
+      ptrs <- forM depNames \name -> nativeFunPtr <$> loadObject name
+      f <- liftIO $ linkFunObjCode objCode ptrs
+      extendLoadedObjects fname f
+      return f
+
+linkFunObjCode :: FunObjCode -> [FunPtr ()] -> IO NativeFunction
+linkFunObjCode (WithCNameInterface code mainFunName reqFuns dtors) depPtrs = do
+  l <- createLinker
+  addExplicitLinkMap l (zip reqFuns depPtrs)
+  addObjectFile l code
+  ptr <- getFunctionPointer l mainFunName
+  dtorPtrs <- mapM (getFunctionPointer l) dtors
+  let destructor :: IO () = do
+        mapM_ callDtor dtorPtrs
+        destroyLinker l
+  return $ NativeFunction ptr destructor
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
@@ -664,42 +677,51 @@ forceDeferredInlining v =
     _ -> return $ Var v
 
 toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
-toCFunction nameHint f = do
-  PassCtx{..} <- getPassCtx
-  logger  <- getLogger
-  (llvmModule, nameMap) <- impToLLVM (FilteredLogger shouldLogPass logger) nameHint f
-  jit <- getDexJIT
-  obj <- liftIO $ compileLLVMModule jit llvmModule (mainFunName nameMap)
-  nameMap' <- nameMapImpToObj nameMap
-  emitObjFile nameHint $ FunObjCode obj nameMap'
+toCFunction nameHint impFun = do
+  logger  <- getFilteredLogger
+  (closedImpFun, reqFuns) <- abstractLinktimeObjects impFun
+  obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
+  reqPtrs <- mapM impNameToObj reqFuns
+  emitObjFile nameHint obj reqPtrs
 
-getLLVMOptLevel :: EvalConfig -> LLVMExec.OptLevel
+getLLVMOptLevel :: EvalConfig -> LLVMOptLevel
 getLLVMOptLevel cfg = case optLevel cfg of
-  NoOptimize -> LLVMExec.OptALittle
-  Optimize   -> LLVMExec.OptAggressively
+  NoOptimize -> OptALittle
+  Optimize   -> OptAggressively
 
 evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
-  PassCtx{..} <- getPassCtx
-  logger  <- getLogger
-  let filteredLogger = FilteredLogger shouldLogPass logger
+  logger  <- getFilteredLogger
   (blockAbs, ptrVals) <- abstractPtrLiterals block
-  let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
-                                        _        -> (EntryFun CUDANotRequired, False)
+  let (cc, _needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
+                                         _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
                                              toImpFunction backend cc blockAbs
-  (llvmAST, nameMap) <- impToLLVM filteredLogger "main" impFun
   let IFunType _ _ resultTypes = impFunType impFun
-  let llvmEvaluate = if requiresBench then compileAndBench needsSync else compileAndEval
-  jit <- getDexJIT
-  CNameMap mainName depNames _ <- nameMapImpToObj nameMap
-  depPtrs <- mapM loadObject depNames
-  resultVals <- liftIO $ llvmEvaluate jit filteredLogger
-                  llvmAST mainName depPtrs (dtorList nameMap) ptrVals resultTypes
+  (closedImpFun, reqFuns) <- abstractLinktimeObjects impFun
+  obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
+  depPtrs <- mapM impNameToPtr reqFuns
+  nativeFun <- liftIO $ linkFunObjCode obj depPtrs
+  resultVals <- liftIO $ callNativeFun nativeFun logger ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
+
+compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
+compileToObjCode astWithNames = forM astWithNames \ast -> do
+  logger  <- getFilteredLogger
+  opt <- getLLVMOptLevel <$> getConfig
+  liftIO $ compileLLVM logger opt ast (cniMainFunName astWithNames)
+
+impNameToPtr :: (Topper m, Mut n) => ImpFunName n -> m n (FunPtr ())
+impNameToPtr v = nativeFunPtr <$> (loadObject =<< impNameToObj v)
+
+impNameToObj :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
+impNameToObj v = do
+  queryObjCache v >>= \case
+    Just v' -> return v'
+    Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
 
 evalBackend :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalBackend block = do
@@ -778,14 +800,6 @@ loadModuleSource config moduleName = do
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
-nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap FunObjCodeName n)
-nameMapImpToObj (CNameMap fname calledNames dtors) = do
-  calledNames' <- forM calledNames \v -> do
-    queryObjCache v >>= \case
-      Just v' -> return v'
-      Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
-  return $ CNameMap fname calledNames' dtors
-
 -- === saving cache to disk ===
 
 -- None of this is safe in the presence of multiple processes trying to interact
@@ -799,7 +813,7 @@ loadCache = liftIO do
     then do
       decoded <- decode <$> BS.readFile cachePath
       case decoded of
-        Right result -> restorePtrSnapshots result
+        Right result -> fromSerializedEnv result
         _            -> removeFile cachePath >> return initTopState
     else return initTopState
 {-# SCC loadCache #-}
@@ -808,9 +822,42 @@ storeCache :: MonadIO m => TopStateEx -> m ()
 storeCache env = liftIO do
   cachePath <- getCachePath
   createDirectoryIfMissing True =<< getCacheDir
-  envToStore <- snapshotPtrs $ stripEnvForSerialization env
-  BS.writeFile cachePath $ encode envToStore
-{-# SCC storeCache #-}
+  TopSerializedStateEx sEnv <- toSerializedEnv env
+  BS.writeFile cachePath $ encode sEnv
+
+snapshotPtrs :: MonadIO m => RecSubst Binding n -> m (RecSubst Binding n)
+snapshotPtrs bindings =
+  RecSubst <$> traverseSubstFrag f (fromRecSubst bindings)
+  where
+    f = \case
+      PtrBinding (PtrLitVal ty p) ->
+        liftIO $ PtrBinding . PtrSnapshot ty <$> takePtrSnapshot ty p
+      PtrBinding (PtrSnapshot _ _) -> error "shouldn't have snapshots"
+      b -> return b
+
+traverseBindingsTopStateEx
+  :: Monad m => TopStateEx -> (forall c n. Binding c n -> m (Binding c n)) -> m TopStateEx
+traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
+  defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
+  return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv)
+
+fromSerializedEnv :: forall n m. MonadIO m => SerializedEnv n -> m TopStateEx
+fromSerializedEnv (SerializedEnv defs rules cache) = do
+  Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence n)
+  let topEnv = Env (TopEnv defs rules cache mempty mempty) mempty
+  restorePtrSnapshots $ TopStateEx topEnv
+
+toSerializedEnv :: MonadIO m => TopStateEx -> m TopSerializedStateEx
+toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _)) = do
+  collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
+    let liveNames = toNameSet $ toScopeFrag defsFrag'
+    let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
+    defs'' <- snapshotPtrs (RecSubst defs')
+    return $ TopSerializedStateEx $ SerializedEnv defs'' rules' cache'
+  where
+    ruleFreeVars v = case M.lookup v rules of
+      Nothing -> mempty
+      Just r  -> freeVarsE r
 
 getCacheDir :: MonadIO m => m FilePath
 getCacheDir = liftIO $ getXdgDirectory XdgCache "dex"
@@ -825,38 +872,12 @@ clearCache = liftIO do
   cachePath <- getCachePath
   removeFile cachePath `catch` \e -> unless (isDoesNotExistError e) (throwIO e)
 
--- TODO: real garbage collection (maybe leave it till after we have a
--- database-backed cache and we can do it incrementally)
-stripEnvForSerialization :: TopStateEx -> TopStateEx
-stripEnvForSerialization (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _)) =
-  collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
-    let liveNames = toNameSet $ toScopeFrag defsFrag'
-    let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
-    TopStateEx $ Env (TopEnv (RecSubst defs') rules' cache' mempty mempty) emptyModuleEnv
-  where
-    ruleFreeVars v = case M.lookup v rules of
-      Nothing -> mempty
-      Just r  -> freeVarsE r
-
-snapshotPtrs :: MonadIO m => TopStateEx -> m TopStateEx
-snapshotPtrs s = traverseBindingsTopStateEx s \case
-  PtrBinding (PtrLitVal ty p) ->
-    liftIO $ PtrBinding . PtrSnapshot ty <$> takePtrSnapshot ty p
-  PtrBinding (PtrSnapshot _ _) -> error "shouldn't have snapshots"
-  b -> return b
-
 restorePtrSnapshots :: MonadIO m => TopStateEx -> m TopStateEx
 restorePtrSnapshots s = traverseBindingsTopStateEx s \case
   PtrBinding (PtrSnapshot ty snapshot) ->
     liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
   PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
   b -> return b
-
-traverseBindingsTopStateEx
-  :: Monad m => TopStateEx -> (forall c n. Binding c n -> m (Binding c n)) -> m TopStateEx
-traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
-  defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
-  return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv)
 
 abstractPtrLiterals
   :: (EnvReader m, HoistableE e)
@@ -874,6 +895,12 @@ abstractPtrLiterals block = do
   let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
   return (Abs ptrBinders block', ptrVals)
 
+getFilteredLogger :: Topper m => m n PassLogger
+getFilteredLogger = do
+  shouldLog <- shouldLogPass <$> getPassCtx
+  logger  <- getLogger
+  return $ FilteredLogger shouldLog logger
+
 -- -- === instances ===
 
 instance PassCtxReader (TopperM n) where
@@ -890,9 +917,6 @@ instance (Monad1 m, ConfigReader (m n)) => ConfigReader (StateT1 s m n) where
 
 instance Topper TopperM
 
-instance JITReader (TopperM n) where
-  getDexJIT = TopperM $ asks topperDexJIT
-
 instance TopBuilder TopperM where
   -- Log bindings as they are emitted
   emitBinding hint binding = do
@@ -904,8 +928,6 @@ instance TopBuilder TopperM where
   emitEnv env = TopperM $ emitEnv env
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont
-
-instance Store TopStateEx
 
 instance MonadLogger [Output] (TopperM n) where
   getLogger = TopperM $ lift1 $ lift $ getLogger

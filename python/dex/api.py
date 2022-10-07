@@ -42,7 +42,6 @@ assert ctypes.sizeof(CAtom) == 4 * 8
 
 class HsAtom(ctypes.Structure): pass
 class HsContext(ctypes.Structure): pass
-class HsJIT(ctypes.Structure): pass
 class NativeFunctionObj(ctypes.Structure): pass
 class NativeFunctionSignature(ctypes.Structure):
   _fields_ = [("arg", ctypes.c_char_p),
@@ -62,7 +61,6 @@ XLACC = ExportCC(1)
 
 HsAtomPtr = ctypes.POINTER(HsAtom)
 HsContextPtr = ctypes.POINTER(HsContext)
-HsJITPtr = ctypes.POINTER(HsJIT)
 CAtomPtr = ctypes.POINTER(CAtom)
 NativeFunctionSignaturePtr = ctypes.POINTER(NativeFunctionSignature)
 NativeFunction = ctypes.POINTER(NativeFunctionObj)
@@ -82,7 +80,7 @@ createContext  = dex_func('dexCreateContext',  HsContextPtr)
 destroyContext = dex_func('dexDestroyContext', HsContextPtr, None)
 forkContext    = dex_func('dexForkContext',    HsContextPtr, HsContextPtr)
 
-eval      = dex_func('dexEval',      HsContextPtr, ctypes.c_char_p, HsContextPtr)
+eval      = dex_func('dexEval',      HsContextPtr, ctypes.c_char_p, ctypes.c_int)
 lookup    = dex_func('dexLookup',    HsContextPtr, ctypes.c_char_p, HsAtomPtr)
 freshName = dex_func('dexFreshName', HsContextPtr, ctypes.c_char_p)
 
@@ -90,26 +88,21 @@ print     = dex_func('dexPrint',     HsContextPtr, HsAtomPtr, ctypes.c_char_p)
 toCAtom   = dex_func('dexToCAtom',   HsAtomPtr,    CAtomPtr,  ctypes.c_int)
 fromCAtom = dex_func('dexFromCAtom', CAtomPtr,                HsAtomPtr)
 
-createJIT  = dex_func('dexCreateJIT',  HsJITPtr)
-destroyJIT = dex_func('dexDestroyJIT', HsJITPtr, None)
-compile    = dex_func('dexCompile',    HsJITPtr, ExportCC, HsContextPtr, HsAtomPtr, NativeFunction)
-unload     = dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
+compile    = dex_func('dexCompile', HsContextPtr, ExportCC, HsAtomPtr, NativeFunction)
+unload     = dex_func('dexUnload',  HsContextPtr, NativeFunction, None)
 
-getFunctionSignature  = dex_func('dexGetFunctionSignature', HsJITPtr, NativeFunction, NativeFunctionSignaturePtr)
+getFunctionSignature  = dex_func('dexGetFunctionSignature', HsContextPtr, NativeFunction, NativeFunctionSignaturePtr)
 freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
 
 xlaCpuTrampoline = lib.dexXLACPUTrampoline
 
 init()
-jit = createJIT()
 nofree = False
 @atexit.register
 def _teardown():
   global nofree
-  destroyJIT(jit)
   fini()
   nofree = True  # Don't destruct any Haskell objects after the RTS has been shutdown
-
 
 def as_cstr(x: str):
   return ctypes.c_char_p(x.encode('ascii'))

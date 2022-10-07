@@ -57,13 +57,13 @@ library
                      , Export
                      , GenericTraversal
                      , Imp
-                     , Inference
                      , Interpreter
-                     , JIT
-                     , LLVM.HEAD.JIT
-                     , LLVM.JIT
+                     , Inference
+                     , ImpToLLVM
+                     , LLVM.Link
+                     , LLVM.Compile
+                     , LLVM.CUDA
                      , LLVM.Shims
-                     , LLVMExec
                      , LabeledItems
                      , Lexing
                      , Linearize
@@ -74,6 +74,7 @@ library
                      , Optimize
                      , PPrint
                      , RawName
+                     , Runtime
                      , Serialize
                      , Simplify
                      , SourceRename

@@ -27,7 +27,6 @@ import Data.Maybe
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
-import qualified Data.ByteString       as BS
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 
@@ -103,6 +102,7 @@ type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
 type PtrName      = Name PtrNameC
+type FunObjCodeName = Name FunObjCodeNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
@@ -314,6 +314,12 @@ data TopEnv (n::S) = TopEnv
   , envLoadedObjects :: LoadedObjects n }
   deriving (Generic)
 
+data SerializedEnv n = SerializedEnv
+  { serializedEnvDefs        :: RecSubst Binding n
+  , serializedEnvCustomRules :: CustomRules n
+  , serializedEnvCache       :: Cache n }
+  deriving (Generic)
+
 -- TODO: consider splitting this further into `ModuleEnv` (the env that's
 -- relevant between top-level decls) and `LocalEnv` (the additional parts of the
 -- env that's relevant under a lambda binder). Unlike the Top/Module
@@ -352,7 +358,7 @@ emptyLoadedModules = LoadedModules mempty
 
 data LoadedObjects (n::S) = LoadedObjects
   -- the pointer points to the actual runtime function
-  { fromLoadedObjects :: M.Map (FunObjCodeName n) (Ptr ())}
+  { fromLoadedObjects :: M.Map (FunObjCodeName n) NativeFunction}
   deriving (Show, Generic)
 
 emptyLoadedObjects :: LoadedObjects n
@@ -399,34 +405,16 @@ data Cache (n::S) = Cache
   , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
 
--- === object file representations ===
+-- === runtime function representations ===
 
--- Object files contain the object code for a single specialized function. All
--- that remains to make it callable is to link it, load it into memory and
--- obtain its pointer. But there's a mismatch between the way we handle names in
--- the Dex compiler (well-scoped, alpha-renamable) vs the C/LLVM world (global,
--- fixed). To reconcile the two approaches, we use C/LLVM names that are
--- completely local to the object file itself, with no requirements for any sort
--- of uniqueness beyond it. The function itself gets called
--- `dexObjectFileMain_foo`, and the Dex functions it calls are called
--- `dexCalledFunction_0_bar`, `dexCalledFunction_1_baz` (The `_foo` suffixes are
--- just for readability and don't need to be unique.) The only way we use these
--- names is to link the object code against known pointers to the functions it
--- calls, and then to obtain its own pointer.
+type DexDestructor = FunPtr (IO ())
 
-type LocalCName = String -- has no meaning beyond a single LLVM module or object file
-data CNameMap (e::E) (n::S) = CNameMap
-  { mainFunName    :: LocalCName
-  , calledFunNames :: M.Map LocalCName (e n)
-  , dtorList       :: [LocalCName] }
-  deriving (Show, Generic)
+data NativeFunction = NativeFunction
+  { nativeFunPtr      :: FunPtr ()
+  , nativeFunTeardown :: IO () }
 
-type FunObjCodeName = Name FunObjCodeNameC
-type FunObjCodeContents = BS.ByteString
-data FunObjCode n = FunObjCode
-  { objectFileContents :: FunObjCodeContents
-  , objectFileNameMap  :: CNameMap FunObjCodeName n }
-  deriving (Show, Generic)
+instance Show NativeFunction where
+  show _ = "<native function>"
 
 -- === bindings - static information we carry about a lexical scope ===
 
@@ -443,7 +431,7 @@ data Binding (c::C) (n::S) where
   HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
   EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
   ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
-  FunObjCodeBinding :: FunObjCode n                   -> Binding FunObjCodeNameC n
+  FunObjCodeBinding :: FunObjCode -> [FunObjCodeName n] -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
 deriving instance Show (Binding c n)
@@ -1857,7 +1845,7 @@ instance Color c => GenericE (Binding c) where
           (ClassName `PairE` LiftE Int `PairE` Atom))
       (EitherE7
           (ImpFunction)
-          (FunObjCode)
+          (LiftE FunObjCode `PairE` ListE FunObjCodeName)
           (Module)
           (LiftE PtrLitVal)
           (EffectDef)
@@ -1873,7 +1861,7 @@ instance Color c => GenericE (Binding c) where
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ instanceDef
     MethodBinding     className idx f   -> Case0 $ Case6 $ className `PairE` LiftE idx `PairE` f
     ImpFunBinding     fun               -> Case1 $ Case0 $ fun
-    FunObjCodeBinding objfile           -> Case1 $ Case1 $ objfile
+    FunObjCodeBinding x y               -> Case1 $ Case1 $ LiftE x `PairE` ListE y
     ModuleBinding m                     -> Case1 $ Case2 $ m
     PtrBinding p                        -> Case1 $ Case3 $ LiftE p
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
@@ -1890,7 +1878,7 @@ instance Color c => GenericE (Binding c) where
     Case0 (Case5 (instanceDef))                             -> fromJust $ tryAsColor $ InstanceBinding   instanceDef
     Case0 (Case6 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
     Case1 (Case0 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
-    Case1 (Case1 objfile)                                   -> fromJust $ tryAsColor $ FunObjCodeBinding objfile
+    Case1 (Case1 (LiftE x `PairE` ListE y))                 -> fromJust $ tryAsColor $ FunObjCodeBinding x y
     Case1 (Case2 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
     Case1 (Case3 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
@@ -1982,7 +1970,6 @@ instance GenericE PartialTopEnvFrag where
 
 instance SinkableE      PartialTopEnvFrag
 instance HoistableE     PartialTopEnvFrag
-instance AlphaEqE       PartialTopEnvFrag
 instance SubstE Name    PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
@@ -2114,7 +2101,7 @@ instance AlphaHashableE LoadedModules
 instance SubstE Name    LoadedModules
 
 instance GenericE LoadedObjects where
-  type RepE LoadedObjects = ListE (PairE FunObjCodeName (LiftE (Ptr ())))
+  type RepE LoadedObjects = ListE (PairE FunObjCodeName (LiftE NativeFunction))
   fromE (LoadedObjects m) =
     ListE $ M.toList m <&> \(v,p) -> PairE v (LiftE p)
   {-# INLINE fromE #-}
@@ -2124,36 +2111,7 @@ instance GenericE LoadedObjects where
 
 instance SinkableE      LoadedObjects
 instance HoistableE     LoadedObjects
-instance AlphaEqE       LoadedObjects
-instance AlphaHashableE LoadedObjects
 instance SubstE Name    LoadedObjects
-
-instance GenericE (CNameMap e) where
-  type RepE (CNameMap e) =
-    LiftE (LocalCName, [LocalCName]) `PairE` ListE e `PairE` LiftE [LocalCName]
-  fromE (CNameMap fname deps dtors) = LiftE (fname, depNames) `PairE` ListE depVals `PairE` LiftE dtors
-    where (depNames, depVals) = unzip $ M.toList deps
-  {-# INLINE fromE #-}
-  toE   (LiftE (fname, depNames) `PairE` ListE depVals `PairE` LiftE dtors) = CNameMap fname deps dtors
-    where deps = M.fromList $ zip depNames depVals
-  {-# INLINE toE #-}
-
-instance Store (e n) => Store (CNameMap e n)
-instance SubstE Name e => SubstE Name (CNameMap e)
-instance SinkableE   e => SinkableE   (CNameMap e)
-instance HoistableE  e => HoistableE  (CNameMap e)
-
-instance GenericE FunObjCode where
-  type RepE FunObjCode = LiftE BS.ByteString `PairE` CNameMap FunObjCodeName
-  fromE (FunObjCode contents m) = LiftE contents `PairE` m
-  {-# INLINE fromE #-}
-  toE   (LiftE contents `PairE` m) = FunObjCode contents m
-  {-# INLINE toE #-}
-
-instance Store (FunObjCode n)
-instance SubstE Name FunObjCode
-instance SinkableE  FunObjCode
-instance HoistableE FunObjCode
 
 instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
@@ -2233,12 +2191,9 @@ instance Store (EffectOpIdx)
 instance Store (SynthCandidates n)
 instance Store (Module n)
 instance Store (ImportStatus n)
-instance Store (LoadedModules n)
-instance Store (LoadedObjects n)
 instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
-instance Store (TopEnv n)
-instance Store (Env n)
+instance Store (SerializedEnv n)
 instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
 
