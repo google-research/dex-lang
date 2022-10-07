@@ -298,8 +298,7 @@ projectNewtype :: Typer m => Type o -> m i o (Type o)
 projectNewtype ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    [DataConDef _ repTy _] <- checkedInstantiateDataDef def params
-    return repTy
+    dataDefRep <$> checkedInstantiateDataDef def params
   TC Nat     -> return IdxRepTy
   TC (Fin _) -> return NatTy
   StaticRecordTy types -> return $ ProdTy $ toList types
