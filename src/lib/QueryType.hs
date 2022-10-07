@@ -387,8 +387,7 @@ projectNewtype ty = case ty of
   TC (Fin _) -> return NatTy
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    [DataConDef _ repTy _] <- instantiateDataDef def params
-    return repTy
+    dataDefRep <$> instantiateDataDef def params
   StaticRecordTy types -> return $ ProdTy $ toList types
   RecordTy _ -> throw CompilerErr "Can't project partially-known records"
   _ -> error $ "not a newtype: " ++ pprint ty
