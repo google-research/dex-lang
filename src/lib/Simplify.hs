@@ -800,7 +800,7 @@ simplifyOp op = case op of
   BinOp (ICmp Equal) x y -> ieq x y
   Select c x y -> select c x y
   ProjMethod dict i -> projectDictMethod dict i
-  _ -> case peepholeOp op of
+  _ -> liftEnvReaderM (peepholeOp op) >>= \case
     Left  a   -> return a
     Right op' -> emitOp op'
 

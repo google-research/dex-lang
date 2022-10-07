@@ -13,6 +13,7 @@ module Optimize
 
 import Data.Functor
 import Data.Word
+import Data.Bits
 import Data.List.NonEmpty qualified as NE
 import Control.Monad
 import Control.Monad.State.Strict
@@ -80,9 +81,9 @@ unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE
 
 -- === Peephole optimizations ===
 
-peepholeOp :: Op o -> Either (Atom o) (Op o)
+peepholeOp :: Op o -> EnvReaderM o (Either (Atom o) (Op o))
 peepholeOp op = case op of
-  CastOp (BaseTy (Scalar sTy)) (Con (Lit l)) -> case sTy of
+  CastOp (BaseTy (Scalar sTy)) (Con (Lit l)) -> return $ case sTy of
     -- TODO: Support all casts.
     Int32Type -> case l of
       Int32Lit  _  -> lit l
@@ -131,20 +132,53 @@ peepholeOp op = case op of
       PtrLit     _ -> noop
     _ -> noop
   -- TODO: Support more unary and binary ops.
-  BinOp IAdd l r -> case (l, r) of
+  BinOp IAdd l r -> return $ case (l, r) of
     -- TODO: Shortcut when either side is zero.
     (Con (Lit ll), Con (Lit rl)) -> case (ll, rl) of
       (Word32Lit lv, Word32Lit lr) -> lit $ Word32Lit $ lv + lr
       _ -> noop
     _ -> noop
-  _ -> noop
+  BinOp (ICmp cop) (Con (Lit ll)) (Con (Lit rl)) ->
+    return $ lit $ Word8Lit $ fromIntegral $ fromEnum $ case (ll, rl) of
+      (Int32Lit  lv, Int32Lit  rv) -> cmp cop lv rv
+      (Int64Lit  lv, Int64Lit  rv) -> cmp cop lv rv
+      (Word8Lit  lv, Word8Lit  rv) -> cmp cop lv rv
+      (Word32Lit lv, Word32Lit rv) -> cmp cop lv rv
+      (Word64Lit lv, Word64Lit rv) -> cmp cop lv rv
+      _ -> error "Ill typed ICmp?"
+  BinOp (FCmp cop) (Con (Lit ll)) (Con (Lit rl)) ->
+    return $ lit $ Word8Lit $ fromIntegral $ fromEnum $ case (ll, rl) of
+      (Float32Lit lv, Float32Lit rv) -> cmp cop lv rv
+      (Float64Lit lv, Float64Lit rv) -> cmp cop lv rv
+      _ -> error "Ill typed FCmp?"
+  BinOp BOr (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
+    return $ lit $ Word8Lit $ lv .|. rv
+  BinOp BAnd (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
+    return $ lit $ Word8Lit $ lv .&. rv
+  ToEnum ty (Con (Lit (Word8Lit tag))) -> Left <$> case ty of
+    TypeCon _ defName _ -> do
+      DataDef _ _ cons <- lookupDataDef defName
+      return $ Con $ Newtype ty $ SumVal (cons <&> const UnitTy) (fromIntegral tag) UnitVal
+    SumTy cases -> return $ SumVal cases (fromIntegral tag) UnitVal
+    _ -> error "Ill typed ToEnum?"
+  SumTag (Con (Newtype _ (SumVal _ tag _))) -> return $ lit $ Word8Lit $ fromIntegral tag
+  SumTag (SumVal _ tag _)                   -> return $ lit $ Word8Lit $ fromIntegral tag
+  _ -> return noop
   where
     noop = Right op
     lit = Left . Con . Lit
 
+    cmp :: Ord a => CmpOp -> a -> a -> Bool
+    cmp = \case
+      Less         -> (<)
+      Greater      -> (>)
+      Equal        -> (==)
+      LessEqual    -> (<=)
+      GreaterEqual -> (>=)
+
 peepholeExpr :: Expr o -> EnvReaderM o (Either (Atom o) (Expr o))
 peepholeExpr expr = case expr of
-  Op op -> return $ Op <$> peepholeOp op
+  Op op -> fmap Op <$> peepholeOp op
   TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
     lookupAtomName t <&> \case
       LetBound (DeclBinding PlainLet _ (Op (TabCon _ elems))) ->
