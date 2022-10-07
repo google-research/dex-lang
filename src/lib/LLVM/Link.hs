@@ -19,12 +19,15 @@ import System.IO.Temp
 
 import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Internal.OrcJIT as OrcJIT
+import qualified LLVM.Internal.Target as Target
+import qualified LLVM.Internal.FFI.Target as FFI
 
 import qualified LLVM.Shims
 
 data Linker = Linker
   { linkerExecutionSession :: OrcJIT.ExecutionSession
   , linkerLinkLayer        :: OrcJIT.RTDyldObjectLinkingLayer
+  , _linkerTargetMachine   :: Target.TargetMachine
    -- We ought to just need the link layer and the mangler but but llvm-hs
    -- requires a full `IRCompileLayer` for incidental reasons. TODO: fix.
   , linkerIRLayer          :: OrcJIT.IRCompileLayer
@@ -51,12 +54,13 @@ createLinker = do
   dylib     <- OrcJIT.createJITDylib s "main_dylib"
   compileLayer <- OrcJIT.createIRCompileLayer s linkLayer tm
   OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer dylib
-  return $ Linker s linkLayer compileLayer dylib
+  return $ Linker s linkLayer tm compileLayer dylib
 
 destroyLinker :: Linker  -> IO ()
-destroyLinker (Linker session _ _ _) = do
+destroyLinker (Linker session _ (Target.TargetMachine tm) _ _) = do
   -- dylib, link layer and IRLayer should get cleaned up automatically
   OrcJIT.disposeExecutionSession session
+  FFI.disposeTargetMachine tm
 
 addExplicitLinkMap :: Linker -> ExplicitLinkMap -> IO ()
 addExplicitLinkMap l linkMap = do

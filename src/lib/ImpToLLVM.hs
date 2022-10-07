@@ -1226,27 +1226,6 @@ typeOf x = case fst $ MB.runModuleBuilder emptyState $ L.typeOf x of
   Left e -> error e
   where emptyState = MB.ModuleBuilderState mempty mempty
 
--- === querying module destructors ===
-
--- moduleDestructorNames :: L.Module
---   moduleDtors <- forM dtorNames \dtorName -> do
---     Right (OrcJIT.JITSymbol dtorAddr _) <-
---       OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
---     return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
---   return NativeModule{..}
---   where
---     -- Unfortunately the JIT layers we use here don't handle the destructors properly,
---     -- so we have to find and call them ourselves.
---     dtorNames = do
---       let dtorStructs = flip foldMap (LLVM.AST.moduleDefinitions ast) \case
---             LLVM.AST.GlobalDefinition
---               LLVM.AST.GlobalVariable{
---                 name="llvm.global_dtors",
---                 initializer=Just (C.Array _ elems)} -> elems
---             _ -> []
---       -- Sort in the order of decreasing priority!
---       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
-
 -- === Module building ===
 
 makeFunction :: LLVMBuilder m => L.Name -> [Parameter] -> Maybe L.Operand -> m Function
