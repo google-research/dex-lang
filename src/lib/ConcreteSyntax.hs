@@ -21,6 +21,7 @@ import Data.Char
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map qualified as M
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text          qualified as T
@@ -84,9 +85,9 @@ data CDecl'
   -- name, args, type, body.  The header should contain the parameters,
   -- optional effects, and return type
   | CDef SourceName Group (Maybe Group) CBlock
-  -- header, methods, optional name.  The header should contain
+  -- header, givens (may be empty), methods, optional name.  The header should contain
   -- the prerequisites, class name, and class arguments.
-  | CInstance Group
+  | CInstance Group Group
       [(SourceName, CBlock)] -- Method definitions
       (Maybe SourceName) -- Optional name of instance
   | CExpr Group
@@ -480,8 +481,9 @@ instanceDef isNamed = withSrc $ do
     False -> keyWord InstanceKW $> Nothing
     True  -> keyWord NamedInstanceKW *> (Just . fromString <$> anyName) <* sym ":"
   header <- cGroup
+  givens <- optional (keyWord GivenKW >> cGroup)
   methods <- onePerLine instanceMethod
-  return $ CInstance header methods name
+  return $ CInstance header (fromMaybe (WithSrc Nothing CEmpty) givens) methods name
 
 instanceMethod :: Parser (SourceName, CBlock)
 instanceMethod = do

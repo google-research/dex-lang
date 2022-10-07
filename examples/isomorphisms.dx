@@ -194,7 +194,7 @@ def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
   fwd = \({a, b, c}). (c, b, a)
   bwd = \(c, b, a). {a, b, c}
   MkIso {fwd, bwd}
-instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
+instance Ix {a:n & b:m & c:q} given {n m q} [Ix n, Ix m, Ix q]
   size = size n * size m * size q
   ordinal = ordinal <<< app_iso abcToTuple
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToTuple
@@ -203,7 +203,7 @@ def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
   fwd = \({b, c}). (c, b)
   bwd = \(c, b). {b, c}
   MkIso {fwd, bwd}
-instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
+instance Ix {b:n & c:m} given {n m} [Ix n, Ix m]
   size = size n * size m
   ordinal = ordinal <<< app_iso bcToPair
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso bcToPair
@@ -266,7 +266,7 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
       Left  y -> {|b=y|}
       Right y -> {|c=y|}
   MkIso {fwd, bwd}
-instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
+instance Ix {a:n | b:m | c:q} given {n m q} [Ix n, Ix m, Ix q]
   size = size n + size m + size q
   ordinal = ordinal <<< app_iso abcToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToEither
@@ -279,7 +279,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
     Left x  -> {|a=x|}
     Right x -> {|b=x|}
   MkIso {fwd, bwd}
-instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
+instance Ix {a:n | b:m} given {n m} [Ix n, Ix m]
   size = size n + size m
   ordinal = ordinal <<< app_iso abToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToEither
@@ -292,7 +292,7 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
     Left x  -> {|a=x|}
     Right x -> {|c=x|}
   MkIso {fwd, bwd}
-instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
+instance Ix {a:n | c:m} given {n m} [Ix n, Ix m]
   size = size n + size m
   ordinal = ordinal <<< app_iso acToEither
   unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso acToEither

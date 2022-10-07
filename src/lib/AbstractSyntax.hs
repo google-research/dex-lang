@@ -231,20 +231,20 @@ decl ann = dropSrc decl' where
       Nothing -> do
         body' <- block body
         return $ ULet ann (UPatAnn (fromString name) Nothing) $ buildLam params' body'
-  decl' (CInstance header methods instName) = do
-    supers' <- concat <$> mapM argument supers
-    clName' <- identifier "class name in instace declaration" clName
+  decl' (CInstance header givens methods instName) = do
+    givens' <- concat <$> (mapM argument $ nary Juxtapose givens)
+    let msg = "As of October 2022, instance declarations use `given` for the binders and superclasses\n" ++
+          "For example, `instance Add (a & b) given {a b} [Add a, Add b]`"
+    clName' <- addContext msg $
+      identifier "class name in instance declaration" clName
     args' <- mapM expr args
     methods' <- mapM method methods
     let instName' = case instName of
           Nothing  -> NothingB
           (Just n) -> JustB $ fromString n
-    return $ UInstance (fromString clName') (toNest supers') args' methods' instName'
+    return $ UInstance (fromString clName') (toNest givens') args' methods' instName'
     where
-      (supers, (clName:args)) = span isBracketed $ nary Juxtapose header
-      isBracketed (Bracketed _ _) = True
-      isBracketed (WithSrc _ (CParens _)) = True
-      isBracketed _ = False
+      (clName:args) = nary Juxtapose header
   decl' (CExpr g) = ULet ann (UPatAnn (nsB UPatIgnore) Nothing) <$> expr g
 
 -- Binder pattern with an optional type annotation

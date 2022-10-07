@@ -75,7 +75,7 @@ point $x$ as both the tangent space, and as a local chart.
 instance of a TangentSpace for vector spaces. In this case, we view the tangent
 space at $x$ to be just a copy of the vector space, centred on $x$.
 
-instance {a} [VSpace a] TangentSpace a a
+instance TangentSpace a a given {a} [VSpace a]
   tangentExponentialMap = \ p v . p + v
   tangentLogarithmMap = \ p q . q - p
 
