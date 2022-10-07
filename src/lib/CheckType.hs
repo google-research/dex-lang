@@ -285,11 +285,22 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        ProdTy xs -> return $ xs !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do v' <- substM v
-                                   instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
-        _ | isNewtype ty && i == 0 -> projectNewtype ty
+        ProdTy xs -> case i of
+          ProjectProduct i' -> return $ xs !! i'
+          _ -> throw TypeErr $ "Projecting from a product with: " ++ pprint i
+        DepPairTy t -> case i of
+          ProjectProduct 0 -> return $ depPairLeftTy t
+          ProjectProduct 1 -> do
+            v' <- substM v
+            instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
+          _ -> throw TypeErr $ "Projecting from a dependent pair with " ++ pprint i
+        _ | isNewtype ty -> do
+          case (ty, i) of
+            (TC Nat    , UnwrapBaseNewtype    ) -> return ()
+            (TC (Fin _), UnwrapBaseNewtype    ) -> return ()
+            (_         , UnwrapCompoundNewtype) -> return ()
+            _ -> throw TypeErr $ "Invalid newtype projection (" ++ pprint i ++ ") from " ++ pprint ty
+          projectNewtype ty
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -736,7 +747,7 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  ProjNewtype x -> getTypeE x >>= projectNewtype
+  ProjBaseNewtype x -> getTypeE x >>= projectNewtype
   Perform eff i -> do
     Eff (OneEffect (UserEffect effName)) <- return eff
     EffectDef _ ops <- substM effName >>= lookupEffectDef

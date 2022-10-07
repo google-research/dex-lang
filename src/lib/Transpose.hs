@@ -7,7 +7,7 @@
 module Transpose (transpose) where
 
 import Data.Foldable
-import Control.Monad
+import Data.Functor
 import Control.Monad.Reader
 import qualified Data.Set as S
 
@@ -15,6 +15,7 @@ import MTL1
 import Err
 import Name
 import Syntax
+import Types.Core
 import Builder
 import QueryType
 import Util (enumerate)
@@ -172,7 +173,8 @@ transposeExpr expr ct = case expr of
         lookupSubstM v >>= \case
           RenameNonlin _ -> error "an error, probably"
           LinRef ref -> do
-            ref' <- getNaryProjRef (toList idxs) ref
+            let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
+            ref' <- getNaryProjRef idxs' ref
             refProj <- naryIndexRef ref' (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
@@ -251,7 +253,7 @@ transposeOp op ct = case op of
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStreamPtr       -> notLinear
-  ProjNewtype _         -> unreachable
+  ProjBaseNewtype _     -> unreachable
   Perform _ _           -> unreachable
   ProjMethod _ _        -> unreachable
   ExplicitApply _ _     -> unreachable
@@ -304,7 +306,8 @@ transposeAtom atom ct = case atom of
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"
       LinRef ref -> do
-        ref' <- getNaryProjRef (toList idxs) ref
+        let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
+        ref' <- getNaryProjRef idxs' ref
         emitCTToRef ref' ct
       LinTrivial -> return ()
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
@@ -353,7 +356,7 @@ transposeCon con ct = case con of
       getProj i ct >>= transposeAtom x
   Newtype ty e      -> case ty of
     TC (Fin _) -> notTangent
-    StaticRecordTy _ -> transposeAtom e (unwrapNewtype ct)
+    StaticRecordTy _ -> transposeAtom e (unwrapCompoundNewtype ct)
     _ -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented

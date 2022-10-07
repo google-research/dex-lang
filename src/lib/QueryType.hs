@@ -214,15 +214,16 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
 userEffect :: EffectName n -> Atom n
 userEffect v = Eff (OneEffect (UserEffect v))
 
-projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Int]]
+projectionIndices :: (Fallible1 m, EnvReader m) => Type n -> m n [[Projection]]
 projectionIndices ty = case ty of
   TypeCon _ defName _ -> do
     DataDef _ _ cons <- lookupDataDef defName
     case cons of
       [DataConDef _ _ idxs] -> return idxs
       _ -> unsupported
-  StaticRecordTy types -> return $ iota (length types) <&> (:[0])
-  ProdTy tys -> return $ iota (length tys) <&> (:[])
+  StaticRecordTy types -> return $ iota (length types) <&> \i ->
+    [ProjectProduct i, UnwrapCompoundNewtype]
+  ProdTy tys -> return $ iota (length tys) <&> \i -> [ProjectProduct i]
   _ -> unsupported
   where unsupported = error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
@@ -353,16 +354,21 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        ProdTy xs -> return $ xs !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do v' <- substM (Var v) >>= \case
-                                     (Var v') -> return v'
-                                     _ -> error "!?"
-                                   instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
-        _ | isNewtype ty && i == 0 -> projectNewtype ty
+        ProdTy xs -> return $ xs !! iProj
+        DepPairTy t | iProj == 0 -> return $ depPairLeftTy t
+        DepPairTy t | iProj == 1 -> do
+          v' <- substM (Var v) >>= \case
+            (Var v') -> return v'
+            _ -> error "!?"
+          instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
+        _ | isNewtype ty -> projectNewtype ty
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty
+        where
+          iProj = case i of
+            ProjectProduct i' -> i'
+            _ -> error "Not a product projection"
 
 -- === newtype conversion ===
 
@@ -635,9 +641,7 @@ getTypePrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  ProjNewtype x -> do
-    ty <- getTypeE x
-    projectNewtype ty
+  ProjBaseNewtype x -> projectNewtype =<< getTypeE x
   Perform eff i -> do
     Eff (OneEffect (UserEffect effName)) <- return eff
     EffectDef _ ops <- substM effName >>= lookupEffectDef

@@ -574,11 +574,11 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
       destTy <- getType initDest
       body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
         (i, destProd) <- fromPair $ Var b'
-        let dest = getProjection [0] destProd
+        let dest = getProjection [ProjectProduct 0] destProd
         idest <- emitOp $ IndexRef dest i
         extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body $> UnitVal
       let seqHof = Hof $ Seq dir ixDict' initDest body'
-      Op . Freeze . ProjectElt (0 NE.:| []) <$> emit seqHof
+      Op . Freeze . ProjectElt (ProjectProduct 0 NE.:| []) <$> emit seqHof
 
 traverseTabCon :: Emits o => Maybe (Dest o) -> Type i -> [Atom i] -> LowerM i o (Expr o)
 traverseTabCon maybeDest tabTy elems = do
@@ -620,7 +620,7 @@ type DestAssignment (i'::S) (o::S) = AtomNameMap (ProjDest o) i'
 
 data ProjDest o
   = FullDest (Dest o)
-  | ProjDest (NE.NonEmpty Int) (Dest o)  -- dest corresponds to the projection applied to name
+  | ProjDest (NE.NonEmpty Projection) (Dest o)  -- dest corresponds to the projection applied to name
 
 lookupDest :: DestAssignment i' o -> AtomName i' -> Maybe (ProjDest o)
 lookupDest = flip lookupNameMap
@@ -714,8 +714,8 @@ traverseExprWithDest dest expr = case expr of
           bd <- getProjRef 0 fd
           rd <- getProjRef 1 fd
           return $ Just (Just bd, Just rd)
-        ProjDest (0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
-        ProjDest (1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
+        ProjDest (ProjectProduct 0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
+        ProjDest (ProjectProduct 1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
         ProjDest _ _ -> return Nothing
 
 
@@ -905,9 +905,11 @@ vectorizeAtom atom = case atom of
       VVal Uniform x -> SubstVal x
       _ -> error $ "Can't vectorize atom " ++ pprint atom
     projStability p s = case (p, s) of
-      ([]  , _                ) -> s
-      (i:is, ProdStability sbs) -> projStability is (sbs !! i)
-      (_   , Uniform          ) -> s
+      ([]                      , _                ) -> s
+      (ProjectProduct i:is     , ProdStability sbs) -> projStability is (sbs !! i)
+      (UnwrapCompoundNewtype:is, _                ) -> projStability is s
+      (UnwrapBaseNewtype:is    , _                ) -> projStability is s
+      (_                       , Uniform          ) -> s
       _ -> error "Invalid projection"
 
 getVectorType :: Type o -> VectorizeM i o (Atom o)

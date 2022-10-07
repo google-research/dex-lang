@@ -316,7 +316,8 @@ seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
                     Let bn (DeclBinding _ _ (Op (AllocDest _))) ->
                       ( nextProj + 1
                       , binderName bn : sinkList topDestNames
-                      , SubstVal $ ProjectElt (nextProj NE.:| [1]) $ withExtEvidence reg' $ sink $ binderName lb')
+                      , SubstVal $ ProjectElt (ProjectProduct nextProj NE.:| [ProjectProduct 1]) $
+                          withExtEvidence reg' $ sink $ binderName lb')
                     _ -> (nextProj, sinkList topDestNames, Rename $ sink $ binderName b')
           HoistFailure _ -> moveOn
         _ -> moveOn

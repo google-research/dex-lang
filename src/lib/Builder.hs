@@ -14,7 +14,7 @@ module Builder (
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
-  select, getUnpacked, emitUnpacked, unwrapNewtype,
+  select, getUnpacked, emitUnpacked, unwrapBaseNewtype, unwrapCompoundNewtype,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
   indexRef, naryIndexRef,
@@ -1222,9 +1222,13 @@ emitUnpacked tup = do
   xs <- getUnpacked tup
   forM xs \x -> emit $ Atom x
 
-unwrapNewtype :: Atom n -> Atom n
-unwrapNewtype = getProjection [0]
-{-# INLINE unwrapNewtype #-}
+unwrapBaseNewtype :: Atom n -> Atom n
+unwrapBaseNewtype = getProjection [UnwrapBaseNewtype]
+{-# INLINE unwrapBaseNewtype #-}
+
+unwrapCompoundNewtype :: Atom n -> Atom n
+unwrapCompoundNewtype = getProjection [UnwrapCompoundNewtype]
+{-# INLINE unwrapCompoundNewtype #-}
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x (i:|[]))
@@ -1280,10 +1284,10 @@ unsafeFromOrdinal (IxType _ dict) i = do
 ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
 ordinal (IxType _ dict) idx = do
   f <- projMethod "ordinal" dict
-  unwrapNewtype <$> app f idx
+  unwrapBaseNewtype <$> app f idx
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = unwrapNewtype <$> projMethod "size" dict
+indexSetSize (IxType _ dict) = unwrapBaseNewtype <$> projMethod "size" dict
 
 repToNat :: Atom n -> Atom n
 repToNat x = Con $ Newtype NatTy x
@@ -1298,7 +1302,7 @@ projectIxFinMethod methodIx n = liftBuilder do
     0 -> return n  -- return type is Nat, not IdxRepTy
     -- ordinal
     1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
-           return $ ProjectElt (0 NE.:| []) ix  -- return type is Nat, not IdxRepTy
+           return $ ProjectElt (UnwrapBaseNewtype NE.:| []) ix  -- return type is Nat, not IdxRepTy
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow NatTy \ix ->
            return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
@@ -1507,8 +1511,8 @@ unpackTelescope atom = do
     go :: Int -> Atom n -> [Atom n]
     go 0 _ = []
     go n pair = left : go (n-1) right
-      where left  = getProjection [0] pair
-            right = getProjection [1] pair
+      where left  = getProjection [ProjectProduct 0] pair
+            right = getProjection [ProjectProduct 1] pair
 
     telescopeLength :: Type n -> Int
     telescopeLength ty = case ty of

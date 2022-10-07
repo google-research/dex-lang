@@ -162,11 +162,11 @@ prepareFunctionForExport' cc f = do
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   wrapScalarNewtypes eltTy =<< unsafePtrLoad =<< ptrOffset basePtr offset
 
-              indexSetSizeFin n = unwrapNewtype <$> projectIxFinMethod 0 n
+              indexSetSizeFin n = unwrapBaseNewtype <$> projectIxFinMethod 0 n
               ordinalFin n ix = do
                 Lam (LamExpr b body) <- projectIxFinMethod 1 n
                 ordNat <- emitBlock =<< applySubst (b@>SubstVal ix) body
-                return $ unwrapNewtype ordNat
+                return $ unwrapBaseNewtype ordNat
               dup x = (x, x)
 
     toExportType :: Fallible m => Type n -> m (ExportType n)
