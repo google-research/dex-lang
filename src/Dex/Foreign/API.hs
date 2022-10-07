@@ -24,8 +24,8 @@ import Dex.Foreign.JIT
 foreign export ccall "dexCreateContext"  dexCreateContext  :: IO (Ptr Context)
 foreign export ccall "dexDestroyContext" dexDestroyContext :: Ptr Context -> IO ()
 foreign export ccall "dexForkContext"    dexForkContext    :: Ptr Context -> IO (Ptr Context)
-foreign export ccall "dexInsert"     dexInsert    :: Ptr Context -> CString   -> Ptr AtomEx -> IO (Ptr Context)
-foreign export ccall "dexEval"       dexEval      :: Ptr Context -> CString   -> IO (Ptr Context)
+foreign export ccall "dexInsert"     dexInsert    :: Ptr Context -> CString   -> Ptr AtomEx -> IO ()
+foreign export ccall "dexEval"       dexEval      :: Ptr Context -> CString   -> IO CInt
 foreign export ccall "dexLookup"     dexLookup    :: Ptr Context -> CString   -> IO (Ptr AtomEx)
 foreign export ccall "dexFreshName"  dexFreshName :: Ptr Context              -> IO CString
 
@@ -35,9 +35,7 @@ foreign export ccall "dexToCAtom"   dexToCAtom    :: Ptr AtomEx  -> Ptr CAtom   
 foreign export ccall "dexFromCAtom" dexFromCAtom  :: Ptr CAtom                     -> IO (Ptr AtomEx)
 
 -- JIT
-foreign export ccall "dexCreateJIT"  dexCreateJIT  :: IO (Ptr JIT)
-foreign export ccall "dexDestroyJIT" dexDestroyJIT :: Ptr JIT -> IO ()
-foreign export ccall "dexCompile"    dexCompile    :: Ptr JIT -> CInt -> Ptr Context -> Ptr AtomEx -> IO (Ptr NativeFunction)
-foreign export ccall "dexUnload"     dexUnload     :: Ptr JIT -> Ptr NativeFunction -> IO ()
-foreign export ccall "dexGetFunctionSignature"  dexGetFunctionSignature  :: Ptr JIT -> Ptr NativeFunction -> IO (Ptr ClosedExportedSignature)
+foreign export ccall "dexCompile"    dexCompile    :: Ptr Context -> CInt -> Ptr AtomEx -> IO ExportNativeFunctionAddr
+foreign export ccall "dexUnload"     dexUnload     :: Ptr Context -> ExportNativeFunctionAddr -> IO ()
+foreign export ccall "dexGetFunctionSignature"  dexGetFunctionSignature  :: Ptr Context -> ExportNativeFunctionAddr -> IO (Ptr ClosedExportedSignature)
 foreign export ccall "dexFreeFunctionSignature" dexFreeFunctionSignature :: Ptr ClosedExportedSignature -> IO ()

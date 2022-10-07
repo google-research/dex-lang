@@ -470,7 +470,7 @@ instance Pretty (Binding s n) where
     InstanceBinding instanceDef -> pretty instanceDef
     MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
-    ObjectFileBinding _ -> "<object file>"
+    FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding     _ -> "<ptr>"
     -- TODO(alex): do something actually useful here
@@ -484,11 +484,7 @@ instance Pretty (Module n) where
     , ("moduleDirectDeps"     , p $ S.toList $ moduleDirectDeps m)
     , ("moduleTransDeps"      , p $ S.toList $ moduleTransDeps m)
     , ("moduleExports"        , p $ moduleExports m)
-    , ("moduleSynthCandidates", p $ moduleSynthCandidates m)
-    , ("moduleObjectFiles"    , p $ moduleObjectFiles m) ]
-
-instance Pretty (ObjectFiles n) where
-  pretty (ObjectFiles _) = error "todo"
+    , ("moduleSynthCandidates", p $ moduleSynthCandidates m) ]
 
 instance Pretty (DataDefParams n) where
   pretty (DataDefParams ps ds) = p ps <+> p ds
@@ -522,11 +518,10 @@ instance Pretty (MethodType n) where
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance Pretty (TopEnv n) where
-  pretty (TopEnv defs rules cache ms) =
+  pretty (TopEnv defs rules cache _ _) =
     prettyRecord [ ("Defs"          , p defs)
                  , ("Rules"         , p rules)
-                 , ("Cache"         , p cache)
-                 , ("Loaded modules", p ms)]
+                 , ("Cache"         , p cache) ]
 
 instance Pretty (CustomRules n) where
   pretty _ = "TODO: Rule printing"
@@ -535,7 +530,7 @@ instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports
 
 instance Pretty (ModuleEnv n) where
-  pretty (ModuleEnv imports sm sc _ effs) =
+  pretty (ModuleEnv imports sm sc effs) =
     prettyRecord [ ("Imports"         , p imports)
                  , ("Source map"      , p sm)
                  , ("Synth candidates", p sc)

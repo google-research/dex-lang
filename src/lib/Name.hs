@@ -1909,7 +1909,7 @@ instance Color ClassNameC      where getColorRep = ClassNameC
 instance Color InstanceNameC   where getColorRep = InstanceNameC
 instance Color MethodNameC     where getColorRep = MethodNameC
 instance Color ImpFunNameC     where getColorRep = ImpFunNameC
-instance Color ObjectFileNameC where getColorRep = ObjectFileNameC
+instance Color FunObjCodeNameC where getColorRep = FunObjCodeNameC
 instance Color ModuleNameC     where getColorRep = ModuleNameC
 instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
@@ -1929,7 +1929,7 @@ interpretColor c cont = case c of
   InstanceNameC   -> cont $ ColorProxy @InstanceNameC
   MethodNameC     -> cont $ ColorProxy @MethodNameC
   ImpFunNameC     -> cont $ ColorProxy @ImpFunNameC
-  ObjectFileNameC -> cont $ ColorProxy @ObjectFileNameC
+  FunObjCodeNameC -> cont $ ColorProxy @FunObjCodeNameC
   ModuleNameC     -> cont $ ColorProxy @ModuleNameC
   PtrNameC        -> cont $ ColorProxy @PtrNameC
   EffectNameC     -> cont $ ColorProxy @EffectNameC
@@ -2464,7 +2464,7 @@ data C =
   | InstanceNameC
   | MethodNameC
   | ImpFunNameC
-  | ObjectFileNameC
+  | FunObjCodeNameC
   | ModuleNameC
   | PtrNameC
   | EffectNameC

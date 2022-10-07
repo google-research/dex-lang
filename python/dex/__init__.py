@@ -21,8 +21,11 @@ class Module:
   __slots__ = ('_as_parameter_',)
 
   def __init__(self, source):
-    self._as_parameter_ = api.eval(prelude, api.as_cstr(source))
-    if not self._as_parameter_: api.raise_from_dex()
+    ptr = api.forkContext(prelude)
+    if not ptr: api.raise_from_dex()
+    self._as_parameter_ = ptr
+    err = api.eval(self, api.as_cstr(source))
+    if err: api.raise_from_dex()
 
   @classmethod
   def _from_ptr(cls, ptr):
@@ -45,10 +48,8 @@ class Module:
   def eval(self, expr: str):
     ans_binder_ptr = api.freshName(self)
     ans_binder = ans_binder_ptr.decode('ascii')
-    new_ctx = api.eval(self, api.as_cstr(f"{ans_binder} = {expr}"))
-    if not new_ctx: api.raise_from_dex()
-    api.destroyContext(self)
-    self._as_parameter_ = new_ctx
+    err = api.eval(self, api.as_cstr(f"{ans_binder} = {expr}"))
+    if err: api.raise_from_dex()
     result = api.lookup(self, ans_binder_ptr)
     # TODO: Free ans_binder_ptr
     # TODO: Delete the name to avoid polluting the module!
@@ -139,6 +140,6 @@ class Atom:
 
   def compile(self, calling_convention='flat'):
     cc = _calling_conventions[calling_convention]
-    func_ptr = api.compile(api.jit, cc, self.module, self)
+    func_ptr = api.compile(self.module, cc, self)
     if not func_ptr: api.raise_from_dex()
-    return NativeFunction(api.jit, func_ptr, cc)
+    return NativeFunction(self.module, func_ptr, cc)

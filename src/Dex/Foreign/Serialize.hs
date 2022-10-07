@@ -20,7 +20,6 @@ import Foreign.Storable
 import Name
 import Syntax
 import Serialize (pprintVal)
-import TopLevel
 
 import Dex.Foreign.Context
 import Dex.Foreign.Util
@@ -28,9 +27,8 @@ import Dex.Foreign.Util
 -- TODO: Free!
 dexPrint :: Ptr Context -> Ptr AtomEx -> IO CString
 dexPrint contextPtr atomPtr = do
-  Context evalConfig env <- fromStablePtr contextPtr
   AtomEx atom <- fromStablePtr atomPtr
-  fst <$> runTopperM evalConfig env do
+  runTopperMFromContext contextPtr do
     -- TODO: Check consistency of atom and context
     liftIO . newCString =<< pprintVal (unsafeCoerceE atom)
 

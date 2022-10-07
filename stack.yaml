@@ -11,7 +11,7 @@ packages:
 
 extra-deps:
   - github: llvm-hs/llvm-hs
-    commit: 789e2b9e8b827d4c5e15b997f16e395fd2259c0f
+    commit: d694c1a0d8941591dffb8c2f7877712e04ab3e7e
     subdirs:
       - llvm-hs
       - llvm-hs-pure

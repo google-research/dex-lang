@@ -408,6 +408,10 @@ lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = lookupEnv name >>= \case ModuleBinding m -> return m
 {-# INLINE lookupModule #-}
 
+lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (FunObjCode, [FunObjCodeName n])
+lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding obj m -> return (obj, m)
+{-# INLINE lookupFunObjCode #-}
+
 lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
 lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
 {-# INLINE lookupDataDef #-}

@@ -9,11 +9,12 @@
 module Imp
   ( toImpFunction, ImpFunctionWithRecon (..)
   , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
-  , PtrBinder, impFunType, getIType) where
+  , PtrBinder, impFunType, getIType, abstractLinktimeObjects) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
+import Data.Maybe (catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import Control.Category
 import Control.Monad.Identity
@@ -1596,6 +1597,20 @@ appReduceImp :: Emits o => Atom o -> Atom o -> SubstImpM i o (Atom o)
 appReduceImp f x = case f of
   Lam (LamExpr b body) -> dropSubst $ extendSubst (b@>SubstVal x) $ translateBlock Nothing body
   _ -> error "couldn't reduce immediately!"
+
+-- === Abstracting link-time objects ===
+
+abstractLinktimeObjects
+  :: EnvReader m => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n])
+abstractLinktimeObjects f = do
+  let vs = freeVarsList f
+  vsToAbs <- catMaybes <$> forM vs \v ->
+    lookupImpFun v <&> \case
+      ImpFunction _ _ -> Just v
+      FFIFunction _ _ -> Nothing
+  Abs bs f' <- return $ abstractFreeVarsNoAnn vsToAbs f
+  tys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
+  return (ClosedImpFunction tys bs f', vsToAbs)
 
 -- === type checking imp programs ===
 

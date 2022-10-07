@@ -154,16 +154,16 @@ data DriverEvent = FileChanged SourceContents
                  | WorkComplete (WithId TopStateEx) (WithId SourceBlock) (Result, TopStateEx)
 
 runDriver :: DriverCfg -> TopStateEx -> Actor DriverEvent
-runDriver cfg env self =
+runDriver cfg env self = do
   liftM fst
-  $ flip runStateT (initialEvalState env, emptyCache)
-  $ flip runReaderT (sendOnly self)
-  $ flip runReaderT cfg
-  $ drive $ forever $ do
-      msg <- liftIO $ readChan self
-      case msg of
-        (FileChanged source) -> evalSource env source
-        (WorkComplete block topState payload) -> processWork block topState payload
+    $ flip runStateT (initialEvalState env, emptyCache)
+    $ flip runReaderT (sendOnly self)
+    $ flip runReaderT cfg
+    $ drive $ forever $ do
+        msg <- liftIO $ readChan self
+        case msg of
+          (FileChanged source) -> evalSource env source
+          (WorkComplete block topState payload) -> processWork block topState payload
 
 -- Start evaluation of the (updated) source file in the given (fresh)
 -- evaluation state.  The evaluation state carried in the monad is
@@ -338,7 +338,6 @@ instance Driver DriverM where
   askOptions = DriverM $ asks fst
   askResultsOutput = DriverM $ asks snd
   askSelf = DriverM $ lift $ ask
-
   getTopState = DriverM $ do
     (SourceEvalState s _ _) <- gets fst
     return s

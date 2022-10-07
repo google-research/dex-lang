@@ -37,9 +37,9 @@ module Syntax (
     ForAnn, Val, Op, Con, Hof, TC, SuperclassBinders (..),
     ClassDef (..), InstanceDef (..), InstanceBody (..), MethodType (..),
     EffectDef (..), EffectOpType (..), EffectName,
-    SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..),
+    SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..), SerializedEnv (..),
     ImportStatus (..), emptyModuleEnv,
-    ModuleSourceName (..), LoadedModules (..), Cache (..), ObjectFiles (..),
+    ModuleSourceName (..), LoadedModules (..), LoadedObjects (..), Cache (..),
     BindsEnv (..), BindsOneAtomName (..), AtomNameBinder,
     AltP, Alt, AtomBinding (..),
     SolverBinding (..), TopFunBinding (..), SpecializationSpec (..),
@@ -74,7 +74,7 @@ module Syntax (
     withFreshLamBinder, withFreshPureLamBinder,
     withFreshPiBinder, catEnvFrags, plainPiBinder,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupClassDef, lookupInstanceDef,
-    lookupAtomName, lookupImpFun, lookupModule,
+    lookupAtomName, lookupImpFun, lookupModule, lookupFunObjCode,
     lookupEnvPure, lookupSourceMap, lookupSourceMapPure, lookupEffectDef,
     lookupEffectOpDef,
     withEnv, updateEnv, runEnvReaderT, liftEnvReaderM, liftExceptEnvReaderM,
@@ -93,17 +93,18 @@ module Syntax (
     getAllowedEffects, withAllowedEffects, todoSinkableProof,
     freeAtomVarsList,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
-    ImpFunction (..), ImpBlock (..), ImpDecl (..),
+    ImpFunction (..), ImpBlock (..), ImpDecl (..), ClosedImpFunction (..),
     ImpInstr (..), iBinderType,
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
-    Output (..), PassName (..), Result (..), BenchStats,
+    Output (..), PassLogger, PassName (..), Result (..), BenchStats,
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam,
     fromNaryTabLam, fromNaryTabLamExact,
     fromNaryLamExact, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
-    ObjectFile (..), ObjectFileName, CFunName, CFun (..),
+    WithCNameInterface (..), FunObjCode, FunObjCodeName,
+    CName, NativeFunction (..), OptLevel (..),
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal, pattern IdxRepScalarBaseTy,
     pattern TagRepTy,
@@ -129,6 +130,7 @@ import GHC.Generics (Generic (..))
 
 import Name
 import Err
+import Logging
 
 import Core
 import Types.Core
@@ -156,3 +158,7 @@ data Output =
   | MiscLog String
   -- Used to have | ExportedFun String Atom
     deriving (Show, Eq, Generic)
+
+type PassLogger = FilteredLogger PassName [Output]
+
+data OptLevel = NoOptimize | Optimize
