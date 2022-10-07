@@ -500,7 +500,8 @@ toImpOp maybeDest op = case op of
         ans <- emitInstr $ IPrimOp $ Select p' x' y'
         returnVal =<< toScalarAtom ans
       _ -> unsupported
-  DataConTag con -> case con of
+  SumTag con -> case con of
+    Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
     Con (SumAsProd _ tag _) -> returnVal tag
     Con (Newtype _ (Con (SumCon _ tag _))) -> returnVal $ TagRepVal $ fromIntegral tag
     Con (Newtype _ (Con (SumAsProd _ tag _))) -> returnVal tag

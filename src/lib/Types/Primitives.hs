@@ -137,7 +137,7 @@ data PrimOp e =
       -- type, label, how deeply shadowed, payload
       | VariantMake e Label Int e
       -- Ask which constructor was used, as its Word8 index
-      | DataConTag e
+      | SumTag e
       -- Create an enum (payload-free ADT) from a Word8
       | ToEnum e e
       -- Converts sum types returned by primitives to variant-types that

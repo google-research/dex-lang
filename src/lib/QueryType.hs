@@ -627,7 +627,7 @@ getTypePrimOp op = case op of
     diff <- labeledRowDifference' full (NoExt types')
     return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
   VariantMake ty _ _ _ -> substM ty
-  DataConTag _ -> return TagRepTy
+  SumTag _ -> return TagRepTy
   ToEnum t _ -> substM t
   SumToVariant x -> getTypeE x >>= \case
     SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases

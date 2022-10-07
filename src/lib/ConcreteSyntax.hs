@@ -987,7 +987,7 @@ builtinNames = M.fromList
   , ("ptrOffset", OpExpr $ PtrOffset () ())
   , ("ptrLoad"  , OpExpr $ PtrLoad ())
   , ("ptrStore" , OpExpr $ PtrStore () ())
-  , ("dataConTag", OpExpr $ DataConTag ())
+  , ("dataConTag", OpExpr $ SumTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
   , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
   , ("newtype"    , ConExpr $ Newtype () ())
