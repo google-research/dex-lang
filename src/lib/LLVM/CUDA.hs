@@ -7,9 +7,6 @@
 module LLVM.CUDA (
   LLVMKernel (..), compileCUDAKernel, ptxTargetTriple, ptxDataLayout) where
 
-#ifdef DEX_DEBUG
-import qualified LLVM.Analysis as L
-#endif
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.Global as GL
