@@ -27,7 +27,6 @@ import Data.Maybe
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
-import qualified Data.ByteString       as BS
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 
@@ -103,6 +102,7 @@ type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
 type PtrName      = Name PtrNameC
+type FunObjCodeName = Name FunObjCodeNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
@@ -405,42 +405,16 @@ data Cache (n::S) = Cache
   , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
 
--- === object file representations ===
-
--- Object files contain the object code for a single specialized function. All
--- that remains to make it callable is to link it, load it into memory and
--- obtain its pointer. But there's a mismatch between the way we handle names in
--- the Dex compiler (well-scoped, alpha-renamable) vs the C/LLVM world (global,
--- fixed). To reconcile the two approaches, we use C/LLVM names that are
--- completely local to the object file itself, with no requirements for any sort
--- of uniqueness beyond it. The function itself gets called
--- `dexObjectFileMain_foo`, and the Dex functions it calls are called
--- `dexCalledFunction_0_bar`, `dexCalledFunction_1_baz` (The `_foo` suffixes are
--- just for readability and don't need to be unique.) The only way we use these
--- names is to link the object code against known pointers to the functions it
--- calls, and then to obtain its own pointer.
-
-type LocalCName = String -- has no meaning beyond a single LLVM module or object file
-data CNameMap e n = CNameMap (M.Map LocalCName (e n))
-     deriving (Show, Generic)
-
-type FunObjCodeName = Name FunObjCodeNameC
-type FunObjCodeNameMap = CNameMap FunObjCodeName
-data FunObjCode = FunObjCode
-  { objectFileContents    :: BS.ByteString
-  , objectFileMainFunName :: LocalCName
-  , objectFileFreeVars    :: [LocalCName]
-  , objectFileDtorList    :: [LocalCName] }
-  deriving (Show, Generic)
-
 -- === runtime function representations ===
 
+type DexDestructor = FunPtr (IO ())
+
 data NativeFunction = NativeFunction
-  { nativeFunPtr      :: Ptr ()
+  { nativeFunPtr      :: FunPtr ()
   , nativeFunTeardown :: IO () }
 
 instance Show NativeFunction where
-  show = undefined
+  show _ = "<native function>"
 
 -- === bindings - static information we carry about a lexical scope ===
 
@@ -457,7 +431,7 @@ data Binding (c::C) (n::S) where
   HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
   EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
   ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
-  FunObjCodeBinding :: FunObjCode -> FunObjCodeNameMap n -> Binding FunObjCodeNameC n
+  FunObjCodeBinding :: FunObjCode -> [FunObjCodeName n] -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
 deriving instance Show (Binding c n)
@@ -1871,7 +1845,7 @@ instance Color c => GenericE (Binding c) where
           (ClassName `PairE` LiftE Int `PairE` Atom))
       (EitherE7
           (ImpFunction)
-          (LiftE FunObjCode `PairE` FunObjCodeNameMap)
+          (LiftE FunObjCode `PairE` ListE FunObjCodeName)
           (Module)
           (LiftE PtrLitVal)
           (EffectDef)
@@ -1887,7 +1861,7 @@ instance Color c => GenericE (Binding c) where
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ instanceDef
     MethodBinding     className idx f   -> Case0 $ Case6 $ className `PairE` LiftE idx `PairE` f
     ImpFunBinding     fun               -> Case1 $ Case0 $ fun
-    FunObjCodeBinding x y               -> Case1 $ Case1 $ LiftE x `PairE` y
+    FunObjCodeBinding x y               -> Case1 $ Case1 $ LiftE x `PairE` ListE y
     ModuleBinding m                     -> Case1 $ Case2 $ m
     PtrBinding p                        -> Case1 $ Case3 $ LiftE p
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
@@ -1904,7 +1878,7 @@ instance Color c => GenericE (Binding c) where
     Case0 (Case5 (instanceDef))                             -> fromJust $ tryAsColor $ InstanceBinding   instanceDef
     Case0 (Case6 (className `PairE` LiftE idx `PairE` f))   -> fromJust $ tryAsColor $ MethodBinding     className idx f
     Case1 (Case0 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
-    Case1 (Case1 (LiftE x `PairE` y))                       -> fromJust $ tryAsColor $ FunObjCodeBinding x y
+    Case1 (Case1 (LiftE x `PairE` ListE y))                 -> fromJust $ tryAsColor $ FunObjCodeBinding x y
     Case1 (Case2 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
     Case1 (Case3 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
@@ -2139,18 +2113,6 @@ instance SinkableE      LoadedObjects
 instance HoistableE     LoadedObjects
 instance SubstE Name    LoadedObjects
 
-instance GenericE (CNameMap e) where
-  type RepE (CNameMap e) = ListE (LiftE LocalCName `PairE` e)
-  fromE (CNameMap m) = ListE $ M.toList m <&> \(k, v) -> LiftE k `PairE` v
-  {-# INLINE fromE #-}
-  toE  (ListE kvs) = CNameMap $ M.fromList $ kvs <&> \(LiftE k `PairE` v) -> (k, v)
-  {-# INLINE toE #-}
-
-instance Store (e n) => Store (CNameMap e n)
-instance SubstE Name e => SubstE Name (CNameMap e)
-instance SinkableE   e => SinkableE   (CNameMap e)
-instance HoistableE  e => HoistableE  (CNameMap e)
-
 instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
                 `PairE` SourceMap
@@ -2234,7 +2196,6 @@ instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
-instance Store FunObjCode
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

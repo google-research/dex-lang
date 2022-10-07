@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun) where
+module Runtime (loadLitVal, callNativeFun, callDtor) where
 
 import Data.Int
 import GHC.IO.FD
@@ -33,6 +33,10 @@ import PPrint ()
 foreign import ccall "dynamic"
   callFunPtr :: DexExecutable -> Int32 -> Ptr () -> Ptr () -> IO DexExitCode
 
+foreign import ccall "dynamic"
+  callDtor :: DexDestructor -> IO ()
+
+type DexDestructor = FunPtr (IO ())
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
@@ -42,7 +46,7 @@ callNativeFun f logger args resultTypes = do
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        _ <- checkedCallFunPtr fd argsPtr resultPtr $ castPtrToFunPtr $ nativeFunPtr f
+        _ <- checkedCallFunPtr fd argsPtr resultPtr $ castFunPtr $ nativeFunPtr f
         -- logSkippingFilter logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 

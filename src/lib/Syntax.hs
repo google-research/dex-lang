@@ -93,7 +93,7 @@ module Syntax (
     getAllowedEffects, withAllowedEffects, todoSinkableProof,
     freeAtomVarsList,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
-    ImpFunction (..), ImpBlock (..), ImpDecl (..),
+    ImpFunction (..), ImpBlock (..), ImpDecl (..), ClosedImpFunction (..),
     ImpInstr (..), iBinderType,
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
     Output (..), PassLogger, PassName (..), Result (..), BenchStats,
@@ -103,8 +103,8 @@ module Syntax (
     fromNaryLamExact, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
-    FunObjCode (..), FunObjCodeName, CNameMap (..),
-    LocalCName, NativeFunction (..), OptLevel (..),
+    WithCNameInterface (..), FunObjCode, FunObjCodeName,
+    CName, NativeFunction (..), OptLevel (..),
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal, pattern IdxRepScalarBaseTy,
     pattern TagRepTy,
@@ -160,3 +160,5 @@ data Output =
     deriving (Show, Eq, Generic)
 
 type PassLogger = FilteredLogger PassName [Output]
+
+data OptLevel = NoOptimize | Optimize

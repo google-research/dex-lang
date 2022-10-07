@@ -172,6 +172,7 @@ class NativeFunction:
     self.callable = func_type(ctypes.cast(ptr, ctypes.c_void_p).value)
 
   def __del__(self):
+    if api.nofree: return
     if hasattr(self, '_as_parameter_'):
       api.unload(self._ctx, self)
 

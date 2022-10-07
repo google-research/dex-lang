@@ -12,7 +12,7 @@ module Dex.Foreign.Context (
   setError, runTopperMFromContext,
   dexCreateContext, dexDestroyContext, dexForkContext,
   dexInsert, dexLookup,
-  dexEval, dexFreshName, insertIntoNativeFunctionTable
+  dexEval, dexFreshName, insertIntoNativeFunctionTable, popFromNativeFunctionTable
   ) where
 
 import Foreign.C
@@ -46,7 +46,7 @@ data ExportNativeFunction =
   ExportNativeFunction { nativeFunction  :: NativeFunction
                        , nativeSignature :: ExportedSignature 'VoidS }
 
-type ExportNativeFunctionAddr = Ptr () -- points to executable code
+type ExportNativeFunctionAddr = FunPtr () -- points to executable code
 type NativeFunctionTable = M.Map ExportNativeFunctionAddr ExportNativeFunction
 
 data AtomEx where
@@ -138,3 +138,10 @@ insertIntoNativeFunctionTable ctxPtr funPtr funData = do
   Context _ _ addrTableMVar  <- fromStablePtr ctxPtr
   modifyMVar addrTableMVar (\m -> return (M.insert funPtr funData m, ()))
 
+popFromNativeFunctionTable
+  :: Ptr Context -> ExportNativeFunctionAddr -> IO ExportNativeFunction
+popFromNativeFunctionTable ctxPtr funcPtr = do
+  Context _ _ ptrTabMVar <- fromStablePtr ctxPtr
+  addrTable <- takeMVar ptrTabMVar
+  putMVar ptrTabMVar $  M.delete funcPtr addrTable
+  return $ addrTable M.! funcPtr

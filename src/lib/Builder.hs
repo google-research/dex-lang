@@ -317,7 +317,7 @@ queryObjCache v = do
   cache <- objCache <$> getCache
   return $ lookupEMap cache v
 
-emitObjFile :: (Mut n, TopBuilder m) => NameHint -> FunObjCode -> FunObjCodeNameMap n -> m n (FunObjCodeName n)
+emitObjFile :: (Mut n, TopBuilder m) => NameHint -> FunObjCode -> [FunObjCodeName n] -> m n (FunObjCodeName n)
 emitObjFile hint objFile nameMap = do
   v <- emitBinding hint $ FunObjCodeBinding objFile nameMap
   return v

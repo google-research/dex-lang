@@ -31,10 +31,10 @@ putOnHeap x = do
   poke ptr x
   return ptr
 
-catchErrors :: IO (Ptr a) -> IO (Ptr a)
+catchErrors :: IO (FunPtr a) -> IO (FunPtr a)
 catchErrors m = catchIOExcept m >>= \case
   Success ans -> return ans
-  Failure err -> setError (pprint err) $> nullPtr
+  Failure err -> setError (pprint err) $> castPtrToFunPtr nullPtr
 
 foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
 

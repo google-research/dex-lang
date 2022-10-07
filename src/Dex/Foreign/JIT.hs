@@ -69,7 +69,5 @@ dexFreeFunctionSignature sigPtr = do
 
 dexUnload :: Ptr Context -> ExportNativeFunctionAddr -> IO ()
 dexUnload ctxPtr funcPtr = do
-  Context _ _ ptrTabMVar <- fromStablePtr ctxPtr
-  addrTable <- takeMVar ptrTabMVar
-  putMVar ptrTabMVar $  M.delete funcPtr addrTable
-  nativeFunTeardown $ nativeFunction $ addrTable M.! funcPtr
+  f <- popFromNativeFunctionTable ctxPtr funcPtr
+  nativeFunTeardown $ nativeFunction f

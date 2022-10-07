@@ -21,9 +21,10 @@ class Module:
   __slots__ = ('_as_parameter_',)
 
   def __init__(self, source):
-    preludeCopy = prelude.copy()
-    self._as_parameter_ = preludeCopy._as_parameter_
-    err =  api.eval(preludeCopy, api.as_cstr(source))
+    ptr = api.forkContext(prelude)
+    if not ptr: api.raise_from_dex()
+    self._as_parameter_ = ptr
+    err = api.eval(self, api.as_cstr(source))
     if err: api.raise_from_dex()
 
   @classmethod
@@ -34,7 +35,8 @@ class Module:
     return self
 
   def __del__(self):
-    pass  # TODO: free
+    if api is None or api.nofree: return
+    api.destroyContext(self)
 
   def __getattr__(self, name):
     result = api.lookup(self, api.as_cstr(name))
@@ -59,6 +61,8 @@ class Prelude(Module):
   __slots__ = ()
   def __init__(self):
     self._as_parameter_ = api.createContext()
+    if not self._as_parameter_:
+      api.raise_from_dex()
 
 prelude = Prelude()
 eval = prelude.eval

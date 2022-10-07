@@ -22,6 +22,7 @@ module Types.Imp where
 
 import Data.Hashable
 import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString       as BS
 
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
@@ -109,6 +110,37 @@ iBinderType (IBinder _ ty) = ty
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | MLIR | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
+
+-- === Closed Imp functions, LLVM and object file representation ===
+
+-- Object files and LLVM modules expose ordinary C-toolchain names rather than
+-- our internal scoped naming system. The `CNameInterface` data structure
+-- describes how to interpret the names exposed by an LLVM module and its
+-- corresponding object code. These names are all considered local to the
+-- module. The module as a whole is a closed object corresponding to a
+-- `ClosedImpFunction`.
+
+-- TODO: consider adding more information here: types of required functions,
+-- calling conventions etc.
+type CName = String
+data WithCNameInterface a = WithCNameInterface
+  { cniCode              :: a       -- module itself (an LLVM.AST.Module or a bytestring of object code)
+  , cniMainFunName       :: CName   -- name of function defined in this module
+  , cniRequiredFunctions :: [CName] -- names of functions required by this module
+  , cniDtorList          :: [CName] -- names of destructors (CUDA only) defined by this module
+  } deriving (Show, Generic, Functor, Foldable, Traversable)
+
+type RawObjCode = BS.ByteString
+type FunObjCode = WithCNameInterface RawObjCode
+
+-- Imp function with link-time objects abstracted out, suitable for standalone
+-- compilation. TODO: enforce actual `VoidS` as the scope parameter.
+data ClosedImpFunction n where
+  ClosedImpFunction
+    :: [IFunType]                         -- types of required functions
+    -> Nest (NameBinder ImpFunNameC) n l  -- names of required functions
+    -> ImpFunction l
+    -> ClosedImpFunction n
 
 -- === instances ===
 
@@ -297,6 +329,7 @@ instance SubstE Name ImpFunction
 
 instance Store IsCUDARequired
 instance Store CallingConvention
+instance Store a => Store (WithCNameInterface a)
 instance Store (IBinder n l)
 instance Store (ImpDecl n l)
 instance Store (IFunType)

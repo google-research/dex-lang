@@ -97,6 +97,12 @@ freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSigna
 xlaCpuTrampoline = lib.dexXLACPUTrampoline
 
 init()
+nofree = False
+@atexit.register
+def _teardown():
+  global nofree
+  fini()
+  nofree = True  # Don't destruct any Haskell objects after the RTS has been shutdown
 
 def as_cstr(x: str):
   return ctypes.c_char_p(x.encode('ascii'))

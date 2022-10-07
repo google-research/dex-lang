@@ -27,6 +27,7 @@ import Data.Store (encode, decode)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
+import Foreign.Ptr
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -635,19 +636,22 @@ loadObject fname =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
-      (objCode, CNameMap depNames) <- lookupFunObjCode fname
+      (objCode, depNames) <- lookupFunObjCode fname
       ptrs <- forM depNames \name -> nativeFunPtr <$> loadObject name
       f <- liftIO $ linkFunObjCode objCode ptrs
       extendLoadedObjects fname f
       return f
 
-linkFunObjCode :: FunObjCode -> ExplicitLinkMap -> IO NativeFunction
-linkFunObjCode obj depPtrs = do
+linkFunObjCode :: FunObjCode -> [FunPtr ()] -> IO NativeFunction
+linkFunObjCode (WithCNameInterface code mainFunName reqFuns dtors) depPtrs = do
   l <- createLinker
-  addExplicitLinkMap l depPtrs
-  addObjectFile l (objectFileContents obj)
-  ptr <- getFunctionPointer l (objectFileMainFunName obj)
-  let destructor = destroyLinker l
+  addExplicitLinkMap l (zip reqFuns depPtrs)
+  addObjectFile l code
+  ptr <- getFunctionPointer l mainFunName
+  dtorPtrs <- mapM (getFunctionPointer l) dtors
+  let destructor :: IO () = do
+        mapM_ callDtor dtorPtrs
+        destroyLinker l
   return $ NativeFunction ptr destructor
 
 -- Get the definition of a specialized function in the pre-simplification IR.
@@ -673,12 +677,12 @@ forceDeferredInlining v =
     _ -> return $ Var v
 
 toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
-toCFunction nameHint f = do
+toCFunction nameHint impFun = do
   logger  <- getFilteredLogger
-  (llvmModule, mainFunName, nameMap) <- impToLLVM logger nameHint f
-  obj <- compileToObjCode llvmModule mainFunName nameMap
-  nameMap' <- nameMapImpToObj nameMap
-  emitObjFile nameHint obj nameMap'
+  (closedImpFun, reqFuns) <- abstractLinktimeObjects impFun
+  obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
+  reqPtrs <- mapM impNameToObj reqFuns
+  emitObjFile nameHint obj reqPtrs
 
 getLLVMOptLevel :: EvalConfig -> LLVMOptLevel
 getLLVMOptLevel cfg = case optLevel cfg of
@@ -695,25 +699,26 @@ evalLLVM block = do
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
                                              toImpFunction backend cc blockAbs
   let IFunType _ _ resultTypes = impFunType impFun
-  (llvmAST, mainFunName, nameMap) <- impToLLVM logger "main" impFun
-  obj <- compileToObjCode llvmAST mainFunName nameMap
-  CNameMap nameMapObjs <- nameMapImpToObj nameMap
-  depPtrs <- fmap nativeFunPtr <$> mapM loadObject nameMapObjs
+  (closedImpFun, reqFuns) <- abstractLinktimeObjects impFun
+  obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
+  depPtrs <- mapM impNameToPtr reqFuns
   nativeFun <- liftIO $ linkFunObjCode obj depPtrs
   resultVals <- liftIO $ callNativeFun nativeFun logger ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
 
-compileToObjCode :: Topper m => LLVM.AST.Module -> LocalCName -> CNameMap e n -> m n FunObjCode
-compileToObjCode llvmAST mainFunName (CNameMap names) = do
+compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
+compileToObjCode astWithNames = forM astWithNames \ast -> do
   logger  <- getFilteredLogger
   opt <- getLLVMOptLevel <$> getConfig
-  objCodeBytes <- liftIO $ compileLLVM logger opt llvmAST mainFunName
-  return $ FunObjCode objCodeBytes mainFunName (M.keys names) [] -- TODO: destructors!
+  liftIO $ compileLLVM logger opt ast (cniMainFunName astWithNames)
 
-nameMapImpToObj :: (EnvReader m, Fallible1 m) => CNameMap ImpFunName n -> m n (CNameMap FunObjCodeName n)
-nameMapImpToObj (CNameMap names) = CNameMap <$> forM names \v -> do
+impNameToPtr :: (Topper m, Mut n) => ImpFunName n -> m n (FunPtr ())
+impNameToPtr v = nativeFunPtr <$> (loadObject =<< impNameToObj v)
+
+impNameToObj :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
+impNameToObj v = do
   queryObjCache v >>= \case
     Just v' -> return v'
     Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v

@@ -13,7 +13,6 @@ module LLVM.Link
 import Data.String (fromString)
 import Foreign.Ptr
 import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as M
 
 import System.IO
 import System.IO.Temp
@@ -21,9 +20,6 @@ import System.IO.Temp
 import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Internal.OrcJIT as OrcJIT
 
-import qualified LLVM.Relocation as R
-import qualified LLVM.CodeModel as CM
-import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Shims
 
 data Linker = Linker
@@ -44,13 +40,12 @@ instance OrcJIT.IRLayer Linker where
 
 type CName = String
 
-type ExplicitLinkMap = M.Map CName (Ptr ())
+type ExplicitLinkMap = [(CName, FunPtr ())]
 
 createLinker :: IO Linker
 createLinker = do
-  -- TODO: cleanup for TargetMachine?
   -- TODO: should this be a parameter to `createLinker` instead?
-  tm <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
+  tm <- LLVM.Shims.newDefaultHostTargetMachine
   s         <- OrcJIT.createExecutionSession
   linkLayer <- OrcJIT.createRTDyldObjectLinkingLayer s
   dylib     <- OrcJIT.createJITDylib s "main_dylib"
@@ -65,9 +60,9 @@ destroyLinker (Linker session _ _ _) = do
 
 addExplicitLinkMap :: Linker -> ExplicitLinkMap -> IO ()
 addExplicitLinkMap l linkMap = do
-  let (linkedNames, linkedPtrs) = unzip $ M.toList linkMap
+  let (linkedNames, linkedPtrs) = unzip linkMap
   let flags = OrcJIT.defaultJITSymbolFlags { OrcJIT.jitSymbolAbsolute = True }
-  let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr ptr) flags | ptr <- linkedPtrs]
+  let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr $ castFunPtrToPtr ptr) flags | ptr <- linkedPtrs]
   mangledNames <- mapM (OrcJIT.mangleSymbol l . fromString) linkedNames
   OrcJIT.defineAbsoluteSymbols (linkerDylib l) $ zip mangledNames ptrSymbols
 
@@ -78,10 +73,10 @@ addObjectFile l objFileContents = do
     hFlush h
     OrcJIT.addObjectFile (linkerLinkLayer l) (linkerDylib l) path
 
-getFunctionPointer :: Linker -> CName -> IO (Ptr ())
+getFunctionPointer :: Linker -> CName -> IO (FunPtr a)
 getFunctionPointer l name = do
   OrcJIT.lookupSymbol (linkerExecutionSession l) (linkerIRLayer l)
     (linkerDylib l) (fromString name) >>= \case
       Right (OrcJIT.JITSymbol funcAddr _) ->
-        return $ wordPtrToPtr funcAddr
+        return $ castPtrToFunPtr $ wordPtrToPtr funcAddr
       Left s -> error $ "Couldn't find function: " ++ name ++ "\n" ++ show s

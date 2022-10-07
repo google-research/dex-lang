@@ -13,9 +13,6 @@ import qualified LLVM.Analysis as L
 #endif
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as GL
-import qualified LLVM.Relocation as R
-import qualified LLVM.CodeModel as CM
-import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Module as Mod
 import qualified LLVM.Internal.Module as Mod
 #if MIN_VERSION_llvm_hs(15,0,0)
@@ -49,7 +46,7 @@ data LLVMOptLevel = OptALittle       -- -O1
 
 compileLLVM :: PassLogger -> LLVMOptLevel -> L.Module -> String -> IO BS.ByteString
 compileLLVM logger opt ast exportName = do
-  tm <- LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
+  tm <- LLVM.Shims.newDefaultHostTargetMachine
   withContext \c -> do
     Mod.withModuleFromAST c ast \m -> do
       standardCompilationPipeline opt
