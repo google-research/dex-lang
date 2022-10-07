@@ -1552,18 +1552,18 @@ unsafeFromOrdinalImp (IxType _ dict) i = do
     (`appReduceImp` (Con $ Newtype NatTy i'))
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
-indexSetSizeImp (IxType _ dict) = fromScalarAtom . unwrapNewtype =<< case dict of
+indexSetSizeImp (IxType _ dict) = fromScalarAtom . unwrapBaseNewtype =<< case dict of
   DictCon (IxFin n) -> return n
   _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduceImp` UnitVal)
 
 indexSetSizeFromSimp :: Emits n => IxType n -> BuilderM n (Atom n)
-indexSetSizeFromSimp (IxType _ dict) = unwrapNewtype <$> case dict of
+indexSetSizeFromSimp (IxType _ dict) = unwrapBaseNewtype <$> case dict of
   DictCon (IxFin n) -> return n
   _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduce` UnitVal)
 
 ordinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
 ordinalFromSimp (IxType _ dict) i =
-  liftM unwrapNewtype $ liftEnvReaderM (projSimpDictThunk dict 1) >>= (`appReduce` i)
+  liftM unwrapBaseNewtype $ liftEnvReaderM (projSimpDictThunk dict 1) >>= (`appReduce` i)
 
 unsafeFromOrdinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
 unsafeFromOrdinalFromSimp (IxType _ dict) o =
@@ -1581,7 +1581,8 @@ projSimpDictThunk topDict methodIx = go topDict []
           Just _ -> error "Not a pure atomic lam?"
           Nothing -> error "Failed to get a dict nary lam?"
       DictCon (InstantiatedGiven d extraArgs) -> go d $ toList extraArgs ++ args
-      Con (Newtype _ _) -> return $ getProjection [methodIx, 0] dict
+      Con (Newtype _ _) ->
+        return $ getProjection [ProjectProduct methodIx, UnwrapBaseNewtype] dict
       DictCon (IxFin n) -> case methodIx == 0 of
         True -> do
           Abs b n' <- toConstAbs n

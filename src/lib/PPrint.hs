@@ -282,6 +282,12 @@ instance PrettyPrec (Atom n) where
 instance Pretty (BoxPtr n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
 
+instance Pretty Projection where
+  pretty = \case
+    UnwrapCompoundNewtype -> "uc"
+    UnwrapBaseNewtype -> "ub"
+    ProjectProduct i -> p i
+
 prettyRecordTyRow :: FieldRowElems n -> Doc ann -> DocPrec ann
 prettyRecordTyRow elems separator = do
   atPrec ArgPrec $ align $ group $ braces $ (prefix <>) $

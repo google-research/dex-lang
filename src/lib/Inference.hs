@@ -1038,9 +1038,9 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     f' <- inferFunNoInstantiation f
     x' <- inferRho x
     (liftM Var $ emit $ App f' (x':|[])) >>= matchRequirement
-  UPrimExpr (OpExpr (ProjNewtype x)) -> do
+  UPrimExpr (OpExpr (ProjBaseNewtype x)) -> do
     x' <- inferRho x >>= emitAtomToName
-    return $ unwrapNewtype $ Var x'
+    return $ unwrapBaseNewtype $ Var x'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
       xBlock <- buildBlockInf $ inferRho x
@@ -1340,7 +1340,7 @@ buildSortedCase scrut alts resultTy = do
         -- Single constructor ADTs are not sum types, so elide the case.
         [_] -> do
           let [IndexedAlt _ alt] = alts
-          emitBlock =<< applyAbs alt (SubstVal $ unwrapNewtype scrut)
+          emitBlock =<< applyAbs alt (SubstVal $ unwrapCompoundNewtype scrut)
         _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
@@ -1551,17 +1551,18 @@ inferDataCon (sourceName, UDataDefTrail argBs) = do
   let (repTy, projIdxs) = dataConRepTy argBs'
   return $ PairE (DataConDef sourceName repTy projIdxs) argBs'
 
-dataConRepTy :: EmptyAbs (Nest Binder) n -> (Type n, [[Int]])
+dataConRepTy :: EmptyAbs (Nest Binder) n -> (Type n, [[Projection]])
 dataConRepTy (Abs topBs UnitE) = case topBs of
   Empty -> (UnitTy, [])
-  _ -> go [] [0] topBs
+  _ -> go [] [UnwrapCompoundNewtype] topBs
   where
-    go :: [Type l] -> [Int] -> Nest Binder l p -> (Type l, [[Int]])
+    go :: [Type l] -> [Projection] -> Nest Binder l p -> (Type l, [[Projection]])
     go revAcc projIdxs = \case
       Empty -> case revAcc of
         []   -> error "should never happen"
         [ty] -> (ty, [projIdxs])
-        _    -> (ProdTy $ reverse revAcc, iota (length revAcc) <&> (:projIdxs))
+        _    -> ( ProdTy $ reverse revAcc
+                , iota (length revAcc) <&> \i -> ProjectProduct i:projIdxs )
       Nest b bs -> case hoist b (EmptyAbs bs) of
         HoistSuccess (Abs bs' UnitE) -> go (binderType b:revAcc) projIdxs bs'
         HoistFailure _ -> (fullTy, idxs)
@@ -1569,11 +1570,11 @@ dataConRepTy (Abs topBs UnitE) = case topBs of
             accSize = length revAcc
             (fullTy, depTyIdxs) = case revAcc of
               [] -> (depTy, [])
-              _  -> (ProdTy $ reverse revAcc ++ [depTy], [accSize])
-            idxs = (iota accSize <&> (:projIdxs)) ++
-                   ((0 : (depTyIdxs ++ projIdxs)) : tailIdxs)
+              _  -> (ProdTy $ reverse revAcc ++ [depTy], [ProjectProduct accSize])
+            (tailTy, tailIdxs) = go [] (ProjectProduct 1 : (depTyIdxs ++ projIdxs)) bs
+            idxs = (iota accSize <&> \i -> ProjectProduct i : projIdxs) ++
+                   ((ProjectProduct 0 : (depTyIdxs ++ projIdxs)) : tailIdxs)
             depTy = DepPairTy $ DepPairType b tailTy
-            (tailTy, tailIdxs) = go [] (1 : (depTyIdxs ++ projIdxs)) bs
 
 inferClassDef
   :: SourceName -> [SourceName] -> Nest (UAnnBinder AtomNameC) i i'

@@ -25,6 +25,7 @@ import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import Data.Word
 import Data.Maybe
 import Data.Functor
+import Data.Hashable
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
@@ -73,7 +74,7 @@ data Atom (n::S) =
  -- a statically-known atom. This is because the variable name used
  -- here may also appear in the type of the atom. (We maintain this
  -- invariant during substitution and in Builder.hs.)
- | ProjectElt (NE.NonEmpty Int) (AtomName n)
+ | ProjectElt (NE.NonEmpty Projection) (AtomName n)
    deriving (Show, Generic)
 
 data Expr n =
@@ -135,7 +136,7 @@ data DataDef n where
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
   -- list of projection indices that recovers elements from the representation.
-  DataConDef SourceName (Type n) [[Int]]
+  DataConDef SourceName (Type n) [[Projection]]
   deriving (Show, Generic)
 
 data DataDefBinders n l where
@@ -211,6 +212,12 @@ data PiType  (n::S) where
 
 data DepPairType (n::S) where
   DepPairType :: Binder n l -> Type  l -> DepPairType n
+
+data Projection
+  = UnwrapCompoundNewtype  -- Unwrap TypeCon, record or variant
+  | UnwrapBaseNewtype      -- Unwrap Fin or Nat
+  | ProjectProduct Int
+  deriving (Show, Eq, Generic)
 
 type Val  = Atom
 type Type = Atom
@@ -984,7 +991,7 @@ instance AlphaEqE DataDef
 instance AlphaHashableE DataDef
 
 instance GenericE DataConDef where
-  type RepE DataConDef = (LiftE (SourceName, [[Int]])) `PairE` Type
+  type RepE DataConDef = (LiftE (SourceName, [[Projection]])) `PairE` Type
   fromE (DataConDef name repTy idxs) = (LiftE (name, idxs)) `PairE` repTy
   {-# INLINE fromE #-}
   toE   ((LiftE (name, idxs)) `PairE` repTy) = DataConDef name repTy idxs
@@ -1064,7 +1071,7 @@ instance GenericE Atom where
                    -- handling when you substitute with atoms. The rest just act
                    -- like containers
   {- Var -}        AtomName
-  {- ProjectElt -} ( LiftE (NE.NonEmpty Int) `PairE` AtomName )
+  {- ProjectElt -} ( LiftE (NE.NonEmpty Projection) `PairE` AtomName )
             ) (EitherE4
   {- Lam -}        LamExpr
   {- Pi -}         PiType
@@ -1180,25 +1187,29 @@ instance SubstE AtomSubstVal Atom where
     Case6 rest -> (toE . Case6) $ substE (scope, env) rest
     Case7 rest -> (toE . Case7) $ substE (scope, env) rest
 
-getProjection :: HasCallStack => [Int] -> Atom n -> Atom n
+getProjection :: HasCallStack => [Projection] -> Atom n -> Atom n
 getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
-  Var name -> ProjectElt (NE.fromList [i]) name
+  Var name -> ProjectElt (i NE.:| []) name
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  Con (ProdCon xs) -> xs !! i
-  Con (Newtype _ x) | i == 0 -> x
-  DepPair l _ _ | i == 0 -> l
-  DepPair _ r _ | i == 1 -> r
+  Con (ProdCon xs) -> xs !! iProd
+  Con (Newtype _ x) -> x
+  DepPair l _ _ | iProd == 0 -> l
+  DepPair _ r _ | iProd == 1 -> r
   ACase scrut alts resultTy -> ACase scrut alts' resultTy'
     where
       alts' = alts <&> \(Abs bs body) -> Abs bs $ getProjection [i] body
       resultTy' = case resultTy of
-        ProdTy tys -> tys !! i
+        ProdTy tys -> tys !! iProd
         -- We can't handle all cases here because we'll end up needing access to
         -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
         -- do away with it.
         _ -> error "oops"
   a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
+  where
+    iProd = case i of
+      ProjectProduct i' -> i'
+      _ -> error "Not a product projection"
 
 instance GenericE Expr where
   type RepE Expr =
@@ -2150,6 +2161,8 @@ instance Semigroup (LoadedObjects n) where
 instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
 
+instance Hashable Projection
+
 instance Store (Atom n)
 instance Store (Expr n)
 instance Store (SolverBinding n)
@@ -2196,6 +2209,7 @@ instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
+instance Store Projection
 
 -- === Orphan instances ===
 -- TODO: Resolve this!
