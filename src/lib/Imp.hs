@@ -14,7 +14,6 @@ module Imp
 import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
-import Data.Maybe (catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import Control.Category
 import Control.Monad.Identity
@@ -32,7 +31,7 @@ import CheckType (CheckableE (..))
 import Lower (IxDestBlock)
 import LabeledItems
 import QueryType
-import Util (enumerate, SnocList (..), unsnoc)
+import Util (enumerate, SnocList (..), unsnoc, forMFilter)
 import Types.Primitives
 import Types.Core
 import Types.Imp
@@ -1601,16 +1600,25 @@ appReduceImp f x = case f of
 -- === Abstracting link-time objects ===
 
 abstractLinktimeObjects
-  :: EnvReader m => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n])
+  :: forall m n. EnvReader m
+  => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n], [PtrName n])
 abstractLinktimeObjects f = do
-  let vs = freeVarsList f
-  vsToAbs <- catMaybes <$> forM vs \v ->
+  let allVars = freeVarsE f
+  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList allVars) \v ->
     lookupImpFun v <&> \case
-      ImpFunction _ _ -> Just v
+      ImpFunction ty _ -> Just (v, ty)
       FFIFunction _ _ -> Nothing
-  Abs bs f' <- return $ abstractFreeVarsNoAnn vsToAbs f
-  tys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
-  return (ClosedImpFunction tys bs f', vsToAbs)
+  (atomVars, ptrVars, ptrTys) <- unzip3 <$> forMFilter (nameSetToList allVars) \v ->
+    lookupAtomName v >>= \case
+      PtrLitBound _ ptrName -> do
+        (ty, _) <- lookupPtrName ptrName
+        return $ Just (v, ptrName, PtrType ty)
+      _ -> return Nothing
+  Abs funBs (Abs ptrBs f') <- return $ abstractFreeVarsNoAnn funVars $
+                                       abstractFreeVarsNoAnn atomVars f
+  let funBs' =  zipWithNest funBs funTys \b ty -> IFunBinder b ty
+  let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> IBinder b ty
+  return (ClosedImpFunction funBs' ptrBs' f', funVars, ptrVars)
 
 -- === type checking imp programs ===
 

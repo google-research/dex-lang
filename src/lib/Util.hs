@@ -8,7 +8,7 @@
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated, splitAtExact,
+             scanM, composeN, mapMaybe, forMFilter, uncons, repeated, splitAtExact,
              transitiveClosure, transitiveClosureM,
              showErr, listDiff, splitMap, enumerate, iota, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
@@ -140,6 +140,15 @@ mapMaybe f (x:xs) = let rest = mapMaybe f xs
                     in case f x of
                         Just y  -> y : rest
                         Nothing -> rest
+
+forMFilter :: Monad m => [a] -> (a -> m (Maybe b)) -> m [b]
+forMFilter [] _ = return []
+forMFilter (x:xs) f = do
+  ans <- f x
+  rest <- forMFilter xs f
+  return case ans of
+    Just y  -> y : rest
+    Nothing -> rest
 
 composeN :: Int -> (a -> a) -> a -> a
 composeN n f = foldr (.) id (replicate n f)

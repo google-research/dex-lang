@@ -33,7 +33,7 @@ module Builder (
   emitTopLet, emitImpFunBinding, emitSpecialization, emitAtomRules,
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
   extendImpCache, queryImpCache,
-  extendSpecializationCache, querySpecializationCache, getCache, emitObjFile,
+  extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
   extendObjCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -317,10 +317,18 @@ queryObjCache v = do
   cache <- objCache <$> getCache
   return $ lookupEMap cache v
 
-emitObjFile :: (Mut n, TopBuilder m) => NameHint -> FunObjCode -> [FunObjCodeName n] -> m n (FunObjCodeName n)
-emitObjFile hint objFile nameMap = do
-  v <- emitBinding hint $ FunObjCodeBinding objFile nameMap
-  return v
+emitObjFile
+  :: (Mut n, TopBuilder m)
+  => NameHint -> FunObjCode -> LinktimeNames  n
+  -> m n (FunObjCodeName n)
+emitObjFile hint objFile names = do
+  emitBinding hint $ FunObjCodeBinding objFile names
+
+lookupPtrName :: EnvReader m => PtrName n -> m n (PtrType, Ptr ())
+lookupPtrName v = lookupEnv v >>= \case
+  PtrBinding p -> case p of
+    PtrLitVal ty ptr -> return (ty, ptr)
+    PtrSnapshot _ _ -> error "this case is only for serialization"
 
 getCache :: EnvReader m => m n (Cache n)
 getCache = withEnv $ envCache . topEnv

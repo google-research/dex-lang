@@ -43,7 +43,7 @@ instance OrcJIT.IRLayer Linker where
 
 type CName = String
 
-type ExplicitLinkMap = [(CName, FunPtr ())]
+type ExplicitLinkMap = [(CName, Ptr ())]
 
 createLinker :: IO Linker
 createLinker = do
@@ -66,7 +66,7 @@ addExplicitLinkMap :: Linker -> ExplicitLinkMap -> IO ()
 addExplicitLinkMap l linkMap = do
   let (linkedNames, linkedPtrs) = unzip linkMap
   let flags = OrcJIT.defaultJITSymbolFlags { OrcJIT.jitSymbolAbsolute = True }
-  let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr $ castFunPtrToPtr ptr) flags | ptr <- linkedPtrs]
+  let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr ptr) flags | ptr <- linkedPtrs]
   mangledNames <- mapM (OrcJIT.mangleSymbol l . fromString) linkedNames
   OrcJIT.defineAbsoluteSymbols (linkerDylib l) $ zip mangledNames ptrSymbols
 

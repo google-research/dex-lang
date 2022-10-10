@@ -108,24 +108,19 @@ impToLLVM :: (EnvReader m, MonadIO1 m)
           => FilteredLogger PassName [Output] -> NameHint
           -> ClosedImpFunction n
           -> m n (WithCNameInterface L.Module)
-impToLLVM logger fNameHint (ClosedImpFunction calledTys calledBs impFun) = do
+impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
   let fName = makeMainFunName fNameHint
-  let calledNames = makeInternalCalledNames $ nestToList getNameHint calledBs
-  (internalDefns, substVals) <- unzip <$> forM (zip calledNames calledTys) \(v, ty) -> do
-    let llvmTy = impFunTyToLLVMTy ty
-    let v' = L.Name $ fromString v
-    let defn = makeCalledFunDefn v' llvmTy
-    let sv = FunctionSubstVal (makeCalledFunOperand v' llvmTy) llvmTy ty
-    return (defn, sv)
-  let initEnv = idSubst <>> calledBs @@> substVals
+  (funDefns, funNames, funVals) <- makeFunDefns funBinders
+  (ptrDefns, ptrNames, ptrVals) <- makePtrDefns ptrBinders
+  let initEnv = idSubst <>> funBinders @@> funVals <>> ptrBinders @@> ptrVals
   (defns, externSpecs, globalDtors) <- compileFunction logger (L.Name $ fromString fName) initEnv impFun
   let externDefns = map externDecl $ toList externSpecs
   let dtorDef = defineGlobalDtors globalDtors
   let resultModule = L.defaultModule
         { L.moduleName = "dexModule"
-        , L.moduleDefinitions = dtorDef : internalDefns ++ defns ++ externDefns }
+        , L.moduleDefinitions = dtorDef : funDefns ++ ptrDefns ++ defns ++ externDefns }
   let dtorNames = map (\(L.Name dname) -> C8BS.unpack $ SBS.fromShort dname) globalDtors
-  return $ WithCNameInterface resultModule fName calledNames dtorNames
+  return $ WithCNameInterface resultModule fName funNames ptrNames dtorNames
   where
     dtorType = L.FunctionType L.VoidType [] False
     dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]
@@ -147,17 +142,41 @@ impToLLVM logger fNameHint (ClosedImpFunction calledTys calledBs impFun) = do
     makeMainFunName :: NameHint -> CName
     makeMainFunName hint = "dexMainFunction_" <> fromString (show hint)
 
-    makeInternalCalledNames :: [NameHint] -> [CName]
-    makeInternalCalledNames hints =
-      ["dexCalled_" <> fromString (show h) <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
+    makeNames :: String -> [NameHint] -> [CName]
+    makeNames prefix hints =
+      [prefix <> fromString (show h) <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
 
-    makeCalledFunDefn :: L.Name -> LLVMFunType -> L.Definition
-    makeCalledFunDefn name (retTy, argTys) =
-      externDecl $ ExternFunSpec name retTy [] [] argTys
+    makeFunDefns :: EnvReader m => Nest IFunBinder any1 any2
+                 -> m n ([L.Definition], [CName], [OperandSubstVal ImpFunNameC n])
+    makeFunDefns bs = do
+      let cnames = makeNames "dex_called_fun_" $ nestToList getNameHint bs
+      let tys = nestToList (\(IFunBinder _ ty) -> ty) bs
+      (defns, substVals) <- unzip <$> forM (zip cnames tys) \(v, ty) -> do
+        let llvmTy@(retTy, argTys) = impFunTyToLLVMTy ty
+        let v' = L.Name $ fromString v
+        let defn = externDecl $ ExternFunSpec v' retTy [] [] argTys
+        let op = L.ConstantOperand $ globalReference (hostPtrTy $ funTy retTy argTys) v'
+        let sv = FunctionSubstVal op llvmTy ty
+        return (defn, sv)
+      return (defns, cnames, substVals)
 
-    makeCalledFunOperand :: L.Name -> LLVMFunType -> Operand
-    makeCalledFunOperand name (retTy, argTys) =
-      L.ConstantOperand $ globalReference (hostPtrTy $ funTy retTy argTys) name
+    makePtrDefns :: EnvReader m => Nest IBinder any1 any2
+                 -> m n ([L.Definition], [CName], [OperandSubstVal AtomNameC n])
+    makePtrDefns bs = do
+      let cnames = makeNames "dex_const_ptr_" $ nestToList getNameHint bs
+      let tys = nestToList (\(IBinder _ ty) -> ty) bs
+      (defns, substVals) <- unzip <$> forM (zip cnames tys) \(v, ptrTy@(PtrType (_, ty))) -> do
+        let v' = L.Name $ fromString v
+        let ty'    = scalarTy ty
+        let ptrTy' = scalarTy ptrTy
+        let defn = L.GlobalDefinition $ L.globalVariableDefaults
+                      { L.name = v'
+                      , L.type' = ty'
+                      , L.linkage = L.External
+                      , L.initializer = Nothing }
+        let sv = OperandSubstVal $ L.ConstantOperand $ globalReference ptrTy' v'
+        return (defn, sv)
+      return (defns, cnames, substVals)
 
 compileFunction
   :: (EnvReader m, MonadIO1 m)
