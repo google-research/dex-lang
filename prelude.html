@@ -351,7 +351,6 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> w32_to_w64 (x <span class="symbol">:</span> <span class="type-name">Word32</span>)<span class="symbol">:</span> <span class="type-name">Word64</span>  <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i_to_f (x<span class="symbol">:</span><span class="type-name">Int</span>)   <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_i (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Int</span>   <span class="symbol">=</span> internal_cast _ x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i64_to_raw_ptr (x<span class="symbol">:</span><span class="type-name">Int64</span> ) <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> raw_ptr_to_i64 (x<span class="symbol">:</span><span class="type-name">RawPtr</span>) <span class="symbol">:</span> <span class="type-name">Int64</span>  <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Nat</span> <span class="symbol">=</span> %<span class="type-name">Nat</span>
@@ -1957,10 +1956,11 @@ Nor does it promise a particular level of precision for numeric values.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>File system operations</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">FilePath</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> null_raw_ptr <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">=</span> i64_to_raw_ptr <span class="symbol">$</span> i_to_i64 0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_null_raw_ptr (ptr<span class="symbol">:</span><span class="type-name">RawPtr</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  raw_ptr_to_i64 ptr <span class="symbol">==</span> 0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> from_nullable_raw_ptr {a} (ptr<span class="symbol">:</span><span class="type-name">RawPtr</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Ptr</span> a) <span class="symbol">=</span>
-  <span class="keyword">if</span> ptr <span class="symbol">==</span> null_raw_ptr
+  <span class="keyword">if</span> is_null_raw_ptr ptr
     <span class="keyword">then</span> <span class="type-name">Nothing</span>
     <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
 </div></div><div class="cell"><div class="code-block">
@@ -2121,7 +2121,7 @@ Not to be confused with a partially applied function</p>
       <span class="symbol">:</span> {<span class="type-name">IO</span>} a <span class="symbol">=</span>
   stream <span class="symbol">=</span> fopen f mode
   (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
-  <span class="keyword">if</span> stream&#39; <span class="symbol">==</span> null_raw_ptr
+  <span class="keyword">if</span> is_null_raw_ptr stream&#39;
     <span class="keyword">then</span>
       error <span class="symbol">$</span> &quot;<span class="type-name">Unable</span> to open file<span class="symbol">:</span> &quot; <span class="symbol">&lt;&gt;</span> f
     <span class="keyword">else</span>
@@ -2138,7 +2138,7 @@ Not to be confused with a partially applied function</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> has_file (f<span class="symbol">:</span><span class="type-name">FilePath</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Bool</span> <span class="symbol">=</span>
   stream <span class="symbol">=</span> fopen f <span class="type-name">ReadMode</span>
   (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
-  result <span class="symbol">=</span> stream&#39; <span class="symbol">/=</span> null_raw_ptr
+  result <span class="symbol">=</span> not (is_null_raw_ptr stream&#39;)
   <span class="keyword">if</span> result <span class="keyword">then</span> fclose stream
   result
 </div></div><div class="cell"><div class="code-block">
