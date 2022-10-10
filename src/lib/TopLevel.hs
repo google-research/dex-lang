@@ -13,7 +13,6 @@ module TopLevel (
   evalSourceBlockIO, loadCache, storeCache, clearCache,
   loadObject, toCFunction) where
 
-import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
 import Control.Exception (throwIO, catch)
@@ -697,18 +696,17 @@ evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
-  (blockAbs, ptrVals) <- abstractPtrLiterals block
   let (cc, _needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                          _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-                                             toImpFunction backend cc blockAbs
+    toImpFunction backend cc $ Abs Empty block
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
   reqFunPtrs  <- forM reqFuns impNameToPtr
   reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
   nativeFun <- liftIO $ linkFunObjCode obj $ LinktimeVals reqFunPtrs reqDataPtrs
-  resultVals <- liftIO $ callNativeFun nativeFun logger ptrVals resultTypes
+  resultVals <- liftIO $ callNativeFun nativeFun logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
@@ -883,21 +881,6 @@ restorePtrSnapshots s = traverseBindingsTopStateEx s \case
     liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
   PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
   b -> return b
-
-abstractPtrLiterals
-  :: (EnvReader m, HoistableE e)
-  => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
-abstractPtrLiterals block = do
-  let fvs = freeAtomVarsList block
-  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
-    lookupAtomName v >>= \case
-      PtrLitBound _ name -> do
-        (ty, ptr) <- lookupPtrName name
-        return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
-      _ -> return Nothing
-  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
-  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
-  return (Abs ptrBinders block', ptrVals)
 
 getFilteredLogger :: Topper m => m n PassLogger
 getFilteredLogger = do
