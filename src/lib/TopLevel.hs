@@ -13,7 +13,6 @@ module TopLevel (
   evalSourceBlockIO, loadCache, storeCache, clearCache,
   loadObject, toCFunction) where
 
-import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
 import Control.Exception (throwIO, catch)
@@ -636,16 +635,20 @@ loadObject fname =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
-      (objCode, depNames) <- lookupFunObjCode fname
-      ptrs <- forM depNames \name -> nativeFunPtr <$> loadObject name
-      f <- liftIO $ linkFunObjCode objCode ptrs
+      (objCode, LinktimeNames funNames ptrNames) <- lookupFunObjCode fname
+      funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
+      ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
+      f <- liftIO $ linkFunObjCode objCode $ LinktimeVals funVals ptrVals
       extendLoadedObjects fname f
       return f
 
-linkFunObjCode :: FunObjCode -> [FunPtr ()] -> IO NativeFunction
-linkFunObjCode (WithCNameInterface code mainFunName reqFuns dtors) depPtrs = do
+linkFunObjCode :: FunObjCode -> LinktimeVals -> IO NativeFunction
+linkFunObjCode objCode (LinktimeVals funVals ptrVals) = do
+  let (WithCNameInterface code mainFunName reqFuns reqPtrs dtors) = objCode
+  let linkMap =   zip reqFuns (map castFunPtrToPtr funVals)
+               <> zip reqPtrs ptrVals
   l <- createLinker
-  addExplicitLinkMap l (zip reqFuns depPtrs)
+  addExplicitLinkMap l linkMap
   addObjectFile l code
   ptr <- getFunctionPointer l mainFunName
   dtorPtrs <- mapM (getFunctionPointer l) dtors
@@ -679,10 +682,10 @@ forceDeferredInlining v =
 toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
 toCFunction nameHint impFun = do
   logger  <- getFilteredLogger
-  (closedImpFun, reqFuns) <- abstractLinktimeObjects impFun
+  (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
-  reqPtrs <- mapM impNameToObj reqFuns
-  emitObjFile nameHint obj reqPtrs
+  reqObjNames <- mapM impNameToObj reqFuns
+  emitObjFile nameHint obj (LinktimeNames reqObjNames reqPtrNames)
 
 getLLVMOptLevel :: EvalConfig -> LLVMOptLevel
 getLLVMOptLevel cfg = case optLevel cfg of
@@ -693,17 +696,17 @@ evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
-  (blockAbs, ptrVals) <- abstractPtrLiterals block
   let (cc, _needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                          _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-                                             toImpFunction backend cc blockAbs
+    blockToImpFunction backend cc block
   let IFunType _ _ resultTypes = impFunType impFun
-  (closedImpFun, reqFuns) <- abstractLinktimeObjects impFun
+  (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
-  depPtrs <- mapM impNameToPtr reqFuns
-  nativeFun <- liftIO $ linkFunObjCode obj depPtrs
-  resultVals <- liftIO $ callNativeFun nativeFun logger ptrVals resultTypes
+  reqFunPtrs  <- forM reqFuns impNameToPtr
+  reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
+  nativeFun <- liftIO $ linkFunObjCode obj $ LinktimeVals reqFunPtrs reqDataPtrs
+  resultVals <- liftIO $ callNativeFun nativeFun logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
@@ -878,22 +881,6 @@ restorePtrSnapshots s = traverseBindingsTopStateEx s \case
     liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
   PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
   b -> return b
-
-abstractPtrLiterals
-  :: (EnvReader m, HoistableE e)
-  => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
-abstractPtrLiterals block = do
-  let fvs = freeAtomVarsList block
-  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
-    lookupAtomName v >>= \case
-      PtrLitBound _ name -> lookupEnv name >>= \case
-        PtrBinding (PtrLitVal ty ptr) ->
-          return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
-        PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
-      _ -> return Nothing
-  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
-  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
-  return (Abs ptrBinders block', ptrVals)
 
 getFilteredLogger :: Topper m => m n PassLogger
 getFilteredLogger = do

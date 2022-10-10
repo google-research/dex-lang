@@ -7,14 +7,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( toImpFunction, ImpFunctionWithRecon (..)
+  ( blockToImpFunction, ImpFunctionWithRecon (..)
   , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
   , PtrBinder, impFunType, getIType, abstractLinktimeObjects) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
-import Data.Maybe (catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import Control.Category
 import Control.Monad.Identity
@@ -32,7 +31,7 @@ import CheckType (CheckableE (..))
 import Lower (IxDestBlock)
 import LabeledItems
 import QueryType
-import Util (enumerate, SnocList (..), unsnoc)
+import Util (enumerate, SnocList (..), unsnoc, forMFilter)
 import Types.Primitives
 import Types.Core
 import Types.Imp
@@ -44,13 +43,13 @@ type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 type PtrBinder = IBinder
 
 -- TODO: make it purely a function of the type and avoid the AtomRecon
-toImpFunction :: EnvReader m
+blockToImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> Abs (Nest PtrBinder) IxDestBlock n
+              -> IxDestBlock n
               -> m n (ImpFunctionWithRecon n)
-toImpFunction _ cc absBlock = liftImpM $
+blockToImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc absBlock
-{-# SCC toImpFunction #-}
+{-# SCC blockToImpFunction #-}
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
 toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
@@ -291,21 +290,20 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> Abs (Nest PtrBinder) IxDestBlock i
+                  -> IxDestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs bs (Abs ixs (Abs (destb:>destTy) body))) = do
-  let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  ab  <- buildImpNaryAbs argTys \vs ->
-    extendSubst (bs @@> map Rename vs) $ translateDeclNest ixs do
+translateTopLevel cc (Abs ixs (Abs (destb:>destTy) body)) = do
+  ab  <- buildScopedImp $
+    translateDeclNest ixs do
       dest <- case destTy of
         RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
         _ -> error "Expected a reference type for body destination"
       extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
       destToAtom dest
-  refreshAbs ab \bs' ab' -> refreshAbs ab' \decls resultAtom -> do
-    (results, recon) <- buildRecon (PairB bs' decls) resultAtom
-    let funImpl = Abs bs' $ ImpBlock decls results
-    let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
+  refreshAbs ab \decls resultAtom -> do
+    (results, recon) <- buildRecon decls resultAtom
+    let funImpl = Abs Empty $ ImpBlock decls results
+    let funTy   = IFunType cc [] (map getIType results)
     return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)
@@ -1603,16 +1601,25 @@ appReduceImp f x = case f of
 -- === Abstracting link-time objects ===
 
 abstractLinktimeObjects
-  :: EnvReader m => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n])
+  :: forall m n. EnvReader m
+  => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n], [PtrName n])
 abstractLinktimeObjects f = do
-  let vs = freeVarsList f
-  vsToAbs <- catMaybes <$> forM vs \v ->
+  let allVars = freeVarsE f
+  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList allVars) \v ->
     lookupImpFun v <&> \case
-      ImpFunction _ _ -> Just v
+      ImpFunction ty _ -> Just (v, ty)
       FFIFunction _ _ -> Nothing
-  Abs bs f' <- return $ abstractFreeVarsNoAnn vsToAbs f
-  tys <- forM vsToAbs \v -> impFunType <$> lookupImpFun v
-  return (ClosedImpFunction tys bs f', vsToAbs)
+  (atomVars, ptrVars, ptrTys) <- unzip3 <$> forMFilter (nameSetToList allVars) \v ->
+    lookupAtomName v >>= \case
+      PtrLitBound _ ptrName -> do
+        (ty, _) <- lookupPtrName ptrName
+        return $ Just (v, ptrName, PtrType ty)
+      _ -> return Nothing
+  Abs funBs (Abs ptrBs f') <- return $ abstractFreeVarsNoAnn funVars $
+                                       abstractFreeVarsNoAnn atomVars f
+  let funBs' =  zipWithNest funBs funTys \b ty -> IFunBinder b ty
+  let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> IBinder b ty
+  return (ClosedImpFunction funBs' ptrBs' f', funVars, ptrVars)
 
 -- === type checking imp programs ===
 

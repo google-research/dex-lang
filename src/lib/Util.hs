@@ -8,7 +8,7 @@
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated, splitAtExact,
+             scanM, composeN, mapMaybe, forMFilter, uncons, repeated, splitAtExact,
              transitiveClosure, transitiveClosureM,
              showErr, listDiff, splitMap, enumerate, iota, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
@@ -22,6 +22,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import Data.Maybe (catMaybes)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
@@ -140,6 +141,10 @@ mapMaybe f (x:xs) = let rest = mapMaybe f xs
                     in case f x of
                         Just y  -> y : rest
                         Nothing -> rest
+
+forMFilter :: Monad m => [a] -> (a -> m (Maybe b)) -> m [b]
+forMFilter xs f = catMaybes <$> mapM f xs
+{-# INLINE forMFilter #-}
 
 composeN :: Int -> (a -> a) -> a -> a
 composeN n f = foldr (.) id (replicate n f)

@@ -21,10 +21,11 @@ def standalone_transpose {n m a} (x:n=>m=>a) : m=>n=>a =
 :p (standalone_transpose mat23, standalone_transpose mat32)
 > ([[1, 4], [2, 5], [3, 6]], [[1, 3, 5], [2, 4, 6]])
 
--- This crashes because the standalone function needs access to a data pointer
--- xs = [1,2,3]
+xs = [1,2,3]
 
--- @noinline
--- def foo (_:Unit) : Nat = sum xs
+@noinline
+def foo (_:Unit) : Nat = sum xs
 
--- foo 1
+foo ()
+> 6
+

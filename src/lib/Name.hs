@@ -55,7 +55,7 @@ module Name (
   withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
   lookupSubstFrag, lookupSubstFragProjected, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
-  fmapNest, forEachNestItem, forEachNestItemM,
+  fmapNest, zipWithNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), NameHint, noHint, Color (..),
   GenericE (..), GenericB (..),
@@ -784,6 +784,13 @@ fmapNest :: (forall ii ii'. b ii ii' -> b' ii ii')
          -> Nest b' i i'
 fmapNest _ Empty = Empty
 fmapNest f (Nest b rest) = Nest (f b) $ fmapNest f rest
+
+zipWithNest :: Nest b  n l -> [a]
+            -> (forall n1 n2. b n1 n2 -> a -> b' n1 n2)
+            -> Nest b' n l
+zipWithNest Empty [] _ = Empty
+zipWithNest (Nest b bs) (x:xs) f = Nest (f b x) (zipWithNest bs xs f)
+zipWithNest _ _ _ = error "zip error"
 
 forEachNestItemM :: Monad m
                 => Nest b i i'
