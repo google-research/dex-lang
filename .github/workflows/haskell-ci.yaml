@@ -18,7 +18,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-20.04, macos-latest]
+        os: [ubuntu-20.04]
         include:
           - os: macos-latest
             install_deps: brew install llvm@12 pkg-config wget gzip coreutils
