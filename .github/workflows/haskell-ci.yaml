@@ -31,12 +31,6 @@ jobs:
     - name: Checkout the repository
       uses: actions/checkout@v2
 
-    - name: Install system dependencies
-      run: |
-        ${{ matrix.install_deps }}
-        if [[ "$OSTYPE" == "darwin"* ]]; then ghcup install ghc 8.10.7; fi
-        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
-
     - name: Cache
       uses: actions/cache@v2
       with:
@@ -51,6 +45,12 @@ jobs:
         key: ${{ runner.os }}-v5-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-v5-
 
+    - name: Install system dependencies
+      run: |
+        ${{ matrix.install_deps }}
+        if [[ "$OSTYPE" == "darwin"* ]]; then ghcup install ghc 8.10.7; fi
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+
     # This step is a workaround.
     # See issue for context: https://github.com/actions/cache/issues/445
     - name: Remove cached Setup executables
@@ -64,6 +64,6 @@ jobs:
     - name: Build
       run: make build
 
-    #- name: Run tests
-      #run: make tests
+    - name: Run tests
+      run: make tests
 
