@@ -699,7 +699,7 @@ evalLLVM block = do
   let (cc, _needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                          _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-    toImpFunction backend cc $ Abs Empty block
+    blockToImpFunction backend cc block
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode

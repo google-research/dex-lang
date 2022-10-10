@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( toImpFunction, ImpFunctionWithRecon (..)
+  ( blockToImpFunction, ImpFunctionWithRecon (..)
   , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
   , PtrBinder, impFunType, getIType, abstractLinktimeObjects) where
 
@@ -43,13 +43,13 @@ type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 type PtrBinder = IBinder
 
 -- TODO: make it purely a function of the type and avoid the AtomRecon
-toImpFunction :: EnvReader m
+blockToImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> Abs (Nest PtrBinder) IxDestBlock n
+              -> IxDestBlock n
               -> m n (ImpFunctionWithRecon n)
-toImpFunction _ cc absBlock = liftImpM $
+blockToImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc absBlock
-{-# SCC toImpFunction #-}
+{-# SCC blockToImpFunction #-}
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
 toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
@@ -290,21 +290,20 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> Abs (Nest PtrBinder) IxDestBlock i
+                  -> IxDestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs bs (Abs ixs (Abs (destb:>destTy) body))) = do
-  let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  ab  <- buildImpNaryAbs argTys \vs ->
-    extendSubst (bs @@> map Rename vs) $ translateDeclNest ixs do
+translateTopLevel cc (Abs ixs (Abs (destb:>destTy) body)) = do
+  ab  <- buildScopedImp $
+    translateDeclNest ixs do
       dest <- case destTy of
         RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
         _ -> error "Expected a reference type for body destination"
       extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
       destToAtom dest
-  refreshAbs ab \bs' ab' -> refreshAbs ab' \decls resultAtom -> do
-    (results, recon) <- buildRecon (PairB bs' decls) resultAtom
-    let funImpl = Abs bs' $ ImpBlock decls results
-    let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
+  refreshAbs ab \decls resultAtom -> do
+    (results, recon) <- buildRecon decls resultAtom
+    let funImpl = Abs Empty $ ImpBlock decls results
+    let funTy   = IFunType cc [] (map getIType results)
     return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)

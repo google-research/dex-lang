@@ -22,6 +22,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import Data.Maybe (catMaybes)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
@@ -142,13 +143,8 @@ mapMaybe f (x:xs) = let rest = mapMaybe f xs
                         Nothing -> rest
 
 forMFilter :: Monad m => [a] -> (a -> m (Maybe b)) -> m [b]
-forMFilter [] _ = return []
-forMFilter (x:xs) f = do
-  ans <- f x
-  rest <- forMFilter xs f
-  return case ans of
-    Just y  -> y : rest
-    Nothing -> rest
+forMFilter xs f = catMaybes <$> mapM f xs
+{-# INLINE forMFilter #-}
 
 composeN :: Int -> (a -> a) -> a -> a
 composeN n f = foldr (.) id (replicate n f)
