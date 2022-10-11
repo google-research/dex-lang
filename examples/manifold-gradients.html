@@ -374,7 +374,7 @@ point $x$ as both the tangent space, and as a local chart.</p>
 </div></div><div class="cell"><div class="prose-block"><p>Before we can define <code>grad</code> for manifolds, we need to create the trivial
 instance of a TangentSpace for vector spaces. In this case, we view the tangent
 space at $x$ to be just a copy of the vector space, centred on $x$.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">VSpace</span> a] <span class="type-name">TangentSpace</span> a a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">TangentSpace</span> a a <span class="keyword">given</span> {a} [<span class="type-name">VSpace</span> a]
   tangentExponentialMap <span class="symbol">=</span> <span class="symbol">\</span> p v <span class="symbol">.</span> p <span class="symbol">+</span> v
   tangentLogarithmMap <span class="symbol">=</span> <span class="symbol">\</span> p q <span class="symbol">.</span> q <span class="symbol">-</span> p
 </div></div><div class="cell"><div class="code-block">

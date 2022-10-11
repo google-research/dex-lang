@@ -326,11 +326,11 @@ use <code>ls_sum</code>, which applies the standard max-sweep log-sum-exp trick 
 rather than relying on monoid reduction using <code>add</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span> <span class="type-name">Exp</span> f
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {f} [<span class="type-name">Add</span> f] <span class="type-name">Mul</span> (<span class="type-name">LogSpace</span> f)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> (<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> {f} [<span class="type-name">Add</span> f]
   mul <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> la <span class="symbol">+</span> lb
   one <span class="symbol">=</span> <span class="type-name">Exp</span> zero
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {f} [<span class="type-name">Sub</span> f] <span class="type-name">Fractional</span> (<span class="type-name">LogSpace</span> f)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Fractional</span> (<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> {f} [<span class="type-name">Sub</span> f]
   divide <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> la <span class="symbol">-</span> lb
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">LogSpace</span> <span class="type-name">Float</span>)
@@ -354,7 +354,7 @@ rather than relying on monoid reduction using <code>add</code>.</p>
         <span class="keyword">then</span> la <span class="symbol">+</span> log1p (exp (lb <span class="symbol">-</span> la))
         <span class="keyword">else</span> lb <span class="symbol">+</span> log1p (exp (la <span class="symbol">-</span> lb))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] <span class="type-name">Add</span> (<span class="type-name">LogSpace</span> f)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> {f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f]
   add <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log_add_exp la lb
   zero <span class="symbol">=</span> <span class="type-name">Exp</span> (zero <span class="symbol">-</span> (divide one zero))
 </div></div><div class="cell"><div class="code-block">

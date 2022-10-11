@@ -371,7 +371,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     <span class="type-name">Left</span> x  <span class="symbol">-&gt;</span> {<span class="symbol">|</span>left<span class="symbol">=</span>x<span class="symbol">|</span>}
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> {<span class="symbol">|</span>right<span class="symbol">=</span>x<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {left<span class="command">:n</span> <span class="symbol">|</span> right<span class="command">:m</span>}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> {left<span class="command">:n</span> <span class="symbol">|</span> right<span class="command">:m</span>} <span class="keyword">given</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] 
   size <span class="symbol">=</span> size n <span class="symbol">+</span> size m
   ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso lrToEither
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso lrToEither
