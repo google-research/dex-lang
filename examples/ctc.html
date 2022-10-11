@@ -329,7 +329,7 @@ of values representing all the spaces in between those elements.</p>
   <span class="type-name">Fence</span> n
   <span class="type-name">Posts</span> (<span class="type-name">Post</span> n)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">Ix</span> (<span class="type-name">FenceAndPosts</span> a)
   size <span class="symbol">=</span> 2 <span class="symbol">*</span> size a <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
     <span class="type-name">Fence</span> j <span class="symbol">-&gt;</span> 2 <span class="symbol">*</span> ordinal j <span class="symbol">+</span> 1
@@ -339,10 +339,10 @@ of values representing all the spaces in between those elements.</p>
       <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Fence</span> <span class="symbol">$</span> unsafe_from_ordinal _ (intdiv2 o)
       <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Posts</span> <span class="symbol">$</span> unsafe_from_ordinal _ (intdiv2 o)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">NonEmpty</span> (<span class="type-name">FenceAndPosts</span> a)
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (<span class="type-name">FenceAndPosts</span> a)
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Fence</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
       <span class="type-name">Fence</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
@@ -362,12 +362,12 @@ that doesn't contain the first element.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">AllButFirst</span> n [<span class="type-name">NonEmpty</span> n] <span class="symbol">=</span>
   <span class="type-name">MkAllButFirst</span> n
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">AllButFirst</span> a) <span class="keyword">given</span> {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">Ix</span> (<span class="type-name">AllButFirst</span> a)
   size <span class="symbol">=</span> unsafe_nat_diff (size a) 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkAllButFirst</span> i)<span class="symbol">.</span> ordinal i
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span> <span class="type-name">MkAllButFirst</span> <span class="symbol">$</span> unsafe_from_ordinal _ o
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">AllButFirst</span> a) a <span class="keyword">given</span> {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">Subset</span> (<span class="type-name">AllButFirst</span> a) a
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_from_ordinal _ ((ordinal x) <span class="symbol">+</span> 1)
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> (ordinal x) <span class="symbol">&gt;</span> 0 <span class="keyword">of</span>
     <span class="type-name">True</span> <span class="symbol">-&gt;</span> unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
@@ -375,7 +375,7 @@ that doesn't contain the first element.</p>
   unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span>
     unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">AllButFirst</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (<span class="type-name">AllButFirst</span> a)
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkAllButFirst</span> x) (<span class="type-name">MkAllButFirst</span> y)<span class="symbol">.</span> x <span class="symbol">==</span> y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Test AllButFirst</h4>
