@@ -762,14 +762,14 @@ function using them:</p>
 </div></div><div class="cell"><div class="prose-block"><p>The instance values are hardcoded for the float pair type. To be more general,
 we can and should instead define <code>Add</code> and <code>VSpace</code> instances for generic
 ' tuple types.</p>
-</div></div><div class="cell"><div class="prose-block"><pre><code>instance {v w} [Add v, Add w] Add (v &amp; w)
+</div></div><div class="cell"><div class="prose-block"><pre><code>instance Add (v &amp; w) given {v w} [Add v, Add w]
  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
  zero = (zero, zero)
 
-instance {v w} [Sub v, Sub w] Sub (v &amp; w)
+instance Sub (v &amp; w) given {v w} [Sub v, Sub w]
  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
 
-instance {v w} [VSpace v, VSpace w] VSpace (v &amp; w)
+instance VSpace (v &amp; w) given {v w} [VSpace v, VSpace w]
  scale_vec = \s (x, y). (scale_vec s x, scale_vec s y)
 
 </code></pre>

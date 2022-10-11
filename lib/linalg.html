@@ -374,7 +374,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     lower<span class="symbol">.</span>j&#39;<span class="symbol">.</span>i&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Type-shifting inequalities between indices</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">LowerTriIx</span> m) (<span class="type-name">LowerTriIx</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">LowerTriIx</span> m) (<span class="type-name">LowerTriIx</span> n) <span class="keyword">given</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIx</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
     j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
@@ -392,7 +392,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
     <span class="type-name">MkLowerTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">UpperTriIx</span> m) (<span class="type-name">UpperTriIx</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">UpperTriIx</span> m) (<span class="type-name">UpperTriIx</span> n) <span class="keyword">given</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIx</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
     j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
@@ -410,7 +410,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
     <span class="type-name">MkUpperTriIx</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">LowerTriIxExc</span> m) (<span class="type-name">LowerTriIxExc</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">LowerTriIxExc</span> m) (<span class="type-name">LowerTriIxExc</span> n) <span class="keyword">given</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriIxExc</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
     j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j
@@ -428,7 +428,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     j&#39;&#39; <span class="symbol">=</span> unsafe_project m j&#39;
     <span class="type-name">MkLowerTriIxExc</span> i&#39; <span class="symbol">$</span> unsafe_project _ j&#39;&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n] <span class="type-name">Subset</span> (<span class="type-name">UpperTriIxExc</span> m) (<span class="type-name">UpperTriIxExc</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">UpperTriIxExc</span> m) (<span class="type-name">UpperTriIxExc</span> n) <span class="keyword">given</span> {m n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Subset</span> m n]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriIxExc</span> i j)<span class="symbol">.</span>
     i&#39; <span class="symbol">=</span> inject n i
     j&#39; <span class="symbol">=</span> unsafe_project _ <span class="symbol">$</span> inject n <span class="symbol">$</span> inject m j

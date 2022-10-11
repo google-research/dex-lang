@@ -458,7 +458,7 @@ ordinary record accessor lens.</p>
   fwd <span class="symbol">=</span> <span class="symbol">\</span>({a<span class="symbol">,</span> b<span class="symbol">,</span> c})<span class="symbol">.</span> (c<span class="symbol">,</span> b<span class="symbol">,</span> a)
   bwd <span class="symbol">=</span> <span class="symbol">\</span>(c<span class="symbol">,</span> b<span class="symbol">,</span> a)<span class="symbol">.</span> {a<span class="symbol">,</span> b<span class="symbol">,</span> c}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">&amp;</span> b<span class="command">:m</span> <span class="symbol">&amp;</span> c<span class="command">:q</span>}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">&amp;</span> b<span class="command">:m</span> <span class="symbol">&amp;</span> c<span class="command">:q</span>} <span class="keyword">given</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q]
   size <span class="symbol">=</span> size n <span class="symbol">*</span> size m <span class="symbol">*</span> size q
   ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso abcToTuple
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abcToTuple
@@ -467,7 +467,7 @@ ordinary record accessor lens.</p>
   fwd <span class="symbol">=</span> <span class="symbol">\</span>({b<span class="symbol">,</span> c})<span class="symbol">.</span> (c<span class="symbol">,</span> b)
   bwd <span class="symbol">=</span> <span class="symbol">\</span>(c<span class="symbol">,</span> b)<span class="symbol">.</span> {b<span class="symbol">,</span> c}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {b<span class="command">:n</span> <span class="symbol">&amp;</span> c<span class="command">:m</span>}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> {b<span class="command">:n</span> <span class="symbol">&amp;</span> c<span class="command">:m</span>} <span class="keyword">given</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m]
   size <span class="symbol">=</span> size n <span class="symbol">*</span> size m
   ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso bcToPair
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso bcToPair
@@ -520,7 +520,7 @@ table:</p>
       <span class="type-name">Left</span>  y <span class="symbol">-&gt;</span> {<span class="symbol">|</span>b<span class="symbol">=</span>y<span class="symbol">|</span>}
       <span class="type-name">Right</span> y <span class="symbol">-&gt;</span> {<span class="symbol">|</span>c<span class="symbol">=</span>y<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> b<span class="command">:m</span> <span class="symbol">|</span> c<span class="command">:q</span>}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> b<span class="command">:m</span> <span class="symbol">|</span> c<span class="command">:q</span>} <span class="keyword">given</span> {n m q} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> q]
   size <span class="symbol">=</span> size n <span class="symbol">+</span> size m <span class="symbol">+</span> size q
   ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso abcToEither
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abcToEither
@@ -533,7 +533,7 @@ table:</p>
     <span class="type-name">Left</span> x  <span class="symbol">-&gt;</span> {<span class="symbol">|</span>a<span class="symbol">=</span>x<span class="symbol">|</span>}
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> {<span class="symbol">|</span>b<span class="symbol">=</span>x<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> b<span class="command">:m</span>}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> b<span class="command">:m</span>} <span class="keyword">given</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m]
   size <span class="symbol">=</span> size n <span class="symbol">+</span> size m
   ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso abToEither
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso abToEither
@@ -546,7 +546,7 @@ table:</p>
     <span class="type-name">Left</span> x  <span class="symbol">-&gt;</span> {<span class="symbol">|</span>a<span class="symbol">=</span>x<span class="symbol">|</span>}
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> {<span class="symbol">|</span>c<span class="symbol">=</span>x<span class="symbol">|</span>}
   <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m] <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> c<span class="command">:m</span>}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> {a<span class="command">:n</span> <span class="symbol">|</span> c<span class="command">:m</span>} <span class="keyword">given</span> {n m} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> m]
   size <span class="symbol">=</span> size n <span class="symbol">+</span> size m
   ordinal <span class="symbol">=</span> ordinal <span class="symbol">&lt;&lt;&lt;</span> app_iso acToEither
   unsafe_from_ordinal <span class="symbol">=</span> unsafe_from_ordinal _ <span class="symbol">&gt;&gt;&gt;</span> rev_iso acToEither

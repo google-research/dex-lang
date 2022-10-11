@@ -421,7 +421,7 @@ be anything for which a Gaussian sampler can be written.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span> <span class="type-name">Float32</span>
   rand_normal <span class="symbol">=</span> randn
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">HasStandardNormal</span> a] <span class="type-name">HasStandardNormal</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">HasStandardNormal</span> a]
   rand_normal <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> rand_normal (ixkey key i)
 </div></div><div class="cell"><div class="code-block">
@@ -438,11 +438,11 @@ This process can be nested to arbitrarily many dimensions.</p>
                       <span class="comment">-- tolerance -&gt; key -&gt; input -&gt; output
 </span>  sample_brownian_sheet <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> v
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {v} [<span class="type-name">HasStandardNormal</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="type-name">HasBrownianSheet</span> <span class="type-name">Float</span> v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasBrownianSheet</span> <span class="type-name">Float</span> v <span class="keyword">given</span> {v} [<span class="type-name">HasStandardNormal</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
   sample_brownian_sheet <span class="symbol">=</span> <span class="symbol">\</span>tol k x<span class="symbol">.</span>
     sample_brownian_motion tol rand_normal k x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a v} [<span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">HasBrownianSheet</span> a v] <span class="type-name">HasBrownianSheet</span> (a <span class="symbol">&amp;</span> <span class="type-name">Float</span>) v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasBrownianSheet</span> (a <span class="symbol">&amp;</span> <span class="type-name">Float</span>) v <span class="keyword">given</span> {a v} [<span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">HasBrownianSheet</span> a v]
   sample_brownian_sheet <span class="symbol">=</span> <span class="symbol">\</span>tol k (xa<span class="symbol">,</span> xb)<span class="symbol">.</span>
     <span class="comment">-- the call to `sample_brownian_sheet` below will recurse
 </span>    <span class="comment">-- until the input is one-dimensional.

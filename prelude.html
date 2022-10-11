@@ -517,10 +517,10 @@ This defines the <code>Add</code> <a href="https://en.wikipedia.org/wiki/Group_(
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Unit</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> (n<span class="symbol">-&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Add</span> a]
   add <span class="symbol">=</span> <span class="symbol">\</span>f g<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> (f x) <span class="symbol">+</span> (g x)
   zero <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Sub</span> a] <span class="type-name">Sub</span> (n<span class="symbol">-&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Sub</span> a]
   sub <span class="symbol">=</span> <span class="symbol">\</span>f g<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> (f x) <span class="symbol">-</span> (g x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Mul</h4>
@@ -568,7 +568,7 @@ This defines the <code>Mul</code> <a href="https://en.wikipedia.org/wiki/Monoid"
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
   one <span class="symbol">=</span> ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Mul</span> a] <span class="type-name">Mul</span> (n<span class="symbol">-&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Mul</span> a]
   mul <span class="symbol">=</span> <span class="symbol">\</span>f g<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> (f x) <span class="symbol">*</span> (g x)
   one <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> one
 </div></div><div class="cell"><div class="code-block">
@@ -646,22 +646,22 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- `(..&lt;i)` parses as `RangeToExc _ i`
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">RangeToExc</span> q<span class="symbol">:</span><span class="type-name">Type</span> i<span class="command">:q</span> <span class="symbol">=</span> <span class="type-name">UnsafeMkRangeToExc</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (<span class="type-name">RangeFrom</span> q i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">RangeFrom</span> q i) <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   size <span class="symbol">=</span> unsafe_nat_diff (size q) (ordinal i)
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeFrom</span> j)<span class="symbol">.</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeFrom</span> j
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (<span class="type-name">RangeFromExc</span> q i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">RangeFromExc</span> q i) <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   size <span class="symbol">=</span> unsafe_nat_diff (size q) (ordinal i <span class="symbol">+</span> 1)
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeFromExc</span> j)<span class="symbol">.</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeFromExc</span> j
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (<span class="type-name">RangeTo</span> q i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">RangeTo</span> q i) <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   size <span class="symbol">=</span> ordinal i <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeTo</span> j)<span class="symbol">.</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeTo</span> j
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Ix</span> (<span class="type-name">RangeToExc</span> q i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">RangeToExc</span> q i) <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   size <span class="symbol">=</span> ordinal i
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeToExc</span> j)<span class="symbol">.</span> j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeToExc</span> j
@@ -674,37 +674,37 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iota (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Nat</span> <span class="symbol">=</span> <span class="keyword">view</span> i<span class="symbol">.</span> ordinal i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Arithmetic instances for table types</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Add</span> a]
   add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
   zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Sub</span> a] <span class="type-name">Sub</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Sub</span> a]
   sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a)  <span class="comment">-- Upper triangular tables
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Add</span> a]  <span class="comment">-- Upper triangular tables
 </span>  add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
   zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Sub</span> a] <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a)  <span class="comment">-- Upper triangular tables
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Sub</span> a]  <span class="comment">-- Upper triangular tables
 </span>  sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)  <span class="comment">-- Lower triangular tables
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Add</span> a]  <span class="comment">-- Lower triangular tables
 </span>  add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
   zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Sub</span> a] <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)  <span class="comment">-- Lower triangular tables
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Sub</span> a]  <span class="comment">-- Lower triangular tables
 </span>  sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Add</span> a]
   add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
   zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Sub</span> a] <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Sub</span> a]
   sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Add</span> a] <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Add</span> a]
   add <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">+</span> ys<span class="symbol">.</span>i
   zero <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Sub</span> a] <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">Sub</span> a]
   sub <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">-</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Mul</span> a] <span class="type-name">Mul</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Mul</span> a]
   mul <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">*</span> ys<span class="symbol">.</span>i
   one <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> one
 </div></div><div class="cell"><div class="code-block">
@@ -715,14 +715,14 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> snd {a b} ((_<span class="symbol">,</span> y)<span class="symbol">:</span> (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> b <span class="symbol">=</span> y
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap {a b} ((x<span class="symbol">,</span> y)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (b<span class="symbol">&amp;</span>a) <span class="symbol">=</span> (y<span class="symbol">,</span> x)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Add</span> b] <span class="type-name">Add</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Add</span> b]
   add <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b) (c<span class="symbol">,</span> d)<span class="symbol">.</span> ( (a <span class="symbol">+</span> c)<span class="symbol">,</span> (b <span class="symbol">+</span> d))
   zero <span class="symbol">=</span> (zero<span class="symbol">,</span> zero)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Sub</span> a<span class="symbol">,</span> <span class="type-name">Sub</span> b] <span class="type-name">Sub</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Sub</span> a<span class="symbol">,</span> <span class="type-name">Sub</span> b]
   sub <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b) (c<span class="symbol">,</span> d)<span class="symbol">.</span> ( (a <span class="symbol">-</span> c)<span class="symbol">,</span> (b <span class="symbol">-</span> d))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b]
   size <span class="symbol">=</span> size a <span class="symbol">*</span> size b
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(i<span class="symbol">,</span> j)<span class="symbol">.</span> (ordinal i <span class="symbol">*</span> size b) <span class="symbol">+</span> ordinal j
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span>
@@ -748,25 +748,25 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> <span class="type-name">Float</span>
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> x <span class="symbol">*</span> y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">VSpace</span> b] <span class="type-name">VSpace</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">VSpace</span> b]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span> s (a<span class="symbol">,</span> b) <span class="symbol">.</span> (scale_vec s a<span class="symbol">,</span> scale_vec s b)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">VSpace</span> a] <span class="type-name">VSpace</span> (n<span class="symbol">-&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s f<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> s <span class="symbol">.*</span> (f x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> <span class="type-name">Unit</span>
@@ -837,7 +837,7 @@ Here we define several basic kinds, and some operators on them.</p>
   <span class="type-name">Left</span>  a
   <span class="type-name">Right</span> b
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a <span class="symbol">|</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (a <span class="symbol">|</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b]
   size <span class="symbol">=</span> size a <span class="symbol">+</span> size b
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
     <span class="type-name">Left</span> ai  <span class="symbol">-&gt;</span> ordinal ai
@@ -867,7 +867,7 @@ Here we define several basic kinds, and some operators on them.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Fencepost index sets</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Post</span> segment<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">UnsafeMkPost</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {segment} [<span class="type-name">Ix</span> segment] <span class="type-name">Ix</span> (<span class="type-name">Post</span> segment)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">Post</span> segment) <span class="keyword">given</span> {segment} [<span class="type-name">Ix</span> segment]
   size <span class="symbol">=</span> size segment <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkPost</span> i)<span class="symbol">.</span> i
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="type-name">UnsafeMkPost</span> i
@@ -884,7 +884,7 @@ Here we define several basic kinds, and some operators on them.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> last_ix {n} [<span class="type-name">NonEmpty</span> n] <span class="symbol">:</span> n <span class="symbol">=</span>
   unsafe_from_ordinal _ <span class="symbol">$</span> unsafe_i_to_n <span class="symbol">$</span> n_to_i (size n) <span class="symbol">-</span> 1
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} [<span class="type-name">Ix</span> n] <span class="type-name">NonEmpty</span> (<span class="type-name">Post</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (<span class="type-name">Post</span> n) <span class="keyword">given</span> {n} [<span class="type-name">Ix</span> n]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal (<span class="type-name">Post</span> n) 0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> <span class="type-name">Unit</span>
@@ -906,7 +906,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;&gt;</span>) {a} [<span class="type-name">Monoid</span> a] <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> mcombine
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Monoid</span> a] <span class="type-name">Monoid</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Monoid</span> a]
   mempty <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> mempty
   mcombine <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> mcombine x<span class="symbol">.</span>i y<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
@@ -918,11 +918,11 @@ Monoids support <code>fold</code> operations, and similar.</li>
   mempty <span class="symbol">=</span> <span class="type-name">False</span>
   mcombine <span class="symbol">=</span> (<span class="symbol">||</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">AddMonoid</span> <span class="symbol">:</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Add</span> a] <span class="type-name">Monoid</span> a
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">AddMonoid</span> <span class="symbol">:</span> <span class="type-name">Monoid</span> a <span class="keyword">given</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Add</span> a]
   mempty <span class="symbol">=</span> zero
   mcombine <span class="symbol">=</span> add
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">MulMonoid</span> <span class="symbol">:</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Mul</span> a] <span class="type-name">Monoid</span> a
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">MulMonoid</span> <span class="symbol">:</span> <span class="type-name">Monoid</span> a <span class="keyword">given</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Mul</span> a]
   mempty <span class="symbol">=</span> one
   mcombine <span class="symbol">=</span> mul
 </div></div><div class="cell"><div class="code-block">
@@ -939,7 +939,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">AccumMonoid</span> h w
   getAccumMonoidData <span class="symbol">:</span> <span class="type-name">AccumMonoidData</span> h w
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n h w} [<span class="type-name">Ix</span> n] [am <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w] <span class="type-name">AccumMonoid</span> h (n<span class="symbol">=&gt;</span>w)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">AccumMonoid</span> h (n<span class="symbol">=&gt;</span>w) <span class="keyword">given</span> {n h w} [<span class="type-name">Ix</span> n] [am <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w]
   getAccumMonoidData <span class="symbol">=</span>
     (<span class="type-name">UnsafeMkAccumMonoidData</span> b bm) <span class="symbol">=</span> %projMethod0 am
     <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
@@ -1069,7 +1069,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> <span class="type-name">Unit</span>
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">True</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Eq</span> a<span class="symbol">,</span> <span class="type-name">Eq</span> b] <span class="type-name">Eq</span> (a <span class="symbol">|</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (a <span class="symbol">|</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Eq</span> a<span class="symbol">,</span> <span class="type-name">Eq</span> b]
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Left</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
       <span class="type-name">Left</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
@@ -1078,7 +1078,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
       <span class="type-name">Left</span> y <span class="symbol">-&gt;</span> <span class="type-name">False</span>
       <span class="type-name">Right</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (<span class="type-name">Maybe</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">Maybe</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Just</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
       <span class="type-name">Just</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
@@ -1122,10 +1122,10 @@ i.e. things that can be compared to other things to find if larger, smaller or e
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">False</span>
   (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Eq</span> a<span class="symbol">,</span> <span class="type-name">Eq</span> b] <span class="type-name">Eq</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Eq</span> a<span class="symbol">,</span> <span class="type-name">Eq</span> b]
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span>y2)<span class="symbol">.</span> x1 <span class="symbol">==</span> y1 <span class="symbol">&amp;&amp;</span> x2 <span class="symbol">==</span> y2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ord</span> a<span class="symbol">,</span> <span class="type-name">Ord</span> b] <span class="type-name">Ord</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Ord</span> a<span class="symbol">,</span> <span class="type-name">Ord</span> b]
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span>y2)<span class="symbol">.</span> x1 <span class="symbol">&gt;</span> y1 <span class="symbol">||</span> (x1 <span class="symbol">==</span> y1 <span class="symbol">&amp;&amp;</span> x2 <span class="symbol">&gt;</span> y2)
   (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span>y2)<span class="symbol">.</span> x1 <span class="symbol">&lt;</span> y1 <span class="symbol">||</span> (x1 <span class="symbol">==</span> y1 <span class="symbol">&amp;&amp;</span> x2 <span class="symbol">&lt;</span> y2)
 </div></div><div class="cell"><div class="code-block">
@@ -1141,10 +1141,10 @@ i.e. things that can be compared to other things to find if larger, smaller or e
   (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> nat_to_rep x <span class="symbol">&lt;</span> nat_to_rep y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: we want Eq and Ord for all index sets, not just `Fin n`
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Eq</span> (<span class="type-name">Fin</span> n)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">Fin</span> n) <span class="keyword">given</span> {n}
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">==</span> ordinal y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Ord</span> (<span class="type-name">Fin</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> (<span class="type-name">Fin</span> n) <span class="keyword">given</span> {n}
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&gt;</span> ordinal y
   (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&lt;</span> ordinal y
 </div></div><div class="cell"><div class="code-block">
@@ -1155,7 +1155,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
     <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
   unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> i <span class="symbol">&gt;</span> 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Ix</span> a] <span class="type-name">Ix</span> (<span class="type-name">Maybe</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">Maybe</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Ix</span> a]
   size <span class="symbol">=</span> size a <span class="symbol">+</span> 1
   ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
     <span class="type-name">Just</span> ai <span class="symbol">-&gt;</span> ordinal ai
@@ -1168,18 +1168,18 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> <span class="type-name">Bool</span>
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">NonEmpty</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b] <span class="type-name">NonEmpty</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">NonEmpty</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">NonEmpty</span> a] <span class="type-name">NonEmpty</span> (a<span class="symbol">|</span>b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (a<span class="symbol">|</span>b) <span class="keyword">given</span> {a b} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">NonEmpty</span> a]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- The below instance is valid, but causes &quot;multiple candidate dictionaries&quot;
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- errors if both Left and Right are NonEmpty.
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance {a b} [Ix a, NonEmpty b] NonEmpty (a|b)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance NonEmpty (a|b) given {a b} [Ix a, NonEmpty b]
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--  first_ix = unsafe_from_ordinal _ 0
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Ix</span> a] <span class="type-name">NonEmpty</span> (<span class="type-name">Maybe</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (<span class="type-name">Maybe</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Ix</span> a]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan {a b n} [<span class="type-name">Ix</span> n] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span>
@@ -1206,12 +1206,12 @@ i.e. things that can be compared to other things to find if larger, smaller or e
       <span class="type-name">GT</span> <span class="symbol">-&gt;</span> <span class="type-name">GT</span>
       <span class="type-name">EQ</span> <span class="symbol">-&gt;</span> y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Eq</span> a]
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span>
     yield_accum <span class="type-name">AndMonoid</span> <span class="symbol">\</span>ref<span class="symbol">.</span>
       <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs<span class="symbol">.</span>i <span class="symbol">==</span> ys<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Ord</span> a] <span class="type-name">Ord</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Ord</span> a]
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span>
     f<span class="symbol">:</span> <span class="type-name">Ordering</span> <span class="symbol">=</span>
         fold <span class="type-name">EQ</span> <span class="symbol">$</span> <span class="symbol">\</span>i c<span class="symbol">.</span> c <span class="symbol">&lt;&gt;</span> (compare xs<span class="symbol">.</span>i ys<span class="symbol">.</span>i)
@@ -1236,7 +1236,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inject {a_sub} (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Subset</span> a_sub a] (x<span class="command">:a</span>_sub) <span class="symbol">:</span> a <span class="symbol">=</span>
   inject&#39; x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b c} [<span class="type-name">Subset</span> a b<span class="symbol">,</span> <span class="type-name">Subset</span> b c] <span class="type-name">Subset</span> a c
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a c <span class="keyword">given</span> {a b c} [<span class="type-name">Subset</span> a b<span class="symbol">,</span> <span class="type-name">Subset</span> b c]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> inject c <span class="symbol">$</span> inject b x
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> project b x <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
@@ -1246,7 +1246,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_project_rangefrom {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] (j<span class="command">:q</span>) <span class="symbol">:</span> <span class="type-name">RangeFrom</span> q i <span class="symbol">=</span>
   <span class="type-name">UnsafeMkRangeFrom</span> <span class="symbol">$</span> unsafe_nat_diff (ordinal j) (ordinal i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeFrom</span> q i) q
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">RangeFrom</span> q i) q <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeFrom</span> j)<span class="symbol">.</span>
     unsafe_from_ordinal _ <span class="symbol">$</span> j <span class="symbol">+</span> ordinal i
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
@@ -1257,7 +1257,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
       <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeMkRangeFrom</span> <span class="symbol">$</span> unsafe_nat_diff j&#39; i&#39;
   unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeFrom</span> <span class="symbol">$</span> unsafe_nat_diff (ordinal j) (ordinal i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeFromExc</span> q i) q
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">RangeFromExc</span> q i) q <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeFromExc</span> j)<span class="symbol">.</span>
     unsafe_from_ordinal _ <span class="symbol">$</span> j <span class="symbol">+</span> ordinal i <span class="symbol">+</span> 1
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
@@ -1269,7 +1269,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
   unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
     <span class="type-name">UnsafeMkRangeFromExc</span> <span class="symbol">$</span> unsafe_nat_diff (ordinal j) (ordinal i <span class="symbol">+</span> 1)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeTo</span> q i) q
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">RangeTo</span> q i) q <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeTo</span> j)<span class="symbol">.</span> unsafe_from_ordinal _ j
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
     j&#39; <span class="symbol">=</span> ordinal j
@@ -1279,7 +1279,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
       <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeMkRangeTo</span> j&#39;
   unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeTo</span> (ordinal j)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeToExc</span> q i) q
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">RangeToExc</span> q i) q <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeToExc</span> j)<span class="symbol">.</span> unsafe_from_ordinal _ j
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
     j&#39; <span class="symbol">=</span> ordinal j
@@ -1289,7 +1289,7 @@ i.e. things that can be compared to other things to find if larger, smaller or e
       <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeMkRangeToExc</span> j&#39;
   unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span> <span class="type-name">UnsafeMkRangeToExc</span> (ordinal j)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q] <span class="type-name">Subset</span> (<span class="type-name">RangeToExc</span> q i) (<span class="type-name">RangeTo</span> q i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">RangeToExc</span> q i) (<span class="type-name">RangeTo</span> q i) <span class="keyword">given</span> {q<span class="symbol">:</span><span class="type-name">Type</span>} {i<span class="command">:q</span>} [<span class="type-name">Ix</span> q]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeMkRangeToExc</span> j)<span class="symbol">.</span> unsafe_from_ordinal _ j
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>j<span class="symbol">.</span>
     j&#39; <span class="symbol">=</span> ordinal j
@@ -1421,7 +1421,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> rep_to_nat <span class="symbol">$</span> load (<span class="type-name">MkPtr</span> ptr)
   storage_size <span class="symbol">=</span> storage_size <span class="type-name">NatRep</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">Storable</span> (<span class="type-name">Ptr</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> (<span class="type-name">Ptr</span> a) <span class="keyword">given</span> {a}
   store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) (<span class="type-name">MkPtr</span> x)<span class="symbol">.</span>         %ptrStore (internal_cast %<span class="type-name">PtrPtr</span> ptr) x
   load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)          <span class="symbol">.</span> <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrLoad  (internal_cast %<span class="type-name">PtrPtr</span> ptr)
   storage_size <span class="symbol">=</span> 8  <span class="comment">-- TODO: something more portable?
@@ -1480,7 +1480,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mod {a} [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Integral</span> a] (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> rem (y <span class="symbol">+</span> rem x y) y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Table Operations</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">Floating</span> a] <span class="type-name">Floating</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Floating</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">Floating</span> a]
   exp    <span class="symbol">=</span> map exp
   exp2   <span class="symbol">=</span> map exp2
   log    <span class="symbol">=</span> map log
@@ -1626,19 +1626,19 @@ It's a kind of <code>scan</code>.</p>
   atol <span class="symbol">=</span> f_to_f64 0<span class="symbol">.</span>00000001
   rtol <span class="symbol">=</span> f_to_f64 0<span class="symbol">.</span>00001
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">HasDefaultTolerance</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> b<span class="symbol">,</span>
-                <span class="type-name">HasAllClose</span> a<span class="symbol">,</span> <span class="type-name">HasAllClose</span> b] <span class="type-name">HasAllClose</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasAllClose</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [ <span class="type-name">HasDefaultTolerance</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> b
+                                         <span class="symbol">,</span> <span class="type-name">HasAllClose</span> a<span class="symbol">,</span> <span class="type-name">HasAllClose</span> b] 
   allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol (a<span class="symbol">,</span> b) (c<span class="symbol">,</span> d)<span class="symbol">.</span> (a <span class="symbol">~~</span> c) <span class="symbol">&amp;&amp;</span> (b <span class="symbol">~~</span> d)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">HasDefaultTolerance</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> b] <span class="type-name">HasDefaultTolerance</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDefaultTolerance</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">HasDefaultTolerance</span> a<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> b]
   atol <span class="symbol">=</span> (atol<span class="symbol">,</span> atol)
   rtol <span class="symbol">=</span> (rtol<span class="symbol">,</span> rtol)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n t} [<span class="type-name">HasAllClose</span> t] <span class="type-name">HasAllClose</span> (n<span class="symbol">=&gt;</span>t)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasAllClose</span> (n<span class="symbol">=&gt;</span>t) <span class="keyword">given</span> {n t} [<span class="type-name">HasAllClose</span> t]
   allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol a b<span class="symbol">.</span>
     all <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> allclose atol<span class="symbol">.</span>i rtol<span class="symbol">.</span>i a<span class="symbol">.</span>i b<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n t} [<span class="type-name">HasDefaultTolerance</span> t] <span class="type-name">HasDefaultTolerance</span> (n<span class="symbol">=&gt;</span>t)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDefaultTolerance</span> (n<span class="symbol">=&gt;</span>t) <span class="keyword">given</span> {n t} [<span class="type-name">HasDefaultTolerance</span> t]
   atol <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> atol
   rtol <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> rtol
 </div></div><div class="cell"><div class="code-block">
@@ -1657,7 +1657,7 @@ It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">List</span> a <span class="symbol">=</span>
   <span class="type-name">AsList</span> n<span class="symbol">:</span><span class="type-name">Nat</span> elements<span class="symbol">:</span>(<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} [<span class="type-name">Eq</span> a] <span class="type-name">Eq</span> (<span class="type-name">List</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">AsList</span> nx xs) (<span class="type-name">AsList</span> ny ys)<span class="symbol">.</span>
     <span class="keyword">if</span> nx <span class="symbol">/=</span> ny
       <span class="keyword">then</span> <span class="type-name">False</span>
@@ -1671,7 +1671,7 @@ It's a kind of <code>scan</code>.</p>
   n&#39; <span class="symbol">=</span> size n
   <span class="type-name">AsList</span> _ <span class="symbol">$</span> unsafe_cast_table (<span class="type-name">Fin</span> n&#39;) xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a} <span class="type-name">Monoid</span> (<span class="type-name">List</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> {a}
   mempty <span class="symbol">=</span> <span class="type-name">AsList</span> _ []
   mcombine <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span>
     (<span class="type-name">AsList</span> nx xs) <span class="symbol">=</span> x
@@ -1683,7 +1683,7 @@ It's a kind of <code>scan</code>.</p>
         <span class="type-name">True</span>  <span class="symbol">-&gt;</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ i&#39;)
         <span class="type-name">False</span> <span class="symbol">-&gt;</span> ys<span class="symbol">.</span>(unsafe_from_ordinal _ <span class="symbol">$</span> unsafe_nat_diff i&#39; nx)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">ListMonoid</span> <span class="symbol">:</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="type-name">Monoid</span> (<span class="type-name">List</span> a)
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">ListMonoid</span> <span class="symbol">:</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> (a<span class="symbol">:</span><span class="type-name">Type</span>)
   mempty <span class="symbol">=</span> mempty
   mcombine <span class="symbol">=</span> mcombine
 </div></div><div class="cell"><div class="code-block">
@@ -1901,7 +1901,7 @@ Nor does it promise a particular level of precision for numeric values.</p>
     (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showFloat64 x
     string_from_char_ptr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Show</span> a<span class="symbol">,</span> <span class="type-name">Show</span> b] <span class="type-name">Show</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Show</span> a<span class="symbol">,</span> <span class="type-name">Show</span> b]
   show <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b)<span class="symbol">.</span> &quot;(&quot; <span class="symbol">&lt;&gt;</span> show a <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show b <span class="symbol">&lt;&gt;</span> &quot;)&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Parse interface</h3>
@@ -2283,7 +2283,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">InnerProd</span> <span class="type-name">Float</span>
   inner_prod <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> x <span class="symbol">*</span> y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a n} [<span class="type-name">InnerProd</span> a] <span class="type-name">InnerProd</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">InnerProd</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">InnerProd</span> a]
   inner_prod <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> inner_prod x<span class="symbol">.</span>i y<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 
@@ -2304,27 +2304,27 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">Nat</span>
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> f_to_n <span class="symbol">$</span> randn key <span class="symbol">*</span> 5<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (n<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Arbitrary</span> a]
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> ixkey key i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {n a} [<span class="type-name">Arbitrary</span> a]
   arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {n a} [<span class="type-name">Arbitrary</span> a]
   arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {n a} [<span class="type-name">Arbitrary</span> a]
   arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n a} [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {n a} [<span class="type-name">Arbitrary</span> a]
   arb <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> new_key (ordinal i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Arbitrary</span> a<span class="symbol">,</span> <span class="type-name">Arbitrary</span> b] <span class="type-name">Arbitrary</span> (a <span class="symbol">&amp;</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">given</span> {a b} [<span class="type-name">Arbitrary</span> a<span class="symbol">,</span> <span class="type-name">Arbitrary</span> b]
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
     [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key key
     (arb k1<span class="symbol">,</span> arb k2)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} <span class="type-name">Arbitrary</span> (<span class="type-name">Fin</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">Fin</span> n) <span class="keyword">given</span> {n}
   arb <span class="symbol">=</span> rand_idx
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Ord on Arrays</h2>
@@ -2401,7 +2401,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
             <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Continue</span>
             <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {n} [<span class="type-name">Ord</span> n] <span class="type-name">Ord</span> (<span class="type-name">List</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> (<span class="type-name">List</span> n) <span class="keyword">given</span> {n} [<span class="type-name">Ord</span> n]
   (<span class="symbol">&gt;</span>) <span class="symbol">=</span> lexical_order (<span class="symbol">&gt;</span>) (<span class="symbol">&gt;</span>)
   (<span class="symbol">&lt;</span>) <span class="symbol">=</span> lexical_order (<span class="symbol">&lt;</span>) (<span class="symbol">&lt;</span>)
 </div></div><div class="cell"><div class="code-block">
@@ -2663,7 +2663,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   <span class="keyword">if</span> not b <span class="keyword">then</span> throw ()
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Misc instances that require <code>error</code></h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} <span class="type-name">Subset</span> a (a<span class="symbol">|</span>b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a (a<span class="symbol">|</span>b) <span class="keyword">given</span> {a b}
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Left</span> x
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Left</span>  y <span class="symbol">-&gt;</span> <span class="type-name">Just</span> y
@@ -2672,7 +2672,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
     <span class="type-name">Left</span>  x <span class="symbol">-&gt;</span> x
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> error &quot;<span class="type-name">Can</span>&#39;t project <span class="type-name">Right</span> branch to <span class="type-name">Left</span> branch&quot;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} <span class="type-name">Subset</span> a (b<span class="symbol">|</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a (b<span class="symbol">|</span>a) <span class="keyword">given</span> {a b}
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Right</span> x
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Left</span>  x <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
@@ -2704,13 +2704,13 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
     next_base <span class="symbol">=</span> cur_base <span class="symbol">*</span> base
     (next_k<span class="symbol">,</span> next_base)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="type-name">Ix</span> (a<span class="symbol">=&gt;</span>b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (a<span class="symbol">=&gt;</span>b) <span class="keyword">given</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b]
   <span class="comment">-- 0@a is the least significant digit,
 </span>  <span class="comment">-- while (size a - 1)@a is the most significant digit.
 </span>  size <span class="symbol">=</span> intpow (size b) (size a)
   ordinal             <span class="symbol">=</span> reversed_digits_to_int
   unsafe_from_ordinal <span class="symbol">=</span> int_to_reversed_digits
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b] <span class="type-name">NonEmpty</span> (a<span class="symbol">=&gt;</span>b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (a<span class="symbol">=&gt;</span>b) <span class="keyword">given</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div></div></body></html>
