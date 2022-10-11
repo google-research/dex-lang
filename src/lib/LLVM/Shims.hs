@@ -56,7 +56,13 @@ newTargetMachine (Target.Target targetFFI) triple cpu features
 -- TODO: Consider changing the linking layer, as suggested in:
 --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
 newDefaultHostTargetMachine :: IO Target.TargetMachine
-newDefaultHostTargetMachine = LLVM.Shims.newHostTargetMachine R.PIC CM.Large CGO.Aggressive
+newDefaultHostTargetMachine = LLVM.Shims.newHostTargetMachine R.PIC cm CGO.Aggressive
+  where
+#if darwin_HOST_OS
+    cm = CM.Small
+#else
+    cm = CM.Large
+#endif
 
 newHostTargetMachine :: R.Model -> CM.Model -> CGO.Level -> IO Target.TargetMachine
 newHostTargetMachine relocModel codeModel cgoLevel = do

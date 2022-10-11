@@ -26,7 +26,11 @@ import qualified LLVM.Shims
 
 data Linker = Linker
   { linkerExecutionSession :: OrcJIT.ExecutionSession
+#ifdef darwin_HOST_OS
+  , linkerLinkLayer        :: OrcJIT.ObjectLinkingLayer
+#else
   , linkerLinkLayer        :: OrcJIT.RTDyldObjectLinkingLayer
+#endif
   , _linkerTargetMachine   :: Target.TargetMachine
    -- We ought to just need the link layer and the mangler but but llvm-hs
    -- requires a full `IRCompileLayer` for incidental reasons. TODO: fix.
@@ -50,7 +54,11 @@ createLinker = do
   -- TODO: should this be a parameter to `createLinker` instead?
   tm <- LLVM.Shims.newDefaultHostTargetMachine
   s         <- OrcJIT.createExecutionSession
+#ifdef darwin_HOST_OS
+  linkLayer <- OrcJIT.createObjectLinkingLayer s
+#else
   linkLayer <- OrcJIT.createRTDyldObjectLinkingLayer s
+#endif
   dylib     <- OrcJIT.createJITDylib s "main_dylib"
   compileLayer <- OrcJIT.createIRCompileLayer s linkLayer tm
   OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer dylib
