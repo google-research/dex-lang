@@ -82,12 +82,12 @@ class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
 data PassCtx = PassCtx
-  { _requiresBench :: Bool
+  { requiresBench :: BenchRequirement
   , shouldLogPass :: PassName -> Bool
   }
 
 initPassCtx :: PassCtx
-initPassCtx = PassCtx False (const True)
+initPassCtx = PassCtx NoBench (const True)
 
 class Monad m => PassCtxReader m where
   getPassCtx :: m PassCtx
@@ -195,9 +195,9 @@ evalSourceBlock :: (Topper m, Mut n)
                 => ModuleSourceName -> SourceBlock -> m n Result
 evalSourceBlock mname block = do
   result <- withCompileTime do
-     (maybeErr, logs) <- catchLogsAndErrs $
-       withPassCtx (PassCtx (blockRequiresBench block)
-                            (passLogFilter $ sbLogLevel block)) $
+     (maybeErr, logs) <- catchLogsAndErrs do
+       benchReq <- getBenchRequirement block
+       withPassCtx (PassCtx benchReq (passLogFilter $ sbLogLevel block)) $
          evalSourceBlock' mname block
      return $ Result logs maybeErr
   case resultErrs result of
@@ -387,11 +387,6 @@ runEnvQuery query = do
             UEffectOpVar v' -> pprint <$> lookupEnv v'
             UHandlerVar  v' -> pprint <$> lookupEnv v'
           logTop $ TextOut $ "Binding:\n" ++ info
-
-blockRequiresBench :: SourceBlock -> Bool
-blockRequiresBench block = case sbLogLevel block of
-  PrintBench _ -> True
-  _            -> False
 
 filterLogs :: SourceBlock -> Result -> Result
 filterLogs block (Result outs err) = let
@@ -706,7 +701,8 @@ evalLLVM block = do
   reqFunPtrs  <- forM reqFuns impNameToPtr
   reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
   nativeFun <- liftIO $ linkFunObjCode obj $ LinktimeVals reqFunPtrs reqDataPtrs
-  resultVals <- liftIO $ callNativeFun nativeFun logger [] resultTypes
+  benchRequired <- requiresBench <$> getPassCtx
+  resultVals <- liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 {-# SCC evalLLVM #-}
@@ -802,6 +798,15 @@ loadModuleSource config moduleName = do
       LibBuiltinPath   -> liftIO $ getDataFileName "lib"
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
+
+getBenchRequirement :: Topper m => SourceBlock -> m n BenchRequirement
+getBenchRequirement block = case sbLogLevel block of
+  PrintBench _ -> do
+    backend <- backendName <$> getConfig
+    let needsSync = case backend of LLVMCUDA -> True
+                                    _        -> False
+    return $ DoBench needsSync
+  _ -> return NoBench
 
 -- === saving cache to disk ===
 
