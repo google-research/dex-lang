@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun, callDtor) where
+module Runtime (loadLitVal, callNativeFun, callDtor, BenchRequirement (..)) where
 
 import Data.Int
 import GHC.IO.FD
@@ -21,12 +21,14 @@ import Control.Monad
 import Control.Concurrent
 import Control.Exception hiding (throw)
 import qualified Control.Exception as E
+import qualified System.Environment as E
 
 import Err
 import Logging
 import Syntax
 import Util (measureSeconds)
 import PPrint ()
+import CUDA (synchronizeCUDA)
 
 -- === One-shot evaluation ===
 
@@ -40,15 +42,32 @@ type DexDestructor = FunPtr (IO ())
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-callNativeFun :: NativeFunction -> PassLogger -> [LitVal] -> [BaseType] -> IO [LitVal]
-callNativeFun f logger args resultTypes = do
+
+data BenchRequirement =
+    NoBench
+  | DoBench Bool -- True means "must sync CUDA"
+
+callNativeFun :: NativeFunction -> BenchRequirement -> PassLogger -> [LitVal] -> [BaseType] -> IO [LitVal]
+callNativeFun f bench logger args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        _ <- checkedCallFunPtr fd argsPtr resultPtr $ castFunPtr $ nativeFunPtr f
-        -- logSkippingFilter logger [EvalTime evalTime Nothing]
-        loadLitVals resultPtr resultTypes
+        let fPtr = castFunPtr $ nativeFunPtr f
+        evalTime <- checkedCallFunPtr fd argsPtr resultPtr fPtr
+        results <- loadLitVals resultPtr resultTypes
+        case bench of
+          NoBench -> logSkippingFilter logger [EvalTime evalTime Nothing]
+          DoBench shouldSyncCUDA -> do
+            let sync = when shouldSyncCUDA $ synchronizeCUDA
+            (avgTime, benchRuns, totalTime) <- runBench do
+              let (CInt fd') = fdFD fd
+              exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
+              unless (exitCode == 0) $ throw RuntimeErr ""
+              freeLitVals resultPtr resultTypes
+              sync
+            logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
+        return results
 
 checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
 checkedCallFunPtr fd argsPtr resultPtr fPtr = do
@@ -69,13 +88,27 @@ withPipeToLogger logger writeAction = do
     Left e -> E.throw e
     Right ans -> return ans
 
+runBench :: IO () -> IO (Double, Int, Double)
+runBench run = do
+  exampleDuration <- snd <$> measureSeconds run
+  test_mode <- (Just "t" ==) <$> E.lookupEnv "DEX_TEST_MODE"
+  let timeBudget = 2 -- seconds
+  let benchRuns = if test_mode
+        then 1
+        else (ceiling $ timeBudget / exampleDuration) :: Int
+  totalTime <- liftM snd $ measureSeconds $ do
+    forM_ [1..benchRuns] $ const run
+  let avgTime = totalTime / (fromIntegral benchRuns)
+
+  return (avgTime, benchRuns, totalTime)
+
 -- === serializing scalars ===
 
 loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
 loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
-_freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
-_freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
+freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
 
 storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
