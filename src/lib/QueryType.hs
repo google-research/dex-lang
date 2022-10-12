@@ -637,8 +637,8 @@ getTypePrimOp op = case op of
   SumToVariant x -> getTypeE x >>= \case
     SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
     ty -> error $ "Not a sum type: " ++ pprint ty
-  OutputStreamPtr ->
-    return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
+  OutputStream ->
+    return $ BaseTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   ProjBaseNewtype x -> projectNewtype =<< getTypeE x
   Perform eff i -> do

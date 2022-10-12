@@ -9,7 +9,7 @@
 module TopLevel (
   EvalConfig (..), Topper, TopperM, runTopperM,
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
-  evalSourceText, initTopState, TopStateEx (..), LibPath (..),
+  evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
   loadObject, toCFunction) where
 
@@ -137,8 +137,19 @@ extendTopEnv env frag = do
   refreshAbsPure (toScope env) (Abs frag UnitE) \_ frag' UnitE ->
     TopStateEx $ extendOutMap env frag'
 
-initTopState :: TopStateEx
-initTopState = TopStateEx emptyOutMap
+initTopState :: IO TopStateEx
+initTopState = do
+  dyvarStores <- allocateDynamicVarStores
+  return $ TopStateEx $ setDynamicVarStores emptyOutMap dyvarStores
+  where
+    setDynamicVarStores :: Env n -> DynamicVarStores -> Env n
+    setDynamicVarStores env dyvarStores =
+      env {topEnv = (topEnv env) {envDynamicVarStores = dyvarStores}}
+
+allocateDynamicVarStores :: IO DynamicVarStores
+allocateDynamicVarStores = do
+  ptr <- allocateTLS
+  return [(OutStreamDyvar, castPtr ptr)]
 
 -- ======
 
@@ -638,15 +649,17 @@ loadObject fname =
       (objCode, LinktimeNames funNames ptrNames) <- lookupFunObjCode fname
       funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
       ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
-      f <- liftIO $ linkFunObjCode objCode $ LinktimeVals funVals ptrVals
+      dyvarStores <- getDynamicVarStores
+      f <- liftIO $ linkFunObjCode objCode dyvarStores $ LinktimeVals funVals ptrVals
       extendLoadedObjects fname f
       return f
 
-linkFunObjCode :: FunObjCode -> LinktimeVals -> IO NativeFunction
-linkFunObjCode objCode (LinktimeVals funVals ptrVals) = do
+linkFunObjCode :: FunObjCode -> DynamicVarStores -> LinktimeVals -> IO NativeFunction
+linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
   let (WithCNameInterface code mainFunName reqFuns reqPtrs dtors) = objCode
   let linkMap =   zip reqFuns (map castFunPtrToPtr funVals)
                <> zip reqPtrs ptrVals
+               <> dynamicVarLinkMap dyvarStores
   l <- createLinker
   addExplicitLinkMap l linkMap
   addObjectFile l code
@@ -705,7 +718,8 @@ evalLLVM block = do
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
   reqFunPtrs  <- forM reqFuns impNameToPtr
   reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
-  nativeFun <- liftIO $ linkFunObjCode obj $ LinktimeVals reqFunPtrs reqDataPtrs
+  dyvarStores <- getDynamicVarStores
+  nativeFun <- liftIO $ linkFunObjCode obj dyvarStores $ LinktimeVals reqFunPtrs reqDataPtrs
   resultVals <- liftIO $ callNativeFun nativeFun logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
@@ -817,8 +831,8 @@ loadCache = liftIO do
       decoded <- decode <$> BS.readFile cachePath
       case decoded of
         Right result -> fromSerializedEnv result
-        _            -> removeFile cachePath >> return initTopState
-    else return initTopState
+        _            -> removeFile cachePath >> initTopState
+    else initTopState
 {-# SCC loadCache #-}
 
 storeCache :: MonadIO m => TopStateEx -> m ()
@@ -847,11 +861,12 @@ traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
 fromSerializedEnv :: forall n m. MonadIO m => SerializedEnv n -> m TopStateEx
 fromSerializedEnv (SerializedEnv defs rules cache) = do
   Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence n)
-  let topEnv = Env (TopEnv defs rules cache mempty mempty) mempty
+  dyvarStores <- liftIO allocateDynamicVarStores
+  let topEnv = Env (TopEnv defs rules cache mempty mempty dyvarStores) mempty
   restorePtrSnapshots $ TopStateEx topEnv
 
 toSerializedEnv :: MonadIO m => TopStateEx -> m TopSerializedStateEx
-toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _)) = do
+toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _ _) _)) = do
   collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
     let liveNames = toNameSet $ toScopeFrag defsFrag'
     let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules

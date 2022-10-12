@@ -143,8 +143,8 @@ data PrimOp e =
       -- Converts sum types returned by primitives to variant-types that
       -- can be scrutinized in the surface language.
       | SumToVariant e
-      -- Pointer to the stdout-like output stream
-      | OutputStreamPtr
+      -- stdout-like output stream
+      | OutputStream
       -- Odds, ends and hacks.
       | ProjBaseNewtype e     -- shouldn't appear after inference
       | ProjMethod e Int  -- project a method from the dict

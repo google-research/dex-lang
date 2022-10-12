@@ -34,7 +34,7 @@ module Builder (
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
   extendImpCache, queryImpCache,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
-  extendObjCache, queryObjCache,
+  extendObjCache, queryObjCache, getDynamicVarStores,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
@@ -332,6 +332,9 @@ lookupPtrName v = lookupEnv v >>= \case
 
 getCache :: EnvReader m => m n (Cache n)
 getCache = withEnv $ envCache . topEnv
+
+getDynamicVarStores :: EnvReader m => m n DynamicVarStores
+getDynamicVarStores = fromLiftE <$> (withEnv $ LiftE . envDynamicVarStores . topEnv)
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }

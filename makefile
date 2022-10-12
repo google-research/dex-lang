@@ -131,7 +131,7 @@ $(error "Please install clang++-12")
 endif
 endif
 
-CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
+CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti -pthread
 CFLAGS := $(CFLAGS) -std=c11
 
 .PHONY: all

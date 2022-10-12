@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun, callDtor) where
+module Runtime (loadLitVal, callNativeFun, callDtor, allocateTLS) where
 
 import Data.Int
 import GHC.IO.FD
@@ -160,3 +160,16 @@ readStream h action = go
     go = do
       eof <- hIsEOF h
       unless eof $ hGetLine h >>= action >> go
+
+-- ==== thread-local storage ===
+
+-- We use TLS to implement some dynamically scoped variables, like the file
+-- descriptor for the current output stream. We allocate the thread-local memory
+-- here, and we generate code for `pthread_setspecific` at entry functions and
+-- `pthread_getspecific` at use sites.
+
+foreign import ccall "dex_pthread_key_create"
+  pthreadKeyCreate :: IO (Ptr ())
+
+allocateTLS :: IO (Ptr (Ptr ()))
+allocateTLS = castPtr <$> pthreadKeyCreate

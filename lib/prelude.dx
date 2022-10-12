@@ -1831,7 +1831,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
 '### Print
 
 def get_output_stream (_:Unit) : {IO} Stream WriteMode =
-  MkStream $ %ptrLoad %outputStreamPtr
+  MkStream $ %outputStream
 
 def print (s:String) : {IO} Unit =
   stream = get_output_stream ()

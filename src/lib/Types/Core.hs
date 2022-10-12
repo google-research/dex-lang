@@ -318,7 +318,8 @@ data TopEnv (n::S) = TopEnv
   , envCustomRules :: CustomRules n
   , envCache :: Cache n
   , envLoadedModules :: LoadedModules n
-  , envLoadedObjects :: LoadedObjects n }
+  , envLoadedObjects :: LoadedObjects n
+  , envDynamicVarStores :: DynamicVarStores }
   deriving (Generic)
 
 data SerializedEnv n = SerializedEnv
@@ -412,7 +413,7 @@ data Cache (n::S) = Cache
   , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
 
--- === runtime function representations ===
+-- === runtime function and variable representations ===
 
 type DexDestructor = FunPtr (IO ())
 
@@ -422,6 +423,18 @@ data NativeFunction = NativeFunction
 
 instance Show NativeFunction where
   show _ = "<native function>"
+
+-- Holds pointers to thread-local storage used to simulate dynamically scoped
+-- variables, such as the output stream file descriptor.
+type DynamicVarStores = [(DynamicVar, Ptr ())]
+
+data DynamicVar = OutStreamDyvar -- TODO: add others as needed
+
+dynamicVarCName :: DynamicVar -> String
+dynamicVarCName OutStreamDyvar = "dex_out_stream_dyvar"
+
+dynamicVarLinkMap :: DynamicVarStores -> [(String, Ptr ())]
+dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 
 -- === bindings - static information we carry about a lexical scope ===
 
@@ -597,14 +610,14 @@ instance OutFrag EnvFrag where
 
 instance OutMap Env where
   emptyOutMap =
-    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules emptyLoadedObjects)
+    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules emptyLoadedObjects mempty)
         emptyModuleEnv
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO)
+  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO dyvars)
                     (ModuleEnv imports sm scs effs)) frag =
     withExtEvidence frag $ Env
       (TopEnv
@@ -612,7 +625,8 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
         (sink rules)
         (sink cache)
         (sink loadedM)
-        (sink loadedO))
+        (sink loadedO)
+        dyvars)
       (ModuleEnv
         (sink imports)
         (sink sm)
@@ -2021,7 +2035,7 @@ instance ExtOutMap Env TopEnvFrag where
     (TopEnvFrag (EnvFrag frag _)
     (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv')) = result
     where
-      Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
+      Env (TopEnv defs rules cache loadedM loadedO dyvars) mEnv = env
       result = Env newTopEnv newModuleEnv
 
       newTopEnv = withExtEvidence frag $ TopEnv
@@ -2030,6 +2044,7 @@ instance ExtOutMap Env TopEnvFrag where
         (sink cache <> cache')
         (sink loadedM <> loadedM')
         (sink loadedO <> loadedO')
+        dyvars
 
       newModuleEnv =
         ModuleEnv

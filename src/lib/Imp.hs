@@ -1666,7 +1666,7 @@ impOpType pop = case pop of
   Select  _ x  _     -> getIType x
   PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
   PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
-  OutputStreamPtr -> hostPtrTy $ hostPtrTy $ Scalar Word8Type
+  OutputStream       -> hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ show pop
