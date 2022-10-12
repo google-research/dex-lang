@@ -318,8 +318,7 @@ data TopEnv (n::S) = TopEnv
   , envCustomRules :: CustomRules n
   , envCache :: Cache n
   , envLoadedModules :: LoadedModules n
-  , envLoadedObjects :: LoadedObjects n
-  , envDynamicVarStores :: DynamicVarStores }
+  , envLoadedObjects :: LoadedObjects n }
   deriving (Generic)
 
 data SerializedEnv n = SerializedEnv
@@ -414,6 +413,8 @@ data Cache (n::S) = Cache
   } deriving (Show, Generic)
 
 -- === runtime function and variable representations ===
+
+type RuntimeEnv = DynamicVarStores
 
 type DexDestructor = FunPtr (IO ())
 
@@ -610,14 +611,14 @@ instance OutFrag EnvFrag where
 
 instance OutMap Env where
   emptyOutMap =
-    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules emptyLoadedObjects mempty)
+    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules emptyLoadedObjects)
         emptyModuleEnv
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO dyvars)
+  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO)
                     (ModuleEnv imports sm scs effs)) frag =
     withExtEvidence frag $ Env
       (TopEnv
@@ -625,8 +626,7 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
         (sink rules)
         (sink cache)
         (sink loadedM)
-        (sink loadedO)
-        dyvars)
+        (sink loadedO))
       (ModuleEnv
         (sink imports)
         (sink sm)
@@ -2035,7 +2035,7 @@ instance ExtOutMap Env TopEnvFrag where
     (TopEnvFrag (EnvFrag frag _)
     (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv')) = result
     where
-      Env (TopEnv defs rules cache loadedM loadedO dyvars) mEnv = env
+      Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
       result = Env newTopEnv newModuleEnv
 
       newTopEnv = withExtEvidence frag $ TopEnv
@@ -2044,7 +2044,6 @@ instance ExtOutMap Env TopEnvFrag where
         (sink cache <> cache')
         (sink loadedM <> loadedM')
         (sink loadedO <> loadedO')
-        dyvars
 
       newModuleEnv =
         ModuleEnv
