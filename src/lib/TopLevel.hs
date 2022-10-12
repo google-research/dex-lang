@@ -148,7 +148,7 @@ initTopState = do
 
 allocateDynamicVarStores :: IO DynamicVarStores
 allocateDynamicVarStores = do
-  ptr <- allocateTLS
+  ptr <- createTLS
   return [(OutStreamDyvar, castPtr ptr)]
 
 -- ======

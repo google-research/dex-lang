@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun, callDtor, allocateTLS) where
+module Runtime (loadLitVal, callNativeFun, callDtor, createTLS) where
 
 import Data.Int
 import GHC.IO.FD
@@ -171,5 +171,5 @@ readStream h action = go
 foreign import ccall "dex_pthread_key_create"
   pthreadKeyCreate :: IO (Ptr ())
 
-allocateTLS :: IO (Ptr (Ptr ()))
-allocateTLS = castPtr <$> pthreadKeyCreate
+createTLS :: IO (Ptr (Ptr ()))
+createTLS = castPtr <$> pthreadKeyCreate

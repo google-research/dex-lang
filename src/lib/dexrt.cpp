@@ -53,6 +53,7 @@ int64_t dex_allocation_size (char* ptr) {
 
 void* dex_pthread_key_create () {
   pthread_key_t* key_ptr = (pthread_key_t*) malloc(sizeof(pthread_key_t));
+  // TODO(dougalm): add destructor. It's not urgent because we only call this once per process at the moment.
   pthread_key_create(key_ptr, NULL);
   return (void*) key_ptr;
 }
