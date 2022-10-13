@@ -106,7 +106,7 @@ module Syntax (
     WithCNameInterface (..), FunObjCode, FunObjCodeName, IFunBinder (..),
     LinktimeNames (..), LinktimeVals (..),
     CName, NativeFunction (..), OptLevel (..),
-    DynamicVarStores, dynamicVarLinkMap, DynamicVar (..), dynamicVarCName,
+    DynamicVarKeyPtrs, dynamicVarLinkMap, DynamicVar (..), dynamicVarCName,
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal, pattern IdxRepScalarBaseTy,
     pattern TagRepTy,

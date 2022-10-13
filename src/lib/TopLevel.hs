@@ -144,13 +144,14 @@ extendTopEnv env rtEnv frag = do
 
 initTopState :: IO TopStateEx
 initTopState = do
-  dyvarStores <- allocateDynamicVarStores
+  dyvarStores <- allocateDynamicVarKeyPtrs
   return $ TopStateEx emptyOutMap dyvarStores
 
-allocateDynamicVarStores :: IO DynamicVarStores
-allocateDynamicVarStores = do
-  ptr <- createTLS
+allocateDynamicVarKeyPtrs :: IO DynamicVarKeyPtrs
+allocateDynamicVarKeyPtrs = do
+  ptr <- createTLSKey
   return [(OutStreamDyvar, castPtr ptr)]
+
 -- ======
 
 evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, TopStateEx)
@@ -654,7 +655,7 @@ loadObject fname =
       extendLoadedObjects fname f
       return f
 
-linkFunObjCode :: FunObjCode -> DynamicVarStores -> LinktimeVals -> IO NativeFunction
+linkFunObjCode :: FunObjCode -> DynamicVarKeyPtrs -> LinktimeVals -> IO NativeFunction
 linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
   let (WithCNameInterface code mainFunName reqFuns reqPtrs dtors) = objCode
   let linkMap =   zip reqFuns (map castFunPtrToPtr funVals)
@@ -861,7 +862,7 @@ traverseBindingsTopStateEx (TopStateEx (Env tenv menv) dyvars) f = do
 fromSerializedEnv :: forall n m. MonadIO m => SerializedEnv n -> m TopStateEx
 fromSerializedEnv (SerializedEnv defs rules cache) = do
   Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence n)
-  dyvarStores <- liftIO allocateDynamicVarStores
+  dyvarStores <- liftIO allocateDynamicVarKeyPtrs
   let topEnv = Env (TopEnv defs rules cache mempty mempty) mempty
   restorePtrSnapshots $ TopStateEx topEnv dyvarStores
 

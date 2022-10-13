@@ -1090,11 +1090,14 @@ initializeOutputStream streamFD = do
 -- === Dynamically-scoped vars via thread-local pthreads vars ===
 
 dyvarDefs :: [L.Definition]
-dyvarDefs  = (:[]) $ L.GlobalDefinition $ L.globalVariableDefaults
-  { L.name = dynamicVarLName OutStreamDyvar
-  , L.type' = hostVoidp
-  , L.linkage = L.External
-  , L.initializer = Nothing }
+dyvarDefs  = map makeDef [minBound..maxBound]
+  where
+    makeDef :: DynamicVar -> L.Definition
+    makeDef v =  L.GlobalDefinition $ L.globalVariableDefaults
+      { L.name = dynamicVarLName v
+      , L.type' = pthreadKeyTy
+      , L.linkage = L.External
+      , L.initializer = Nothing }
 
 dynamicVarLName :: DynamicVar -> L.Name
 dynamicVarLName v = fromString $ dynamicVarCName v
@@ -1111,14 +1114,18 @@ getDyvar v = do
 
 getDyvarKey :: LLVMBuilder m => DynamicVar -> m Operand
 getDyvarKey v = do
-  let ref = globalReference (hostPtrTy hostVoidp) $ dynamicVarLName v
-  load hostVoidp (L.ConstantOperand ref)
+  let ref = globalReference (hostPtrTy pthreadKeyTy) $ dynamicVarLName v
+  load pthreadKeyTy (L.ConstantOperand ref)
+
+-- This is actually implementation-dependent, but we verify that it's true in dexrt.cpp
+pthreadKeyTy :: L.Type
+pthreadKeyTy = i32
 
 pthread_setspecific :: ExternFunSpec
-pthread_setspecific = ExternFunSpec "pthread_setspecific" i32 [] [] [hostVoidp, hostVoidp]
+pthread_setspecific = ExternFunSpec "pthread_setspecific" i32 [] [] [pthreadKeyTy, hostVoidp]
 
 pthread_getspecific :: ExternFunSpec
-pthread_getspecific = ExternFunSpec "pthread_getspecific" hostVoidp [] [] [hostVoidp]
+pthread_getspecific = ExternFunSpec "pthread_getspecific" hostVoidp [] [] [pthreadKeyTy]
 
 -- === Compile monad utilities ===
 

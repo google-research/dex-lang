@@ -414,7 +414,7 @@ data Cache (n::S) = Cache
 
 -- === runtime function and variable representations ===
 
-type RuntimeEnv = DynamicVarStores
+type RuntimeEnv = DynamicVarKeyPtrs
 
 type DexDestructor = FunPtr (IO ())
 
@@ -427,14 +427,15 @@ instance Show NativeFunction where
 
 -- Holds pointers to thread-local storage used to simulate dynamically scoped
 -- variables, such as the output stream file descriptor.
-type DynamicVarStores = [(DynamicVar, Ptr ())]
+type DynamicVarKeyPtrs = [(DynamicVar, Ptr ())]
 
 data DynamicVar = OutStreamDyvar -- TODO: add others as needed
+                  deriving (Enum, Bounded)
 
 dynamicVarCName :: DynamicVar -> String
 dynamicVarCName OutStreamDyvar = "dex_out_stream_dyvar"
 
-dynamicVarLinkMap :: DynamicVarStores -> [(String, Ptr ())]
+dynamicVarLinkMap :: DynamicVarKeyPtrs -> [(String, Ptr ())]
 dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 
 -- === bindings - static information we carry about a lexical scope ===

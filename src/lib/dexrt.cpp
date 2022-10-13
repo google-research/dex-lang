@@ -12,6 +12,12 @@
 #include <thread>
 #include <vector>
 
+#include <type_traits>
+#include <cstdint>
+
+static_assert(std::is_same<pthread_key_t, std::uint32_t>::value,
+              "Expected pthread_key_t to be an uint32_t!");
+
 #ifdef DEX_LIVE
 #include <png.h>
 #endif // DEX_LIVE
