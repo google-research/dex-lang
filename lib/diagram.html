@@ -533,22 +533,25 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">move_x <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> move_xy (x<span class="symbol">,</span> 0<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">move_y <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="symbol">\</span>y<span class="symbol">.</span> move_xy (0<span class="symbol">.</span>0<span class="symbol">,</span> y)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>A Demo showing all kind of features</p>
-<pre><code>mydiagram : Diagram =
-    (  (circle 7.0 |&gt; move_xy (20.0, 20.0) |&gt; setFillColor blue |&gt; setStrokeColor red)
-    &lt;&gt; (circle 5.0 |&gt; move_xy (40.0, 41.0))
-    &lt;&gt; (rect  10.0 20.0 |&gt; move_xy (5.0, 10.0) |&gt; setStrokeColor red)
-    &lt;&gt; (text &quot;DexLang&quot;  |&gt; move_xy (30.0, 10.0) |&gt; setStrokeColor green)
-    &lt;&gt; (pointDiagram |&gt; move_xy (15.0, 5.0) |&gt; setStrokeColor red)
-    )
-:html renderScaledSVG mydiagram
-</code></pre>
-</div></div><div class="cell"><div class="prose-block"><p>Another demo that shows things are all center aligned:</p>
-<pre><code>concentric_diagram : Diagram = (
-     (rect 2.0 2.0 |&gt; setFillColor red)
-  &lt;&gt; (circle 1.0 |&gt; setFillColor blue)
-  &lt;&gt; (text &quot;DexLang&quot; |&gt; setStrokeColor white)
-) |&gt; move_xy (5.0, 5.0)
-:html renderScaledSVG concentric_diagram
-</code></pre>
-</div></div></div></body></html>
+</div></div><div class="cell"><div class="prose-block"><h2>Demos</h2>
+</div></div><div class="cell"><div class="prose-block"><p>A generic diagram</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span>
+  mydiagram <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> (
+     (circle 7<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> move_xy (20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0)
+       <span class="symbol">|&gt;</span> set_fill_color blue <span class="symbol">|&gt;</span> set_stroke_color red)
+  <span class="symbol">&lt;&gt;</span> (circle 5<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> move_xy (40<span class="symbol">.</span>0<span class="symbol">,</span> 41<span class="symbol">.</span>0))
+  <span class="symbol">&lt;&gt;</span> (rect  10<span class="symbol">.</span>0 20<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> move_xy (5<span class="symbol">.</span>0<span class="symbol">,</span> 10<span class="symbol">.</span>0) <span class="symbol">|&gt;</span> set_stroke_color red)
+  <span class="symbol">&lt;&gt;</span> (text &quot;<span class="type-name">DexLang</span>&quot;  <span class="symbol">|&gt;</span> move_xy (30<span class="symbol">.</span>0<span class="symbol">,</span> 10<span class="symbol">.</span>0) <span class="symbol">|&gt;</span> set_stroke_color green)
+  <span class="symbol">&lt;&gt;</span> (point_diagram <span class="symbol">|&gt;</span> move_xy (15<span class="symbol">.</span>0<span class="symbol">,</span> 5<span class="symbol">.</span>0) <span class="symbol">|&gt;</span> set_stroke_color red)
+  )
+  render_scaled_svg mydiagram
+</div><svg width="400" height="408.888916" viewBox="0 -408.888916 400 408.888916"><g stroke="#FF0000" fill="#0000FF" stroke-width="1"><circle cx="177.777786"cy="-177.777786"r="62.2222252"/></g><g stroke="#000000" fill="none" stroke-width="1"><circle cx="355.555573"cy="-364.444458"r="44.4444466"/></g><g stroke="#FF0000" fill="none" stroke-width="1"><rect width="88.8888931"height="177.777786"x="0"y="-177.777786"/></g><g stroke="#00FF00" fill="#00FF00" stroke-width="1"><text x="266.666687"y="-88.8888931"text-anchor="middle"dominant-baseline="middle">DexLang</text></g><g stroke="#FF0000" fill="#FF0000" stroke-width="1"><circle cx="133.333344"cy="-44.4444466"r="1"/></g></svg></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Another diagram, showing things are all center aligned</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span>
+  concentric_diagram <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> (
+       (rect 2<span class="symbol">.</span>0 2<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> set_fill_color red)
+    <span class="symbol">&lt;&gt;</span> (circle 1<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> set_fill_color blue)
+    <span class="symbol">&lt;&gt;</span> (text &quot;<span class="type-name">DexLang</span>&quot; <span class="symbol">|&gt;</span> set_stroke_color white)
+  ) <span class="symbol">|&gt;</span> move_xy (5<span class="symbol">.</span>0<span class="symbol">,</span> 5<span class="symbol">.</span>0)
+  render_scaled_svg concentric_diagram
+</div><svg width="400" height="400" viewBox="800 -1200 400 400"><g stroke="#000000" fill="#FF0000" stroke-width="1"><rect width="400"height="400"x="800"y="-1200"/></g><g stroke="#000000" fill="#0000FF" stroke-width="1"><circle cx="1000"cy="-1000"r="200"/></g><g stroke="#FFFFFF" fill="#FFFFFF" stroke-width="1"><text x="1000"y="-1000"text-anchor="middle"dominant-baseline="middle">DexLang</text></g></svg></div></div></body></html>
