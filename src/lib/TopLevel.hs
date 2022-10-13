@@ -212,7 +212,7 @@ evalSourceBlock' :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n 
 evalSourceBlock' mname block = case sbContents block of
   EvalUDecl decl -> execUDecl mname decl
   Command cmd expr -> case cmd of
-    EvalExpr fmt -> do
+    EvalExpr fmt -> when (mname == Main) do
       annExpr <- case fmt of
         Printed -> return expr
         RenderHtml -> return $ addTypeAnn expr $ referTo "String"

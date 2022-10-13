@@ -230,24 +230,29 @@ render_scaled_svg = \d. render_svg d (compute_bounds d)
 move_x : Float -> Diagram -> Diagram = \x. move_xy (x, 0.0)
 move_y : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
 
-' A Demo showing all kind of features
-```
-mydiagram : Diagram =
-    (  (circle 7.0 |> move_xy (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
-    <> (circle 5.0 |> move_xy (40.0, 41.0))
-    <> (rect  10.0 20.0 |> move_xy (5.0, 10.0) |> setStrokeColor red)
-    <> (text "DexLang"  |> move_xy (30.0, 10.0) |> setStrokeColor green)
-    <> (pointDiagram |> move_xy (15.0, 5.0) |> setStrokeColor red)
-    )
-:html renderScaledSVG mydiagram
-```
+'## Demos
 
-' Another demo that shows things are all center aligned:
-```
-concentric_diagram : Diagram = (
-     (rect 2.0 2.0 |> setFillColor red)
-  <> (circle 1.0 |> setFillColor blue)
-  <> (text "DexLang" |> setStrokeColor white)
-) |> move_xy (5.0, 5.0)
-:html renderScaledSVG concentric_diagram
-```
+'A generic diagram
+
+:html
+  mydiagram : Diagram = (
+     (circle 7.0 |> move_xy (20.0, 20.0)
+       |> set_fill_color blue |> set_stroke_color red)
+  <> (circle 5.0 |> move_xy (40.0, 41.0))
+  <> (rect  10.0 20.0 |> move_xy (5.0, 10.0) |> set_stroke_color red)
+  <> (text "DexLang"  |> move_xy (30.0, 10.0) |> set_stroke_color green)
+  <> (point_diagram |> move_xy (15.0, 5.0) |> set_stroke_color red)
+  )
+  render_scaled_svg mydiagram
+> <html output>
+
+'Another diagram, showing things are all center aligned
+
+:html
+  concentric_diagram : Diagram = (
+       (rect 2.0 2.0 |> set_fill_color red)
+    <> (circle 1.0 |> set_fill_color blue)
+    <> (text "DexLang" |> set_stroke_color white)
+  ) |> move_xy (5.0, 5.0)
+  render_scaled_svg concentric_diagram
+> <html output>
