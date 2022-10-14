@@ -2858,7 +2858,7 @@ liftDictSynthTraverserM m = do
     Errs [] -> Success ans
     _       -> Failure $ coerce errs
 
-type DictSynthTraverserM = GenericTraverserM DictSynthTraverserS
+type DictSynthTraverserM = GenericTraverserM UnitB DictSynthTraverserS
 
 newtype DictSynthTraverserS (n::S) = DictSynthTraverserS Errs
 instance GenericE DictSynthTraverserS where
@@ -2869,7 +2869,7 @@ instance SinkableE DictSynthTraverserS
 instance HoistableState DictSynthTraverserS where
   hoistState _ _ (DictSynthTraverserS errs) = DictSynthTraverserS errs
 
-instance GenericTraverser DictSynthTraverserS where
+instance GenericTraverser UnitB DictSynthTraverserS where
   traverseAtom a@(Con (DictHole (AlwaysEqual ctx) ty)) = do
     ty' <- cheapNormalize =<< substM ty
     ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'

@@ -118,10 +118,11 @@ evalAtom atom = traverseSurfaceAtomNames atom \v -> do
       ~(AtomNameBinding bindingInfo) <- lookupEnv v'
       case bindingInfo of
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ evalAtom x
+        TopFunBound _ _ -> return $ Var v'
         PtrLitBound _ ptrName -> do
           ~(PtrBinding ptr) <- lookupEnv ptrName
           return $ Con $ Lit $ PtrLit ptr
-        _ -> error "shouldn't have irreducible atom names left"
+        _ -> error $ "shouldn't have irreducible atom names left. Got " ++ pprint bindingInfo
 {-# SCC evalAtom #-}
 
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
@@ -240,7 +241,7 @@ evalProjectDictMethod d i = cheapNormalize d >>= \case
     case i of
       0 -> return method
       _ -> error "ExplicitDict only supports single-method classes"
-  DictCon (IxFin n) -> projectIxFinMethod i n
+  DictCon (IxFin n) -> projectIxFinMethod (toEnum i) n
   Con (Newtype (DictTy (DictType _ clsName _)) (ProdVal mts)) -> do
     ClassDef _ _ _ _ mTys <- lookupClassDef clsName
     let (m, MethodType _ mTy) = (mts !! i, mTys !! i)

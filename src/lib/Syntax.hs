@@ -56,7 +56,7 @@ module Syntax (
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
     ULamExpr (..), UPiExpr (..), UTabLamExpr (..), UTabPiExpr (..), IxBinder,
-    TabLamExpr (..), TabPiType (..), IxType (..), IxDict,
+    TabLamExpr (..), TabPiType (..), IxType (..), IxDict, IxMethod (..),
     UDeclExpr (..), UForExpr (..), UAlt (..),
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
     UMethodDef (..), UAnnBinder (..),

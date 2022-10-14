@@ -8,7 +8,7 @@
 
 module Optimize
   ( earlyOptimize, optimize
-  , peepholeOp, hoistLoopInvariantIxDest, dceIxDestBlock
+  , peepholeOp, hoistLoopInvariantDest, dceDestBlock
   ) where
 
 import Data.Functor
@@ -41,7 +41,7 @@ optimize = dceBlock     -- Clean up user code
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
 
 data UTLS n = UTLS
-type UTLM = GenericTraverserM UTLS
+type UTLM = GenericTraverserM UnitB UTLS
 instance SinkableE UTLS where
   sinkingProofE _ UTLS = UTLS
 instance HoistableState UTLS where
@@ -60,7 +60,7 @@ isTrivialIndex = \case
     return $ SingletonIxSet $ Con $ Newtype (FinConst n) (NatVal 0)
   _ -> return UnknownIxSet
 
-instance GenericTraverser UTLS where
+instance GenericTraverser UnitB UTLS where
   traverseExpr expr = case expr of
     Hof (For _ ixDict (Lam (LamExpr b body@(Block _ decls a)))) -> do
       isTrivialIndex (binderType b) >>= \case
@@ -199,7 +199,7 @@ unrollLoops :: EnvReader m => Block n -> m n (Block n)
 unrollLoops b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
 
 newtype ULS n = ULS Int deriving Show
-type ULM = GenericTraverserM ULS
+type ULM = GenericTraverserM UnitB ULS
 instance SinkableE ULS where
   sinkingProofE _ (ULS c) = ULS c
 instance HoistableState ULS where
@@ -208,7 +208,7 @@ instance HoistableState ULS where
 
 -- TODO: Refine the cost accounting so that operations that will become
 -- constant-foldable after inlining don't count towards it.
-instance GenericTraverser ULS where
+instance GenericTraverser UnitB ULS where
   traverseInlineExpr expr = case expr of
     Hof (For Fwd ixDict body@(Lam (LamExpr b _))) -> do
       case binderType b of
@@ -253,14 +253,13 @@ emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 -- === Loop invariant code motion ===
 
 -- TODO: Resolve import cycle with Lower
-type IxDestBlock = Abs (Nest Decl) (Abs Binder Block)
+type DestBlock = Abs Binder Block
 
-hoistLoopInvariantIxDest :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
-hoistLoopInvariantIxDest (Abs ixs (Abs (db:>dTy) body)) =
-  liftM fst $ liftGenericTraverserM LICMS $
-    buildScoped $ traverseDeclNest ixs do
-      dTy' <- traverseGenericE dTy
-      buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+hoistLoopInvariantDest :: EnvReader m => DestBlock n -> m n (DestBlock n)
+hoistLoopInvariantDest (Abs (db:>dTy) body) =
+  liftM fst $ liftGenericTraverserM LICMS do
+    dTy' <- traverseGenericE dTy
+    buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
 
 hoistLoopInvariant :: EnvReader m => Block n -> m n (Block n)
 hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
@@ -271,7 +270,7 @@ instance SinkableE LICMS where
 instance HoistableState LICMS where
   hoistState _ _ LICMS = LICMS
 
-instance GenericTraverser LICMS where
+instance GenericTraverser UnitB LICMS where
   traverseExpr = \case
     Hof (Seq dir ix (ProdVal dests) (Lam (LamExpr b body))) -> do
       ix' <- traverseAtom ix
@@ -306,7 +305,7 @@ instance GenericTraverser LICMS where
     where
       rebuildBody :: LamBinder i i' -> Block i'
                   -> AtomNameBinder n l -> Type n -> Abs (Nest Decl) Atom l
-                  -> GenericTraverserM LICMS i n (Atom n)
+                  -> GenericTraverserM UnitB LICMS i n (Atom n)
       rebuildBody b body@(Block ann _ _) lnb lbTy bodyAbs = do
         Distinct <- getDistinct
         refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
@@ -367,10 +366,9 @@ instance HoistableState FV where
 
 type DCEM = StateT1 FV EnvReaderM
 
-dceIxDestBlock :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
-dceIxDestBlock idb = liftEnvReaderM $
-  refreshAbs idb \ixs db ->
-    refreshAbs db \d b -> Abs ixs . Abs d <$> dceBlock b
+dceDestBlock :: EnvReader m => DestBlock n -> m n (DestBlock n)
+dceDestBlock idb = liftEnvReaderM $
+  refreshAbs idb \d b -> Abs d <$> dceBlock b
 
 dceBlock :: EnvReader m => Block n -> m n (Block n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty

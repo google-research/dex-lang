@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
-  loadObject, toCFunction) where
+  loadObject, toCFunction, evalRequiredSpecializations, hoistIxDicts) where
 
 import Data.Foldable (toList)
 import Data.Functor
@@ -43,7 +43,7 @@ import Err
 import MTL1
 import Logging
 import PPrint (pprintCanonicalized)
-import Util (measureSeconds, File (..), readFileWithHash)
+import Util (measureSeconds, File (..), readFileWithHash, forMFilter)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
 
 import Name
@@ -65,6 +65,7 @@ import ImpToLLVM
 import Optimize
 import Runtime
 import QueryType
+import GenericTraversal
 
 -- === top-level monad ===
 
@@ -569,15 +570,15 @@ evalBlock typed = do
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   evalRequiredSpecializations simplifiedBlock
   SimplifiedBlock simp recon <- return simplifiedBlock
-  opt <- whenOpt simp $ checkPass OptPass . optimize
+  simp' <- hoistIxDicts simp
+  opt <- whenOpt simp' $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
-      explicitIx <- emitIx opt
-      instIx <- simplifyIx explicitIx
-      lowered <- checkPass LowerPass $ lowerFullySequential instIx
+      lowered <- checkPass LowerPass $ lowerFullySequential opt
+      evalRequiredSpecializations lowered
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
-        (dceIxDestBlock >=> hoistLoopInvariantIxDest)
+        (dceDestBlock >=> hoistLoopInvariantDest)
       evalBackend lopt
   applyRecon recon result
 {-# SCC evalBlock #-}
@@ -588,9 +589,16 @@ evalRequiredSpecializations
 evalRequiredSpecializations e = do
   forM_ (freeAtomVarsList e) \v -> do
     lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun _) ->
+      TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
         queryImpCache v >>= \case
           Nothing -> compileTopLevelFun v
+          Just _ -> return ()
+      -- XXX: we might need to toposort these based on dependencies. Or else
+      -- maybe we can be careful about the order in which we request them in the
+      -- first place (rather than querying free vars).
+      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
+        queryIxLoweredCache v >>= \case
+          Nothing -> lowerTopLevelFun v
           Just _ -> return ()
       _ -> return ()
 
@@ -624,12 +632,23 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
+lowerTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
+lowerTopLevelFun fname = do
+  fPreSimp <- specializedFunPreSimpDefinition fname
+  fSimp <- simplifyTopFunction fPreSimp
+  evalRequiredSpecializations fSimp
+  fSimp' <- hoistIxDicts fSimp
+  -- TODO: actually do the lowering (lowering only handles blocks, not functions, right now)
+  fSimpName <- emitLoweredFun (getNameHint fname) fSimp'
+  extendIxLoweredCache fname fSimpName
+
 compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
   evalRequiredSpecializations fSimp
-  fImp <- toImpStandaloneFunction fSimp
+  fSimp' <- hoistIxDicts fSimp
+  fImp <- toImpStandaloneFunction fSimp'
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -671,13 +690,20 @@ specializedFunPreSimpDefinition
   :: (MonadFail1 m, EnvReader m) => AtomName n -> m n (NaryLamExpr n)
 specializedFunPreSimpDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
-  AppSpecialization f abStaticArgs@(Abs bs _) <- return s
-  f' <- forceDeferredInlining f
-  liftBuilder do
-    buildNaryLamExpr ty \allArgs -> do
-      let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-      ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
-      naryApp (sink f') $ staticArgs' <> map Var originalArgs
+  case s of
+    AppSpecialization f abStaticArgs@(Abs bs _) -> do
+      f' <- forceDeferredInlining f
+      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
+        ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
+        naryApp (sink f') $ staticArgs' <> map Var originalArgs
+    IxMethodSpecialization method absDict@(Abs bs _) -> do
+      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
+        dict <- applyNaryAbs (sink absDict) extraArgs
+        let actualArgs = case method of Size -> []  -- size is thunked
+                                        _    -> map Var methodArgs
+        applyIxMethod dict method actualArgs
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
@@ -701,7 +727,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
+evalLLVM :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
@@ -737,7 +763,7 @@ impNameToObj v = do
     Just v' -> return v'
     Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
 
-evalBackend :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
+evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
@@ -747,6 +773,7 @@ evalBackend block = do
                LLVMCUDA    -> evalLLVM
                Interpreter -> error "TODO"
   eval block
+
 
 withCompileTime :: MonadIO m => m Result -> m Result
 withCompileTime m = do
@@ -909,7 +936,57 @@ getFilteredLogger = do
   logger  <- getLogger
   return $ FilteredLogger shouldLog logger
 
--- -- === instances ===
+-- === hoisting Ix dicts ===
+
+hoistIxDicts
+  :: ( Topper m, Mut n, GenericallyTraversableE e
+     , SinkableE e, SubstE Name e, HoistableE e)
+  => e n -> m n (e n)
+hoistIxDicts e = do
+  Abs frag (PairE e' (IxHoistingState UnitE)) <-
+    liftGenericTraverserMTopEmissions (IxHoistingState UnitE) $ traverseGenericE (sink e)
+  e'' <- emitEnv (Abs frag e')
+  evalRequiredSpecializations e''  -- track the needed sepcializations rather than traversing again to find them
+  return e''
+
+newtype IxHoistingState (n::S) = IxHoistingState (UnitE n)
+        deriving (SinkableE, HoistableState, SubstE Name)
+
+instance GenericTraverser TopEnvFrag IxHoistingState where
+  traverseAtom = \case
+    DictCon d -> do
+      d' <- substM d
+      dTy <- getType d'
+      DictCon <$> case dTy of
+        DictTy dTy'@(DictType "Ix" _ _) -> emitIxDictSpecialization dTy' d'
+        _ -> return d'
+    atom -> traverseAtomDefault atom
+
+emitIxDictSpecialization :: HoistingTopBuilder m => DictType n -> DictExpr n -> m n (DictExpr n)
+emitIxDictSpecialization _ d@(ExplicitMethods _ _ _) = return d -- Nothing to do if we already have explicit methods
+emitIxDictSpecialization _ d@(IxFin _)               = return d -- `Ix (Fin n))` is built-in
+emitIxDictSpecialization dictTy ixDict = do
+  (ixDictAbs, params) <- generalizeIxDict ixDict
+  methodImplNames <- forM [minBound..maxBound] \methodName ->
+    getSpecializedFunction $ IxMethodSpecialization methodName ixDictAbs
+  return $ ExplicitMethods dictTy (map Var methodImplNames) params
+
+-- TODO: we could get more cache hits if we abstract more than necessary,
+-- based on whether parameters are data or nondata. E.g. abstract `Fin 10`
+-- as `(\n. Fin n) 10` instead of not abstracting it at all.
+generalizeIxDict :: (HoistingTopBuilder m, EnvReader m) => DictExpr n -> m n (Generalized Atom n)
+generalizeIxDict d = do
+  typedVs <- forMFilter (freeAtomVarsList d) \v ->
+    willItHoist v >>= \case
+      False -> do
+        ty <- getType v
+        return $ Just (v, ty)
+      True -> return Nothing
+  let typedVsToposorted = toposortAnnVars typedVs
+  let atoms = [Var v | (v, _) <- typedVsToposorted]
+  return (abstractFreeVars typedVsToposorted (DictCon d), atoms)
+
+-- === instances ===
 
 instance PassCtxReader (TopperM n) where
   getPassCtx = TopperM $ asks topperPassCtx

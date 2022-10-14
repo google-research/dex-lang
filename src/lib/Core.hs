@@ -385,6 +385,10 @@ instance ExtOutMap Env (RNest Decl) where
     bindings `extendOutMap` toEnvFrag emissions
   {-# INLINE extendOutMap #-}
 
+instance ExtOutMap Env UnitB where
+  extendOutMap bindings UnitB = bindings
+  {-# INLINE extendOutMap #-}
+
 -- === Monadic helpers ===
 
 lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)

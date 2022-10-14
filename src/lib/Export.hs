@@ -28,17 +28,14 @@ import Simplify
 import Imp
 import Util (scanM)
 import Lower
+import TopLevel
 
 exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
-prepareFunctionForExport :: (EnvReader m, Fallible1 m) => ExportCC -> Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
-prepareFunctionForExport cc f = liftExcept =<< liftEnvReaderT (prepareFunctionForExport' cc f)
-{-# INLINE prepareFunctionForExport #-}
-
-prepareFunctionForExport' :: ExportCC -> Atom n -> EnvReaderT Except n (ImpFunction n, ExportedSignature VoidS)
-prepareFunctionForExport' cc f = do
+prepareFunctionForExport :: (Mut n, Topper m) => ExportCC -> Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport cc f = do
   naryPi <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
     Just npi -> return npi
@@ -54,13 +51,11 @@ prepareFunctionForExport' cc f = do
       case sinkFromTop $ EmptyAbs argSig of
         Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon naryPi argSig'
   f' <- asNaryLam naryPi f
-  -- TODO: figure out how to handle specialization cache emissions when compiling for export
-  NaryLamExpr bs Pure body <- simplifyTopFunctionAssumeNoTopEmissions f'
-  -- TODO: Optimize the function!
-  loweredAbs <- refreshAbs (Abs bs body) \(NonEmptyNest b' bs') body' -> do
-    explicitIx <- emitIx body'
-    instIx <- simplifyIx explicitIx
-    Abs (Nest b' bs') <$> lowerFullySequential instIx
+  fSimp <- simplifyTopFunction f'
+  evalRequiredSpecializations fSimp
+  NaryLamExpr bs Pure body <- hoistIxDicts fSimp
+  loweredAbs <- liftEnvReaderM $ refreshAbs (Abs bs body) \(NonEmptyNest b' bs') body' -> do
+    Abs (Nest b' bs') <$> lowerFullySequential body'
   fImp <- toImpExportedFunction cc loweredAbs argRecon
   return (fImp, sig)
   where
@@ -162,9 +157,9 @@ prepareFunctionForExport' cc f = do
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   wrapScalarNewtypes eltTy =<< unsafePtrLoad =<< ptrOffset basePtr offset
 
-              indexSetSizeFin n = unwrapBaseNewtype <$> projectIxFinMethod 0 n
+              indexSetSizeFin n = unwrapBaseNewtype <$> projectIxFinMethod Size n
               ordinalFin n ix = do
-                Lam (LamExpr b body) <- projectIxFinMethod 1 n
+                Lam (LamExpr b body) <- projectIxFinMethod Ordinal n
                 ordNat <- emitBlock =<< applySubst (b@>SubstVal ix) body
                 return $ unwrapBaseNewtype ordNat
               dup x = (x, x)
@@ -209,7 +204,7 @@ prepareFunctionForExport' cc f = do
         HoistSuccess a' <- return $ hoist b a
         tabTyElementTy a'
       _ -> Nothing
-
+{-# INLINE prepareFunctionForExport #-}
 {-# SCC prepareFunctionForExport #-}
 
 -- === Exported function signature ===

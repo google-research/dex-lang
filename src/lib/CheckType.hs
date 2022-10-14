@@ -193,6 +193,7 @@ instance CheckableE AtomBinding where
            matches <- alphaEq ty' specializedTy
            unless matches $ throw TypeErr "Specialization args don't match function type"
            substM f
+        LoweredTopFun f' -> LoweredTopFun <$> substM f'
         FFITopFun name -> do
           _ <- checkFFIFunTypeM ty'
           FFITopFun <$> substM name
@@ -417,6 +418,9 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
+  ExplicitMethods ty _ _ ->
+    -- TODO: check
+    substM $ DictTy ty
 
 instance HasType DictExpr where
   getTypeE e = dictExprType e
@@ -504,18 +508,6 @@ typeCheckPrimCon con = case con of
         def <- lookupDataDef defName
         cons <- checkedInstantiateDataDef def params
         e |: dataDefRep cons
-      DictTy (DictType _ clsName allParams) -> do
-        ClassDef _ _ pbs sbs methodTys <- lookupClassDef clsName
-        let (params, superclasses) = splitAt (nestLength pbs) allParams
-        Abs sbs' methodTys' <- checkedApplyNaryAbs (Abs pbs $ Abs sbs $ ListE methodTys) params
-        -- TODO: Check that this subst is well typed
-        ListE methodTys'' <- applySubst (sbs' @@> (SubstVal <$> superclasses)) methodTys'
-        thunkedMethodTys <- forM methodTys'' \(MethodType _ mty) -> case mty of
-          Pi _ -> return mty
-          _    -> do
-            Abs b mty' <- toConstAbs mty
-            return $ Pi $ PiType (PiBinder b UnitTy PlainArrow) Pure mty'
-        e |: ProdTy thunkedMethodTys
       _ -> error $ "Unsupported newtype: " ++ pprint ty
     return ty'
   BaseTypeRef p -> do
