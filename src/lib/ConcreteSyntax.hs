@@ -991,7 +991,7 @@ builtinNames = M.fromList
   , ("ptrStore" , OpExpr $ PtrStore () ())
   , ("dataConTag", OpExpr $ SumTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
-  , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
+  , ("outputStream", OpExpr $ OutputStream)
   , ("newtype"    , ConExpr $ Newtype () ())
   , ("projNewtype", OpExpr $ ProjBaseNewtype ())
   , ("projMethod0", OpExpr $ ProjMethod () 0)

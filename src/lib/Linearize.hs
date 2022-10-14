@@ -439,7 +439,7 @@ linearizeOp op = case op of
       \(PairE (ComposeE ts') v') -> emitOp $ VariantSplit ts' v'
   ThrowException _       -> notImplemented
   SumToVariant _         -> notImplemented
-  OutputStreamPtr        -> emitZeroT
+  OutputStream           -> emitZeroT
   _ -> notImplemented
   where
     emitZeroT = withZeroT $ liftM Var $ emit =<< substM (Op op)

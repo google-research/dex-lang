@@ -9,7 +9,7 @@
 module TopLevel (
   EvalConfig (..), Topper, TopperM, runTopperM,
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
-  evalSourceText, initTopState, TopStateEx (..), LibPath (..),
+  evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
   loadObject, toCFunction) where
 
@@ -93,6 +93,9 @@ class Monad m => PassCtxReader m where
   getPassCtx :: m PassCtx
   withPassCtx :: PassCtx -> m a -> m a
 
+class Monad m => RuntimeEnvReader m where
+  getRuntimeEnv :: m RuntimeEnv
+
 type TopLogger m = (MonadIO m, MonadLogger [Output] m)
 
 class ( forall n. Fallible (m n)
@@ -100,13 +103,15 @@ class ( forall n. Fallible (m n)
       , forall n. Catchable (m n)
       , forall n. ConfigReader (m n)
       , forall n. PassCtxReader (m n)
+      , forall n. RuntimeEnvReader (m n)
       , forall n. MonadIO (m n)  -- TODO: something more restricted here
       , TopBuilder m )
       => Topper m
 
 data TopperReaderData = TopperReaderData
   { topperPassCtx    :: PassCtx
-  , topperEvalConfig :: EvalConfig }
+  , topperEvalConfig :: EvalConfig
+  , topperRuntimeEnv :: RuntimeEnv }
 
 newtype TopperM (n::S) a = TopperM
   { runTopperM' :: TopBuilderT (ReaderT TopperReaderData (LoggerT [Output] IO)) n a }
@@ -115,7 +120,7 @@ newtype TopperM (n::S) a = TopperM
 
 -- Hides the `n` parameter as an existential
 data TopStateEx where
-  TopStateEx :: Distinct n => Env n -> TopStateEx
+  TopStateEx :: Distinct n => Env n -> RuntimeEnv -> TopStateEx
 
 -- Hides the `n` parameter as an existential
 data TopSerializedStateEx where
@@ -124,21 +129,28 @@ data TopSerializedStateEx where
 runTopperM :: EvalConfig -> TopStateEx
            -> (forall n. Mut n => TopperM n a)
            -> IO (a, TopStateEx)
-runTopperM opts (TopStateEx env) cont = do
+runTopperM opts (TopStateEx env rtEnv) cont = do
   let maybeLogFile = logFile opts
   (Abs frag (LiftE result), _) <- runLogger maybeLogFile \l -> runLoggerT l $
-    flip runReaderT (TopperReaderData initPassCtx opts) $
+    flip runReaderT (TopperReaderData initPassCtx opts rtEnv) $
       runTopBuilderT env $ runTopperM' do
         localTopBuilder $ LiftE <$> cont
-  return (result, extendTopEnv env frag)
+  return (result, extendTopEnv env rtEnv frag)
 
-extendTopEnv :: Distinct n => Env n -> TopEnvFrag n l -> TopStateEx
-extendTopEnv env frag = do
+extendTopEnv :: Distinct n => Env n -> RuntimeEnv -> TopEnvFrag n l -> TopStateEx
+extendTopEnv env rtEnv frag = do
   refreshAbsPure (toScope env) (Abs frag UnitE) \_ frag' UnitE ->
-    TopStateEx $ extendOutMap env frag'
+    TopStateEx (extendOutMap env frag') rtEnv
 
-initTopState :: TopStateEx
-initTopState = TopStateEx emptyOutMap
+initTopState :: IO TopStateEx
+initTopState = do
+  dyvarStores <- allocateDynamicVarKeyPtrs
+  return $ TopStateEx emptyOutMap dyvarStores
+
+allocateDynamicVarKeyPtrs :: IO DynamicVarKeyPtrs
+allocateDynamicVarKeyPtrs = do
+  ptr <- createTLSKey
+  return [(OutStreamDyvar, castPtr ptr)]
 
 -- ======
 
@@ -633,15 +645,17 @@ loadObject fname =
       (objCode, LinktimeNames funNames ptrNames) <- lookupFunObjCode fname
       funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
       ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
-      f <- liftIO $ linkFunObjCode objCode $ LinktimeVals funVals ptrVals
+      dyvarStores <- getRuntimeEnv
+      f <- liftIO $ linkFunObjCode objCode dyvarStores $ LinktimeVals funVals ptrVals
       extendLoadedObjects fname f
       return f
 
-linkFunObjCode :: FunObjCode -> LinktimeVals -> IO NativeFunction
-linkFunObjCode objCode (LinktimeVals funVals ptrVals) = do
+linkFunObjCode :: FunObjCode -> DynamicVarKeyPtrs -> LinktimeVals -> IO NativeFunction
+linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
   let (WithCNameInterface code mainFunName reqFuns reqPtrs dtors) = objCode
   let linkMap =   zip reqFuns (map castFunPtrToPtr funVals)
                <> zip reqPtrs ptrVals
+               <> dynamicVarLinkMap dyvarStores
   l <- createLinker
   addExplicitLinkMap l linkMap
   addObjectFile l code
@@ -700,8 +714,9 @@ evalLLVM block = do
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
   reqFunPtrs  <- forM reqFuns impNameToPtr
   reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
-  nativeFun <- liftIO $ linkFunObjCode obj $ LinktimeVals reqFunPtrs reqDataPtrs
+  dyvarStores <- getRuntimeEnv
   benchRequired <- requiresBench <$> getPassCtx
+  nativeFun <- liftIO $ linkFunObjCode obj dyvarStores $ LinktimeVals reqFunPtrs reqDataPtrs
   resultVals <- liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
@@ -822,8 +837,8 @@ loadCache = liftIO do
       decoded <- decode <$> BS.readFile cachePath
       case decoded of
         Right result -> fromSerializedEnv result
-        _            -> removeFile cachePath >> return initTopState
-    else return initTopState
+        _            -> removeFile cachePath >> initTopState
+    else initTopState
 {-# SCC loadCache #-}
 
 storeCache :: MonadIO m => TopStateEx -> m ()
@@ -845,18 +860,19 @@ snapshotPtrs bindings =
 
 traverseBindingsTopStateEx
   :: Monad m => TopStateEx -> (forall c n. Binding c n -> m (Binding c n)) -> m TopStateEx
-traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
+traverseBindingsTopStateEx (TopStateEx (Env tenv menv) dyvars) f = do
   defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
-  return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv)
+  return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv) dyvars
 
 fromSerializedEnv :: forall n m. MonadIO m => SerializedEnv n -> m TopStateEx
 fromSerializedEnv (SerializedEnv defs rules cache) = do
   Distinct <- return (fabricateDistinctEvidence :: DistinctEvidence n)
+  dyvarStores <- liftIO allocateDynamicVarKeyPtrs
   let topEnv = Env (TopEnv defs rules cache mempty mempty) mempty
-  restorePtrSnapshots $ TopStateEx topEnv
+  restorePtrSnapshots $ TopStateEx topEnv dyvarStores
 
 toSerializedEnv :: MonadIO m => TopStateEx -> m TopSerializedStateEx
-toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _)) = do
+toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _) _) = do
   collectGarbage (RecSubstFrag defs) ruleFreeVars cache \defsFrag'@(RecSubstFrag defs') cache' -> do
     let liveNames = toNameSet $ toScopeFrag defsFrag'
     let rules' = unsafeCoerceE $ CustomRules $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
@@ -901,6 +917,9 @@ instance PassCtxReader (TopperM n) where
     liftTopBuilderTWith (local \r -> r {topperPassCtx = ctx}) $
       runTopperM' cont
 
+instance RuntimeEnvReader (TopperM n) where
+  getRuntimeEnv = TopperM $ asks topperRuntimeEnv
+
 instance ConfigReader (TopperM n) where
   getConfig = TopperM $ asks topperEvalConfig
 
@@ -927,11 +946,11 @@ instance MonadLogger [Output] (TopperM n) where
     TopperM $ liftTopBuilderTWith (withLogger l) (runTopperM' cont)
 
 instance Generic TopStateEx where
-  type Rep TopStateEx = Rep (Env UnsafeS)
-  from (TopStateEx topState) = from (unsafeCoerceE topState :: Env UnsafeS)
+  type Rep TopStateEx = Rep (Env UnsafeS, RuntimeEnv)
+  from (TopStateEx env rtEnv) = from ((unsafeCoerceE env :: Env UnsafeS), rtEnv)
   to rep = do
     case fabricateDistinctEvidence :: DistinctEvidence UnsafeS of
-      Distinct -> TopStateEx (to rep :: Env UnsafeS)
+      Distinct -> uncurry TopStateEx (to rep :: (Env UnsafeS, RuntimeEnv))
 
 instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch

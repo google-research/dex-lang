@@ -252,7 +252,7 @@ transposeOp op ct = case op of
   SumTag _              -> notLinear
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
-  OutputStreamPtr       -> notLinear
+  OutputStream          -> notLinear
   ProjBaseNewtype _     -> unreachable
   Perform _ _           -> unreachable
   ProjMethod _ _        -> unreachable

@@ -4,7 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun, callDtor, BenchRequirement (..)) where
+module Runtime (loadLitVal, callNativeFun, callDtor, BenchRequirement (..),
+               createTLSKey, PThreadKey) where
 
 import Data.Int
 import GHC.IO.FD
@@ -193,3 +194,18 @@ readStream h action = go
     go = do
       eof <- hIsEOF h
       unless eof $ hGetLine h >>= action >> go
+
+-- ==== thread-local storage ===
+
+-- We use TLS to implement some dynamically scoped variables, like the file
+-- descriptor for the current output stream. We create the key here and we
+-- generate code for `pthread_setspecific` at entry functions and
+-- `pthread_getspecific` at use sites.
+
+data PThreadKey
+
+foreign import ccall "dex_pthread_key_create"
+  pthreadKeyCreate :: IO (Ptr PThreadKey)
+
+createTLSKey :: IO (Ptr (Ptr ()))
+createTLSKey = castPtr <$> pthreadKeyCreate

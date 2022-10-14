@@ -26,7 +26,6 @@ import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.IRBuilder.Module as MB
 
-
 import System.IO.Unsafe
 import qualified System.Environment as E
 import Control.Monad
@@ -118,7 +117,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
   let dtorDef = defineGlobalDtors globalDtors
   let resultModule = L.defaultModule
         { L.moduleName = "dexModule"
-        , L.moduleDefinitions = dtorDef : funDefns ++ ptrDefns ++ defns ++ externDefns }
+        , L.moduleDefinitions = dtorDef : funDefns ++ ptrDefns ++ defns ++ externDefns ++ dyvarDefs }
   let dtorNames = map (\(L.Name dname) -> C8BS.unpack $ SBS.fromShort dname) globalDtors
   return $ WithCNameInterface resultModule fName funNames ptrNames dtorNames
   where
@@ -195,7 +194,7 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
+    return ([L.GlobalDefinition mainFun], extraSpecs, [])
   CEntryFun -> liftCompile CPU env $ do
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CEntryFun doesn't support returning values"
@@ -203,7 +202,7 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
+    return ([L.GlobalDefinition mainFun], extraSpecs, [])
   EntryFun requiresCUDA -> liftCompile CPU env $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -218,7 +217,7 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     mainFun <- makeFunction fName
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
+    return ([L.GlobalDefinition mainFun], extraSpecs, [])
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
     arch <- liftIO $ getCudaArchitecture 0
@@ -555,7 +554,7 @@ compilePrimOp pop = case pop of
   Select      p  x y -> do
     pb <- p `asIntWidth` i1
     emitInstr (typeOf x) $ L.Select pb x y []
-  OutputStreamPtr -> return outputStreamPtr
+  OutputStream -> getOutputStream
   _ -> error $ "Can't JIT primop: " ++ pprint pop
 
 compileUnOp :: LLVMBuilder m => UnOp -> Operand -> m Operand
@@ -1064,24 +1063,6 @@ cpuBinaryIntrinsic op x y = case typeOf x of
     floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
 
--- === Output stream ===
-
--- TODO: replace all of this with a built-in print
-
-outputStreamPtrLName :: L.Name
-outputStreamPtrLName  = "*OUT_STREAM_PTR*"
-
-outputStreamPtrDef :: L.Definition
-outputStreamPtrDef = L.GlobalDefinition $ L.globalVariableDefaults
-  { L.name = outputStreamPtrLName
-  , L.type' = hostVoidp
-  , L.linkage = L.Private
-  , L.initializer = Just $ C.Null hostVoidp }
-
-outputStreamPtr :: Operand
-outputStreamPtr =
-  L.ConstantOperand $ globalReference (hostPtrTy hostVoidp) outputStreamPtrLName
-
 globalReference :: L.Type -> L.Name -> C.Constant
 #if MIN_VERSION_llvm_hs(15,0,0)
 globalReference = const C.GlobalReference
@@ -1096,10 +1077,55 @@ pointerType = const L.PointerType
 pointerType = L.PointerType
 #endif
 
+-- === Output stream ===
+
+getOutputStream :: LLVMBuilder m => m Operand
+getOutputStream = getDyvar OutStreamDyvar
+
 initializeOutputStream :: LLVMBuilder m => Operand -> m ()
 initializeOutputStream streamFD = do
   streamPtr <- emitExternCall fdopenFun [streamFD]
-  store outputStreamPtr streamPtr
+  setDyvar OutStreamDyvar streamPtr
+
+-- === Dynamically-scoped vars via thread-local pthreads vars ===
+
+dyvarDefs :: [L.Definition]
+dyvarDefs  = map makeDef [minBound..maxBound]
+  where
+    makeDef :: DynamicVar -> L.Definition
+    makeDef v =  L.GlobalDefinition $ L.globalVariableDefaults
+      { L.name = dynamicVarLName v
+      , L.type' = pthreadKeyTy
+      , L.linkage = L.External
+      , L.initializer = Nothing }
+
+dynamicVarLName :: DynamicVar -> L.Name
+dynamicVarLName v = fromString $ dynamicVarCName v
+
+setDyvar :: LLVMBuilder m => DynamicVar -> Operand -> m ()
+setDyvar v val = do
+  key <- getDyvarKey v
+  void $ emitExternCall pthread_setspecific [key, val]
+
+getDyvar :: LLVMBuilder m => DynamicVar -> m Operand
+getDyvar v = do
+  key <- getDyvarKey v
+  emitExternCall pthread_getspecific [key]
+
+getDyvarKey :: LLVMBuilder m => DynamicVar -> m Operand
+getDyvarKey v = do
+  let ref = globalReference (hostPtrTy pthreadKeyTy) $ dynamicVarLName v
+  load pthreadKeyTy (L.ConstantOperand ref)
+
+-- This is actually implementation-dependent, but we verify that it's true in dexrt.cpp
+pthreadKeyTy :: L.Type
+pthreadKeyTy = i32
+
+pthread_setspecific :: ExternFunSpec
+pthread_setspecific = ExternFunSpec "pthread_setspecific" i32 [] [] [pthreadKeyTy, hostVoidp]
+
+pthread_getspecific :: ExternFunSpec
+pthread_getspecific = ExternFunSpec "pthread_getspecific" hostVoidp [] [] [pthreadKeyTy]
 
 -- === Compile monad utilities ===
 
