@@ -400,8 +400,12 @@ emptyImportStatus = ImportStatus mempty mempty
 
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
+
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
+    -- This is to hold the results of translating specialized top-level
+    -- functions. TODO: `Cache` might not be the best term for this, since we
+    -- sometimes *require* that the cache entry exist.
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName FunObjCodeName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -556,9 +560,13 @@ data AtomBinding (n::S) =
    deriving (Show, Generic)
 
 data TopFunBinding (n::S) =
-   UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
- | SpecializedTopFun (SpecializationSpec n) -- Original (unspecialized) function, specialization args
- | SimpTopFun          (NaryLamExpr n)
+   -- This is for functions marked `@noinline`, before we've seen their use
+   -- sites and discovered what arguments we need to specialize on.
+   AwaitingSpecializationArgsTopFun Int (Atom n)
+   -- Specification of a specialized function. We still need to simplify, lower,
+   -- and translate-to-Imp this function. When we do that we'll store the result
+   -- in the `impCache`.
+ | SpecializedTopFun (SpecializationSpec n)
  | FFITopFun           (ImpFunName n)
    deriving (Show, Generic)
 
@@ -1784,23 +1792,20 @@ instance AlphaEqE AtomBinding
 instance AlphaHashableE AtomBinding
 
 instance GenericE TopFunBinding where
-  type RepE TopFunBinding = EitherE4
-    (LiftE Int `PairE` Atom)  -- UnspecializedTopFun
+  type RepE TopFunBinding = EitherE3
+    (LiftE Int `PairE` Atom)  -- AwaitingSpecializationArgsTopFun
     SpecializationSpec        -- SpecializedTopFun
-    NaryLamExpr               -- SimpTopFun
     ImpFunName                -- FFITopFun
   fromE = \case
-    UnspecializedTopFun n x  -> Case0 $ PairE (LiftE n) x
+    AwaitingSpecializationArgsTopFun n x  -> Case0 $ PairE (LiftE n) x
     SpecializedTopFun x -> Case1 x
-    SimpTopFun        x -> Case2 x
-    FFITopFun         x -> Case3 x
+    FFITopFun         x -> Case2 x
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (PairE (LiftE n) x) -> UnspecializedTopFun n x
+    Case0 (PairE (LiftE n) x) -> AwaitingSpecializationArgsTopFun n x
     Case1 x                   -> SpecializedTopFun x
-    Case2 x                   -> SimpTopFun        x
-    Case3 x                   -> FFITopFun         x
+    Case2 x                   -> FFITopFun         x
     _ -> error "impossible"
   {-# INLINE toE #-}
 

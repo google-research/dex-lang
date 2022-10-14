@@ -445,9 +445,8 @@ instance Pretty (AtomBinding n) where
 
 instance Pretty (TopFunBinding n) where
   pretty = \case
-    UnspecializedTopFun _ f -> p f
+    AwaitingSpecializationArgsTopFun _ f -> p f
     SpecializedTopFun f -> p f
-    SimpTopFun f -> p f
     FFITopFun  f -> p f
 
 instance Pretty (SpecializationSpec n) where

@@ -185,18 +185,14 @@ instance CheckableE AtomBinding where
     TopFunBound ty f -> do
       ty' <- substM ty
       TopFunBound ty' <$> case f of
-        UnspecializedTopFun n f' -> do
+        AwaitingSpecializationArgsTopFun n f' -> do
           f'' <- checkTypeE (naryPiTypeAsType ty') f'
-          return $ UnspecializedTopFun n f''
+          return $ AwaitingSpecializationArgsTopFun n f''
         SpecializedTopFun s -> do
            specializedTy <- specializedFunType =<< substM s
            matches <- alphaEq ty' specializedTy
            unless matches $ throw TypeErr "Specialization args don't match function type"
            substM f
-        SimpTopFun lam -> do
-          lam' <- substM lam
-          dropSubst $ checkNaryLamExpr lam' ty'
-          return $ SimpTopFun lam'
         FFITopFun name -> do
           _ <- checkFFIFunTypeM ty'
           FFITopFun <$> substM name
@@ -940,8 +936,8 @@ checkTabApp tabTy xs = go tabTy $ toList xs
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
 
-checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
-checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
+_checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
+_checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
 
 asNaryPiType :: Type n -> Maybe (NaryPiType n)
 asNaryPiType ty = case ty of

@@ -608,7 +608,7 @@ execUDecl mname decl = do
           asSpecializableFunction ty >>= \case
             Just (n, fty) -> do
               f <- emitBinding (getNameHint p) $
-                AtomNameBinding $ TopFunBound fty $ UnspecializedTopFun n result
+                AtomNameBinding $ TopFunBound fty $ AwaitingSpecializationArgsTopFun n result
               -- warm up cache if it's already sufficiently specialized
               -- (this is actually here as a workaround for some sort of
               -- caching/linking bug that occurs when we deserialize compilation artifacts).
@@ -685,7 +685,7 @@ specializedFunPreSimpDefinition fname = do
 forceDeferredInlining :: EnvReader m => AtomName n -> m n (Atom n)
 forceDeferredInlining v =
   lookupAtomName v >>= \case
-    TopFunBound _ (UnspecializedTopFun _ f) -> return f
+    TopFunBound _ (AwaitingSpecializationArgsTopFun _ f) -> return f
     _ -> return $ Var v
 
 toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)

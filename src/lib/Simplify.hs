@@ -365,7 +365,7 @@ simplifyApp f xs =
         dropSubst $ simplifyExpr caseExpr
       Var v ->
         lookupAtomName v >>= \case
-          TopFunBound _ (UnspecializedTopFun numSpecializationArgs _) ->
+          TopFunBound _ (AwaitingSpecializationArgsTopFun numSpecializationArgs _) ->
             case splitAtExact numSpecializationArgs (toList xs) of
               Just (specializationArgs, runtimeArgs) -> do
                 (spec, extraArgs) <- determineSpecializationSpec v specializationArgs
