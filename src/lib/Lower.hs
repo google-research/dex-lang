@@ -540,12 +540,12 @@ instance GenericTraverser LFS where
         traverseLamBinder b \b' -> Lam . LamExpr b' <$> do
           block'@(Block ann decls ans) <- traverseGenericE block
           case ann of
-            BlockAnn bTy bEffs@(EffectRow effs _) | IOEffect `S.member` effs ->
+            BlockAnn bTy bEffs@(EffectRow effs _) | InitEffect `S.member` effs ->
               buildBlock $ Var <$> do
-                emit . Hof . RunIO =<< withFreshBinder noHint UnitTy \iob -> do
+                emit . Hof . RunInit =<< withFreshBinder noHint UnitTy \initb -> do
                   bEffs' <- sinkM bEffs
                   Abs decls' ans' <- sinkM $ Abs decls ans
-                  return $ Lam $ LamExpr (LamBinder iob UnitTy PlainArrow bEffs') $
+                  return $ Lam $ LamExpr (LamBinder initb UnitTy PlainArrow bEffs') $
                     Block (BlockAnn (sink bTy) bEffs') decls' ans'
             _ -> return block'
       return $ Con $ Newtype dty' $ ProdVal methods'

@@ -831,6 +831,11 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect IOEffect $ declareEffs eff'
     return resultTy'
+  RunInit f -> do
+    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
+    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
+    extendAllowedEffect InitEffect $ declareEffs eff'
+    return resultTy'
   CatchException f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
     PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy

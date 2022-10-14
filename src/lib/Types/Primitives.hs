@@ -163,6 +163,7 @@ data PrimHof e =
       | RunWriter (Maybe e) (BaseMonoidP e) e
       | RunState  (Maybe e) e e
       | RunIO e
+      | RunInit e
       | CatchException e
       | Linearize e
       | Transpose e

@@ -719,6 +719,9 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunIO f -> do
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ ignoreHoistFailure $ hoist b resultTy
+  RunInit f -> do
+    Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
+    return $ ignoreHoistFailure $ hoist b resultTy
   CatchException f -> do
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ MaybeTy $ ignoreHoistFailure $ hoist b resultTy
@@ -806,6 +809,9 @@ exprEffects expr = case expr of
     RunIO f -> do
       effs <- functionEffs f
       return $ deleteEff IOEffect effs
+    RunInit f -> do
+      effs <- functionEffs f
+      return $ deleteEff InitEffect effs
     CatchException f -> do
       effs <- functionEffs f
       return $ deleteEff ExceptionEffect effs
