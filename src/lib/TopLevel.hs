@@ -714,8 +714,8 @@ checkPass name cont = do
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
   let allowedEffs = case name of
-                      LowerPass    -> OneEffect IOEffect
-                      LowerOptPass -> OneEffect IOEffect
+                      LowerPass    -> OneEffect InitEffect
+                      LowerOptPass -> OneEffect InitEffect
                       _            -> mempty
   {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
     withAllowedEffects allowedEffs $ checkTypesM result
