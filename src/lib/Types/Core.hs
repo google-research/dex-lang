@@ -174,6 +174,10 @@ data LamExpr (n::S) where
 
 type IxDict = Atom
 
+-- TODO: use this in projectIxFinMethod too
+data IxMethod = Size | Ordinal | UnsafeFromOrdinal
+     deriving (Show, Generic, Enum, Bounded)
+
 data IxType (n::S) =
   IxType { ixTypeType :: Type n
          , ixTypeDict :: IxDict n }
@@ -295,6 +299,10 @@ data DictExpr (n::S) =
  | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (Atom n)
+   -- Used for dicts defined by top-level functions, which may take extra data parameters
+   -- TODO: consider bundling `(DictType n, [AtomName n])` as a top-level
+   -- binding for some `Name DictNameC` to make the IR smaller.
+ | ExplicitMethods (DictType n) [AtomName n] [Atom n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -572,10 +580,11 @@ data TopFunBinding (n::S) =
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-  -- The additional binders are for "data" components of the specialization types, like
-  -- `n` in `Fin n`.
-  AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
-  deriving (Show, Generic)
+   -- The additional binders are for "data" components of the specialization types, like
+   -- `n` in `Fin n`.
+   AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
+ | IxMethodSpecialization IxMethod (Abs (Nest Binder) IxDict n)
+   deriving (Show, Generic)
 
 atomBindingType :: Binding AtomNameC n -> Type n
 atomBindingType (AtomNameBinding b) = case b of
@@ -2230,6 +2239,7 @@ instance Store (SerializedEnv n)
 instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
 instance Store Projection
+instance Store IxMethod
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

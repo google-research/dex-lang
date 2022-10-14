@@ -135,6 +135,7 @@ emitAtomToName x = emit (Atom x)
 class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
   emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
                  => Abs TopEnvFrag e n -> m n (Maybe (e n))
+  willItHoist :: HoistableE e => e n -> m n Bool
 
 liftTopBuilderHoisted
   :: (HoistingTopBuilder m, SubstE Name e, SinkableE e, HoistableE e)

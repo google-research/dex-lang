@@ -31,7 +31,7 @@ import Syntax
 import Optimize (peepholeOp)
 import CheckType (CheckableE (..), isData)
 import Util ( enumerate, foldMapM, restructure, toSnocList
-            , splitAtExact, SnocList, snoc, emptySnocList)
+            , splitAtExact, SnocList, snoc, emptySnocList, forMFilter)
 import QueryType
 import CheapReduction
 import Linearize
@@ -381,6 +381,26 @@ simplifyApp f xs =
       Lam lam -> return $ Left lam
       _ -> Right <$> simplifyAtomAndInline func
 
+emitIxDictSpecialization :: HoistingTopBuilder m => DictType n -> DictExpr n -> m n (DictExpr n)
+emitIxDictSpecialization dictTy ixDict = do
+  (ixDictAbs, params) <- generalizeIxDict ixDict
+  methodImplNames <- forM [minBound..maxBound] \methodName ->
+    getSpecializedFunction $ IxMethodSpecialization methodName ixDictAbs
+  return $ ExplicitMethods dictTy methodImplNames params
+
+-- TODO: we could get more cache hits if we abstract more than necessary,
+-- based on whether parameters are data or nondata. E.g. abstract `Fin 10`
+-- as `(\n. Fin n) 10` instead of not abstracting it at all.
+generalizeIxDict :: (HoistingTopBuilder m, EnvReader m) => DictExpr n -> m n (Generalized Atom n)
+generalizeIxDict d = do
+  (typedVs, atoms) <- unzip <$> forMFilter (freeAtomVarsList d) \v ->
+    willItHoist v >>= \case
+      True -> do
+        ty <- getType v
+        return $ Just ((v, ty), Var v)
+      False -> return Nothing
+  return (abstractFreeVars typedVs (DictCon d), atoms)
+
 -- | Like `simplifyAtom`, but will try to inline function definitions found
 -- in the environment. The only exception is when we're going to differentiate
 -- and the function has a custom derivative rule defined.
@@ -482,8 +502,7 @@ generalizeInstance (DictType "Ix" _ [TC (Fin n)]) (DictCon (IxFin _)) =
   return $ DictCon (IxFin n)
 generalizeInstance _ x = return x
 
-getSpecializedFunction
-  :: (HoistingTopBuilder m, Mut n) => SpecializationSpec n -> m n (AtomName n)
+getSpecializedFunction :: HoistingTopBuilder m => SpecializationSpec n -> m n (AtomName n)
 getSpecializedFunction s = do
   querySpecializationCache s >>= \case
     Just name -> return name
@@ -551,7 +570,12 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
   TypeCon _ _ _ -> substM atom
-  DictCon d -> DictCon <$> substM d
+  DictCon d -> do
+    d' <- substM d
+    dTy <- getType d'
+    DictCon <$> case dTy of
+      DictTy dTy'@(DictType "Ix" _ _) -> emitIxDictSpecialization dTy' d'
+      _ -> return d'
   DictTy  t -> DictTy  <$> substM t
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
