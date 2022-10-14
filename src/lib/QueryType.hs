@@ -796,7 +796,7 @@ exprEffects expr = case expr of
     IOFree   _    -> return $ OneEffect IOEffect
     PtrLoad  _    -> return $ OneEffect IOEffect
     PtrStore _ _  -> return $ OneEffect IOEffect
-    Place    _ _  -> return $ OneEffect IOEffect
+    Place    _ _  -> return $ OneEffect InitEffect
     _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
@@ -804,8 +804,8 @@ exprEffects expr = case expr of
     Linearize _   -> return Pure  -- Body has to be a pure function
     Transpose _   -> return Pure  -- Body has to be a pure function
     RunReader _ f -> rwsFunEffects Reader f
-    RunWriter d _ f -> rwsFunEffects Writer f <&> maybeIO d
-    RunState  d _ f -> rwsFunEffects State  f <&> maybeIO d
+    RunWriter d _ f -> rwsFunEffects Writer f <&> maybeInit d
+    RunState  d _ f -> rwsFunEffects State  f <&> maybeInit d
     RunIO f -> do
       effs <- functionEffs f
       return $ deleteEff IOEffect effs
@@ -817,8 +817,8 @@ exprEffects expr = case expr of
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
     RememberDest _ f -> functionEffs f
-    where maybeIO :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
-          maybeIO d = case d of Just _ -> (<>OneEffect IOEffect); Nothing -> id
+    where maybeInit :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
+          maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
   Handle v _ body -> do
     HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef

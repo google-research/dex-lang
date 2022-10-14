@@ -753,7 +753,7 @@ typeCheckPrimOp op = case op of
   Place ref val -> do
     ty <- getTypeE val
     ref |: RawRefTy ty
-    declareEff IOEffect
+    declareEff InitEffect
     return UnitTy
   Freeze ref -> do
     RawRefTy ty <- getTypeE ref
@@ -815,7 +815,7 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
       Nothing -> return ()
       Just dest -> do
         dest |: RawRefTy accTy
-        declareEff IOEffect
+        declareEff InitEffect
     return $ PairTy resultTy accTy
   RunState d s f -> do
     (resultTy, stateTy) <- checkRWSAction State f
@@ -824,7 +824,7 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
       Nothing -> return ()
       Just dest -> do
         dest |: RawRefTy stateTy
-        declareEff IOEffect
+        declareEff InitEffect
     return $ PairTy resultTy stateTy
   RunIO f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
