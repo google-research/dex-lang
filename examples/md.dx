@@ -162,9 +162,10 @@ def draw_system {n} (r: n=>Vec TwoDimensions) : Diagram =
 '## Example
 Initialize a system randomly.
 
-N = 256
+N = 5000
 d = 2
 L = box_size_at_number_density (n_to_i N) 1.2 (n_to_i d)
+L
 
 R = rand_mat N d (\k. L * rand k) (new_key 0)
 
@@ -286,7 +287,7 @@ desired_cell_size = 1.0
 
 cells_per_side = floor(L / desired_cell_size)
 
-cell_size = ceil(L / cells_per_side)
+cell_size = L / cells_per_side
 
 grid_size = unsafe_i_to_n $ f_to_i cells_per_side
 
@@ -302,7 +303,7 @@ as_list tbl.(unsafe_from_ordinal _ 0)
 '### Now let's compute pairs of neighbors from our cell list
 
 cell_neighbors_2d = [[-1, -1], [-1, 0], [-1, 1], [0, -1],
-                     [0, 1], [1, -1], [1, 0], [1, 1]]
+                     [0, 0], [0, 1], [1, -1], [1, 0], [1, 1]]
 
 :t cell_neighbors_2d
 
@@ -310,7 +311,7 @@ def torus_offset {n} (ix: (Fin n)) (offset: Int) : (Fin n) =
   unsafe_from_ordinal _ $ unsafe_i_to_n $
     mod (n_to_i (ordinal ix) + offset) (n_to_i n)
 
-neighbor_list_size = 1000
+neighbor_list_size = 40000
 
 %time
 def neighbor_list {grid_size bucket_size atom_ix}
@@ -340,4 +341,51 @@ def neighbor_list {grid_size bucket_size atom_ix}
 %time
 res = neighbor_list neighbor_list_size tbl $ get_position state'
 
-as_list res
+(AsList k _) = as_list res
+k
+
+def pair_energy_nl {dim n}
+  (energy: Float -> Float)
+  (displacement: Displacement dim)
+  (r: n=>Vec dim)
+  (neighbors: List (n & n))
+  : Float =
+  (AsList k nbrs) = neighbors
+  sum for i.
+    a1ix, a2ix = nbrs.i
+    case (ordinal a1ix) < (ordinal a2ix) of
+      True  -> energy $ norm $ displacement r.a1ix r.a2ix
+      False -> 0.0
+
+def energy_nl {n d} (neighbors: List (n & n)) (pos: n=>d=>Float) : Float
+  = pair_energy_nl (harmonic_soft_sphere 1.0) (periodic_displacement L) pos neighbors
+
+energy_nl (as_list res) (get_position state')
+
+energy (get_position state')
+
+
+def just_neighbor_list {n} (atoms:n=>(Fin 2)=>Float) : (List (n & n)) =
+  tbl = cell_table grid_size bucket_size cell_size atoms
+  res = neighbor_list neighbor_list_size tbl atoms
+  as_list res
+
+%time
+state_nl = fire_descent_init 0.1 0.1 (energy_nl $ just_neighbor_list R) R
+
+energy R
+energy $ get_position $ fire_descent_step free_shift energy state
+
+%time
+(state_nl', energies_nl) = scan state \i:(Fin 100) s.
+  nbrs = just_neighbor_list $ get_position s
+  s' = fire_descent_step (periodic_shift L) (energy_nl nbrs) s
+  (s', (energy_nl nbrs) $ get_position s')
+
+%time
+:html show_plot $ y_plot energies_nl
+
+%time
+:html render_svg (draw_system (get_position state_nl')) ((0.0, 0.0), (L, L))
+
+L
