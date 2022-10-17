@@ -1119,7 +1119,13 @@ getDyvarKey v = do
 
 -- This is actually implementation-dependent, but we verify that it's true in dexrt.cpp
 pthreadKeyTy :: L.Type
+#if defined(linux_HOST_OS)
 pthreadKeyTy = i32
+#elif defined(darwin_HOST_OS)
+pthreadKeyTy = i64
+#else
+# error Unsupported OS
+#endif
 
 pthread_setspecific :: ExternFunSpec
 pthread_setspecific = ExternFunSpec "pthread_setspecific" i32 [] [] [pthreadKeyTy, hostVoidp]
