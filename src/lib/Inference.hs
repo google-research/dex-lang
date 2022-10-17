@@ -1012,6 +1012,26 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           _ -> throw TypeErr $ "Can't reduce type expression: " ++
                  docAsStr (prettyBlock decls piResult)
     matchRequirement $ TabPi piTy
+  UDepPairTy (UDepPairType (UPatAnn (WithSrcB pos' pat) ann) rhs) -> do
+    ann' <- checkAnn ann
+    depPairTy <- addSrcContext pos' do
+      buildDepPairTyInf (getNameHint pat) ann' \v -> do
+        Abs decls result <- buildDeclsInf do
+          v' <- sinkM v
+          bindLamPat (WithSrcB pos' pat) v' (checkUType rhs)
+        cheapReduceWithDecls decls result >>= \case
+          (Just rhs', DictTypeHoistSuccess, []) -> return rhs'
+          _ -> throw TypeErr $ "Can't reduce type expression: " ++
+                 docAsStr (prettyBlock decls result)
+    matchRequirement $ DepPairTy depPairTy
+  UDepPair lhs rhs -> do
+    case reqTy of
+      Check (DepPairTy ty@(DepPairType (_ :> lhsTy) _)) -> do
+        lhs' <- checkSigmaDependent lhs lhsTy
+        rhsTy <- instantiateDepPairTy ty lhs'
+        rhs' <- checkSigma rhs rhsTy
+        return $ DepPair lhs' rhs' ty
+      _ -> throw TypeErr $ "Can't infer the type of a dependent pair; please annotate it"
   UDecl (UDeclExpr (ULet letAnn (UPatAnn p ann) rhs) body) -> do
     val <- checkMaybeAnnExpr ann rhs
     var <- emitDecl (getNameHint p) letAnn $ Atom val
@@ -2948,6 +2968,15 @@ buildTabPiInf hint ty body = do
     buildAbsInf hint ty \v ->
       withAllowedEffects Pure $ body v
   return $ TabPiType (b:>ty) resultTy
+
+buildDepPairTyInf
+  :: EmitsInf n
+  => NameHint -> Type n
+  -> (forall l. (EmitsInf l, Ext n l) => AtomName l -> InfererM i l (Type l))
+  -> InfererM i n (DepPairType n)
+buildDepPairTyInf hint ty body = do
+  Abs (b:>_) resultTy <- buildAbsInf hint ty body
+  return $ DepPairType (b :> ty) resultTy
 
 buildAltInf
   :: EmitsInf n

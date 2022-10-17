@@ -251,7 +251,7 @@ instance PrettyPrec (Atom n) where
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
-        parens $ p x <> ",>" <+> p y
+        parens $ p x <+> ",>" <+> p y
     TC  e -> prettyPrec e
     NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
@@ -647,6 +647,11 @@ instance PrettyPrec (UTabPiExpr n) where
   prettyPrec (UTabPiExpr pat ty) = atPrec LowestPrec $ align $
     p pat <+> "=>" <+> pLowest ty
 
+instance Pretty (UDepPairType n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UDepPairType n) where
+  prettyPrec (UDepPairType pat ty) = atPrec LowestPrec $ align $
+    p pat <+> "&>" <+> pLowest ty
+
 instance Pretty (UDeclExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UDeclExpr n) where
   prettyPrec (UDeclExpr decl body) = atPrec LowestPrec $ align $
@@ -667,6 +672,9 @@ instance PrettyPrec (UExpr' n) where
                              Rev -> "rof"
     UPi piType -> prettyPrec piType
     UTabPi piType -> prettyPrec piType
+    UDepPairTy depPairType -> prettyPrec depPairType
+    UDepPair lhs rhs -> atPrec ArgPrec $ parens $
+      p lhs <+> ",>" <+> p rhs
     UDecl declExpr -> prettyPrec declExpr
     UHole -> atPrec ArgPrec "_"
     UTypeAnn v ty -> atPrec LowestPrec $
@@ -1169,8 +1177,10 @@ instance Pretty Bin' where
   pretty (EvalBinOp name) = fromString name
   pretty Juxtapose = " "
   pretty Ampersand = "&"
+  pretty DepAmpersand = "&>"
   pretty IndexingDot = "."
   pretty Comma = ","
+  pretty DepComma = ",>"
   pretty Colon = ":"
   pretty DoubleColon = "::"
   pretty Dollar = "$"

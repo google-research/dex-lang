@@ -520,6 +520,24 @@ foo : Fin 3 => Float = [1.0, 2.0, 3.0]
 > foo : Fin 3 => Float = [1.0, 2.0, 3.0]
 > ^^^^
 
+'### Tests for dependent pair syntax
+
+buffer = [0, 1, 2, 3, 4]
+
+tp = (n:Nat &> (Fin n) => Nat)
+
+pair = (5 ,> buffer) :: tp
+
+:t pair
+> (n:Nat &> ((Fin n) => Nat))
+
+'Check that dependent pairs typecheck across a case, and that they print sensibly.
+
+if False
+  then (5 ,> buffer) :: tp
+  else (3 ,> for i:(Fin 3). (ordinal i) * 2) :: tp
+> (3 ,> [0, 2, 4]) :: (n:Nat &> ((Fin n) => Nat))
+
 '### Tests for function VSpace
 
 :p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
