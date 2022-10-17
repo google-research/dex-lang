@@ -783,7 +783,7 @@ typeCheckPrimOp op = case op of
     i |: binderType b
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
-    return ty'
+    return $ RawRefTy ty'
   -- TODO(alex): check the argument
   Resume retTy _argTy -> do
     checkTypeE TyKind retTy

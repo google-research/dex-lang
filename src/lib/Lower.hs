@@ -750,11 +750,13 @@ instance PrettyPrec (VSubstValC c n) where
 
 type TopVectorizeM = BuilderT (ReaderT Word32 HardFailM)
 
-vectorizeLoops :: EnvReader m => Word32 -> Block n -> m n (Block n)
-vectorizeLoops vectorByteWidth (Block _ decls ans) = do
-  liftM (runHardFail . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
-    s <- vectorizeLoopsRec emptyInFrag decls
-    applySubst s ans
+vectorizeLoops :: EnvReader m => Word32 -> IxDestBlock n -> m n (IxDestBlock n)
+vectorizeLoops vectorByteWidth ixDestBlock = liftEnvReaderM do
+  refreshAbs ixDestBlock \xs destBlock ->
+    Abs xs <$> refreshAbs destBlock \d (Block _ decls ans) ->
+      liftM (Abs d . runHardFail . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
+        s <- vectorizeLoopsRec emptyInFrag decls
+        applySubst s ans
 {-# INLINE vectorizeLoops #-}
 
 vectorizeLoopsRec :: (Ext i o, Emits o)
@@ -782,7 +784,7 @@ vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              -> TopVectorizeM o (Atom o)
 vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
   case eff of
-    Pure -> do
+    _ -> do
       ty' <- case ty of
         ProdTy [_, ref] -> do
           ref' <- applySubst frag ref
@@ -791,9 +793,9 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
       liftM (runHardFail . (`runReaderT` loopWidth)) $ liftBuilderT $ do
         buildLam (getNameHint b) arr (sink ty') Pure \ci -> do
           (vi, dest) <- fromPair $ Var ci
-          viOrd <- emitOp $ CastOp IdxRepTy vi
-          iOrd <- emitOp $ BinOp IMul viOrd (IdxRepVal loopWidth)
-          i <- emitOp $ CastOp (sink newIxTy) iOrd
+          let viOrd = unwrapBaseNewtype $ unwrapBaseNewtype vi
+          iOrd <- imul viOrd $ IdxRepVal loopWidth
+          let i = Con $ Newtype (sink newIxTy) $ Con $ Newtype NatTy iOrd
           let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
     _ -> error "Effectful loop vectorization not implemented!"
@@ -894,7 +896,17 @@ vectorizeAtom atom = case atom of
   Var v -> lookupSubstM v
   ProjectElt p v -> do
     VVal vv v' <- lookupSubstM v
-    return $ VVal (projStability (reverse $ NE.toList p) vv) $ getProjection (NE.toList p) v'
+    let ov = projStability (reverse $ NE.toList p) vv
+    let p' = case ov of
+               -- Uniform and contiguous values are always of the original type.
+               Uniform -> NE.toList p
+               Contiguous -> NE.toList p
+               -- Vectors of base newtypes are already newtype-stripped.
+               Varying -> NE.filter (/= UnwrapBaseNewtype) p
+               -- Product types cannot be projected out of base newtypes,
+               -- so no need to filter.
+               ProdStability _ -> NE.toList p
+    return $ VVal ov $ getProjection p' v'
   Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
   _ -> do
     subst <- getSubst

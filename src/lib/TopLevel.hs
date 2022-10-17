@@ -577,7 +577,7 @@ evalBlock typed = do
       instIx <- simplifyIx explicitIx
       lowered <- checkPass LowerPass $ lowerFullySequential instIx
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
-        (dceIxDestBlock >=> hoistLoopInvariantIxDest)
+        (dceIxDestBlock >=> hoistLoopInvariantIxDest >=> vectorizeLoops 64)
       evalBackend lopt
   applyRecon recon result
 {-# SCC evalBlock #-}
