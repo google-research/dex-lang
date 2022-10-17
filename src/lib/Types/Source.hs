@@ -91,6 +91,8 @@ data UExpr' (n::S) =
  | UApp (UExpr n) (UExpr n)
  | UTabLam (UTabLamExpr n)
  | UTabPi  (UTabPiExpr n)
+ | UDepPairTy (UDepPairType n)
+ | UDepPair (UExpr n) (UExpr n)
  | UTabApp (UExpr n) (UExpr n)
  | UDecl (UDeclExpr n)
  | UFor Direction (UForExpr n)
@@ -129,6 +131,9 @@ data UTabLamExpr (n::S) where
 
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UPatAnn n l -> UType l -> UTabPiExpr n
+
+data UDepPairType (n::S) where
+  UDepPairType :: UPatAnn n l -> UType l -> UDepPairType n
 
 data UDeclExpr (n::S) where
   UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
@@ -571,6 +576,7 @@ deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
 deriving instance Show (UTabLamExpr n)
 deriving instance Show (UTabPiExpr n)
+deriving instance Show (UDepPairType n)
 deriving instance Show (UDeclExpr n)
 deriving instance Show (UDataDef n)
 deriving instance Show (UDecl n l)

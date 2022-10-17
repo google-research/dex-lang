@@ -126,8 +126,10 @@ data Bin'
   = Juxtapose
   | EvalBinOp String
   | Ampersand
+  | DepAmpersand
   | IndexingDot
   | Comma
+  | DepComma
   | Colon
   | DoubleColon
   | Dollar
@@ -141,8 +143,10 @@ data Bin'
 interp_operator :: String -> Bin'
 interp_operator = \case
   "&"   -> Ampersand
+  "&>"  -> DepAmpersand
   "."   -> IndexingDot
   ","   -> Comma
+  ",>"  -> DepComma
   ":"   -> Colon
   "::"  -> DoubleColon
   "$"   -> Dollar
@@ -810,7 +814,9 @@ ops =
   -- tuples are internally represented curried, so this puts the new
   -- element in front.
   , [symOpR   ","]
+  , [symOpR  ",>"]
   , [symOpR   "&"]
+  , [symOpR  "&>"]
   , [symOpL   "|"]
   ] where
   juxtaposition = ("space", Expr.InfixL $ opWithSrc $ sc $> (binApp Juxtapose))

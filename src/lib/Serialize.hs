@@ -136,6 +136,11 @@ prettyVal val = case val of
     Newtype (TypeCon _ dataDefName _) e -> prettyData dataDefName 0 e
     SumAsProd _ _ _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
+  DepPair lhs rhs ty -> do
+    lhs' <- prettyVal lhs
+    rhs' <- prettyVal rhs
+    ty' <- prettyVal $ DepPairTy ty
+    return $ "(" <> lhs' <+> ",>" <+> rhs' <> ")" <+> "::" <+> ty'
   atom -> return $ prettyPrec atom LowestPrec
   where
     prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> Atom n -> m n (Doc ann)

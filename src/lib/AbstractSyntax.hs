@@ -443,7 +443,11 @@ expr = propagateSrcE expr' where
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
       (EvalBinOp s) -> evalOp s
       Ampersand     -> evalOp "(&)"
+      DepAmpersand  -> do
+        lhs' <- tyOptPat lhs
+        UDepPairTy . (UDepPairType lhs') <$> expr rhs
       Comma         -> evalOp "(,)"
+      DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
       Pipe          -> evalOp "(|)"
       Equal         -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
       Question      -> throw SyntaxErr "Question mark separates labeled row elements, is not a standalone operator"
