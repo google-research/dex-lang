@@ -124,7 +124,7 @@ interface HasStandardNormal a:Type
 
 instance HasStandardNormal Float32
   rand_normal = randn
-instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+instance HasStandardNormal (n=>a) given {a n} [HasStandardNormal a]
   rand_normal = \key.
     for i. rand_normal (ixkey key i)
 
@@ -142,11 +142,11 @@ interface [HasStandardNormal v] HasBrownianSheet a:Type v:Type
                       -- tolerance -> key -> input -> output
   sample_brownian_sheet : Float -> Key -> a -> v
 
-instance {v} [HasStandardNormal v, VSpace v] HasBrownianSheet Float v
+instance HasBrownianSheet Float v given {v} [HasStandardNormal v, VSpace v]
   sample_brownian_sheet = \tol k x.
     sample_brownian_motion tol rand_normal k x
 
-instance {a v} [VSpace v, HasBrownianSheet a v] HasBrownianSheet (a & Float) v
+instance HasBrownianSheet (a & Float) v given {a v} [VSpace v, HasBrownianSheet a v]
   sample_brownian_sheet = \tol k (xa, xb).
     -- the call to `sample_brownian_sheet` below will recurse
     -- until the input is one-dimensional.

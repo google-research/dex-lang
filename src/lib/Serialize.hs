@@ -66,7 +66,7 @@ getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs 
       TabLam (TabLamExpr i body) <- return tabAtom
       FinConst n <- return $ binderType i
       Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
-      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (0 NE.:| [0]) i')))) <- return offDecl
+      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (UnwrapBaseNewtype NE.:| [UnwrapBaseNewtype]) i')))) <- return offDecl
       guard $ binderName i == i'
       Let r (DeclBinding _ _ loadExpr) <- return loadDecl
       guard $ binderName r == result

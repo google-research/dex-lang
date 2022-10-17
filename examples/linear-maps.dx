@@ -50,7 +50,7 @@ instance HasDeterminant ScalarMap
   transpose' = id
   identity' = MkScalarMap 1.0
 
-instance {v} [Mul v, VSpace v] LinearEndo ScalarMap v
+instance LinearEndo ScalarMap v given {v} [Mul v, VSpace v]
   apply =  \(MkScalarMap a) b. a .* b
   diag =   \(MkScalarMap a).   a .* one
   solve' = \(MkScalarMap a) b. b / a
@@ -64,31 +64,31 @@ instance Arbitrary ScalarMap
 data DiagMap n [Ix n] =
   MkDiagMap (n=>Float)
 
-instance {n} HasDeterminant (DiagMap n)
+instance HasDeterminant (DiagMap n) given {n}
   determinant' = \(MkDiagMap x). prod x
   transposeType = n=>Float
   transpose' = id
   identity' = MkDiagMap one
 
-instance {n v} [Mul v, VSpace v] LinearEndo (DiagMap n) (n=>v)
+instance LinearEndo (DiagMap n) (n=>v) given {n v} [Mul v, VSpace v]
   apply =  \(MkDiagMap x) y. for i. x.i .* y.i
   diag =   \(MkDiagMap a).   for i. a.i .* one
   solve' = \(MkDiagMap a) b. for i. b.i / a.i
 
-instance {n} Arbitrary (DiagMap n)
+instance Arbitrary (DiagMap n) given {n}
   arb = \k. MkDiagMap $ arb k
 
 
 '### Full-rank matrices.
 I didn't use a newtype for these, but I'm not sure if that's the right call.
 
-instance {n} HasDeterminant (n=>n=>Float)
+instance HasDeterminant (n=>n=>Float) given {n}
   determinant' = determinant
   transposeType = n=>n=>Float
   transpose' = transpose
   identity' = eye
 
-instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
+instance LinearEndo (n=>n=>Float) (n=>v) given {n v} [Mul v, VSpace v]
   apply = \x y. for i. sum for j. x.i.j .* y.j
   diag = \x. for i. x.i.i .* one
   solve' = solve
@@ -99,18 +99,18 @@ instance {n v} [Mul v, VSpace v] LinearEndo (n=>n=>Float) (n=>v)
 data LowerTriMap n [Ix n] =
   MkLowerTriMap ((i:n)=>(..i)=>Float)
 
-instance {n} HasDeterminant (LowerTriMap n)
+instance HasDeterminant (LowerTriMap n) given {n}
   determinant' = \(MkLowerTriMap x). prod $ lower_tri_diag x
   transposeType = UpperTriMat n Float
   transpose' = error "Can't transpose to different types yet."
   identity' = MkLowerTriMap for i j. select (ordinal i == ordinal j) one zero
 
-instance {n v} [Mul v, VSpace v] LinearEndo (LowerTriMap n) (n=>v)
+instance LinearEndo (LowerTriMap n) (n=>v) given {n v} [Mul v, VSpace v]
   apply  = \(MkLowerTriMap x) y. for i. sum for j. x.i.j .* y.(inject _ j)
   diag   = \(MkLowerTriMap x).   for i. x.i.(unsafe_project _ i) .* one
   solve' = \(MkLowerTriMap x).   forward_substitute x
 
-instance {n} Arbitrary (LowerTriMap n)
+instance Arbitrary (LowerTriMap n) given {n}
   arb = \k. MkLowerTriMap $ arb k
 
 
@@ -119,18 +119,18 @@ instance {n} Arbitrary (LowerTriMap n)
 data UpperTriMap n [Ix n] =
   MkUpperTriMap ((i:n)=>(i..)=>Float)
 
-instance {n} HasDeterminant (UpperTriMap n)
+instance HasDeterminant (UpperTriMap n) given {n}
   determinant' = \(MkUpperTriMap x). prod $ upper_tri_diag x
   transposeType = LowerTriMat n Float
   transpose' = error "Can't transpose to different types yet."
   identity' = MkUpperTriMap for i j. select (0 == ordinal j) one zero
 
-instance {n v} [Mul v, VSpace v] LinearEndo (UpperTriMap n) (n=>v)
+instance LinearEndo (UpperTriMap n) (n=>v) given {n v} [Mul v, VSpace v]
   apply  = \(MkUpperTriMap x) y. for i. sum for j. x.i.j .* y.(inject _ j)
   diag   = \(MkUpperTriMap x).   for i. x.i.(0@_) .* one
   solve' = \(MkUpperTriMap x).   backward_substitute x
 
-instance {n} Arbitrary (UpperTriMap n)
+instance Arbitrary (UpperTriMap n) given {n}
   arb = \k. MkUpperTriMap $ arb k
 
 
@@ -139,7 +139,7 @@ instance {n} Arbitrary (UpperTriMap n)
 data SkewSymmetricMap n [Ix n] =
   MkSkewSymMap ((i:n)=>(..<i)=>Float)
 
-instance {n} HasDeterminant (SkewSymmetricMap n)
+instance HasDeterminant (SkewSymmetricMap n) given {n}
   determinant' = case is_odd (size n) of
     True -> zero
     False -> \(MkSkewSymMap a).
@@ -149,14 +149,14 @@ instance {n} HasDeterminant (SkewSymmetricMap n)
   transpose' = \(MkSkewSymMap x). MkSkewSymMap (-x)
   identity' = error "Skew symmetric matrices can't represent the identity map."
 
-instance {n v} [Mul v, VSpace v] LinearEndo (SkewSymmetricMap n) (n=>v)
+instance LinearEndo (SkewSymmetricMap n) (n=>v) given {n v} [Mul v, VSpace v]
   apply  = \(MkSkewSymMap x) y. skew_symmetric_prod x y
   diag   = \(MkSkewSymMap x).   zero
   solve' = \(MkSkewSymMap x) y.
     dense_rep = skew_symmetric_prod x eye  -- Fall back to naive algorithm
     solve dense_rep y
 
-instance {n} Arbitrary (SkewSymmetricMap n)
+instance Arbitrary (SkewSymmetricMap n) given {n}
   arb = \k. MkSkewSymMap $ arb k
 
 
@@ -172,7 +172,7 @@ interface HasStandardNormal a:Type
 
 instance HasStandardNormal Float32
   randNormal = randn
-instance {a n} [HasStandardNormal a] HasStandardNormal (n=>a)
+instance HasStandardNormal (n=>a) given {a n} [HasStandardNormal a]
   randNormal = \key.
     for i. randNormal (ixkey key i)
 

@@ -27,7 +27,7 @@ data FenceAndPosts n [Ix n] =
   Fence n
   Posts (Post n)
 
-instance {a} Ix (FenceAndPosts a)
+instance Ix (FenceAndPosts a) given {a}
   size = 2 * size a + 1
   ordinal = \i. case i of
     Fence j -> 2 * ordinal j + 1
@@ -37,10 +37,10 @@ instance {a} Ix (FenceAndPosts a)
       True  -> Fence $ unsafe_from_ordinal _ (intdiv2 o)
       False -> Posts $ unsafe_from_ordinal _ (intdiv2 o)
 
-instance {a} NonEmpty (FenceAndPosts a)
+instance NonEmpty (FenceAndPosts a) given {a}
   first_ix = unsafe_from_ordinal _ 0
 
-instance {a} [Eq a] Eq (FenceAndPosts a)
+instance Eq (FenceAndPosts a) given {a} [Eq a]
   (==) = \x y. case x of
     Fence x -> case y of
       Fence y -> x == y
@@ -63,12 +63,12 @@ that doesn't contain the first element.
 data AllButFirst n [NonEmpty n] =
   MkAllButFirst n
 
-instance {a} Ix (AllButFirst a)
+instance Ix (AllButFirst a) given {a}
   size = unsafe_nat_diff (size a) 1
   ordinal = \(MkAllButFirst i). ordinal i
   unsafe_from_ordinal = \o. MkAllButFirst $ unsafe_from_ordinal _ o
 
-instance {a} Subset (AllButFirst a) a
+instance Subset (AllButFirst a) a given {a}
   inject' = \x. unsafe_from_ordinal _ ((ordinal x) + 1)
   project' = \x. case (ordinal x) > 0 of
     True -> unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
@@ -76,7 +76,7 @@ instance {a} Subset (AllButFirst a) a
   unsafe_project' = \x.
     unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
 
-instance {a} [Eq a] Eq (AllButFirst a)
+instance Eq (AllButFirst a) given {a} [Eq a]
   (==) = \(MkAllButFirst x) (MkAllButFirst y). x == y
 
 '#### Test AllButFirst

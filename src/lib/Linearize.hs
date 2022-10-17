@@ -401,7 +401,7 @@ linearizeOp op = case op of
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
   ThrowError _           -> emitZeroT
-  DataConTag _           -> emitZeroT
+  SumTag _               -> emitZeroT
   ToEnum _ _             -> emitZeroT
   TabCon ty xs -> do
     ty' <- substM ty
@@ -439,7 +439,7 @@ linearizeOp op = case op of
       \(PairE (ComposeE ts') v') -> emitOp $ VariantSplit ts' v'
   ThrowException _       -> notImplemented
   SumToVariant _         -> notImplemented
-  OutputStreamPtr        -> emitZeroT
+  OutputStream           -> emitZeroT
   _ -> notImplemented
   where
     emitZeroT = withZeroT $ liftM Var $ emit =<< substM (Op op)

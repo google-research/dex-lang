@@ -14,7 +14,7 @@ module Builder (
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
-  select, getUnpacked, emitUnpacked, unwrapNewtype,
+  select, getUnpacked, emitUnpacked, unwrapBaseNewtype, unwrapCompoundNewtype,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   tabApp, naryTabApp,
   indexRef, naryIndexRef,
@@ -31,10 +31,10 @@ module Builder (
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
   emitTopLet, emitImpFunBinding, emitSpecialization, emitAtomRules,
-  lookupLoadedModule, bindModule, getAllRequiredObjectFiles, extendCache,
+  lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
   extendImpCache, queryImpCache,
-  extendSpecializationCache, querySpecializationCache,
-  extendObjCache, queryObjCache, getCache, emitObjFile,
+  extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
+  extendObjCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
@@ -57,7 +57,6 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState, StateT (..), runStateT)
-import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
@@ -273,16 +272,20 @@ bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName
   emitPartialTopEnvFrag $ mempty {fragLoadedModules = loaded}
 
-getAllRequiredObjectFiles :: EnvReader m => m n [ObjectFileName n]
-getAllRequiredObjectFiles = do
-  env <- withEnv moduleEnv
-  ObjectFiles objs <- return $ envObjectFiles env
-  return $ S.toList objs
-
 lookupLoadedModule:: EnvReader m => ModuleSourceName -> m n (Maybe (ModuleName n))
 lookupLoadedModule name = do
   loadedModules <- withEnv $ envLoadedModules . topEnv
   return $ M.lookup name $ fromLoadedModules loadedModules
+
+lookupLoadedObject :: EnvReader m => FunObjCodeName n -> m n (Maybe NativeFunction)
+lookupLoadedObject name = do
+  loadedObjects <- withEnv $ envLoadedObjects . topEnv
+  return $ M.lookup name $ fromLoadedObjects loadedObjects
+
+extendLoadedObjects :: (Mut n, TopBuilder m) => FunObjCodeName n -> NativeFunction -> m n ()
+extendLoadedObjects name ptr = do
+  let loaded = LoadedObjects $ M.singleton name ptr
+  emitPartialTopEnvFrag $ mempty {fragLoadedObjects = loaded}
 
 extendCache :: TopBuilder m => Cache n -> m n ()
 extendCache cache = emitPartialTopEnvFrag $ mempty {fragCache = cache}
@@ -305,20 +308,27 @@ querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
 
-extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
-extendObjCache fImp cfun =
-  extendCache $ mempty { objCache = eMapSingleton fImp cfun }
+extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> FunObjCodeName n -> m n ()
+extendObjCache fImp fObj =
+  extendCache $ mempty { objCache = eMapSingleton fImp fObj }
 
-emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
-emitObjFile hint objFile = do
-  v <- emitBinding hint $ ObjectFileBinding objFile
-  emitLocalModuleEnv $ mempty {envObjectFiles = ObjectFiles $ S.singleton v}
-  return v
-
-queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
+queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (FunObjCodeName n))
 queryObjCache v = do
   cache <- objCache <$> getCache
   return $ lookupEMap cache v
+
+emitObjFile
+  :: (Mut n, TopBuilder m)
+  => NameHint -> FunObjCode -> LinktimeNames  n
+  -> m n (FunObjCodeName n)
+emitObjFile hint objFile names = do
+  emitBinding hint $ FunObjCodeBinding objFile names
+
+lookupPtrName :: EnvReader m => PtrName n -> m n (PtrType, Ptr ())
+lookupPtrName v = lookupEnv v >>= \case
+  PtrBinding p -> case p of
+    PtrLitVal ty ptr -> return (ty, ptr)
+    PtrSnapshot _ _ -> error "this case is only for serialization"
 
 getCache :: EnvReader m => m n (Cache n)
 getCache = withEnv $ envCache . topEnv
@@ -1220,9 +1230,13 @@ emitUnpacked tup = do
   xs <- getUnpacked tup
   forM xs \x -> emit $ Atom x
 
-unwrapNewtype :: Atom n -> Atom n
-unwrapNewtype = getProjection [0]
-{-# INLINE unwrapNewtype #-}
+unwrapBaseNewtype :: Atom n -> Atom n
+unwrapBaseNewtype = getProjection [UnwrapBaseNewtype]
+{-# INLINE unwrapBaseNewtype #-}
+
+unwrapCompoundNewtype :: Atom n -> Atom n
+unwrapCompoundNewtype = getProjection [UnwrapCompoundNewtype]
+{-# INLINE unwrapCompoundNewtype #-}
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x (i:|[]))
@@ -1278,10 +1292,10 @@ unsafeFromOrdinal (IxType _ dict) i = do
 ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
 ordinal (IxType _ dict) idx = do
   f <- projMethod "ordinal" dict
-  unwrapNewtype <$> app f idx
+  unwrapBaseNewtype <$> app f idx
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = unwrapNewtype <$> projMethod "size" dict
+indexSetSize (IxType _ dict) = unwrapBaseNewtype <$> projMethod "size" dict
 
 repToNat :: Atom n -> Atom n
 repToNat x = Con $ Newtype NatTy x
@@ -1296,7 +1310,7 @@ projectIxFinMethod methodIx n = liftBuilder do
     0 -> return n  -- return type is Nat, not IdxRepTy
     -- ordinal
     1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
-           return $ ProjectElt (0 NE.:| []) ix  -- return type is Nat, not IdxRepTy
+           return $ ProjectElt (UnwrapBaseNewtype NE.:| []) ix  -- return type is Nat, not IdxRepTy
     -- unsafe_from_ordinal
     2 -> buildPureLam noHint PlainArrow NatTy \ix ->
            return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
@@ -1505,8 +1519,8 @@ unpackTelescope atom = do
     go :: Int -> Atom n -> [Atom n]
     go 0 _ = []
     go n pair = left : go (n-1) right
-      where left  = getProjection [0] pair
-            right = getProjection [1] pair
+      where left  = getProjection [ProjectProduct 0] pair
+            right = getProjection [ProjectProduct 1] pair
 
     telescopeLength :: Type n -> Int
     telescopeLength ty = case ty of

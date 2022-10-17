@@ -96,9 +96,9 @@ def deriveDFromF {a} [F a] (x:a) : Int = d_ x
 -- Overlapping instances
 instance A Int
   a_ = \x. 1
-instance {n a} [A a] A (n=>a)
+instance A (n=>a) given {n a} [A a]
   a_ = \x. a_ x.(0@_)
-instance {n} A (n=>Int)
+instance A (n=>Int) given {n}
   a_ = \x. 0
 
 -- There are two derivations for n=>Int
@@ -124,11 +124,11 @@ interface Eq' a
 interface [Eq' a] Ord' a
   ord : a -> Int
 
-instance {n} Eq' (n=>Int)
+instance Eq' (n=>Int) given {n}
   eq = const 2
-instance {n a} [Eq' a] Eq' (n=>a)
+instance Eq' (n=>a) given {n a} [Eq' a]
   eq = const 3
-instance {n a} [Ord' a] Ord' (n=>a)
+instance Ord' (n=>a) given {n a} [Ord' a]
   ord = const 4
 
 -- Simplifiable constraints should be accepted
@@ -192,7 +192,7 @@ def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
 -- Check automatic quantification for interfaces
 interface AutoQuant a
   dummy : Int
-instance {a} AutoQuant (MyPairOfXs a)
+instance AutoQuant (MyPairOfXs a) given {a}
   dummy = 1
 
 -- Should be able to quantify nested constraints

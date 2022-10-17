@@ -165,7 +165,7 @@ instance Color c => CheckableE (Binding c) where
     InstanceBinding   instanceDef       -> InstanceBinding   <$> substM instanceDef
     MethodBinding     className idx f   -> MethodBinding     <$> substM className   <*> pure idx <*> substM f
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
-    ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
+    FunObjCodeBinding objfile m         -> FunObjCodeBinding <$> pure objfile <*> substM m
     ModuleBinding     md                -> ModuleBinding     <$> substM md
     PtrBinding        ptr               -> PtrBinding        <$> return ptr
     -- TODO(alex): consider checkE below?
@@ -285,11 +285,22 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        ProdTy xs -> return $ xs !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do v' <- substM v
-                                   instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
-        _ | isNewtype ty && i == 0 -> projectNewtype ty
+        ProdTy xs -> case i of
+          ProjectProduct i' -> return $ xs !! i'
+          _ -> throw TypeErr $ "Projecting from a product with: " ++ pprint i
+        DepPairTy t -> case i of
+          ProjectProduct 0 -> return $ depPairLeftTy t
+          ProjectProduct 1 -> do
+            v' <- substM v
+            instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
+          _ -> throw TypeErr $ "Projecting from a dependent pair with " ++ pprint i
+        _ | isNewtype ty -> do
+          case (ty, i) of
+            (TC Nat    , UnwrapBaseNewtype    ) -> return ()
+            (TC (Fin _), UnwrapBaseNewtype    ) -> return ()
+            (_         , UnwrapCompoundNewtype) -> return ()
+            _ -> throw TypeErr $ "Invalid newtype projection (" ++ pprint i ++ ") from " ++ pprint ty
+          projectNewtype ty
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -298,8 +309,7 @@ projectNewtype :: Typer m => Type o -> m i o (Type o)
 projectNewtype ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    [DataConDef _ repTy _] <- checkedInstantiateDataDef def params
-    return repTy
+    dataDefRep <$> checkedInstantiateDataDef def params
   TC Nat     -> return IdxRepTy
   TC (Fin _) -> return NatTy
   StaticRecordTy types -> return $ ProdTy $ toList types
@@ -712,8 +722,11 @@ typeCheckPrimOp op = case op of
     unless (0 <= i && i < length labelTys) $ throw TypeErr "Invalid variant index"
     e |: (labelTys !! i)
     return ty'
-  DataConTag x -> do
-    TypeCon _ _ _ <- getTypeE x
+  SumTag x -> do
+    getTypeE x >>= \case
+      TypeCon _ _ _ -> return ()
+      SumTy _ -> return ()
+      xTy -> throw TypeErr $ "SumTag expected a data-type or a sum type, got: " ++ pprint xTy
     return TagRepTy
   ToEnum t x -> do
     x |: Word8Ty
@@ -730,10 +743,10 @@ typeCheckPrimOp op = case op of
   SumToVariant x -> getTypeE x >>= \case
     SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
     ty -> error $ "Not a sum type: " ++ pprint ty
-  OutputStreamPtr ->
-    return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
+  OutputStream ->
+    return $ BaseTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
-  ProjNewtype x -> getTypeE x >>= projectNewtype
+  ProjBaseNewtype x -> getTypeE x >>= projectNewtype
   Perform eff i -> do
     Eff (OneEffect (UserEffect effName)) <- return eff
     EffectDef _ ops <- substM effName >>= lookupEffectDef

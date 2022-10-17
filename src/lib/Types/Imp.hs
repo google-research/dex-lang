@@ -20,8 +20,10 @@
 
 module Types.Imp where
 
+import Foreign.Ptr
 import Data.Hashable
 import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString       as BS
 
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
@@ -109,6 +111,67 @@ iBinderType (IBinder _ ty) = ty
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | MLIR | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
+
+-- === Closed Imp functions, LLVM and object file representation ===
+
+-- Object files and LLVM modules expose ordinary C-toolchain names rather than
+-- our internal scoped naming system. The `CNameInterface` data structure
+-- describes how to interpret the names exposed by an LLVM module and its
+-- corresponding object code. These names are all considered local to the
+-- module. The module as a whole is a closed object corresponding to a
+-- `ClosedImpFunction`.
+
+-- TODO: consider adding more information here: types of required functions,
+-- calling conventions etc.
+type CName = String
+data WithCNameInterface a = WithCNameInterface
+  { cniCode         :: a       -- module itself (an LLVM.AST.Module or a bytestring of object code)
+  , cniMainFunName  :: CName   -- name of function defined in this module
+  , cniRequiredFuns :: [CName] -- names of functions required by this module
+  , cniRequiredPtrs :: [CName] -- names of data pointers
+  , cniDtorList     :: [CName] -- names of destructors (CUDA only) defined by this module
+  } deriving (Show, Generic, Functor, Foldable, Traversable)
+
+type RawObjCode = BS.ByteString
+type FunObjCode = WithCNameInterface RawObjCode
+
+data IFunBinder n l = IFunBinder (NameBinder ImpFunNameC n l) IFunType
+
+-- Imp function with link-time objects abstracted out, suitable for standalone
+-- compilation. TODO: enforce actual `VoidS` as the scope parameter.
+data ClosedImpFunction n where
+  ClosedImpFunction
+    :: Nest IFunBinder n1 n2  -- binders for required functions
+    -> Nest IBinder    n2 n3  -- binders for required data pointers
+    -> ImpFunction n3
+    -> ClosedImpFunction n1
+
+data LinktimeNames n = LinktimeNames [Name FunObjCodeNameC n] [Name PtrNameC n]  deriving (Show, Generic)
+data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]                        deriving (Show, Generic)
+
+instance BindsAtMostOneName IFunBinder ImpFunNameC where
+  IFunBinder b _ @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance BindsOneName IFunBinder ImpFunNameC where
+  binderName (IFunBinder b _) = binderName b
+  {-# INLINE binderName #-}
+
+instance HasNameHint (IFunBinder n l) where
+  getNameHint (IFunBinder b _) = getNameHint b
+
+instance GenericB IFunBinder where
+  type RepB IFunBinder = BinderP ImpFunNameC (LiftE IFunType)
+  fromB (IFunBinder b ty) = b :> LiftE ty
+  toB   (b :> LiftE ty) = IFunBinder b ty
+
+instance ProvesExt  IFunBinder
+instance BindsNames IFunBinder
+instance SinkableB IFunBinder
+instance HoistableB  IFunBinder
+instance SubstB Name IFunBinder
+instance AlphaEqB IFunBinder
+instance AlphaHashableB IFunBinder
 
 -- === instances ===
 
@@ -295,8 +358,25 @@ instance AlphaEqE    ImpFunction
 instance AlphaHashableE    ImpFunction
 instance SubstE Name ImpFunction
 
+
+instance GenericE LinktimeNames where
+  type RepE LinktimeNames = ListE  (Name FunObjCodeNameC)
+                   `PairE`  ListE  (Name PtrNameC)
+  fromE (LinktimeNames funs ptrs) = ListE funs `PairE` ListE ptrs
+  {-# INLINE fromE #-}
+
+  toE (ListE funs `PairE` ListE ptrs) = LinktimeNames funs ptrs
+  {-# INLINE toE #-}
+
+instance SinkableE      LinktimeNames
+instance HoistableE     LinktimeNames
+instance AlphaEqE       LinktimeNames
+instance AlphaHashableE LinktimeNames
+instance SubstE Name    LinktimeNames
+
 instance Store IsCUDARequired
 instance Store CallingConvention
+instance Store a => Store (WithCNameInterface a)
 instance Store (IBinder n l)
 instance Store (ImpDecl n l)
 instance Store (IFunType)
@@ -304,6 +384,8 @@ instance Store (ImpInstr n)
 instance Store (IExpr n)
 instance Store (ImpBlock n)
 instance Store (ImpFunction n)
+instance Store (LinktimeNames n)
+instance Store LinktimeVals
 
 instance Hashable IsCUDARequired
 instance Hashable CallingConvention

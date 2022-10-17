@@ -12,11 +12,15 @@ module Export (
     ExportCC (..),
   ) where
 
+import Foreign.Storable
+import Foreign.C.String
+import Foreign.Ptr
+
 import Data.List (intercalate)
 import Control.Monad
 import Name
 import Err
-import Syntax
+import Syntax hiding (sizeOf)
 import CheckType (asFirstOrderFunction)
 import QueryType
 import Builder
@@ -158,11 +162,11 @@ prepareFunctionForExport' cc f = do
                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
                   wrapScalarNewtypes eltTy =<< unsafePtrLoad =<< ptrOffset basePtr offset
 
-              indexSetSizeFin n = unwrapNewtype <$> projectIxFinMethod 0 n
+              indexSetSizeFin n = unwrapBaseNewtype <$> projectIxFinMethod 0 n
               ordinalFin n ix = do
                 Lam (LamExpr b body) <- projectIxFinMethod 1 n
                 ordNat <- emitBlock =<< applySubst (b@>SubstVal ix) body
-                return $ unwrapNewtype ordNat
+                return $ unwrapBaseNewtype ordNat
               dup x = (x, x)
 
     toExportType :: Fallible m => Type n -> m (ExportType n)
@@ -325,3 +329,14 @@ instance Show (ExportArg n l) where
 
 instance Show (ExportResult n l) where
   show (ExportResult (name:>ty)) = pprint name <> ":" <> show ty
+
+instance Storable (ExportedSignature 'VoidS) where
+  sizeOf _ = 3 * sizeOf (undefined :: Ptr ())
+  alignment _ = alignment (undefined :: Ptr ())
+  peek _ = error "peek not implemented for ExportedSignature"
+  poke addr sig = do
+    let strAddr = castPtr @(ExportedSignature 'VoidS) @CString addr
+    let (arg, res, ccall) = exportedSignatureDesc sig
+    pokeElemOff strAddr 0 =<< newCString arg
+    pokeElemOff strAddr 1 =<< newCString res
+    pokeElemOff strAddr 2 =<< newCString ccall

@@ -282,6 +282,12 @@ instance PrettyPrec (Atom n) where
 instance Pretty (BoxPtr n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
 
+instance Pretty Projection where
+  pretty = \case
+    UnwrapCompoundNewtype -> "uc"
+    UnwrapBaseNewtype -> "ub"
+    ProjectProduct i -> p i
+
 prettyRecordTyRow :: FieldRowElems n -> Doc ann -> DocPrec ann
 prettyRecordTyRow elems separator = do
   atPrec ArgPrec $ align $ group $ braces $ (prefix <>) $
@@ -472,7 +478,7 @@ instance Pretty (Binding s n) where
     InstanceBinding instanceDef -> pretty instanceDef
     MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
-    ObjectFileBinding _ -> "<object file>"
+    FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding     _ -> "<ptr>"
     -- TODO(alex): do something actually useful here
@@ -486,11 +492,7 @@ instance Pretty (Module n) where
     , ("moduleDirectDeps"     , p $ S.toList $ moduleDirectDeps m)
     , ("moduleTransDeps"      , p $ S.toList $ moduleTransDeps m)
     , ("moduleExports"        , p $ moduleExports m)
-    , ("moduleSynthCandidates", p $ moduleSynthCandidates m)
-    , ("moduleObjectFiles"    , p $ moduleObjectFiles m) ]
-
-instance Pretty (ObjectFiles n) where
-  pretty (ObjectFiles _) = error "todo"
+    , ("moduleSynthCandidates", p $ moduleSynthCandidates m) ]
 
 instance Pretty (DataDefParams n) where
   pretty (DataDefParams ps ds) = p ps <+> p ds
@@ -524,11 +526,10 @@ instance Pretty (MethodType n) where
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance Pretty (TopEnv n) where
-  pretty (TopEnv defs rules cache ms) =
+  pretty (TopEnv defs rules cache _ _) =
     prettyRecord [ ("Defs"          , p defs)
                  , ("Rules"         , p rules)
-                 , ("Cache"         , p cache)
-                 , ("Loaded modules", p ms)]
+                 , ("Cache"         , p cache) ]
 
 instance Pretty (CustomRules n) where
   pretty _ = "TODO: Rule printing"
@@ -537,7 +538,7 @@ instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports
 
 instance Pretty (ModuleEnv n) where
-  pretty (ModuleEnv imports sm sc _ effs) =
+  pretty (ModuleEnv imports sm sc effs) =
     prettyRecord [ ("Imports"         , p imports)
                  , ("Source map"      , p sm)
                  , ("Synth candidates", p sc)
@@ -1114,10 +1115,14 @@ instance Pretty CDecl' where
   pretty (CDef name args Nothing blk) =
     "def " <> fromString name <> " " <> pArg args <> " ="
       <> nest 2 (hardline <> p blk)
-  pretty (CInstance header methods name) =
-    case name of
-      Nothing  -> "instance " <> p header <> prettyLines methods
-      (Just n) -> "named-instance " <> p n <+> p header <> prettyLines methods
+  pretty (CInstance header givens methods name) =
+    name' <> p header <> givens' <> prettyLines methods where
+    name' = case name of
+      Nothing  -> "instance "
+      (Just n) -> "named-instance " <> p n <> " "
+    givens' = case givens of
+      (WithSrc _ CEmpty) -> ""
+      _ -> " given" <+> p givens <> " "
   pretty (CExpr e) = p e
 
 instance Pretty CBlock where

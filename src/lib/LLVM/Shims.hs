@@ -6,6 +6,7 @@
 
 module LLVM.Shims (
   newTargetMachine, newHostTargetMachine, disposeTargetMachine,
+  newDefaultHostTargetMachine
   ) where
 
 import qualified Data.Map as M
@@ -45,6 +46,23 @@ newTargetMachine (Target.Target targetFFI) triple cpu features
                 targetFFI tripleFFI cpuFFI featuresFFI
                 targetOptFFI relocModelFFI codeModelFFI cgoLevelFFI
   where encodeFeature (Target.CPUFeature f, on) = (if on then "+" else "-") <> f
+
+-- XXX: We need to use the large code model for macOS, because the libC functions
+--      are loaded very far away from the JITed code. This does not prevent the
+--      runtime linker from attempting to shove their offsets into 32-bit values
+--      which cannot represent them, leading to segfaults that are very fun to debug.
+--      It would be good to find a better solution, because larger code models might
+--      hurt performance if we were to end up doing a lot of function calls.
+-- TODO: Consider changing the linking layer, as suggested in:
+--       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
+newDefaultHostTargetMachine :: IO Target.TargetMachine
+newDefaultHostTargetMachine = LLVM.Shims.newHostTargetMachine R.PIC cm CGO.Aggressive
+  where
+#if darwin_HOST_OS
+    cm = CM.Small
+#else
+    cm = CM.Large
+#endif
 
 newHostTargetMachine :: R.Model -> CM.Model -> CGO.Level -> IO Target.TargetMachine
 newHostTargetMachine relocModel codeModel cgoLevel = do

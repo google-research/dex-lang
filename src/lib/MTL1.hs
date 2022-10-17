@@ -119,6 +119,10 @@ instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
   getDistinct = lift11 getDistinct
   {-# INLINE getDistinct #-}
 
+instance (SinkableE r, ScopeExtender m) => ScopeExtender (ReaderT1 r m) where
+  refreshAbsScope ab cont = ReaderT1 $ ReaderT \r -> do
+    refreshAbsScope ab \b e -> runReaderT1 (sink r) $ cont b e
+
 instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
   refreshAbs ab cont = ReaderT1 $ ReaderT \r -> do
     refreshAbs ab \b e -> runReaderT1 (sink r) $ cont b e

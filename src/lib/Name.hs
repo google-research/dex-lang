@@ -36,7 +36,7 @@ module Name (
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, toConstAbsPure, PrettyE, PrettyB, ShowE, ShowV, ShowB,
-  runScopeReaderT, runScopeReaderM, runSubstReaderT, liftSubstReaderT,
+  runScopeReaderT, runScopeReaderM, ScopeReaderM, runSubstReaderT, liftSubstReaderT,
   liftScopeReaderT, liftScopeReaderM, tryExtDistinct,
   ScopeReaderT (..), SubstReaderT (..),
   lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM, traverseNames,
@@ -55,7 +55,7 @@ module Name (
   withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
   lookupSubstFrag, lookupSubstFragProjected, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
-  fmapNest, forEachNestItem, forEachNestItemM,
+  fmapNest, zipWithNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), NameHint, noHint, Color (..),
   GenericE (..), GenericB (..),
@@ -784,6 +784,13 @@ fmapNest :: (forall ii ii'. b ii ii' -> b' ii ii')
          -> Nest b' i i'
 fmapNest _ Empty = Empty
 fmapNest f (Nest b rest) = Nest (f b) $ fmapNest f rest
+
+zipWithNest :: Nest b  n l -> [a]
+            -> (forall n1 n2. b n1 n2 -> a -> b' n1 n2)
+            -> Nest b' n l
+zipWithNest Empty [] _ = Empty
+zipWithNest (Nest b bs) (x:xs) f = Nest (f b x) (zipWithNest bs xs f)
+zipWithNest _ _ _ = error "zip error"
 
 forEachNestItemM :: Monad m
                 => Nest b i i'
@@ -1909,7 +1916,7 @@ instance Color ClassNameC      where getColorRep = ClassNameC
 instance Color InstanceNameC   where getColorRep = InstanceNameC
 instance Color MethodNameC     where getColorRep = MethodNameC
 instance Color ImpFunNameC     where getColorRep = ImpFunNameC
-instance Color ObjectFileNameC where getColorRep = ObjectFileNameC
+instance Color FunObjCodeNameC where getColorRep = FunObjCodeNameC
 instance Color ModuleNameC     where getColorRep = ModuleNameC
 instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
@@ -1929,7 +1936,7 @@ interpretColor c cont = case c of
   InstanceNameC   -> cont $ ColorProxy @InstanceNameC
   MethodNameC     -> cont $ ColorProxy @MethodNameC
   ImpFunNameC     -> cont $ ColorProxy @ImpFunNameC
-  ObjectFileNameC -> cont $ ColorProxy @ObjectFileNameC
+  FunObjCodeNameC -> cont $ ColorProxy @FunObjCodeNameC
   ModuleNameC     -> cont $ ColorProxy @ModuleNameC
   PtrNameC        -> cont $ ColorProxy @PtrNameC
   EffectNameC     -> cont $ ColorProxy @EffectNameC
@@ -2464,7 +2471,7 @@ data C =
   | InstanceNameC
   | MethodNameC
   | ImpFunNameC
-  | ObjectFileNameC
+  | FunObjCodeNameC
   | ModuleNameC
   | PtrNameC
   | EffectNameC

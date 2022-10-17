@@ -7,9 +7,9 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( toImpFunction, ImpFunctionWithRecon (..)
+  ( blockToImpFunction, ImpFunctionWithRecon (..)
   , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
-  , PtrBinder, impFunType, getIType) where
+  , PtrBinder, impFunType, getIType, abstractLinktimeObjects) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
@@ -31,7 +31,7 @@ import CheckType (CheckableE (..))
 import Lower (IxDestBlock)
 import LabeledItems
 import QueryType
-import Util (enumerate, SnocList (..), unsnoc)
+import Util (enumerate, SnocList (..), unsnoc, forMFilter)
 import Types.Primitives
 import Types.Core
 import Types.Imp
@@ -43,13 +43,13 @@ type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 type PtrBinder = IBinder
 
 -- TODO: make it purely a function of the type and avoid the AtomRecon
-toImpFunction :: EnvReader m
+blockToImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> Abs (Nest PtrBinder) IxDestBlock n
+              -> IxDestBlock n
               -> m n (ImpFunctionWithRecon n)
-toImpFunction _ cc absBlock = liftImpM $
+blockToImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc absBlock
-{-# SCC toImpFunction #-}
+{-# SCC blockToImpFunction #-}
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
 toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
@@ -290,21 +290,20 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> Abs (Nest PtrBinder) IxDestBlock i
+                  -> IxDestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs bs (Abs ixs (Abs (destb:>destTy) body))) = do
-  let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  ab  <- buildImpNaryAbs argTys \vs ->
-    extendSubst (bs @@> map Rename vs) $ translateDeclNest ixs do
+translateTopLevel cc (Abs ixs (Abs (destb:>destTy) body)) = do
+  ab  <- buildScopedImp $
+    translateDeclNest ixs do
       dest <- case destTy of
         RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
         _ -> error "Expected a reference type for body destination"
       extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
       destToAtom dest
-  refreshAbs ab \bs' ab' -> refreshAbs ab' \decls resultAtom -> do
-    (results, recon) <- buildRecon (PairB bs' decls) resultAtom
-    let funImpl = Abs bs' $ ImpBlock decls results
-    let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
+  refreshAbs ab \decls resultAtom -> do
+    (results, recon) <- buildRecon decls resultAtom
+    let funImpl = Abs Empty $ ImpBlock decls results
+    let funTy   = IFunType cc [] (map getIType results)
     return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)
@@ -500,7 +499,8 @@ toImpOp maybeDest op = case op of
         ans <- emitInstr $ IPrimOp $ Select p' x' y'
         returnVal =<< toScalarAtom ans
       _ -> unsupported
-  DataConTag con -> case con of
+  SumTag con -> case con of
+    Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
     Con (SumAsProd _ tag _) -> returnVal tag
     Con (Newtype _ (Con (SumCon _ tag _))) -> returnVal $ TagRepVal $ fromIntegral tag
     Con (Newtype _ (Con (SumAsProd _ tag _))) -> returnVal tag
@@ -1553,18 +1553,18 @@ unsafeFromOrdinalImp (IxType _ dict) i = do
     (`appReduceImp` (Con $ Newtype NatTy i'))
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
-indexSetSizeImp (IxType _ dict) = fromScalarAtom . unwrapNewtype =<< case dict of
+indexSetSizeImp (IxType _ dict) = fromScalarAtom . unwrapBaseNewtype =<< case dict of
   DictCon (IxFin n) -> return n
   _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduceImp` UnitVal)
 
 indexSetSizeFromSimp :: Emits n => IxType n -> BuilderM n (Atom n)
-indexSetSizeFromSimp (IxType _ dict) = unwrapNewtype <$> case dict of
+indexSetSizeFromSimp (IxType _ dict) = unwrapBaseNewtype <$> case dict of
   DictCon (IxFin n) -> return n
   _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduce` UnitVal)
 
 ordinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
 ordinalFromSimp (IxType _ dict) i =
-  liftM unwrapNewtype $ liftEnvReaderM (projSimpDictThunk dict 1) >>= (`appReduce` i)
+  liftM unwrapBaseNewtype $ liftEnvReaderM (projSimpDictThunk dict 1) >>= (`appReduce` i)
 
 unsafeFromOrdinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
 unsafeFromOrdinalFromSimp (IxType _ dict) o =
@@ -1582,7 +1582,8 @@ projSimpDictThunk topDict methodIx = go topDict []
           Just _ -> error "Not a pure atomic lam?"
           Nothing -> error "Failed to get a dict nary lam?"
       DictCon (InstantiatedGiven d extraArgs) -> go d $ toList extraArgs ++ args
-      Con (Newtype _ _) -> return $ getProjection [methodIx, 0] dict
+      Con (Newtype _ _) ->
+        return $ getProjection [ProjectProduct methodIx, UnwrapBaseNewtype] dict
       DictCon (IxFin n) -> case methodIx == 0 of
         True -> do
           Abs b n' <- toConstAbs n
@@ -1599,6 +1600,29 @@ appReduceImp :: Emits o => Atom o -> Atom o -> SubstImpM i o (Atom o)
 appReduceImp f x = case f of
   Lam (LamExpr b body) -> dropSubst $ extendSubst (b@>SubstVal x) $ translateBlock Nothing body
   _ -> error "couldn't reduce immediately!"
+
+-- === Abstracting link-time objects ===
+
+abstractLinktimeObjects
+  :: forall m n. EnvReader m
+  => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n], [PtrName n])
+abstractLinktimeObjects f = do
+  let allVars = freeVarsE f
+  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList allVars) \v ->
+    lookupImpFun v <&> \case
+      ImpFunction ty _ -> Just (v, ty)
+      FFIFunction _ _ -> Nothing
+  (atomVars, ptrVars, ptrTys) <- unzip3 <$> forMFilter (nameSetToList allVars) \v ->
+    lookupAtomName v >>= \case
+      PtrLitBound _ ptrName -> do
+        (ty, _) <- lookupPtrName ptrName
+        return $ Just (v, ptrName, PtrType ty)
+      _ -> return Nothing
+  Abs funBs (Abs ptrBs f') <- return $ abstractFreeVarsNoAnn funVars $
+                                       abstractFreeVarsNoAnn atomVars f
+  let funBs' =  zipWithNest funBs funTys \b ty -> IFunBinder b ty
+  let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> IBinder b ty
+  return (ClosedImpFunction funBs' ptrBs' f', funVars, ptrVars)
 
 -- === type checking imp programs ===
 
@@ -1645,7 +1669,7 @@ impOpType pop = case pop of
   Select  _ x  _     -> getIType x
   PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
   PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
-  OutputStreamPtr -> hostPtrTy $ hostPtrTy $ Scalar Word8Type
+  OutputStream       -> hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ show pop

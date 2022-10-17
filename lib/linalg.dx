@@ -70,7 +70,7 @@ def transpose_lower_to_upper_no_diag {n v}
 
 '## Type-shifting inequalities between indices
 
-instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIx m) (LowerTriIx n)
+instance Subset (LowerTriIx m) (LowerTriIx n) given {m n} [Ix n, Ix m, Subset m n]
   inject' = \(MkLowerTriIx i j).
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
@@ -88,7 +88,7 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIx m) (LowerTriIx n)
     j'' = unsafe_project m j'
     MkLowerTriIx i' $ unsafe_project _ j''
 
-instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIx m) (UpperTriIx n)
+instance Subset (UpperTriIx m) (UpperTriIx n) given {m n} [Ix n, Ix m, Subset m n]
   inject' = \(MkUpperTriIx i j).
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
@@ -106,7 +106,7 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIx m) (UpperTriIx n)
     j'' = unsafe_project m j'
     MkUpperTriIx i' $ unsafe_project _ j''
 
-instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIxExc m) (LowerTriIxExc n)
+instance Subset (LowerTriIxExc m) (LowerTriIxExc n) given {m n} [Ix n, Ix m, Subset m n]
   inject' = \(MkLowerTriIxExc i j).
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j
@@ -124,7 +124,7 @@ instance {m n} [Ix n, Ix m, Subset m n] Subset (LowerTriIxExc m) (LowerTriIxExc 
     j'' = unsafe_project m j'
     MkLowerTriIxExc i' $ unsafe_project _ j''
 
-instance {m n} [Ix n, Ix m, Subset m n] Subset (UpperTriIxExc m) (UpperTriIxExc n)
+instance Subset (UpperTriIxExc m) (UpperTriIxExc n) given {m n} [Ix n, Ix m, Subset m n]
   inject' = \(MkUpperTriIxExc i j).
     i' = inject n i
     j' = unsafe_project _ $ inject n $ inject m j

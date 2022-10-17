@@ -57,13 +57,13 @@ library
                      , Export
                      , GenericTraversal
                      , Imp
-                     , Inference
                      , Interpreter
-                     , JIT
-                     , LLVM.HEAD.JIT
-                     , LLVM.JIT
+                     , Inference
+                     , ImpToLLVM
+                     , LLVM.Link
+                     , LLVM.Compile
+                     , LLVM.CUDA
                      , LLVM.Shims
-                     , LLVMExec
                      , LabeledItems
                      , Lexing
                      , Linearize
@@ -71,9 +71,11 @@ library
                      , Lower
                      , MTL1
                      , Name
+                     , Occurrence
                      , Optimize
                      , PPrint
                      , RawName
+                     , Runtime
                      , Serialize
                      , Simplify
                      , SourceRename
@@ -298,10 +300,13 @@ test-suite spec
   hs-source-dirs:      tests/unit
   ghc-options:         -Wall
   build-depends:       base
+                     , containers
                      , hspec
+                     , mtl
                      , QuickCheck
                      , dex
-  other-modules:       RawNameSpec
+  other-modules:       OccurrenceSpec
+                     , RawNameSpec
   default-language:    Haskell2010
   build-tool-depends:  hspec-discover:hspec-discover
                        -- Mimicking -XGHC2021 in GHC 8.10.1

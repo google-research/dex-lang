@@ -131,7 +131,7 @@ $(error "Please install clang++-12")
 endif
 endif
 
-CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
+CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti -pthread
 CFLAGS := $(CFLAGS) -std=c11
 
 .PHONY: all
@@ -216,6 +216,8 @@ test-names = uexpr-tests adt-tests type-tests cast-tests eval-tests show-tests \
 
 doc-names = conditionals functions
 
+lib-names = complex fft netpbm plot sort diagram linalg parser png set stats
+
 benchmark-names = \
   fused_sum gaussian jvp_matmul matmul_big matmul_small matvec_big matvec_small \
   poly vjp_matmul
@@ -224,10 +226,12 @@ quine-test-targets = \
   $(test-names:%=run-tests/%) \
   $(example-names:%=run-examples/%) \
   $(doc-names:%=run-doc/%) \
+  $(lib-names:%=run-lib/%) \
   $(benchmark-names:%=run-bench-tests/%)
 
 update-test-targets    = $(test-names:%=update-tests/%)
 update-doc-targets     = $(doc-names:%=update-doc/%)
+update-lib-targets     = $(lib-names:%=update-lib/%)
 update-example-targets = $(example-names:%=update-examples/%)
 
 t10k-images-idx3-ubyte-sha256 = 346e55b948d973a97e58d2351dde16a484bd415d4595297633bb08f03db6a073
@@ -271,6 +275,9 @@ tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests doc-f
 unit-tests:
 	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS)
 
+watch-unit-tests:
+	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS) --file-watch
+
 opt-tests: just-build
 	misc/file-check tests/opt-tests.dx $(dex) -O script
 
@@ -285,6 +292,8 @@ run-%: export DEX_TEST_MODE=t
 run-tests/%: tests/%.dx just-build
 	misc/check-quine $< $(dex) -O script
 run-doc/%: doc/%.dx just-build
+	misc/check-quine $< $(dex) script
+run-lib/%: lib/%.dx just-build
 	misc/check-quine $< $(dex) script
 run-examples/%: examples/%.dx just-build
 	misc/check-quine $< $(dex) -O script
@@ -315,13 +324,17 @@ update-lower-vectorize-tests: just-build
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: export DEX_TEST_MODE=t
 
-update-all: $(update-test-targets) $(update-example-targets)
+update-all: $(update-test-targets) $(update-doc-targets) $(update-lib-targets) $(update-example-targets)
 
 update-tests/%: tests/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
 update-doc/%: doc/%.dx just-build
+	$(dex) script $< > $<.tmp
+	mv $<.tmp $<
+
+update-lib/%: lib/%.dx just-build
 	$(dex) script $< > $<.tmp
 	mv $<.tmp $<
 
