@@ -50,6 +50,7 @@ module Builder (
   ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
   HoistingTopBuilder (..), liftTopBuilderHoisted,
   DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT, runDoubleBuilderT,
+  liftDoubleBuilderTEmitTop, liftDoubleBuilderTNoEmissions
   ) where
 
 import Control.Applicative
@@ -153,6 +154,15 @@ newtype DoubleBuilderT (m::MonadKind) (n::S) (a:: *) =
 
 type DoubleBuilder = DoubleBuilderT HardFailM
 
+
+liftDoubleBuilderTEmitTop
+  :: (TopBuilder m, Fallible m', Mut n) => DoubleBuilderT m' n a -> m n (m' a)
+liftDoubleBuilderTEmitTop = undefined
+
+liftDoubleBuilderTNoEmissions
+  :: (EnvReader m, Fallible m') => DoubleBuilderT m' n a -> m n (m' a)
+liftDoubleBuilderTNoEmissions = undefined
+
 -- TODO: do we really need to play these rank-2 games here?
 liftDoubleBuilderT
   :: (EnvReader m, Fallible m', SinkableE e, SubstE Name e)
@@ -175,6 +185,7 @@ runDoubleBuilderT env cont = do
 
 instance Fallible m => HoistingTopBuilder (DoubleBuilderT m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
+  willItHoist e = DoubleBuilderT $ willItHoistDoubleInplaceT e
 
 instance Monad m => EnvReader (DoubleBuilderT m) where
   unsafeGetEnv = DoubleBuilderT $ liftDoubleInplaceT $ unsafeGetEnv
@@ -214,6 +225,7 @@ instance Fallible m => EnvExtender (DoubleBuilderT m) where
 
 instance (SinkableV v, HoistingTopBuilder m) => HoistingTopBuilder (SubstReaderT v m i) where
   emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
+  willItHoist e = SubstReaderT $ lift $ willItHoist e
 
 -- === Top-level builder class ===
 
@@ -523,6 +535,12 @@ instance (SinkableE e, HoistableState e, ScopableBuilder m) => ScopableBuilder (
     let s'' = hoistState s decls s'
     return (Abs decls e, s'')
   {-# INLINE buildScoped #-}
+
+instance (SinkableE e, HoistableState e, HoistingTopBuilder m) => HoistingTopBuilder (StateT1 e m) where
+  emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
+  {-# INLINE emitHoistedEnv #-}
+  willItHoist e = lift11 $ willItHoist e
+  {-# INLINE willItHoist #-}
 
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
@@ -1277,6 +1295,9 @@ unsafePtrLoad x = do
 -- XXX: the internal versions of `ordinal`, `unsafeFromOrdinal` etc. work with
 -- `IdxRepTy` (whereas the user-facing versions work with `Nat`)
 
+-- XXX: it's important that we do the reduction here, because we need the
+-- property that if we call this with a simplified dict, we only produce
+-- simplified decls.
 projMethod :: (Builder m, Emits n) => String -> Atom n -> m n (Atom n)
 projMethod methodName dict = do
   getType dict >>= \case

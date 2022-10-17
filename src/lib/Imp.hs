@@ -28,7 +28,7 @@ import Name
 import Builder hiding (unsafeFromOrdinal, ordinal, indexSetSize)
 import Syntax
 import CheckType (CheckableE (..))
-import Lower (IxDestBlock)
+import Lower (DestBlock)
 import LabeledItems
 import QueryType
 import Util (enumerate, SnocList (..), unsnoc, forMFilter)
@@ -45,7 +45,7 @@ type PtrBinder = IBinder
 -- TODO: make it purely a function of the type and avoid the AtomRecon
 blockToImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> IxDestBlock n
+              -> DestBlock n
               -> m n (ImpFunctionWithRecon n)
 blockToImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc absBlock
@@ -121,33 +121,31 @@ ccUnpackActuals cc actual = case cc of
 
 toImpExportedFunction :: EnvReader m
                       => ExportCC
-                      -> Abs (Nest Binder) IxDestBlock n
+                      -> Abs (Nest Binder) DestBlock n
                       -> (Abs (Nest IBinder) (ListE Block) n)
                       -> m n (ImpFunction n)
-toImpExportedFunction cc def@(Abs bs (Abs ixDecls (Abs d body))) (Abs baseArgBs argRecons) = liftImpM do
+toImpExportedFunction cc def@(Abs bs (Abs d body)) (Abs baseArgBs argRecons) = liftImpM do
   -- XXX: We assume that makeDest is deterministic in here! We first run it outside of
   -- the Imp function to infer the set of arguments, and then once again inside the
   -- Imp function to get the destination atom. We could pass it around, but it would have
   -- been more complicated.
-  ptrFormals <- refreshAbs def \_ def' -> do
-    refreshAbs def' \_ (Abs (_:>RawRefTy resTy') _) -> do
-      -- WARNING! This ties the makeDest implementation to the C API expected in export.
-      -- In particular, every array has to be backend by a single pointer and pairs
-      -- should be traversed left-to-right.
-      AbsPtrs _ ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
-      return $ ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
+  ptrFormals <- refreshAbs def \_ (Abs (_:>RawRefTy resTy') _) -> do
+    -- WARNING! This ties the makeDest implementation to the C API expected in export.
+    -- In particular, every array has to be backend by a single pointer and pairs
+    -- should be traversed left-to-right.
+    AbsPtrs _ ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
+    return $ ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
   let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
   dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
     (args, ptrs) <- ccUnpackActuals ccCtx ccActuals
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
       traverse (translateBlock Nothing) $ fromListE argRecons
-    extendSubst (bs @@> map SubstVal argAtoms) $
-      translateDeclNest ixDecls do
-        let RawRefTy dTy = binderType d
-        AbsPtrs resDestAbsPtrs _ <- makeDest (LLVM, CPU, Unmanaged) =<< substM dTy
-        resDest <- applyNaryAbs resDestAbsPtrs ptrs
-        extendSubst (d @> SubstVal resDest) $
-          translateBlock Nothing body $> []
+    extendSubst (bs @@> map SubstVal argAtoms) do
+      let RawRefTy dTy = binderType d
+      AbsPtrs resDestAbsPtrs _ <- makeDest (LLVM, CPU, Unmanaged) =<< substM dTy
+      resDest <- applyNaryAbs resDestAbsPtrs ptrs
+      extendSubst (d @> SubstVal resDest) $
+        translateBlock Nothing body $> []
 
 {-# SCC toImpExportedFunction #-}
 
@@ -290,16 +288,15 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> IxDestBlock i
+                  -> DestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs ixs (Abs (destb:>destTy) body)) = do
-  ab  <- buildScopedImp $
-    translateDeclNest ixs do
-      dest <- case destTy of
-        RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
-        _ -> error "Expected a reference type for body destination"
-      extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
-      destToAtom dest
+translateTopLevel cc (Abs (destb:>destTy) body) = do
+  ab  <- buildScopedImp do
+    dest <- case destTy of
+      RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
+      _ -> error "Expected a reference type for body destination"
+    extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
+    destToAtom dest
   refreshAbs ab \decls resultAtom -> do
     (results, recon) <- buildRecon decls resultAtom
     let funImpl = Abs Empty $ ImpBlock decls results

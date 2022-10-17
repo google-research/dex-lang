@@ -8,7 +8,6 @@
 
 module Simplify
   ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-  , simplifyTopFunctionAssumeNoTopEmissions
   , buildBlockSimplified
   ) where
 
@@ -122,37 +121,18 @@ liftSimplifyM cont = do
   emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
 
--- Used in `Imp`, which calls back into simplification but can't emit top level
--- emissions itself. That whole pathway is a hack and we should fix it.
-liftSimplifyMAssumeNoTopEmissions
-  :: (SinkableE e, SubstE Name e, EnvReader m)
+liftSimplifyMLocal
+  :: (SinkableE e, SubstE Name e, EnvReader m, HoistingTopBuilder m)
   => (forall l. DExt n l => SimplifyM l l (e l))
   -> m n (e n)
-liftSimplifyMAssumeNoTopEmissions cont =
-  liftM (runHardFail . flip runReaderT NoLinearize) $
-    liftDoubleBuilderTAssumeNoTopEmissions $
-      runSubstReaderT (sink idSubst) $ runSimplifyM' cont
-{-# INLINE liftSimplifyMAssumeNoTopEmissions #-}
-
-liftDoubleBuilderTAssumeNoTopEmissions
-  :: (Fallible m', EnvReader m, SinkableE e, SubstE Name e)
-  => (forall l. DExt n l => DoubleBuilderT m' l (e l))
-  -> m n (m' (e n))
-liftDoubleBuilderTAssumeNoTopEmissions cont = do
-  env <- unsafeGetEnv
-  Distinct <- getDistinct
-  return do
-    Abs frag e <- runDoubleBuilderT env cont
-    case checkNoBinders frag of
-      Nothing -> error "there weren't supposed to be any emissions!"
-      Just UnitB -> return e
+liftSimplifyMLocal cont = undefined
 
 buildBlockSimplified
-  :: (EnvReader m)
+  :: (EnvReader m, HoistingTopBuilder m)
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Block n)
 buildBlockSimplified m = do
-  liftSimplifyMAssumeNoTopEmissions do
+  liftSimplifyMLocal do
     block <- liftBuilder $ buildBlock m
     buildBlock $ simplifyBlock block
 
@@ -186,13 +166,6 @@ simplifyTopFunction
 simplifyTopFunction f = do
   liftSimplifyM $ dropSubst $ simplifyNaryLam $ sink f
 {-# SCC simplifyTopFunction #-}
-
-simplifyTopFunctionAssumeNoTopEmissions
-  :: EnvReader m
-  => NaryLamExpr n -> m n (NaryLamExpr n)
-simplifyTopFunctionAssumeNoTopEmissions f = do
-  liftSimplifyMAssumeNoTopEmissions $ simplifyNaryLam $ sink f
-{-# SCC simplifyTopFunctionAssumeNoTopEmissions #-}
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
@@ -382,11 +355,12 @@ simplifyApp f xs =
       _ -> Right <$> simplifyAtomAndInline func
 
 emitIxDictSpecialization :: HoistingTopBuilder m => DictType n -> DictExpr n -> m n (DictExpr n)
+emitIxDictSpecialization _ d@(ExplicitMethods _ _ _) = return d -- Nothing to do if we already have explicit methods
 emitIxDictSpecialization dictTy ixDict = do
   (ixDictAbs, params) <- generalizeIxDict ixDict
   methodImplNames <- forM [minBound..maxBound] \methodName ->
     getSpecializedFunction $ IxMethodSpecialization methodName ixDictAbs
-  return $ ExplicitMethods dictTy methodImplNames params
+  return $ ExplicitMethods dictTy (map Var methodImplNames) params
 
 -- TODO: we could get more cache hits if we abstract more than necessary,
 -- based on whether parameters are data or nondata. E.g. abstract `Fin 10`
@@ -395,10 +369,10 @@ generalizeIxDict :: (HoistingTopBuilder m, EnvReader m) => DictExpr n -> m n (Ge
 generalizeIxDict d = do
   (typedVs, atoms) <- unzip <$> forMFilter (freeAtomVarsList d) \v ->
     willItHoist v >>= \case
-      True -> do
+      False -> do
         ty <- getType v
         return $ Just ((v, ty), Var v)
-      False -> return Nothing
+      True -> return Nothing
   return (abstractFreeVars typedVs (DictCon d), atoms)
 
 -- | Like `simplifyAtom`, but will try to inline function definitions found
@@ -509,7 +483,7 @@ getSpecializedFunction s = do
     _ -> do
       maybeName <- liftTopBuilderHoisted $ emitSpecialization (sink s)
       case maybeName of
-        Nothing -> error "couldn't hoist specialization"
+        Nothing -> error $ "couldn't hoist specialization: " ++ pprint s
         Just name -> return name
 
 -- TODO: de-dup this and simplifyApp?
@@ -846,15 +820,11 @@ projectDictMethod d i = do
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
     DictCon (IxFin n) -> projectIxFinMethod i n
-    Con (Newtype (DictTy (DictType _ clsName _)) (ProdVal els)) -> do
-      ClassDef _ _ _ _ mTys <- lookupClassDef clsName
-      let (e, MethodType _ mTy) = (els !! i, mTys !! i)
-      case (mTy, e) of
-        (Pi _, _) -> return e
-        -- Non-function methods are thunked, so we have to apply
-        (_, Lam (LamExpr b body)) ->
-          dropSubst $ extendSubst (b @> SubstVal UnitVal) $ simplifyBlock body
-        _ -> error $ "Not a simplified dict: " ++ pprint e
+    DictCon (ExplicitMethods _ fs params) -> do
+      let f = fs !! i
+      case toEnum i of
+        Size -> naryApp f $ params ++ [UnitVal]
+        _    -> naryApp f params
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)

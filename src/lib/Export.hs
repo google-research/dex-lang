@@ -38,179 +38,180 @@ prepareFunctionForExport cc f = liftExcept =<< liftEnvReaderT (prepareFunctionFo
 {-# INLINE prepareFunctionForExport #-}
 
 prepareFunctionForExport' :: ExportCC -> Atom n -> EnvReaderT Except n (ImpFunction n, ExportedSignature VoidS)
-prepareFunctionForExport' cc f = do
-  naryPi <- getType f >>= asFirstOrderFunction >>= \case
-    Nothing  -> throw TypeErr "Only first-order functions can be exported"
-    Just npi -> return npi
-  closedNaryPi <- case hoistToTop naryPi of
-    HoistFailure _   -> throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++
-      pprint naryPi
-    HoistSuccess npi -> return npi
-  sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
-    Success sig -> return sig
-    Failure err -> throwErrs err
-  argRecon <- case sig of
-    ExportedSignature argSig _ _ -> do
-      case sinkFromTop $ EmptyAbs argSig of
-        Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon naryPi argSig'
-  f' <- asNaryLam naryPi f
-  -- TODO: figure out how to handle specialization cache emissions when compiling for export
-  NaryLamExpr bs Pure body <- simplifyTopFunctionAssumeNoTopEmissions f'
-  -- TODO: Optimize the function!
-  loweredAbs <- refreshAbs (Abs bs body) \(NonEmptyNest b' bs') body' -> do
-    explicitIx <- emitIx body'
-    instIx <- simplifyIx explicitIx
-    Abs (Nest b' bs') <$> lowerFullySequential instIx
-  fImp <- toImpExportedFunction cc loweredAbs argRecon
-  return (fImp, sig)
-  where
-    naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => NaryPiType n -> m n (ExportedSignature n)
-    naryPiToExportSig (NaryPiType (NonEmptyNest tb tbs) effs resultTy) = do
-        case effs of
-          Pure -> return ()
-          _    -> throw TypeErr "Only pure functions can be exported"
-        goArgs Empty [] (Nest tb tbs) resultTy
-      where
-        goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-               => Nest ExportArg n l' -> [AtomName l'] -> Nest PiBinder l' l -> Type l -> m l' (ExportedSignature n)
-        goArgs argSig argVs piBs piRes = case piBs of
-          Empty -> goResult piRes \resSig ->
-            return $ ExportedSignature argSig resSig $ case cc of
-              FlatExportCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
-              XLAExportCC  -> []
-          Nest b bs -> do
-            refreshAbs (Abs b (Abs bs piRes)) \(PiBinder v ty arrow) (Abs bs' piRes') -> do
-              let invalidArrow = throw TypeErr
-                                   "Exported functions can only have regular and implicit arrow types"
-              vis <- case arrow of
-                PlainArrow    -> return ExplicitArg
-                ImplicitArrow -> return ImplicitArg
-                ClassArrow    -> invalidArrow
-                LinArrow      -> invalidArrow
-              ety <- toExportType ty
-              goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
-                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
+prepareFunctionForExport' cc f = undefined
+-- prepareFunctionForExport' cc f = do
+--   naryPi <- getType f >>= asFirstOrderFunction >>= \case
+--     Nothing  -> throw TypeErr "Only first-order functions can be exported"
+--     Just npi -> return npi
+--   closedNaryPi <- case hoistToTop naryPi of
+--     HoistFailure _   -> throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++
+--       pprint naryPi
+--     HoistSuccess npi -> return npi
+--   sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
+--     Success sig -> return sig
+--     Failure err -> throwErrs err
+--   argRecon <- case sig of
+--     ExportedSignature argSig _ _ -> do
+--       case sinkFromTop $ EmptyAbs argSig of
+--         Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon naryPi argSig'
+--   f' <- asNaryLam naryPi f
+--   -- TODO: figure out how to handle specialization cache emissions when compiling for export
+--   NaryLamExpr bs Pure body <- simplifyTopFunctionAssumeNoTopEmissions f'
+--   -- TODO: Optimize the function!
+--   loweredAbs <- refreshAbs (Abs bs body) \(NonEmptyNest b' bs') body' -> do
+--     explicitIx <- emitIx body'
+--     instIx <- simplifyIx explicitIx
+--     Abs (Nest b' bs') <$> lowerFullySequential instIx
+--   fImp <- toImpExportedFunction cc loweredAbs argRecon
+--   return (fImp, sig)
+--   where
+--     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
+--                       => NaryPiType n -> m n (ExportedSignature n)
+--     naryPiToExportSig (NaryPiType (NonEmptyNest tb tbs) effs resultTy) = do
+--         case effs of
+--           Pure -> return ()
+--           _    -> throw TypeErr "Only pure functions can be exported"
+--         goArgs Empty [] (Nest tb tbs) resultTy
+--       where
+--         goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
+--                => Nest ExportArg n l' -> [AtomName l'] -> Nest PiBinder l' l -> Type l -> m l' (ExportedSignature n)
+--         goArgs argSig argVs piBs piRes = case piBs of
+--           Empty -> goResult piRes \resSig ->
+--             return $ ExportedSignature argSig resSig $ case cc of
+--               FlatExportCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+--               XLAExportCC  -> []
+--           Nest b bs -> do
+--             refreshAbs (Abs b (Abs bs piRes)) \(PiBinder v ty arrow) (Abs bs' piRes') -> do
+--               let invalidArrow = throw TypeErr
+--                                    "Exported functions can only have regular and implicit arrow types"
+--               vis <- case arrow of
+--                 PlainArrow    -> return ExplicitArg
+--                 ImplicitArrow -> return ImplicitArg
+--                 ClassArrow    -> invalidArrow
+--                 LinArrow      -> invalidArrow
+--               ety <- toExportType ty
+--               goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
+--                      ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
 
-        goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
-                 => Type l
-                 -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
-                 -> m l a
-        goResult ty cont = case ty of
-          ProdTy [lty, rty] ->
-            goResult lty \lres ->
-              goResult (sink rty) \rres ->
-                cont $ joinNest lres rres
-          _ -> withFreshBinder noHint ty \b -> do
-            ety <- toExportType ty
-            cont $ Nest (ExportResult (b:>ety)) Empty
+--         goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
+--                  => Type l
+--                  -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
+--                  -> m l a
+--         goResult ty cont = case ty of
+--           ProdTy [lty, rty] ->
+--             goResult lty \lres ->
+--               goResult (sink rty) \rres ->
+--                 cont $ joinNest lres rres
+--           _ -> withFreshBinder noHint ty \b -> do
+--             ety <- toExportType ty
+--             cont $ Nest (ExportResult (b:>ety)) Empty
 
-    exportArgRecon
-      :: (EnvReader m, EnvExtender m)
-      => NaryPiType n
-      -> Nest ExportArg n l
-      -> m n (Abs (Nest IBinder) (ListE Block) n)
-    exportArgRecon (NaryPiType (NonEmptyNest tb tbs) _ _) topArgs =
-      go [] (Abs (Nest tb tbs) UnitE) topArgs
-      where
-        go :: (EnvReader m, EnvExtender m)
-           => [Block n]
-           -> Abs (Nest PiBinder) UnitE n
-           -> Nest ExportArg n l
-           -> m n (Abs (Nest IBinder) (ListE Block) n)
-        go argRecons dexArgs = \case
-          Empty -> case dexArgs of
-            Abs Empty UnitE -> return $ Abs Empty $ ListE argRecons
-            _ -> error "zip error: dex args should correspond 1-to-1 with export args"
-          Nest (ExportArg _ b) bs ->
-            refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) ->
-              sinkM dexArgs >>= \case
-                Abs (Nest (PiBinder dexB dexArgTy _) restDexArgs) UnitE -> do
-                  (ity, block) <- typeRecon (sink ety) dexArgTy $ Var $ binderName v'
-                  case block of
-                    AtomicBlock dexArgAtom -> do
-                      restDexArgs' <- applySubst (dexB@>SubstVal dexArgAtom) $ Abs restDexArgs UnitE
-                      Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) restDexArgs' bs'
-                      return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
-                    _ -> error "Expected an atomic block"
-                _ -> error "zip error: dex args should correspond 1-to-1 with export args"
+--     exportArgRecon
+--       :: (EnvReader m, EnvExtender m)
+--       => NaryPiType n
+--       -> Nest ExportArg n l
+--       -> m n (Abs (Nest IBinder) (ListE Block) n)
+--     exportArgRecon (NaryPiType (NonEmptyNest tb tbs) _ _) topArgs =
+--       go [] (Abs (Nest tb tbs) UnitE) topArgs
+--       where
+--         go :: (EnvReader m, EnvExtender m)
+--            => [Block n]
+--            -> Abs (Nest PiBinder) UnitE n
+--            -> Nest ExportArg n l
+--            -> m n (Abs (Nest IBinder) (ListE Block) n)
+--         go argRecons dexArgs = \case
+--           Empty -> case dexArgs of
+--             Abs Empty UnitE -> return $ Abs Empty $ ListE argRecons
+--             _ -> error "zip error: dex args should correspond 1-to-1 with export args"
+--           Nest (ExportArg _ b) bs ->
+--             refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) ->
+--               sinkM dexArgs >>= \case
+--                 Abs (Nest (PiBinder dexB dexArgTy _) restDexArgs) UnitE -> do
+--                   (ity, block) <- typeRecon (sink ety) dexArgTy $ Var $ binderName v'
+--                   case block of
+--                     AtomicBlock dexArgAtom -> do
+--                       restDexArgs' <- applySubst (dexB@>SubstVal dexArgAtom) $ Abs restDexArgs UnitE
+--                       Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) restDexArgs' bs'
+--                       return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+--                     _ -> error "Expected an atomic block"
+--                 _ -> error "zip error: dex args should correspond 1-to-1 with export args"
 
-        typeRecon :: EnvExtender m => ExportType n -> Type n -> Atom n -> m n (IType, Block n)
-        typeRecon ety dexTy v = case ety of
-          ScalarType sbt -> do
-            resultWrapped <- wrapScalarNewtypes dexTy v
-            return (Scalar sbt, AtomicBlock resultWrapped)
-          RectContArrayPtr sbt shape -> do
-              resultEltTy <- case tabTyElementTy dexTy of
-                Nothing -> error $ "Not a non-dependent table type: " ++ pprint dexTy
-                Just t -> return t
-              block <- liftBuilder $ buildBlock do
-                tableAtom (sink resultEltTy) (sink v) (sink $ ListE shape) []
-              return (PtrType (Heap CPU, Scalar sbt), block)
-            where
-              tableAtom :: Emits n => Type n -> Atom n -> ListE ExportDim n
-                        -> [(Atom n, ExportDim n)] -> BuilderM n (Atom n)
-              tableAtom eltTy basePtr (ListE shapeTail) typedIdxs = case shapeTail of
-                (ity:rest) -> buildTabLam noHint (exportDimToIxType ity) \i -> do
-                  let typedIdxs' = [(sink ix, sink t) | (ix, t) <- typedIdxs]
-                  tableAtom (sink eltTy) (sink basePtr) (sink $ ListE rest) (typedIdxs' ++ [(Var i, sink ity)])
-                [] -> do
-                  sizes <- mapM (indexSetSizeFin . finArg . snd) typedIdxs
-                  strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
-                                                     (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
-                  ords <- forM typedIdxs \(i, ity) -> ordinalFin (finArg ity) i
-                  offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
-                  wrapScalarNewtypes eltTy =<< unsafePtrLoad =<< ptrOffset basePtr offset
+--         typeRecon :: EnvExtender m => ExportType n -> Type n -> Atom n -> m n (IType, Block n)
+--         typeRecon ety dexTy v = case ety of
+--           ScalarType sbt -> do
+--             resultWrapped <- wrapScalarNewtypes dexTy v
+--             return (Scalar sbt, AtomicBlock resultWrapped)
+--           RectContArrayPtr sbt shape -> do
+--               resultEltTy <- case tabTyElementTy dexTy of
+--                 Nothing -> error $ "Not a non-dependent table type: " ++ pprint dexTy
+--                 Just t -> return t
+--               block <- liftBuilder $ buildBlock do
+--                 tableAtom (sink resultEltTy) (sink v) (sink $ ListE shape) []
+--               return (PtrType (Heap CPU, Scalar sbt), block)
+--             where
+--               tableAtom :: Emits n => Type n -> Atom n -> ListE ExportDim n
+--                         -> [(Atom n, ExportDim n)] -> BuilderM n (Atom n)
+--               tableAtom eltTy basePtr (ListE shapeTail) typedIdxs = case shapeTail of
+--                 (ity:rest) -> buildTabLam noHint (exportDimToIxType ity) \i -> do
+--                   let typedIdxs' = [(sink ix, sink t) | (ix, t) <- typedIdxs]
+--                   tableAtom (sink eltTy) (sink basePtr) (sink $ ListE rest) (typedIdxs' ++ [(Var i, sink ity)])
+--                 [] -> do
+--                   sizes <- mapM (indexSetSizeFin . finArg . snd) typedIdxs
+--                   strides <- reverse . fst <$> scanM (\si st -> dup <$> imul st si)
+--                                                      (IdxRepVal 1:reverse (tail sizes)) (IdxRepVal 1)
+--                   ords <- forM typedIdxs \(i, ity) -> ordinalFin (finArg ity) i
+--                   offset <- foldM iadd (IdxRepVal 0) =<< mapM (uncurry imul) (zip strides ords)
+--                   wrapScalarNewtypes eltTy =<< unsafePtrLoad =<< ptrOffset basePtr offset
 
-              indexSetSizeFin n = unwrapBaseNewtype <$> projectIxFinMethod 0 n
-              ordinalFin n ix = do
-                Lam (LamExpr b body) <- projectIxFinMethod 1 n
-                ordNat <- emitBlock =<< applySubst (b@>SubstVal ix) body
-                return $ unwrapBaseNewtype ordNat
-              dup x = (x, x)
+--               indexSetSizeFin n = unwrapBaseNewtype <$> projectIxFinMethod 0 n
+--               ordinalFin n ix = do
+--                 Lam (LamExpr b body) <- projectIxFinMethod 1 n
+--                 ordNat <- emitBlock =<< applySubst (b@>SubstVal ix) body
+--                 return $ unwrapBaseNewtype ordNat
+--               dup x = (x, x)
 
-    toExportType :: Fallible m => Type n -> m (ExportType n)
-    toExportType ty = case ty of
-      BaseTy (Scalar sbt) -> return $ ScalarType sbt
-      NatTy               -> return $ ScalarType IdxRepScalarBaseTy
-      TabTy  _ _          -> case parseTabTy ty of
-        Nothing  -> unsupported
-        Just ety -> return ety
-      _ -> unsupported
-      where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+--     toExportType :: Fallible m => Type n -> m (ExportType n)
+--     toExportType ty = case ty of
+--       BaseTy (Scalar sbt) -> return $ ScalarType sbt
+--       NatTy               -> return $ ScalarType IdxRepScalarBaseTy
+--       TabTy  _ _          -> case parseTabTy ty of
+--         Nothing  -> unsupported
+--         Just ety -> return ety
+--       _ -> unsupported
+--       where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 
-    wrapScalarNewtypes :: EnvReader m => Type n -> Atom n -> m n (Atom n)
-    wrapScalarNewtypes ty x = case ty of
-      NatTy             -> return $ Con $ Newtype NatTy x
-      BaseTy (Scalar _) -> return x
-      _ -> error $ "not a scalar type: " ++ pprint ty
+--     wrapScalarNewtypes :: EnvReader m => Type n -> Atom n -> m n (Atom n)
+--     wrapScalarNewtypes ty x = case ty of
+--       NatTy             -> return $ Con $ Newtype NatTy x
+--       BaseTy (Scalar _) -> return x
+--       _ -> error $ "not a scalar type: " ++ pprint ty
 
-    parseTabTy :: Type n -> Maybe (ExportType n)
-    parseTabTy = go []
-      where
-        go shape = \case
-          BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
-          NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-          TabTy  (b:>(IxType (TC (Fin n)) _)) a -> do
-            dim <- case n of
-              Var v    -> Just (ExportDimVar v)
-              NatVal s -> Just (ExportDimLit $ fromIntegral s)
-              _        -> Nothing
-            case hoist b a of
-              HoistSuccess a' -> go (shape ++ [dim]) a'
-              HoistFailure _  -> Nothing
-          _ -> Nothing
+--     parseTabTy :: Type n -> Maybe (ExportType n)
+--     parseTabTy = go []
+--       where
+--         go shape = \case
+--           BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
+--           NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
+--           TabTy  (b:>(IxType (TC (Fin n)) _)) a -> do
+--             dim <- case n of
+--               Var v    -> Just (ExportDimVar v)
+--               NatVal s -> Just (ExportDimLit $ fromIntegral s)
+--               _        -> Nothing
+--             case hoist b a of
+--               HoistSuccess a' -> go (shape ++ [dim]) a'
+--               HoistFailure _  -> Nothing
+--           _ -> Nothing
 
-    tabTyElementTy :: Type n -> Maybe (Type n)
-    tabTyElementTy ty = case ty of
-      BaseTy (Scalar _) -> return ty
-      NatTy             -> return ty
-      TabTy b a -> do
-        HoistSuccess a' <- return $ hoist b a
-        tabTyElementTy a'
-      _ -> Nothing
+--     tabTyElementTy :: Type n -> Maybe (Type n)
+--     tabTyElementTy ty = case ty of
+--       BaseTy (Scalar _) -> return ty
+--       NatTy             -> return ty
+--       TabTy b a -> do
+--         HoistSuccess a' <- return $ hoist b a
+--         tabTyElementTy a'
+--       _ -> Nothing
 
-{-# SCC prepareFunctionForExport #-}
+-- {-# SCC prepareFunctionForExport #-}
 
 -- === Exported function signature ===
 

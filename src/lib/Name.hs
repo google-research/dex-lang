@@ -18,7 +18,7 @@ module Name (
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
   DoubleInplaceT (..), liftDoubleInplaceT,
-  emitDoubleInplaceTHoisted, unsafeEmitDoubleInplaceTHoisted,
+  emitDoubleInplaceTHoisted, willItHoistDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
   runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -1840,6 +1840,14 @@ emitDoubleInplaceTHoisted emission = do
         return $ Just $ unsafeCoerceE e
     else
       return Nothing
+
+willItHoistDoubleInplaceT
+  :: ( Monad m, ExtOutMap b d1, OutFrag d1
+     , ExtOutMap b d2, OutFrag d2, HoistableE e)
+  => e n -> DoubleInplaceT b d1 d2 m n Bool
+willItHoistDoubleInplaceT e = do
+  Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
+  return $ R.containedIn (freeVarsE e) topScopeFrag
 
 unsafeEmitDoubleInplaceTHoisted
   :: ( Monad m, ExtOutMap b d1, OutFrag d1

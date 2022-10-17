@@ -176,7 +176,7 @@ type IxDict = Atom
 
 -- TODO: use this in projectIxFinMethod too
 data IxMethod = Size | Ordinal | UnsafeFromOrdinal
-     deriving (Show, Generic, Enum, Bounded)
+     deriving (Show, Generic, Enum, Bounded, Eq)
 
 data IxType (n::S) =
   IxType { ixTypeType :: Type n
@@ -302,7 +302,10 @@ data DictExpr (n::S) =
    -- Used for dicts defined by top-level functions, which may take extra data parameters
    -- TODO: consider bundling `(DictType n, [AtomName n])` as a top-level
    -- binding for some `Name DictNameC` to make the IR smaller.
- | ExplicitMethods (DictType n) [AtomName n] [Atom n] -- dict type, names of parameterized method functions, parameters
+   -- TODO: the function atoms should be names. We could enforce that syntactically but then
+   -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
+   -- top function names.
+ | ExplicitMethods (DictType n) [Atom n] [Atom n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -1455,21 +1458,24 @@ instance SubstE AtomSubstVal DictType
 
 instance GenericE DictExpr where
   type RepE DictExpr =
-    EitherE4
+    EitherE5
  {- InstanceDict -}      (PairE InstanceName (ListE Atom))
  {- InstantiatedGiven -} (PairE Atom (ListE Atom))
  {- SuperclassProj -}    (PairE Atom (LiftE Int))
  {- IxFin -}             (Atom)
+ {- ExplicitMethods -}   (DictType `PairE` ListE Atom `PairE` ListE Atom)
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
+    ExplicitMethods ty fs args -> Case4 (ty `PairE` ListE fs `PairE` ListE args)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x -> IxFin x
+    Case4 (ty `PairE` ListE fs `PairE` ListE args) -> ExplicitMethods ty fs args
     _ -> error "impossible"
 
 instance SinkableE           DictExpr
@@ -1827,14 +1833,20 @@ instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
-  type RepE SpecializationSpec = PairE AtomName (Abs (Nest Binder) (ListE Type))
-  fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
+  type RepE SpecializationSpec = EitherE2
+         (PairE AtomName (Abs (Nest Binder) (ListE Type)))
+         (PairE (LiftE IxMethod) (Abs (Nest Binder) IxDict))
+  fromE (AppSpecialization fname (Abs bs args))    = Case0 (PairE fname (Abs bs args))
+  fromE (IxMethodSpecialization method (Abs bs d)) = Case1 (PairE (LiftE method) (Abs bs d))
   {-# INLINE fromE #-}
-  toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
+  toE (Case0 (PairE fname (Abs bs args)))       = AppSpecialization fname (Abs bs args)
+  toE (Case1 (PairE (LiftE method) (Abs bs d))) = IxMethodSpecialization method (Abs bs d)
+  toE _ = error "impossible"
   {-# INLINE toE #-}
 
 instance HasNameHint (SpecializationSpec n) where
   getNameHint (AppSpecialization f _) = getNameHint f
+  getNameHint (IxMethodSpecialization ixMethod _) = getNameHint $ show ixMethod
 
 instance SubstE AtomSubstVal SpecializationSpec where
   substE env (AppSpecialization f ab) = do
@@ -1843,6 +1855,8 @@ instance SubstE AtomSubstVal SpecializationSpec where
                SubstVal (Var v) -> v
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
+  substE env (IxMethodSpecialization ixMethod ab) =
+    IxMethodSpecialization ixMethod $ substE env ab
 
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
@@ -2191,6 +2205,7 @@ instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
 
 instance Hashable Projection
+instance Hashable IxMethod
 
 instance Store (Atom n)
 instance Store (Expr n)

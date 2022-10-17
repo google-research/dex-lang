@@ -50,6 +50,7 @@ import Name
 import AbstractSyntax
 import Syntax
 import Core
+import CheapReduction
 import Types.Core
 import Builder
 import CheckType ( CheckableE (..), asFFIFunType, checkHasType, asSpecializableFunction)
@@ -573,11 +574,10 @@ evalBlock typed = do
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
-      explicitIx <- emitIx opt
-      instIx <- simplifyIx explicitIx
-      lowered <- checkPass LowerPass $ lowerFullySequential instIx
+      lowered <- checkPass LowerPass $ lowerFullySequential opt
+      evalRequiredSpecializations lowered
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
-        (dceIxDestBlock >=> hoistLoopInvariantIxDest)
+        (dceDestBlock >=> hoistLoopInvariantDest)
       evalBackend lopt
   applyRecon recon result
 {-# SCC evalBlock #-}
@@ -671,13 +671,42 @@ specializedFunPreSimpDefinition
   :: (MonadFail1 m, EnvReader m) => AtomName n -> m n (NaryLamExpr n)
 specializedFunPreSimpDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
-  AppSpecialization f abStaticArgs@(Abs bs _) <- return s
-  f' <- forceDeferredInlining f
-  liftBuilder do
-    buildNaryLamExpr ty \allArgs -> do
-      let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-      ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
-      naryApp (sink f') $ staticArgs' <> map Var originalArgs
+  case s of
+    AppSpecialization f abStaticArgs@(Abs bs _) -> do
+      f' <- forceDeferredInlining f
+      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
+        ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
+        naryApp (sink f') $ staticArgs' <> map Var originalArgs
+    IxMethodSpecialization method absDict@(Abs bs _) -> do
+      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
+        dict <- applyNaryAbs (sink absDict) extraArgs
+        methodImpl <- projectDictMethod dict (fromEnum method)
+        naryApp methodImpl (map Var methodArgs)
+
+-- This is needed to avoid an infinite loop. If we just emit `ProjMethod` then
+-- simplification will try outlining the dict again and we'll keep going around.
+-- TODO: de-dup with the version in Simplify.hs
+projectDictMethod :: Emits n => Atom n -> Int -> BuilderM n (Atom n)
+projectDictMethod d i =
+  cheapNormalize d >>= \case
+    DictCon (InstanceDict instanceName args) -> do
+      InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+      let InstanceBody _ methods = body
+      let method = methods !! i
+      emitBlock =<< applySubst (bs@@>(SubstVal <$> args)) method
+    Con (ExplicitDict _ method) -> do
+      case i of
+        0 -> return method
+        _ -> error "ExplicitDict only supports single-method classes"
+    DictCon (IxFin n) -> projectIxFinMethod i n
+    DictCon (ExplicitMethods _ fs params) -> do
+      let f = fs !! i
+      case toEnum i of
+        Size -> naryApp f $ params ++ [UnitVal]
+        _    -> naryApp f params
+    d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
@@ -701,7 +730,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
+evalLLVM :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
@@ -737,7 +766,7 @@ impNameToObj v = do
     Just v' -> return v'
     Nothing -> throw CompilerErr $ "Expected to find an object cache entry for: " ++ pprint v
 
-evalBackend :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
+evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of

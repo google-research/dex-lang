@@ -228,6 +228,7 @@ instance Pretty (DictExpr n) where
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
+    ExplicitMethods _ methods args -> "ExplicitMethods" <+> p methods <+> p args
 
 instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
@@ -452,6 +453,11 @@ instance Pretty (TopFunBinding n) where
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
     "Specialization" <+> p f <+> p bs <+> p args
+  pretty (IxMethodSpecialization method (Abs bs d)) =
+    "IxMethodSpecialization" <+> p method <+> p bs <+> p d
+
+instance Pretty IxMethod where
+  pretty method = p $ show method
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
