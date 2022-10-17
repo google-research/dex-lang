@@ -964,15 +964,19 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     tab' <- inferRho tab >>= zonk
     inferNaryTabApp (srcPos tab) tab' (NE.fromList args) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
-    -- TODO: make sure there's no effect if it's an implicit or table arrow
+    -- TODO: make sure there's no effect if it's an implicit or table
+    -- arrow
     piTy <- checkAnnWithMissingDicts ann \missingDs getAnnType -> do
-      -- Note that we can't automatically quantify class Pis, because the class dict
-      -- might have been bound on the rhs of a let and it would get bound to the
-      -- inserted arguments instead of the desired dict. It's not a fundemental
-      -- limitation of our automatic quantification, but it's simpler not to deal with
+      -- Note that we can't automatically quantify class Pis, because
+      -- the class dict might have been bound on the rhs of a let and
+      -- it would get bound to the inserted arguments instead of the
+      -- desired dict. It's not a fundemental limitation of our
+      -- automatic quantification, but it's simpler not to deal with
       -- that for now.
-      let checkNoMissing = addSrcContext pos' $ unless (null $ eSetToList missingDs) $ throw TypeErr $
-            "Couldn't synthesize a class dictionary for: " ++ pprint (head $ eSetToList missingDs)
+      let checkNoMissing = (addSrcContext pos'
+           $ unless (null $ eSetToList missingDs) $ throw TypeErr
+           $ "Couldn't synthesize a class dictionary for: "
+             ++ pprint (head $ eSetToList missingDs))
       autoDs <- case arr of
         ClassArrow -> checkNoMissing $> mempty
         _          -> return $ missingDs
