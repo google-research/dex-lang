@@ -15,8 +15,16 @@
 #include <type_traits>
 #include <cstdint>
 
+#if defined(__linux__)
 static_assert(std::is_same<pthread_key_t, std::uint32_t>::value,
-              "Expected pthread_key_t to be an uint32_t!");
+              "On linux, expected pthread_key_t to be an uint32_t");
+#elif defined(__APPLE__)
+static_assert(std::is_same<pthread_key_t, unsigned long>::value,
+              "On macOS, Expected pthread_key_t to be an unsigned long");
+static_assert(sizeof(unsigned long) == 8, "Expected 64-bit unsigned long");
+#else
+# error Unsupported OS
+#endif
 
 #ifdef DEX_LIVE
 #include <png.h>
