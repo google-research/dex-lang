@@ -7,35 +7,35 @@
 
 'This is a normal ADT, and you can construct your own isomorphisms.
 
-def cycleThree {a b c} : Iso (a & b & c) (b & c & a) =
+def cycle_three {a b c} : Iso (a & b & c) (b & c & a) =
   MkIso {
       fwd = \(a, b, c). (b, c, a)
     , bwd = \(b, c, a). (a, b, c)
     }
 
-'Isomorphisms can be applied with `appIso`, applied in reverse with `revIso`,
-and flipped with `flipIso`
+'Isomorphisms can be applied with `app_iso`, applied in reverse with `rev_iso`,
+and flipped with `flip_iso`
 
-:p app_iso cycleThree (1, 2.0, 3)
+:p app_iso cycle_three (1, 2.0, 3)
 > (2., (3, 1))
 
-:p rev_iso cycleThree (1, 2.0, 3)
+:p rev_iso cycle_three (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p app_iso (flip_iso cycleThree) (1, 2.0, 3)
+:p app_iso (flip_iso cycle_three) (1, 2.0, 3)
 > (3, (1, 2.))
 
 'They can also be composed with `&>>`:
 
-:p app_iso (cycleThree &>> cycleThree) (1, 2.0, 3)
+:p app_iso (cycle_three &>> cycle_three) (1, 2.0, 3)
 > (3, (1, 2.))
 
-:p app_iso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
+:p app_iso (cycle_three &>> cycle_three &>> cycle_three) (1, 2.0, 3)
 > (1, (2., 3))
 
 'Note that we assume but do not check that the isomorphism is lawful (i.e.
-`appIso iso $ revIso iso x == x` for all `x`, or equivalently
-`iso &>> (flipIso iso) == idIso`).
+`app_iso iso $ rev_iso iso x == x` for all `x`, or equivalently
+`iso &>> (flip_iso iso) == id_iso`).
 
 'In addition, Dex will automatically write some useful isomorphisms for you
 to extract fields from records and variants. There are four syntactic forms
@@ -72,7 +72,7 @@ that produce isos. We will start with the first two:
   ```
 
 '## Record accessors and lens-like helpers
-Record accessor isomorphisms can be passed into the helper function `getAt`:
+Record accessor isomorphisms can be passed into the helper function `get_at`:
 
 :t get_at
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> a -> b)
@@ -165,15 +165,15 @@ when using a record type as an index set:
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
 --     ordinal a * 100 + ordinal b * 10 + ordinal c
 --   v1 = x
---   v2 = sum $ overFields (#&b) x
---   v3 = sum $ overFields (#&b &>> #&c) x
---   v4 = sum $ overFields (#&a &>> #&b &>> #&c) x
+--   v2 = sum $ over_fields (#&b) x
+--   v3 = sum $ over_fields (#&b &>> #&c) x
+--   v4 = sum $ over_fields (#&a &>> #&b &>> #&c) x
 --   (v1, v2, v3, v4)
 -- > ( [0, 100, 10, 110, 1, 101, 11, 111]@{a: Fin 2 & b: Fin 2 & c: Fin 2}
 -- > , ([10, 210, 12, 212]@{a: Fin 2 & c: Fin 2}, ([22, 422]@{a: Fin 2}, [444]@{ &})) )
 
-'Note that `overFields` is just a simple wrapper combining `splitR` and
-`overLens`:
+'Note that `over_fields` is just a simple wrapper combining `split_r` and
+`over_lens`:
 
 :t split_r
 > ((a:Type) ?-> Iso a ({&} & a))
@@ -187,26 +187,26 @@ when using a record type as an index set:
 >  ?=> (v#1:(Ix c))
 >  ?=> (Iso a (b & c)) -> (_autoq:(Ix a)) ?=> (a => v) -> b => c => v)
 
-'`overLens` alone can be used with any lens-like isomorphism, for instance an
+'`over_lens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.
 
-def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
+def abc_to_tuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
   fwd = \({a, b, c}). (c, b, a)
   bwd = \(c, b, a). {a, b, c}
   MkIso {fwd, bwd}
 instance Ix {a:n & b:m & c:q} given {n m q} [Ix n, Ix m, Ix q]
   size = size n * size m * size q
-  ordinal = ordinal <<< app_iso abcToTuple
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToTuple
+  ordinal = ordinal <<< app_iso abc_to_tuple
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abc_to_tuple
 
-def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
+def bc_to_pair {b c} : Iso {b:b & c:c} (c&b) =
   fwd = \({b, c}). (c, b)
   bwd = \(c, b). {b, c}
   MkIso {fwd, bwd}
 instance Ix {b:n & c:m} given {n m} [Ix n, Ix m]
   size = size n * size m
-  ordinal = ordinal <<< app_iso bcToPair
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso bcToPair
+  ordinal = ordinal <<< app_iso bc_to_pair
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso bc_to_pair
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -215,7 +215,7 @@ instance Ix {b:n & c:m} given {n m} [Ix n, Ix m]
 > [ [0, 10, 1, 11]@{b: Fin 2 & c: Fin 2}
 > , [100, 110, 101, 111]@{b: Fin 2 & c: Fin 2} ]
 
-'`splitR` can be used if you want to process multiple fields at once:
+'`split_r` can be used if you want to process multiple fields at once:
 
 :p push_at (split_r &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
 > {a = 1, b = 2., c = 3, d = 4.}
@@ -242,7 +242,7 @@ zipper isomorphisms:
 >               ((Right l)) -> (Right {|a| ...l |}))}
 >  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
 
-'`splitV` makes a prism zipper into an ordinary prism isomorphism:
+'`split_v` makes a prism zipper into an ordinary prism isomorphism:
 
 :t split_v
 > ((a:Type) ?-> Iso a ({ |} | a))
@@ -252,10 +252,10 @@ zipper isomorphisms:
   for i. match_with (split_v &>> #|a &>> #|b) vals.i
 > [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
 
-'`sliceFields` uses this to specific named variants from a variant-indexed
+'`slice_fields` uses this to specific named variants from a variant-indexed
 table:
 
-def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
+def abc_to_either {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
   fwd = \v.  case v of
     {|a=x|} -> Left x
     {|b=x|} -> Right (Left x)
@@ -268,10 +268,10 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
   MkIso {fwd, bwd}
 instance Ix {a:n | b:m | c:q} given {n m q} [Ix n, Ix m, Ix q]
   size = size n + size m + size q
-  ordinal = ordinal <<< app_iso abcToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abcToEither
+  ordinal = ordinal <<< app_iso abc_to_either
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abc_to_either
 
-def abToEither {a b} : Iso {a:a | b:b} (a|b) =
+def ab_to_either {a b} : Iso {a:a | b:b} (a|b) =
   fwd = \v.  case v of
     {|a=x|} -> Left x
     {|b=x|} -> Right x
@@ -281,10 +281,10 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
   MkIso {fwd, bwd}
 instance Ix {a:n | b:m} given {n m} [Ix n, Ix m]
   size = size n + size m
-  ordinal = ordinal <<< app_iso abToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToEither
+  ordinal = ordinal <<< app_iso ab_to_either
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso ab_to_either
 
-def acToEither {a c} : Iso {a:a | c:c} (a|c) =
+def ac_to_either {a c} : Iso {a:a | c:c} (a|c) =
   fwd = \v.  case v of
     {|a=x|} -> Left x
     {|c=x|} -> Right x
@@ -294,8 +294,8 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
   MkIso {fwd, bwd}
 instance Ix {a:n | c:m} given {n m} [Ix n, Ix m]
   size = size n + size m
-  ordinal = ordinal <<< app_iso acToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso acToEither
+  ordinal = ordinal <<< app_iso ac_to_either
+  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso ac_to_either
 
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
