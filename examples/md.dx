@@ -269,17 +269,32 @@ def target_cell {dim grid_size}
   (cell_size: Float) (atom: Vec dim) : GridIx dim grid_size =
   for dim. from_ordinal _ $ f_to_n $ atom.dim / cell_size
 
+def traverse_cells {dim atom_ix eff}
+  [Ix atom_ix] grid_size cell_size
+  (atoms: atom_ix => Vec dim)
+  (action: atom_ix -> (GridIx dim grid_size) -> {|eff} Unit)
+  : {|eff} Unit =
+  for ix.
+    cell = target_cell cell_size atoms.ix
+    action ix cell
+  ()
+
 def cell_table {dim atom_ix}
-  [Ix atom_ix]
-  grid_size
-  bucket_size
-  cell_size
-  (atoms: atom_ix => Vec dim) : (CellTable dim grid_size bucket_size atom_ix) =
-  -- catch do
-    yield_state (for _. empty_bounded_list $ unsafe_from_ordinal _ 0) \ref.
-      for ix.
-        cell = target_cell cell_size atoms.ix
-        bd_push ref!cell ix
+  [Ix atom_ix] grid_size bucket_size cell_size
+  (atoms: atom_ix => Vec dim)
+  : (CellTable dim grid_size bucket_size atom_ix) =
+  yield_state (for _. empty_bounded_list $ unsafe_from_ordinal _ 0) \ref.
+    traverse_cells grid_size cell_size atoms \ix cell.
+      bd_push ref!cell ix
+
+def cell_table_bucket_size {dim atom_ix}
+  [Ix atom_ix] grid_size cell_size
+  (atoms: atom_ix => Vec dim) : Nat =
+  -- TODO Use yield_accum here
+  bucket_sizes = yield_state (for _:(GridIx dim grid_size). 0) \ref.
+    traverse_cells grid_size cell_size atoms \ix cell.
+      ref!cell := get ref!cell + 1
+  maximum bucket_sizes
 
 'Let's test it out:
 
@@ -313,30 +328,43 @@ def torus_offset {n} (ix: (Fin n)) (offset: Int) : (Fin n) =
 
 neighbor_list_size = 40000
 
+def traverse_neighbors {grid_size bucket_size atom_ix eff}
+  (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
+  (atoms: atom_ix => Vec TwoDimensions)
+  (action: atom_ix -> atom_ix -> {|eff} Unit)
+  : {|eff} Unit =
+  for cell_ix : (GridIx TwoDimensions grid_size).
+    for nb.
+      displacement = cell_neighbors_2d.nb
+      neighbor_ix = for dim. torus_offset cell_ix.dim displacement.dim
+      (AsList sz_atoms_1 atoms_1) = as_list tbl.cell_ix
+      for atom1_ix : (Fin sz_atoms_1).
+        atom1 = atoms_1.atom1_ix
+        (AsList sz_atoms_2 atoms_2) = as_list tbl.neighbor_ix
+        for atom2_ix : (Fin sz_atoms_2).
+          atom2 = atoms_2.atom2_ix
+          dist = norm $ periodic_displacement L atoms.atom1 atoms.atom2
+          if dist < 1 then
+            action atom1 atom2
+        ()
+      ()
+  ()
+
 %time
 def neighbor_list {grid_size bucket_size atom_ix}
   neighbor_list_size
   (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
   (atoms: atom_ix => Vec TwoDimensions)
   : BoundedList (Fin neighbor_list_size) (atom_ix & atom_ix) =
-  -- catch do
-    yield_state (empty_bounded_list $ (from_ordinal _ 0, from_ordinal _ 0)) \ref.
-      for cell_ix : (GridIx TwoDimensions grid_size).
-        for nb.
-          displacement = cell_neighbors_2d.nb
-          neighbor_ix = for dim. torus_offset cell_ix.dim displacement.dim
-          (AsList sz_atoms_1 atoms_1) = as_list tbl.cell_ix
-          for atom1_ix : (Fin sz_atoms_1).
-            atom1 = atoms_1.atom1_ix
-            (AsList sz_atoms_2 atoms_2) = as_list tbl.neighbor_ix
-            for atom2_ix : (Fin sz_atoms_2).
-              atom2 = atoms_2.atom2_ix
-              dist = norm $ periodic_displacement L atoms.atom1 atoms.atom2
-              if dist < 1 then
-                num = get $ fst_ref ref
-                bd_push ref (atom1, atom2)
-            ()
-          ()
+  yield_state (empty_bounded_list $ (from_ordinal _ 0, from_ordinal _ 0)) \ref.
+    traverse_neighbors tbl atoms (\atom1 atom2. bd_push ref (atom1, atom2))
+
+def count_neighbor_list_size {grid_size bucket_size atom_ix}
+  (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
+  (atoms: atom_ix => Vec TwoDimensions)
+  : Nat =
+  yield_accum (AddMonoid Nat) \ref.
+    traverse_neighbors tbl atoms (\atom1 atom2. ref += 1)
 
 %time
 res = neighbor_list neighbor_list_size tbl $ get_position state'
@@ -366,8 +394,10 @@ energy (get_position state')
 
 
 def just_neighbor_list {n} (atoms:n=>(Fin 2)=>Float) : (List (n & n)) =
+  bucket_size = cell_table_bucket_size grid_size cell_size atoms
   tbl = cell_table grid_size bucket_size cell_size atoms
-  res = neighbor_list neighbor_list_size tbl atoms
+  neighbor_list_sz = count_neighbor_list_size tbl atoms
+  res = neighbor_list neighbor_list_sz tbl atoms
   as_list res
 
 %time
