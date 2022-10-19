@@ -607,6 +607,9 @@ toImpHof maybeDest hof = do
     RunIO (Lam (LamExpr b body)) ->
       extendSubst (b@>SubstVal UnitVal) $
         translateBlock maybeDest body
+    RunInit (Lam (LamExpr b body)) ->
+      extendSubst (b@>SubstVal UnitVal) $
+        translateBlock maybeDest body
     Seq d ixDict carry (Lam (LamExpr b body)) -> do
       ixTy <- ixTyFromDict =<< substM ixDict
       carry' <- substM carry

@@ -251,6 +251,7 @@ instance (SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => S
   sourceRenameE ExceptionEffect = return ExceptionEffect
   sourceRenameE IOEffect = return IOEffect
   sourceRenameE (UserEffect name) = UserEffect <$> sourceRenameE name
+  sourceRenameE InitEffect = return InitEffect
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $

@@ -422,6 +422,7 @@ instance Pretty (Effect n) where
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
     UserEffect name -> p name
+    InitEffect      -> "Init"
 
 instance Pretty (UEffect n) where
   pretty eff = case eff of
@@ -429,6 +430,7 @@ instance Pretty (UEffect n) where
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
     UserEffect name -> p name
+    InitEffect      -> "Init"
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 

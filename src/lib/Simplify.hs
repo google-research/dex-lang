@@ -882,6 +882,11 @@ simplifyHof hof = case hof of
     ans <- emit $ Hof $ RunIO lam'
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
+  RunInit lam -> do
+    (lam', Abs b recon) <- simplifyLam lam
+    ans <- emit $ Hof $ RunInit lam'
+    let recon' = ignoreHoistFailure $ hoist b recon
+    applyRecon recon' $ Var ans
   Linearize lam -> do
     (lam', IdentityReconAbs) <- local (const WillLinearize) $ simplifyLam lam
     linearize lam'

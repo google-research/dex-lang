@@ -1809,6 +1809,7 @@ checkUEff eff = case eff of
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
   UserEffect ~(SIInternalName _ name) -> UserEffect <$> substM name
+  InitEffect -> return InitEffect
 
 constrainVarTy :: EmitsInf o => AtomName o -> Type o -> InfererM i o ()
 constrainVarTy v tyReq = do

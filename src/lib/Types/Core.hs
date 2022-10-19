@@ -2259,3 +2259,4 @@ instance SubstE AtomSubstVal (EffectP Name) where
         -- other cases are proven unreachable by type system
         -- v' is an EffectNameC but other cases apply only to
         -- AtomNameC
+    InitEffect -> InitEffect
