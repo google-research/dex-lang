@@ -252,15 +252,15 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
   Hof hof -> simplifyHof hof
   Case e alts resultTy eff -> do
     e' <- simplifyAtom e
-    eff' <- substM eff
-    resultTy' <- substM resultTy
     case trySelectBranch e' of
       Just (i, arg) -> do
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyBlock body
       Nothing -> do
+        resultTy' <- substM resultTy
         isData resultTy' >>= \case
           True -> do
+            eff' <- substM eff
             alts' <- forM alts \(Abs b body) -> do
               bTy' <- substM $ binderType b
               buildAbs (getNameHint b) bTy' \x ->
