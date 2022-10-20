@@ -274,10 +274,9 @@ def traverse_cells {dim atom_ix eff}
   (atoms: atom_ix => Vec dim)
   (action: atom_ix -> (GridIx dim grid_size) -> {|eff} Unit)
   : {|eff} Unit =
-  for ix.
+  for_ ix.
     cell = target_cell cell_size atoms.ix
     action ix cell
-  ()
 
 def cell_table {dim atom_ix}
   [Ix atom_ix] grid_size bucket_size cell_size
@@ -298,13 +297,15 @@ def cell_table_bucket_size {dim atom_ix}
 
 'Let's test it out:
 
+def grid_params L desired_cell_size : _ =
+  cells_per_side = floor(L / desired_cell_size)
+  cell_size = L / cells_per_side
+  grid_size = unsafe_i_to_n $ f_to_i cells_per_side
+  cell_size, grid_size
+
 desired_cell_size = 1.0
 
-cells_per_side = floor(L / desired_cell_size)
-
-cell_size = L / cells_per_side
-
-grid_size = unsafe_i_to_n $ f_to_i cells_per_side
+cell_size, grid_size = grid_params L desired_cell_size
 
 bucket_size = 10
 
@@ -328,46 +329,55 @@ def torus_offset {n} (ix: (Fin n)) (offset: Int) : (Fin n) =
 
 neighbor_list_size = 40000
 
-def traverse_neighbors {grid_size bucket_size atom_ix eff}
+def traverse_pairs {grid_size bucket_size atom_ix eff}
   (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
   (atoms: atom_ix => Vec TwoDimensions)
   (action: atom_ix -> atom_ix -> {|eff} Unit)
   : {|eff} Unit =
-  for cell_ix : (GridIx TwoDimensions grid_size).
-    for nb.
+  for_ cell_ix : (GridIx TwoDimensions grid_size).
+    for_ nb.
       displacement = cell_neighbors_2d.nb
       neighbor_ix = for dim. torus_offset cell_ix.dim displacement.dim
       (AsList sz_atoms_1 atoms_1) = as_list tbl.cell_ix
-      for atom1_ix : (Fin sz_atoms_1).
+      for_ atom1_ix : (Fin sz_atoms_1).
         atom1 = atoms_1.atom1_ix
         (AsList sz_atoms_2 atoms_2) = as_list tbl.neighbor_ix
-        for atom2_ix : (Fin sz_atoms_2).
+        for_ atom2_ix : (Fin sz_atoms_2).
           atom2 = atoms_2.atom2_ix
-          dist = norm $ periodic_displacement L atoms.atom1 atoms.atom2
-          if dist < 1 then
-            action atom1 atom2
-        ()
-      ()
-  ()
+          action atom1 atom2
 
 %time
 def neighbor_list {grid_size bucket_size atom_ix}
   neighbor_list_size
   (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
+  (is_neighbor: atom_ix -> atom_ix -> Bool)
   (atoms: atom_ix => Vec TwoDimensions)
   : BoundedList (Fin neighbor_list_size) (atom_ix & atom_ix) =
   yield_state (empty_bounded_list $ (from_ordinal _ 0, from_ordinal _ 0)) \ref.
-    traverse_neighbors tbl atoms (\atom1 atom2. bd_push ref (atom1, atom2))
+    traverse_pairs tbl atoms (\atom1 atom2.
+      if is_neighbor atom1 atom2
+        then bd_push ref (atom1, atom2))
 
 def count_neighbor_list_size {grid_size bucket_size atom_ix}
   (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
+  (is_neighbor: atom_ix -> atom_ix -> Bool)
   (atoms: atom_ix => Vec TwoDimensions)
   : Nat =
   yield_accum (AddMonoid Nat) \ref.
-    traverse_neighbors tbl atoms (\atom1 atom2. ref += 1)
+    traverse_pairs tbl atoms (\atom1 atom2.
+      if is_neighbor atom1 atom2
+        then ref += 1)
+
+def periodic_distance {atom_ix}
+  desired_cell_size
+  (atoms: atom_ix => Vec TwoDimensions) (atom1:atom_ix) (atom2:atom_ix)
+  : Bool =
+  dist = norm $ periodic_displacement L atoms.atom1 atoms.atom2
+  dist < desired_cell_size
 
 %time
-res = neighbor_list neighbor_list_size tbl $ get_position state'
+res = (neighbor_list neighbor_list_size tbl
+  (periodic_distance 1.0 $ get_position state') $ get_position state')
 
 (AsList k _) = as_list res
 k
@@ -393,24 +403,62 @@ energy_nl (as_list res) (get_position state')
 energy (get_position state')
 
 
-def just_neighbor_list {n} (atoms:n=>(Fin 2)=>Float) : (List (n & n)) =
+def just_neighbor_list {n}
+  desired_cell_size (atoms:n=>(Fin 2)=>Float)
+  : (List (n & n)) =
+  cell_size, grid_size = grid_params L desired_cell_size
   bucket_size = cell_table_bucket_size grid_size cell_size atoms
   tbl = cell_table grid_size bucket_size cell_size atoms
-  neighbor_list_sz = count_neighbor_list_size tbl atoms
-  res = neighbor_list neighbor_list_sz tbl atoms
+  is_neighbor = periodic_distance desired_cell_size atoms
+  neighbor_list_sz = count_neighbor_list_size tbl is_neighbor atoms
+  res = neighbor_list neighbor_list_sz tbl is_neighbor atoms
   as_list res
 
 %time
-state_nl = fire_descent_init 0.1 0.1 (energy_nl $ just_neighbor_list R) R
+state_nl = fire_descent_init 0.1 0.1 (energy_nl $ just_neighbor_list 1.0 R) R
 
 energy R
 energy $ get_position $ fire_descent_step free_shift energy state
 
+:t state
+
+def fast_any {n eff} [Ix n] (f: n -> {|eff} Bool) : {|eff} Bool =
+  iter \ct.
+    if ct >= size n
+      then Done False
+      else if f (ct @ n) then Done True else Continue
+
+-- TODO(Issue 1133) Can't use scan with a body that has an effect?
+def simulate {atom_ix}
+  (displacement : Displacement TwoDimensions)
+  halo_size
+  time [Ix time]
+  (state : FireDescentState atom_ix TwoDimensions)
+  : {IO} (FireDescentState atom_ix TwoDimensions & time => Float) =
+  with_state (get_position state) \saved_atoms_ref.
+    nbrs = just_neighbor_list (1.0 + halo_size) $ get_position state
+    (AsList k _) = nbrs
+    print $ show k <> " initial neighbor list size"
+    with_state nbrs \saved_neighbors_ref.
+      swap $ run_state state \s_ref. for i.
+        s = get s_ref
+        new_atoms = get_position s
+        rebuild = fast_any \i.
+          2 * norm (displacement (get saved_atoms_ref!i) new_atoms.i) > halo_size
+        if rebuild then
+          saved_atoms_ref := new_atoms
+          nbrs = just_neighbor_list (1.0 + halo_size) new_atoms
+          saved_neighbors_ref := nbrs
+          (AsList k _) = nbrs
+          print $ show k <> " new neighbor list size"
+        nbrs = get saved_neighbors_ref
+        s' = fire_descent_step (periodic_shift L) (energy_nl nbrs) s
+        s_ref := s'
+        energy_nl nbrs $ get_position s'
+
 %time
-(state_nl', energies_nl) = scan state \i:(Fin 100) s.
-  nbrs = just_neighbor_list $ get_position s
-  s' = fire_descent_step (periodic_shift L) (energy_nl nbrs) s
-  (s', (energy_nl nbrs) $ get_position s')
+(state_nl', energies_nl) =
+  unsafe_io do simulate (periodic_displacement L) 0.5 (Fin 100) state
 
 %time
 :html show_plot $ y_plot energies_nl
