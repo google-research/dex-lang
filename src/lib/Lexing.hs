@@ -70,11 +70,14 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
              | CustomLinearizationKW | CustomLinearizationSymbolicKW
+             | MapKW | OverKW
   deriving (Enum)
 
 keyWordToken :: KeyWord -> String
 keyWordToken = \case
   DefKW           -> "def"
+  MapKW           -> "map_"
+  OverKW          -> "over_"
   ForKW           -> "for"
   RofKW           -> "rof"
   For_KW          -> "for_"

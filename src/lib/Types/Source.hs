@@ -95,6 +95,7 @@ data UExpr' (n::S) =
  | UDepPair (UExpr n) (UExpr n)
  | UTabApp (UExpr n) (UExpr n)
  | UDecl (UDeclExpr n)
+ | UMap (UExpr n) (UExpr n)
  | UFor Direction (UForExpr n)
  | UCase (UExpr n) [UAlt n]
  | UHole

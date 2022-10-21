@@ -212,6 +212,8 @@ instance SourceRenamableE UExpr' where
     UDecl (UDeclExpr decl rest) ->
       sourceRenameB decl \decl' ->
         UDecl <$> UDeclExpr decl' <$> sourceRenameE rest
+    UMap fun array -> UMap <$> sourceRenameE fun
+                           <*> sourceRenameE array
     UFor d (UForExpr pat body) ->
       sourceRenameB pat \pat' ->
         UFor d <$> UForExpr pat' <$> sourceRenameE body

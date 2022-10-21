@@ -790,6 +790,14 @@ typeCheckPrimOp op = case op of
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
+  Map fun array -> do
+    Pi (PiType (PiBinder b argTy PlainArrow) Pure resEltTy) <- getTypeE fun
+    let resEltTy' = ignoreHoistFailure $ hoist b resEltTy
+    TabPi (TabPiType binder argEltTy) <- getTypeE array
+    let argEltTy' = ignoreHoistFailure $ hoist binder argEltTy
+    checkAlphaEq argTy argEltTy'
+    refreshAbs (Abs binder UnitE) \binder' _ ->
+      return $ TabPi $ TabPiType binder' (sink resEltTy')
   For _ ixDict f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f

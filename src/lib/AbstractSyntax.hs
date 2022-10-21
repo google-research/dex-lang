@@ -498,6 +498,10 @@ expr = propagateSrcE expr' where
         UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
   expr' (CLambda args body) =
     dropSrcE <$> liftM2 buildLam (concat <$> mapM argument args) (block body)
+  expr' (CMap fun array) = do
+    fun' <- expr fun
+    array' <- expr array
+    return $ UMap fun' array'
   expr' (CFor KView indices body) =
     dropSrcE <$> (buildTabLam <$> mapM patOptAnn indices <*> block body)
   expr' (CFor kind indices body) = do

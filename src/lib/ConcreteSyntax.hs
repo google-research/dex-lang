@@ -115,6 +115,7 @@ data Group'
   | CPrefix SourceName Group -- covers unary - and unary + among others
   | CPostfix SourceName Group
   | CLambda [Group] CBlock  -- The arguments do not have Juxtapose at the top level
+  | CMap Group Group -- unary fun, array
   | CFor ForKind [Group] CBlock -- also for_, rof, rof_, view
   | CCase Group [(Group, CBlock)] -- scrutinee, alternatives
   | CIf Group CBlock (Maybe CBlock)
@@ -565,6 +566,14 @@ cLam = do
   body <- cBlock
   return $ CLambda bs body
 
+cMap :: Parser Group'
+cMap = do
+  keyWord MapKW
+  fun <- cGroupNoJuxt
+  keyWord OverKW
+  array <- cGroup
+  return $ CMap fun array
+
 cFor :: Parser Group'
 cFor = do
   kw <- forKW
@@ -710,6 +719,7 @@ leafGroupNoBrackets = do
     _ | isDigit next -> (    CNat   <$> natLit
                          <|> CFloat <$> doubleLit)
     '\\' -> cLam
+    'm'  -> cMap <|> CIdentifier <$> anyName
     -- For exprs include view, for, rof, for_, rof_
     'v'  -> cFor  <|> CIdentifier <$> anyName
     'f'  -> cFor  <|> CIdentifier <$> anyName

@@ -560,6 +560,19 @@ toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (Atom i) -> SubstImpM i o (Atom
 toImpHof maybeDest hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
+    Map (Lam (LamExpr b body)) array -> do
+      rDest <- allocDest maybeDest resultTy
+      TabPi (TabPiType (_:>ixTy) _) <- getTypeSubst array
+      array' <- substM array
+      n <- indexSetSizeImp ixTy
+      emitLoop noHint Fwd n \i -> do
+        idx <- unsafeFromOrdinalImp (sink ixTy) i
+        ithArg <- dropSubst $ translateExpr Nothing $
+                    TabApp (sink array') $ idx :| []
+        ithDest <- destGet (sink rDest) idx
+        void $ extendSubst (b @> SubstVal ithArg) $
+          translateBlock (Just ithDest) body
+      destToAtom rDest
     For d ixDict (Lam (LamExpr b body)) -> do
       ixTy <- ixTyFromDict =<< substM ixDict
       n <- indexSetSizeImp ixTy

@@ -670,6 +670,8 @@ instance PrettyPrec (UExpr' n) where
                              <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
+    UMap fun array -> atPrec LowestPrec $ "map_"  <+> nest 2 (pLowest fun)
+                                      <+> "over_" <+> nest 2 (pLowest array)
     UPi piType -> prettyPrec piType
     UTabPi piType -> prettyPrec piType
     UDepPairTy depPairType -> prettyPrec depPairType
