@@ -27,7 +27,7 @@ import PPrint ()
 import {-# SOURCE #-} Inference (trySynthTerm)
 import Err
 import Types.Primitives
-import Util (for)
+import Util (for, onSndM)
 
 -- Carry out the reductions we are willing to carry out during type
 -- inference.  The goal is to support type aliases like `Int = Int32`
@@ -237,9 +237,8 @@ instance CheaplyReducibleE DictExpr Atom where
     where justSubst = DictCon <$> substM d
 
 instance CheaplyReducibleE DataDefParams DataDefParams where
-  cheapReduceE (DataDefParams ps ds) =
-    DataDefParams <$> mapM cheapReduceE ps
-                  <*> mapM cheapReduceE ds
+  cheapReduceE (DataDefParams ps) =
+    DataDefParams <$> mapM (onSndM cheapReduceE) ps
 
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
@@ -283,6 +282,11 @@ instance CheaplyReducibleE Expr Atom where
 instance (CheaplyReducibleE e1 e1', CheaplyReducibleE e2 e2')
   => CheaplyReducibleE (PairE e1 e2) (PairE e1' e2') where
     cheapReduceE (PairE e1 e2) = PairE <$> cheapReduceE e1 <*> cheapReduceE e2
+
+instance (CheaplyReducibleE e1 e1', CheaplyReducibleE e2 e2')
+  => CheaplyReducibleE (EitherE e1 e2) (EitherE e1' e2') where
+    cheapReduceE (LeftE e) = LeftE <$> cheapReduceE e
+    cheapReduceE (RightE e) = RightE <$> cheapReduceE e
 
 instance CheaplyReducibleE EffectRow EffectRow where
   cheapReduceE row = cheapReduceFromSubst row

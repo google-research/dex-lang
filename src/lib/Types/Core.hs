@@ -39,7 +39,7 @@ import Foreign.Ptr
 import Name
 import Err
 import LabeledItems
-import Util (FileHash)
+import Util (FileHash, onFst)
 
 import Types.Primitives
 import Types.Source
@@ -131,7 +131,7 @@ data FieldRowElem (n::S)
 data DataDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Env
-  DataDef :: SourceName -> DataDefBinders n l -> [DataConDef l] -> DataDef n
+  DataDef :: SourceName -> Nest PiBinder n l -> [DataConDef l] -> DataDef n
 
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
@@ -139,14 +139,8 @@ data DataConDef n =
   DataConDef SourceName (Type n) [[Projection]]
   deriving (Show, Generic)
 
-data DataDefBinders n l where
-  DataDefBinders
-    :: Nest Binder n h  -- ordinary params
-    -> Nest Binder h l  -- dict params
-    -> DataDefBinders n l
-
-data DataDefParams n = DataDefParams [Atom n] [Atom n]  -- ordinary params, dict params
-                       deriving (Show, Generic)
+newtype DataDefParams n = DataDefParams [(Arrow, Atom n)]
+  deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
 -- block). It's given by querying the result expression's type, and checking
@@ -950,39 +944,21 @@ instance ProvesExt  EffectBinder
 instance BindsNames EffectBinder
 instance SubstB Name EffectBinder
 
-instance GenericB DataDefBinders where
-  type RepB DataDefBinders = PairB (Nest Binder) (Nest Binder)
-  fromB (DataDefBinders bs1 bs2) = PairB bs1 bs2
-  {-# INLINE fromB #-}
-  toB   (PairB bs1 bs2) = DataDefBinders bs1 bs2
-  {-# INLINE toB #-}
-
-instance SinkableB   DataDefBinders
-instance HoistableB  DataDefBinders
-instance ProvesExt   DataDefBinders
-instance BindsNames  DataDefBinders
-instance SubstB Name DataDefBinders
-instance SubstB AtomSubstVal DataDefBinders
-instance AlphaHashableB DataDefBinders
-instance AlphaEqB       DataDefBinders
-deriving instance Show (DataDefBinders n l)
-deriving via WrapB DataDefBinders n l instance Generic (DataDefBinders n l)
-
 instance GenericE DataDefParams where
-  type RepE DataDefParams = PairE (ListE Atom) (ListE Atom)
-  fromE (DataDefParams xs ys) = PairE (ListE xs) (ListE ys)
+  type RepE DataDefParams = ListE (PairE (LiftE Arrow) Atom)
+  fromE (DataDefParams xs) = ListE $ map toPairE $ map (onFst LiftE) xs
   {-# INLINE fromE #-}
-  toE   (PairE (ListE xs) (ListE ys)) = DataDefParams xs ys
+  toE (ListE xs) = DataDefParams $ map (onFst fromLiftE) $ map fromPairE xs
   {-# INLINE toE #-}
 
 -- We ignore the dictionary parameters because we assume coherence
 instance AlphaEqE DataDefParams where
-  alphaEqE (DataDefParams params _) (DataDefParams params' _) =
-    alphaEqE (ListE params) (ListE params')
+  alphaEqE (DataDefParams params) (DataDefParams params') =
+    alphaEqE (ListE $ plainArrows params) (ListE $ plainArrows params')
 
 instance AlphaHashableE DataDefParams where
-  hashWithSaltE env salt (DataDefParams params _) =
-    hashWithSaltE env salt (ListE params)
+  hashWithSaltE env salt (DataDefParams params) =
+    hashWithSaltE env salt (ListE $ plainArrows params)
 
 instance SinkableE           DataDefParams
 instance HoistableE          DataDefParams
@@ -990,7 +966,7 @@ instance SubstE Name         DataDefParams
 instance SubstE AtomSubstVal DataDefParams
 
 instance GenericE DataDef where
-  type RepE DataDef = PairE (LiftE SourceName) (Abs DataDefBinders (ListE DataConDef))
+  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest PiBinder) (ListE DataConDef))
   fromE (DataDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs (ListE cons))
   {-# INLINE fromE #-}
   toE   (PairE (LiftE sourceName) (Abs bs (ListE cons))) = DataDef sourceName bs cons
@@ -2189,7 +2165,6 @@ instance Store (DeclBinding n)
 instance Store (FieldRowElem  n)
 instance Store (FieldRowElems n)
 instance Store (Decl n l)
-instance Store (DataDefBinders n l)
 instance Store (DataDefParams n)
 instance Store (DataDef n)
 instance Store (DataConDef n)

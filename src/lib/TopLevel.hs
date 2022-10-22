@@ -354,7 +354,7 @@ evalSourceBlock' mname block = case sbContents block of
                 Just (UTyConVar symTanName) -> do
                   TyConBinding dataDefName _ <- lookupEnv symTanName
                   return \elTy -> TypeCon "SymbolicTangent" dataDefName
-                    $ DataDefParams [elTy] []
+                    $ DataDefParams [(PlainArrow, elTy)]
                 Just _ -> throw TypeErr
                   "SymbolicTangent should name a `data` type"
           let prependTangent linTail ty =

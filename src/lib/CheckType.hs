@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as M
 import LabeledItems
 
 import Err
-import Util (forMZipped_)
+import Util (forMZipped_, onSndM)
 import QueryType hiding (HasType)
 
 import CheapReduction
@@ -210,6 +210,10 @@ instance CheckableE DataDef where
 
 instance (CheckableE e1, CheckableE e2) => CheckableE (PairE e1 e2) where
   checkE (PairE e1 e2) = PairE <$> checkE e1 <*> checkE e2
+
+instance (CheckableE e1, CheckableE e2) => CheckableE (EitherE e1 e2) where
+  checkE ( LeftE e) =  LeftE <$> checkE e
+  checkE (RightE e) = RightE <$> checkE e
 
 instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
   checkE (Abs b e) = checkB b \b' -> Abs b' <$> checkE e
@@ -398,8 +402,7 @@ instance HasType TabLamExpr where
       return $ TabTy b' bodyTy
 
 instance CheckableE DataDefParams where
-  checkE (DataDefParams params dicts) =
-    DataDefParams <$> mapM checkE params <*> mapM checkE dicts
+  checkE (DataDefParams params) = DataDefParams <$> mapM (onSndM checkE) params
 
 dictExprType :: Typer m => DictExpr i -> m i o (Type o)
 dictExprType e = case e of
@@ -732,7 +735,7 @@ typeCheckPrimOp op = case op of
     x |: Word8Ty
     t' <- checkTypeE TyKind t
     case t' of
-      TypeCon _ dataDefName (DataDefParams [] []) -> do
+      TypeCon _ dataDefName (DataDefParams []) -> do
         DataDef _ _ dataConDefs <- lookupDataDef dataDefName
         forM_ dataConDefs \(DataConDef _ _ idxs) ->
           unless (null idxs) $ throw TypeErr "Not empty"
@@ -1104,9 +1107,9 @@ checkUnOp op x = do
 checkedInstantiateDataDef
   :: (EnvReader m, Fallible1 m)
   => DataDef n -> DataDefParams n -> m n [DataConDef n]
-checkedInstantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons)
-                          (DataDefParams xs1 xs2) = do
-  fromListE <$> checkedApplyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
+checkedInstantiateDataDef (DataDef _ bs cons) (DataDefParams xs) = do
+  fromListE <$> checkedApplyNaryAbs
+    (Abs (fmapNest piBinderAsBinder bs) (ListE cons)) (map snd xs)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n]

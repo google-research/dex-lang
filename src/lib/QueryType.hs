@@ -131,10 +131,9 @@ instantiateDataDef (DataDef _ bs cons) params = do
 {-# INLINE instantiateDataDef #-}
 
 applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, ScopeReader m)
-                => Abs DataDefBinders e n -> DataDefParams n -> m n (e n)
-applyDataConAbs (Abs (DataDefBinders bs1 bs2) e) (DataDefParams xs1 xs2) = do
-  let paramsSubst = bs1 @@> (SubstVal <$> xs1) <.> bs2 @@> (SubstVal <$> xs2)
-  applySubst paramsSubst e
+                => Abs (Nest PiBinder) e n -> DataDefParams n -> m n (e n)
+applyDataConAbs (Abs bs e) (DataDefParams xs) =
+  applySubst (bs @@> (SubstVal <$> map snd xs)) e
 {-# INLINE applyDataConAbs #-}
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
