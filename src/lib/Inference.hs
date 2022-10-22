@@ -1499,12 +1499,19 @@ buildTyConLam
   -> (forall l. DExt n l => SourceName -> DataDefParams l -> m l (Atom l))
   -> m n (Atom n)
 buildTyConLam defName arr cont = do
-  DataDef sourceName (DataDefBinders paramBs classBs) _ <- lookupDataDef =<< sinkM defName
-  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest arr paramBs) \params -> do
-    Abs classBs' UnitE <- applySubst (paramBs @@> params) $ Abs classBs UnitE
-    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow classBs') \dicts -> do
-      params' <- mapM sinkM params
-      cont sourceName $ DataDefParams (Var <$> params') (Var <$> dicts)
+  DataDef sourceName paramBs _ <- lookupDataDef =<< sinkM defName
+  buildPureNaryLam (EmptyAbs $ fmapNest replacePlain paramBs) \params -> do
+    cont sourceName $ DataDefParams (attachArrows paramBs params)
+  where
+    replacePlain :: PiBinder n l -> PiBinder n l
+    replacePlain (PiBinder b ty PlainArrow) = PiBinder b ty arr
+    replacePlain b = b
+    attachArrows :: Nest PiBinder n l
+                  -> [AtomName l2] -> [(Arrow, Atom l2)]
+    attachArrows Empty []     = []
+    attachArrows (Nest (PiBinder _ _ arr') bs) (x:xs)
+      = (arr', Var x):attachArrows bs xs
+    attachArrows _ _ = error "zip error"
 
 tyConDefAsAtom :: EnvReader m => DataDefName n -> m n (Atom n)
 tyConDefAsAtom defName = liftBuilder do
@@ -1512,7 +1519,7 @@ tyConDefAsAtom defName = liftBuilder do
     return $ TypeCon sourceName (sink defName) params
 
 dataConDefAsAtom :: EnvReader m
-                 => Abs DataDefBinders (EmptyAbs (Nest Binder)) n
+                 => Abs (Nest PiBinder) (EmptyAbs (Nest Binder)) n
                  -> DataDefName n -> Int -> m n (Atom n)
 dataConDefAsAtom bsAbs defName conIx = liftBuilder do
   buildTyConLam defName ImplicitArrow \_ params -> do
@@ -1556,14 +1563,14 @@ binderNestAsPiNest arr = \case
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
 inferDataDef :: EmitsInf o => UDataDef i
-             -> InfererM i o (PairE DataDef (Abs DataDefBinders (ListE (EmptyAbs (Nest Binder)))) o)
+             -> InfererM i o (PairE DataDef (Abs (Nest PiBinder) (ListE (EmptyAbs (Nest Binder)))) o)
 inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
   Abs paramBs' (Abs clsBs' (ListE dataConsWithBs')) <-
     withNestedUBinders paramBs id \_ -> do
       withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ ->
         ListE <$> mapM inferDataCon dataCons
   let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
-  let ddbs = (DataDefBinders paramBs' clsBs')
+  let ddbs = (fmapNest plainPiBinder paramBs' `joinNest` fmapNest classPiBinder clsBs')
   return $ PairE (DataDef tyConName ddbs dataCons')
                  (Abs ddbs $ ListE bs')
 
@@ -1909,22 +1916,22 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
-            => Abs DataDefBinders e o -> InfererM i o (DataDefParams o, e o)
-inferParams (Abs (DataDefBinders paramBs classBs) body) = case paramBs of
-  Empty -> do
-    case classBs of
-      Empty -> return (DataDefParams [] [], body)
-      Nest (b:>ty) bs -> do
-        ctx <- srcPosCtx <$> getErrCtx
-        let d = Con $ DictHole (AlwaysEqual ctx) ty
-        rest <- applySubst (b@>SubstVal d) $ Abs (DataDefBinders Empty bs) body
-        (DataDefParams params dicts, body') <- inferParams rest
-        return (DataDefParams params (d:dicts), body')
-  Nest (b:>ty) bs -> do
+            => Abs (Nest PiBinder) e o -> InfererM i o (DataDefParams o, e o)
+inferParams (Abs paramBs body) = case paramBs of
+  Empty -> return (DataDefParams [], body)
+  Nest (PiBinder b ty PlainArrow) bs -> do
     x <- freshInferenceName ty
-    rest <- applySubst (b@>x) $ Abs (DataDefBinders bs classBs) body
-    (DataDefParams params dicts, body') <- inferParams rest
-    return (DataDefParams (Var x : params) dicts, body')
+    rest <- applySubst (b@>x) $ Abs bs body
+    (DataDefParams params, body') <- inferParams rest
+    return (DataDefParams ((PlainArrow, (Var x)) : params), body')
+  Nest (PiBinder b ty ClassArrow) bs -> do
+    ctx <- srcPosCtx <$> getErrCtx
+    let d = Con $ DictHole (AlwaysEqual ctx) ty
+    rest <- applySubst (b@>SubstVal d) $ Abs bs body
+    (DataDefParams params, body') <- inferParams rest
+    return (DataDefParams ((ClassArrow, d):params), body')
+  Nest (PiBinder _ _ _) _ -> do
+    error "TODO Handle implicit or linear parameters for data constructors"
 
 bindLamPats :: EmitsBoth o
             => Nest UPat i i' -> [AtomName o] -> InfererM i' o a -> InfererM i o a
@@ -2473,7 +2480,8 @@ instance Unifiable IxType where
 
 instance Unifiable DataDefParams where
   -- We ignore the dictionaries because we assume coherence
-  unifyZonked (DataDefParams xs _) (DataDefParams xs' _) = zipWithM_ unify xs xs'
+  unifyZonked (DataDefParams xs) (DataDefParams xs')
+    = zipWithM_ unify (plainArrows xs) (plainArrows xs')
 
 instance Unifiable (EffectRowP Name) where
   unifyZonked x1 x2 =

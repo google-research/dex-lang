@@ -530,8 +530,14 @@ withFreshPiBinder hint binding@(PiBinding arr ty) cont = do
     withAllowedEffects Pure $
       cont $ PiBinder b ty arr
 
+piBinderAsBinder :: PiBinder n l -> Binder n l
+piBinderAsBinder (PiBinder b ty _) = b:>ty
+
 plainPiBinder :: Binder n l -> PiBinder n l
 plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
+
+classPiBinder :: Binder n l -> PiBinder n l
+classPiBinder (b:>ty) = PiBinder b ty ClassArrow
 
 withAllowedEffects :: EnvExtender m => EffectRow n -> m n a -> m n a
 withAllowedEffects effs cont =

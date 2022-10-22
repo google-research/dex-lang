@@ -127,7 +127,7 @@ prettyVal val = case val of
       return $ pretty $ Newtype vty $ SumVal (toList types) t value
       where t = fromIntegral trep; value = payload !! t
     -- Pretty-print strings
-    Newtype (TypeCon "List" _ (DataDefParams [Word8Ty] _)) _ -> do
+    Newtype (TypeCon "List" _ (DataDefParams [(PlainArrow, Word8Ty)])) _ -> do
       s <- getDexString val
       return $ pretty $ "\"" ++ s ++ "\""
     Newtype (TypeCon _ dataDefName _) (Con (SumCon _ t e)) -> prettyData dataDefName t e
