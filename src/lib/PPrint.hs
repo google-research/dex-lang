@@ -723,9 +723,8 @@ instance Pretty (UAlt n) where
 instance Pretty (UDecl n l) where
   pretty (ULet ann b rhs) =
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-  pretty (UDataDefDecl (UDataDef bParams bIfaces dataCons) bTyCon bDataCons) =
-    "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
-       <+> "where" <> nest 2
+  pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
+    "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
@@ -773,6 +772,12 @@ instance Pretty (UPatAnnArrow n l) where
 
 instance Color c => Pretty (UAnnBinder c n l) where
   pretty (UAnnBinder b ty) = p b <> ":" <> p ty
+
+instance Color c => Pretty (UAnnBinderArrow c n l) where
+  pretty (UAnnBinderArrow b ty PlainArrow) = p b <> ":" <> p ty
+  pretty (UAnnBinderArrow b ty ClassArrow) = "[" <> p b <> ":" <> p ty <> "]"
+  pretty (UAnnBinderArrow b ty ImplicitArrow) = "{" <> p b <> ":" <> p ty <> "}"
+  pretty (UAnnBinderArrow b ty LinArrow) = p b <> ":" <> p ty
 
 instance Pretty (UMethodDef n) where
   pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs

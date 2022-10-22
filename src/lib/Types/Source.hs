@@ -144,8 +144,8 @@ type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameC) n l)
 -- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
-    :: (SourceName, Nest (UAnnBinder AtomNameC) n l')    -- param binders
-    -> Nest (UAnnBinder AtomNameC) l' l  -- typeclass binders
+    :: SourceName
+    -> Nest (UAnnBinderArrow AtomNameC) n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
@@ -227,6 +227,16 @@ data UPatAnnArrow (n::S) (l::S) = UPatAnnArrow (UPatAnn n l) Arrow
 
 data UAnnBinder (c::C) (n::S) (l::S) = UAnnBinder (UBinder c n l) (UType n)
   deriving (Show, Generic)
+
+data UAnnBinderArrow (c::C) (n::S) (l::S) =
+  UAnnBinderArrow (UBinder c n l) (UType n) Arrow
+  deriving (Show, Generic)
+
+plainUAnnBinder :: UAnnBinder c n l -> UAnnBinderArrow c n l
+plainUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty PlainArrow
+
+classUAnnBinder :: UAnnBinder c n l -> UAnnBinderArrow c n l
+classUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty ClassArrow
 
 data UAlt (n::S) where
   UAlt :: UPat n l -> UExpr l -> UAlt n

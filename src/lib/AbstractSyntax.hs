@@ -135,15 +135,17 @@ topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
   topDecl' (CDecl ann d) = decl ann d
   topDecl' (CData tyC classes constructors) = do
-    tyC' <- tyCon tyC
+    (name, params) <- tyCon tyC
     classes' <- case classes of
       Nothing -> return []
       (Just g) -> multiIfaceBinder g
+    let binders =
+          fmapNest plainUAnnBinder params `joinNest` (fmapNest classUAnnBinder $ toNest classes')
     constructors' <- mapM dataCon constructors
     return $ UDataDefDecl
-      (UDataDef tyC' (toNest classes') $
-        map (\(name, cons) -> (name, UDataDefTrail cons)) constructors')
-      (fromString $ fst tyC')
+      (UDataDef name binders $
+        map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
+      (fromString name)
       (toNest $ map (fromString . fst) constructors')
   topDecl' (CInterface supers self methods) = do
     supers' <- mapM expr supers
