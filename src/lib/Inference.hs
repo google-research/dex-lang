@@ -1569,15 +1569,13 @@ binderNestAsPiNest arr = \case
 
 inferDataDef :: EmitsInf o => UDataDef i
              -> InfererM i o (PairE DataDef (Abs (Nest PiBinder) (ListE (EmptyAbs (Nest Binder)))) o)
-inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
-  Abs paramBs' (Abs clsBs' (ListE dataConsWithBs')) <-
-    withNestedUBinders paramBs id \_ -> do
-      withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ ->
-        ListE <$> mapM inferDataCon dataCons
+inferDataDef (UDataDef tyConName paramBs dataCons) = do
+  Abs paramBs' (ListE dataConsWithBs') <-
+    withNestedUBindersArrow paramBs \_ -> do
+      ListE <$> mapM inferDataCon dataCons
   let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
-  let ddbs = (fmapNest plainPiBinder paramBs' `joinNest` fmapNest classPiBinder clsBs')
-  return $ PairE (DataDef tyConName ddbs dataCons')
-                 (Abs ddbs $ ListE bs')
+  return $ PairE (DataDef tyConName paramBs' dataCons')
+                 (Abs paramBs' $ ListE bs')
 
 inferDataCon :: EmitsInf o
              => (SourceName, UDataDefTrail i)
@@ -1650,6 +1648,25 @@ withSuperclassBindersRec (ty:rest) cont = do
     ListE rest' <- sinkM $ ListE rest
     withSuperclassBindersRec rest' cont
   return $ Abs (Nest b bs) e
+
+withNestedUBindersArrow
+  :: forall i i' o e. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  => Nest (UAnnBinderArrow AtomNameC) i i'
+  -> (forall o'. (EmitsInf o', Ext o o') => [AtomName o'] -> InfererM i' o' (e o'))
+  -> InfererM i o (Abs (Nest PiBinder) e o)
+withNestedUBindersArrow bs cont = case bs of
+  Empty -> Abs Empty <$> cont []
+  Nest (UAnnBinderArrow b ty arr) rest -> do
+    Abs (b':>ty') (Abs rest' body) <-
+      withUBinder (UAnnBinder b ty) asBinding \name ->
+        withNestedUBindersArrow rest \names -> do
+          name' <- sinkM name
+          cont (name':names)
+    return $ Abs (Nest (PiBinder b' ty' arr) rest') body
+    where
+      asBinding = case arr of
+        PlainArrow -> toBinding
+        _ -> toBinding . LamBinding arr
 
 withNestedUBinders
   :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)

@@ -60,7 +60,7 @@ module Syntax (
     TabLamExpr (..), TabPiType (..), IxType (..), IxDict,
     UDeclExpr (..), UForExpr (..), UAlt (..),
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
-    UMethodDef (..), UAnnBinder (..),
+    UMethodDef (..), UAnnBinder (..), UAnnBinderArrow (..),
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock, SourceBlockP (..), SourceBlock' (..), SourceBlockMisc (..), EnvQuery (..),
     ModuleName, Module (..), UModule (..), UModulePartialParse (..),
