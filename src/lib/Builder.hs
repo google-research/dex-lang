@@ -8,15 +8,16 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
-  emit, emitOp, emitUnOp,
+  emit, emitHinted, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
   select, getUnpacked, emitUnpacked, unwrapBaseNewtype, unwrapCompoundNewtype,
-  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
-  tabApp, naryTabApp,
+  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef,
+  naryApp, naryAppHinted,
+  tabApp, naryTabApp, naryTabAppHinted,
   indexRef, naryIndexRef,
   ptrOffset, unsafePtrLoad,
   getClassDef, getDataCon,
@@ -100,6 +101,10 @@ emit :: (Builder m, Emits n) => Expr n -> m n (AtomName n)
 emit expr = emitDecl noHint PlainLet expr
 {-# INLINE emit #-}
 
+emitHinted :: (Builder m, Emits n) => NameHint -> Expr n -> m n (AtomName n)
+emitHinted hint expr = emitDecl hint PlainLet expr
+{-# INLINE emitHinted #-}
+
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
 {-# INLINE emitOp #-}
@@ -122,9 +127,9 @@ emitDecls' (Nest (Let b (DeclBinding ann _ expr)) rest) e = do
   v <- emitDecl (getNameHint b) ann expr'
   extendSubst (b @> v) $ emitDecls' rest e
 
-emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
-emitAtomToName (Var v) = return v
-emitAtomToName x = emit (Atom x)
+emitAtomToName :: (Builder m, Emits n) => NameHint -> Atom n -> m n (AtomName n)
+emitAtomToName _ (Var v) = return v
+emitAtomToName hint x = emitHinted hint (Atom x)
 
 -- === "Hoisting" top-level builder class ===
 
@@ -1242,17 +1247,27 @@ app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x (i:|[]))
 
 naryApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
-naryApp f xs = case nonEmpty xs of
+naryApp = naryAppHinted noHint
+{-# INLINE naryApp #-}
+
+naryAppHinted :: (Builder m, Emits n)
+  => NameHint -> Atom n -> [Atom n] -> m n (Atom n)
+naryAppHinted hint f xs = case nonEmpty xs of
   Nothing -> return f
-  Just xs' -> Var <$> emit (App f xs')
+  Just xs' -> Var <$> emitHinted hint (App f xs')
 
 tabApp :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 tabApp x i = Var <$> emit (TabApp x (i:|[]))
 
 naryTabApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
-naryTabApp f xs = case nonEmpty xs of
+naryTabApp = naryTabAppHinted noHint
+{-# INLINE naryTabApp #-}
+
+naryTabAppHinted :: (Builder m, Emits n)
+  => NameHint -> Atom n -> [Atom n] -> m n (Atom n)
+naryTabAppHinted hint f xs = case nonEmpty xs of
   Nothing -> return f
-  Just xs' -> Var <$> emit (TabApp f xs')
+  Just xs' -> Var <$> emitHinted hint (TabApp f xs')
 
 indexRef :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 indexRef ref i = emitOp $ IndexRef ref i

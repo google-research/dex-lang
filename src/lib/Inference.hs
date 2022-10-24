@@ -58,7 +58,7 @@ checkTopUType ty = liftInfererM $ solveLocal $ withApplyDefaults $ checkUType ty
 
 inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (Block n)
 inferTopUExpr e = liftInfererM do
-  solveLocal $ buildBlockInf $ withApplyDefaults $ inferSigma e
+  solveLocal $ buildBlockInf $ withApplyDefaults $ inferSigma noHint e
 {-# SCC inferTopUExpr #-}
 
 data UDeclInferenceResult e n =
@@ -115,12 +115,12 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
     _ -> error "impossible"
 inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
   block <- liftInfererM $ solveLocal $ buildBlockInf do
-    val <- checkMaybeAnnExpr ann rhs
+    val <- checkMaybeAnnExpr (getNameHint p) ann rhs
     -- This is just for type checking. We don't actually generate
     -- pattern-matching code at the top level
     _ <- buildBlockInf do
       val' <- sinkM val
-      v <- emitDecl noHint PlainLet $ Atom val'
+      v <- emitDecl (getNameHint p) PlainLet $ Atom val'
       bindLamPat p v $ return UnitVal
     applyDefaults
     return val
@@ -167,7 +167,7 @@ checkHandlerBody effName r retTy opDefs = do
   retOp <- case rets of
     [UReturnOpDef retOp] -> do
       retOpTy <- mkRetOpTy r retTy
-      buildBlockInf $ checkSigma retOp (sink retOpTy)
+      buildBlockInf $ checkSigma noHint retOp (sink retOpTy)
     [] -> throw TypeErr "missing return"
     _ -> throw TypeErr "multiple returns"
 
@@ -201,7 +201,7 @@ checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) 
     return $ naryPiTypeAsType (NaryPiType bs' Pure (sink retTy))
   -- TODO(alex): introduce resume into scope (with correct type)
   -- TODO(alex): handle pol
-  opBody' <- buildBlockInf $ checkSigma opBody (sink internalOpTy)
+  opBody' <- buildBlockInf $ checkSigma noHint opBody (sink internalOpTy)
   return (opIdx, opBody')
 
 mkRetOpTy :: (EnvReader m, Fallible1 m) => AtomName n -> Type n -> m n (Type n)
@@ -861,8 +861,8 @@ data RequiredTy (e::E) (n::S) = Check (e n)
                                 deriving Show
 
 checkSigma :: EmitsBoth o
-           => UExpr i -> SigmaType o -> InfererM i o (Atom o)
-checkSigma expr sTy = confuseGHC >>= \_ -> case sTy of
+           => NameHint -> UExpr i -> SigmaType o -> InfererM i o (Atom o)
+checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
   Pi piTy@(PiType (PiBinder b _ arrow) _ _)
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _)) | arrow == arrow' -> checkULam lam piTy
@@ -873,22 +873,24 @@ checkSigma expr sTy = confuseGHC >>= \_ -> case sTy of
             \x -> do
               piTy' <- sinkM piTy
               (Pure, bodyTy) <- instantiatePi piTy' (Var x)
-              checkSigma expr bodyTy
-  _ -> checkOrInferRho expr (Check sTy)
+              checkSigma hint expr bodyTy
+  _ -> checkOrInferRho hint expr (Check sTy)
 
-inferSigma :: EmitsBoth o => UExpr i -> InfererM i o (Atom o)
-inferSigma (WithSrcE pos expr) = case expr of
+inferSigma :: EmitsBoth o => NameHint -> UExpr i -> InfererM i o (Atom o)
+inferSigma hint (WithSrcE pos expr) = case expr of
   ULam lam@(ULamExpr ImplicitArrow _ _) ->
     addSrcContext pos $ inferULam Pure lam
   -- TODO: Should we be handling class arrows here?
-  _ -> inferRho (WithSrcE pos expr)
+  _ -> inferRho hint (WithSrcE pos expr)
 
-checkRho :: EmitsBoth o => UExpr i -> RhoType o -> InfererM i o (Atom o)
-checkRho expr ty = checkOrInferRho expr (Check ty)
+checkRho :: EmitsBoth o =>
+  NameHint -> UExpr i -> RhoType o -> InfererM i o (Atom o)
+checkRho hint expr ty = checkOrInferRho hint expr (Check ty)
 {-# INLINE checkRho #-}
 
-inferRho :: EmitsBoth o => UExpr i -> InfererM i o (Atom o)
-inferRho expr = checkOrInferRho expr Infer
+inferRho :: EmitsBoth o =>
+  NameHint -> UExpr i -> InfererM i o (Atom o)
+inferRho hint expr = checkOrInferRho hint expr Infer
 {-# INLINE inferRho #-}
 
 instantiateSigma :: EmitsBoth o => Atom o -> InfererM i o (Atom o)
@@ -918,16 +920,18 @@ getImplicitArg (PiBinder _ argTy arr) = case arr of
     return $ Just $ Con $ DictHole (AlwaysEqual ctx) argTy
   _ -> return Nothing
 
+-- The name hint names the object being computed
 checkOrInferRho :: forall i o. EmitsBoth o
-                => UExpr i -> RequiredTy RhoType o -> InfererM i o (Atom o)
-checkOrInferRho (WithSrcE pos expr) reqTy = do
+                => NameHint -> UExpr i
+                -> RequiredTy RhoType o -> InfererM i o (Atom o)
+checkOrInferRho hint (WithSrcE pos expr) reqTy = do
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
   UVar ~(InternalName _ v) -> do
     substM v >>= inferUVar >>= instantiateSigma >>= matchRequirement
   ULam (ULamExpr ImplicitArrow (UPatAnn p ann) body) -> do
     argTy <- checkAnn ann
     v <- freshInferenceName argTy
-    bindLamPat p v $ checkOrInferRho body reqTy
+    bindLamPat p v $ checkOrInferRho hint body reqTy
   ULam lamExpr -> do
     case reqTy of
       Check (Pi piTy) -> checkULam lamExpr piTy
@@ -953,7 +957,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Check _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
     IxType _ ixDict <- asIxType $ binderType b'
-    result <- liftM Var $ emit $ Hof $ For dir ixDict lam
+    result <- liftM Var $ emitHinted hint $ Hof $ For dir ixDict lam
     matchRequirement result
   UApp _ _ -> do
     let (f, args) = asNaryApp $ WithSrcE pos expr
@@ -961,7 +965,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     inferNaryApp (srcPos f) f' (NE.fromList args) >>= matchRequirement
   UTabApp _ _ -> do
     let (tab, args) = asNaryTabApp $ WithSrcE pos expr
-    tab' <- inferRho tab >>= zonk
+    tab' <- inferRho noHint tab >>= zonk
     inferNaryTabApp (srcPos tab) tab' (NE.fromList args) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table
@@ -1027,18 +1031,18 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
   UDepPair lhs rhs -> do
     case reqTy of
       Check (DepPairTy ty@(DepPairType (_ :> lhsTy) _)) -> do
-        lhs' <- checkSigmaDependent lhs lhsTy
+        lhs' <- checkSigmaDependent noHint lhs lhsTy
         rhsTy <- instantiateDepPairTy ty lhs'
-        rhs' <- checkSigma rhs rhsTy
+        rhs' <- checkSigma noHint rhs rhsTy
         return $ DepPair lhs' rhs' ty
       _ -> throw TypeErr $ "Can't infer the type of a dependent pair; please annotate it"
   UDecl (UDeclExpr (ULet letAnn (UPatAnn p ann) rhs) body) -> do
-    val <- checkMaybeAnnExpr ann rhs
+    val <- checkMaybeAnnExpr (getNameHint p) ann rhs
     var <- emitDecl (getNameHint p) letAnn $ Atom val
-    bindLamPat p var $ checkOrInferRho body reqTy
+    bindLamPat p var $ checkOrInferRho hint body reqTy
   UDecl _ -> throw CompilerErr "not a local decl"
   UCase scrut alts -> do
-    scrut' <- inferRho scrut
+    scrut' <- inferRho noHint scrut
     scrutTy <- getType scrut'
     reqTy' <- case reqTy of
       Infer -> freshType TyKind
@@ -1046,13 +1050,13 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
     scrut'' <- zonk scrut'
     buildSortedCase scrut'' alts' reqTy'
-  UTabCon xs -> inferTabCon xs reqTy >>= matchRequirement
+  UTabCon xs -> inferTabCon hint xs reqTy >>= matchRequirement
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
   UTypeAnn val ty -> do
     ty' <- zonk =<< checkUType ty
-    val' <- checkSigma val ty'
+    val' <- checkSigma hint val ty'
     matchRequirement val'
   UPrimExpr (OpExpr (MonoLiteral (WithSrcE _ l))) -> case l of
     UIntLit x -> matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x
@@ -1060,14 +1064,14 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     _ -> throw MiscErr "argument to %monoLit must be a literal"
   UPrimExpr (OpExpr (ExplicitApply f x)) -> do
     f' <- inferFunNoInstantiation f
-    x' <- inferRho x
-    (liftM Var $ emit $ App f' (x':|[])) >>= matchRequirement
+    x' <- inferRho noHint x
+    (liftM Var $ emitHinted hint $ App f' (x':|[])) >>= matchRequirement
   UPrimExpr (OpExpr (ProjBaseNewtype x)) -> do
-    x' <- inferRho x >>= emitAtomToName
+    x' <- inferRho hint x >>= emitAtomToName hint
     return $ unwrapBaseNewtype $ Var x'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
-      xBlock <- buildBlockInf $ inferRho x
+      xBlock <- buildBlockInf $ inferRho noHint x
       getType xBlock >>= \case
         TyKind -> cheapReduce xBlock >>= \case
           (Just reduced, DictTypeHoistSuccess, []) -> return reduced
@@ -1076,8 +1080,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
-      OpExpr  e -> Var <$> emit (Op e)
-      HofExpr e -> Var <$> emit (Hof e)
+      OpExpr  e -> Var <$> emitHinted hint (Op e)
+      HofExpr e -> Var <$> emitHinted hint (Hof e)
     matchRequirement val
   ULabel name -> matchRequirement $ Con $ LabelCon name
   URecord elems ->
@@ -1088,17 +1092,17 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
          -> InfererM i o (Maybe (Atom o), LabeledItems (Atom o))
       go delayedRec = \case
         UStaticField l e -> do
-          e' <- inferRho e
+          e' <- inferRho noHint e
           return (rec, labeledSingleton l e' <> delayItems)
           where (rec, delayItems) = delayedRec
         UDynField    v e -> do
-          v' <- checkRho (WithSrcE Nothing $ UVar v) (TC LabelType)
-          e' <- inferRho e
+          v' <- checkRho noHint (WithSrcE Nothing $ UVar v) (TC LabelType)
+          e' <- inferRho noHint e
           rec' <- emitOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
           return (Just rec', mempty)
         UDynFields   v -> do
           anyFields <- freshInferenceName LabeledRowKind
-          v' <- checkRho v $ RecordTyWithElems [DynFields anyFields]
+          v' <- checkRho noHint v $ RecordTyWithElems [DynFields anyFields]
           case delayedRec of
             (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
             _ -> do
@@ -1119,7 +1123,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
             tys <- traverse getType delayedItems
             return $ Record tys $ toList delayedItems
   UVariant labels@(LabeledItems lmap) label value -> do
-    value' <- inferRho value
+    value' <- inferRho noHint value
     ty <- getType value'
     unless (M.size lmap == 0 || M.size lmap == 1) $ throw TypeErr
       "All labels in a variant literal should use the same field name."
@@ -1134,7 +1138,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
   UVariantLift labels value -> do
     row <- freshInferenceName LabeledRowKind
-    value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
+    value' <- zonk =<< (checkRho noHint value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emitOp (VariantLift prev value')
   UNatLit x -> do
@@ -1182,11 +1186,11 @@ inferFieldRowElem = \case
     return [StaticFields $ labeledSingleton l ty']
   UDynField    v ty -> do
     ty' <- checkUType ty
-    checkRho (WithSrcE Nothing $ UVar v) (TC LabelType) >>= \case
+    checkRho noHint (WithSrcE Nothing $ UVar v) (TC LabelType) >>= \case
       Con (LabelCon l) -> return [StaticFields $ labeledSingleton l ty']
       Var v'           -> return [DynField v' ty']
       _                -> error "Unexpected Label atom"
-  UDynFields   v    -> checkRho v LabeledRowKind >>= \case
+  UDynFields   v    -> checkRho noHint v LabeledRowKind >>= \case
     LabeledRow row -> return $ fromFieldRowElems row
     Var v'         -> return [DynFields v']
     _              -> error "Unexpected Fields atom"
@@ -1209,7 +1213,7 @@ inferFunNoInstantiation expr@(WithSrcE pos expr') = do
   UVar ~(InternalName _ v) -> do
     -- XXX: deliberately no instantiation!
     substM v >>= inferUVar
-  _ -> inferRho expr
+  _ -> inferRho noHint expr
 
 type UExprArg n = (SrcPosCtx, UExpr n)
 asNaryApp :: UExpr n -> (UExpr n, [UExprArg n])
@@ -1240,8 +1244,8 @@ inferNaryTabAppArgs tabTy ((appCtx, arg):rest) = do
   let isDependent = binderName b `isFreeIn` resultTy
   arg' <- addSrcContext appCtx $
     if isDependent
-      then checkSigmaDependent arg ixTy
-      else checkSigma arg ixTy
+      then checkSigmaDependent (getNameHint b) arg ixTy
+      else checkSigma (getNameHint b) arg ixTy
   arg'' <- zonk arg'
   resultTy' <- applySubst (b @> SubstVal arg'') resultTy
   rest' <- inferNaryTabAppArgs resultTy' rest
@@ -1294,13 +1298,13 @@ inferAppArg isDependent b@(PiBinder _ argTy _) uArgs = getImplicitArg b >>= \cas
     let (appCtx, arg) :| restUArgs = uArgs
     liftM (,restUArgs) $ addSrcContext appCtx $
       if isDependent
-        then checkSigmaDependent arg argTy
-        else checkSigma arg argTy
+        then checkSigmaDependent (getNameHint b) arg argTy
+        else checkSigma (getNameHint b) arg argTy
 
 checkSigmaDependent :: EmitsBoth o
-                    => UExpr i -> SigmaType o -> InfererM i o (Atom o)
-checkSigmaDependent e@(WithSrcE ctx _) ty = do
-  Abs decls result <- buildDeclsInf $ checkSigma e (sink ty)
+                    => NameHint -> UExpr i -> SigmaType o -> InfererM i o (Atom o)
+checkSigmaDependent hint e@(WithSrcE ctx _) ty = do
+  Abs decls result <- buildDeclsInf $ checkSigma hint e (sink ty)
   cheapReduceWithDecls decls result >>= \case
     (Just x', DictTypeHoistSuccess, ds) ->
       forM_ ds reportUnsolvedInterface >> return x'
@@ -1456,10 +1460,11 @@ buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
     resultTy <- instantiateTabPi (sink tabPiTy) $ Var i
     return (sink effs, resultTy)
 
-checkMaybeAnnExpr :: EmitsBoth o => Maybe (UType i) -> UExpr i -> InfererM i o (Atom o)
-checkMaybeAnnExpr ty expr = confuseGHC >>= \_ -> case ty of
-  Nothing -> inferSigma expr
-  Just ty' -> checkSigma expr =<< zonk =<< checkUType ty'
+checkMaybeAnnExpr :: EmitsBoth o
+  => NameHint -> Maybe (UType i) -> UExpr i -> InfererM i o (Atom o)
+checkMaybeAnnExpr hint ty expr = confuseGHC >>= \_ -> case ty of
+  Nothing -> inferSigma hint expr
+  Just ty' -> checkSigma hint expr =<< zonk =<< checkUType ty'
 
 dictTypeFun :: EnvReader m => ClassName n -> m n (Atom n)
 dictTypeFun v = do
@@ -1675,7 +1680,7 @@ inferULam :: EmitsBoth o => EffectRow o -> ULamExpr i -> InfererM i o (Atom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
   argTy <- checkAnn ann
   buildLamInf (getNameHint p) arrow argTy (\_ -> sinkM effs) \v ->
-    bindLamPat p v $ inferSigma body
+    bindLamPat p v $ inferSigma noHint body
 
 checkULam :: EmitsBoth o => ULamExpr i -> PiType o -> InfererM i o (Atom o)
 checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ argTy arr) _ _) = do
@@ -1691,7 +1696,7 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ argTy arr) 
      \v -> bindLamPat p v do
         piTy' <- sinkM piTy
         (_, resultTy) <- instantiatePi piTy' (Var v)
-        checkSigma body resultTy
+        checkSigma noHint body resultTy
 
 checkInstanceArgs
   :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
@@ -1811,7 +1816,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs)
   let MethodType _ methodTy = methodTys !! i
   rhs' <- buildBlockInf do
     methodTy' <- sinkM methodTy
-    checkSigma rhs methodTy'
+    checkSigma noHint rhs methodTy'
   return (i, rhs')
 
 checkUEffRow :: EmitsInf o => UEffectRow i -> InfererM i o (EffectRow o)
@@ -1850,7 +1855,7 @@ checkCaseAlt :: EmitsBoth o
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   alt <- checkCasePat pat scrutineeTy do
     reqTy' <- sinkM reqTy
-    checkRho body reqTy'
+    checkRho noHint body reqTy'
   idx <- getCaseAltIndex pat
   return $ IndexedAlt idx alt
 
@@ -1943,9 +1948,9 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     ty <- getType x
     _  <- fromPairType ty
     x' <- zonk x  -- ensure it has a pair type before unpacking
-    x1 <- getFst x' >>= zonk >>= emitAtomToName
+    x1 <- getFst x' >>= zonk >>= emitAtomToName noHint
     bindLamPat p1 x1 do
-      x2  <- getSnd x' >>= zonk >>= emitAtomToName
+      x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
       bindLamPat p2 x2 do
         cont
   UPatCon ~(InternalName _ conName) ps -> do
@@ -1958,7 +1963,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
                                                  ++ " got " ++ show (nestLength ps)
         (params, UnitE) <- inferParams (Abs paramBs UnitE)
         constrainVarTy v $ TypeCon sourceName dataDefName params
-        xs <- mapM emitAtomToName =<< getUnpacked =<< zonk (Var v)
+        xs <- mapM (emitAtomToName noHint) =<< getUnpacked =<< zonk (Var v)
         bindLamPats ps xs cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
   UPatRecord rowPat -> do
@@ -1985,14 +1990,16 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           bindPats c (ls ++ [l], joinNest ps (Nest p Empty), rvn) rest
         UDynFieldsPat fv p rest -> do
           resolveDelay rv \rv' -> do
-            fv' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar fv) LabeledRowKind
+            fv' <- emitAtomToName noHint =<< checkRho noHint
+              (WithSrcE Nothing $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
             [subr, rv''] <- emitUnpacked =<< emitOp (RecordSplit (Var fv') (Var rv'))
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
           resolveDelay rv \rv' -> do
-            lv' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar lv) (TC LabelType)
+            lv' <- emitAtomToName noHint =<< checkRho noHint
+              (WithSrcE Nothing $ UVar lv) (TC LabelType)
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
@@ -2022,7 +2029,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
               (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
               (Var r))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
-          restRecordName <- emitAtomToName restRecord
+          restRecordName <- emitAtomToName noHint restRecord
           bindLamPats ps itemsNestOrdered $ f restRecordName
   UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
@@ -2067,7 +2074,7 @@ checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
     -- end up with fake ambiguous variables if they leak out.
     Abs frag unsolvedSubset' <- liftInfererMSubst $ runLocalInfererM do
       (Abs decls result, unsolvedSubset) <- gatherUnsolvedInterfaces $
-        buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
+        buildDeclsInf $ withAllowedEffects Pure $ checkRho noHint uty TyKind
       -- Note that even if the normalization succeeds here, we can't short-circuit
       -- rechecking the UType, because unsolvedSubset is only an approximation to
       -- the set of all constraints. We have to reverify it again!
@@ -2085,7 +2092,7 @@ checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
 
 checkUType :: EmitsInf o => UType i -> InfererM i o (Type o)
 checkUType uty@(WithSrcE pos _) = do
-  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
+  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho noHint uty TyKind
   (ans, hoistStatus, ds) <- cheapReduceWithDecls decls result
   case hoistStatus of
     DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $
@@ -2109,11 +2116,12 @@ checkExtLabeledRow (Ext types Nothing) = do
 checkExtLabeledRow (Ext types (Just ext)) = do
   types' <- mapM checkUType types
   -- Only variables can have kind LabeledRowKind at the moment.
-  Var ext' <- checkRho ext LabeledRowKind
+  Var ext' <- checkRho noHint ext LabeledRowKind
   return $ Ext types' $ Just ext'
 
-inferTabCon :: EmitsBoth o => [UExpr i] -> RequiredTy RhoType o -> InfererM i o (Atom o)
-inferTabCon xs reqTy = do
+inferTabCon :: EmitsBoth o
+  => NameHint -> [UExpr i] -> RequiredTy RhoType o -> InfererM i o (Atom o)
+inferTabCon hint xs reqTy = do
   (tabTy, xs') <- case reqTy of
     Check tabTy@(TabPi piTy) -> do
       (TabPiType b restTy) <- return piTy
@@ -2126,13 +2134,13 @@ inferTabCon xs reqTy = do
               -- possible.
               case hoist b restTy of
                 HoistSuccess elTy -> do
-                  xs' <- mapM (`checkRho` elTy) xs
+                  xs' <- mapM (\x -> checkRho noHint x elTy) xs
                   return (tabTy, xs')
                 HoistFailure _    -> do
                   idx <- indices $ binderAnn b
                   xs' <- forM (zip xs idx) \(x, i) -> do
                     xTy <- instantiateTabPi piTy i
-                    checkOrInferRho x $ Check xTy
+                    checkOrInferRho noHint x $ Check xTy
                   return (tabTy, xs')
             (Just size) -> throw TypeErr $ "Literal has " ++ count (length xs) "element"
                              ++ ", but required type has " ++ show size ++ "."
@@ -2146,18 +2154,18 @@ inferTabCon xs reqTy = do
         Nothing -> inferFin
     -- Requested type is not a `Check (TabPi _)`
     _ -> inferFin
-  liftM Var $ emit $ Op $ TabCon tabTy xs'
+  liftM Var $ emitHinted hint $ Op $ TabCon tabTy xs'
     where
       inferFin = do
         elemTy <- case xs of
           []    -> freshType TyKind
-          (x:_) -> getType =<< inferRho x
+          (x:_) -> getType =<< inferRho noHint x
         ixTy <- asIxType $ FinConst (fromIntegral $ length xs)
         tabTy <- ixTy ==> elemTy
         case reqTy of
           Check sTy -> addContext context $ constrainEq sTy tabTy
           Infer     -> return ()
-        xs' <- mapM (`checkRho` elemTy) xs
+        xs' <- mapM (\x -> checkRho noHint x elemTy) xs
         return (tabTy, xs')
 
       staticallyKnownIdx :: (EnvReader m) => Abs (Nest Decl) Atom n -> m n (Maybe Word32)
