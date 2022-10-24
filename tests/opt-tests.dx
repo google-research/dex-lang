@@ -113,3 +113,11 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 %passes opt
 (2 > 1 || 4 < 5) && 6 == 6
 -- CHECK: (1| () |)@(Bool)
+
+-- Testing user name preservation
+
+%passes simp
+:p
+  unmistakable_name = for i:(Fin 10). 2 * ordinal i
+  for j. unmistakable_name.j
+-- CHECK: unmista

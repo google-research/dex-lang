@@ -50,7 +50,7 @@ sumUsingPolys lim (Abs i body) = do
       Just poly' -> return $ Abs i' poly'
       Nothing -> throw NotImplementedErr $
         "Algebraic simplification failed to model index computations: " ++ pprint body'
-  limName <- emitAtomToName lim
+  limName <- emitAtomToName noHint lim
   emitPolynomial $ sum limName sumAbs
 
 mul :: Polynomial n-> Polynomial n -> Polynomial n
