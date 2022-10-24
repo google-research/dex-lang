@@ -134,13 +134,8 @@ sourceBlock' (CUnParseable eof s) = return $ UnParseable eof s
 topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
   topDecl' (CDecl ann d) = decl ann d
-  topDecl' (CData tyC classes constructors) = do
-    (name, params) <- tyCon tyC
-    classes' <- case classes of
-      Nothing -> return []
-      (Just g) -> multiIfaceBinder g
-    let binders =
-          fmapNest plainUAnnBinder params `joinNest` (fmapNest classUAnnBinder $ toNest classes')
+  topDecl' (CData name args constructors) = do
+    binders <- toNest . concat <$> mapM dataArg args
     constructors' <- mapM dataCon constructors
     return $ UDataDefDecl
       (UDataDef name binders $
@@ -169,6 +164,13 @@ topDecl = dropSrc topDecl' where
     methods' <- mapM effectOpDef methods
     return $ UHandlerDecl (fromString effName) bodyTyArg' (toNest args')
       effs returnTy methods' (fromString hName)
+
+dataArg :: Group -> SyntaxM [(UAnnBinderArrow AtomNameC) 'VoidS 'VoidS]
+dataArg = \case
+  g@(WithSrc _ (CBracket Square _)) -> map classUAnnBinder <$> multiIfaceBinder g
+  arg -> do
+    binder <- optAnnotatedBinder $ (binOptR Colon) arg
+    return $ [plainUAnnBinder binder]
 
 -- This corresponds to tyConDef in the original parser.
 -- tyCon differs from dataCon in how they treat a binding without an
