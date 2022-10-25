@@ -19,7 +19,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 
 module Syntax (
-    Type, Kind, BaseType (..), ScalarBaseType (..), Except,
+    Type, Kind, Dict, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
     Binder, Block (..), BlockAnn (..), Decl (..), Decls, DeclBinding (..),
     FieldRowElem (..), FieldRowElems, fromFieldRowElems,
@@ -31,7 +31,7 @@ module Syntax (
     AlwaysEqual (..),
     PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
-    PiBinding (..), PiBinder (..),
+    PiBinding (..), PiBinder (..), RoleBinder (..), RolePiBinder (..), ParamRole (..),
     PiType (..), DepPairType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), SourceNameDef (..), LitProg,
     ForAnn, Val, Op, Con, Hof, TC, SuperclassBinders (..),
@@ -40,7 +40,7 @@ module Syntax (
     SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..), SerializedEnv (..),
     ImportStatus (..), emptyModuleEnv,
     ModuleSourceName (..), LoadedModules (..), LoadedObjects (..), Cache (..),
-    BindsEnv (..), BindsOneAtomName (..), AtomNameBinder,
+    BindsEnv (..), BindsOneAtomName (..), AtomNameBinder, toBinder, toBinderNest,
     AltP, Alt, AtomBinding (..),
     SolverBinding (..), TopFunBinding (..), SpecializationSpec (..),
     SubstE (..), SubstB (..), Ptr, PtrType,

@@ -27,6 +27,7 @@ import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
+import Generalize
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -43,7 +44,7 @@ import Err
 import MTL1
 import Logging
 import PPrint (pprintCanonicalized)
-import Util (measureSeconds, File (..), readFileWithHash, forMFilter)
+import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
 
 import Name
@@ -966,25 +967,10 @@ emitIxDictSpecialization :: HoistingTopBuilder m => DictType n -> DictExpr n -> 
 emitIxDictSpecialization _ d@(ExplicitMethods _ _ _) = return d -- Nothing to do if we already have explicit methods
 emitIxDictSpecialization _ d@(IxFin _)               = return d -- `Ix (Fin n))` is built-in
 emitIxDictSpecialization dictTy ixDict = do
-  (ixDictAbs, params) <- generalizeIxDict ixDict
+  (ixDictAbs, params) <- generalizeIxDict (DictCon ixDict)
   methodImplNames <- forM [minBound..maxBound] \methodName ->
     getSpecializedFunction $ IxMethodSpecialization methodName ixDictAbs
   return $ ExplicitMethods dictTy (map Var methodImplNames) params
-
--- TODO: we could get more cache hits if we abstract more than necessary,
--- based on whether parameters are data or nondata. E.g. abstract `Fin 10`
--- as `(\n. Fin n) 10` instead of not abstracting it at all.
-generalizeIxDict :: (HoistingTopBuilder m, EnvReader m) => DictExpr n -> m n (Generalized Atom n)
-generalizeIxDict d = do
-  typedVs <- forMFilter (freeAtomVarsList d) \v ->
-    willItHoist v >>= \case
-      False -> do
-        ty <- getType v
-        return $ Just (v, ty)
-      True -> return Nothing
-  let typedVsToposorted = toposortAnnVars typedVs
-  let atoms = [Var v | (v, _) <- typedVsToposorted]
-  return (abstractFreeVars typedVsToposorted (DictCon d), atoms)
 
 -- === instances ===
 

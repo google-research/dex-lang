@@ -190,7 +190,7 @@ def ctc {vocab time position} [Eq time, Eq vocab]
         logits.(unsafe_from_ordinal _ (ordinal t)).(unsafe_from_ordinal _ (ordinal v))
       labels' = view p:position'.
         unsafe_from_ordinal _ (ordinal labels.(unsafe_from_ordinal _ (ordinal p)))
-      
+
       ctc_non_empty blank' logits' labels'
     else zero
 

@@ -414,7 +414,7 @@ dictExprType e = case e of
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    checkedApplyNaryAbs (Abs bs (superclassTypes superclasses !! i)) params
+    checkedApplyNaryAbs (Abs (toBinderNest bs) (superclassTypes superclasses !! i)) params
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
@@ -1089,14 +1089,14 @@ checkedInstantiateDataDef
   => DataDef n -> DataDefParams n -> m n [DataConDef n]
 checkedInstantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons)
                           (DataDefParams xs1 xs2) = do
-  fromListE <$> checkedApplyNaryAbs (Abs (bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
+  fromListE <$> checkedApplyNaryAbs (Abs (toBinderNest bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n]
   -> m n (Abs SuperclassBinders (ListE MethodType) n)
 checkedApplyClassParams (ClassDef _ _ bs superclassBs methodTys) params = do
   let body = Abs superclassBs (ListE methodTys)
-  checkedApplyNaryAbs (Abs bs body) params
+  checkedApplyNaryAbs (Abs (toBinderNest bs) body) params
 
 -- TODO: Subst all at once, not one at a time!
 checkedApplyNaryAbs :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)

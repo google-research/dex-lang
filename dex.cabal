@@ -56,6 +56,7 @@ library
                      , Err
                      , Export
                      , GenericTraversal
+                     , Generalize
                      , Imp
                      , Interpreter
                      , Inference

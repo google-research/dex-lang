@@ -9,7 +9,7 @@
 
 module Inference
   ( inferTopUDecl, checkTopUType, inferTopUExpr, applyUDeclAbs
-  , trySynthTerm
+  , trySynthTerm, generalizeDict
   , synthTopBlock, UDeclInferenceResult (..)) where
 
 import Prelude hiding ((.), id)
@@ -100,7 +100,8 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
         body <- checkInstanceBody className'' params' methods
         return (ListE params' `PairE` body)
   Abs bs' (Abs dictBinders (ListE params' `PairE` body)) <- return ab
-  let def = InstanceDef className' (bs' >>> dictBinders) params' body
+  let dictBinders' = fmapNest (\(PiBinder b ty arr) -> RolePiBinder b ty arr DictParam) dictBinders
+  let def = InstanceDef className' (bs' >>> dictBinders') params' body
   def' <- synthInstanceDef def
   instanceName <- emitInstanceDef def'
   UDeclResultDone <$> case maybeName of
@@ -1445,10 +1446,10 @@ dictTypeFun v = do
     v' <- sinkM v
     return $ go classSourceName bs' v' $ nestToNames bs'
   where
-    go :: SourceName -> Nest Binder n l -> ClassName l -> [AtomName l] -> Atom n
+    go :: SourceName -> Nest RoleBinder n l -> ClassName l -> [AtomName l] -> Atom n
     go classSourceName bs className params = case bs of
       Empty -> DictTy $ DictType classSourceName className $ map Var params
-      Nest (b:>ty) rest ->
+      Nest (RoleBinder b ty _) rest ->
         Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
           AtomicBlock $ go classSourceName rest className params
 
@@ -1461,10 +1462,10 @@ instanceFun instanceName = do
     instanceName' <- sinkM instanceName
     return $ go bs' instanceName' args
   where
-    go :: Nest PiBinder n l -> InstanceName l -> [Atom l] -> Atom n
+    go :: Nest RolePiBinder n l -> InstanceName l -> [Atom l] -> Atom n
     go bs name args = case bs of
       Empty -> DictCon $ InstanceDict name args
-      Nest (PiBinder b ty arr) rest -> do
+      Nest (RolePiBinder b ty arr _) rest -> do
         let restAtom = go rest name args
         Lam $ LamExpr (LamBinder b ty arr Pure) (AtomicBlock restAtom)
 
@@ -1476,7 +1477,7 @@ buildTyConLam
   -> m n (Atom n)
 buildTyConLam defName arr cont = do
   DataDef sourceName (DataDefBinders paramBs classBs) _ <- lookupDataDef =<< sinkM defName
-  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest arr paramBs) \params -> do
+  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest arr $ toBinderNest paramBs) \params -> do
     Abs classBs' UnitE <- applySubst (paramBs @@> params) $ Abs classBs UnitE
     buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow classBs') \dicts -> do
       params' <- mapM sinkM params
@@ -1531,6 +1532,24 @@ binderNestAsPiNest arr = \case
   Empty             -> Empty
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
+inferRoleBinderNest :: Fallible m => Nest Binder n l -> m (Nest RoleBinder n l)
+inferRoleBinderNest Empty = return Empty
+inferRoleBinderNest (Nest (b:>ty) bs) =
+  Nest (RoleBinder b ty (typeToRole ty)) <$> inferRoleBinderNest bs
+{-# INLINE inferRoleBinderNest #-}
+
+inferRolePiBinderNest :: Fallible m => Nest PiBinder n l -> m (Nest RolePiBinder n l)
+inferRolePiBinderNest Empty = return Empty
+inferRolePiBinderNest (Nest (PiBinder b ty arr) bs) =
+  Nest (RolePiBinder b ty arr (typeToRole ty)) <$> inferRolePiBinderNest bs
+{-# INLINE inferRolePiBinderNest #-}
+
+typeToRole :: Type n -> ParamRole
+typeToRole ty = case ty of
+  TyKind -> TypeParam
+  DictTy _ -> DictParam
+  _ -> DataParam -- TODO(dougalm): check that it's actually "data" and throw a useful error if not
+
 inferDataDef :: EmitsInf o => UDataDef i
              -> InfererM i o (PairE DataDef (Abs DataDefBinders (ListE (EmptyAbs (Nest Binder)))) o)
 inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
@@ -1539,7 +1558,8 @@ inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
       withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ ->
         ListE <$> mapM inferDataCon dataCons
   let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
-  let ddbs = (DataDefBinders paramBs' clsBs')
+  paramBs'' <- inferRoleBinderNest paramBs'
+  let ddbs = (DataDefBinders paramBs'' clsBs')
   return $ PairE (DataDef tyConName ddbs dataCons')
                  (Abs ddbs $ ListE bs')
 
@@ -1588,7 +1608,8 @@ inferClassDef className methodNames paramBs superclassTys methods = solveLocal d
         ty' <- checkUType ty
         return $ MethodType explicits ty'
   Abs bs (Abs scs (ListE mtys)) <- return ab
-  return $ ClassDef className methodNames bs scs mtys
+  bs' <- inferRoleBinderNest bs
+  return $ ClassDef className methodNames bs' scs mtys
 
 withSuperclassBinders
   :: (SinkableE e, SubstE Name e, HoistableE e, EmitsInf o)
@@ -1673,7 +1694,7 @@ checkInstanceArgs
   :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
   => Nest UPatAnnArrow i i'
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
-  -> InfererM i o (Abs (Nest PiBinder) e o)
+  -> InfererM i o (Abs (Nest RolePiBinder) e o)
 checkInstanceArgs Empty cont = do
   Distinct <- getDistinct
   Abs Empty <$> cont
@@ -1692,7 +1713,8 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
           checkInstanceArgs rest do
             cont
   Abs bs (Abs b (Abs bs' e)) <- return ab
-  return $ Abs (bs >>> Nest b Empty >>> bs') e
+  bs'' <- inferRolePiBinderNest $ bs >>> Nest b Empty
+  return $ Abs (bs'' >>> bs') e
 
 -- Nothing about the implementation was instance-specific. This seems
 -- right. If not, at least we only need to change this definition.
@@ -1701,7 +1723,10 @@ checkHandlerArgs
   => Nest UPatAnnArrow i i'
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest PiBinder) e o)
-checkHandlerArgs = checkInstanceArgs
+checkHandlerArgs bs cont = do
+  Abs bs' result <- checkInstanceArgs bs cont
+  let bs'' = fmapNest (\(RolePiBinder b ty arr _) -> PiBinder b ty arr) bs'
+  return $ Abs bs'' result
 
 checkHandlerBodyTyArg
   :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
@@ -1895,8 +1920,8 @@ inferParams (Abs (DataDefBinders paramBs classBs) body) = case paramBs of
         rest <- applySubst (b@>SubstVal d) $ Abs (DataDefBinders Empty bs) body
         (DataDefParams params dicts, body') <- inferParams rest
         return (DataDefParams params (d:dicts), body')
-  Nest (b:>ty) bs -> do
-    x <- freshInferenceName ty
+  Nest b bs -> do
+    x <- freshInferenceName $ binderType b
     rest <- applySubst (b@>x) $ Abs (DataDefBinders bs classBs) body
     (DataDefParams params dicts, body') <- inferParams rest
     return (DataDefParams (Var x : params) dicts, body')
@@ -2629,6 +2654,53 @@ synthTopBlock block = do
   (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
 {-# SCC synthTopBlock #-}
 
+-- Given a simplified dict (an Atom of type `DictTy _` in the
+-- post-simplification IR), and a requested, more general, dict type, generalize
+-- the dict to match the more general type. This is only possible because we
+-- require that instances are polymorphic in data-role parameters.
+generalizeDict :: (EnvReader m) => Type n -> Dict n-> m n (Dict n)
+generalizeDict ty dict = do
+  result <- liftSolverM $ solveLocal $ generalizeDictAndUnify (sink ty) (sink dict)
+  case result of
+    Failure e -> error $ pprint e
+    Success ans -> return ans
+
+generalizeDictAndUnify :: EmitsInf n => Type n -> Dict n -> SolverM n (Dict n)
+generalizeDictAndUnify ty dict = do
+  dict' <- generalizeDictRec dict
+  dictTy <- getType dict'
+  unify ty dictTy
+  zonk dict'
+
+generalizeDictRec :: EmitsInf n => Dict n -> SolverM n (Dict n)
+generalizeDictRec dict = do
+  -- TODO: we should be able to avoid the normalization here . We only need it
+  -- because we sometimes end up with superclass projections. But they shouldn't
+  -- really be allowed to occur in the post-simplification IR.
+  DictCon dict' <- cheapNormalize dict
+  DictCon <$> case dict' of
+    InstanceDict instanceName args -> do
+      InstanceDef _ bs _ _ <- lookupInstanceDef instanceName
+      args' <- generalizeInstanceArgs bs args
+      return $ InstanceDict instanceName args'
+    IxFin _ -> IxFin <$> Var <$> freshInferenceName NatTy
+    ExplicitMethods _ _ _ -> notSimplifiedDict
+    InstantiatedGiven _ _ -> notSimplifiedDict
+    SuperclassProj _ _    -> notSimplifiedDict
+    where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
+
+generalizeInstanceArgs :: EmitsInf n => Nest RolePiBinder n l -> [Atom n] -> SolverM n [Atom n]
+generalizeInstanceArgs Empty [] = return []
+generalizeInstanceArgs (Nest (RolePiBinder b ty _ role) bs) (arg:args) = do
+  arg' <- case role of
+    TypeParam -> Var <$> freshInferenceName TyKind
+    DictParam -> generalizeDictAndUnify ty arg
+    DataParam -> Var <$> freshInferenceName ty
+  Abs bs' UnitE <- applySubst (b@>SubstVal arg') (Abs bs UnitE)
+  args' <- generalizeInstanceArgs bs' args
+  return $ arg':args'
+generalizeInstanceArgs _ _ = error "zip error"
+
 synthInstanceDef
   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
 synthInstanceDef (InstanceDef className bs params body) = do
@@ -2803,12 +2875,12 @@ getInstanceType instanceName = do
     className' <- sinkM className
     return $ go bs' classSourceName className' params'
   where
-    go :: Nest PiBinder n l -> SourceName -> ClassName l -> [Atom l] -> SynthType n
+    go :: Nest RolePiBinder n l -> SourceName -> ClassName l -> [Atom l] -> SynthType n
     go bs classSourceName className params = case bs of
       Empty -> SynthDictType $ DictType classSourceName className params
-      Nest b rest ->
+      Nest (RolePiBinder b ty arr _) rest ->
         let restTy = go rest classSourceName className params
-        in SynthPiType $ Abs b restTy
+        in SynthPiType $ Abs (PiBinder b ty arr) restTy
 {-# SCC getInstanceType #-}
 
 instantiateSynthArgs :: DictType n -> SynthType n -> SyntherM n [Atom n]
