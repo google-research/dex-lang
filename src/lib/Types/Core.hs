@@ -414,6 +414,10 @@ emptyImportStatus = ImportStatus mempty mempty
 
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
+    -- This holds the result of lowering the `IxMethodSpecialization`
+    -- specialization requests to a simplified/lowered function. The key is the
+    -- name of the specialization "request" and the value is the name of the
+    -- simplified/lowered version.
   , ixLoweredCache :: EMap AtomName AtomName n
     -- This is to hold the results of translating specialized top-level
     -- functions. TODO: `Cache` might not be the best term for this, since we

@@ -576,7 +576,6 @@ evalBlock typed = do
     AtomicBlock result -> return result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
-      evalRequiredSpecializations lowered
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
         (dceDestBlock >=> hoistLoopInvariantDest)
       evalBackend lopt
@@ -598,7 +597,7 @@ evalRequiredSpecializations e = do
       -- first place (rather than querying free vars).
       TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
         queryIxLoweredCache v >>= \case
-          Nothing -> lowerTopLevelFun v
+          Nothing -> lowerIxMethod v
           Just _ -> return ()
       _ -> return ()
 
@@ -632,8 +631,8 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-lowerTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
-lowerTopLevelFun fname = do
+lowerIxMethod :: (Topper m, Mut n) => AtomName n -> m n ()
+lowerIxMethod fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
   evalRequiredSpecializations fSimp
@@ -946,7 +945,7 @@ hoistIxDicts e = do
   Abs frag (PairE e' (IxHoistingState UnitE)) <-
     liftGenericTraverserMTopEmissions (IxHoistingState UnitE) $ traverseGenericE (sink e)
   e'' <- emitEnv (Abs frag e')
-  evalRequiredSpecializations e''  -- track the needed sepcializations rather than traversing again to find them
+  evalRequiredSpecializations e''  -- TODO: track the needed sepcializations rather than traversing again to find them
   return e''
 
 newtype IxHoistingState (n::S) = IxHoistingState (UnitE n)
@@ -977,7 +976,7 @@ emitIxDictSpecialization dictTy ixDict = do
 generalizeIxDict :: (HoistingTopBuilder m, EnvReader m) => DictExpr n -> m n (Generalized Atom n)
 generalizeIxDict d = do
   typedVs <- forMFilter (freeAtomVarsList d) \v ->
-    willItHoist v >>= \case
+    canHoistToTop v >>= \case
       False -> do
         ty <- getType v
         return $ Just (v, ty)

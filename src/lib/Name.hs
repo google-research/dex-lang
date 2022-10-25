@@ -18,7 +18,7 @@ module Name (
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
   DoubleInplaceT (..), liftDoubleInplaceT,
-  emitDoubleInplaceTHoisted, willItHoistDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
+  emitDoubleInplaceTHoisted, canHoistToTopDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
   runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -73,7 +73,7 @@ module Name (
   WrapE (..), WrapB (..),
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames,
-  unsafeCoerceE, unsafeCoerceE1, unsafeCoerceB, ColorsEqual (..), eqColorRep,
+  unsafeCoerceE, unsafeCoerceM1, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs,
@@ -1841,11 +1841,11 @@ emitDoubleInplaceTHoisted emission = do
     else
       return Nothing
 
-willItHoistDoubleInplaceT
+canHoistToTopDoubleInplaceT
   :: ( Monad m, ExtOutMap b d1, OutFrag d1
      , ExtOutMap b d2, OutFrag d2, HoistableE e)
   => e n -> DoubleInplaceT b d1 d2 m n Bool
-willItHoistDoubleInplaceT e = do
+canHoistToTopDoubleInplaceT e = do
   Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
   return $ R.containedIn (freeVarsE e) topScopeFrag
 
@@ -3128,9 +3128,9 @@ unsafeCoerceVC :: forall c' (v::V) c o. v c o -> v c' o
 unsafeCoerceVC = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceVC #-}
 
-unsafeCoerceE1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
-unsafeCoerceE1 = TrulyUnsafe.unsafeCoerce
-{-# NOINLINE [1] unsafeCoerceE1 #-}
+unsafeCoerceM1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
+unsafeCoerceM1 = TrulyUnsafe.unsafeCoerce
+{-# NOINLINE [1] unsafeCoerceM1 #-}
 
 -- === instances ===
 

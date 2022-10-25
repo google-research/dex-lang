@@ -135,7 +135,7 @@ emitAtomToName x = emit (Atom x)
 class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
   emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
                  => Abs TopEnvFrag e n -> m n (Maybe (e n))
-  willItHoist :: HoistableE e => e n -> m n Bool
+  canHoistToTop :: HoistableE e => e n -> m n Bool
 
 liftTopBuilderHoisted
   :: (HoistingTopBuilder m, SubstE Name e, SinkableE e, HoistableE e)
@@ -164,10 +164,10 @@ liftDoubleBuilderTNoEmissions cont = do
   Distinct <- getDistinct
   return do
     Abs UnitB (DoubleInplaceTResult REmpty (LiftE ans)) <-
-      -- XXX: it's safe to use `unsafeCoerceE1` here. We don't need the rank-2
+      -- XXX: it's safe to use `unsafeCoerceM1` here. We don't need the rank-2
       -- trick because we've specialized on the `UnitB` case, so there can't be
       -- any top emissions.
-      runDoubleInplaceT env $ unsafeCoerceE1 $ runDoubleBuilderT' $ LiftE <$> cont
+      runDoubleInplaceT env $ unsafeCoerceM1 $ runDoubleBuilderT' $ LiftE <$> cont
     return ans
 
 -- TODO: do we really need to play these rank-2 games here?
@@ -195,8 +195,8 @@ runDoubleBuilderT env cont = do
 instance Fallible m => HoistingTopBuilder (DoubleBuilderT TopEnvFrag m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
   {-# INLINE emitHoistedEnv #-}
-  willItHoist e = DoubleBuilderT $ willItHoistDoubleInplaceT e
-  {-# INLINE willItHoist #-}
+  canHoistToTop e = DoubleBuilderT $ canHoistToTopDoubleInplaceT e
+  {-# INLINE canHoistToTop #-}
 
 instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m) => EnvReader (DoubleBuilderT frag m) where
   unsafeGetEnv = DoubleBuilderT $ liftDoubleInplaceT $ unsafeGetEnv
@@ -243,8 +243,8 @@ instance ( SubstB Name frag, HoistableB frag, OutFrag frag
 instance (SinkableV v, HoistingTopBuilder m) => HoistingTopBuilder (SubstReaderT v m i) where
   emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
-  willItHoist e = SubstReaderT $ lift $ willItHoist e
-  {-# INLINE willItHoist #-}
+  canHoistToTop e = SubstReaderT $ lift $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
 
 -- === Top-level builder class ===
 
@@ -572,8 +572,8 @@ instance (SinkableE e, HoistableState e, ScopableBuilder m) => ScopableBuilder (
 instance (SinkableE e, HoistableState e, HoistingTopBuilder m) => HoistingTopBuilder (StateT1 e m) where
   emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
-  willItHoist e = lift11 $ willItHoist e
-  {-# INLINE willItHoist #-}
+  canHoistToTop e = lift11 $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
 
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
