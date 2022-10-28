@@ -237,16 +237,16 @@ def mcts_sample {move state node_ix} [Eq node_ix]
       mcts_backpropagate game tree_ref leaf_ix result
 
 ' ## Toy game: Count 21
-This is a simple two-player game. Two players in turn chooses
+This is a simple two-player game. Two players in turn choose
 between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 wins.
 
 Count21State = Nat
 Count21Move = Nat
 Count21 : Game Count21State Count21Move = {
-  possible_moves = \sum:Count21State. to_list $ map unsafe_i_to_n [1,2],
-  win_or_lose = \sum. sum == unsafe_i_to_n 21,
+  possible_moves = \sum:Count21State. to_list [1,2],
+  win_or_lose = \sum. sum == 21,
   update = \sum:Count21State move. sum + move,
-  game_over = \sum. sum >= unsafe_i_to_n 21,
+  game_over = \sum. sum >= 21,
 }
 
 ' ### Approximate winning chances by sampling
@@ -259,9 +259,9 @@ key = new_key 0
 
 def test (key:Key) (current_state:Nat) : (Float & Nat) = 
   init_node_stats : NodeStats Count21State = 
-    (0., unsafe_i_to_n 0, unsafe_i_to_n 0, current_state)
+    (0., 0, 0, current_state)
   -- (0 wins, 0 visits, level 0, game state)
-  tree_size = unsafe_i_to_n 70
+  tree_size = 70
   start_tree = init_tree tree_size init_node_stats
   end_tree = fold start_tree \i:(Fin 50).
     mcts_sample Count21 (ixkey key i)
