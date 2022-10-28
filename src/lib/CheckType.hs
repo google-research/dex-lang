@@ -172,6 +172,7 @@ instance Color c => CheckableE (Binding c) where
     EffectBinding     eff               -> EffectBinding     <$> substM eff
     HandlerBinding    h                 -> HandlerBinding    <$> substM h
     EffectOpBinding   op                -> EffectOpBinding   <$> substM op
+    SpecializedDictBinding ty methods   -> SpecializedDictBinding <$> substM ty <*> mapM substM methods
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -418,19 +419,19 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
-  ExplicitMethods ty methodFunNames args -> do
-    DictTy (DictType _ className params) <- checkTypeE TyKind (DictTy ty)
+  ExplicitMethods d args -> do
+    SpecializedDictBinding ty methodFunNames <- lookupEnv =<< substM d
+    DictType _ className params <- return ty
     ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
     forMZipped_ methodTys methodFunNames \(MethodType _ methodTy) methodFunName -> do
       reqTy <- checkedApplyNaryAbs (Abs pbs methodTy) params
       let args' = case reqTy of
             Pi _ -> args
             _ -> args ++ [UnitVal]
-      methodFunTy <- getType =<< substM methodFunName
+      methodFunTy <- getType $ Var methodFunName
       actualTy  <- checkApp methodFunTy args'
       checkAlphaEq reqTy actualTy
-      -- TODO: something special with thunks/nullary methods?
-    substM $ DictTy ty
+    return $ DictTy ty
 
 instance HasType DictExpr where
   getTypeE e = dictExprType e

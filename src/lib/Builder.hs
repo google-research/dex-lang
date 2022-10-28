@@ -1335,16 +1335,16 @@ applyIxMethod dict method args = case dict of
     UnsafeFromOrdinal -> do
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
-  DictCon (ExplicitMethods _ fs params) -> do
+  DictCon (ExplicitMethods d params) -> do
+    SpecializedDictBinding _ fs <- lookupEnv d
     let f = fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
-    Var v <- return f
-    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName v
+    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName f
     -- TODO(dougalm): make sure we can guarantee that this cache is already populated.
     -- Maybe we need to toposort based on dependencies somewhere?
-    Just fSimpName <- queryIxLoweredCache v
+    Just fSimpName <- queryIxLoweredCache f
     TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fSimpName
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
   _ -> do

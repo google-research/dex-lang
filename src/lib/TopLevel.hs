@@ -962,13 +962,17 @@ instance GenericTraverser TopEnvFrag IxHoistingState where
     atom -> traverseAtomDefault atom
 
 emitIxDictSpecialization :: HoistingTopBuilder m => DictType n -> DictExpr n -> m n (DictExpr n)
-emitIxDictSpecialization _ d@(ExplicitMethods _ _ _) = return d -- Nothing to do if we already have explicit methods
-emitIxDictSpecialization _ d@(IxFin _)               = return d -- `Ix (Fin n))` is built-in
+emitIxDictSpecialization _ (ExplicitMethods _ _) = error "Should have specialized dicts yet"
+emitIxDictSpecialization _ d@(IxFin _)           = return d -- `Ix (Fin n))` is built-in
 emitIxDictSpecialization dictTy ixDict = do
   (ixDictAbs, params) <- generalizeIxDict ixDict
   methodImplNames <- forM [minBound..maxBound] \methodName ->
     getSpecializedFunction $ IxMethodSpecialization methodName ixDictAbs
-  return $ ExplicitMethods dictTy (map Var methodImplNames) params
+  maybeD <- liftTopBuilderHoisted $
+    emitBinding "d" $ sink $ SpecializedDictBinding dictTy methodImplNames
+  case maybeD of
+    Just d -> return $ ExplicitMethods d params
+    Nothing -> error "Couldn't hoist specialized dictionary"
 
 -- TODO: we could get more cache hits if we abstract more than necessary,
 -- based on whether parameters are data or nondata. E.g. abstract `Fin 10`

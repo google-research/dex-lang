@@ -470,7 +470,9 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- substM n
     liftM DictTy $ ixDictType $ TC $ Fin n'
-  ExplicitMethods ty _ _ -> substM $ DictTy ty
+  ExplicitMethods v _ -> do
+    SpecializedDictBinding ty _ <- lookupEnv =<< substM v
+    return $ DictTy ty
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case

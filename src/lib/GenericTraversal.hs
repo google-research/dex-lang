@@ -162,7 +162,7 @@ instance GenericallyTraversableE DictExpr where
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
     IxFin n ->  IxFin <$> tge n
-    ExplicitMethods ty methods params -> ExplicitMethods <$> tge ty <*> mapM tge methods <*> mapM tge params
+    ExplicitMethods d params -> ExplicitMethods <$> substM d <*> mapM tge params
 
 instance GenericallyTraversableE DictType where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params

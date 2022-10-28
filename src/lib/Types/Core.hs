@@ -174,7 +174,6 @@ data LamExpr (n::S) where
 
 type IxDict = Atom
 
--- TODO: use this in projectIxFinMethod too
 data IxMethod = Size | Ordinal | UnsafeFromOrdinal
      deriving (Show, Generic, Enum, Bounded, Eq)
 
@@ -305,7 +304,7 @@ data DictExpr (n::S) =
    -- TODO: the function atoms should be names. We could enforce that syntactically but then
    -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
    -- top function names.
- | ExplicitMethods (DictType n) [Atom n] [Atom n] -- dict type, names of parameterized method functions, parameters
+ | ExplicitMethods (Name SpecializedDictNameC n) [Atom n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -476,6 +475,7 @@ data Binding (c::C) (n::S) where
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
+  SpecializedDictBinding :: DictType n -> [AtomName n] -> Binding SpecializedDictNameC n
 deriving instance Show (Binding c n)
 
 data EffectOpDef (n::S) where
@@ -1471,19 +1471,19 @@ instance GenericE DictExpr where
  {- InstantiatedGiven -} (PairE Atom (ListE Atom))
  {- SuperclassProj -}    (PairE Atom (LiftE Int))
  {- IxFin -}             (Atom)
- {- ExplicitMethods -}   (DictType `PairE` ListE Atom `PairE` ListE Atom)
+ {- ExplicitMethods -}   (Name SpecializedDictNameC `PairE` ListE Atom)
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
-    ExplicitMethods ty fs args -> Case4 (ty `PairE` ListE fs `PairE` ListE args)
+    ExplicitMethods sd args -> Case4 (sd `PairE` ListE args)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x -> IxFin x
-    Case4 (ty `PairE` ListE fs `PairE` ListE args) -> ExplicitMethods ty fs args
+    Case4 (sd `PairE` ListE args) -> ExplicitMethods sd args
     _ -> error "impossible"
 
 instance SinkableE           DictExpr
@@ -1909,7 +1909,7 @@ instance Color c => GenericE (Binding c) where
           (ClassDef)
           (InstanceDef)
           (ClassName `PairE` LiftE Int `PairE` Atom))
-      (EitherE7
+      (EitherE8
           (ImpFunction)
           (LiftE FunObjCode `PairE` LinktimeNames)
           (Module)
@@ -1917,6 +1917,7 @@ instance Color c => GenericE (Binding c) where
           (EffectDef)
           (HandlerDef)
           (EffectOpDef)
+          (DictType `PairE` ListE AtomName)
       )
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
@@ -1933,6 +1934,7 @@ instance Color c => GenericE (Binding c) where
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
+    SpecializedDictBinding ty methods   -> Case1 $ Case7 $ ty `PairE` ListE methods
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -1950,6 +1952,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
+    Case1 (Case7 (ty `PairE` ListE methods))                -> fromJust $ tryAsColor $ SpecializedDictBinding ty methods
     _ -> error "impossible"
   {-# INLINE toE #-}
 

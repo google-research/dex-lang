@@ -1008,6 +1008,7 @@ instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
 instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
+instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1930,6 +1931,7 @@ instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
 instance Color HandlerNameC    where getColorRep = HandlerNameC
+instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -1950,6 +1952,7 @@ interpretColor c cont = case c of
   EffectNameC     -> cont $ ColorProxy @EffectNameC
   EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
   HandlerNameC    -> cont $ ColorProxy @HandlerNameC
+  SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
@@ -2491,6 +2494,7 @@ data C =
   | EffectNameC
   | EffectOpNameC
   | HandlerNameC
+  | SpecializedDictNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 

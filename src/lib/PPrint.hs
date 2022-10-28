@@ -228,7 +228,7 @@ instance Pretty (DictExpr n) where
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
-    ExplicitMethods _ methods args -> "ExplicitMethods" <+> p methods <+> p args
+    ExplicitMethods v args -> "ExplicitMethods" <+> p v <+> p args
 
 instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
@@ -489,6 +489,7 @@ instance Pretty (Binding s n) where
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
     EffectOpBinding _ -> "<effect-op-binding>"
+    SpecializedDictBinding _ _ -> "<specialized-dict-binding>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord

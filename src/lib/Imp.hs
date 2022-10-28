@@ -1546,7 +1546,8 @@ unsafeFromOrdinalImp (IxType _ dict) i = do
   i' <- (Con . Newtype NatTy) <$> toScalarAtom i
   case dict of
     DictCon (IxFin n) -> return $ Con $ Newtype (TC $ Fin n) i'
-    DictCon (ExplicitMethods _ fs params) ->
+    DictCon (ExplicitMethods d params) -> do
+      SpecializedDictBinding _ fs <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
     _ -> error $ "Not a simplified dict: " ++ pprint dict
 
@@ -1554,13 +1555,14 @@ indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
 indexSetSizeImp (IxType _ dict) = do
   ans <- case dict of
     DictCon (IxFin n) -> return n
-    DictCon (ExplicitMethods _ fs params) ->
+    DictCon (ExplicitMethods d params) -> do
+      SpecializedDictBinding _ fs <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
     _ -> error $ "Not a simplified dict: " ++ pprint dict
   fromScalarAtom $ unwrapBaseNewtype ans
 
-appSpecializedIxMethod :: Emits n => Atom n -> [Atom n] -> SubstImpM i n (Atom n)
-appSpecializedIxMethod ~(Var f) args = do
+appSpecializedIxMethod :: Emits n => AtomName n -> [Atom n] -> SubstImpM i n (Atom n)
+appSpecializedIxMethod f args = do
   Just fLoweredName <- queryIxLoweredCache f
   TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fLoweredName
   dropSubst $ extendSubst (bs @@> map SubstVal args) $ translateBlock Nothing body
