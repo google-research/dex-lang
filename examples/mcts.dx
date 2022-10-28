@@ -184,31 +184,24 @@ def mcts_backpropagate {move state node_ix h} [Eq node_ix]
                     then (1. - newResult)
                     else newResult
 
-    -- collect itself and all ancestors
-    ancestors_list = yield_accum (ListMonoid node_ix) \ls.
-      with_state node \node_ref. iter \_.
-        append ls (get node_ref)
-        curr_node = from_just $ get (fst_ref tree_ref)!(get node_ref)
-        (Branch _ curr_parent _) = curr_node
-        if is_nothing curr_parent || (0@node_ix) == (get node_ref)
-          then Done ()
-          else
-            node_ref := from_just curr_parent
-            Continue
-
-    -- update win and loss counts
-    (AsList _ ancestors) = ancestors_list
-    for i.
-      -- unpack
-      ancestor = from_just $ get (fst_ref tree_ref)!(ancestors.i)
-      (Branch stats parent children) = ancestor
+    with_state node \node_ref. iter \_.
+      -- update win and loss counts
+      --- unpack
+      curr_node = from_just $ get (fst_ref tree_ref)!(get node_ref)
+      (Branch stats parent children) = curr_node
       (wins, visits, level, state) = stats
-      -- compute
+      --- compute
       (new_wins, new_visits) = (wins + maxResult, visits + 1)
-      -- pack
+      --- pack
       new_stats = (new_wins, new_visits, level, state)
-      (fst_ref tree_ref)!(ancestors.i) := Just (Branch new_stats parent children)
-    ()
+      (fst_ref tree_ref)!(get node_ref) := Just (Branch new_stats parent children)
+
+      -- find the parent of the current node
+      if is_nothing parent || (0@node_ix) == (get node_ref)
+        then Done ()
+        else
+          node_ref := from_just parent
+          Continue
 
 ' Wrap up the procedure for taking one sample and extend the tree.
 
