@@ -47,11 +47,11 @@ def Game (state:Type) (move:Type) : Type =
   }
 
 def NodeStats (state:Type) : Type = 
-  (Int & Int & Nat & state)
-  -- (#win, #visit, level, state)
+  (Nat & Nat & Nat & state)
+  -- (#winning rollouts for max/first player, #visit, level, state)
 
 def node_win_visit_stats {node_ix state} (node:(Node node_ix (NodeStats state)))
-  : (Int & Int) =
+  : (Nat & Nat) =
   (Branch stats _ _) = node
   (wins, visits, _, _) = stats
   (wins, visits)
@@ -80,9 +80,9 @@ $N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
 The upper confidence bound for trees of node $n$ is
 $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$
 
-def uct (win:Int) (n:Int) (parent_n:Int) : Float = 
+def uct (win:Nat) (n:Nat) (parent_n:Nat) : Float =
   -- wins stored at every node are w.r.t to the max_player
-  (i_to_f win) / (i_to_f n) + sqrt (2.0 / (i_to_f n) * (log (i_to_f parent_n)))
+  (n_to_f win) / (n_to_f n) + sqrt (2.0 / (n_to_f n) * (log (n_to_f parent_n)))
 
 'Recursively find the most promising leaf (measured by UCT) to rollout next.
 
@@ -180,24 +180,20 @@ based on the simulation result.
 def mcts_backpropagate {move state node_ix h} [Eq node_ix] 
     (game: Game state move)
     (tree_ref: Ref h (Tree node_ix (NodeStats state)))
-    (node: node_ix) (new_rollout_wins: Int) : {State h} Unit =
-    -- newResult: win or lose w.r.t curr_player @node
-    leaf_min_player = get (fst_ref tree_ref)!node |>
-      from_just |> node_level |> is_odd
-    rollouts_per_sample = n_to_i ROLLOUTS_PER_SAMPLE
-    max_result = if leaf_min_player 
-                    then (rollouts_per_sample - new_rollout_wins)
-                    else new_rollout_wins
+    (node: node_ix) (new_rollout_wins: Nat) : {State h} Unit =
+    -- new_rollout_wins: #wins w.r.t max player
 
     with_state node \node_ref. iter \_.
       -- update win and loss counts
-      --- unpack
+      -- -unpack
       curr_node = from_just $ get (fst_ref tree_ref)!(get node_ref)
       (Branch stats parent children) = curr_node
       (wins, visits, level, state) = stats
-      --- compute
-      (new_wins, new_visits) = (wins + max_result, visits + rollouts_per_sample)
-      --- pack
+      -- -compute
+      new_wins = wins + new_rollout_wins
+      new_visits = visits + 1  -- Todo: or to add ROLLOUTS_PER_SAMPLE
+
+      -- -pack
       new_stats = (new_wins, new_visits, level, state)
       (fst_ref tree_ref)!(get node_ref) := Just (Branch new_stats parent children)
 
@@ -223,15 +219,17 @@ def mcts_sample {move state node_ix} [Eq node_ix]
       if not $ (get_at #game_over game) $ node_state leaf then
         mcts_expand game tree_ref leaf_ix
 
-    num_wins = yield_accum (AddMonoid Int) \c.
+    leaf_min_player = leaf |> node_level |> is_odd
+    max_player_wins = yield_accum (AddMonoid Nat) \c.
       for i:(Fin ROLLOUTS_PER_SAMPLE).
         key' = ixkey key i
-        c += if mcts_rollout game key' $ node_state leaf 
-          then 1
-          else 0
+        leaf_result = mcts_rollout game key' $ node_state leaf
+                  -- w.r.t. the current player
+        max_rollout_wins = b_to_n $ xor leaf_min_player leaf_result
+        c += max_rollout_wins
 
     yield_state tree' \tree_ref.
-      mcts_backpropagate game tree_ref leaf_ix num_wins
+      mcts_backpropagate game tree_ref leaf_ix max_player_wins
 
 ' ## Toy game: Count 21
 This is a simple two-player game. Two players in turn choose
@@ -254,36 +252,36 @@ has a winning strategy.
 
 key = new_key 0
 
-def test (key:Key) (current_state:Nat) : (Int & Int) = 
+def test (key:Key) (current_state:Nat) : (Nat & Nat) =
   init_node_stats : NodeStats Count21State = 
     (0, 0, 0, current_state)
   -- (0 wins, 0 visits, level 0, game state)
-  tree_size = MAX_TREE_SIZE
-  start_tree = init_tree tree_size init_node_stats
+  start_tree = init_tree MAX_TREE_SIZE init_node_stats
   end_tree = fold start_tree \i:(Fin SAMPLES).
     mcts_sample Count21 (ixkey key i)
   node_win_visit_stats $ from_just (fst end_tree).(root_of end_tree)
 
+
 test key 21
-> (0., 50)
+> (0, 50)
 test key 20
-> (45.5, 50)
+> (485, 50)
 test key 19
-> (45., 50)
+> (490, 50)
 test key 18
-> (2.3, 50)
+> (23, 50)
 test key 17
-> (40., 50)
+> (475, 50)
 test key 16
-> (38.8, 50)
+> (468, 50)
 test key 15
-> (29.9, 50)
+> (69, 50)
 test key 14
-> (32.2, 50)
+> (451, 50)
 test key 13
-> (33.7, 50)
+> (389, 50)
 test key 12
-> (30.9, 50)
+> (286, 50)
 
 ' We fix number of samples (SAMPLES=50) and rollouts (ROLLOUTS_PER_SAMPLE=10). Fully explored 
 trees (`current_state` close to 21) yields extreme win/visits ratios. 
@@ -302,19 +300,24 @@ end_tree = fold start_tree \i:(Fin 50).
   mcts_sample Count21 (ixkey key i)
 
 end_tree
-> ( [ (Just (Branch (40., (50, (0, 17))) Nothing (AsList 2 [ (1@(Fin 15)), (2@(Fin 15)) ])))
-> , (Just (Branch (38.4, (43, (1, 18))) (Just (0@(Fin 15))) (AsList 2 [ (5@(Fin 15)), (6@(Fin 15)) ])))
-> , (Just (Branch (0.8, (6, (1, 19))) (Just (0@(Fin 15))) (AsList 2 [ (3@(Fin 15)), (4@(Fin 15)) ])))
-> , (Just (Branch (0.5, (1, (2, 20))) (Just (2@(Fin 15))) (AsList 2 [ (11@(Fin 15)), (12@(Fin 15)) ])))
-> , (Just (Branch (0., (4, (2, 21))) (Just (2@(Fin 15))) (AsList 0 [])))
-> , (Just (Branch (0.8, (1, (2, 19))) (Just (1@(Fin 15))) (AsList 2 [ (7@(Fin 15)), (8@(Fin 15)) ])))
-> , (Just (Branch (36.8, (41, (2, 20))) (Just (1@(Fin 15))) (AsList 2 [ (9@(Fin 15)), (10@(Fin 15)) ])))
-> , (Just (Branch (0., (0, (3, 20))) (Just (5@(Fin 15))) (AsList 0 [])))
-> , (Just (Branch (0., (0, (3, 21))) (Just (5@(Fin 15))) (AsList 0 [])))
-> , (Just (Branch (36., (36, (3, 21))) (Just (6@(Fin 15))) (AsList 0 [])))
-> , (Just (Branch (-0., (4, (3, 22))) (Just (6@(Fin 15))) (AsList 0 [])))
-> , (Just (Branch (0., (0, (3, 21))) (Just (3@(Fin 15))) (AsList 0 [])))
-> , (Just (Branch (0., (0, (3, 22))) (Just (3@(Fin 15))) (AsList 0 [])))
+> ( [ (Just (Branch (475, (50, (0, 17))) Nothing (AsList 2 [ (1@(Fin 15))
+>                                                      , (2@(Fin 15)) ])))
+> , (Just (Branch (464, (48, (1, 18))) (Just (0@(Fin 15))) (AsList 2 [ (5@(Fin 15))
+>                                                                  , (6@(Fin 15)) ])))
+> , (Just (Branch (3, (1, (1, 19))) (Just (0@(Fin 15))) (AsList 2 [ (3@(Fin 15))
+>                                                               , (4@(Fin 15)) ])))
+> , (Just (Branch (0, (0, (2, 20))) (Just (2@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (0, (0, (2, 21))) (Just (2@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (8, (1, (2, 19))) (Just (1@(Fin 15))) (AsList 2 [ (7@(Fin 15))
+>                                                               , (8@(Fin 15)) ])))
+> , (Just (Branch (448, (46, (2, 20))) (Just (1@(Fin 15))) (AsList 2 [ (9@(Fin 15))
+>                                                                  , (10@(Fin 15)) ])))
+> , (Just (Branch (0, (0, (3, 20))) (Just (5@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (0, (0, (3, 21))) (Just (5@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (440, (44, (3, 21))) (Just (6@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (0, (1, (3, 22))) (Just (6@(Fin 15))) (AsList 0 [])))
+> , Nothing
+> , Nothing
 > , Nothing
 > , Nothing ]
-> , (12@(Fin 15)) )
+> , (10@(Fin 15)) )
