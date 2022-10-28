@@ -1,4 +1,4 @@
-' ## Monte Carlo Tree Search
+' # Monte Carlo Tree Search
 MCTS is the decision engine for the notable AlphaGo program.
 It samples rollouts to guide tree search. 
 The nice thing is Dex can in theory automatically parallelize leaf rollouts.
@@ -12,7 +12,7 @@ and traverses its branches by indexing.
 def (+|) {a} [Ix a] (n:a) (m:Nat) : a = ((ordinal n) + m)@a
 def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
 
-' ### Tree types
+' ## Tree types
 
 data Node node_ix a =
   Branch content:a parent:(Maybe node_ix) children:(List (node_ix))
@@ -32,7 +32,7 @@ def init_tree {a} (max_size:Nat) (default_content:a): Tree (Fin max_size) a =
   init_array = yield_state nothings \ref. ref!(0@_) := (Just root)
   (init_array, 0@_)
 
-' ### Game and Node utilities
+' ## Game and Node utilities
 
 def Game (state:Type) (move:Type) : Type =
   {
@@ -67,7 +67,7 @@ def node_level {node_ix state} (node:(Node node_ix (NodeStats state))) : Nat =
   (_, _, level, _) = stats
   level
 
-' ### MCTS functions
+' ## MCTS functions
 
 ' Let $n$ be a node. The upper confidence bound for trees (UCT) is a heuristic 
 that balances exploration and exploitation, weighed by $1:\sqrt{2}$ here.
@@ -236,7 +236,7 @@ def mcts_sample {move state node_ix} [Eq node_ix]
     yield_state tree' \tree_ref.
       mcts_backpropagate game tree_ref leaf_ix result
 
-' ### Toy game: Count 21
+' ## Toy game: Count 21
 This is a simple two-player game. Two players in turn chooses
 between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 wins.
 
@@ -249,7 +249,7 @@ Count21 : Game Count21State Count21Move = {
   game_over = \sum. sum >= unsafe_i_to_n 21,
 }
 
-' #### Approximate winning chances by sampling
+' ### Approximate winning chances by sampling
 In theory, multiples of three are bad positions for the current player,
 since the opponent has a winning strategy by always choosing
 (3 - move by the current player). Otherwise, the current player
@@ -293,7 +293,7 @@ trees (`current_state` close to 21) yields extreme win/visits ratios.
 We also verify that the current player is disadvantaged when the current state 
 is a multiple of three.
 
-' #### A closer look at the game tree
+' ### A closer look at the game tree
 Say the current sum is 17, the winning move for the current player is to add 1.
 In the following tree, we see that adding 1 (the second node) is indeed 
 considered a more promising choice by `uct` and sees more rollouts than 
