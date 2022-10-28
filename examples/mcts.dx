@@ -12,6 +12,10 @@ and traverses its branches by indexing.
 def (+|) {a} [Ix a] (n:a) (m:Nat) : a = ((ordinal n) + m)@a
 def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
 
+MAX_TREE_SIZE:Nat = 70
+SAMPLES:Nat = 50
+ROLLOUTS_PER_SAMPLE:Nat = 10
+
 ' ## Tree types
 
 data Node node_ix a =
@@ -43,11 +47,11 @@ def Game (state:Type) (move:Type) : Type =
   }
 
 def NodeStats (state:Type) : Type = 
-  (Float & Nat & Nat & state)
-  -- (win ratio or reward, #visit, level, state)
+  (Int & Int & Nat & state)
+  -- (#win, #visit, level, state)
 
 def node_win_visit_stats {node_ix state} (node:(Node node_ix (NodeStats state)))
-  : (Float & Nat) =
+  : (Int & Int) =
   (Branch stats _ _) = node
   (wins, visits, _, _) = stats
   (wins, visits)
@@ -76,9 +80,9 @@ $N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
 The upper confidence bound for trees of node $n$ is
 $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$
 
-def uct (win:Float) (n:Nat) (parent_n:Nat) : Float = 
+def uct (win:Int) (n:Int) (parent_n:Int) : Float = 
   -- wins stored at every node are w.r.t to the max_player
-  win / (n_to_f n) + sqrt (2.0 / (n_to_f n) * (log (n_to_f parent_n)))
+  (i_to_f win) / (i_to_f n) + sqrt (2.0 / (i_to_f n) * (log (i_to_f parent_n)))
 
 'Recursively find the most promising leaf (measured by UCT) to rollout next.
 
@@ -176,13 +180,14 @@ based on the simulation result.
 def mcts_backpropagate {move state node_ix h} [Eq node_ix] 
     (game: Game state move)
     (tree_ref: Ref h (Tree node_ix (NodeStats state)))
-    (node: node_ix) (newResult: Float) : {State h} Unit =
+    (node: node_ix) (new_rollout_wins: Int) : {State h} Unit =
     -- newResult: win or lose w.r.t curr_player @node
     leaf_min_player = get (fst_ref tree_ref)!node |>
       from_just |> node_level |> is_odd
-    maxResult = if leaf_min_player 
-                    then (1. - newResult)
-                    else newResult
+    rollouts_per_sample = n_to_i ROLLOUTS_PER_SAMPLE
+    max_result = if leaf_min_player 
+                    then (rollouts_per_sample - new_rollout_wins)
+                    else new_rollout_wins
 
     with_state node \node_ref. iter \_.
       -- update win and loss counts
@@ -191,7 +196,7 @@ def mcts_backpropagate {move state node_ix h} [Eq node_ix]
       (Branch stats parent children) = curr_node
       (wins, visits, level, state) = stats
       --- compute
-      (new_wins, new_visits) = (wins + maxResult, visits + 1)
+      (new_wins, new_visits) = (wins + max_result, visits + rollouts_per_sample)
       --- pack
       new_stats = (new_wins, new_visits, level, state)
       (fst_ref tree_ref)!(get node_ref) := Just (Branch new_stats parent children)
@@ -218,16 +223,15 @@ def mcts_sample {move state node_ix} [Eq node_ix]
       if not $ (get_at #game_over game) $ node_state leaf then
         mcts_expand game tree_ref leaf_ix
 
-    num_leaf_rollouts = 10
-    result = yield_accum (AddMonoid Float) \c.
-      for i:(Fin num_leaf_rollouts).
+    num_wins = yield_accum (AddMonoid Int) \c.
+      for i:(Fin ROLLOUTS_PER_SAMPLE).
         key' = ixkey key i
         c += if mcts_rollout game key' $ node_state leaf 
-          then 1. / (n_to_f num_leaf_rollouts)
-          else 0.
+          then 1
+          else 0
 
     yield_state tree' \tree_ref.
-      mcts_backpropagate game tree_ref leaf_ix result
+      mcts_backpropagate game tree_ref leaf_ix num_wins
 
 ' ## Toy game: Count 21
 This is a simple two-player game. Two players in turn choose
@@ -250,13 +254,13 @@ has a winning strategy.
 
 key = new_key 0
 
-def test (key:Key) (current_state:Nat) : (Float & Nat) = 
+def test (key:Key) (current_state:Nat) : (Int & Int) = 
   init_node_stats : NodeStats Count21State = 
-    (0., 0, 0, current_state)
+    (0, 0, 0, current_state)
   -- (0 wins, 0 visits, level 0, game state)
-  tree_size = 70
+  tree_size = MAX_TREE_SIZE
   start_tree = init_tree tree_size init_node_stats
-  end_tree = fold start_tree \i:(Fin 50).
+  end_tree = fold start_tree \i:(Fin SAMPLES).
     mcts_sample Count21 (ixkey key i)
   node_win_visit_stats $ from_just (fst end_tree).(root_of end_tree)
 
@@ -281,7 +285,7 @@ test key 13
 test key 12
 > (30.9, 50)
 
-' We fix number of samples (50) and rollouts (10 per sample). Fully explored 
+' We fix number of samples (SAMPLES=50) and rollouts (ROLLOUTS_PER_SAMPLE=10). Fully explored 
 trees (`current_state` close to 21) yields extreme win/visits ratios. 
 We also verify that the current player is disadvantaged when the current state 
 is a multiple of three.
