@@ -183,20 +183,21 @@ simpDeclsSubst :: Emits o => Subst AtomSubstVal l o -> Nest Decl l i' -> Simplif
 simpDeclsSubst !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
+    let hint = (getNameHint b)
     x <- withSubst s $ case (ann, expr) of
       (NoInlineLet, Atom a) ->
-        liftM Var $ emitDecl noHint NoInlineLet =<< (Atom <$> simplifyAtom a)
-      _ -> simplifyExpr expr
+        liftM Var $ emitDecl hint NoInlineLet =<< (Atom <$> simplifyAtom a)
+      _ -> simplifyExpr hint expr
     simpDeclsSubst (s <>> (b@>SubstVal x)) rest
 
-simplifyExpr :: Emits o => Expr i -> SimplifyM i o (Atom o)
-simplifyExpr expr = confuseGHC >>= \_ -> case expr of
+simplifyExpr :: Emits o => NameHint -> Expr i -> SimplifyM i o (Atom o)
+simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
   App f xs -> do
     xs' <- mapM simplifyAtom xs
-    simplifyApp f xs'
+    simplifyApp hint f xs'
   TabApp f xs -> do
     xs' <- mapM simplifyAtom xs
-    simplifyTabApp f xs'
+    simplifyTabApp hint f xs'
   Atom x -> simplifyAtom x
   -- Handle PrimEffect here, to avoid traversing cb multiple times
   Op (PrimEffect ref (MExtend (BaseMonoid em cb) x)) -> do
@@ -206,24 +207,24 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     (cb', IdentityReconAbs) <- simplifyBinaryLam cb
     emitOp $ PrimEffect ref' $ MExtend (BaseMonoid em' cb') x'
   Op  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
-  Hof hof -> simplifyHof hof
+  Hof hof -> simplifyHof hint hof
   Case e alts resultTy eff -> do
     e' <- simplifyAtom e
-    eff' <- substM eff
-    resultTy' <- substM resultTy
     case trySelectBranch e' of
       Just (i, arg) -> do
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyBlock body
       Nothing -> do
+        resultTy' <- substM resultTy
         isData resultTy' >>= \case
           True -> do
+            eff' <- substM eff
             alts' <- forM alts \(Abs b body) -> do
               bTy' <- substM $ binderType b
               buildAbs (getNameHint b) bTy' \x ->
                 extendSubst (b @> Rename x) $
                   buildBlock $ simplifyBlock body
-            liftM Var $ emit $ Case e' alts' resultTy' eff'
+            liftM Var $ emitHinted hint $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
   -- TODO(alex): implement
   Handle _ _ _ -> error "Not implemented"
@@ -291,8 +292,9 @@ defuncCase scrut alts resultTy = do
           let block = makeBlock decls effs (PairVal resultData newResult) ty
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
-simplifyApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
-simplifyApp f xs =
+simplifyApp :: forall i o. Emits o
+  => NameHint -> Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
+simplifyApp hint f xs =
   simplifyFuncAtom f >>= \case
     Left  lam  -> fast lam
     Right atom -> slow atom
@@ -304,7 +306,7 @@ simplifyApp f xs =
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
             case nonEmpty xsRest of
               Nothing    -> simplifyAtom atom
-              Just rest' -> simplifyApp atom rest'
+              Just rest' -> simplifyApp hint atom rest'
       Nothing -> error "should never happen"
 
     slow :: Atom o -> SimplifyM i o (Atom o)
@@ -319,7 +321,7 @@ simplifyApp f xs =
             a' <- applySubst (b@>v) a
             naryApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
-        dropSubst $ simplifyExpr caseExpr
+        dropSubst $ simplifyExpr hint caseExpr
       Var v ->
         lookupAtomName v >>= \case
           TopFunBound _ (AwaitingSpecializationArgsTopFun numSpecializationArgs _) ->
@@ -327,10 +329,11 @@ simplifyApp f xs =
               Just (specializationArgs, runtimeArgs) -> do
                 (spec, extraArgs) <- determineSpecializationSpec v specializationArgs
                 specializedFunction <- getSpecializedFunction spec
-                naryApp (Var specializedFunction) (extraArgs ++ runtimeArgs)
+                naryAppHinted hint (Var specializedFunction)
+                  (extraArgs ++ runtimeArgs)
               Nothing -> error $ "Specialization of " ++ pprint atom ++
                 " requires saturated application of specialization args."
-          _ -> naryApp atom $ toList xs
+          _ -> naryAppHinted hint atom $ toList xs
       _ -> error $ "Unexpected function: " ++ pprint atom
 
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (LamExpr i) (Atom o))
@@ -452,8 +455,9 @@ getSpecializedFunction s = do
         Just name -> return name
 
 -- TODO: de-dup this and simplifyApp?
-simplifyTabApp :: forall i o. Emits o => Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
-simplifyTabApp f xs =
+simplifyTabApp :: forall i o. Emits o
+  => NameHint -> Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
+simplifyTabApp hint f xs =
   simplifyFuncAtom f >>= \case
     Left  lam  -> fast lam
     Right atom -> slow atom
@@ -465,7 +469,7 @@ simplifyTabApp f xs =
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
             case nonEmpty xsRest of
               Nothing    -> simplifyAtom atom
-              Just rest' -> simplifyTabApp atom rest'
+              Just rest' -> simplifyTabApp hint atom rest'
       Nothing -> error "should never happen"
 
     slow :: Atom o -> SimplifyM i o (Atom o)
@@ -480,8 +484,8 @@ simplifyTabApp f xs =
             a' <- applySubst (b@>v) a
             naryTabApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
-        dropSubst $ simplifyExpr $ caseExpr
-      _ -> naryTabApp atom $ toList xs
+        dropSubst $ simplifyExpr hint $ caseExpr
+      _ -> naryTabAppHinted hint atom $ toList xs
 
     simplifyFuncAtom :: Atom i -> SimplifyM i o (Either (TabLamExpr i) (Atom o))
     simplifyFuncAtom func = case func of
@@ -782,12 +786,12 @@ projectDictMethod d i = do
     DictCon (IxFin n) -> projectIxFinMethod (toEnum i) n
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
-simplifyHof :: Emits o => Hof i -> SimplifyM i o (Atom o)
-simplifyHof hof = case hof of
+simplifyHof :: Emits o => NameHint -> Hof i -> SimplifyM i o (Atom o)
+simplifyHof hint hof = case hof of
   For d ixDict lam -> do
     ixTy@(IxType _ ixDict') <- ixTyFromDict =<< substM ixDict
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- liftM Var $ emit $ Hof $ For d ixDict' lam'
+    ans <- liftM Var $ emitHinted hint $ Hof $ For d ixDict' lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon reconAbs ->
@@ -800,11 +804,11 @@ simplifyHof hof = case hof of
           applyReconAbs reconAbs' elt
   While body -> do
     (lam', IdentityReconAbs) <- simplifyLam body
-    liftM Var $ emit $ Hof $ While lam'
+    liftM Var $ emitHinted hint $ Hof $ While lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
     (lam', Abs b recon) <- simplifyBinaryLam lam
-    ans <- emit $ Hof $ RunReader r' lam'
+    ans <- emitHinted hint $ Hof $ RunReader r' lam'
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
   RunWriter Nothing (BaseMonoid e combine) lam -> do
@@ -812,7 +816,7 @@ simplifyHof hof = case hof of
     (combine', IdentityReconAbs) <- simplifyBinaryLam combine
     (lam', Abs b recon) <- simplifyBinaryLam lam
     let hof' = Hof $ RunWriter Nothing (BaseMonoid e' combine') lam'
-    (ans, w) <- fromPair =<< liftM Var (emit hof')
+    (ans, w) <- fromPair =<< liftM Var (emitHinted hint hof')
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
     return $ PairVal ans' w
@@ -820,7 +824,7 @@ simplifyHof hof = case hof of
   RunState Nothing s lam -> do
     s' <- simplifyAtom s
     (lam', Abs b recon) <- simplifyBinaryLam lam
-    resultPair <- emit $ Hof $ RunState Nothing s' lam'
+    resultPair <- emitHinted hint $ Hof $ RunState Nothing s' lam'
     (ans, sOut) <- fromPair $ Var resultPair
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
@@ -828,7 +832,12 @@ simplifyHof hof = case hof of
   RunState _ _ _ -> error "Shouldn't see a RunState with a dest in Simplify"
   RunIO lam -> do
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- emit $ Hof $ RunIO lam'
+    ans <- emitHinted hint $ Hof $ RunIO lam'
+    let recon' = ignoreHoistFailure $ hoist b recon
+    applyRecon recon' $ Var ans
+  RunInit lam -> do
+    (lam', Abs b recon) <- simplifyLam lam
+    ans <- emitHinted hint $ Hof $ RunInit lam'
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
   Linearize lam -> do

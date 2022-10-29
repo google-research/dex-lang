@@ -342,13 +342,15 @@ linearizeExpr expr = case expr of
                 False -> -- Pass in ZeroTangent as the tangent
                   return $ WithTangent arg' $
                     return $ sink $ Con $ Newtype
-                      (TypeCon "SymbolicTangent" stDefName (DataDefParams [argTy'] []))
+                      (TypeCon "SymbolicTangent" stDefName
+                       (DataDefParams [(PlainArrow, argTy')]))
                       (SumVal [UnitTy, argTy'] 0 UnitVal)
                 True -> do  -- Wrap tangent in SomeTangent
                   WithTangent arg'' argLin <- dropSubst $ linearizeAtom arg'
                   return $ WithTangent arg'' $ argLin <&> \argTan ->
                     Con $ Newtype
-                      (TypeCon "SymbolicTangent" (sink stDefName) (DataDefParams [sink argTy'] []))
+                      (TypeCon "SymbolicTangent" (sink stDefName)
+                       (DataDefParams [(PlainArrow, sink argTy')]))
                       (SumVal [UnitTy, sink argTy'] 1 argTan)
         (ans, flin) <- fromPair =<< naryApp cl (polyXs' ++ (wts <&> \(WithTangent p _) -> p))
         return $ WithTangent ans $ naryApp (sink flin) =<< sequence (wts <&> \(WithTangent _ t) -> t)
@@ -368,7 +370,7 @@ linearizeExpr expr = case expr of
         resultTyWithTangent <- PairTy <$> substM resultTy
                                       <*> tangentFunType resultTangentType
         (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i x -> do
-          x' <- emitAtomToName x
+          x' <- emitAtomToName noHint x
           Abs b body <- return $ alts !! i
           extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do

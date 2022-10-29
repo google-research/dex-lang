@@ -29,8 +29,9 @@ module Name (
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
-  EitherE (..), LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
-  EitherB (..), BinderP (..),
+  EitherE (..), leftsE, rightsE, forgetEitherE,
+  LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
+  EitherB (..), forgetEitherB, BinderP (..),
   LiftB, pattern LiftB,
   HashMapE (..), HashableE, nestToNames,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
@@ -584,6 +585,23 @@ toPairE (x, y) = (PairE x y)
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
      deriving (Show, Eq, Generic)
 
+leftsE :: [EitherE e1 e2 n] -> [e1 n]
+leftsE = \case
+  [] -> []
+  ((LeftE x):rest) -> x:leftsE rest
+  ((RightE _):rest) -> leftsE rest
+
+rightsE :: [EitherE e1 e2 n] -> [e2 n]
+rightsE = \case
+  [] -> []
+  ((LeftE _):rest) -> rightsE rest
+  ((RightE x):rest) -> x:rightsE rest
+
+forgetEitherE :: EitherE e e n -> e n
+forgetEitherE ( LeftE x) = x
+forgetEitherE (RightE x) = x
+{-# INLINE forgetEitherE #-}
+
 newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
         deriving (Show, Eq, Generic)
 
@@ -618,6 +636,11 @@ data EitherB (b1::B) (b2::B) (n::S) (l::S) =
    LeftB  (b1 n l)
  | RightB (b2 n l)
    deriving (Show, Eq, Generic)
+
+forgetEitherB :: EitherB b b n l -> b n l
+forgetEitherB (LeftB b) = b
+forgetEitherB (RightB b) = b
+{-# INLINE forgetEitherB #-}
 
 -- The constant function of kind `V`
 newtype ConstE (const::E) (ignored::C) (n::S) = ConstE (const n)
@@ -708,6 +731,17 @@ instance Color c => BindsAtMostOneName (BinderP c ann) c where
 instance Color c => BindsOneName (BinderP c ann) c where
   binderName (b:>_) = binderName b
   {-# INLINE binderName #-}
+
+instance (BindsAtMostOneName b1 c, BindsAtMostOneName b2 c) =>
+  BindsAtMostOneName (EitherB b1 b2) c where
+  ( LeftB b) @> x = b @> x
+  (RightB b) @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance (BindsOneName b1 c, BindsOneName b2 c) =>
+  BindsOneName (EitherB b1 b2) c where
+  binderName ( LeftB b) = binderName b
+  binderName (RightB b) = binderName b
 
 infixr 7 @@>
 (@@>) :: (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
@@ -1139,6 +1173,11 @@ instance (Color c, AlphaEqE ann) => AlphaEqB (BinderP c ann) where
     alphaEqE ann1 ann2
     withAlphaEqB b1 b2 $ cont
 
+instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (EitherB b1 b2) where
+  withAlphaEqB (LeftB b1) (LeftB b2) cont = withAlphaEqB b1 b2 cont
+  withAlphaEqB (RightB b1) (RightB b2) cont = withAlphaEqB b1 b2 cont
+  withAlphaEqB _ _ _ = zipErr
+
 instance AlphaEqE UnitE where
   alphaEqE UnitE UnitE = return ()
 
@@ -1250,6 +1289,13 @@ instance (AlphaHashableE e1, AlphaHashableE e2) => AlphaHashableE (EitherE e1 e2
   hashWithSaltE env salt (RightE e) = do
     let h = hashWithSalt salt (1::Int)
     hashWithSaltE env h e
+
+instance (AlphaHashableB b1, AlphaHashableB b2)
+         => AlphaHashableB (EitherB b1 b2) where
+  hashWithSaltB env salt (LeftB x) =
+    hashWithSaltB env (hashWithSalt salt (0::Int)) x
+  hashWithSaltB env salt (RightB x) =
+    hashWithSaltB env (hashWithSalt salt (1::Int)) x
 
 instance AlphaHashableE VoidE where
   hashWithSaltE _ _ _ = error "impossible"
@@ -2313,6 +2359,7 @@ instance Store (UnitE n)
 instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
 instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
+instance (Store (b1 n l), Store (b2 n l)) => Store (EitherB b1 b2 n l)
 instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance (Store (e UnsafeS), Generic (e UnsafeS)) => Store (LiftB e n l)

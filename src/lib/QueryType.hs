@@ -131,10 +131,9 @@ instantiateDataDef (DataDef _ bs cons) params = do
 {-# INLINE instantiateDataDef #-}
 
 applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, ScopeReader m)
-                => Abs DataDefBinders e n -> DataDefParams n -> m n (e n)
-applyDataConAbs (Abs (DataDefBinders bs1 bs2) e) (DataDefParams xs1 xs2) = do
-  let paramsSubst = bs1 @@> (SubstVal <$> xs1) <.> bs2 @@> (SubstVal <$> xs2)
-  applySubst paramsSubst e
+                => Abs (Nest PiBinder) e n -> DataDefParams n -> m n (e n)
+applyDataConAbs (Abs bs e) (DataDefParams xs) =
+  applySubst (bs @@> (SubstVal <$> map snd xs)) e
 {-# INLINE applyDataConAbs #-}
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
@@ -738,6 +737,9 @@ getTypePrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunIO f -> do
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ ignoreHoistFailure $ hoist b resultTy
+  RunInit f -> do
+    Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
+    return $ ignoreHoistFailure $ hoist b resultTy
   CatchException f -> do
     Pi (PiType (PiBinder b _ _) _ resultTy) <- getTypeE f
     return $ MaybeTy $ ignoreHoistFailure $ hoist b resultTy
@@ -812,7 +814,7 @@ exprEffects expr = case expr of
     IOFree   _    -> return $ OneEffect IOEffect
     PtrLoad  _    -> return $ OneEffect IOEffect
     PtrStore _ _  -> return $ OneEffect IOEffect
-    Place    _ _  -> return $ OneEffect IOEffect
+    Place    _ _  -> return $ OneEffect InitEffect
     _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
@@ -820,18 +822,21 @@ exprEffects expr = case expr of
     Linearize _   -> return Pure  -- Body has to be a pure function
     Transpose _   -> return Pure  -- Body has to be a pure function
     RunReader _ f -> rwsFunEffects Reader f
-    RunWriter d _ f -> rwsFunEffects Writer f <&> maybeIO d
-    RunState  d _ f -> rwsFunEffects State  f <&> maybeIO d
+    RunWriter d _ f -> rwsFunEffects Writer f <&> maybeInit d
+    RunState  d _ f -> rwsFunEffects State  f <&> maybeInit d
     RunIO f -> do
       effs <- functionEffs f
       return $ deleteEff IOEffect effs
+    RunInit f -> do
+      effs <- functionEffs f
+      return $ deleteEff InitEffect effs
     CatchException f -> do
       effs <- functionEffs f
       return $ deleteEff ExceptionEffect effs
     Seq _ _ _ f   -> functionEffs f
     RememberDest _ f -> functionEffs f
-    where maybeIO :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
-          maybeIO d = case d of Just _ -> (<>OneEffect IOEffect); Nothing -> id
+    where maybeInit :: Maybe (Atom i) -> (EffectRow o -> EffectRow o)
+          maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
   Handle v _ body -> do
     HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef

@@ -24,6 +24,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import numpy as np
 import csv
+import jax
 
 
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
@@ -95,6 +96,31 @@ class Python:
     return [Result(self.name, 'runtime', avg_time)]
 
 
+@dataclass
+class PythonSubprocess:
+  name: str
+  repeats: int
+  variant: str = 'latest'
+  baseline_commit: str = BASELINE  # Unused but demanded by the driver
+
+  def clean(self, code, xdg_home):
+    run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
+
+  def bench(self, code, xdg_home):
+    dex_py_path = code / 'python'
+    source = code / 'benchmarks' / (self.name + '.py')
+    env = { # Use the ambient Python so that virtualenv works
+            'PATH': os.getenv('PATH'),
+            # but look for the `dex` package in the installation directory first
+            'PYTHONPATH': dex_py_path,
+    }
+    runtime = parse_result_runtime(read('python3', source, env=env))
+    return [Result(self.name, 'runtime', runtime)]
+
+  def baseline(self):
+    return Python(self.name, self.repeats, RUNTIME_BASELINES[self.name])
+
+
 def numpy_sum():
   n = 1000000
   xs = np.arange(n, dtype=np.float64)
@@ -122,6 +148,18 @@ def numpy_poly(n):
   return lambda: np.polynomial.Polynomial([0.0, 1.0, 2.0, 3.0, 4.0])(xs)
 
 
+def diag_conv_jax():
+  # TODO Deduplicate these parameters vs the Dex implementation?
+  shp = (100, 3, 32, 32)
+  filter_size = 3
+  lhs = jax.random.normal(jax.random.PRNGKey(1), shp, dtype=jax.numpy.float32)
+  rhs = jax.lax.broadcast(jax.numpy.eye(filter_size), (100, 3))
+  return lambda: jax.lax.conv_general_dilated(
+      lhs, rhs, window_strides=(1, 1), padding='SAME',
+      dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
+      feature_group_count=1)
+
+
 BENCHMARKS = [
     DexEndToEnd('kernelregression', 10),
     DexEndToEnd('psd', 10),
@@ -137,6 +175,7 @@ BENCHMARKS = [
     DexRuntime('poly', 5),
     DexRuntime('vjp_matmul', 5),
     DexRuntimeVsDex('conv', 10, baseline_commit='531832c0e18a64c1cab10fc16270b930eed5ed2b'),
+    PythonSubprocess('conv_py', 5),
 ]
 RUNTIME_BASELINES = {
     'fused_sum': numpy_sum,
@@ -148,12 +187,13 @@ RUNTIME_BASELINES = {
     'matvec_small': numpy_matvec(10, 10000),
     'poly': numpy_poly(100000),
     'vjp_matmul': numpy_matmul(500, 1),  # TODO: rewrite the baseline in JAX and actually use vjp there
+    'conv_py': diag_conv_jax(),
 }
 
 
-def run(*args, capture=False, env=None):
+def run(*args, capture=False, **kwargs):
   print('> ' + ' '.join(map(str, args)))
-  result = subprocess.run(args, text=True, capture_output=capture, env=env)
+  result = subprocess.run(args, text=True, capture_output=capture, **kwargs)
   if result.returncode != 0 and capture:
     line = '-' * 20
     print(line, 'CAPTURED STDOUT', line)
@@ -177,11 +217,14 @@ def build(commit):
   if install_path.exists():
     print(f'Skipping the build of {commit}')
   else:
-    run('git', 'checkout', commit)
-    run('make', 'install', env=dict(os.environ, PREFIX=commit))
-    run('cp', '-r', 'lib', install_path / 'lib')
-    run('cp', '-r', 'examples', install_path / 'examples')
-    run('cp', '-r', 'benchmarks', install_path / 'benchmarks')
+    run('git', 'clone', '.', commit)
+    run('git', 'checkout', commit, cwd=install_path)
+    try:
+      run('make', 'build-ffis-and-exe', cwd=install_path, env=dict(os.environ))
+    except subprocess.CalledProcessError:
+      # Presume that this commit doesn't have the `build-ffis-and-exe` target.
+      # Then we presumably didn't need the FFI to run anything against it.
+      run('make', 'install', cwd=install_path, env=dict(os.environ, PREFIX=install_path))
   return install_path
 
 

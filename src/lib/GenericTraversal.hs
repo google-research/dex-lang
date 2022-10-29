@@ -19,8 +19,8 @@ import Err
 import Builder
 import Syntax
 import MTL1
-
 import LabeledItems
+import Util (onSndM)
 
 liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
@@ -144,8 +144,8 @@ instance GenericallyTraversableE FieldRowElems where
       DynFields rowVar    -> return $ DynFields rowVar
 
 instance GenericallyTraversableE DataDefParams where
-  traverseGenericE (DataDefParams params dicts) =
-    DataDefParams <$> mapM tge params <*> mapM tge dicts
+  traverseGenericE (DataDefParams params) =
+    DataDefParams <$> mapM (onSndM tge) params
 
 instance GenericallyTraversableE DepPairType where
   traverseGenericE (DepPairType (b:>lty) rty) = do
@@ -189,6 +189,11 @@ traverseBinderNest (Nest (b:>ty) bs) cont = do
     extendRenamer (b@>binderName b') do
       traverseBinderNest bs \bs' -> do
         cont (Nest (b':>ty') bs')
+
+instance (GenericallyTraversableE e1, GenericallyTraversableE e2) =>
+  (GenericallyTraversableE (EitherE e1 e2)) where
+  traverseGenericE ( LeftE e) =  LeftE <$> tge e
+  traverseGenericE (RightE e) = RightE <$> tge e
 
 traverseBlock
   :: (GenericTraverser f s, Emits o)

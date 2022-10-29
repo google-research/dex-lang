@@ -183,6 +183,12 @@ instance SourceRenamableB (UAnnBinder AtomNameC) where
     sourceRenameB b \b' ->
       cont $ UAnnBinder b' ann'
 
+instance SourceRenamableB (UAnnBinderArrow AtomNameC) where
+  sourceRenameB (UAnnBinderArrow b ann arr) cont = do
+    ann' <- sourceRenameE ann
+    sourceRenameB b \b' ->
+      cont $ UAnnBinderArrow b' ann' arr
+
 instance SourceRenamableB UPatAnnArrow where
   sourceRenameB (UPatAnnArrow b arrow) cont =
     sourceRenameB b \b' -> cont $ UPatAnnArrow b' arrow
@@ -203,6 +209,11 @@ instance SourceRenamableE UExpr' where
     UTabPi (UTabPiExpr pat body) ->
       sourceRenameB pat \pat' ->
         UTabPi <$> (UTabPiExpr pat' <$> sourceRenameE body)
+    UDepPairTy (UDepPairType pat body) ->
+      sourceRenameB pat \pat' ->
+        UDepPairTy <$> (UDepPairType pat' <$> sourceRenameE body)
+    UDepPair lhs rhs ->
+      UDepPair <$> sourceRenameE lhs <*> sourceRenameE rhs
     UTabApp f x -> UTabApp <$> sourceRenameE f <*> sourceRenameE x
     UDecl (UDeclExpr decl rest) ->
       sourceRenameB decl \decl' ->
@@ -251,6 +262,7 @@ instance (SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => S
   sourceRenameE ExceptionEffect = return ExceptionEffect
   sourceRenameE IOEffect = return IOEffect
   sourceRenameE (UserEffect name) = UserEffect <$> sourceRenameE name
+  sourceRenameE InitEffect = return InitEffect
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $
@@ -363,13 +375,12 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UIgnore -> cont UIgnore
 
 instance SourceRenamableE UDataDef where
-  sourceRenameE (UDataDef (tyConName, paramBs) clsBs dataCons) = do
+  sourceRenameE (UDataDef tyConName paramBs dataCons) = do
     sourceRenameB paramBs \paramBs' -> do
-      sourceRenameB clsBs \clsBs' -> do
-        dataCons' <- forM dataCons \(dataConName, argBs) -> do
-          argBs' <- sourceRenameE argBs
-          return (dataConName, argBs')
-        return $ UDataDef (tyConName, paramBs') clsBs' dataCons'
+      dataCons' <- forM dataCons \(dataConName, argBs) -> do
+        argBs' <- sourceRenameE argBs
+        return (dataConName, argBs')
+      return $ UDataDef tyConName paramBs' dataCons'
 
 instance SourceRenamableE UDataDefTrail where
   sourceRenameE (UDataDefTrail args) = sourceRenameB args \args' ->
