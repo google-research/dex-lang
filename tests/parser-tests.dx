@@ -120,3 +120,9 @@ data MyPair2 a:Type b:Type = MkPair2 x:a y:b
 'which may be grouped with parentheses
 
 data MyPair3 (a:Type) (b:Type) = MkPair3 (x:a) (y:b)
+
+'Data definitions allow interleaving arguments and class constraints
+(regression test for Issue 1015)
+
+data TableInType n a [Ix n] table:(n=>a) =
+  MkTableInType              -- Doesn't store any data except in the type!

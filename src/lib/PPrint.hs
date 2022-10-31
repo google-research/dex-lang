@@ -207,7 +207,10 @@ instance Pretty (NaryPiType n) where
     (spaced $ fromNest $ Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance Pretty (PiBinder n l) where
-  pretty (PiBinder b ty _) = p (b:>ty)
+  pretty (PiBinder b ty PlainArrow) = p (b:>ty)
+  pretty (PiBinder b ty ClassArrow) = "[" <> p (b:>ty) <> "]"
+  pretty (PiBinder b ty ImplicitArrow) = "{" <> p (b:>ty) <> "}"
+  pretty (PiBinder b ty LinArrow) = p (b:>ty)
 
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
@@ -256,16 +259,21 @@ instance PrettyPrec (Atom n) where
     NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
-    TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
-    TypeCon "RangeToExc"   _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ "..<" <> pApp i
-    TypeCon "RangeFrom"    _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <>  ".."
-    TypeCon "RangeFromExc" _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <> "<.."
-    TypeCon name _ (DataDefParams params _) -> case params of
+    TypeCon "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ ".."  <> pApp i
+    TypeCon "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ "..<" <> pApp i
+    TypeCon "RangeFrom"    _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ pApp i <>  ".."
+    TypeCon "RangeFromExc" _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ pApp i <> "<.."
+    TypeCon name _ (DataDefParams params) -> case params of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (fromString name) ->
+      [(PlainArrow, l), (PlainArrow, r)]
+        | Just sym <- fromInfix (fromString name) ->
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
-      _  -> atPrec LowestPrec $ pAppArg (p name) params
+      _  -> atPrec LowestPrec $ pAppArg (p name) $ plainArrows params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
@@ -495,14 +503,15 @@ instance Pretty (Module n) where
     , ("moduleSynthCandidates", p $ moduleSynthCandidates m) ]
 
 instance Pretty (DataDefParams n) where
-  pretty (DataDefParams ps ds) = p ps <+> p ds
-
-instance Pretty (DataDefBinders n l) where
-  pretty (DataDefBinders paramBs dictBs) = p paramBs <+> p dictBs
+  pretty (DataDefParams bs) = hsep $ map bracketize bs where
+    bracketize (PlainArrow, x) = p x
+    bracketize (ClassArrow, x) = "[" <> p x <> "]"
+    bracketize (ImplicitArrow, x) = "{" <> p x <> "}"
+    bracketize (LinArrow, x) = p x
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
-    "data" <+> p name <+> p bs <> prettyLines cons
+    "data" <+> p name <+> (spaced $ fromNest bs) <> prettyLines cons
 
 instance Pretty (DataConDef n) where
   pretty (DataConDef name repTy _) =
@@ -714,9 +723,8 @@ instance Pretty (UAlt n) where
 instance Pretty (UDecl n l) where
   pretty (ULet ann b rhs) =
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-  pretty (UDataDefDecl (UDataDef bParams bIfaces dataCons) bTyCon bDataCons) =
-    "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
-       <+> "where" <> nest 2
+  pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
+    "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
@@ -764,6 +772,12 @@ instance Pretty (UPatAnnArrow n l) where
 
 instance Color c => Pretty (UAnnBinder c n l) where
   pretty (UAnnBinder b ty) = p b <> ":" <> p ty
+
+instance Color c => Pretty (UAnnBinderArrow c n l) where
+  pretty (UAnnBinderArrow b ty PlainArrow) = p b <> ":" <> p ty
+  pretty (UAnnBinderArrow b ty ClassArrow) = "[" <> p b <> ":" <> p ty <> "]"
+  pretty (UAnnBinderArrow b ty ImplicitArrow) = "{" <> p b <> ":" <> p ty <> "}"
+  pretty (UAnnBinderArrow b ty LinArrow) = p b <> ":" <> p ty
 
 instance Pretty (UMethodDef n) where
   pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs

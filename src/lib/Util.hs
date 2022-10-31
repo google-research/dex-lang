@@ -11,7 +11,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              scanM, composeN, mapMaybe, forMFilter, uncons, repeated, splitAtExact,
              transitiveClosure, transitiveClosureM,
              showErr, listDiff, splitMap, enumerate, iota, restructure,
-             onSnd, onFst, findReplace, swapAt, uncurry3,
+             onFst, onSnd, onFstM, onSndM, findReplace, swapAt, uncurry3,
              measureSeconds, sameConstructor,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
@@ -53,8 +53,14 @@ swapAt n y (x:xs) = x:(swapAt (n-1) y xs)
 onFst :: (a -> b) -> (a, c) -> (b, c)
 onFst f (x, y) = (f x, y)
 
+onFstM :: (Functor m) => (a -> m b) -> (a, c) -> m (b, c)
+onFstM f (x, y) = (,y) <$> f x
+
 onSnd :: (a -> b) -> (c, a) -> (c, b)
 onSnd f (x, y) = (x, f y)
+
+onSndM :: (Functor m) => (a -> m b) -> (c, a) -> m (c, b)
+onSndM f (x, y) = (x,) <$> f y
 
 unsnocNonempty :: NonEmpty a -> ([a], a)
 unsnocNonempty (x:|xs) = case reverse (x:xs) of

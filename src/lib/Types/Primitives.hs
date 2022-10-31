@@ -250,6 +250,9 @@ data Arrow =
  | LinArrow
    deriving (Show, Eq, Ord, Generic)
 
+plainArrows :: [(Arrow, a)] -> [a]
+plainArrows = map snd . filter (\(arr, _) -> arr == PlainArrow)
+
 instance Pretty Arrow where
   pretty arr = case arr of
     PlainArrow     -> "->"

@@ -33,7 +33,7 @@ import Name
 import Syntax
 import QueryType
 import PPrint ()
-import Util ((...), iota, restructure)
+import Util ((...), iota, onSndM, restructure)
 import Builder
 import CheapReduction (cheapNormalize)
 
@@ -96,9 +96,9 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   DictCon _ -> substM atom
   DictTy  _ -> substM atom
   Eff _ -> substM atom
-  TypeCon sn defName (DataDefParams params dicts) -> do
+  TypeCon sn defName (DataDefParams params) -> do
     defName' <- substM defName
-    TypeCon sn defName' <$> (DataDefParams <$> mapM rec params <*> mapM rec dicts)
+    TypeCon sn defName' <$> (DataDefParams <$> mapM (onSndM rec) params)
   RecordTy _ -> substM atom
   VariantTy _      -> substM atom
   LabeledRow _     -> substM atom
@@ -107,7 +107,8 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
-  where rec x = traverseSurfaceAtomNames x doWithName
+  where
+    rec x = traverseSurfaceAtomNames x doWithName
 
 evalAtom :: Interp m => Atom i -> m i o (Atom o)
 evalAtom atom = traverseSurfaceAtomNames atom \v -> do
