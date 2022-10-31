@@ -1,0 +1,605 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX, if available.
+    // Skip rendering if KaTeX is unavailable.
+    if (typeof renderMathInElement == &#39;undefined&#39;) {
+        return;
+    }
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Monte Carlo Tree Search</h1>
+<p>MCTS is the decision engine for the notable AlphaGo program.
+It samples rollouts to guide tree search.
+The nice thing is Dex can in theory automatically parallelize leaf rollouts.</p>
+</div></div><div class="cell"><div class="prose-block"><p>We implement a variant of MCTS with minimax search and upper
+confidence bound for trees (uct) for the two-player mini-game <code>Count21</code>.
+This demo implements a doubly-linked tree structure as a Dex array,
+and traverses its branches by indexing.
+<a href="http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf">reference</a></p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+|</span>) {a} [<span class="type-name">Ix</span> a] (n<span class="command">:a</span>) (m<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span> ((ordinal n) <span class="symbol">+</span> m)<span class="symbol">@</span>a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xor (a<span class="symbol">:</span><span class="type-name">Bool</span>) (b<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> ((not a) <span class="symbol">&amp;&amp;</span> b) <span class="symbol">||</span> (a <span class="symbol">&amp;&amp;</span> (not b))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">MAX</span>_<span class="type-name">TREE</span>_<span class="type-name">SIZE</span><span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> 70
+</div></div><div class="cell"><div class="code-block"><span class="type-name">SAMPLES</span><span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> 50
+</div></div><div class="cell"><div class="code-block"><span class="type-name">ROLLOUTS</span>_<span class="type-name">PER</span>_<span class="type-name">SAMPLE</span><span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> 10
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Tree types</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Node</span> node_ix a <span class="symbol">=</span>
+  <span class="type-name">Branch</span> content<span class="command">:a</span> parent<span class="symbol">:</span>(<span class="type-name">Maybe</span> node_ix) children<span class="symbol">:</span>(<span class="type-name">List</span> (node_ix))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tree</span> (node_ix<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> node_ix] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (node_ix<span class="symbol">=&gt;</span>(<span class="type-name">Maybe</span> (<span class="type-name">Node</span> node_ix a)) <span class="symbol">&amp;</span> node_ix)
+</div></div><div class="cell"><div class="code-block">  <span class="comment">-- Node array, and pointer to last used node.
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> root_<span class="keyword">of</span> {node_ix a} (tree<span class="symbol">:</span><span class="type-name">Tree</span> node_ix a) <span class="symbol">:</span> node_ix <span class="symbol">=</span> 0<span class="symbol">@</span>node_ix
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_leaf {node a} ((<span class="type-name">Branch</span> _ _ children)<span class="symbol">:</span><span class="type-name">Node</span> node a) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> 
+  list_length children <span class="symbol">==</span> 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> init_tree {a} (max_size<span class="symbol">:</span><span class="type-name">Nat</span>) (default_content<span class="command">:a</span>)<span class="symbol">:</span> <span class="type-name">Tree</span> (<span class="type-name">Fin</span> max_size) a <span class="symbol">=</span>
+  root <span class="symbol">=</span> <span class="type-name">Branch</span> default_content <span class="type-name">Nothing</span> (<span class="type-name">AsList</span> 0 [])
+  nothings <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> max_size)<span class="symbol">.</span> <span class="type-name">Nothing</span>
+  init_array <span class="symbol">=</span> yield_state nothings <span class="symbol">\</span>ref<span class="symbol">.</span> ref<span class="symbol">!</span>(0<span class="symbol">@</span>_) <span class="symbol">:=</span> (<span class="type-name">Just</span> root)
+  (init_array<span class="symbol">,</span> 0<span class="symbol">@</span>_)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Game and Node utilities</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Game</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) (move<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  {
+    possible_moves <span class="symbol">:</span> state <span class="symbol">-&gt;</span> (<span class="type-name">List</span> move) <span class="symbol">&amp;</span>
+    win_or_lose <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">&amp;</span>
+    update <span class="symbol">:</span> state <span class="symbol">-&gt;</span> move <span class="symbol">-&gt;</span> state <span class="symbol">&amp;</span>
+    game_over <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">&amp;</span>
+  }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NodeStats</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> 
+  (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span> <span class="symbol">&amp;</span> state)
+</div></div><div class="cell"><div class="code-block">  <span class="comment">-- (#winning rollouts for max/first player, #visit, level, state)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_win_visit_stats {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state)))
+  <span class="symbol">:</span> (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span>) <span class="symbol">=</span>
+  (<span class="type-name">Branch</span> stats _ _) <span class="symbol">=</span> node
+  (wins<span class="symbol">,</span> visits<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> stats
+  (wins<span class="symbol">,</span> visits)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_is_visited {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state)))
+  <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  (_<span class="symbol">,</span> visits) <span class="symbol">=</span> node_win_visit_stats node
+  visits <span class="symbol">&gt;</span> 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_state {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state))) <span class="symbol">:</span> state <span class="symbol">=</span>
+  (<span class="type-name">Branch</span> stats _ _) <span class="symbol">=</span> node
+  (_<span class="symbol">,</span> _<span class="symbol">,</span> _<span class="symbol">,</span> s) <span class="symbol">=</span> stats
+  s
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_level {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state))) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+  (<span class="type-name">Branch</span> stats _ _) <span class="symbol">=</span> node
+  (_<span class="symbol">,</span> _<span class="symbol">,</span> level<span class="symbol">,</span> _) <span class="symbol">=</span> stats
+  level
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>MCTS functions</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Let $n$ be a node. The upper confidence bound for trees (UCT) is a heuristic
+that balances exploration and exploitation, weighed by $1:\sqrt{2}$ here.
+The reward $Q(n)$ summarizes the performance of $n$'s subtree.
+$N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
+The upper confidence bound for trees of node $n$ is
+$$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> uct (win<span class="symbol">:</span><span class="type-name">Nat</span>) (n<span class="symbol">:</span><span class="type-name">Nat</span>) (parent_n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="comment">-- wins stored at every node are w.r.t to the max_player
+</span>  (n_to_f win) <span class="symbol">/</span> (n_to_f n) <span class="symbol">+</span> sqrt (2<span class="symbol">.</span>0 <span class="symbol">/</span> (n_to_f n) <span class="symbol">*</span> (log (n_to_f parent_n)))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Recursively find the most promising leaf (measured by UCT) to rollout next.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_select {move state node_ix}
+    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move) (tree<span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)) (key<span class="symbol">:</span> <span class="type-name">Key</span>)
+    <span class="symbol">:</span> node_ix <span class="symbol">=</span> 
+    arr <span class="symbol">=</span> fst tree
+
+    yield_state (root_<span class="keyword">of</span> tree) <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
+      node <span class="symbol">=</span> from_just arr<span class="symbol">.</span>(get ref)
+      <span class="keyword">if</span> is_leaf node
+        <span class="keyword">then</span>
+          <span class="type-name">Done</span> ()
+        <span class="keyword">else</span>
+          (<span class="type-name">Branch</span> stats _ children_list) <span class="symbol">=</span> node
+          (<span class="type-name">AsList</span> _ children) <span class="symbol">=</span> children_list
+          fully_expanded <span class="symbol">=</span> all <span class="keyword">for</span> i<span class="symbol">.</span>
+            node_is_visited <span class="symbol">$</span> from_just arr<span class="symbol">.</span>(children<span class="symbol">.</span>i)
+          <span class="keyword">if</span> not fully_expanded
+            <span class="keyword">then</span>
+              criterion <span class="symbol">=</span> <span class="symbol">\</span>child<span class="symbol">.</span>
+                not <span class="symbol">$</span> node_is_visited <span class="symbol">$</span> from_just arr<span class="symbol">.</span>child
+              (<span class="type-name">AsList</span> _ unvisited) <span class="symbol">=</span> filter criterion children 
+              ref <span class="symbol">:=</span> unvisited<span class="symbol">.</span>(rand_idx key)
+              <span class="type-name">Done</span> ()
+            <span class="keyword">else</span>
+              (_<span class="symbol">,</span> p_visits) <span class="symbol">=</span> node_win_visit_stats node
+              <span class="comment">-- minimax
+</span>              is_max_player <span class="symbol">=</span> is_even <span class="symbol">$</span> node_level node
+              selector <span class="symbol">=</span> <span class="keyword">if</span> is_max_player <span class="keyword">then</span> argmax <span class="keyword">else</span> argmin
+              best_child <span class="symbol">=</span> selector <span class="keyword">for</span> i<span class="symbol">.</span>
+                child <span class="symbol">=</span> from_just arr<span class="symbol">.</span>(children<span class="symbol">.</span>i)
+                (win<span class="symbol">,</span> visits) <span class="symbol">=</span> node_win_visit_stats child
+                uct win visits p_visits
+              ref <span class="symbol">:=</span> children<span class="symbol">.</span>best_child
+              <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Expand the tree (in-place) by adding states one-move away from the current state.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_expand {move state node_ix h}
+    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move)
+    (tree_ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)))
+    (node<span class="symbol">:</span> node_ix) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+    <span class="comment">-- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
+</span>
+    <span class="comment">-- extract info about the base node
+</span>    base_node <span class="symbol">=</span> from_just <span class="symbol">$</span> get (fst_ref tree_ref)<span class="symbol">!</span>node
+    (<span class="type-name">Branch</span> base_stats base_parent _) <span class="symbol">=</span> base_node
+    (_<span class="symbol">,</span> _<span class="symbol">,</span> base_level<span class="symbol">,</span> base_state) <span class="symbol">=</span> base_stats
+
+    <span class="comment">-- prepare child nodes
+</span>    (<span class="type-name">AsList</span> n base_moves) <span class="symbol">=</span> (get_at <span class="iso-sugar">#possible</span>_moves game) base_state
+    child_nodes <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+      new_move <span class="symbol">=</span> base_moves<span class="symbol">.</span>i
+      new_state <span class="symbol">=</span> (get_at <span class="iso-sugar">#update</span> game) base_state new_move
+      new_stats <span class="symbol">=</span> (0<span class="symbol">,</span> 0<span class="symbol">,</span> base_level <span class="symbol">+</span> 1<span class="symbol">,</span> new_state)
+      <span class="type-name">Branch</span> new_stats (<span class="type-name">Just</span> node) (to_list [])
+
+    <span class="comment">-- write to the tree
+</span>    new_node <span class="symbol">=</span> get (snd_ref tree_ref)
+    base_children_ix <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span> new_node <span class="symbol">+|</span> (1 <span class="symbol">+</span> ordinal i)
+    <span class="comment">-- update base&#39;s children list
+</span>    new_base_node <span class="symbol">=</span> <span class="type-name">Branch</span> base_stats base_parent (to_list base_children_ix)
+    (fst_ref tree_ref)<span class="symbol">!</span>node <span class="symbol">:=</span> <span class="type-name">Just</span> new_base_node
+    <span class="comment">-- insert every child
+</span>    <span class="keyword">for</span> i<span class="symbol">.</span>
+      child_ix <span class="symbol">=</span> base_children_ix<span class="symbol">.</span>i
+      (fst_ref tree_ref)<span class="symbol">!</span>child_ix <span class="symbol">:=</span> <span class="type-name">Just</span> child_nodes<span class="symbol">.</span>i
+    snd_ref tree_ref <span class="symbol">:=</span> new_node <span class="symbol">+|</span> n
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Simulate the game starting at a given state until the game terminates and
+return the simulation result.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_rollout {move state}
+    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move)
+    (key<span class="symbol">:</span> <span class="type-name">Key</span>) (curr_state<span class="symbol">:</span> state) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+    <span class="comment">-- output is w.r.t. current player
+</span>    with_state curr_state <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
+      curr_state&#39; <span class="symbol">=</span> get ref
+      <span class="keyword">if</span> (get_at <span class="iso-sugar">#game</span>_over game) curr_state&#39;
+        <span class="keyword">then</span>
+          <span class="comment">-- #win_or_lose is w.r.t. the last player
+</span>          result <span class="symbol">=</span> (get_at <span class="iso-sugar">#win</span>_or_lose game) curr_state&#39;
+          <span class="type-name">Done</span> <span class="symbol">$</span> xor (is_even i) result
+        <span class="keyword">else</span>
+          (<span class="type-name">AsList</span> _ new_moves) <span class="symbol">=</span> (get_at <span class="iso-sugar">#possible</span>_moves game) curr_state&#39;
+          <span class="comment">-- rollout policy: uniform random
+</span>          new_move <span class="symbol">=</span> new_moves<span class="symbol">.</span>(rand_idx (hash key i))
+          ref <span class="symbol">:=</span> (get_at <span class="iso-sugar">#update</span> game) curr_state&#39; new_move
+          <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Update the record of a node and its chain of ancestors,
+based on the simulation result.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_backpropagate {move state node_ix h} [<span class="type-name">Eq</span> node_ix] 
+    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move)
+    (tree_ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)))
+    (node<span class="symbol">:</span> node_ix) (new_rollout_wins<span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+    <span class="comment">-- new_rollout_wins: #wins w.r.t max player
+</span>
+    with_state node <span class="symbol">\</span>node_ref<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
+      <span class="comment">-- update win and loss counts
+</span>      <span class="comment">-- -unpack
+</span>      curr_node <span class="symbol">=</span> from_just <span class="symbol">$</span> get (fst_ref tree_ref)<span class="symbol">!</span>(get node_ref)
+      (<span class="type-name">Branch</span> stats parent children) <span class="symbol">=</span> curr_node
+      (wins<span class="symbol">,</span> visits<span class="symbol">,</span> level<span class="symbol">,</span> state) <span class="symbol">=</span> stats
+      <span class="comment">-- -compute
+</span>      new_wins <span class="symbol">=</span> wins <span class="symbol">+</span> new_rollout_wins
+      new_visits <span class="symbol">=</span> visits <span class="symbol">+</span> 1  <span class="comment">-- Todo: or to add ROLLOUTS_PER_SAMPLE
+</span>
+      <span class="comment">-- -pack
+</span>      new_stats <span class="symbol">=</span> (new_wins<span class="symbol">,</span> new_visits<span class="symbol">,</span> level<span class="symbol">,</span> state)
+      (fst_ref tree_ref)<span class="symbol">!</span>(get node_ref) <span class="symbol">:=</span> <span class="type-name">Just</span> (<span class="type-name">Branch</span> new_stats parent children)
+
+      <span class="comment">-- find the parent of the current node
+</span>      <span class="keyword">if</span> is_nothing parent <span class="symbol">||</span> (0<span class="symbol">@</span>node_ix) <span class="symbol">==</span> (get node_ref)
+        <span class="keyword">then</span> <span class="type-name">Done</span> ()
+        <span class="keyword">else</span>
+          node_ref <span class="symbol">:=</span> from_just parent
+          <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Wrap up the procedure for taking one sample and extend the tree.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- slow: every sample makes two copies of the tree array
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_sample {move state node_ix} [<span class="type-name">Eq</span> node_ix]
+    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move) (key<span class="symbol">:</span> <span class="type-name">Key</span>)
+    (tree<span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state))
+    <span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state) <span class="symbol">=</span>
+    [key1<span class="symbol">,</span> key2] <span class="symbol">=</span> split_key key
+    leaf_ix <span class="symbol">=</span> mcts_select game tree key1
+    leaf <span class="symbol">=</span> from_just (fst tree)<span class="symbol">.</span>leaf_ix
+
+    tree&#39; <span class="symbol">=</span> yield_state tree <span class="symbol">\</span>tree_ref<span class="symbol">.</span>
+      <span class="keyword">if</span> not <span class="symbol">$</span> (get_at <span class="iso-sugar">#game</span>_over game) <span class="symbol">$</span> node_state leaf <span class="keyword">then</span>
+        mcts_expand game tree_ref leaf_ix
+
+    leaf_min_player <span class="symbol">=</span> leaf <span class="symbol">|&gt;</span> node_level <span class="symbol">|&gt;</span> is_odd
+    max_player_wins <span class="symbol">=</span> yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Nat</span>) <span class="symbol">\</span>c<span class="symbol">.</span>
+      <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> <span class="type-name">ROLLOUTS</span>_<span class="type-name">PER</span>_<span class="type-name">SAMPLE</span>)<span class="symbol">.</span>
+        key&#39; <span class="symbol">=</span> ixkey key i
+        leaf_result <span class="symbol">=</span> mcts_rollout game key&#39; <span class="symbol">$</span> node_state leaf
+                  <span class="comment">-- w.r.t. the current player
+</span>        max_rollout_wins <span class="symbol">=</span> b_to_n <span class="symbol">$</span> xor leaf_min_player leaf_result
+        c <span class="symbol">+=</span> max_rollout_wins
+
+    yield_state tree&#39; <span class="symbol">\</span>tree_ref<span class="symbol">.</span>
+      mcts_backpropagate game tree_ref leaf_ix max_player_wins
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Toy game: Count 21</h2>
+<p>This is a simple two-player game. Two players in turn choose
+between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 wins.</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Count21State</span> <span class="symbol">=</span> <span class="type-name">Nat</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Count21Move</span> <span class="symbol">=</span> <span class="type-name">Nat</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Count21</span> <span class="symbol">:</span> <span class="type-name">Game</span> <span class="type-name">Count21State</span> <span class="type-name">Count21Move</span> <span class="symbol">=</span> {
+  possible_moves <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span><span class="symbol">.</span> to_list [1<span class="symbol">,</span>2]<span class="symbol">,</span>
+  win_or_lose <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">==</span> 21<span class="symbol">,</span>
+  update <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span> move<span class="symbol">.</span> sum <span class="symbol">+</span> move<span class="symbol">,</span>
+  game_over <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">&gt;=</span> 21<span class="symbol">,</span>
+}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Approximate winning chances by sampling</h3>
+<p>In theory, multiples of three are bad positions for the current player,
+since the opponent has a winning strategy by always choosing
+(3 - move by the current player). Otherwise, the current player
+has a winning strategy.</p>
+</div></div><div class="cell"><div class="code-block">key <span class="symbol">=</span> new_key 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> test (key<span class="symbol">:</span><span class="type-name">Key</span>) (current_state<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span>) <span class="symbol">=</span>
+  init_node_stats <span class="symbol">:</span> <span class="type-name">NodeStats</span> <span class="type-name">Count21State</span> <span class="symbol">=</span> 
+    (0<span class="symbol">,</span> 0<span class="symbol">,</span> 0<span class="symbol">,</span> current_state)
+  <span class="comment">-- (0 wins, 0 visits, level 0, game state)
+</span>  start_tree <span class="symbol">=</span> init_tree <span class="type-name">MAX</span>_<span class="type-name">TREE</span>_<span class="type-name">SIZE</span> init_node_stats
+  end_tree <span class="symbol">=</span> fold start_tree <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> <span class="type-name">SAMPLES</span>)<span class="symbol">.</span>
+    mcts_sample <span class="type-name">Count21</span> (ixkey key i)
+  node_win_visit_stats <span class="symbol">$</span> from_just (fst end_tree)<span class="symbol">.</span>(root_<span class="keyword">of</span> end_tree)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">test key 21
+</div><div class="result-block">(0, 50)</div></div><div class="cell"><div class="code-block">test key 20
+</div><div class="result-block">(485, 50)</div></div><div class="cell"><div class="code-block">test key 19
+</div><div class="result-block">(490, 50)</div></div><div class="cell"><div class="code-block">test key 18
+</div><div class="result-block">(23, 50)</div></div><div class="cell"><div class="code-block">test key 17
+</div><div class="result-block">(475, 50)</div></div><div class="cell"><div class="code-block">test key 16
+</div><div class="result-block">(468, 50)</div></div><div class="cell"><div class="code-block">test key 15
+</div><div class="result-block">(69, 50)</div></div><div class="cell"><div class="code-block">test key 14
+</div><div class="result-block">(451, 50)</div></div><div class="cell"><div class="code-block">test key 13
+</div><div class="result-block">(389, 50)</div></div><div class="cell"><div class="code-block">test key 12
+</div><div class="result-block">(286, 50)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We fix number of samples (SAMPLES=50) and rollouts (ROLLOUTS_PER_SAMPLE=10). Fully explored
+trees (<code>current_state</code> close to 21) yields extreme win/visits ratios.
+We also verify that the current player is disadvantaged when the current state
+is a multiple of three.</p>
+</div></div><div class="cell"><div class="prose-block"><h3>A closer look at the game tree</h3>
+<p>Say the current sum is 17, the winning move for the current player is to add 1.
+In the following tree, we see that adding 1 (the second node) is indeed
+considered a more promising choice by <code>uct</code> and sees more rollouts than
+the alternative (adding 2, the third node).</p>
+</div></div><div class="cell"><div class="code-block">init_node_stats <span class="symbol">:</span> <span class="type-name">NodeStats</span> <span class="type-name">Count21State</span> <span class="symbol">=</span> (0<span class="symbol">,</span> 0<span class="symbol">,</span> 0<span class="symbol">,</span> 17)
+</div></div><div class="cell"><div class="code-block">start_tree <span class="symbol">=</span> init_tree 15 init_node_stats
+</div></div><div class="cell"><div class="code-block">end_tree <span class="symbol">=</span> fold start_tree <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> 50)<span class="symbol">.</span>
+  mcts_sample <span class="type-name">Count21</span> (ixkey key i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">end_tree
+</div><div class="result-block">( [ (Just (Branch (475, (50, (0, 17))) Nothing (AsList 2 [ (1@(Fin 15))
+                                                     , (2@(Fin 15)) ])))
+, (Just (Branch (464, (48, (1, 18))) (Just (0@(Fin 15))) (AsList 2 [ (5@(Fin 15))
+                                                                 , (6@(Fin 15)) ])))
+, (Just (Branch (3, (1, (1, 19))) (Just (0@(Fin 15))) (AsList 2 [ (3@(Fin 15))
+                                                              , (4@(Fin 15)) ])))
+, (Just (Branch (0, (0, (2, 20))) (Just (2@(Fin 15))) (AsList 0 [])))
+, (Just (Branch (0, (0, (2, 21))) (Just (2@(Fin 15))) (AsList 0 [])))
+, (Just (Branch (8, (1, (2, 19))) (Just (1@(Fin 15))) (AsList 2 [ (7@(Fin 15))
+                                                              , (8@(Fin 15)) ])))
+, (Just (Branch (448, (46, (2, 20))) (Just (1@(Fin 15))) (AsList 2 [ (9@(Fin 15))
+                                                                 , (10@(Fin 15)) ])))
+, (Just (Branch (0, (0, (3, 20))) (Just (5@(Fin 15))) (AsList 0 [])))
+, (Just (Branch (0, (0, (3, 21))) (Just (5@(Fin 15))) (AsList 0 [])))
+, (Just (Branch (440, (44, (3, 21))) (Just (6@(Fin 15))) (AsList 0 [])))
+, (Just (Branch (0, (1, (3, 22))) (Just (6@(Fin 15))) (AsList 0 [])))
+, Nothing
+, Nothing
+, Nothing
+, Nothing ]
+, (10@(Fin 15)) )</div></div></div></body></html>
