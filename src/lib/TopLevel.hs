@@ -602,8 +602,12 @@ evalBlock typed = do
       instIx <- simplifyIx explicitIx
       lowered <- checkPass LowerPass $ lowerFullySequential instIx
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
-        (dceIxDestBlock >=> hoistLoopInvariantIxDest >=> vectorizeLoops 64)
-      evalBackend lopt
+        (dceIxDestBlock >=> hoistLoopInvariantIxDest)
+      PairE vopt errs <- vectorizeLoops 64 lopt
+      l <- getFilteredLogger
+      logFiltered l VectPass $ return [TextOut $ pprint errs]
+      vopt' <- checkPass VectPass $ return vopt
+      evalBackend vopt'
   applyRecon recon result
 {-# SCC evalBlock #-}
 
@@ -801,6 +805,7 @@ checkPass name cont = do
   let allowedEffs = case name of
                       LowerPass    -> OneEffect InitEffect
                       LowerOptPass -> OneEffect InitEffect
+                      VectPass     -> OneEffect InitEffect
                       _            -> mempty
   {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
     withAllowedEffects allowedEffs $ checkTypesM result

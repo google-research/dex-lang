@@ -39,7 +39,6 @@ import QueryType
 import GenericTraversal
 import Simplify (buildBlockSimplified)
 import Util (foldMapM, enumerate)
-import GHC.IO (unsafePerformIO)
 
 -- A block preceded by a bunch of Ix instance bindings (all Decls bind Atoms)
 type IxBlock = Abs (Nest Decl) Block
@@ -751,18 +750,20 @@ instance PrettyPrec (VSubstValC c n) where
 
 type TopVectorizeM = BuilderT (ReaderT Word32 SoftResultM)
 
-vectorizeLoops :: EnvReader m => Word32 -> IxDestBlock n -> m n (IxDestBlock n)
-vectorizeLoops vectorByteWidth ixDestBlock = liftEnvReaderM do
-  refreshAbs ixDestBlock \xs destBlock ->
-    Abs xs <$> refreshAbs destBlock \d block@(Block _ decls ans) -> do
-      result <- liftM ((`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
-        s <- vectorizeLoopsRec emptyInFrag decls
-        applySubst s ans
-      case runSoftResultM result of
-        Success vblock -> return $ Abs d vblock
-        Failure (Errs errs) -> return $ Abs d $ unsafePerformIO $ do
-          putStr . pprint . Errs $ errs
-          return block
+vectorizeLoops :: EnvReader m
+               => Word32 -> IxDestBlock n -> m n (PairE IxDestBlock (LiftE Errs) n)
+vectorizeLoops vectorByteWidth ixDestBlock = do
+  result <- liftEnvReaderM do
+    refreshAbs ixDestBlock \xs destBlock -> do
+      destBlock' <- refreshAbs destBlock \d (Block _ decls ans) -> do
+        block' <- liftM (runSoftResultM . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
+          s <- vectorizeLoopsRec emptyInFrag decls
+          applySubst s ans
+        return $ (Abs d) <$> block'
+      return $ (Abs xs) <$> destBlock'
+  case result of
+    Success vblock -> return $ PairE vblock (LiftE $ Errs [])
+    Failure errs -> return $ PairE ixDestBlock (LiftE errs)
 {-# INLINE vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
@@ -790,6 +791,9 @@ vectorizeLoopsRec frag nest =
           | n `mod` loopWidth == 0 -> do
             Distinct <- getDistinct
             let vn = NatVal $ n `div` loopWidth
+            -- TODO: If we fail inside `vectorizeSeq`, then -- under `SoftResultM` -- the remainder
+            -- `nest` will not be inspected, due to laziness and since `vectorizeSeq` will have
+            -- evalutated to a `SoftError`.
             body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
             dest' <- applySubst frag dest
             emit $ Hof $ Seq dir (DictCon $ IxFin vn) dest' body'
@@ -824,7 +828,7 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
       case runSoftResultM result of
         Success s -> return s
         Failure errs -> throwErrs errs  -- re-raise inside `TopVectorizeM`
-      else throwVectErr "Effectful loop vectorization not implemented!"
+    else throwVectErr "Effectful loop vectorization not implemented!"
   where
     iSubst :: (DExt o o', Color c) => Name c i' -> VSubstValC c o'
     iSubst v = case lookupSubstFragProjected frag v of
