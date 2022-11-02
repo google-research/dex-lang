@@ -1550,7 +1550,7 @@ unsafeFromOrdinalImp (IxType _ dict) i = do
   case dict of
     DictCon (IxFin n) -> return $ Con $ Newtype (TC $ Fin n) i'
     DictCon (ExplicitMethods d params) -> do
-      SpecializedDictBinding _ fs <- lookupEnv d
+      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
     _ -> error $ "Not a simplified dict: " ++ pprint dict
 
@@ -1559,7 +1559,7 @@ indexSetSizeImp (IxType _ dict) = do
   ans <- case dict of
     DictCon (IxFin n) -> return n
     DictCon (ExplicitMethods d params) -> do
-      SpecializedDictBinding _ fs <- lookupEnv d
+      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
     _ -> error $ "Not a simplified dict: " ++ pprint dict
   fromScalarAtom $ unwrapBaseNewtype ans

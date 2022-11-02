@@ -29,9 +29,11 @@ liftGenericTraverserM s m =
 {-# INLINE liftGenericTraverserM #-}
 
 liftGenericTraverserMTopEmissions
-  :: (EnvReader m, SinkableE e, SubstE Name e, SinkableE s, SubstE Name s)  => s n
-  -> (forall l. DExt n l => GenericTraverserM TopEnvFrag s l l (e l))
-  -> m n (Abs TopEnvFrag (PairE e s) n)
+  :: ( EnvReader m, SinkableE e, SubstE Name e, SinkableE s
+     , SubstE Name s, ExtOutMap Env frag, OutFrag frag)
+  => s n
+  -> (forall l. DExt n l => GenericTraverserM frag s l l (e l))
+  -> m n (Abs frag (PairE e s) n)
 liftGenericTraverserMTopEmissions s m =
   liftM runHardFail $ liftDoubleBuilderT do
     (e, s') <- runStateT1 (runSubstReaderT idSubst $ runGenericTraverserM' m) (sink s)
@@ -48,7 +50,7 @@ deriving instance GenericTraverser f s => ScopeReader     (GenericTraverserM f s
 deriving instance GenericTraverser f s => EnvReader       (GenericTraverserM f s i)
 deriving instance GenericTraverser f s => ScopableBuilder (GenericTraverserM f s i)
 deriving instance GenericTraverser f s => Builder         (GenericTraverserM f s i)
-deriving instance GenericTraverser TopEnvFrag s => HoistingTopBuilder (GenericTraverserM TopEnvFrag s i)
+deriving instance GenericTraverser f s => HoistingTopBuilder f (GenericTraverserM f s i)
 
 class (SubstB Name f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
       => GenericTraverser f s where

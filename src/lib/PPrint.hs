@@ -499,7 +499,7 @@ instance Pretty (Binding s n) where
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
     EffectOpBinding _ -> "<effect-op-binding>"
-    SpecializedDictBinding _ _ -> "<specialized-dict-binding>"
+    SpecializedDictBinding _ -> "<specialized-dict-binding>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord

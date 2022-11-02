@@ -469,7 +469,7 @@ data Binding (c::C) (n::S) where
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
-  SpecializedDictBinding :: DictType n -> [AtomName n] -> Binding SpecializedDictNameC n
+  SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
 deriving instance Show (Binding c n)
 
 data EffectOpDef (n::S) where
@@ -557,6 +557,24 @@ instance SubstE Name EffectOpType
 instance SubstE AtomSubstVal EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
+
+data SpecializedDictDef n =
+  -- dict type abstracted over local params, method names
+  SpecializedDictDef (Abs (Nest Binder) DictType n) [AtomName n]
+  deriving (Show, Generic)
+
+instance GenericE SpecializedDictDef where
+  type RepE SpecializedDictDef = PairE (Abs (Nest Binder) DictType) (ListE AtomName)
+  fromE (SpecializedDictDef ab methods) = ab `PairE` ListE methods
+  {-# INLINE fromE #-}
+  toE   (ab `PairE` ListE methods) = SpecializedDictDef ab methods
+  {-# INLINE toE #-}
+
+instance SinkableE      SpecializedDictDef
+instance HoistableE     SpecializedDictDef
+instance AlphaEqE       SpecializedDictDef
+instance AlphaHashableE SpecializedDictDef
+instance SubstE Name    SpecializedDictDef
 
 data AtomBinding (n::S) =
    LetBound    (DeclBinding   n)
@@ -1893,7 +1911,7 @@ instance Color c => GenericE (Binding c) where
           (EffectDef)
           (HandlerDef)
           (EffectOpDef)
-          (DictType `PairE` ListE AtomName)
+          (SpecializedDictDef)
       )
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
@@ -1910,7 +1928,7 @@ instance Color c => GenericE (Binding c) where
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
-    SpecializedDictBinding ty methods   -> Case1 $ Case7 $ ty `PairE` ListE methods
+    SpecializedDictBinding def          -> Case1 $ Case7 $ def
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -1928,7 +1946,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
-    Case1 (Case7 (ty `PairE` ListE methods))                -> fromJust $ tryAsColor $ SpecializedDictBinding ty methods
+    Case1 (Case7 def)                                       -> fromJust $ tryAsColor $ SpecializedDictBinding def
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2245,6 +2263,7 @@ instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
 instance Store Projection
 instance Store IxMethod
+instance Store (SpecializedDictDef n)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

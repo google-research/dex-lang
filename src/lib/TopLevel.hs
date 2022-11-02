@@ -617,13 +617,6 @@ evalRequiredSpecializations e = do
         queryImpCache v >>= \case
           Nothing -> compileTopLevelFun v
           Just _ -> return ()
-      -- XXX: we might need to toposort these based on dependencies. Or else
-      -- maybe we can be careful about the order in which we request them in the
-      -- first place (rather than querying free vars).
-      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
-        queryIxLoweredCache v >>= \case
-          Nothing -> lowerIxMethod v
-          Just _ -> return ()
       _ -> return ()
 
 execUDecl
@@ -985,16 +978,28 @@ hoistIxDicts
      , SinkableE e, SubstE Name e, HoistableE e)
   => e n -> m n (e n)
 hoistIxDicts e = do
-  Abs frag (PairE e' (IxHoistingState UnitE)) <-
+  Abs (IxHoistingEmissions envFrag methodNames) (PairE e' (IxHoistingState UnitE)) <-
     liftGenericTraverserMTopEmissions (IxHoistingState UnitE) $ traverseGenericE (sink e)
-  e'' <- emitEnv (Abs frag e')
-  evalRequiredSpecializations e''  -- TODO: track the needed sepcializations rather than traversing again to find them
+  (PairE (ListE methodNames') e'') <- emitEnv $ Abs envFrag (PairE (ListE methodNames) e')
+  forM_ methodNames' \v -> do
+    lookupAtomName v >>= \case
+      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
+        queryIxLoweredCache v >>= \case
+          Nothing -> lowerIxMethod v
+          Just _ -> return ()
+      _ -> error "Expected a method name"
   return e''
+
+type IxHoistingM = GenericTraverserM IxHoistingEmissions IxHoistingState
+
+data IxHoistingEmissions (n::S) (l::S) =
+  -- env frag, names of specialized methods we need to lower
+  IxHoistingEmissions (TopEnvFrag n l) [AtomName l]
 
 newtype IxHoistingState (n::S) = IxHoistingState (UnitE n)
         deriving (SinkableE, HoistableState, SubstE Name)
 
-instance GenericTraverser TopEnvFrag IxHoistingState where
+instance GenericTraverser IxHoistingEmissions IxHoistingState where
   traverseAtom = \case
     DictCon d -> do
       d' <- substM d
@@ -1004,15 +1009,21 @@ instance GenericTraverser TopEnvFrag IxHoistingState where
         _ -> return d'
     atom -> traverseAtomDefault atom
 
-emitIxDictSpecialization :: HoistingTopBuilder m => DictType n -> DictExpr n -> m n (DictExpr n)
-emitIxDictSpecialization _ (ExplicitMethods _ _) = error "Should have specialized dicts yet"
+emitIxDictSpecialization :: DictType n -> DictExpr n -> IxHoistingM i n (DictExpr n)
+emitIxDictSpecialization _ d@(ExplicitMethods _ _) = return d
 emitIxDictSpecialization _ d@(IxFin _)           = return d -- `Ix (Fin n))` is built-in
 emitIxDictSpecialization dictTy ixDict = do
-  (ixDictAbs, params) <- generalizeIxDict ixDict
-  methodImplNames <- forM [minBound..maxBound] \methodName ->
-    getSpecializedFunction $ IxMethodSpecialization methodName ixDictAbs
-  maybeD <- liftTopBuilderHoisted $
-    emitBinding "d" $ sink $ SpecializedDictBinding dictTy methodImplNames
+  (Abs bs (PairE dictTy' ixDict'), params) <- generalizeIxDict dictTy ixDict
+  (Abs frag (PairE (ListE methodNames) dictName)) <- liftTopBuilderHoisted do
+    methodImplNames <- forM [minBound..maxBound] \methodName -> do
+      let s = IxMethodSpecialization methodName (sink (Abs bs (DictCon ixDict')))
+      querySpecializationCache s >>= \case
+        Just name -> return name
+        _ -> emitSpecialization s
+    d <- emitBinding "d" $ sink $ SpecializedDictBinding $
+           SpecializedDictDef (sink (Abs bs dictTy')) methodImplNames
+    return $ PairE (ListE methodImplNames) d
+  maybeD <- emitHoistedEnv $ Abs (IxHoistingEmissions frag methodNames) dictName
   case maybeD of
     Just d -> return $ ExplicitMethods d params
     Nothing -> error "Couldn't hoist specialized dictionary"
@@ -1020,9 +1031,10 @@ emitIxDictSpecialization dictTy ixDict = do
 -- TODO: we could get more cache hits if we abstract more than necessary,
 -- based on whether parameters are data or nondata. E.g. abstract `Fin 10`
 -- as `(\n. Fin n) 10` instead of not abstracting it at all.
-generalizeIxDict :: (HoistingTopBuilder m, EnvReader m) => DictExpr n -> m n (Generalized Atom n)
-generalizeIxDict d = do
-  typedVs <- forMFilter (freeAtomVarsList d) \v ->
+generalizeIxDict :: DictType n -> DictExpr n -> IxHoistingM i n (Generalized (PairE DictType DictExpr) n)
+generalizeIxDict dTy d = do
+  let dWithTy = PairE dTy d
+  typedVs <- forMFilter (freeAtomVarsList dWithTy) \v ->
     canHoistToTop v >>= \case
       False -> do
         ty <- getType v
@@ -1030,7 +1042,29 @@ generalizeIxDict d = do
       True -> return Nothing
   let typedVsToposorted = toposortAnnVars typedVs
   let atoms = [Var v | (v, _) <- typedVsToposorted]
-  return (abstractFreeVars typedVsToposorted (DictCon d), atoms)
+  return (abstractFreeVars typedVsToposorted dWithTy, atoms)
+
+instance GenericB IxHoistingEmissions where
+  type RepB IxHoistingEmissions = PairB TopEnvFrag (LiftB (ListE AtomName))
+  fromB (IxHoistingEmissions frag names) = PairB frag (LiftB (ListE names))
+  toB   (PairB frag (LiftB (ListE names))) = IxHoistingEmissions frag names
+
+instance ProvesExt   IxHoistingEmissions
+instance SinkableB   IxHoistingEmissions
+instance HoistableB  IxHoistingEmissions
+instance BindsNames  IxHoistingEmissions
+instance SubstB Name IxHoistingEmissions
+
+instance OutFrag IxHoistingEmissions where
+  emptyOutFrag = IxHoistingEmissions emptyOutFrag []
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags s (IxHoistingEmissions frag1 names1) (IxHoistingEmissions frag2 names2) =
+    withExtEvidence frag2 $
+      IxHoistingEmissions (catOutFrags s frag1 frag2) (map sink names1 <> names2)
+  {-# INLINE catOutFrags #-}
+
+instance ExtOutMap Env IxHoistingEmissions where
+  extendOutMap env (IxHoistingEmissions frag1 _) = extendOutMap env frag1
 
 -- === instances ===
 

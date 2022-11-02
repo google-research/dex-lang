@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
@@ -137,19 +138,19 @@ emitAtomToName hint x = emitHinted hint (Atom x)
 -- top-level function definitions, from within a local context. The operation
 -- may fail, returning `Nothing`, because the emission might mention local
 -- variables that can't be hoisted the top level.
-class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
+class (EnvReader m, MonadFail1 m) => HoistingTopBuilder frag m | m -> frag where
   emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
-                 => Abs TopEnvFrag e n -> m n (Maybe (e n))
+                 => Abs frag e n -> m n (Maybe (e n))
   canHoistToTop :: HoistableE e => e n -> m n Bool
 
 liftTopBuilderHoisted
-  :: (HoistingTopBuilder m, SubstE Name e, SinkableE e, HoistableE e)
+  :: (EnvReader m, SubstE Name e, SinkableE e, HoistableE e)
   => (forall l. (Mut l, DExt n l) => TopBuilderM l (e l))
-  -> m n (Maybe (e n))
+  -> m n (Abs TopEnvFrag e n)
 liftTopBuilderHoisted cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  emitHoistedEnv $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
+  return $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
 
 newtype DoubleBuilderT (topEmissions::B) (m::MonadKind) (n::S) (a:: *) =
   DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env topEmissions BuilderEmissions m n a }
@@ -197,7 +198,8 @@ runDoubleBuilderT env cont = do
     runDoubleInplaceT env $ runDoubleBuilderT' cont
   return $ Abs envFrag e
 
-instance Fallible m => HoistingTopBuilder (DoubleBuilderT TopEnvFrag m) where
+instance (ExtOutMap Env f, OutFrag f, SubstB Name f, HoistableB f, Fallible m)
+  => HoistingTopBuilder f (DoubleBuilderT f m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
   {-# INLINE emitHoistedEnv #-}
   canHoistToTop e = DoubleBuilderT $ canHoistToTopDoubleInplaceT e
@@ -245,7 +247,7 @@ instance ( SubstB Name frag, HoistableB frag, OutFrag frag
     return ans
   {-# INLINE refreshAbs #-}
 
-instance (SinkableV v, HoistingTopBuilder m) => HoistingTopBuilder (SubstReaderT v m i) where
+instance (SinkableV v, HoistingTopBuilder f m) => HoistingTopBuilder f (SubstReaderT v m i) where
   emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
   canHoistToTop e = SubstReaderT $ lift $ canHoistToTop e
@@ -574,7 +576,8 @@ instance (SinkableE e, HoistableState e, ScopableBuilder m) => ScopableBuilder (
     return (Abs decls e, s'')
   {-# INLINE buildScoped #-}
 
-instance (SinkableE e, HoistableState e, HoistingTopBuilder m) => HoistingTopBuilder (StateT1 e m) where
+instance (SinkableE e, HoistableState e, HoistingTopBuilder frag m)
+  => HoistingTopBuilder frag (StateT1 e m) where
   emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
   canHoistToTop e = lift11 $ canHoistToTop e
@@ -1351,14 +1354,12 @@ applyIxMethod dict method args = case dict of
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
   DictCon (ExplicitMethods d params) -> do
-    SpecializedDictBinding _ fs <- lookupEnv d
+    SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
     let f = fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
     TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName f
-    -- TODO(dougalm): make sure we can guarantee that this cache is already populated.
-    -- Maybe we need to toposort based on dependencies somewhere?
     Just fSimpName <- queryIxLoweredCache f
     TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fSimpName
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body

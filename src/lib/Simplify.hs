@@ -7,8 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Simplify
-  ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
-  , Generalized, getSpecializedFunction) where
+  ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..), Generalized) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -108,7 +107,7 @@ newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
     :: SubstReaderT AtomSubstVal (DoubleBuilderT TopEnvFrag (ReaderT WillLinearize HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader AtomSubstVal, MonadFail
-           , Builder, HoistingTopBuilder)
+           , Builder, HoistingTopBuilder TopEnvFrag)
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
@@ -328,7 +327,8 @@ simplifyApp hint f xs =
             case splitAtExact numSpecializationArgs (toList xs) of
               Just (specializationArgs, runtimeArgs) -> do
                 (spec, extraArgs) <- determineSpecializationSpec v specializationArgs
-                specializedFunction <- getSpecializedFunction spec
+                ab <- getSpecializedFunction spec
+                Just specializedFunction <- emitHoistedEnv ab
                 naryAppHinted hint (Var specializedFunction)
                   (extraArgs ++ runtimeArgs)
               Nothing -> error $ "Specialization of " ++ pprint atom ++
@@ -442,17 +442,11 @@ generalizeInstance (DictType "Ix" _ [TC (Fin n)]) (DictCon (IxFin _)) =
   return $ DictCon (IxFin n)
 generalizeInstance _ x = return x
 
-getSpecializedFunction :: HoistingTopBuilder m => SpecializationSpec n -> m n (AtomName n)
+getSpecializedFunction :: EnvReader m => SpecializationSpec n -> m n (Abs TopEnvFrag AtomName n)
 getSpecializedFunction s = do
   querySpecializationCache s >>= \case
-    Just name -> return name
-    _ -> do
-      maybeName <- liftTopBuilderHoisted $ emitSpecialization (sink s)
-      case maybeName of
-        Nothing -> error $ "couldn't hoist specialization: " ++ pprint s ++
-          "\nFree vars: " ++ pprint (freeAtomVarsList s)
-          ++ "\n\n" ++ show s
-        Just name -> return name
+    Just name -> return $ Abs emptyOutFrag name
+    _ -> liftTopBuilderHoisted $ emitSpecialization (sink s)
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o
