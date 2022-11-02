@@ -65,7 +65,7 @@ liftGeneralizerM cont = do
   let (bs, vals) = hoistGeneralizationVals (unRNest emissions)
   return (Abs bs e, vals)
   where
-    -- TODO: something not O(N^2)
+    -- OPTIMIZE: something not O(N^2)
     hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Nest Binder n l, [Atom n])
     hoistGeneralizationVals Empty = (Empty, [])
     hoistGeneralizationVals (Nest (GeneralizationEmission b val) bs) = do
@@ -91,9 +91,7 @@ generalizeType :: Type n -> GeneralizerM n (Type n)
 generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case paramRole of
   TypeParam -> generalizeType param
   DictParam -> generalizeDict paramReqTy param
-  DataParam -> do
-    paramTyGeneralized <- getType param >>= generalizeType
-    Var <$> emitGeneralizationParameter paramTyGeneralized param
+  DataParam -> Var <$> emitGeneralizationParameter paramReqTy param
 
 -- === role-aware type traversal ===
 
@@ -118,7 +116,7 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     return $ DictTy $ DictType sn name params'
   TabPi (TabPiType (b:>(IxType iTy d)) resultTy) -> do
     iTy' <- f TypeParam TyKind iTy
-    dictTy <- ignoreFallibleT1 $ DictTy <$> ixDictType iTy'
+    dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
     d'   <- f DictParam dictTy d
     withFreshBinder (getNameHint b) (toBinding iTy') \b' -> do
       resultTy' <- applySubst (b@>binderName b') resultTy >>= f TypeParam TyKind
@@ -170,30 +168,6 @@ traverserseFieldRowElemTypes f els = fieldRowElemsFromList <$> traverse checkEle
       DynField _ _ -> error "shouldn't have dynamic fields post-simplification"
       DynFields _  -> error "shouldn't have dynamic fields post-simplification"
 
--- traverseLabeledRow
---   :: Monad m
---   => (Type n -> m (Type n))
---   -> LabeledItems (Type n)
---   -> m (LabeledItems (Type n))
--- traverseLabeledRow f (items rest) = undefined
--- {-# INLINE traverseLabeledRow #-}
-
--- traverseLabeledRow (Ext items rest) = do
---   mapM_ (|: TyKind) items
---   forM_ rest \name -> do
---     name' <- lookupSubstM name
---     ty <- atomBindingType <$> lookupEnv name'
---     checkAlphaEq LabeledRowKind ty
-
-
--- checkLabeledRow :: Typer m => ExtLabeledItems (Type i) (AtomName i) -> m i o ()
--- checkLabeledRow (Ext items rest) = do
---   mapM_ (|: TyKind) items
---   forM_ rest \name -> do
---     name' <- lookupSubstM name
---     ty <- atomBindingType <$> lookupEnv name'
---     checkAlphaEq LabeledRowKind ty
-
 getDataDefRoleBinders :: EnvReader m => DataDefName n -> m n (Abs (Nest RoleBinder) UnitE n)
 getDataDefRoleBinders def = do
   DataDef _ bs _ <- lookupDataDef def
@@ -212,7 +186,9 @@ getClassRoleBinders def = do
 instance GenericB GeneralizationEmission where
   type RepB GeneralizationEmission = BinderP AtomNameC (PairE Type Atom)
   fromB (GeneralizationEmission (b:>ty) x) = b :> PairE ty x
+  {-# INLINE fromB #-}
   toB   (b :> PairE ty x) = GeneralizationEmission (b:>ty) x
+  {-# INLINE toB #-}
 
 instance SubstB Name GeneralizationEmission
 instance HoistableB  GeneralizationEmission

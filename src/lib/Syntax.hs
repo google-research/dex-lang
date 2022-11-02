@@ -40,7 +40,7 @@ module Syntax (
     SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..), SerializedEnv (..),
     ImportStatus (..), emptyModuleEnv,
     ModuleSourceName (..), LoadedModules (..), LoadedObjects (..), Cache (..),
-    BindsEnv (..), BindsOneAtomName (..), AtomNameBinder, toBinder, toBinderNest,
+    BindsEnv (..), BindsOneAtomName (..), AtomNameBinder, toBinderNest,
     AltP, Alt, AtomBinding (..),
     SolverBinding (..), TopFunBinding (..), SpecializationSpec (..),
     SubstE (..), SubstB (..), Ptr, PtrType,

@@ -759,12 +759,9 @@ instance BindsOneAtomName RoleBinder where
 instance BindsOneAtomName RolePiBinder where
   binderType (RolePiBinder _ ty _ _) = ty
 
-toBinder :: BindsOneAtomName b => b n l -> Binder n l
-toBinder b = asNameBinder b :> binderType b
-
 toBinderNest :: BindsOneAtomName b => Nest b n l -> Nest Binder n l
 toBinderNest Empty = Empty
-toBinderNest (Nest b bs) = Nest (toBinder b) (toBinderNest bs)
+toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest bs)
 
 -- === ToBinding ===
 
@@ -1684,7 +1681,9 @@ deriving via WrapE PiType n instance Generic (PiType n)
 instance GenericB RolePiBinder where
   type RepB RolePiBinder = BinderP AtomNameC (PairE Type (LiftE (Arrow, ParamRole)))
   fromB (RolePiBinder b ty arr role) = b :> PairE ty (LiftE (arr, role))
+  {-# INLINE fromB #-}
   toB   (b :> PairE ty (LiftE (arr, role))) = RolePiBinder b ty arr role
+  {-# INLINE toB #-}
 
 instance BindsAtMostOneName RolePiBinder AtomNameC where
   RolePiBinder b _ _ _ @> x = b @> x
@@ -1710,7 +1709,9 @@ instance AlphaHashableB RolePiBinder
 instance GenericB RoleBinder where
   type RepB RoleBinder = BinderP AtomNameC (PairE Type (LiftE ParamRole))
   fromB (RoleBinder b ty role) = b :> PairE ty (LiftE role)
+  {-# INLINE fromB #-}
   toB   (b :> PairE ty (LiftE role)) = RoleBinder b ty role
+  {-# INLINE toB #-}
 
 instance BindsAtMostOneName RoleBinder AtomNameC where
   RoleBinder b _ _ @> x = b @> x

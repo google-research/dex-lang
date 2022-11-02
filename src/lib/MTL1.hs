@@ -12,7 +12,7 @@ module MTL1 (
     StateT1, pattern StateT1, runStateT1, evalStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
     ScopedT1, pattern ScopedT1, runScopedT1,
-    FallibleT1, runFallibleT1, ignoreFallibleT1
+    FallibleT1, runFallibleT1
   ) where
 
 import Control.Monad.Reader
@@ -289,13 +289,6 @@ runFallibleT1 m =
     Right ans -> return $ Success ans
     Left errs -> return $ Failure errs
 {-# INLINE runFallibleT1 #-}
-
-ignoreFallibleT1 :: Monad1 m => FallibleT1 m n a -> m n a
-ignoreFallibleT1 m =
-  runFallibleT1 m >>= \case
-    Success x -> return x
-    Failure e -> error $ pprint e
-{-# INLINE ignoreFallibleT1 #-}
 
 instance Monad1 m => MonadFail (FallibleT1 m n) where
   fail s = throw MonadFailErr s
