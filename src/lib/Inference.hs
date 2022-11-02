@@ -1572,22 +1572,23 @@ binderNestAsPiNest arr = \case
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
 inferRoleBinderNest :: Fallible m => Nest Binder n l -> m (Nest RoleBinder n l)
-inferRoleBinderNest Empty = return Empty
-inferRoleBinderNest (Nest (b:>ty) bs) =
-  Nest (RoleBinder b ty (typeToRole ty)) <$> inferRoleBinderNest bs
+inferRoleBinderNest bs = forEachNestItemM bs \(b:>ty) -> do
+  role <- inferRole ty PlainArrow
+  return $ RoleBinder b ty role
 {-# INLINE inferRoleBinderNest #-}
 
 inferRolePiBinderNest :: Fallible m => Nest PiBinder n l -> m (Nest RolePiBinder n l)
-inferRolePiBinderNest Empty = return Empty
-inferRolePiBinderNest (Nest (PiBinder b ty arr) bs) =
-  Nest (RolePiBinder b ty arr (typeToRole ty)) <$> inferRolePiBinderNest bs
+inferRolePiBinderNest bs = forEachNestItemM bs \(PiBinder b ty arr) -> do
+  role <- inferRole ty arr
+  return $ RolePiBinder b ty arr role
 {-# INLINE inferRolePiBinderNest #-}
 
-typeToRole :: Type n -> ParamRole
-typeToRole ty = case ty of
-  TyKind -> TypeParam
-  DictTy _ -> DictParam
-  _ -> DataParam -- TODO(dougalm): check that it's actually "data" and throw a useful error if not
+inferRole :: Fallible m => Type n -> Arrow -> m ParamRole
+inferRole ty arr = case (ty, arr) of
+  (TyKind  , _         ) -> return TypeParam
+  (DictTy _, ClassArrow) -> return DictParam
+  _ -> return DataParam -- TODO(dougalm): check it's actually "data"
+{-# INLINE inferRole #-}
 
 inferDataDef :: EmitsInf o => UDataDef i
              -> InfererM i o (PairE DataDef (Abs (Nest RolePiBinder) (ListE (EmptyAbs (Nest Binder)))) o)

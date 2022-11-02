@@ -33,11 +33,11 @@ generalizeArgs reqTys allArgs =  liftGeneralizerM $ runSubstReaderT idSubst do
   where
     go ::Nest PiBinder i i' -> [Atom n] -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom n]
     go Empty [] = return []
-    go (Nest (PiBinder b ty _) bs) (arg:args) = do
+    go (Nest (PiBinder b ty arr) bs) (arg:args) = do
       ty' <- substM ty
       arg' <- case ty' of
         TyKind   -> liftSubstReaderT $ generalizeType arg
-        DictTy _ -> generalizeDict ty' arg
+        DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
         _ -> return arg
       args'' <- extendSubst (b@>SubstVal arg') $ go bs args
       return $ arg' : args''
@@ -72,7 +72,9 @@ liftGeneralizerM cont = do
       let (bs', vals) = hoistGeneralizationVals bs
       case hoist b (ListE vals) of
         HoistSuccess (ListE vals') -> (Nest b bs', val:vals')
-        HoistFailure _ -> error "should't happen"
+        HoistFailure _ -> error "should't happen" -- when we do the generalization,
+        -- the "local" values we emit never mention the new generalization binders.
+        -- TODO: consider trying to encode this constraint using scope parameters.
 {-# INLINE liftGeneralizerM #-}
 
 -- XXX: the supplied type may be more general than the type of the atom!
