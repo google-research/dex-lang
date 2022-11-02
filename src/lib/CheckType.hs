@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as M
 import LabeledItems
 
 import Err
-import Util (forMZipped_)
+import Util (forMZipped_, onSndM)
 import QueryType hiding (HasType)
 
 import CheapReduction
@@ -172,6 +172,7 @@ instance Color c => CheckableE (Binding c) where
     EffectBinding     eff               -> EffectBinding     <$> substM eff
     HandlerBinding    h                 -> HandlerBinding    <$> substM h
     EffectOpBinding   op                -> EffectOpBinding   <$> substM op
+    SpecializedDictBinding def          -> SpecializedDictBinding <$> substM def
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -207,6 +208,10 @@ instance CheckableE DataDef where
 
 instance (CheckableE e1, CheckableE e2) => CheckableE (PairE e1 e2) where
   checkE (PairE e1 e2) = PairE <$> checkE e1 <*> checkE e2
+
+instance (CheckableE e1, CheckableE e2) => CheckableE (EitherE e1 e2) where
+  checkE ( LeftE e) =  LeftE <$> checkE e
+  checkE (RightE e) = RightE <$> checkE e
 
 instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
   checkE (Abs b e) = checkB b \b' -> Abs b' <$> checkE e
@@ -395,8 +400,7 @@ instance HasType TabLamExpr where
       return $ TabTy b' bodyTy
 
 instance CheckableE DataDefParams where
-  checkE (DataDefParams params dicts) =
-    DataDefParams <$> mapM checkE params <*> mapM checkE dicts
+  checkE (DataDefParams params) = DataDefParams <$> mapM (onSndM checkE) params
 
 dictExprType :: Typer m => DictExpr i -> m i o (Type o)
 dictExprType e = case e of
@@ -418,9 +422,22 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
-  ExplicitMethods ty _ _ ->
-    -- TODO: check
-    substM $ DictTy ty
+  ExplicitMethods d args -> do
+    SpecializedDictBinding def <- lookupEnv =<< substM d
+    SpecializedDictDef (Abs bs dictTy) methodFunNames <- return def
+    args' <- mapM substM args
+    dictTy'@(DictType _ className params) <- applySubst (bs @@> map SubstVal args') dictTy
+    ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
+    let pbs' = fmapNest (\(RoleBinder b ty _) -> b:>ty) pbs
+    forMZipped_ methodTys methodFunNames \(MethodType _ methodTy) methodFunName -> do
+      reqTy <- checkedApplyNaryAbs (Abs pbs' methodTy) params
+      let extendedArgs = case reqTy of
+            Pi _ -> args
+            _ -> args ++ [UnitVal]
+      methodFunTy <- getType $ Var methodFunName
+      actualTy  <- checkApp methodFunTy extendedArgs
+      checkAlphaEq reqTy actualTy
+    return $ DictTy dictTy'
 
 instance HasType DictExpr where
   getTypeE e = dictExprType e
@@ -720,7 +737,7 @@ typeCheckPrimOp op = case op of
     x |: Word8Ty
     t' <- checkTypeE TyKind t
     case t' of
-      TypeCon _ dataDefName (DataDefParams [] []) -> do
+      TypeCon _ dataDefName (DataDefParams []) -> do
         DataDef _ _ dataConDefs <- lookupDataDef dataDefName
         forM_ dataConDefs \(DataConDef _ _ idxs) ->
           unless (null idxs) $ throw TypeErr "Not empty"
@@ -754,7 +771,7 @@ typeCheckPrimOp op = case op of
   Place ref val -> do
     ty <- getTypeE val
     ref |: RawRefTy ty
-    declareEff IOEffect
+    declareEff InitEffect
     return UnitTy
   Freeze ref -> do
     RawRefTy ty <- getTypeE ref
@@ -816,7 +833,7 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
       Nothing -> return ()
       Just dest -> do
         dest |: RawRefTy accTy
-        declareEff IOEffect
+        declareEff InitEffect
     return $ PairTy resultTy accTy
   RunState d s f -> do
     (resultTy, stateTy) <- checkRWSAction State f
@@ -825,12 +842,17 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
       Nothing -> return ()
       Just dest -> do
         dest |: RawRefTy stateTy
-        declareEff IOEffect
+        declareEff InitEffect
     return $ PairTy resultTy stateTy
   RunIO f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
     PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect IOEffect $ declareEffs eff'
+    return resultTy'
+  RunInit f -> do
+    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
+    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
+    extendAllowedEffect InitEffect $ declareEffs eff'
     return resultTy'
   CatchException f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
@@ -1087,9 +1109,9 @@ checkUnOp op x = do
 checkedInstantiateDataDef
   :: (EnvReader m, Fallible1 m)
   => DataDef n -> DataDefParams n -> m n [DataConDef n]
-checkedInstantiateDataDef (DataDef _ (DataDefBinders bs1 bs2) cons)
-                          (DataDefParams xs1 xs2) = do
-  fromListE <$> checkedApplyNaryAbs (Abs (toBinderNest bs1 >>> bs2) (ListE cons)) (xs1 <> xs2)
+checkedInstantiateDataDef (DataDef _ bs cons) (DataDefParams xs) = do
+  fromListE <$> checkedApplyNaryAbs
+    (Abs (fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) bs) (ListE cons)) (map snd xs)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n]
@@ -1119,6 +1141,7 @@ instance CheckableE EffectRow where
       ExceptionEffect -> return ()
       IOEffect        -> return ()
       UserEffect _    -> return ()
+      InitEffect      -> return ()
     forM_ effTail \v -> do
       v' <- substM v
       ty <- atomBindingType <$> lookupEnv v'

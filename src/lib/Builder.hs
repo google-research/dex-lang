@@ -5,18 +5,20 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
-  emit, emitOp, emitUnOp,
+  emit, emitHinted, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
   select, getUnpacked, emitUnpacked, unwrapBaseNewtype, unwrapCompoundNewtype,
-  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
-  tabApp, naryTabApp,
+  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef,
+  naryApp, naryAppHinted,
+  tabApp, naryTabApp, naryTabAppHinted,
   indexRef, naryIndexRef,
   ptrOffset, unsafePtrLoad,
   getClassDef, getDataCon,
@@ -100,6 +102,10 @@ emit :: (Builder m, Emits n) => Expr n -> m n (AtomName n)
 emit expr = emitDecl noHint PlainLet expr
 {-# INLINE emit #-}
 
+emitHinted :: (Builder m, Emits n) => NameHint -> Expr n -> m n (AtomName n)
+emitHinted hint expr = emitDecl hint PlainLet expr
+{-# INLINE emitHinted #-}
+
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
 {-# INLINE emitOp #-}
@@ -122,9 +128,9 @@ emitDecls' (Nest (Let b (DeclBinding ann _ expr)) rest) e = do
   v <- emitDecl (getNameHint b) ann expr'
   extendSubst (b @> v) $ emitDecls' rest e
 
-emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
-emitAtomToName (Var v) = return v
-emitAtomToName x = emit (Atom x)
+emitAtomToName :: (Builder m, Emits n) => NameHint -> Atom n -> m n (AtomName n)
+emitAtomToName _ (Var v) = return v
+emitAtomToName hint x = emitHinted hint (Atom x)
 
 -- === "Hoisting" top-level builder class ===
 
@@ -132,19 +138,19 @@ emitAtomToName x = emit (Atom x)
 -- top-level function definitions, from within a local context. The operation
 -- may fail, returning `Nothing`, because the emission might mention local
 -- variables that can't be hoisted the top level.
-class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
+class (EnvReader m, MonadFail1 m) => HoistingTopBuilder frag m | m -> frag where
   emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
-                 => Abs TopEnvFrag e n -> m n (Maybe (e n))
-  willItHoist :: HoistableE e => e n -> m n Bool
+                 => Abs frag e n -> m n (Maybe (e n))
+  canHoistToTop :: HoistableE e => e n -> m n Bool
 
 liftTopBuilderHoisted
-  :: (HoistingTopBuilder m, SubstE Name e, SinkableE e, HoistableE e)
+  :: (EnvReader m, SubstE Name e, SinkableE e, HoistableE e)
   => (forall l. (Mut l, DExt n l) => TopBuilderM l (e l))
-  -> m n (Maybe (e n))
+  -> m n (Abs TopEnvFrag e n)
 liftTopBuilderHoisted cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  emitHoistedEnv $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
+  return $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
 
 newtype DoubleBuilderT (topEmissions::B) (m::MonadKind) (n::S) (a:: *) =
   DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env topEmissions BuilderEmissions m n a }
@@ -164,10 +170,10 @@ liftDoubleBuilderTNoEmissions cont = do
   Distinct <- getDistinct
   return do
     Abs UnitB (DoubleInplaceTResult REmpty (LiftE ans)) <-
-      -- XXX: it's safe to use `unsafeCoerceE1` here. We don't need the rank-2
+      -- XXX: it's safe to use `unsafeCoerceM1` here. We don't need the rank-2
       -- trick because we've specialized on the `UnitB` case, so there can't be
       -- any top emissions.
-      runDoubleInplaceT env $ unsafeCoerceE1 $ runDoubleBuilderT' $ LiftE <$> cont
+      runDoubleInplaceT env $ unsafeCoerceM1 $ runDoubleBuilderT' $ LiftE <$> cont
     return ans
 
 -- TODO: do we really need to play these rank-2 games here?
@@ -192,11 +198,12 @@ runDoubleBuilderT env cont = do
     runDoubleInplaceT env $ runDoubleBuilderT' cont
   return $ Abs envFrag e
 
-instance Fallible m => HoistingTopBuilder (DoubleBuilderT TopEnvFrag m) where
+instance (ExtOutMap Env f, OutFrag f, SubstB Name f, HoistableB f, Fallible m)
+  => HoistingTopBuilder f (DoubleBuilderT f m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
   {-# INLINE emitHoistedEnv #-}
-  willItHoist e = DoubleBuilderT $ willItHoistDoubleInplaceT e
-  {-# INLINE willItHoist #-}
+  canHoistToTop e = DoubleBuilderT $ canHoistToTopDoubleInplaceT e
+  {-# INLINE canHoistToTop #-}
 
 instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m) => EnvReader (DoubleBuilderT frag m) where
   unsafeGetEnv = DoubleBuilderT $ liftDoubleInplaceT $ unsafeGetEnv
@@ -241,11 +248,11 @@ instance ( SubstB Name frag, HoistableB frag, OutFrag frag
     return ans
   {-# INLINE refreshAbs #-}
 
-instance (SinkableV v, HoistingTopBuilder m) => HoistingTopBuilder (SubstReaderT v m i) where
+instance (SinkableV v, HoistingTopBuilder f m) => HoistingTopBuilder f (SubstReaderT v m i) where
   emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
-  willItHoist e = SubstReaderT $ lift $ willItHoist e
-  {-# INLINE willItHoist #-}
+  canHoistToTop e = SubstReaderT $ lift $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
 
 -- === Top-level builder class ===
 
@@ -570,11 +577,12 @@ instance (SinkableE e, HoistableState e, ScopableBuilder m) => ScopableBuilder (
     return (Abs decls e, s'')
   {-# INLINE buildScoped #-}
 
-instance (SinkableE e, HoistableState e, HoistingTopBuilder m) => HoistingTopBuilder (StateT1 e m) where
+instance (SinkableE e, HoistableState e, HoistingTopBuilder frag m)
+  => HoistingTopBuilder frag (StateT1 e m) where
   emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
-  willItHoist e = lift11 $ willItHoist e
-  {-# INLINE willItHoist #-}
+  canHoistToTop e = lift11 $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
 
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
@@ -1290,17 +1298,27 @@ app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x (i:|[]))
 
 naryApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
-naryApp f xs = case nonEmpty xs of
+naryApp = naryAppHinted noHint
+{-# INLINE naryApp #-}
+
+naryAppHinted :: (Builder m, Emits n)
+  => NameHint -> Atom n -> [Atom n] -> m n (Atom n)
+naryAppHinted hint f xs = case nonEmpty xs of
   Nothing -> return f
-  Just xs' -> Var <$> emit (App f xs')
+  Just xs' -> Var <$> emitHinted hint (App f xs')
 
 tabApp :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 tabApp x i = Var <$> emit (TabApp x (i:|[]))
 
 naryTabApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
-naryTabApp f xs = case nonEmpty xs of
+naryTabApp = naryTabAppHinted noHint
+{-# INLINE naryTabApp #-}
+
+naryTabAppHinted :: (Builder m, Emits n)
+  => NameHint -> Atom n -> [Atom n] -> m n (Atom n)
+naryTabAppHinted hint f xs = case nonEmpty xs of
   Nothing -> return f
-  Just xs' -> Var <$> emit (TabApp f xs')
+  Just xs' -> Var <$> emitHinted hint (TabApp f xs')
 
 indexRef :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 indexRef ref i = emitOp $ IndexRef ref i
@@ -1336,16 +1354,14 @@ applyIxMethod dict method args = case dict of
     UnsafeFromOrdinal -> do
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
-  DictCon (ExplicitMethods _ fs params) -> do
+  DictCon (ExplicitMethods d params) -> do
+    SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
     let f = fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
-    Var v <- return f
-    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName v
-    -- TODO(dougalm): make sure we can guarantee that this cache is already populated.
-    -- Maybe we need to toposort based on dependencies somewhere?
-    Just fSimpName <- queryIxLoweredCache v
+    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName f
+    Just fSimpName <- queryIxLoweredCache f
     TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fSimpName
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
   _ -> do

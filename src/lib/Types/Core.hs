@@ -39,7 +39,7 @@ import Foreign.Ptr
 import Name
 import Err
 import LabeledItems
-import Util (FileHash)
+import Util (FileHash, onFst)
 
 import Types.Primitives
 import Types.Source
@@ -131,7 +131,7 @@ data FieldRowElem (n::S)
 data DataDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Env
-  DataDef :: SourceName -> DataDefBinders n l -> [DataConDef l] -> DataDef n
+  DataDef :: SourceName -> Nest RolePiBinder n l -> [DataConDef l] -> DataDef n
 
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
@@ -142,14 +142,8 @@ data DataConDef n =
 data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
 data RoleBinder n l = RoleBinder (AtomNameBinder n l) (Type n) ParamRole deriving (Show, Generic)
 
-data DataDefBinders n l where
-  DataDefBinders
-    :: Nest RoleBinder n h  -- ordinary params
-    -> Nest Binder h l      -- dict params
-    -> DataDefBinders n l
-
-data DataDefParams n = DataDefParams [Atom n] [Atom n]  -- ordinary params, dict params
-                       deriving (Show, Generic)
+newtype DataDefParams n = DataDefParams [(Arrow, Atom n)]
+  deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
 -- block). It's given by querying the result expression's type, and checking
@@ -177,7 +171,6 @@ data LamExpr (n::S) where
 
 type IxDict = Atom
 
--- TODO: use this in projectIxFinMethod too
 data IxMethod = Size | Ordinal | UnsafeFromOrdinal
      deriving (Show, Generic, Enum, Bounded, Eq)
 
@@ -312,7 +305,7 @@ data DictExpr (n::S) =
    -- TODO: the function atoms should be names. We could enforce that syntactically but then
    -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
    -- top function names.
- | ExplicitMethods (DictType n) [Atom n] [Atom n] -- dict type, names of parameterized method functions, parameters
+ | ExplicitMethods (Name SpecializedDictNameC n) [Atom n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -421,6 +414,10 @@ emptyImportStatus = ImportStatus mempty mempty
 
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
+    -- This holds the result of lowering the `IxMethodSpecialization`
+    -- specialization requests to a simplified/lowered function. The key is the
+    -- name of the specialization "request" and the value is the name of the
+    -- simplified/lowered version.
   , ixLoweredCache :: EMap AtomName AtomName n
     -- This is to hold the results of translating specialized top-level
     -- functions. TODO: `Cache` might not be the best term for this, since we
@@ -479,6 +476,7 @@ data Binding (c::C) (n::S) where
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
+  SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
 deriving instance Show (Binding c n)
 
 data EffectOpDef (n::S) where
@@ -566,6 +564,24 @@ instance SubstE Name EffectOpType
 instance SubstE AtomSubstVal EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
+
+data SpecializedDictDef n =
+  -- dict type abstracted over local params, method names
+  SpecializedDictDef (Abs (Nest Binder) DictType n) [AtomName n]
+  deriving (Show, Generic)
+
+instance GenericE SpecializedDictDef where
+  type RepE SpecializedDictDef = PairE (Abs (Nest Binder) DictType) (ListE AtomName)
+  fromE (SpecializedDictDef ab methods) = ab `PairE` ListE methods
+  {-# INLINE fromE #-}
+  toE   (ab `PairE` ListE methods) = SpecializedDictDef ab methods
+  {-# INLINE toE #-}
+
+instance SinkableE      SpecializedDictDef
+instance HoistableE     SpecializedDictDef
+instance AlphaEqE       SpecializedDictDef
+instance AlphaHashableE SpecializedDictDef
+instance SubstE Name    SpecializedDictDef
 
 data AtomBinding (n::S) =
    LetBound    (DeclBinding   n)
@@ -994,39 +1010,21 @@ instance ProvesExt  EffectBinder
 instance BindsNames EffectBinder
 instance SubstB Name EffectBinder
 
-instance GenericB DataDefBinders where
-  type RepB DataDefBinders = PairB (Nest RoleBinder) (Nest Binder)
-  fromB (DataDefBinders bs1 bs2) = PairB bs1 bs2
-  {-# INLINE fromB #-}
-  toB   (PairB bs1 bs2) = DataDefBinders bs1 bs2
-  {-# INLINE toB #-}
-
-instance SinkableB   DataDefBinders
-instance HoistableB  DataDefBinders
-instance ProvesExt   DataDefBinders
-instance BindsNames  DataDefBinders
-instance SubstB Name DataDefBinders
-instance SubstB AtomSubstVal DataDefBinders
-instance AlphaHashableB DataDefBinders
-instance AlphaEqB       DataDefBinders
-deriving instance Show (DataDefBinders n l)
-deriving via WrapB DataDefBinders n l instance Generic (DataDefBinders n l)
-
 instance GenericE DataDefParams where
-  type RepE DataDefParams = PairE (ListE Atom) (ListE Atom)
-  fromE (DataDefParams xs ys) = PairE (ListE xs) (ListE ys)
+  type RepE DataDefParams = ListE (PairE (LiftE Arrow) Atom)
+  fromE (DataDefParams xs) = ListE $ map toPairE $ map (onFst LiftE) xs
   {-# INLINE fromE #-}
-  toE   (PairE (ListE xs) (ListE ys)) = DataDefParams xs ys
+  toE (ListE xs) = DataDefParams $ map (onFst fromLiftE) $ map fromPairE xs
   {-# INLINE toE #-}
 
 -- We ignore the dictionary parameters because we assume coherence
 instance AlphaEqE DataDefParams where
-  alphaEqE (DataDefParams params _) (DataDefParams params' _) =
-    alphaEqE (ListE params) (ListE params')
+  alphaEqE (DataDefParams params) (DataDefParams params') =
+    alphaEqE (ListE $ plainArrows params) (ListE $ plainArrows params')
 
 instance AlphaHashableE DataDefParams where
-  hashWithSaltE env salt (DataDefParams params _) =
-    hashWithSaltE env salt (ListE params)
+  hashWithSaltE env salt (DataDefParams params) =
+    hashWithSaltE env salt (ListE $ plainArrows params)
 
 instance SinkableE           DataDefParams
 instance HoistableE          DataDefParams
@@ -1034,7 +1032,7 @@ instance SubstE Name         DataDefParams
 instance SubstE AtomSubstVal DataDefParams
 
 instance GenericE DataDef where
-  type RepE DataDef = PairE (LiftE SourceName) (Abs DataDefBinders (ListE DataConDef))
+  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest RolePiBinder) (ListE DataConDef))
   fromE (DataDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs (ListE cons))
   {-# INLINE fromE #-}
   toE   (PairE (LiftE sourceName) (Abs bs (ListE cons))) = DataDef sourceName bs cons
@@ -1487,19 +1485,19 @@ instance GenericE DictExpr where
  {- InstantiatedGiven -} (PairE Atom (ListE Atom))
  {- SuperclassProj -}    (PairE Atom (LiftE Int))
  {- IxFin -}             (Atom)
- {- ExplicitMethods -}   (DictType `PairE` ListE Atom `PairE` ListE Atom)
+ {- ExplicitMethods -}   (Name SpecializedDictNameC `PairE` ListE Atom)
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
-    ExplicitMethods ty fs args -> Case4 (ty `PairE` ListE fs `PairE` ListE args)
+    ExplicitMethods sd args -> Case4 (sd `PairE` ListE args)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x -> IxFin x
-    Case4 (ty `PairE` ListE fs `PairE` ListE args) -> ExplicitMethods ty fs args
+    Case4 (sd `PairE` ListE args) -> ExplicitMethods sd args
     _ -> error "impossible"
 
 instance SinkableE           DictExpr
@@ -1977,7 +1975,7 @@ instance Color c => GenericE (Binding c) where
           (ClassDef)
           (InstanceDef)
           (ClassName `PairE` LiftE Int `PairE` Atom))
-      (EitherE7
+      (EitherE8
           (ImpFunction)
           (LiftE FunObjCode `PairE` LinktimeNames)
           (Module)
@@ -1985,6 +1983,7 @@ instance Color c => GenericE (Binding c) where
           (EffectDef)
           (HandlerDef)
           (EffectOpDef)
+          (SpecializedDictDef)
       )
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
@@ -2001,6 +2000,7 @@ instance Color c => GenericE (Binding c) where
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
+    SpecializedDictBinding def          -> Case1 $ Case7 $ def
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -2018,6 +2018,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
+    Case1 (Case7 def)                                       -> fromJust $ tryAsColor $ SpecializedDictBinding def
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2301,7 +2302,6 @@ instance Store (FieldRowElems n)
 instance Store (Decl n l)
 instance Store (RoleBinder n l)
 instance Store (RolePiBinder n l)
-instance Store (DataDefBinders n l)
 instance Store (DataDefParams n)
 instance Store (DataDef n)
 instance Store (DataConDef n)
@@ -2339,6 +2339,7 @@ instance (Store (ann n)) => Store (NonDepNest ann n l)
 instance Store Projection
 instance Store IxMethod
 instance Store ParamRole
+instance Store (SpecializedDictDef n)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!
@@ -2373,3 +2374,4 @@ instance SubstE AtomSubstVal (EffectP Name) where
         -- other cases are proven unreachable by type system
         -- v' is an EffectNameC but other cases apply only to
         -- AtomNameC
+    InitEffect -> InitEffect

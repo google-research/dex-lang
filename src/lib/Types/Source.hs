@@ -91,6 +91,8 @@ data UExpr' (n::S) =
  | UApp (UExpr n) (UExpr n)
  | UTabLam (UTabLamExpr n)
  | UTabPi  (UTabPiExpr n)
+ | UDepPairTy (UDepPairType n)
+ | UDepPair (UExpr n) (UExpr n)
  | UTabApp (UExpr n) (UExpr n)
  | UDecl (UDeclExpr n)
  | UFor Direction (UForExpr n)
@@ -130,6 +132,9 @@ data UTabLamExpr (n::S) where
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UPatAnn n l -> UType l -> UTabPiExpr n
 
+data UDepPairType (n::S) where
+  UDepPairType :: UPatAnn n l -> UType l -> UDepPairType n
+
 data UDeclExpr (n::S) where
   UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
 
@@ -139,8 +144,8 @@ type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameC) n l)
 -- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
-    :: (SourceName, Nest (UAnnBinder AtomNameC) n l')    -- param binders
-    -> Nest (UAnnBinder AtomNameC) l' l  -- typeclass binders
+    :: SourceName
+    -> Nest (UAnnBinderArrow AtomNameC) n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
@@ -222,6 +227,16 @@ data UPatAnnArrow (n::S) (l::S) = UPatAnnArrow (UPatAnn n l) Arrow
 
 data UAnnBinder (c::C) (n::S) (l::S) = UAnnBinder (UBinder c n l) (UType n)
   deriving (Show, Generic)
+
+data UAnnBinderArrow (c::C) (n::S) (l::S) =
+  UAnnBinderArrow (UBinder c n l) (UType n) Arrow
+  deriving (Show, Generic)
+
+plainUAnnBinder :: UAnnBinder c n l -> UAnnBinderArrow c n l
+plainUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty PlainArrow
+
+classUAnnBinder :: UAnnBinder c n l -> UAnnBinderArrow c n l
+classUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty ClassArrow
 
 data UAlt (n::S) where
   UAlt :: UPat n l -> UExpr l -> UAlt n
@@ -571,6 +586,7 @@ deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
 deriving instance Show (UTabLamExpr n)
 deriving instance Show (UTabPiExpr n)
+deriving instance Show (UDepPairType n)
 deriving instance Show (UDeclExpr n)
 deriving instance Show (UDataDef n)
 deriving instance Show (UDecl n l)

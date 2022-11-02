@@ -1,0 +1,323 @@
+' # Monte Carlo Tree Search
+MCTS is the decision engine for the notable AlphaGo program.
+It samples rollouts to guide tree search. 
+The nice thing is Dex can in theory automatically parallelize leaf rollouts.
+
+' We implement a variant of MCTS with minimax search and upper
+confidence bound for trees (uct) for the two-player mini-game `Count21`. 
+This demo implements a doubly-linked tree structure as a Dex array,
+and traverses its branches by indexing.
+[reference](http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf)
+
+def (+|) {a} [Ix a] (n:a) (m:Nat) : a = ((ordinal n) + m)@a
+def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
+
+MAX_TREE_SIZE:Nat = 70
+SAMPLES:Nat = 50
+ROLLOUTS_PER_SAMPLE:Nat = 10
+
+' ## Tree types
+
+data Node node_ix a =
+  Branch content:a parent:(Maybe node_ix) children:(List (node_ix))
+
+def Tree (node_ix:Type) (a:Type) [Ix node_ix] : Type =
+  (node_ix=>(Maybe (Node node_ix a)) & node_ix)
+  -- Node array, and pointer to last used node.
+
+def root_of {node_ix a} (tree:Tree node_ix a) : node_ix = 0@node_ix
+
+def is_leaf {node a} ((Branch _ _ children):Node node a) : Bool = 
+  list_length children == 0
+
+def init_tree {a} (max_size:Nat) (default_content:a): Tree (Fin max_size) a =
+  root = Branch default_content Nothing (AsList 0 [])
+  nothings = for i:(Fin max_size). Nothing
+  init_array = yield_state nothings \ref. ref!(0@_) := (Just root)
+  (init_array, 0@_)
+
+' ## Game and Node utilities
+
+def Game (state:Type) (move:Type) : Type =
+  {
+    possible_moves : state -> (List move) &
+    win_or_lose : state -> Bool &
+    update : state -> move -> state &
+    game_over : state -> Bool &
+  }
+
+def NodeStats (state:Type) : Type = 
+  (Nat & Nat & Nat & state)
+  -- (#winning rollouts for max/first player, #visit, level, state)
+
+def node_win_visit_stats {node_ix state} (node:(Node node_ix (NodeStats state)))
+  : (Nat & Nat) =
+  (Branch stats _ _) = node
+  (wins, visits, _, _) = stats
+  (wins, visits)
+
+def node_is_visited {node_ix state} (node:(Node node_ix (NodeStats state)))
+  : Bool =
+  (_, visits) = node_win_visit_stats node
+  visits > 0
+
+def node_state {node_ix state} (node:(Node node_ix (NodeStats state))) : state =
+  (Branch stats _ _) = node
+  (_, _, _, s) = stats
+  s
+
+def node_level {node_ix state} (node:(Node node_ix (NodeStats state))) : Nat =
+  (Branch stats _ _) = node
+  (_, _, level, _) = stats
+  level
+
+' ## MCTS functions
+
+' Let $n$ be a node. The upper confidence bound for trees (UCT) is a heuristic 
+that balances exploration and exploitation, weighed by $1:\sqrt{2}$ here.
+The reward $Q(n)$ summarizes the performance of $n$'s subtree.
+$N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
+The upper confidence bound for trees of node $n$ is
+$$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$
+
+def uct (win:Nat) (n:Nat) (parent_n:Nat) : Float =
+  -- wins stored at every node are w.r.t to the max_player
+  (n_to_f win) / (n_to_f n) + sqrt (2.0 / (n_to_f n) * (log (n_to_f parent_n)))
+
+'Recursively find the most promising leaf (measured by UCT) to rollout next.
+
+def mcts_select {move state node_ix}
+    (game: Game state move) (tree: Tree node_ix (NodeStats state)) (key: Key)
+    : node_ix = 
+    arr = fst tree
+
+    yield_state (root_of tree) \ref. iter \i.
+      node = from_just arr.(get ref)
+      if is_leaf node
+        then
+          Done ()
+        else
+          (Branch stats _ children_list) = node
+          (AsList _ children) = children_list
+          fully_expanded = all for i.
+            node_is_visited $ from_just arr.(children.i)
+          if not fully_expanded
+            then
+              criterion = \child.
+                not $ node_is_visited $ from_just arr.child
+              (AsList _ unvisited) = filter criterion children 
+              ref := unvisited.(rand_idx key)
+              Done ()
+            else
+              (_, p_visits) = node_win_visit_stats node
+              -- minimax
+              is_max_player = is_even $ node_level node
+              selector = if is_max_player then argmax else argmin
+              best_child = selector for i.
+                child = from_just arr.(children.i)
+                (win, visits) = node_win_visit_stats child
+                uct win visits p_visits
+              ref := children.best_child
+              Continue
+
+' Expand the tree (in-place) by adding states one-move away from the current state.
+
+def mcts_expand {move state node_ix h}
+    (game: Game state move)
+    (tree_ref: Ref h (Tree node_ix (NodeStats state)))
+    (node: node_ix) : {State h} Unit =
+    -- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
+
+    -- extract info about the base node
+    base_node = from_just $ get (fst_ref tree_ref)!node
+    (Branch base_stats base_parent _) = base_node
+    (_, _, base_level, base_state) = base_stats
+
+    -- prepare child nodes
+    (AsList n base_moves) = (get_at #possible_moves game) base_state
+    child_nodes = for i.
+      new_move = base_moves.i
+      new_state = (get_at #update game) base_state new_move
+      new_stats = (0, 0, base_level + 1, new_state)
+      Branch new_stats (Just node) (to_list [])
+
+    -- write to the tree
+    new_node = get (snd_ref tree_ref)
+    base_children_ix = for i:(Fin n). new_node +| (1 + ordinal i)
+    -- update base's children list
+    new_base_node = Branch base_stats base_parent (to_list base_children_ix)
+    (fst_ref tree_ref)!node := Just new_base_node
+    -- insert every child
+    for i.
+      child_ix = base_children_ix.i
+      (fst_ref tree_ref)!child_ix := Just child_nodes.i
+    snd_ref tree_ref := new_node +| n
+
+' Simulate the game starting at a given state until the game terminates and
+return the simulation result.
+
+def mcts_rollout {move state}
+    (game: Game state move)
+    (key: Key) (curr_state: state) : Bool =
+    -- output is w.r.t. current player
+    with_state curr_state \ref. iter \i.
+      curr_state' = get ref
+      if (get_at #game_over game) curr_state'
+        then
+          -- #win_or_lose is w.r.t. the last player
+          result = (get_at #win_or_lose game) curr_state'
+          Done $ xor (is_even i) result
+        else
+          (AsList _ new_moves) = (get_at #possible_moves game) curr_state'
+          -- rollout policy: uniform random
+          new_move = new_moves.(rand_idx (hash key i))
+          ref := (get_at #update game) curr_state' new_move
+          Continue
+
+' Update the record of a node and its chain of ancestors,
+based on the simulation result.
+
+def mcts_backpropagate {move state node_ix h} [Eq node_ix] 
+    (game: Game state move)
+    (tree_ref: Ref h (Tree node_ix (NodeStats state)))
+    (node: node_ix) (new_rollout_wins: Nat) : {State h} Unit =
+    -- new_rollout_wins: #wins w.r.t max player
+
+    with_state node \node_ref. iter \_.
+      -- update win and loss counts
+      -- -unpack
+      curr_node = from_just $ get (fst_ref tree_ref)!(get node_ref)
+      (Branch stats parent children) = curr_node
+      (wins, visits, level, state) = stats
+      -- -compute
+      new_wins = wins + new_rollout_wins
+      new_visits = visits + 1  -- Todo: or to add ROLLOUTS_PER_SAMPLE
+
+      -- -pack
+      new_stats = (new_wins, new_visits, level, state)
+      (fst_ref tree_ref)!(get node_ref) := Just (Branch new_stats parent children)
+
+      -- find the parent of the current node
+      if is_nothing parent || (0@node_ix) == (get node_ref)
+        then Done ()
+        else
+          node_ref := from_just parent
+          Continue
+
+' Wrap up the procedure for taking one sample and extend the tree.
+
+-- slow: every sample makes two copies of the tree array
+def mcts_sample {move state node_ix} [Eq node_ix]
+    (game: Game state move) (key: Key)
+    (tree: Tree node_ix (NodeStats state))
+    : Tree node_ix (NodeStats state) =
+    [key1, key2] = split_key key
+    leaf_ix = mcts_select game tree key1
+    leaf = from_just (fst tree).leaf_ix
+
+    tree' = yield_state tree \tree_ref.
+      if not $ (get_at #game_over game) $ node_state leaf then
+        mcts_expand game tree_ref leaf_ix
+
+    leaf_min_player = leaf |> node_level |> is_odd
+    max_player_wins = yield_accum (AddMonoid Nat) \c.
+      for i:(Fin ROLLOUTS_PER_SAMPLE).
+        key' = ixkey key i
+        leaf_result = mcts_rollout game key' $ node_state leaf
+                  -- w.r.t. the current player
+        max_rollout_wins = b_to_n $ xor leaf_min_player leaf_result
+        c += max_rollout_wins
+
+    yield_state tree' \tree_ref.
+      mcts_backpropagate game tree_ref leaf_ix max_player_wins
+
+' ## Toy game: Count 21
+This is a simple two-player game. Two players in turn choose
+between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 wins.
+
+Count21State = Nat
+Count21Move = Nat
+Count21 : Game Count21State Count21Move = {
+  possible_moves = \sum:Count21State. to_list [1,2],
+  win_or_lose = \sum. sum == 21,
+  update = \sum:Count21State move. sum + move,
+  game_over = \sum. sum >= 21,
+}
+
+' ### Approximate winning chances by sampling
+In theory, multiples of three are bad positions for the current player,
+since the opponent has a winning strategy by always choosing
+(3 - move by the current player). Otherwise, the current player
+has a winning strategy.
+
+key = new_key 0
+
+def test (key:Key) (current_state:Nat) : (Nat & Nat) =
+  init_node_stats : NodeStats Count21State = 
+    (0, 0, 0, current_state)
+  -- (0 wins, 0 visits, level 0, game state)
+  start_tree = init_tree MAX_TREE_SIZE init_node_stats
+  end_tree = fold start_tree \i:(Fin SAMPLES).
+    mcts_sample Count21 (ixkey key i)
+  node_win_visit_stats $ from_just (fst end_tree).(root_of end_tree)
+
+
+test key 21
+> (0, 50)
+test key 20
+> (485, 50)
+test key 19
+> (490, 50)
+test key 18
+> (23, 50)
+test key 17
+> (475, 50)
+test key 16
+> (468, 50)
+test key 15
+> (69, 50)
+test key 14
+> (451, 50)
+test key 13
+> (389, 50)
+test key 12
+> (286, 50)
+
+' We fix number of samples (SAMPLES=50) and rollouts (ROLLOUTS_PER_SAMPLE=10). Fully explored 
+trees (`current_state` close to 21) yields extreme win/visits ratios. 
+We also verify that the current player is disadvantaged when the current state 
+is a multiple of three.
+
+' ### A closer look at the game tree
+Say the current sum is 17, the winning move for the current player is to add 1.
+In the following tree, we see that adding 1 (the second node) is indeed 
+considered a more promising choice by `uct` and sees more rollouts than 
+the alternative (adding 2, the third node).
+
+init_node_stats : NodeStats Count21State = (0, 0, 0, 17)
+start_tree = init_tree 15 init_node_stats
+end_tree = fold start_tree \i:(Fin 50).
+  mcts_sample Count21 (ixkey key i)
+
+end_tree
+> ( [ (Just (Branch (475, (50, (0, 17))) Nothing (AsList 2 [ (1@(Fin 15))
+>                                                      , (2@(Fin 15)) ])))
+> , (Just (Branch (464, (48, (1, 18))) (Just (0@(Fin 15))) (AsList 2 [ (5@(Fin 15))
+>                                                                  , (6@(Fin 15)) ])))
+> , (Just (Branch (3, (1, (1, 19))) (Just (0@(Fin 15))) (AsList 2 [ (3@(Fin 15))
+>                                                               , (4@(Fin 15)) ])))
+> , (Just (Branch (0, (0, (2, 20))) (Just (2@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (0, (0, (2, 21))) (Just (2@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (8, (1, (2, 19))) (Just (1@(Fin 15))) (AsList 2 [ (7@(Fin 15))
+>                                                               , (8@(Fin 15)) ])))
+> , (Just (Branch (448, (46, (2, 20))) (Just (1@(Fin 15))) (AsList 2 [ (9@(Fin 15))
+>                                                                  , (10@(Fin 15)) ])))
+> , (Just (Branch (0, (0, (3, 20))) (Just (5@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (0, (0, (3, 21))) (Just (5@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (440, (44, (3, 21))) (Just (6@(Fin 15))) (AsList 0 [])))
+> , (Just (Branch (0, (1, (3, 22))) (Just (6@(Fin 15))) (AsList 0 [])))
+> , Nothing
+> , Nothing
+> , Nothing
+> , Nothing ]
+> , (10@(Fin 15)) )

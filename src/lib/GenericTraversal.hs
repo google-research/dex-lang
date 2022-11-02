@@ -19,8 +19,8 @@ import Err
 import Builder
 import Syntax
 import MTL1
-
 import LabeledItems
+import Util (onSndM)
 
 liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
@@ -29,9 +29,11 @@ liftGenericTraverserM s m =
 {-# INLINE liftGenericTraverserM #-}
 
 liftGenericTraverserMTopEmissions
-  :: (EnvReader m, SinkableE e, SubstE Name e, SinkableE s, SubstE Name s)  => s n
-  -> (forall l. DExt n l => GenericTraverserM TopEnvFrag s l l (e l))
-  -> m n (Abs TopEnvFrag (PairE e s) n)
+  :: ( EnvReader m, SinkableE e, SubstE Name e, SinkableE s
+     , SubstE Name s, ExtOutMap Env frag, OutFrag frag)
+  => s n
+  -> (forall l. DExt n l => GenericTraverserM frag s l l (e l))
+  -> m n (Abs frag (PairE e s) n)
 liftGenericTraverserMTopEmissions s m =
   liftM runHardFail $ liftDoubleBuilderT do
     (e, s') <- runStateT1 (runSubstReaderT idSubst $ runGenericTraverserM' m) (sink s)
@@ -48,7 +50,7 @@ deriving instance GenericTraverser f s => ScopeReader     (GenericTraverserM f s
 deriving instance GenericTraverser f s => EnvReader       (GenericTraverserM f s i)
 deriving instance GenericTraverser f s => ScopableBuilder (GenericTraverserM f s i)
 deriving instance GenericTraverser f s => Builder         (GenericTraverserM f s i)
-deriving instance GenericTraverser TopEnvFrag s => HoistingTopBuilder (GenericTraverserM TopEnvFrag s i)
+deriving instance GenericTraverser f s => HoistingTopBuilder f (GenericTraverserM f s i)
 
 class (SubstB Name f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
       => GenericTraverser f s where
@@ -144,8 +146,8 @@ instance GenericallyTraversableE FieldRowElems where
       DynFields rowVar    -> return $ DynFields rowVar
 
 instance GenericallyTraversableE DataDefParams where
-  traverseGenericE (DataDefParams params dicts) =
-    DataDefParams <$> mapM tge params <*> mapM tge dicts
+  traverseGenericE (DataDefParams params) =
+    DataDefParams <$> mapM (onSndM tge) params
 
 instance GenericallyTraversableE DepPairType where
   traverseGenericE (DepPairType (b:>lty) rty) = do
@@ -162,7 +164,7 @@ instance GenericallyTraversableE DictExpr where
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
     IxFin n ->  IxFin <$> tge n
-    ExplicitMethods ty methods params -> ExplicitMethods <$> tge ty <*> mapM tge methods <*> mapM tge params
+    ExplicitMethods d params -> ExplicitMethods <$> substM d <*> mapM tge params
 
 instance GenericallyTraversableE DictType where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params
@@ -189,6 +191,11 @@ traverseBinderNest (Nest (b:>ty) bs) cont = do
     extendRenamer (b@>binderName b') do
       traverseBinderNest bs \bs' -> do
         cont (Nest (b':>ty') bs')
+
+instance (GenericallyTraversableE e1, GenericallyTraversableE e2) =>
+  (GenericallyTraversableE (EitherE e1 e2)) where
+  traverseGenericE ( LeftE e) =  LeftE <$> tge e
+  traverseGenericE (RightE e) = RightE <$> tge e
 
 traverseBlock
   :: (GenericTraverser f s, Emits o)

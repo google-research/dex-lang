@@ -7,8 +7,6 @@
 module Generalize (generalizeArgs, generalizeIxDict, Generalized) where
 
 import Control.Monad
-import Control.Category ((>>>))
-
 import Syntax
 import Inference
 import QueryType
@@ -19,12 +17,13 @@ import LabeledItems
 
 type Generalized (e::E) (n::S) = (Abs (Nest Binder) e n, [Atom n])
 
-generalizeIxDict :: EnvReader m => Dict n -> m n (Generalized Dict n)
+generalizeIxDict :: EnvReader m => Dict n -> m n (Generalized (PairE Type Dict) n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
   dictTy <- getType dict'
   dictTyGeneralized <- generalizeType dictTy
-  liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
+  dictGeneralized <- liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
+  return $ PairE dictTyGeneralized dictGeneralized
 {-# INLINE generalizeIxDict #-}
 
 generalizeArgs ::EnvReader m => Nest PiBinder n l -> [Atom n] -> m n (Generalized (ListE Atom) n)
@@ -108,11 +107,11 @@ traverseTyParams
   -> (forall l . DExt n l => ParamRole -> Type l -> Atom l -> m l (Atom l))
   -> m n (Atom n)
 traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
-  TypeCon sn def (DataDefParams ordinaryParams dictParams) -> do
+  TypeCon sn def (DataDefParams arrParams) -> do
     Abs roleBinders UnitE <- getDataDefRoleBinders def
-    params' <- traverseRoleBinders f roleBinders (ordinaryParams ++ dictParams)
-    let (ordinaryParams', dictParams') = splitAt (length ordinaryParams) params'
-    return $ TypeCon sn def $ DataDefParams ordinaryParams' dictParams'
+    let (arrs, params) = unzip arrParams
+    params' <- traverseRoleBinders f roleBinders params
+    return $ TypeCon sn def $ DataDefParams $ zip arrs params'
   DictTy (DictType sn name params) -> do
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
@@ -197,9 +196,9 @@ traverserseFieldRowElemTypes f els = fieldRowElemsFromList <$> traverse checkEle
 
 getDataDefRoleBinders :: EnvReader m => DataDefName n -> m n (Abs (Nest RoleBinder) UnitE n)
 getDataDefRoleBinders def = do
-  DataDef _ (DataDefBinders bs dictBs) _ <- lookupDataDef def
-  let bs' = fmapNest (\(b:>ty) -> RoleBinder b ty DictParam) dictBs
-  return $ Abs (bs >>> bs') UnitE
+  DataDef _ bs _ <- lookupDataDef def
+  let bs' = fmapNest (\(RolePiBinder b ty _ role) -> RoleBinder b ty role) bs
+  return $ Abs bs' UnitE
 {-# INLINE getDataDefRoleBinders #-}
 
 getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs (Nest RoleBinder) UnitE n)

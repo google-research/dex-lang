@@ -18,7 +18,7 @@ module Name (
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
   DoubleInplaceT (..), liftDoubleInplaceT,
-  emitDoubleInplaceTHoisted, willItHoistDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
+  emitDoubleInplaceTHoisted, canHoistToTopDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
   runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -29,8 +29,9 @@ module Name (
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
-  EitherE (..), LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
-  EitherB (..), BinderP (..),
+  EitherE (..), leftsE, rightsE, forgetEitherE,
+  LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
+  EitherB (..), forgetEitherB, BinderP (..),
   LiftB, pattern LiftB,
   HashMapE (..), HashableE, nestToNames,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
@@ -73,7 +74,7 @@ module Name (
   WrapE (..), WrapB (..),
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames,
-  unsafeCoerceE, unsafeCoerceE1, unsafeCoerceB, ColorsEqual (..), eqColorRep,
+  unsafeCoerceE, unsafeCoerceM1, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs,
@@ -584,6 +585,23 @@ toPairE (x, y) = (PairE x y)
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
      deriving (Show, Eq, Generic)
 
+leftsE :: [EitherE e1 e2 n] -> [e1 n]
+leftsE = \case
+  [] -> []
+  ((LeftE x):rest) -> x:leftsE rest
+  ((RightE _):rest) -> leftsE rest
+
+rightsE :: [EitherE e1 e2 n] -> [e2 n]
+rightsE = \case
+  [] -> []
+  ((LeftE _):rest) -> rightsE rest
+  ((RightE x):rest) -> x:rightsE rest
+
+forgetEitherE :: EitherE e e n -> e n
+forgetEitherE ( LeftE x) = x
+forgetEitherE (RightE x) = x
+{-# INLINE forgetEitherE #-}
+
 newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
         deriving (Show, Eq, Generic)
 
@@ -618,6 +636,11 @@ data EitherB (b1::B) (b2::B) (n::S) (l::S) =
    LeftB  (b1 n l)
  | RightB (b2 n l)
    deriving (Show, Eq, Generic)
+
+forgetEitherB :: EitherB b b n l -> b n l
+forgetEitherB (LeftB b) = b
+forgetEitherB (RightB b) = b
+{-# INLINE forgetEitherB #-}
 
 -- The constant function of kind `V`
 newtype ConstE (const::E) (ignored::C) (n::S) = ConstE (const n)
@@ -708,6 +731,17 @@ instance Color c => BindsAtMostOneName (BinderP c ann) c where
 instance Color c => BindsOneName (BinderP c ann) c where
   binderName (b:>_) = binderName b
   {-# INLINE binderName #-}
+
+instance (BindsAtMostOneName b1 c, BindsAtMostOneName b2 c) =>
+  BindsAtMostOneName (EitherB b1 b2) c where
+  ( LeftB b) @> x = b @> x
+  (RightB b) @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance (BindsOneName b1 c, BindsOneName b2 c) =>
+  BindsOneName (EitherB b1 b2) c where
+  binderName ( LeftB b) = binderName b
+  binderName (RightB b) = binderName b
 
 infixr 7 @@>
 (@@>) :: (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
@@ -1008,6 +1042,7 @@ instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
 instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
+instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1138,6 +1173,11 @@ instance (Color c, AlphaEqE ann) => AlphaEqB (BinderP c ann) where
     alphaEqE ann1 ann2
     withAlphaEqB b1 b2 $ cont
 
+instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (EitherB b1 b2) where
+  withAlphaEqB (LeftB b1) (LeftB b2) cont = withAlphaEqB b1 b2 cont
+  withAlphaEqB (RightB b1) (RightB b2) cont = withAlphaEqB b1 b2 cont
+  withAlphaEqB _ _ _ = zipErr
+
 instance AlphaEqE UnitE where
   alphaEqE UnitE UnitE = return ()
 
@@ -1249,6 +1289,13 @@ instance (AlphaHashableE e1, AlphaHashableE e2) => AlphaHashableE (EitherE e1 e2
   hashWithSaltE env salt (RightE e) = do
     let h = hashWithSalt salt (1::Int)
     hashWithSaltE env h e
+
+instance (AlphaHashableB b1, AlphaHashableB b2)
+         => AlphaHashableB (EitherB b1 b2) where
+  hashWithSaltB env salt (LeftB x) =
+    hashWithSaltB env (hashWithSalt salt (0::Int)) x
+  hashWithSaltB env salt (RightB x) =
+    hashWithSaltB env (hashWithSalt salt (1::Int)) x
 
 instance AlphaHashableE VoidE where
   hashWithSaltE _ _ _ = error "impossible"
@@ -1841,11 +1888,11 @@ emitDoubleInplaceTHoisted emission = do
     else
       return Nothing
 
-willItHoistDoubleInplaceT
+canHoistToTopDoubleInplaceT
   :: ( Monad m, ExtOutMap b d1, OutFrag d1
      , ExtOutMap b d2, OutFrag d2, HoistableE e)
   => e n -> DoubleInplaceT b d1 d2 m n Bool
-willItHoistDoubleInplaceT e = do
+canHoistToTopDoubleInplaceT e = do
   Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
   return $ R.containedIn (freeVarsE e) topScopeFrag
 
@@ -1930,6 +1977,7 @@ instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
 instance Color HandlerNameC    where getColorRep = HandlerNameC
+instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -1950,6 +1998,7 @@ interpretColor c cont = case c of
   EffectNameC     -> cont $ ColorProxy @EffectNameC
   EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
   HandlerNameC    -> cont $ ColorProxy @HandlerNameC
+  SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
@@ -2310,6 +2359,7 @@ instance Store (UnitE n)
 instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
 instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
+instance (Store (b1 n l), Store (b2 n l)) => Store (EitherB b1 b2 n l)
 instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance (Store (e UnsafeS), Generic (e UnsafeS)) => Store (LiftB e n l)
@@ -2491,6 +2541,7 @@ data C =
   | EffectNameC
   | EffectOpNameC
   | HandlerNameC
+  | SpecializedDictNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 
@@ -3128,9 +3179,9 @@ unsafeCoerceVC :: forall c' (v::V) c o. v c o -> v c' o
 unsafeCoerceVC = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceVC #-}
 
-unsafeCoerceE1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
-unsafeCoerceE1 = TrulyUnsafe.unsafeCoerce
-{-# NOINLINE [1] unsafeCoerceE1 #-}
+unsafeCoerceM1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
+unsafeCoerceM1 = TrulyUnsafe.unsafeCoerce
+{-# NOINLINE [1] unsafeCoerceM1 #-}
 
 -- === instances ===
 

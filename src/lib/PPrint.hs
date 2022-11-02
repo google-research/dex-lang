@@ -207,7 +207,10 @@ instance Pretty (NaryPiType n) where
     (spaced $ fromNest $ Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance Pretty (PiBinder n l) where
-  pretty (PiBinder b ty _) = p (b:>ty)
+  pretty (PiBinder b ty PlainArrow) = p (b:>ty)
+  pretty (PiBinder b ty ClassArrow) = "[" <> p (b:>ty) <> "]"
+  pretty (PiBinder b ty ImplicitArrow) = "{" <> p (b:>ty) <> "}"
+  pretty (PiBinder b ty LinArrow) = p (b:>ty)
 
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
@@ -228,7 +231,7 @@ instance Pretty (DictExpr n) where
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
-    ExplicitMethods _ methods args -> "ExplicitMethods" <+> p methods <+> p args
+    ExplicitMethods v args -> "ExplicitMethods" <+> p v <+> p args
 
 instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
@@ -252,21 +255,26 @@ instance PrettyPrec (Atom n) where
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
-        parens $ p x <> ",>" <+> p y
+        parens $ p x <+> ",>" <+> p y
     TC  e -> prettyPrec e
     NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
-    TypeCon "RangeTo"      _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ ".."  <> pApp i
-    TypeCon "RangeToExc"   _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ "..<" <> pApp i
-    TypeCon "RangeFrom"    _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <>  ".."
-    TypeCon "RangeFromExc" _ (DataDefParams [_, i] _) -> atPrec LowestPrec $ pApp i <> "<.."
-    TypeCon name _ (DataDefParams params _) -> case params of
+    TypeCon "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ ".."  <> pApp i
+    TypeCon "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ "..<" <> pApp i
+    TypeCon "RangeFrom"    _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ pApp i <>  ".."
+    TypeCon "RangeFromExc" _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ pApp i <> "<.."
+    TypeCon name _ (DataDefParams params) -> case params of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (fromString name) ->
+      [(PlainArrow, l), (PlainArrow, r)]
+        | Just sym <- fromInfix (fromString name) ->
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
-      _  -> atPrec LowestPrec $ pAppArg (p name) params
+      _  -> atPrec LowestPrec $ pAppArg (p name) $ plainArrows params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
     LabeledRow elems -> prettyRecordTyRow elems "?"
@@ -423,6 +431,7 @@ instance Pretty (Effect n) where
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
     UserEffect name -> p name
+    InitEffect      -> "Init"
 
 instance Pretty (UEffect n) where
   pretty eff = case eff of
@@ -430,6 +439,7 @@ instance Pretty (UEffect n) where
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
     UserEffect name -> p name
+    InitEffect      -> "Init"
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
@@ -489,6 +499,7 @@ instance Pretty (Binding s n) where
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
     EffectOpBinding _ -> "<effect-op-binding>"
+    SpecializedDictBinding _ -> "<specialized-dict-binding>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
@@ -499,14 +510,15 @@ instance Pretty (Module n) where
     , ("moduleSynthCandidates", p $ moduleSynthCandidates m) ]
 
 instance Pretty (DataDefParams n) where
-  pretty (DataDefParams ps ds) = p ps <+> p ds
-
-instance Pretty (DataDefBinders n l) where
-  pretty (DataDefBinders paramBs dictBs) = p paramBs <+> p dictBs
+  pretty (DataDefParams bs) = hsep $ map bracketize bs where
+    bracketize (PlainArrow, x) = p x
+    bracketize (ClassArrow, x) = "[" <> p x <> "]"
+    bracketize (ImplicitArrow, x) = "{" <> p x <> "}"
+    bracketize (LinArrow, x) = p x
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
-    "data" <+> p name <+> p bs <> prettyLines cons
+    "data" <+> p name <+> (spaced $ fromNest bs) <> prettyLines cons
 
 instance Pretty (DataConDef n) where
   pretty (DataConDef name repTy _) =
@@ -657,6 +669,11 @@ instance PrettyPrec (UTabPiExpr n) where
   prettyPrec (UTabPiExpr pat ty) = atPrec LowestPrec $ align $
     p pat <+> "=>" <+> pLowest ty
 
+instance Pretty (UDepPairType n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UDepPairType n) where
+  prettyPrec (UDepPairType pat ty) = atPrec LowestPrec $ align $
+    p pat <+> "&>" <+> pLowest ty
+
 instance Pretty (UDeclExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UDeclExpr n) where
   prettyPrec (UDeclExpr decl body) = atPrec LowestPrec $ align $
@@ -677,6 +694,9 @@ instance PrettyPrec (UExpr' n) where
                              Rev -> "rof"
     UPi piType -> prettyPrec piType
     UTabPi piType -> prettyPrec piType
+    UDepPairTy depPairType -> prettyPrec depPairType
+    UDepPair lhs rhs -> atPrec ArgPrec $ parens $
+      p lhs <+> ",>" <+> p rhs
     UDecl declExpr -> prettyPrec declExpr
     UHole -> atPrec ArgPrec "_"
     UTypeAnn v ty -> atPrec LowestPrec $
@@ -716,9 +736,8 @@ instance Pretty (UAlt n) where
 instance Pretty (UDecl n l) where
   pretty (ULet ann b rhs) =
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-  pretty (UDataDefDecl (UDataDef bParams bIfaces dataCons) bTyCon bDataCons) =
-    "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
-       <+> "where" <> nest 2
+  pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
+    "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
@@ -766,6 +785,12 @@ instance Pretty (UPatAnnArrow n l) where
 
 instance Color c => Pretty (UAnnBinder c n l) where
   pretty (UAnnBinder b ty) = p b <> ":" <> p ty
+
+instance Color c => Pretty (UAnnBinderArrow c n l) where
+  pretty (UAnnBinderArrow b ty PlainArrow) = p b <> ":" <> p ty
+  pretty (UAnnBinderArrow b ty ClassArrow) = "[" <> p b <> ":" <> p ty <> "]"
+  pretty (UAnnBinderArrow b ty ImplicitArrow) = "{" <> p b <> ":" <> p ty <> "}"
+  pretty (UAnnBinderArrow b ty LinArrow) = p b <> ":" <> p ty
 
 instance Pretty (UMethodDef n) where
   pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs
@@ -1179,8 +1204,10 @@ instance Pretty Bin' where
   pretty (EvalBinOp name) = fromString name
   pretty Juxtapose = " "
   pretty Ampersand = "&"
+  pretty DepAmpersand = "&>"
   pretty IndexingDot = "."
   pretty Comma = ","
+  pretty DepComma = ",>"
   pretty Colon = ":"
   pretty DoubleColon = "::"
   pretty Dollar = "$"

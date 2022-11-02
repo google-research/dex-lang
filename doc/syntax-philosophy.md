@@ -62,7 +62,9 @@ tightest-binding to loosest-binding.
 | =                     | let binding, field assignment            | Left          |
 | ?                     | separator for labeled rows               | Left          |
 | ,                     | separator for tuples, records, others    | Right         |
+| ,>                    | separator for dependent pairs            | Right         |
 | &                     | separator for record types               | Right         |
+| &>                    | separator for dependent pair types       | Right         |
 | \|                    | separator for variants and variant types | Left          |
 |-----------------------|------------------------------------------|---------------|
 
@@ -211,6 +213,10 @@ Specifially, we want the following things:
       `Either` types must always be enclosed in parens.  But that's fine; the
       parens serve as a pun reminding the user that a pair is just a binary
       record with anonymous fields.
+
+  - The dependent pair operators `,>` and `&>` are little-used as of this
+    writing, so we arbitrarily dump them next to their non-dependent pair
+    variants `,` and `&`, discussed below.
 
   - The double colon `::` type-annotates an arbitrary expression without
     otherwise changing its meaning.  Since it can go anywhere, we make it looser

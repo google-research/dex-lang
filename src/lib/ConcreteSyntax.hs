@@ -61,8 +61,8 @@ data CSourceBlock'
 type CTopDecl = WithSrc CTopDecl'
 data CTopDecl'
   = CDecl LetAnn CDecl
-  | CData NameAndArgs -- Type constructor name and arguments
-      (Maybe Group) -- Optional class constraints
+  | CData SourceName -- Type constructor name
+      [Group] -- Arguments, including class constraints
       [NameAndArgs] -- Constructor names and argument sets
   | CInterface [Group] -- Superclasses
       NameAndArgs -- Class name and arguments
@@ -126,8 +126,10 @@ data Bin'
   = Juxtapose
   | EvalBinOp String
   | Ampersand
+  | DepAmpersand
   | IndexingDot
   | Comma
+  | DepComma
   | Colon
   | DoubleColon
   | Dollar
@@ -141,8 +143,10 @@ data Bin'
 interp_operator :: String -> Bin'
 interp_operator = \case
   "&"   -> Ampersand
+  "&>"  -> DepAmpersand
   "."   -> IndexingDot
   ","   -> Comma
+  ",>"  -> DepComma
   ":"   -> Colon
   "::"  -> DoubleColon
   "$"   -> Dollar
@@ -372,11 +376,11 @@ explicitCommand = do
 dataDef :: Parser CTopDecl
 dataDef = withSrc do
   keyWord DataKW
-  tyCon <- nameAndArgs
-  ifaces <- (lookAhead lBracket >> (Just <$> cGroupNoEqual)) <|> pure Nothing
+  tyName <- anyName
+  args <- many cGroupNoJuxtEqual
   sym "="
   dataCons <- onePerLine nameAndArgs
-  return $ CData tyCon ifaces dataCons
+  return $ CData tyName args dataCons
 
 interfaceDef :: Parser CTopDecl
 interfaceDef = withSrc do
@@ -509,9 +513,14 @@ cGroup :: Parser Group
 cGroup = makeExprParser (withSrc leafGroup) ops
 
 -- Like cGroup but does not allow juxtaposition or . at the top level
-cGroupNoJuxt :: Parser Group
-cGroupNoJuxt = makeExprParser (withSrc leafGroup) $
+cGroupNoJuxtDot :: Parser Group
+cGroupNoJuxtDot = makeExprParser (withSrc leafGroup) $
   withoutOp "space" $ withoutOp "." ops
+
+-- Like cGroup but does not allow juxtaposition or = at the top level
+cGroupNoJuxtEqual :: Parser Group
+cGroupNoJuxtEqual = makeExprParser (withSrc leafGroup) $
+  withoutOp "space" $ withoutOp "=" ops
 
 -- Like cGroup but does not allow square brackets `[]`, juxtaposition,
 -- or `=` at the top level
@@ -556,7 +565,7 @@ cGroupInBraces = optional separator >>= \case
 cLam :: Parser Group'
 cLam = do
   sym "\\"
-  bs <- many cGroupNoJuxt
+  bs <- many cGroupNoJuxtDot
   mayNotBreak $ sym "."
   body <- cBlock
   return $ CLambda bs body
@@ -564,7 +573,7 @@ cLam = do
 cFor :: Parser Group'
 cFor = do
   kw <- forKW
-  indices <- many cGroupNoJuxt
+  indices <- many cGroupNoJuxtDot
   mayNotBreak $ sym "."
   body <- cBlock
   return $ CFor kw indices body
@@ -700,7 +709,7 @@ leafGroupNoBrackets = do
     '%'  -> do
       name <- primName
       case strToPrimName name of
-        Just prim -> CPrim <$> traverse (const cGroupNoJuxt) prim
+        Just prim -> CPrim <$> traverse (const cGroupNoJuxtDot) prim
         Nothing   -> fail $ "Unrecognized primitive: " ++ name
     '#'  -> liftM2 CLabel labelPrefix fieldLabel
     _ | isDigit next -> (    CNat   <$> natLit
@@ -810,7 +819,9 @@ ops =
   -- tuples are internally represented curried, so this puts the new
   -- element in front.
   , [symOpR   ","]
+  , [symOpR  ",>"]
   , [symOpR   "&"]
+  , [symOpR  "&>"]
   , [symOpL   "|"]
   ] where
   juxtaposition = ("space", Expr.InfixL $ opWithSrc $ sc $> (binApp Juxtapose))

@@ -127,7 +127,7 @@ prettyVal val = case val of
       return $ pretty $ Newtype vty $ SumVal (toList types) t value
       where t = fromIntegral trep; value = payload !! t
     -- Pretty-print strings
-    Newtype (TypeCon "List" _ (DataDefParams [Word8Ty] _)) _ -> do
+    Newtype (TypeCon "List" _ (DataDefParams [(PlainArrow, Word8Ty)])) _ -> do
       s <- getDexString val
       return $ pretty $ "\"" ++ s ++ "\""
     Newtype (TypeCon _ dataDefName _) (Con (SumCon _ t e)) -> prettyData dataDefName t e
@@ -136,6 +136,11 @@ prettyVal val = case val of
     Newtype (TypeCon _ dataDefName _) e -> prettyData dataDefName 0 e
     SumAsProd _ _ _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
+  DepPair lhs rhs ty -> do
+    lhs' <- prettyVal lhs
+    rhs' <- prettyVal rhs
+    ty' <- prettyVal $ DepPairTy ty
+    return $ "(" <> lhs' <+> ",>" <+> rhs' <> ")" <+> "::" <+> ty'
   atom -> return $ prettyPrec atom LowestPrec
   where
     prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> Atom n -> m n (Doc ann)

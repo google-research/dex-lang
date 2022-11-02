@@ -134,16 +134,13 @@ sourceBlock' (CUnParseable eof s) = return $ UnParseable eof s
 topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
   topDecl' (CDecl ann d) = decl ann d
-  topDecl' (CData tyC classes constructors) = do
-    tyC' <- tyCon tyC
-    classes' <- case classes of
-      Nothing -> return []
-      (Just g) -> multiIfaceBinder g
+  topDecl' (CData name args constructors) = do
+    binders <- toNest . concat <$> mapM dataArg args
     constructors' <- mapM dataCon constructors
     return $ UDataDefDecl
-      (UDataDef tyC' (toNest classes') $
-        map (\(name, cons) -> (name, UDataDefTrail cons)) constructors')
-      (fromString $ fst tyC')
+      (UDataDef name binders $
+        map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
+      (fromString name)
       (toNest $ map (fromString . fst) constructors')
   topDecl' (CInterface supers self methods) = do
     supers' <- mapM expr supers
@@ -167,6 +164,13 @@ topDecl = dropSrc topDecl' where
     methods' <- mapM effectOpDef methods
     return $ UHandlerDecl (fromString effName) bodyTyArg' (toNest args')
       effs returnTy methods' (fromString hName)
+
+dataArg :: Group -> SyntaxM [(UAnnBinderArrow AtomNameC) 'VoidS 'VoidS]
+dataArg = \case
+  g@(WithSrc _ (CBracket Square _)) -> map classUAnnBinder <$> multiIfaceBinder g
+  arg -> do
+    binder <- optAnnotatedBinder $ (binOptR Colon) arg
+    return $ [plainUAnnBinder binder]
 
 -- This corresponds to tyConDef in the original parser.
 -- tyCon differs from dataCon in how they treat a binding without an
@@ -443,7 +447,11 @@ expr = propagateSrcE expr' where
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
       (EvalBinOp s) -> evalOp s
       Ampersand     -> evalOp "(&)"
+      DepAmpersand  -> do
+        lhs' <- tyOptPat lhs
+        UDepPairTy . (UDepPairType lhs') <$> expr rhs
       Comma         -> evalOp "(,)"
+      DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
       Pipe          -> evalOp "(|)"
       Equal         -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
       Question      -> throw SyntaxErr "Question mark separates labeled row elements, is not a standalone operator"

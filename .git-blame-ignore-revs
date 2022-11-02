@@ -1,0 +1,5 @@
+# Run this command to always ignore these in local `git blame`:
+# git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Formatted TopLevel.hs to 80 character width
+ef500cc06f96bddcc355d0e29945a3d48dd19867

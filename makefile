@@ -175,6 +175,18 @@ build-ffis: dexrt-llvm
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
+# This target is for CI, because it wants to be able to both run the
+# `dex` executable and load the `dex` Python package from the same
+# directory, without a needless recompile.
+build-ffis-and-exe: dexrt-llvm
+	$(STACK) build   $(STACK_FLAGS) --work-dir .stack-work-ffis \
+	 --flag dex:foreign --flag dex:optimized --force-dirty
+	$(STACK) install $(STACK_FLAGS) --work-dir .stack-work-ffis \
+	 --flag dex:foreign --flag dex:optimized --local-bin-path .
+	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --work-dir .stack-work-ffis --local-install-root))
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
+
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
 	$(dex) clean             # clear cache
@@ -197,7 +209,7 @@ example-names := \
   isomorphisms fluidsim \
   sgd psd kernelregression nn \
   quaternions manifold-gradients schrodinger tutorial \
-  latex linear-maps dither
+  latex linear-maps dither mcts
 # TODO: re-enable
 # fft vega-plotting
 
