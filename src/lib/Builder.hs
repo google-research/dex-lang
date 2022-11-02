@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
@@ -33,24 +34,25 @@ module Builder (
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
   emitTopLet, emitImpFunBinding, emitSpecialization, emitAtomRules,
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
-  extendImpCache, queryImpCache,
+  extendImpCache, queryImpCache, extendIxLoweredCache, queryIxLoweredCache,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
   extendObjCache, queryObjCache,
-  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
+  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv, emitLoweredFun,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   litValToPointerlessAtom, emitPtrLit,
   telescopicCapture, unpackTelescope,
-  applyRecon, applyReconAbs,
-  emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
+  applyRecon, applyReconAbs, applyIxMethod,
+  emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
   addTangent, updateAddAt, tangentBaseMonoidFor,
   buildEffLam, catMaybesE, runMaybeWhile,
   ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
   HoistingTopBuilder (..), liftTopBuilderHoisted,
-  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT, runDoubleBuilderT,
+  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT,
+  liftDoubleBuilderTNoEmissions, runDoubleBuilderT, toposortAnnVars
   ) where
 
 import Control.Applicative
@@ -62,7 +64,6 @@ import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
-import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import GHC.Stack
 
@@ -137,56 +138,84 @@ emitAtomToName hint x = emitHinted hint (Atom x)
 -- top-level function definitions, from within a local context. The operation
 -- may fail, returning `Nothing`, because the emission might mention local
 -- variables that can't be hoisted the top level.
-class (EnvReader m, MonadFail1 m) => HoistingTopBuilder m where
+class (EnvReader m, MonadFail1 m) => HoistingTopBuilder frag m | m -> frag where
   emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
-                 => Abs TopEnvFrag e n -> m n (Maybe (e n))
+                 => Abs frag e n -> m n (Maybe (e n))
+  canHoistToTop :: HoistableE e => e n -> m n Bool
 
 liftTopBuilderHoisted
-  :: (HoistingTopBuilder m, SubstE Name e, SinkableE e, HoistableE e)
+  :: (EnvReader m, SubstE Name e, SinkableE e, HoistableE e)
   => (forall l. (Mut l, DExt n l) => TopBuilderM l (e l))
-  -> m n (Maybe (e n))
+  -> m n (Abs TopEnvFrag e n)
 liftTopBuilderHoisted cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
-  emitHoistedEnv $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
+  return $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
 
-newtype DoubleBuilderT (m::MonadKind) (n::S) (a:: *) =
-  DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env TopEnvFrag BuilderEmissions m n a }
+newtype DoubleBuilderT (topEmissions::B) (m::MonadKind) (n::S) (a:: *) =
+  DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env topEmissions BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader, MonadIO, Catchable, MonadReader r)
+           , CtxReader, MonadIO, Catchable, MonadReader r)
 
-type DoubleBuilder = DoubleBuilderT HardFailM
+deriving instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m)
+                  => ScopeReader (DoubleBuilderT frag m)
+
+type DoubleBuilder = DoubleBuilderT TopEnvFrag HardFailM
+
+
+liftDoubleBuilderTNoEmissions
+  :: (EnvReader m, Fallible m') => DoubleBuilderT UnitB m' n a -> m n (m' a)
+liftDoubleBuilderTNoEmissions cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return do
+    Abs UnitB (DoubleInplaceTResult REmpty (LiftE ans)) <-
+      -- XXX: it's safe to use `unsafeCoerceM1` here. We don't need the rank-2
+      -- trick because we've specialized on the `UnitB` case, so there can't be
+      -- any top emissions.
+      runDoubleInplaceT env $ unsafeCoerceM1 $ runDoubleBuilderT' $ LiftE <$> cont
+    return ans
 
 -- TODO: do we really need to play these rank-2 games here?
 liftDoubleBuilderT
-  :: (EnvReader m, Fallible m', SinkableE e, SubstE Name e)
-  => (forall l. DExt n l => DoubleBuilderT m' l (e l))
-  -> m n (m' (Abs TopEnvFrag e n))
+  :: ( EnvReader m, Fallible m', SinkableE e, SubstE Name e
+     , ExtOutMap Env frag, OutFrag frag)
+  => (forall l. DExt n l => DoubleBuilderT frag m' l (e l))
+  -> m n (m' (Abs frag e n))
 liftDoubleBuilderT cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
   return $ runDoubleBuilderT env cont
 
 runDoubleBuilderT
-  :: (Distinct n, Fallible m, SinkableE e, SubstE Name e)
+  :: ( Distinct n, Fallible m, SinkableE e, SubstE Name e
+     , ExtOutMap Env frag, OutFrag frag)
   => Env n
-  -> (forall l. DExt n l => DoubleBuilderT m l (e l))
-  -> m (Abs TopEnvFrag e n)
+  -> (forall l. DExt n l => DoubleBuilderT frag m l (e l))
+  -> m (Abs frag e n)
 runDoubleBuilderT env cont = do
   Abs envFrag (DoubleInplaceTResult REmpty e) <-
     runDoubleInplaceT env $ runDoubleBuilderT' cont
   return $ Abs envFrag e
 
-instance Fallible m => HoistingTopBuilder (DoubleBuilderT m) where
+instance (ExtOutMap Env f, OutFrag f, SubstB Name f, HoistableB f, Fallible m)
+  => HoistingTopBuilder f (DoubleBuilderT f m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
+  {-# INLINE emitHoistedEnv #-}
+  canHoistToTop e = DoubleBuilderT $ canHoistToTopDoubleInplaceT e
+  {-# INLINE canHoistToTop #-}
 
-instance Monad m => EnvReader (DoubleBuilderT m) where
+instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m) => EnvReader (DoubleBuilderT frag m) where
   unsafeGetEnv = DoubleBuilderT $ liftDoubleInplaceT $ unsafeGetEnv
 
-instance Fallible m => Builder (DoubleBuilderT m) where
+instance ( SubstB Name frag, HoistableB frag, OutFrag frag
+         , ExtOutMap Env frag, Fallible m)
+        => Builder (DoubleBuilderT frag m) where
   emitDecl hint ann e = DoubleBuilderT $ liftDoubleInplaceT $ runBuilderT' $ emitDecl hint ann e
 
-instance Fallible m => ScopableBuilder (DoubleBuilderT m) where
+instance ( SubstB Name frag, HoistableB frag, OutFrag frag
+         , ExtOutMap Env frag, Fallible m)
+         => ScopableBuilder (DoubleBuilderT frag m) where
   -- TODO: find a safe API for DoubleInplaceT sufficient to implement this
   buildScoped cont = DoubleBuilderT do
     (ans, decls) <- UnsafeMakeDoubleInplaceT $
@@ -204,7 +233,9 @@ instance Fallible m => ScopableBuilder (DoubleBuilderT m) where
     return ans
   {-# INLINE buildScoped #-}
 
-instance Fallible m => EnvExtender (DoubleBuilderT m) where
+instance ( SubstB Name frag, HoistableB frag, OutFrag frag
+         , ExtOutMap Env frag, Fallible m)
+         => EnvExtender (DoubleBuilderT frag m) where
   refreshAbs ab cont = DoubleBuilderT do
     (ans, decls) <- UnsafeMakeDoubleInplaceT do
       StateT \s@(topScope, _) -> do
@@ -216,8 +247,11 @@ instance Fallible m => EnvExtender (DoubleBuilderT m) where
     return ans
   {-# INLINE refreshAbs #-}
 
-instance (SinkableV v, HoistingTopBuilder m) => HoistingTopBuilder (SubstReaderT v m i) where
+instance (SinkableV v, HoistingTopBuilder f m) => HoistingTopBuilder f (SubstReaderT v m i) where
   emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
+  {-# INLINE emitHoistedEnv #-}
+  canHoistToTop e = SubstReaderT $ lift $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
 
 -- === Top-level builder class ===
 
@@ -303,6 +337,20 @@ queryImpCache :: EnvReader m => AtomName n -> m n (Maybe (ImpFunName n))
 queryImpCache v = do
   cache <- impCache <$> getCache
   return $ lookupEMap cache v
+
+extendIxLoweredCache :: TopBuilder m => AtomName n -> AtomName n -> m n ()
+extendIxLoweredCache specialized lowered =
+  extendCache $ mempty { ixLoweredCache = eMapSingleton specialized lowered }
+
+queryIxLoweredCache :: EnvReader m => AtomName n -> m n (Maybe (AtomName n))
+queryIxLoweredCache v = do
+  cache <- ixLoweredCache <$> getCache
+  return $ lookupEMap cache v
+
+emitLoweredFun :: (Mut n, TopBuilder m) => NameHint -> NaryLamExpr n -> m n (AtomName n)
+emitLoweredFun hint f = do
+  fTy <- naryLamExprType f
+  emitBinding hint $ AtomNameBinding $ TopFunBound fTy (LoweredTopFun f)
 
 extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> AtomName n -> m n ()
 extendSpecializationCache specialization f =
@@ -527,6 +575,13 @@ instance (SinkableE e, HoistableState e, ScopableBuilder m) => ScopableBuilder (
     let s'' = hoistState s decls s'
     return (Abs decls e, s'')
   {-# INLINE buildScoped #-}
+
+instance (SinkableE e, HoistableState e, HoistingTopBuilder frag m)
+  => HoistingTopBuilder frag (StateT1 e m) where
+  emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
+  {-# INLINE emitHoistedEnv #-}
+  canHoistToTop e = lift11 $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
 
 instance Builder m => Builder (MaybeT1 m) where
   emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
@@ -923,11 +978,6 @@ emitRunWriter hint accTy bm body = do
   lam <- buildEffLam Writer hint accTy \h ref -> body h ref
   liftM Var $ emit $ Hof $ RunWriter Nothing bm lam
 
-mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
-mCombine monoidDict x y = do
-  method <- projMethod "mcombine" monoidDict
-  naryApp method [x, y]
-
 emitRunState
   :: (Emits n, ScopableBuilder m)
   => NameHint -> Atom n
@@ -1288,48 +1338,64 @@ unsafePtrLoad x = do
 
 -- === index set type class ===
 
--- XXX: the internal versions of `ordinal`, `unsafeFromOrdinal` etc. work with
--- `IdxRepTy` (whereas the user-facing versions work with `Nat`)
+-- XXX: it's important that we do the reduction here, because we need the
+-- property that if we call this with a simplified dict, we only produce
+-- simplified decls.
+applyIxMethod :: (Builder m, Emits n) => Atom n -> IxMethod -> [Atom n] -> m n (Atom n)
+applyIxMethod dict method args = case dict of
+  DictCon (IxFin n) -> case method of
+    Size -> do
+      [] <- return args
+      return n                       -- result : Nat
+    Ordinal -> do
+      [ix] <- return args            -- ix : Fin n
+      return $ unwrapBaseNewtype ix  -- result : Nat
+    UnsafeFromOrdinal -> do
+      [ix] <- return args                     -- ix : Nat
+      return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
+  DictCon (ExplicitMethods d params) -> do
+    SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
+    let f = fs !! fromEnum method
+    let args' = case method of
+          Size -> params ++ [UnitVal]
+          _    -> params ++ args
+    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName f
+    Just fSimpName <- queryIxLoweredCache f
+    TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fSimpName
+    emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
+  _ -> do
+    methodImpl <- emitOp $ ProjMethod dict (fromEnum method)
+    naryApp methodImpl args
 
-projMethod :: (Builder m, Emits n) => String -> Atom n -> m n (Atom n)
-projMethod methodName dict = do
-  getType dict >>= \case
-    DictTy (DictType _ className _) -> do
-      methodIdx <- getMethodIndex className methodName
-      emitOp $ ProjMethod dict methodIdx
-    _ -> error $ "Not a dict: " ++ pprint dict
+-- This works with `Nat` instead of `IndexRepTy` because it's used alongside
+-- user-defined instances.
+projectIxFinMethod :: EnvReader m => IxMethod -> Atom n -> m n (Atom n)
+projectIxFinMethod method n = liftBuilder do
+  case method of
+    Size -> return n  -- result : Nat
+    Ordinal -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
+      return $ unwrapBaseNewtype (Var ix) -- result : Nat
+    UnsafeFromOrdinal -> buildPureLam noHint PlainArrow NatTy \ix ->
+      return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
 
+-- XXX: these internal versions of `ordinal`, `unsafeFromOrdinal` and
+-- `indexSetSize`. work with `IdxRepTy` (whereas the user-facing versions work
+-- with `Nat`)
 unsafeFromOrdinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
-unsafeFromOrdinal (IxType _ dict) i = do
-  f <- projMethod "unsafe_from_ordinal" dict
-  app f (repToNat i)
+unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [repToNat i]
 
 ordinal :: forall m n. (Builder m, Emits n) => IxType n -> Atom n -> m n (Atom n)
 ordinal (IxType _ dict) idx = do
-  f <- projMethod "ordinal" dict
-  unwrapBaseNewtype <$> app f idx
+  unwrapBaseNewtype <$> applyIxMethod dict Ordinal [idx]
 
 indexSetSize :: (Builder m, Emits n) => IxType n -> m n (Atom n)
-indexSetSize (IxType _ dict) = unwrapBaseNewtype <$> projMethod "size" dict
+indexSetSize (IxType _ dict) = do
+  sizeNat <- applyIxMethod dict Size []
+  return $ unwrapBaseNewtype sizeNat
 
 repToNat :: Atom n -> Atom n
 repToNat x = Con $ Newtype NatTy x
 {-# INLINE repToNat #-}
-
--- This works with `Nat` instead of `IndexRepTy` because it's used alongside
--- user-defined instances.
-projectIxFinMethod :: EnvReader m => Int -> Atom n -> m n (Atom n)
-projectIxFinMethod methodIx n = liftBuilder do
-  case methodIx of
-    -- size
-    0 -> return n  -- return type is Nat, not IdxRepTy
-    -- ordinal
-    1 -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
-           return $ ProjectElt (UnwrapBaseNewtype NE.:| []) ix  -- return type is Nat, not IdxRepTy
-    -- unsafe_from_ordinal
-    2 -> buildPureLam noHint PlainArrow NatTy \ix ->
-           return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
-    _ -> error "Ix only has three methods"
 
 -- === pseudo-prelude ===
 

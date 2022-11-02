@@ -168,6 +168,9 @@ data LamExpr (n::S) where
 
 type IxDict = Atom
 
+data IxMethod = Size | Ordinal | UnsafeFromOrdinal
+     deriving (Show, Generic, Enum, Bounded, Eq)
+
 data IxType (n::S) =
   IxType { ixTypeType :: Type n
          , ixTypeDict :: IxDict n }
@@ -289,6 +292,13 @@ data DictExpr (n::S) =
  | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (Atom n)
+   -- Used for dicts defined by top-level functions, which may take extra data parameters
+   -- TODO: consider bundling `(DictType n, [AtomName n])` as a top-level
+   -- binding for some `Name DictNameC` to make the IR smaller.
+   -- TODO: the function atoms should be names. We could enforce that syntactically but then
+   -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
+   -- top function names.
+ | ExplicitMethods (Name SpecializedDictNameC n) [Atom n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -394,8 +404,17 @@ emptyImportStatus = ImportStatus mempty mempty
 
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
+
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
+    -- This holds the result of lowering the `IxMethodSpecialization`
+    -- specialization requests to a simplified/lowered function. The key is the
+    -- name of the specialization "request" and the value is the name of the
+    -- simplified/lowered version.
+  , ixLoweredCache :: EMap AtomName AtomName n
+    -- This is to hold the results of translating specialized top-level
+    -- functions. TODO: `Cache` might not be the best term for this, since we
+    -- sometimes *require* that the cache entry exist.
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName FunObjCodeName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -450,6 +469,7 @@ data Binding (c::C) (n::S) where
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
+  SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
 deriving instance Show (Binding c n)
 
 data EffectOpDef (n::S) where
@@ -538,6 +558,24 @@ instance SubstE AtomSubstVal EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
+data SpecializedDictDef n =
+  -- dict type abstracted over local params, method names
+  SpecializedDictDef (Abs (Nest Binder) DictType n) [AtomName n]
+  deriving (Show, Generic)
+
+instance GenericE SpecializedDictDef where
+  type RepE SpecializedDictDef = PairE (Abs (Nest Binder) DictType) (ListE AtomName)
+  fromE (SpecializedDictDef ab methods) = ab `PairE` ListE methods
+  {-# INLINE fromE #-}
+  toE   (ab `PairE` ListE methods) = SpecializedDictDef ab methods
+  {-# INLINE toE #-}
+
+instance SinkableE      SpecializedDictDef
+instance HoistableE     SpecializedDictDef
+instance AlphaEqE       SpecializedDictDef
+instance AlphaHashableE SpecializedDictDef
+instance SubstE Name    SpecializedDictDef
+
 data AtomBinding (n::S) =
    LetBound    (DeclBinding   n)
  | LamBound    (LamBinding    n)
@@ -550,18 +588,26 @@ data AtomBinding (n::S) =
    deriving (Show, Generic)
 
 data TopFunBinding (n::S) =
-   UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
- | SpecializedTopFun (SpecializationSpec n) -- Original (unspecialized) function, specialization args
- | SimpTopFun          (NaryLamExpr n)
- | FFITopFun           (ImpFunName n)
+   -- This is for functions marked `@noinline`, before we've seen their use
+   -- sites and discovered what arguments we need to specialize on.
+   AwaitingSpecializationArgsTopFun Int (Atom n)
+   -- Specification of a specialized function. We still need to simplify, lower,
+   -- and translate-to-Imp this function. When we do that we'll store the result
+   -- in the `impCache`. Or, if we're dealing with ix method specializations, we
+   -- won't go all the way to Imp and we'll store the result in
+   -- `ixLoweredCache`.
+ | SpecializedTopFun (SpecializationSpec n)
+ | LoweredTopFun     (NaryLamExpr n)
+ | FFITopFun         (ImpFunName n)
    deriving (Show, Generic)
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-  -- The additional binders are for "data" components of the specialization types, like
-  -- `n` in `Fin n`.
-  AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
-  deriving (Show, Generic)
+   -- The additional binders are for "data" components of the specialization types, like
+   -- `n` in `Fin n`.
+   AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
+ | IxMethodSpecialization IxMethod (Abs (Nest Binder) IxDict n)
+   deriving (Show, Generic)
 
 atomBindingType :: Binding AtomNameC n -> Type n
 atomBindingType (AtomNameBinding b) = case b of
@@ -1414,21 +1460,24 @@ instance SubstE AtomSubstVal DictType
 
 instance GenericE DictExpr where
   type RepE DictExpr =
-    EitherE4
+    EitherE5
  {- InstanceDict -}      (PairE InstanceName (ListE Atom))
  {- InstantiatedGiven -} (PairE Atom (ListE Atom))
  {- SuperclassProj -}    (PairE Atom (LiftE Int))
  {- IxFin -}             (Atom)
+ {- ExplicitMethods -}   (Name SpecializedDictNameC `PairE` ListE Atom)
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
+    ExplicitMethods sd args -> Case4 (sd `PairE` ListE args)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x -> IxFin x
+    Case4 (sd `PairE` ListE args) -> ExplicitMethods sd args
     _ -> error "impossible"
 
 instance SinkableE           DictExpr
@@ -1441,6 +1490,7 @@ instance SubstE AtomSubstVal DictExpr
 instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec AtomName
+    `PairE` EMap AtomName AtomName
     `PairE` EMap AtomName ImpFunName
     `PairE` EMap ImpFunName FunObjCodeName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
@@ -1448,13 +1498,13 @@ instance GenericE Cache where
                    `PairE` LiftE FileHash
                    `PairE` ListE ModuleName
                    `PairE` ModuleName)
-  fromE (Cache x y z parseCache evalCache) =
-    x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE`
+  fromE (Cache x y z w parseCache evalCache) =
+    x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE`
       ListE [LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
              | (sourceName, ((hashVal, deps), result)) <- M.toList evalCache ]
   {-# INLINE fromE #-}
-  toE   (x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE` ListE evalCache) =
-    Cache x y z parseCache
+  toE   (x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE` ListE evalCache) =
+    Cache x y z w parseCache
       (M.fromList
        [(sourceName, ((hashVal, deps), result))
        | LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
@@ -1468,13 +1518,13 @@ instance SubstE Name Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty mempty mempty mempty
+  mempty = Cache mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 x3 x4 x5 <> Cache y1 y2 y3 y4 y5 =
-    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5)
+  Cache x1 x2 x3 x4 x5 x6 <> Cache y1 y2 y3 y4 y5 y6 =
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5) (x6<>y6)
 
 instance GenericB LamBinder where
   type RepB LamBinder =         LiftB (PairE Type (LiftE Arrow))
@@ -1761,21 +1811,21 @@ instance AlphaHashableE AtomBinding
 
 instance GenericE TopFunBinding where
   type RepE TopFunBinding = EitherE4
-    (LiftE Int `PairE` Atom)  -- UnspecializedTopFun
+    (LiftE Int `PairE` Atom)  -- AwaitingSpecializationArgsTopFun
     SpecializationSpec        -- SpecializedTopFun
-    NaryLamExpr               -- SimpTopFun
+    NaryLamExpr               -- LoweredTopFun
     ImpFunName                -- FFITopFun
   fromE = \case
-    UnspecializedTopFun n x  -> Case0 $ PairE (LiftE n) x
+    AwaitingSpecializationArgsTopFun n x  -> Case0 $ PairE (LiftE n) x
     SpecializedTopFun x -> Case1 x
-    SimpTopFun        x -> Case2 x
+    LoweredTopFun     x -> Case2 x
     FFITopFun         x -> Case3 x
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (PairE (LiftE n) x) -> UnspecializedTopFun n x
+    Case0 (PairE (LiftE n) x) -> AwaitingSpecializationArgsTopFun n x
     Case1 x                   -> SpecializedTopFun x
-    Case2 x                   -> SimpTopFun        x
+    Case2 x                   -> LoweredTopFun     x
     Case3 x                   -> FFITopFun         x
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1789,14 +1839,20 @@ instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
-  type RepE SpecializationSpec = PairE AtomName (Abs (Nest Binder) (ListE Type))
-  fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
+  type RepE SpecializationSpec = EitherE2
+         (PairE AtomName (Abs (Nest Binder) (ListE Type)))
+         (PairE (LiftE IxMethod) (Abs (Nest Binder) IxDict))
+  fromE (AppSpecialization fname (Abs bs args))    = Case0 (PairE fname (Abs bs args))
+  fromE (IxMethodSpecialization method (Abs bs d)) = Case1 (PairE (LiftE method) (Abs bs d))
   {-# INLINE fromE #-}
-  toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
+  toE (Case0 (PairE fname (Abs bs args)))       = AppSpecialization fname (Abs bs args)
+  toE (Case1 (PairE (LiftE method) (Abs bs d))) = IxMethodSpecialization method (Abs bs d)
+  toE _ = error "impossible"
   {-# INLINE toE #-}
 
 instance HasNameHint (SpecializationSpec n) where
   getNameHint (AppSpecialization f _) = getNameHint f
+  getNameHint (IxMethodSpecialization ixMethod _) = getNameHint $ show ixMethod
 
 instance SubstE AtomSubstVal SpecializationSpec where
   substE env (AppSpecialization f ab) = do
@@ -1805,6 +1861,8 @@ instance SubstE AtomSubstVal SpecializationSpec where
                SubstVal (Var v) -> v
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
+  substE env (IxMethodSpecialization ixMethod ab) =
+    IxMethodSpecialization ixMethod $ substE env ab
 
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
@@ -1845,7 +1903,7 @@ instance Color c => GenericE (Binding c) where
           (ClassDef)
           (InstanceDef)
           (ClassName `PairE` LiftE Int `PairE` Atom))
-      (EitherE7
+      (EitherE8
           (ImpFunction)
           (LiftE FunObjCode `PairE` LinktimeNames)
           (Module)
@@ -1853,6 +1911,7 @@ instance Color c => GenericE (Binding c) where
           (EffectDef)
           (HandlerDef)
           (EffectOpDef)
+          (SpecializedDictDef)
       )
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
@@ -1869,6 +1928,7 @@ instance Color c => GenericE (Binding c) where
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
+    SpecializedDictBinding def          -> Case1 $ Case7 $ def
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -1886,6 +1946,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
+    Case1 (Case7 def)                                       -> fromJust $ tryAsColor $ SpecializedDictBinding def
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2153,6 +2214,7 @@ instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
 
 instance Hashable Projection
+instance Hashable IxMethod
 
 instance Store (Atom n)
 instance Store (Expr n)
@@ -2200,6 +2262,8 @@ instance Store (SerializedEnv n)
 instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
 instance Store Projection
+instance Store IxMethod
+instance Store (SpecializedDictDef n)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

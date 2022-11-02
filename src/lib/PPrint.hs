@@ -231,6 +231,7 @@ instance Pretty (DictExpr n) where
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
+    ExplicitMethods v args -> "ExplicitMethods" <+> p v <+> p args
 
 instance Pretty (DictType n) where
   pretty (DictType classSourceName _ params) =
@@ -455,14 +456,19 @@ instance Pretty (AtomBinding n) where
 
 instance Pretty (TopFunBinding n) where
   pretty = \case
-    UnspecializedTopFun _ f -> p f
+    AwaitingSpecializationArgsTopFun _ f -> p f
     SpecializedTopFun f -> p f
-    SimpTopFun f -> p f
+    LoweredTopFun     f -> p f
     FFITopFun  f -> p f
 
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
     "Specialization" <+> p f <+> p bs <+> p args
+  pretty (IxMethodSpecialization method (Abs bs d)) =
+    "IxMethodSpecialization" <+> p method <+> p bs <+> p d
+
+instance Pretty IxMethod where
+  pretty method = p $ show method
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
@@ -493,6 +499,7 @@ instance Pretty (Binding s n) where
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
     EffectOpBinding _ -> "<effect-op-binding>"
+    SpecializedDictBinding _ -> "<specialized-dict-binding>"
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
@@ -825,7 +832,7 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =

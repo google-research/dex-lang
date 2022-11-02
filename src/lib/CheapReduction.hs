@@ -234,6 +234,7 @@ instance CheaplyReducibleE DictExpr Atom where
       cheapReduceE (App f xs) <|> justSubst
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
+    ExplicitMethods _ _ -> justSubst
     where justSubst = DictCon <$> substM d
 
 instance CheaplyReducibleE DataDefParams DataDefParams where

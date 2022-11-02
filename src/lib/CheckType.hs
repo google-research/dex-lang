@@ -172,6 +172,7 @@ instance Color c => CheckableE (Binding c) where
     EffectBinding     eff               -> EffectBinding     <$> substM eff
     HandlerBinding    h                 -> HandlerBinding    <$> substM h
     EffectOpBinding   op                -> EffectOpBinding   <$> substM op
+    SpecializedDictBinding def          -> SpecializedDictBinding <$> substM def
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -185,18 +186,15 @@ instance CheckableE AtomBinding where
     TopFunBound ty f -> do
       ty' <- substM ty
       TopFunBound ty' <$> case f of
-        UnspecializedTopFun n f' -> do
+        AwaitingSpecializationArgsTopFun n f' -> do
           f'' <- checkTypeE (naryPiTypeAsType ty') f'
-          return $ UnspecializedTopFun n f''
+          return $ AwaitingSpecializationArgsTopFun n f''
         SpecializedTopFun s -> do
            specializedTy <- specializedFunType =<< substM s
            matches <- alphaEq ty' specializedTy
            unless matches $ throw TypeErr "Specialization args don't match function type"
            substM f
-        SimpTopFun lam -> do
-          lam' <- substM lam
-          dropSubst $ checkNaryLamExpr lam' ty'
-          return $ SimpTopFun lam'
+        LoweredTopFun f' -> LoweredTopFun <$> substM f'
         FFITopFun name -> do
           _ <- checkFFIFunTypeM ty'
           FFITopFun <$> substM name
@@ -424,6 +422,21 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
+  ExplicitMethods d args -> do
+    SpecializedDictBinding def <- lookupEnv =<< substM d
+    SpecializedDictDef (Abs bs dictTy) methodFunNames <- return def
+    args' <- mapM substM args
+    dictTy'@(DictType _ className params) <- applySubst (bs @@> map SubstVal args') dictTy
+    ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
+    forMZipped_ methodTys methodFunNames \(MethodType _ methodTy) methodFunName -> do
+      reqTy <- checkedApplyNaryAbs (Abs pbs methodTy) params
+      let extendedArgs = case reqTy of
+            Pi _ -> args
+            _ -> args ++ [UnitVal]
+      methodFunTy <- getType $ Var methodFunName
+      actualTy  <- checkApp methodFunTy extendedArgs
+      checkAlphaEq reqTy actualTy
+    return $ DictTy dictTy'
 
 instance HasType DictExpr where
   getTypeE e = dictExprType e
@@ -511,18 +524,6 @@ typeCheckPrimCon con = case con of
         def <- lookupDataDef defName
         cons <- checkedInstantiateDataDef def params
         e |: dataDefRep cons
-      DictTy (DictType _ clsName allParams) -> do
-        ClassDef _ _ pbs sbs methodTys <- lookupClassDef clsName
-        let (params, superclasses) = splitAt (nestLength pbs) allParams
-        Abs sbs' methodTys' <- checkedApplyNaryAbs (Abs pbs $ Abs sbs $ ListE methodTys) params
-        -- TODO: Check that this subst is well typed
-        ListE methodTys'' <- applySubst (sbs' @@> (SubstVal <$> superclasses)) methodTys'
-        thunkedMethodTys <- forM methodTys'' \(MethodType _ mty) -> case mty of
-          Pi _ -> return mty
-          _    -> do
-            Abs b mty' <- toConstAbs mty
-            return $ Pi $ PiType (PiBinder b UnitTy PlainArrow) Pure mty'
-        e |: ProdTy thunkedMethodTys
       _ -> error $ "Unsupported newtype: " ++ pprint ty
     return ty'
   BaseTypeRef p -> do
@@ -948,8 +949,8 @@ checkTabApp tabTy xs = go tabTy $ toList xs
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
 
-checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
-checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
+_checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
+_checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
 
 asNaryPiType :: Type n -> Maybe (NaryPiType n)
 asNaryPiType ty = case ty of

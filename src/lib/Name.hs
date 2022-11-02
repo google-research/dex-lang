@@ -18,7 +18,7 @@ module Name (
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
   DoubleInplaceT (..), liftDoubleInplaceT,
-  emitDoubleInplaceTHoisted, unsafeEmitDoubleInplaceTHoisted,
+  emitDoubleInplaceTHoisted, canHoistToTopDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
   runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -74,7 +74,7 @@ module Name (
   WrapE (..), WrapB (..),
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames,
-  unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
+  unsafeCoerceE, unsafeCoerceM1, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs,
@@ -1042,6 +1042,7 @@ instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
 instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
+instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1887,6 +1888,14 @@ emitDoubleInplaceTHoisted emission = do
     else
       return Nothing
 
+canHoistToTopDoubleInplaceT
+  :: ( Monad m, ExtOutMap b d1, OutFrag d1
+     , ExtOutMap b d2, OutFrag d2, HoistableE e)
+  => e n -> DoubleInplaceT b d1 d2 m n Bool
+canHoistToTopDoubleInplaceT e = do
+  Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
+  return $ R.containedIn (freeVarsE e) topScopeFrag
+
 unsafeEmitDoubleInplaceTHoisted
   :: ( Monad m, ExtOutMap b d1, OutFrag d1
      , ExtOutMap b d2, OutFrag d2
@@ -1968,6 +1977,7 @@ instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
 instance Color HandlerNameC    where getColorRep = HandlerNameC
+instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -1988,6 +1998,7 @@ interpretColor c cont = case c of
   EffectNameC     -> cont $ ColorProxy @EffectNameC
   EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
   HandlerNameC    -> cont $ ColorProxy @HandlerNameC
+  SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
@@ -2149,6 +2160,12 @@ instance SinkableB UnitB where
 instance ProvesExt  UnitB where
 instance BindsNames UnitB where
   toScopeFrag UnitB = id
+
+instance OutFrag UnitB where
+  emptyOutFrag = UnitB
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags _ UnitB UnitB = UnitB
+  {-# INLINE catOutFrags #-}
 
 instance FromName v => SubstB v UnitB where
   substB env UnitB cont = cont env UnitB
@@ -2524,6 +2541,7 @@ data C =
   | EffectNameC
   | EffectOpNameC
   | HandlerNameC
+  | SpecializedDictNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 
@@ -3160,6 +3178,10 @@ unsafeCoerceB = TrulyUnsafe.unsafeCoerce
 unsafeCoerceVC :: forall c' (v::V) c o. v c o -> v c' o
 unsafeCoerceVC = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceVC #-}
+
+unsafeCoerceM1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
+unsafeCoerceM1 = TrulyUnsafe.unsafeCoerce
+{-# NOINLINE [1] unsafeCoerceM1 #-}
 
 -- === instances ===
 

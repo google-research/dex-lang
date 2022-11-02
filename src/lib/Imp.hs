@@ -24,11 +24,10 @@ import GHC.Exts (inline)
 import Err
 import MTL1
 import Name
--- If you want to touch Ix methods, use the *FromSimp variants defined in this module
-import Builder hiding (unsafeFromOrdinal, ordinal, indexSetSize)
+import Builder
 import Syntax
 import CheckType (CheckableE (..))
-import Lower (IxDestBlock)
+import Lower (DestBlock)
 import LabeledItems
 import QueryType
 import Util (enumerate, SnocList (..), unsnoc, forMFilter)
@@ -45,7 +44,7 @@ type PtrBinder = IBinder
 -- TODO: make it purely a function of the type and avoid the AtomRecon
 blockToImpFunction :: EnvReader m
               => Backend -> CallingConvention
-              -> IxDestBlock n
+              -> DestBlock n
               -> m n (ImpFunctionWithRecon n)
 blockToImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc absBlock
@@ -121,33 +120,31 @@ ccUnpackActuals cc actual = case cc of
 
 toImpExportedFunction :: EnvReader m
                       => ExportCC
-                      -> Abs (Nest Binder) IxDestBlock n
+                      -> Abs (Nest Binder) DestBlock n
                       -> (Abs (Nest IBinder) (ListE Block) n)
                       -> m n (ImpFunction n)
-toImpExportedFunction cc def@(Abs bs (Abs ixDecls (Abs d body))) (Abs baseArgBs argRecons) = liftImpM do
+toImpExportedFunction cc def@(Abs bs (Abs d body)) (Abs baseArgBs argRecons) = liftImpM do
   -- XXX: We assume that makeDest is deterministic in here! We first run it outside of
   -- the Imp function to infer the set of arguments, and then once again inside the
   -- Imp function to get the destination atom. We could pass it around, but it would have
   -- been more complicated.
-  ptrFormals <- refreshAbs def \_ def' -> do
-    refreshAbs def' \_ (Abs (_:>RawRefTy resTy') _) -> do
-      -- WARNING! This ties the makeDest implementation to the C API expected in export.
-      -- In particular, every array has to be backend by a single pointer and pairs
-      -- should be traversed left-to-right.
-      AbsPtrs _ ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
-      return $ ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
+  ptrFormals <- refreshAbs def \_ (Abs (_:>RawRefTy resTy') _) -> do
+    -- WARNING! This ties the makeDest implementation to the C API expected in export.
+    -- In particular, every array has to be backend by a single pointer and pairs
+    -- should be traversed left-to-right.
+    AbsPtrs _ ptrInfo <- makeDest (LLVM, CPU, Unmanaged) resTy'
+    return $ ptrInfo <&> \(DestPtrInfo bt _) -> (noHint, PtrType bt)
   let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
   dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
     (args, ptrs) <- ccUnpackActuals ccCtx ccActuals
     argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
       traverse (translateBlock Nothing) $ fromListE argRecons
-    extendSubst (bs @@> map SubstVal argAtoms) $
-      translateDeclNest ixDecls do
-        let RawRefTy dTy = binderType d
-        AbsPtrs resDestAbsPtrs _ <- makeDest (LLVM, CPU, Unmanaged) =<< substM dTy
-        resDest <- applyNaryAbs resDestAbsPtrs ptrs
-        extendSubst (d @> SubstVal resDest) $
-          translateBlock Nothing body $> []
+    extendSubst (bs @@> map SubstVal argAtoms) do
+      let RawRefTy dTy = binderType d
+      AbsPtrs resDestAbsPtrs _ <- makeDest (LLVM, CPU, Unmanaged) =<< substM dTy
+      resDest <- applyNaryAbs resDestAbsPtrs ptrs
+      extendSubst (d @> SubstVal resDest) $
+        translateBlock Nothing body $> []
 
 {-# SCC toImpExportedFunction #-}
 
@@ -290,16 +287,15 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention
-                  -> IxDestBlock i
+                  -> DestBlock i
                   -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs ixs (Abs (destb:>destTy) body)) = do
-  ab  <- buildScopedImp $
-    translateDeclNest ixs do
-      dest <- case destTy of
-        RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
-        _ -> error "Expected a reference type for body destination"
-      extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
-      destToAtom dest
+translateTopLevel cc (Abs (destb:>destTy) body) = do
+  ab  <- buildScopedImp do
+    dest <- case destTy of
+      RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
+      _ -> error "Expected a reference type for body destination"
+    extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
+    destToAtom dest
   refreshAbs ab \decls resultAtom -> do
     (results, recon) <- buildRecon decls resultAtom
     let funImpl = Abs Empty $ ImpBlock decls results
@@ -348,13 +344,15 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
           scalarArgs <- liftM toList $ mapM fromScalarAtom xs
           results <- impCall v' scalarArgs
           restructureScalarOrPairType resultTy results
-        TopFunBound piTy (SpecializedTopFun _) -> do
+        TopFunBound piTy (SpecializedTopFun specializationSpec) -> do
           if length (toList xs') /= numNaryPiArgs piTy
             then notASimpExpr
-            else do
-              Just fImp <- queryImpCache v
-              result <- emitCall piTy fImp $ toList xs
-              returnVal result
+            else case specializationSpec of
+              AppSpecialization _ _ -> do
+                Just fImp <- queryImpCache v
+                result <- emitCall piTy fImp $ toList xs
+                returnVal result
+              _ -> notASimpExpr
         _ -> notASimpExpr
       _ -> notASimpExpr
   TabApp f' xs' -> do
@@ -1313,7 +1311,7 @@ computeElemCount (EmptyAbs Empty) =
   return $ IdxRepVal 1
 computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
-  sizes <- forM idxList indexSetSizeFromSimp
+  sizes <- forM idxList indexSetSize
   listSize <- foldM imul (IdxRepVal 1) sizes
   nestSize <- elemCountPoly idxNest
   imul listSize nestSize
@@ -1322,7 +1320,7 @@ elemCountPoly :: Emits n => IndexStructure n -> SimpleBuilderM n (Atom n)
 elemCountPoly (Abs bs UnitE) = case bs of
   Empty -> return $ IdxRepVal 1
   Nest b@(_:>ixTy) rest -> do
-   curSize <- indexSetSizeFromSimp ixTy
+   curSize <- indexSetSize ixTy
    restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
    sumUsingPolysImp curSize restSizes
 
@@ -1332,7 +1330,7 @@ computeSizeGivenOrdinal
 computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
     Abs (bOrdinal:>IdxRepTy) <$> buildBlock do
-      i <- unsafeFromOrdinalFromSimp (sink idxTy) $ Var $ sink $ binderName bOrdinal
+      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
 
@@ -1362,11 +1360,11 @@ computeOffset idxNest' idxs = do
   listOrds     <- forM listIdxs \i -> do
     i' <- sinkM i
     ixTy <- getIxType i'
-    ordinalFromSimp ixTy (Var i')
+    ordinal ixTy (Var i')
   -- We don't compute the first size (which we don't need!) to avoid emitting unnecessary decls.
   idxListSizes <- case idxList of
     [] -> return []
-    _  -> (IdxRepVal 0:) <$> forM (tail idxList) indexSetSizeFromSimp
+    _  -> (IdxRepVal 0:) <$> forM (tail idxList) indexSetSize
   listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
   iadd listOffset nestOffset
   where
@@ -1377,7 +1375,7 @@ computeOffset idxNest' idxs = do
    rec (Abs (Nest b@(_:>ixTy) bs) UnitE) (i:is) = do
      let rest = EmptyAbs bs
      rhsElemCounts <- computeSizeGivenOrdinal b rest
-     iOrd <- ordinalFromSimp ixTy $ Var i
+     iOrd <- ordinal ixTy $ Var i
      significantOffset <- sumUsingPolysImp iOrd rhsElemCounts
      remainingIdxStructure <- applySubst (b@>i) rest
      otherOffsets <- rec remainingIdxStructure is
@@ -1548,58 +1546,29 @@ liftBuilderImp cont = do
 
 unsafeFromOrdinalImp :: Emits n => IxType n -> IExpr n -> SubstImpM i n (Atom n)
 unsafeFromOrdinalImp (IxType _ dict) i = do
-  i' <- toScalarAtom =<< sinkM i
-  liftEnvReaderM (projSimpDictThunk dict 2) >>=
-    (`appReduceImp` (Con $ Newtype NatTy i'))
+  i' <- (Con . Newtype NatTy) <$> toScalarAtom i
+  case dict of
+    DictCon (IxFin n) -> return $ Con $ Newtype (TC $ Fin n) i'
+    DictCon (ExplicitMethods d params) -> do
+      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
+      appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
+    _ -> error $ "Not a simplified dict: " ++ pprint dict
 
 indexSetSizeImp :: Emits n => IxType n -> SubstImpM i n (IExpr n)
-indexSetSizeImp (IxType _ dict) = fromScalarAtom . unwrapBaseNewtype =<< case dict of
-  DictCon (IxFin n) -> return n
-  _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduceImp` UnitVal)
+indexSetSizeImp (IxType _ dict) = do
+  ans <- case dict of
+    DictCon (IxFin n) -> return n
+    DictCon (ExplicitMethods d params) -> do
+      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
+      appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
+    _ -> error $ "Not a simplified dict: " ++ pprint dict
+  fromScalarAtom $ unwrapBaseNewtype ans
 
-indexSetSizeFromSimp :: Emits n => IxType n -> BuilderM n (Atom n)
-indexSetSizeFromSimp (IxType _ dict) = unwrapBaseNewtype <$> case dict of
-  DictCon (IxFin n) -> return n
-  _ -> liftEnvReaderM (projSimpDictThunk dict 0) >>= (`appReduce` UnitVal)
-
-ordinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
-ordinalFromSimp (IxType _ dict) i =
-  liftM unwrapBaseNewtype $ liftEnvReaderM (projSimpDictThunk dict 1) >>= (`appReduce` i)
-
-unsafeFromOrdinalFromSimp :: Emits n => IxType n -> Atom n -> BuilderM n (Atom n)
-unsafeFromOrdinalFromSimp (IxType _ dict) o =
-  liftEnvReaderM (projSimpDictThunk dict 2) >>= (`appReduce` (Con $ Newtype NatTy o))
-
-projSimpDictThunk :: Atom n -> Int -> EnvReaderM n (Atom n)
-projSimpDictThunk topDict methodIx = go topDict []
-  where
-    go dict args = case dict of
-      Lam _ ->  do
-        case fromNaryLamExact (length args) dict of
-          Just (NaryLamExpr bs Pure (AtomicBlock d)) -> do
-            d' <- applySubst (bs @@> (SubstVal <$> args)) d
-            go d' []
-          Just _ -> error "Not a pure atomic lam?"
-          Nothing -> error "Failed to get a dict nary lam?"
-      DictCon (InstantiatedGiven d extraArgs) -> go d $ toList extraArgs ++ args
-      Con (Newtype _ _) ->
-        return $ getProjection [ProjectProduct methodIx, UnwrapBaseNewtype] dict
-      DictCon (IxFin n) -> case methodIx == 0 of
-        True -> do
-          Abs b n' <- toConstAbs n
-          return $ Lam $ LamExpr (LamBinder b UnitTy PlainArrow Pure) $ AtomicBlock n'
-        False -> projectIxFinMethod methodIx n
-      _ -> error $ "Not a pre-simplified dict atom: " ++ pprint dict
-
-appReduce :: Emits n => Atom n -> Atom n -> BuilderM n (Atom n)
-appReduce f x = case f of
-  Lam (LamExpr b body) -> emitBlock =<< applySubst (b@>SubstVal x) body
-  _ -> error "couldn't reduce immediately!"
-
-appReduceImp :: Emits o => Atom o -> Atom o -> SubstImpM i o (Atom o)
-appReduceImp f x = case f of
-  Lam (LamExpr b body) -> dropSubst $ extendSubst (b@>SubstVal x) $ translateBlock Nothing body
-  _ -> error "couldn't reduce immediately!"
+appSpecializedIxMethod :: Emits n => AtomName n -> [Atom n] -> SubstImpM i n (Atom n)
+appSpecializedIxMethod f args = do
+  Just fLoweredName <- queryIxLoweredCache f
+  TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fLoweredName
+  dropSubst $ extendSubst (bs @@> map SubstVal args) $ translateBlock Nothing body
 
 -- === Abstracting link-time objects ===
 

@@ -209,6 +209,19 @@ specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
         let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> nonEmptyToNest dynArgBs
         return $ NaryPiType allBs effs resultTy
       _ -> error "should only be specializing top-level functions"
+specializedFunType (IxMethodSpecialization method absDict) = liftEnvReaderM $
+  refreshAbs absDict \extraArgBs dict -> do
+    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
+      Pi (PiType b _ resultTy) -> do
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest b Empty
+        return $ NaryPiType allBs Pure resultTy
+      -- non-function methods are thunked
+      ty -> do
+        Abs unitBinder ty' <- toConstAbs ty
+        let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest unitPiBinder Empty
+        return $ NaryPiType allBs Pure ty'
 
 userEffect :: EffectName n -> Atom n
 userEffect v = Eff (OneEffect (UserEffect v))
@@ -456,6 +469,11 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- substM n
     liftM DictTy $ ixDictType $ TC $ Fin n'
+  ExplicitMethods v params -> do
+    params' <- mapM substM params
+    SpecializedDictBinding (SpecializedDictDef (Abs bs dictTy) _) <- lookupEnv =<< substM v
+    dictTy' <- applySubst (bs @@> map SubstVal params') dictTy
+    return $ DictTy dictTy'
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
