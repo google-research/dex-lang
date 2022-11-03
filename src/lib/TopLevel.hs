@@ -11,6 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
+  ensureModuleLoaded, importModule,
   loadObject, toCFunction) where
 
 import Data.Foldable (toList)
