@@ -81,7 +81,8 @@ module Name (
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
-  NameMap, hoistFilterNameMap, insertNameMap, lookupNameMap, singletonNameMap, toListNameMap
+  NameMap, hoistFilterNameMap, insertNameMap, lookupNameMap, singletonNameMap, toListNameMap,
+  boundNamesList
   ) where
 
 import Prelude hiding (id, (.))
@@ -2876,6 +2877,9 @@ nameSetToList nameSet =
     case fromSubstItem item of
       Nothing -> Nothing
       Just (_ :: GHC.Exts.Any c UnsafeS) -> Just $ UnsafeMakeName rawName
+
+boundNamesList :: (BindsNames b, Color c) => b n l -> [Name c l]
+boundNamesList b = nameSetToList $ toNameSet $ toScopeFrag b
 
 toNameSet :: ScopeFrag n l -> NameSet l
 toNameSet (UnsafeMakeScopeFrag s) = s

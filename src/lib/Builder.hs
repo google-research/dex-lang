@@ -30,7 +30,8 @@ module Builder (
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
-  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
+  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
+  runTopBuilderT, TopBuilder2, emitBindingDefault,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
   emitTopLet, emitImpFunBinding, emitSpecialization, emitAtomRules,
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
@@ -261,12 +262,23 @@ class (EnvReader m, MonadFail1 m)
   -- `emitBinding` is expressible in terms of `emitEnv` but it can be
   -- implemented more efficiently by avoiding a double substitution
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
+  -- TODO: do we actually need `emitBinding`? Top emissions probably aren't hot.
   emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
   emitEnv :: (Mut n, SinkableE e, SubstE Name e) => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: SinkableE e
                   => (forall l. (Mut l, DExt n l) => m l (e l))
                   -> m n (Abs TopEnvFrag e n)
+
+emitBindingDefault
+  :: (TopBuilder m, Mut n, Color c)
+  => NameHint -> Binding c n -> m n (Name c n)
+emitBindingDefault hint binding = do
+  Abs b v <- freshNameM hint
+  ab <- liftEnvReaderM $ refreshAbs (Abs (b:>binding) v) \b' v' -> do
+    let topFrag = TopEnvFrag (toEnvFrag b') mempty
+    return $ Abs topFrag v'
+  emitEnv ab
 
 emitPartialTopEnvFrag :: TopBuilder m => PartialTopEnvFrag n -> m n ()
 emitPartialTopEnvFrag frag = emitNamelessEnv $ TopEnvFrag emptyOutFrag frag

@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
-  loadObject, toCFunction, evalRequiredSpecializations, hoistIxDicts) where
+  loadObject, toCFunction, hoistIxDicts) where
 
 import Data.Foldable (toList)
 import Data.Functor
@@ -594,7 +594,6 @@ evalBlock typed = do
   eopt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock eopt
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
-  evalRequiredSpecializations simplifiedBlock
   SimplifiedBlock simp recon <- return simplifiedBlock
   simp' <- hoistIxDicts simp
   opt <- whenOpt simp' $ checkPass OptPass . optimize
@@ -608,17 +607,18 @@ evalBlock typed = do
   applyRecon recon result
 {-# SCC evalBlock #-}
 
-evalRequiredSpecializations
-  :: (Topper m, Mut n, SinkableE e, SubstE Name e, HoistableE e)
-  => e n -> m n ()
-evalRequiredSpecializations e = do
-  forM_ (freeAtomVarsList e) \v -> do
-    lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
-        queryImpCache v >>= \case
-          Nothing -> compileTopLevelFun v
-          Just _ -> return ()
-      _ -> return ()
+evalSpecializations :: (Topper m, Mut n) => [AtomName n] -> m n ()
+evalSpecializations vs = forM_ vs \v -> do
+  lookupAtomName v >>= \case
+    TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
+      queryImpCache v >>= \case
+        Nothing -> compileTopLevelFun v
+        Just _ -> return ()
+    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
+      queryIxLoweredCache v >>= \case
+        Nothing -> lowerIxMethod v
+        Just _ -> return ()
+    _ -> return ()
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -643,8 +643,7 @@ execUDecl mname decl = do
               -- artifacts).
               when (n == 0) do
                 let s = AppSpecialization f (Abs Empty (ListE []))
-                fSpecial <- emitSpecialization s
-                evalRequiredSpecializations (Var fSpecial)
+                void $ emitSpecialization s
               return $ Var f
             Nothing -> throw TypeErr $
               "Not a valid @noinline function type: " ++ pprint ty
@@ -657,7 +656,6 @@ lowerIxMethod :: (Topper m, Mut n) => AtomName n -> m n ()
 lowerIxMethod fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  evalRequiredSpecializations fSimp
   fSimp' <- hoistIxDicts fSimp
   -- TODO: actually do the lowering (lowering only handles blocks, not functions, right now)
   fSimpName <- emitLoweredFun (getNameHint fname) fSimp'
@@ -667,7 +665,6 @@ compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  evalRequiredSpecializations fSimp
   fSimp' <- hoistIxDicts fSimp
   fImp <- toImpStandaloneFunction fSimp'
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
@@ -979,17 +976,9 @@ hoistIxDicts
      , SinkableE e, SubstE Name e, HoistableE e)
   => e n -> m n (e n)
 hoistIxDicts e = do
-  Abs (IxHoistingEmissions envFrag methodNames) (PairE e' (IxHoistingState UnitE)) <-
+  Abs (IxHoistingEmissions envFrag _) (PairE e' (IxHoistingState UnitE)) <-
     liftGenericTraverserMTopEmissions (IxHoistingState UnitE) $ traverseGenericE (sink e)
-  (PairE (ListE methodNames') e'') <- emitEnv $ Abs envFrag (PairE (ListE methodNames) e')
-  forM_ methodNames' \v -> do
-    lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
-        queryIxLoweredCache v >>= \case
-          Nothing -> lowerIxMethod v
-          Just _ -> return ()
-      _ -> error "Expected a method name"
-  return e''
+  emitEnv $ Abs envFrag e'
 
 type IxHoistingM = GenericTraverserM IxHoistingEmissions IxHoistingState
 
@@ -1071,14 +1060,12 @@ instance (Monad1 m, ConfigReader (m n)) => ConfigReader (StateT1 s m n) where
 instance Topper TopperM
 
 instance TopBuilder TopperM where
-  -- Log bindings as they are emitted
-  emitBinding hint binding = do
-    name <- TopperM $ emitBinding hint binding
-    logTop $ MiscLog $ "=== Top name ===\n" ++ pprint name ++ " =\n"
-                      ++ pprint binding ++ "\n===\n"
-    return name
-
-  emitEnv env = TopperM $ emitEnv env
+  emitBinding = emitBindingDefault
+  emitEnv (Abs frag result) = do
+    PairE result' (ListE names) <- TopperM $ emitEnv $
+      Abs frag $ PairE result (ListE (boundNamesList frag))
+    evalSpecializations names
+    return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont
 
