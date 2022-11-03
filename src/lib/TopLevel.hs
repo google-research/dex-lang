@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
-  loadObject, toCFunction, hoistIxDicts) where
+  loadObject, toCFunction) where
 
 import Data.Foldable (toList)
 import Data.Functor
@@ -27,7 +27,6 @@ import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
-import Generalize
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -67,7 +66,6 @@ import ImpToLLVM
 import Optimize
 import Runtime
 import QueryType
-import GenericTraversal
 
 -- === top-level monad ===
 
@@ -595,8 +593,7 @@ evalBlock typed = do
   synthed <- checkPass SynthPass $ synthTopBlock eopt
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
-  simp' <- hoistIxDicts simp
-  opt <- whenOpt simp' $ checkPass OptPass . optimize
+  opt <- whenOpt simp $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
@@ -656,17 +653,15 @@ lowerIxMethod :: (Topper m, Mut n) => AtomName n -> m n ()
 lowerIxMethod fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  fSimp' <- hoistIxDicts fSimp
   -- TODO: actually do the lowering (lowering only handles blocks, not functions, right now)
-  fSimpName <- emitLoweredFun (getNameHint fname) fSimp'
+  fSimpName <- emitLoweredFun (getNameHint fname) fSimp
   extendIxLoweredCache fname fSimpName
 
 compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  fSimp' <- hoistIxDicts fSimp
-  fImp <- toImpStandaloneFunction fSimp'
+  fImp <- toImpStandaloneFunction fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -968,77 +963,6 @@ getFilteredLogger = do
   shouldLog <- shouldLogPass <$> getPassCtx
   logger  <- getLogger
   return $ FilteredLogger shouldLog logger
-
--- === hoisting Ix dicts ===
-
-hoistIxDicts
-  :: ( Topper m, Mut n, GenericallyTraversableE e
-     , SinkableE e, SubstE Name e, HoistableE e)
-  => e n -> m n (e n)
-hoistIxDicts e = do
-  Abs (IxHoistingEmissions envFrag _) (PairE e' (IxHoistingState UnitE)) <-
-    liftGenericTraverserMTopEmissions (IxHoistingState UnitE) $ traverseGenericE (sink e)
-  emitEnv $ Abs envFrag e'
-
-type IxHoistingM = GenericTraverserM IxHoistingEmissions IxHoistingState
-
-data IxHoistingEmissions (n::S) (l::S) =
-  -- env frag, names of specialized methods we need to lower
-  IxHoistingEmissions (TopEnvFrag n l) [AtomName l]
-
-newtype IxHoistingState (n::S) = IxHoistingState (UnitE n)
-        deriving (SinkableE, HoistableState, SubstE Name)
-
-instance GenericTraverser IxHoistingEmissions IxHoistingState where
-  traverseAtom = \case
-    DictCon d -> do
-      d' <- substM d
-      dTy <- getType d'
-      DictCon <$> case dTy of
-        DictTy (DictType "Ix" _ _) -> emitIxDictSpecialization d'
-        _ -> return d'
-    atom -> traverseAtomDefault atom
-
-emitIxDictSpecialization :: DictExpr n -> IxHoistingM i n (DictExpr n)
-emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
-emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
-emitIxDictSpecialization ixDict = do
-  (Abs bs (PairE (DictTy dictTy) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
-  (Abs frag (PairE (ListE methodNames) dictName)) <- liftTopBuilderHoisted do
-    methodImplNames <- forM [minBound..maxBound] \methodName -> do
-      let s = IxMethodSpecialization methodName (sink (Abs bs ixDict'))
-      querySpecializationCache s >>= \case
-        Just name -> return name
-        _ -> emitSpecialization s
-    d <- emitBinding "d" $ sink $ SpecializedDictBinding $
-           SpecializedDictDef (sink (Abs bs dictTy)) methodImplNames
-    return $ PairE (ListE methodImplNames) d
-  maybeD <- emitHoistedEnv $ Abs (IxHoistingEmissions frag methodNames) dictName
-  case maybeD of
-    Just d -> return $ ExplicitMethods d params
-    Nothing -> error "Couldn't hoist specialized dictionary"
-
-instance GenericB IxHoistingEmissions where
-  type RepB IxHoistingEmissions = PairB TopEnvFrag (LiftB (ListE AtomName))
-  fromB (IxHoistingEmissions frag names) = PairB frag (LiftB (ListE names))
-  toB   (PairB frag (LiftB (ListE names))) = IxHoistingEmissions frag names
-
-instance ProvesExt   IxHoistingEmissions
-instance SinkableB   IxHoistingEmissions
-instance HoistableB  IxHoistingEmissions
-instance BindsNames  IxHoistingEmissions
-instance SubstB Name IxHoistingEmissions
-
-instance OutFrag IxHoistingEmissions where
-  emptyOutFrag = IxHoistingEmissions emptyOutFrag []
-  {-# INLINE emptyOutFrag #-}
-  catOutFrags s (IxHoistingEmissions frag1 names1) (IxHoistingEmissions frag2 names2) =
-    withExtEvidence frag2 $
-      IxHoistingEmissions (catOutFrags s frag1 frag2) (map sink names1 <> names2)
-  {-# INLINE catOutFrags #-}
-
-instance ExtOutMap Env IxHoistingEmissions where
-  extendOutMap env (IxHoistingEmissions frag1 _) = extendOutMap env frag1
 
 -- === instances ===
 

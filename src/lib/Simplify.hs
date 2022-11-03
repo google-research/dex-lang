@@ -214,12 +214,12 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyBlock body
       Nothing -> do
-        resultTy' <- substM resultTy
+        resultTy' <- simplifyType resultTy
         isData resultTy' >>= \case
           True -> do
             eff' <- substM eff
             alts' <- forM alts \(Abs b body) -> do
-              bTy' <- substM $ binderType b
+              bTy' <- simplifyType $ binderType b
               buildAbs (getNameHint b) bTy' \x ->
                 extendSubst (b @> Rename x) $
                   buildBlock $ simplifyBlock body
@@ -389,6 +389,24 @@ getSpecializedFunction s = do
     Just name -> return $ Abs emptyOutFrag name
     _ -> liftTopBuilderHoisted $ emitSpecialization (sink s)
 
+emitIxDictSpecialization :: DictExpr n -> SimplifyM i n (DictExpr n)
+emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
+emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
+emitIxDictSpecialization ixDict = do
+  (Abs bs (PairE (DictTy dictTy) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
+  ab <- liftTopBuilderHoisted do
+    methodImplNames <- forM [minBound..maxBound] \methodName -> do
+      let s = IxMethodSpecialization methodName (sink (Abs bs ixDict'))
+      querySpecializationCache s >>= \case
+        Just name -> return name
+        _ -> emitSpecialization s
+    emitBinding "d" $ sink $ SpecializedDictBinding $
+      SpecializedDictDef (sink (Abs bs dictTy)) methodImplNames
+  maybeD <- emitHoistedEnv ab
+  case maybeD of
+    Just d -> return $ ExplicitMethods d params
+    Nothing -> error "Couldn't hoist specialized dictionary"
+
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o
   => NameHint -> Atom i -> NonEmpty (Atom o) -> SimplifyM i o (Atom o)
@@ -440,15 +458,33 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
       False -> substM atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _    -> substM atom
-  Pi  _   -> substM atom
-  TabPi _ -> substM atom
+  Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
+    ty' <- simplifyType ty
+    withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
+      extendRenamer (b@>binderName b') $
+        Pi <$> (PiType b' <$> substM eff <*> simplifyType resultTy)
+  TabPi (TabPiType (b:>IxType t d) resultTy) -> do
+    t' <- simplifyType t
+    d' <- simplifyDict d
+    withFreshBinder (getNameHint b) (IxType t' d') \b' -> do
+      extendRenamer (b@>binderName b') $
+        TabPi <$> (TabPiType (b':>IxType t' d') <$> simplifyType resultTy)
   DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
   Con con -> Con <$> (inline traversePrimCon) simplifyAtom con
   TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
-  TypeCon _ _ _ -> substM atom
-  DictCon d -> DictCon <$> substM d
+  TypeCon sn dataDefName (DataDefParams arrParams) -> do
+    dataDefName' <- substM dataDefName
+    let (arrs, params) = unzip arrParams
+    params' <- mapM simplifyAtom params
+    return $ TypeCon sn dataDefName' (DataDefParams $ zip arrs params')
+  DictCon d -> do
+    d' <- substM d
+    dTy <- getType d'
+    DictCon <$> case dTy of
+      DictTy (DictType "Ix" _ _) -> emitIxDictSpecialization d'
+      _ -> return d'
   DictTy  t -> DictTy  <$> substM t
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
@@ -470,9 +506,9 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyAtom body
       Nothing -> do
-        rTy' <- substM rTy
+        rTy' <- simplifyType rTy
         alts' <- forM alts \(Abs b body) -> do
-          bTy' <- substM $ binderType b
+          bTy' <- simplifyType $ binderType b
           buildAbs (getNameHint b) bTy' \xs ->
             extendSubst (b @> Rename xs) $
               simplifyAtom body
@@ -480,6 +516,16 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
+
+-- We use a different name because the implementations might need to diverge.
+simplifyType :: Type i -> SimplifyM i o (Type o)
+simplifyType = simplifyAtom
+{-# INLINE simplifyType #-}
+
+-- We use a different name because the implementations might need to diverge.
+simplifyDict :: Dict i -> SimplifyM i o (Dict o)
+simplifyDict = simplifyAtom
+{-# INLINE simplifyDict #-}
 
 simplifyVar :: AtomName i -> SimplifyM i o (Atom o)
 simplifyVar v = do
@@ -718,13 +764,19 @@ projectDictMethod d i = do
       case i of
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
+    DictCon (ExplicitMethods methodImplName params) -> do
+      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv methodImplName
+      let f = fs !! i
+      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ (Abs bs dict'))) <- lookupAtomName f
+      dict'' <- applySubst (bs @@> map SubstVal params) dict'
+      projectDictMethod dict'' i
     DictCon (IxFin n) -> projectIxFinMethod (toEnum i) n
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
 simplifyHof :: Emits o => NameHint -> Hof i -> SimplifyM i o (Atom o)
 simplifyHof hint hof = case hof of
   For d ixDict lam -> do
-    ixTy@(IxType _ ixDict') <- ixTyFromDict =<< substM ixDict
+    ixTy@(IxType _ ixDict') <- ixTyFromDict =<< simplifyDict ixDict
     (lam', Abs b recon) <- simplifyLam lam
     ans <- liftM Var $ emitHinted hint $ Hof $ For d ixDict' lam'
     case recon of
