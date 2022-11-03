@@ -39,6 +39,8 @@ import Syntax
 import Types.Core
 import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
+import Occurrence (Count (Bounded), UsageInfo (..))
+import Occurrence qualified as Occ
 import Util (restructure)
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
@@ -1068,6 +1070,15 @@ instance Pretty LetAnn where
   pretty ann = case ann of
     PlainLet      -> ""
     NoInlineLet   -> "%noinline"
+
+instance Pretty UsageInfo where
+  pretty (UsageInfo static (ixDepth, ct)) =
+    "occurs in" <+> p (show static) <+> "places, read"
+    <+> p ct <+> "times, to depth" <+> p (show ixDepth)
+
+instance Pretty Count where
+  pretty (Bounded ct) = "<=" <+> pretty ct
+  pretty Occ.Unbounded = "many"
 
 instance PrettyPrec () where prettyPrec = atPrec ArgPrec . pretty
 
