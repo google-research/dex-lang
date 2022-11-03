@@ -73,6 +73,7 @@ library
                      , MTL1
                      , Name
                      , Occurrence
+                     , OccAnalysis
                      , Optimize
                      , PPrint
                      , RawName

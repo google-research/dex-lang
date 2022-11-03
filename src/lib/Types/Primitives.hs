@@ -36,6 +36,7 @@ import GHC.Generics (Generic (..))
 import Name
 import Err
 import LabeledItems
+import Occurrence
 
 data PrimExpr e =
         TCExpr  (PrimTC  e)
@@ -160,8 +161,8 @@ data PrimHof e =
         For ForAnn e e        -- ix dict, body lambda
       | While e
       | RunReader e e
-      | RunWriter (Maybe e) (BaseMonoidP e) e
-      | RunState  (Maybe e) e e
+      | RunWriter (Maybe e) (BaseMonoidP e) e  -- dest, monoid, body lambda
+      | RunState  (Maybe e) e e  -- dest, initial value, body lambda
       | RunIO e
       | RunInit e
       | CatchException e
@@ -262,6 +263,7 @@ instance Pretty Arrow where
 
 data LetAnn = PlainLet
             | NoInlineLet
+            | OccInfo UsageInfo
               deriving (Show, Eq, Generic)
 
 -- === Primitive scalar values and base types ===

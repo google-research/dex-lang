@@ -198,7 +198,7 @@ instance Pretty (DeclBinding n) where
 instance Pretty (Decl n l) where
   pretty (Let b (DeclBinding ann ty rhs)) =
     align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    where annDoc = case ann of PlainLet -> mempty; _ -> pretty ann <> " "
+    where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance Pretty (NaryLamExpr n) where
   pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
@@ -1070,6 +1070,7 @@ instance Pretty LetAnn where
   pretty ann = case ann of
     PlainLet      -> ""
     NoInlineLet   -> "%noinline"
+    OccInfo u     -> p u <> line
 
 instance Pretty UsageInfo where
   pretty (UsageInfo static (ixDepth, ct)) =
