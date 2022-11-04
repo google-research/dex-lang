@@ -181,7 +181,8 @@ peepholeExpr expr = case expr of
   Op op -> fmap Op <$> peepholeOp op
   TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
     lookupAtomName t <&> \case
-      LetBound (DeclBinding PlainLet _ (Op (TabCon _ elems))) ->
+      LetBound (DeclBinding ann _ (Op (TabCon _ elems)))
+        | ann /= NoInlineLet ->
         -- It is not safe to assume that this index can always be simplified!
         -- For example, it might be coming from an unsafe_from_ordinal that is
         -- under a case branch that would be dead for all invalid indices.
