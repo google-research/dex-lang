@@ -479,7 +479,7 @@ and if not, casts them to an equivalent but provably <code>NonEmpty</code> form.
         logits<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal t))<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal v))
       labels&#39; <span class="symbol">=</span> <span class="keyword">view</span> p<span class="command">:position</span>&#39;<span class="symbol">.</span>
         unsafe_from_ordinal _ (ordinal labels<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal p)))
-      
+
       ctc_non_empty blank&#39; logits&#39; labels&#39;
     <span class="keyword">else</span> zero
 </div></div><div class="cell"><div class="code-block">
