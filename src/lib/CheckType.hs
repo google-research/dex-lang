@@ -1309,7 +1309,7 @@ isData ty = liftM isJust $ runCheck do
 
 checkDataLike :: Typer m => Type i -> m i o ()
 checkDataLike ty = case ty of
-  Var _ -> error "Not implemented"
+  Var _ -> throw TypeErr $ pprint ty
   TabPi (TabPiType b eltTy) -> do
     substBinders b \_ ->
       checkDataLike eltTy

@@ -38,7 +38,7 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Types.Core
-import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType)
+import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType, isData)
 import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
 import CheapReduction
@@ -1571,12 +1571,18 @@ binderNestAsPiNest arr = \case
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
 inferRole :: Type o -> Arrow -> InfererM i o ParamRole
-inferRole ty arr = do
-  ty' <- zonk ty
-  case (ty', arr) of
-    (TyKind  , _         ) -> return TypeParam
-    (DictTy _, ClassArrow) -> return DictParam
-    _ -> return DataParam -- TODO(dougalm): check it's actually "data"
+inferRole ty arr = case arr of
+  ClassArrow -> return DictParam
+  _ -> do
+    zonk ty >>= \case
+      TyKind -> return TypeParam
+      ty' -> isData ty' >>= \case
+        True -> return DataParam
+        -- TODO(dougalm): the `False` branch should throw an error but that's
+        -- currently too conservative. e.g. `data RangeFrom q:Type i:q = ...`
+        -- fails because `q` isn't data. We should be able to fix it once we
+        -- have a `Data a` class (see issue #680).
+        False -> return DataParam
 {-# INLINE inferRole #-}
 
 inferDataDef :: EmitsInf o => UDataDef i
@@ -1774,12 +1780,16 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
   ab <- checkAnnWithMissingDicts ann \ds getArgTy -> do
     introDicts (eSetToList ds) $ do
       argTy <- getArgTy
-      role <- inferRole argTy arrow
-      buildRolePiAbsInf (getNameHint p) arrow role argTy \v -> do
+      ab <- buildPiAbsInf (getNameHint p) arrow argTy \v -> do
         WithSrcB pos (UPatBinder b) <- return p  -- TODO: enforce this syntactically
         addSrcContext pos $ extendSubst (b@>v) $
           checkInstanceArgs rest do
             cont
+      Abs (PiBinder b ty _) e <- return ab
+      -- it's important to do role inference after we finish everything else
+      -- because we don't know what the parameter's type is until then.
+      role <- inferRole argTy arrow
+      return $ Abs (RolePiBinder b ty arrow role) e
   Abs bs (Abs b (Abs bs' e)) <- return ab
   return $ Abs (bs >>> Nest b Empty >>> bs') e
 
@@ -3063,15 +3073,6 @@ buildPiAbsInf hint arr ty body = do
     buildAbsInf hint (PiBinding arr ty) \v ->
       withAllowedEffects Pure $ body v
   return $ Abs (PiBinder b ty arr) resultTy
-
-buildRolePiAbsInf
-  :: (EmitsInf n, SinkableE e, SubstE Name e, HoistableE e)
-  => NameHint -> Arrow -> ParamRole -> Type n
-  -> (forall l. (EmitsInf l, Ext n l) => AtomName l -> InfererM i l (e l))
-  -> InfererM i n (Abs RolePiBinder e n)
-buildRolePiAbsInf hint arr role ty body = do
-  Abs (PiBinder b ty' arr') e <- buildPiAbsInf hint arr ty body
-  return $ Abs (RolePiBinder b ty' arr' role) e
 
 buildPiInf
   :: EmitsInf n
