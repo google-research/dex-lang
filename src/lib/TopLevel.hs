@@ -27,6 +27,7 @@ import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
+import Generalize
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -43,7 +44,7 @@ import Err
 import MTL1
 import Logging
 import PPrint (pprintCanonicalized)
-import Util (measureSeconds, File (..), readFileWithHash, forMFilter)
+import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize ( HasPtrs (..), pprintVal, getDexString
                  , takePtrSnapshot, restorePtrSnapshot)
 import Name
@@ -1005,44 +1006,28 @@ instance GenericTraverser IxHoistingEmissions IxHoistingState where
       d' <- substM d
       dTy <- getType d'
       DictCon <$> case dTy of
-        DictTy dTy'@(DictType "Ix" _ _) -> emitIxDictSpecialization dTy' d'
+        DictTy (DictType "Ix" _ _) -> emitIxDictSpecialization d'
         _ -> return d'
     atom -> traverseAtomDefault atom
 
-emitIxDictSpecialization :: DictType n -> DictExpr n -> IxHoistingM i n (DictExpr n)
-emitIxDictSpecialization _ d@(ExplicitMethods _ _) = return d
-emitIxDictSpecialization _ d@(IxFin _)           = return d -- `Ix (Fin n))` is built-in
-emitIxDictSpecialization dictTy ixDict = do
-  (Abs bs (PairE dictTy' ixDict'), params) <- generalizeIxDict dictTy ixDict
+emitIxDictSpecialization :: DictExpr n -> IxHoistingM i n (DictExpr n)
+emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
+emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
+emitIxDictSpecialization ixDict = do
+  (Abs bs (PairE (DictTy dictTy) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
   (Abs frag (PairE (ListE methodNames) dictName)) <- liftTopBuilderHoisted do
     methodImplNames <- forM [minBound..maxBound] \methodName -> do
-      let s = IxMethodSpecialization methodName (sink (Abs bs (DictCon ixDict')))
+      let s = IxMethodSpecialization methodName (sink (Abs bs ixDict'))
       querySpecializationCache s >>= \case
         Just name -> return name
         _ -> emitSpecialization s
     d <- emitBinding "d" $ sink $ SpecializedDictBinding $
-           SpecializedDictDef (sink (Abs bs dictTy')) methodImplNames
+           SpecializedDictDef (sink (Abs bs dictTy)) methodImplNames
     return $ PairE (ListE methodImplNames) d
   maybeD <- emitHoistedEnv $ Abs (IxHoistingEmissions frag methodNames) dictName
   case maybeD of
     Just d -> return $ ExplicitMethods d params
     Nothing -> error "Couldn't hoist specialized dictionary"
-
--- TODO: we could get more cache hits if we abstract more than necessary,
--- based on whether parameters are data or nondata. E.g. abstract `Fin 10`
--- as `(\n. Fin n) 10` instead of not abstracting it at all.
-generalizeIxDict :: DictType n -> DictExpr n -> IxHoistingM i n (Generalized (PairE DictType DictExpr) n)
-generalizeIxDict dTy d = do
-  let dWithTy = PairE dTy d
-  typedVs <- forMFilter (freeAtomVarsList dWithTy) \v ->
-    canHoistToTop v >>= \case
-      False -> do
-        ty <- getType v
-        return $ Just (v, ty)
-      True -> return Nothing
-  let typedVsToposorted = toposortAnnVars typedVs
-  let atoms = [Var v | (v, _) <- typedVsToposorted]
-  return (abstractFreeVars typedVsToposorted dWithTy, atoms)
 
 instance GenericB IxHoistingEmissions where
   type RepB IxHoistingEmissions = PairB TopEnvFrag (LiftB (ListE AtomName))

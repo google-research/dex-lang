@@ -418,7 +418,7 @@ dictExprType e = case e of
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    checkedApplyNaryAbs (Abs bs (superclassTypes superclasses !! i)) params
+    checkedApplyNaryAbs (Abs (toBinderNest bs) (superclassTypes superclasses !! i)) params
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
@@ -428,8 +428,9 @@ dictExprType e = case e of
     args' <- mapM substM args
     dictTy'@(DictType _ className params) <- applySubst (bs @@> map SubstVal args') dictTy
     ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
+    let pbs' = fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) pbs
     forMZipped_ methodTys methodFunNames \(MethodType _ methodTy) methodFunName -> do
-      reqTy <- checkedApplyNaryAbs (Abs pbs methodTy) params
+      reqTy <- checkedApplyNaryAbs (Abs pbs' methodTy) params
       let extendedArgs = case reqTy of
             Pi _ -> args
             _ -> args ++ [UnitVal]
@@ -1110,14 +1111,14 @@ checkedInstantiateDataDef
   => DataDef n -> DataDefParams n -> m n [DataConDef n]
 checkedInstantiateDataDef (DataDef _ bs cons) (DataDefParams xs) = do
   fromListE <$> checkedApplyNaryAbs
-    (Abs (fmapNest piBinderAsBinder bs) (ListE cons)) (map snd xs)
+    (Abs (fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) bs) (ListE cons)) (map snd xs)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [Type n]
   -> m n (Abs SuperclassBinders (ListE MethodType) n)
 checkedApplyClassParams (ClassDef _ _ bs superclassBs methodTys) params = do
   let body = Abs superclassBs (ListE methodTys)
-  checkedApplyNaryAbs (Abs bs body) params
+  checkedApplyNaryAbs (Abs (toBinderNest bs) body) params
 
 -- TODO: Subst all at once, not one at a time!
 checkedApplyNaryAbs :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)
@@ -1308,7 +1309,7 @@ isData ty = liftM isJust $ runCheck do
 
 checkDataLike :: Typer m => Type i -> m i o ()
 checkDataLike ty = case ty of
-  Var _ -> error "Not implemented"
+  Var _ -> throw TypeErr $ pprint ty
   TabPi (TabPiType b eltTy) -> do
     substBinders b \_ ->
       checkDataLike eltTy

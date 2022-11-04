@@ -532,6 +532,12 @@ instance Pretty (ClassDef n) where
          line <> "superclasses:" <+> pretty (superclassTypes superclasses) <>
          line <> "methods:" <+> pretty methodTys)
 
+instance Pretty ParamRole where
+  pretty r = p (show r)
+
+instance Pretty (RolePiBinder n l) where
+  pretty (RolePiBinder b ty _ _) = p (b:>ty)
+
 instance Pretty (InstanceDef n) where
   pretty (InstanceDef className bs params _) =
     "Instance" <+> p className <+> p bs <+> p params

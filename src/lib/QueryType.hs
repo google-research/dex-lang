@@ -131,7 +131,7 @@ instantiateDataDef (DataDef _ bs cons) params = do
 {-# INLINE instantiateDataDef #-}
 
 applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, ScopeReader m)
-                => Abs (Nest PiBinder) e n -> DataDefParams n -> m n (e n)
+                => Abs (Nest RolePiBinder) e n -> DataDefParams n -> m n (e n)
 applyDataConAbs (Abs bs e) (DataDefParams xs) =
   applySubst (bs @@> (SubstVal <$> map snd xs)) e
 {-# INLINE applyDataConAbs #-}
@@ -764,9 +764,9 @@ instance HasType Block where
 getClassTy :: ClassDef n -> Type n
 getClassTy (ClassDef _ _ bs _ _) = go bs
   where
-    go :: Nest Binder n l -> Type n
+    go :: Nest RolePiBinder n l -> Type n
     go Empty = TyKind
-    go (Nest (b:>ty) rest) = Pi $ PiType (PiBinder b ty PlainArrow) Pure $ go rest
+    go (Nest (RolePiBinder b ty arr _) rest) = Pi $ PiType (PiBinder b ty arr) Pure $ go rest
 
 ixTyFromDict :: EnvReader m => Atom n -> m n (IxType n)
 ixTyFromDict dict = do

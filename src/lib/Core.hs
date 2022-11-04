@@ -27,6 +27,7 @@ import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State
+import qualified Control.Monad.State.Strict as SS
 import qualified Data.Map.Strict       as M
 
 import Name
@@ -269,6 +270,20 @@ instance (Monad m, ExtOutMap Env decls, OutFrag decls)
           return (ans, catOutFrags (toScope env') decls d, env')
   {-# INLINE refreshAbs #-}
 
+instance ( Monad m, ExtOutMap Env d1, ExtOutMap Env d2
+         , OutFrag d1, OutFrag d2, SubstB Name d1, HoistableB d1)
+         => EnvExtender (DoubleInplaceT Env d1 d2 m) where
+  refreshAbs ab cont = do
+    (ans, decls) <- UnsafeMakeDoubleInplaceT do
+      SS.StateT \s@(topScope, _) -> do
+        (ans, (_, decls)) <- refreshAbs ab \b e -> do
+          flip SS.runStateT (topScope, emptyOutFrag) $
+            unsafeRunDoubleInplaceT $ cont b e
+        return ((ans, decls), s)
+    unsafeEmitDoubleInplaceTHoisted decls
+    return ans
+  {-# INLINE refreshAbs #-}
+
 -- === Typeclasses for syntax ===
 
 -- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
@@ -319,6 +334,10 @@ instance BindsEnv TopEnvFrag where
 
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
+  {-# INLINE toEnvFrag #-}
+
+instance BindsEnv RolePiBinder where
+  toEnvFrag (RolePiBinder b ty arr _) = toEnvFrag (PiBinder b ty arr)
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv (RecSubstFrag Binding) where

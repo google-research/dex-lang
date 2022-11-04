@@ -233,6 +233,7 @@ instance ( SubstB Name frag, HoistableB frag, OutFrag frag
     return ans
   {-# INLINE buildScoped #-}
 
+-- TODO: derive this instead
 instance ( SubstB Name frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m)
          => EnvExtender (DoubleBuilderT frag m) where
@@ -1141,9 +1142,6 @@ zipNest _ _ Empty = Empty
 zipNest f (x:t) (Nest b rest) = Nest (f x b) $ zipNest f t rest
 zipNest _ _ _ = error "List too short!"
 
-zipPiBinders :: [Arrow] -> Nest Binder i i' -> Nest PiBinder i i'
-zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
-
 emitMethod
   :: (Mut n, TopBuilder m)
   => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
@@ -1161,6 +1159,9 @@ makeMethodGetter className explicit methodIdx = liftBuilder do
     let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
     buildPureLam noHint ClassArrow dictTy \dict ->
       emitOp $ ProjMethod (Var dict) methodIdx
+  where
+    zipPiBinders :: [Arrow] -> Nest RolePiBinder i i' -> Nest PiBinder i i'
+    zipPiBinders = zipNest \arr (RolePiBinder b ty _ _) -> PiBinder b ty arr
 
 emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> Atom n -> m n (Name TyConNameC n)
 emitTyConName dataDefName tyConAtom = do

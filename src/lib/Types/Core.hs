@@ -131,13 +131,15 @@ data FieldRowElem (n::S)
 data DataDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Env
-  DataDef :: SourceName -> Nest PiBinder n l -> [DataConDef l] -> DataDef n
+  DataDef :: SourceName -> Nest RolePiBinder n l -> [DataConDef l] -> DataDef n
 
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
   -- list of projection indices that recovers elements from the representation.
   DataConDef SourceName (Type n) [[Projection]]
   deriving (Show, Generic)
+
+data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
 
 newtype DataDefParams n = DataDefParams [(Arrow, Atom n)]
   deriving (Show, Generic)
@@ -219,6 +221,7 @@ data Projection
 type Val  = Atom
 type Type = Atom
 type Kind = Type
+type Dict = Atom
 
 type TC  n = PrimTC  (Atom n)
 type Con n = PrimCon (Atom n)
@@ -257,16 +260,19 @@ data ClassDef (n::S) where
   ClassDef
     :: SourceName
     -> [SourceName]              -- method source names
-    -> Nest Binder n1 n2         -- parameters
+    -> Nest RolePiBinder n1 n2   -- parameters
     ->   SuperclassBinders n2 n3 -- superclasses
     ->   [MethodType n3]         -- method types
     -> ClassDef n1
 
+data RolePiBinder n l = RolePiBinder (AtomNameBinder n l) (Type n) Arrow ParamRole
+     deriving (Show, Generic)
+
 data InstanceDef (n::S) where
   InstanceDef
     :: ClassName n1
-    -> Nest PiBinder n1 n2 -- parameters (types and dictionaries)
-    ->   [Type n2]         -- class parameters
+    -> Nest RolePiBinder n1 n2 -- parameters (types and dictionaries)
+    ->   [Type n2]             -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
 
@@ -746,6 +752,13 @@ instance BindsOneAtomName PiBinder where
 instance BindsOneAtomName IxBinder where
   binderType (_ :> IxType ty _) = ty
 
+instance BindsOneAtomName RolePiBinder where
+  binderType (RolePiBinder _ ty _ _) = ty
+
+toBinderNest :: BindsOneAtomName b => Nest b n l -> Nest Binder n l
+toBinderNest Empty = Empty
+toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest bs)
+
 -- === ToBinding ===
 
 class (SubstE Name e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
@@ -1012,7 +1025,7 @@ instance SubstE Name         DataDefParams
 instance SubstE AtomSubstVal DataDefParams
 
 instance GenericE DataDef where
-  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest PiBinder) (ListE DataConDef))
+  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest RolePiBinder) (ListE DataConDef))
   fromE (DataDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs (ListE cons))
   {-# INLINE fromE #-}
   toE   (PairE (LiftE sourceName) (Abs bs (ListE cons))) = DataDef sourceName bs cons
@@ -1386,7 +1399,7 @@ instance AlphaHashableB SuperclassBinders
 instance GenericE ClassDef where
   type RepE ClassDef =
     LiftE (SourceName, [SourceName])
-     `PairE` Abs (Nest Binder) (Abs SuperclassBinders (ListE MethodType))
+     `PairE` Abs (Nest RolePiBinder) (Abs SuperclassBinders (ListE MethodType))
   fromE (ClassDef name names b scs tys) =
     LiftE (name, names) `PairE` Abs b (Abs scs (ListE tys))
   {-# INLINE fromE #-}
@@ -1405,7 +1418,7 @@ deriving via WrapE ClassDef n instance Generic (ClassDef n)
 
 instance GenericE InstanceDef where
   type RepE InstanceDef =
-    ClassName `PairE` Abs (Nest PiBinder) (ListE Type `PairE` InstanceBody)
+    ClassName `PairE` Abs (Nest RolePiBinder) (ListE Type `PairE` InstanceBody)
   fromE (InstanceDef name bs params body) =
     name `PairE` Abs bs (ListE params `PairE` body)
   toE (name `PairE` Abs bs (ListE params `PairE` body)) =
@@ -1660,6 +1673,34 @@ instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
 deriving instance Show (PiType n)
 deriving via WrapE PiType n instance Generic (PiType n)
+
+instance GenericB RolePiBinder where
+  type RepB RolePiBinder = BinderP AtomNameC (PairE Type (LiftE (Arrow, ParamRole)))
+  fromB (RolePiBinder b ty arr role) = b :> PairE ty (LiftE (arr, role))
+  {-# INLINE fromB #-}
+  toB   (b :> PairE ty (LiftE (arr, role))) = RolePiBinder b ty arr role
+  {-# INLINE toB #-}
+
+instance BindsAtMostOneName RolePiBinder AtomNameC where
+  RolePiBinder b _ _ _ @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance BindsOneName RolePiBinder AtomNameC where
+  binderName (RolePiBinder b _ _ _) = binderName b
+  {-# INLINE binderName #-}
+
+instance HasNameHint (RolePiBinder n l) where
+  getNameHint (RolePiBinder b _ _ _) = getNameHint b
+  {-# INLINE getNameHint #-}
+
+instance ProvesExt  RolePiBinder
+instance BindsNames RolePiBinder
+instance SinkableB RolePiBinder
+instance HoistableB  RolePiBinder
+instance SubstB Name RolePiBinder
+instance SubstB AtomSubstVal RolePiBinder
+instance AlphaEqB RolePiBinder
+instance AlphaHashableB RolePiBinder
 
 instance GenericE IxType where
   type RepE IxType = PairE Type IxDict
@@ -2215,6 +2256,7 @@ instance Monoid (LoadedObjects n) where
 
 instance Hashable Projection
 instance Hashable IxMethod
+instance Hashable ParamRole
 
 instance Store (Atom n)
 instance Store (Expr n)
@@ -2227,6 +2269,7 @@ instance Store (DeclBinding n)
 instance Store (FieldRowElem  n)
 instance Store (FieldRowElems n)
 instance Store (Decl n l)
+instance Store (RolePiBinder n l)
 instance Store (DataDefParams n)
 instance Store (DataDef n)
 instance Store (DataConDef n)
@@ -2263,6 +2306,7 @@ instance Store (BoxPtr n)
 instance (Store (ann n)) => Store (NonDepNest ann n l)
 instance Store Projection
 instance Store IxMethod
+instance Store ParamRole
 instance Store (SpecializedDictDef n)
 
 -- === Orphan instances ===
