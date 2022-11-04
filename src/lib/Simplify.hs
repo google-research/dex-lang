@@ -393,14 +393,14 @@ emitIxDictSpecialization :: DictExpr n -> SimplifyM i n (DictExpr n)
 emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
 emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
 emitIxDictSpecialization ixDict = do
-  (Abs bs (PairE (DictTy dictTy) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
+  (Abs bs (PairE (DictTy dictTy@(DictType sn _ _)) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
   ab <- liftTopBuilderHoisted do
     methodImplNames <- forM [minBound..maxBound] \methodName -> do
       let s = IxMethodSpecialization methodName (sink (Abs bs ixDict'))
       querySpecializationCache s >>= \case
         Just name -> return name
         _ -> emitSpecialization s
-    emitBinding "d" $ sink $ SpecializedDictBinding $
+    emitBinding (getNameHint (sn ++ "_sd")) $ sink $ SpecializedDictBinding $
       SpecializedDictDef (sink (Abs bs dictTy)) methodImplNames
   maybeD <- emitHoistedEnv ab
   case maybeD of
