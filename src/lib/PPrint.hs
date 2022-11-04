@@ -524,9 +524,6 @@ instance Pretty (DataConDef n) where
   pretty (DataConDef name repTy _) =
     p name <+> ":" <+> p repTy
 
-instance Pretty (RoleBinder n l) where
-  pretty (RoleBinder b ty _) = p (b:>ty)
-
 instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames params superclasses methodTys) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
@@ -534,6 +531,9 @@ instance Pretty (ClassDef n) where
          line <> "parameter biners:" <+> pretty params <>
          line <> "superclasses:" <+> pretty (superclassTypes superclasses) <>
          line <> "methods:" <+> pretty methodTys)
+
+instance Pretty ParamRole where
+  pretty r = p (show r)
 
 instance Pretty (RolePiBinder n l) where
   pretty (RolePiBinder b ty _ _) = p (b:>ty)

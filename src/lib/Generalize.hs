@@ -144,14 +144,14 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
 traverseRoleBinders
   :: forall m n n'. EnvReader m
   => (forall l . DExt n l => ParamRole -> Type l -> Atom l -> m l (Atom l))
-  ->  Nest RoleBinder n n' -> [Atom n] -> m n [Atom n]
+  ->  Nest RolePiBinder n n' -> [Atom n] -> m n [Atom n]
 traverseRoleBinders f allBinders allParams =
   runSubstReaderT idSubst $ go allBinders allParams
   where
-    go :: forall i i'. Nest RoleBinder i i' -> [Atom n]
+    go :: forall i i'. Nest RolePiBinder i i' -> [Atom n]
        -> SubstReaderT AtomSubstVal m i n [Atom n]
     go Empty [] = return []
-    go (Nest (RoleBinder b ty role) bs) (param:params) = do
+    go (Nest (RolePiBinder b ty _ role) bs) (param:params) = do
       ty' <- substM ty
       Distinct <- getDistinct
       param' <- liftSubstReaderT $ f role ty' param
@@ -159,7 +159,6 @@ traverseRoleBinders f allBinders allParams =
       return $ param' : params''
     go _ _ = error "zip error"
 {-# INLINE traverseRoleBinders #-}
-
 
 traverserseFieldRowElemTypes :: Monad m => (Type n -> m (Type n)) -> FieldRowElems n -> m (FieldRowElems n)
 traverserseFieldRowElemTypes f els = fieldRowElemsFromList <$> traverse checkElem elemList
@@ -170,14 +169,13 @@ traverserseFieldRowElemTypes f els = fieldRowElemsFromList <$> traverse checkEle
       DynField _ _ -> error "shouldn't have dynamic fields post-simplification"
       DynFields _  -> error "shouldn't have dynamic fields post-simplification"
 
-getDataDefRoleBinders :: EnvReader m => DataDefName n -> m n (Abs (Nest RoleBinder) UnitE n)
+getDataDefRoleBinders :: EnvReader m => DataDefName n -> m n (Abs (Nest RolePiBinder) UnitE n)
 getDataDefRoleBinders def = do
   DataDef _ bs _ <- lookupDataDef def
-  let bs' = fmapNest (\(RolePiBinder b ty _ role) -> RoleBinder b ty role) bs
-  return $ Abs bs' UnitE
+  return $ Abs bs UnitE
 {-# INLINE getDataDefRoleBinders #-}
 
-getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs (Nest RoleBinder) UnitE n)
+getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs (Nest RolePiBinder) UnitE n)
 getClassRoleBinders def = do
   ClassDef _ _ bs _ _ <- lookupClassDef def
   return $ Abs bs UnitE

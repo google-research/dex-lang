@@ -31,7 +31,7 @@ module Syntax (
     AlwaysEqual (..),
     PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
-    PiBinding (..), PiBinder (..), RoleBinder (..), RolePiBinder (..), ParamRole (..),
+    PiBinding (..), PiBinder (..), RolePiBinder (..), ParamRole (..),
     PiType (..), DepPairType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), SourceNameDef (..), LitProg,
     ForAnn, Val, Op, Con, Hof, TC, SuperclassBinders (..),

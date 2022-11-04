@@ -100,8 +100,7 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
         body <- checkInstanceBody className'' params' methods
         return (ListE params' `PairE` body)
   Abs bs' (Abs dictBinders (ListE params' `PairE` body)) <- return ab
-  let dictBinders' = fmapNest (\(PiBinder b ty arr) -> RolePiBinder b ty arr DictParam) dictBinders
-  let def = InstanceDef className' (bs' >>> dictBinders') params' body
+  let def = InstanceDef className' (bs' >>> dictBinders) params' body
   def' <- synthInstanceDef def
   instanceName <- emitInstanceDef def'
   UDeclResultDone <$> case maybeName of
@@ -1475,10 +1474,10 @@ dictTypeFun v = do
     v' <- sinkM v
     return $ go classSourceName bs' v' $ nestToNames bs'
   where
-    go :: SourceName -> Nest RoleBinder n l -> ClassName l -> [AtomName l] -> Atom n
+    go :: SourceName -> Nest RolePiBinder n l -> ClassName l -> [AtomName l] -> Atom n
     go classSourceName bs className params = case bs of
       Empty -> DictTy $ DictType classSourceName className $ map Var params
-      Nest (RoleBinder b ty _) rest ->
+      Nest (RolePiBinder b ty _ _) rest ->
         Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
           AtomicBlock $ go classSourceName rest className params
 
@@ -1571,35 +1570,39 @@ binderNestAsPiNest arr = \case
   Empty             -> Empty
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
-inferRoleBinderNest :: Fallible m => Nest Binder n l -> m (Nest RoleBinder n l)
-inferRoleBinderNest bs = forEachNestItemM bs \(b:>ty) -> do
-  role <- inferRole ty PlainArrow
-  return $ RoleBinder b ty role
-{-# INLINE inferRoleBinderNest #-}
-
-inferRolePiBinderNest :: Fallible m => Nest PiBinder n l -> m (Nest RolePiBinder n l)
-inferRolePiBinderNest bs = forEachNestItemM bs \(PiBinder b ty arr) -> do
-  role <- inferRole ty arr
-  return $ RolePiBinder b ty arr role
-{-# INLINE inferRolePiBinderNest #-}
-
-inferRole :: Fallible m => Type n -> Arrow -> m ParamRole
-inferRole ty arr = case (ty, arr) of
-  (TyKind  , _         ) -> return TypeParam
-  (DictTy _, ClassArrow) -> return DictParam
-  _ -> return DataParam -- TODO(dougalm): check it's actually "data"
+inferRole :: Type o -> Arrow -> InfererM i o ParamRole
+inferRole ty arr = do
+  ty' <- zonk ty
+  case (ty', arr) of
+    (TyKind  , _         ) -> return TypeParam
+    (DictTy _, ClassArrow) -> return DictParam
+    _ -> return DataParam -- TODO(dougalm): check it's actually "data"
 {-# INLINE inferRole #-}
 
 inferDataDef :: EmitsInf o => UDataDef i
              -> InfererM i o (PairE DataDef (Abs (Nest RolePiBinder) (ListE (EmptyAbs (Nest Binder)))) o)
 inferDataDef (UDataDef tyConName paramBs dataCons) = do
   Abs paramBs' (ListE dataConsWithBs') <-
-    withNestedUBindersArrow paramBs \_ -> do
+    withNestedUBindersTyCon paramBs \_ -> do
       ListE <$> mapM inferDataCon dataCons
   let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
-  paramBs'' <- inferRolePiBinderNest paramBs'
-  return $ PairE (DataDef tyConName paramBs'' dataCons')
-                 (Abs paramBs'' $ ListE bs')
+  return $ PairE (DataDef tyConName paramBs' dataCons')
+                 (Abs paramBs' $ ListE bs')
+
+withNestedUBindersTyCon
+  :: forall i i' o e. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  => Nest (UAnnBinderArrow AtomNameC) i i'
+  -> (forall o'. (EmitsInf o', Ext o o') => [AtomName o'] -> InfererM i' o' (e o'))
+  -> InfererM i o (Abs (Nest RolePiBinder) e o)
+withNestedUBindersTyCon bs cont = case bs of
+  Empty -> Abs Empty <$> cont []
+  Nest (UAnnBinderArrow b ty arr) rest -> do
+    Abs b' (Abs rest' body) <-
+      withRoleUBinder (UAnnBinder b ty) arr \name ->
+        withNestedUBindersTyCon rest \names -> do
+          name' <- sinkM name
+          cont (name':names)
+    return $ Abs (Nest b' rest') body
 
 inferDataCon :: EmitsInf o
              => (SourceName, UDataDefTrail i)
@@ -1639,15 +1642,28 @@ inferClassDef
   -> [UType i'] -> [UMethodType i']
   -> InfererM i o (ClassDef o)
 inferClassDef className methodNames paramBs superclassTys methods = solveLocal do
-  ab <- withNestedUBinders paramBs id \_ -> do
+  ab <- withClassDefBinders paramBs \_ -> do
     superclassTys' <- mapM checkUType superclassTys
     withSuperclassBinders superclassTys' do
       ListE <$> forM methods \(UMethodType (Right explicits) ty) -> do
         ty' <- checkUType ty
         return $ MethodType explicits ty'
   Abs bs (Abs scs (ListE mtys)) <- return ab
-  bs' <- inferRoleBinderNest bs
-  return $ ClassDef className methodNames bs' scs mtys
+  return $ ClassDef className methodNames bs scs mtys
+
+withClassDefBinders
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  => Nest (UAnnBinder AtomNameC) i i'
+  -> (forall o'. (EmitsInf o', Ext o o') => [AtomName o'] -> InfererM i' o' (e o'))
+  -> InfererM i o (Abs (Nest RolePiBinder) e o)
+withClassDefBinders bs cont = case bs of
+  Empty -> Abs Empty <$> cont []
+  Nest b rest -> do
+    Abs b' (Abs rest' body) <- withRoleUBinder b PlainArrow \name -> do
+      withClassDefBinders rest \names -> do
+        name' <- sinkM name
+        cont (name':names)
+    return $ Abs (Nest b' rest') body
 
 withSuperclassBinders
   :: (SinkableE e, SubstE Name e, HoistableE e, EmitsInf o)
@@ -1674,25 +1690,6 @@ withSuperclassBindersRec (ty:rest) cont = do
     withSuperclassBindersRec rest' cont
   return $ Abs (Nest b bs) e
 
-withNestedUBindersArrow
-  :: forall i i' o e. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
-  => Nest (UAnnBinderArrow AtomNameC) i i'
-  -> (forall o'. (EmitsInf o', Ext o o') => [AtomName o'] -> InfererM i' o' (e o'))
-  -> InfererM i o (Abs (Nest PiBinder) e o)
-withNestedUBindersArrow bs cont = case bs of
-  Empty -> Abs Empty <$> cont []
-  Nest (UAnnBinderArrow b ty arr) rest -> do
-    Abs (b':>ty') (Abs rest' body) <-
-      withUBinder (UAnnBinder b ty) asBinding \name ->
-        withNestedUBindersArrow rest \names -> do
-          name' <- sinkM name
-          cont (name':names)
-    return $ Abs (Nest (PiBinder b' ty' arr) rest') body
-    where
-      asBinding = case arr of
-        PlainArrow -> toBinding
-        _ -> toBinding . LamBinding arr
-
 withNestedUBinders
   :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
   => Nest (UAnnBinder AtomNameC) i i'
@@ -1707,6 +1704,19 @@ withNestedUBinders bs asBinding cont = case bs of
         name' <- sinkM name
         cont (name':names)
     return $ Abs (Nest b' rest') body
+
+withRoleUBinder
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  => UAnnBinder AtomNameC i i' -> Arrow
+  -> (forall o'. (EmitsInf o', Ext o o') => AtomName o' -> InfererM i' o' (e o'))
+  -> InfererM i o (Abs RolePiBinder e o)
+withRoleUBinder (UAnnBinder b ann) arr cont = do
+  ty <- checkUType ann
+  role <- inferRole ty arr
+  let binding = toBinding $ LamBinding arr ty
+  Abs (b' :> _) ans <- buildAbsInf (getNameHint b) binding \name ->
+    extendSubst (b @> name) $ cont name
+  return $ Abs (RolePiBinder b' ty arr role) ans
 
 withUBinder :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
             => UAnnBinder AtomNameC i i'
@@ -1764,14 +1774,14 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
   ab <- checkAnnWithMissingDicts ann \ds getArgTy -> do
     introDicts (eSetToList ds) $ do
       argTy <- getArgTy
-      buildPiAbsInf (getNameHint p) arrow argTy \v -> do
+      role <- inferRole argTy arrow
+      buildRolePiAbsInf (getNameHint p) arrow role argTy \v -> do
         WithSrcB pos (UPatBinder b) <- return p  -- TODO: enforce this syntactically
         addSrcContext pos $ extendSubst (b@>v) $
           checkInstanceArgs rest do
             cont
   Abs bs (Abs b (Abs bs' e)) <- return ab
-  bs'' <- inferRolePiBinderNest $ bs >>> Nest b Empty
-  return $ Abs (bs'' >>> bs') e
+  return $ Abs (bs >>> Nest b Empty >>> bs') e
 
 -- Nothing about the implementation was instance-specific. This seems
 -- right. If not, at least we only need to change this definition.
@@ -1801,11 +1811,11 @@ checkInstanceParams
      (EmitsInf o, SinkableE e, HoistableE e, SubstE Name e)
   => [UType i]
   -> (forall o'. (EmitsInf o', Ext o o') => [Type o'] -> InfererM i o' (e o'))
-  -> InfererM i o (Abs (Nest PiBinder) e o)
+  -> InfererM i o (Abs (Nest RolePiBinder) e o)
 checkInstanceParams params cont = go params []
   where
     go :: forall o'. (EmitsInf o', Ext o o') => [UType i] -> [Type o']
-       -> InfererM i o' (Abs (Nest PiBinder) e o')
+       -> InfererM i o' (Abs (Nest RolePiBinder) e o')
     go []    ptys = Abs Empty <$> cont (reverse ptys)
     go (p:t) ptys = checkUTypeWithMissingDicts p \ds getParamType -> do
       mergeAbs <$> introDicts (eSetToList ds) do
@@ -1840,14 +1850,14 @@ introDicts
      (EmitsInf o, SinkableE e, HoistableE e, SubstE Name e)
   => [Type o]
   -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (e l))
-  -> InfererM i o (Abs (Nest PiBinder) e o)
+  -> InfererM i o (Abs (Nest RolePiBinder) e o)
 introDicts []    m = Abs Empty <$> m
 introDicts (h:t) m = do
   ab <- buildPiAbsInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
     ListE t' <- sinkM $ ListE t
     introDicts t' m
-  Abs b (Abs bs e) <- return ab
-  return $ Abs (Nest b bs) e
+  Abs (PiBinder b ty arr) (Abs bs e) <- return ab
+  return $ Abs (Nest (RolePiBinder b ty arr DictParam) bs) e
 
 introDictTys :: forall i o. EmitsInf o
              => [Type o]
@@ -3053,6 +3063,15 @@ buildPiAbsInf hint arr ty body = do
     buildAbsInf hint (PiBinding arr ty) \v ->
       withAllowedEffects Pure $ body v
   return $ Abs (PiBinder b ty arr) resultTy
+
+buildRolePiAbsInf
+  :: (EmitsInf n, SinkableE e, SubstE Name e, HoistableE e)
+  => NameHint -> Arrow -> ParamRole -> Type n
+  -> (forall l. (EmitsInf l, Ext n l) => AtomName l -> InfererM i l (e l))
+  -> InfererM i n (Abs RolePiBinder e n)
+buildRolePiAbsInf hint arr role ty body = do
+  Abs (PiBinder b ty' arr') e <- buildPiAbsInf hint arr ty body
+  return $ Abs (RolePiBinder b ty' arr' role) e
 
 buildPiInf
   :: EmitsInf n

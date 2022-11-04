@@ -764,9 +764,9 @@ instance HasType Block where
 getClassTy :: ClassDef n -> Type n
 getClassTy (ClassDef _ _ bs _ _) = go bs
   where
-    go :: Nest RoleBinder n l -> Type n
+    go :: Nest RolePiBinder n l -> Type n
     go Empty = TyKind
-    go (Nest (RoleBinder b ty _) rest) = Pi $ PiType (PiBinder b ty PlainArrow) Pure $ go rest
+    go (Nest (RolePiBinder b ty arr _) rest) = Pi $ PiType (PiBinder b ty arr) Pure $ go rest
 
 ixTyFromDict :: EnvReader m => Atom n -> m n (IxType n)
 ixTyFromDict dict = do

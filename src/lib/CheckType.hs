@@ -428,7 +428,7 @@ dictExprType e = case e of
     args' <- mapM substM args
     dictTy'@(DictType _ className params) <- applySubst (bs @@> map SubstVal args') dictTy
     ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
-    let pbs' = fmapNest (\(RoleBinder b ty _) -> b:>ty) pbs
+    let pbs' = fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) pbs
     forMZipped_ methodTys methodFunNames \(MethodType _ methodTy) methodFunName -> do
       reqTy <- checkedApplyNaryAbs (Abs pbs' methodTy) params
       let extendedArgs = case reqTy of

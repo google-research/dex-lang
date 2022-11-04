@@ -1160,8 +1160,8 @@ makeMethodGetter className explicit methodIdx = liftBuilder do
     buildPureLam noHint ClassArrow dictTy \dict ->
       emitOp $ ProjMethod (Var dict) methodIdx
   where
-    zipPiBinders :: [Arrow] -> Nest RoleBinder i i' -> Nest PiBinder i i'
-    zipPiBinders = zipNest \arr (RoleBinder b ty _) -> PiBinder b ty arr
+    zipPiBinders :: [Arrow] -> Nest RolePiBinder i i' -> Nest PiBinder i i'
+    zipPiBinders = zipNest \arr (RolePiBinder b ty _ _) -> PiBinder b ty arr
 
 emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> Atom n -> m n (Name TyConNameC n)
 emitTyConName dataDefName tyConAtom = do

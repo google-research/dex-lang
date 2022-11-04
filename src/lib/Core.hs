@@ -336,10 +336,6 @@ instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
 
-instance BindsEnv RoleBinder where
-  toEnvFrag (RoleBinder b ty _) = toEnvFrag (PiBinder b ty PlainArrow)
-  {-# INLINE toEnvFrag #-}
-
 instance BindsEnv RolePiBinder where
   toEnvFrag (RolePiBinder b ty arr _) = toEnvFrag (PiBinder b ty arr)
   {-# INLINE toEnvFrag #-}

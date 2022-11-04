@@ -140,7 +140,6 @@ data DataConDef n =
   deriving (Show, Generic)
 
 data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
-data RoleBinder n l = RoleBinder (AtomNameBinder n l) (Type n) ParamRole deriving (Show, Generic)
 
 newtype DataDefParams n = DataDefParams [(Arrow, Atom n)]
   deriving (Show, Generic)
@@ -261,7 +260,7 @@ data ClassDef (n::S) where
   ClassDef
     :: SourceName
     -> [SourceName]              -- method source names
-    -> Nest RoleBinder n1 n2     -- parameters
+    -> Nest RolePiBinder n1 n2   -- parameters
     ->   SuperclassBinders n2 n3 -- superclasses
     ->   [MethodType n3]         -- method types
     -> ClassDef n1
@@ -752,9 +751,6 @@ instance BindsOneAtomName PiBinder where
 
 instance BindsOneAtomName IxBinder where
   binderType (_ :> IxType ty _) = ty
-
-instance BindsOneAtomName RoleBinder where
-  binderType (RoleBinder _ ty _) = ty
 
 instance BindsOneAtomName RolePiBinder where
   binderType (RolePiBinder _ ty _ _) = ty
@@ -1403,7 +1399,7 @@ instance AlphaHashableB SuperclassBinders
 instance GenericE ClassDef where
   type RepE ClassDef =
     LiftE (SourceName, [SourceName])
-     `PairE` Abs (Nest RoleBinder) (Abs SuperclassBinders (ListE MethodType))
+     `PairE` Abs (Nest RolePiBinder) (Abs SuperclassBinders (ListE MethodType))
   fromE (ClassDef name names b scs tys) =
     LiftE (name, names) `PairE` Abs b (Abs scs (ListE tys))
   {-# INLINE fromE #-}
@@ -1705,34 +1701,6 @@ instance SubstB Name RolePiBinder
 instance SubstB AtomSubstVal RolePiBinder
 instance AlphaEqB RolePiBinder
 instance AlphaHashableB RolePiBinder
-
-instance GenericB RoleBinder where
-  type RepB RoleBinder = BinderP AtomNameC (PairE Type (LiftE ParamRole))
-  fromB (RoleBinder b ty role) = b :> PairE ty (LiftE role)
-  {-# INLINE fromB #-}
-  toB   (b :> PairE ty (LiftE role)) = RoleBinder b ty role
-  {-# INLINE toB #-}
-
-instance BindsAtMostOneName RoleBinder AtomNameC where
-  RoleBinder b _ _ @> x = b @> x
-  {-# INLINE (@>) #-}
-
-instance BindsOneName RoleBinder AtomNameC where
-  binderName (RoleBinder b _ _) = binderName b
-  {-# INLINE binderName #-}
-
-instance HasNameHint (RoleBinder n l) where
-  getNameHint (RoleBinder b _ _) = getNameHint b
-  {-# INLINE getNameHint #-}
-
-instance ProvesExt  RoleBinder
-instance BindsNames RoleBinder
-instance SinkableB RoleBinder
-instance HoistableB  RoleBinder
-instance SubstB Name RoleBinder
-instance SubstB AtomSubstVal RoleBinder
-instance AlphaEqB RoleBinder
-instance AlphaHashableB RoleBinder
 
 instance GenericE IxType where
   type RepE IxType = PairE Type IxDict
@@ -2301,7 +2269,6 @@ instance Store (DeclBinding n)
 instance Store (FieldRowElem  n)
 instance Store (FieldRowElems n)
 instance Store (Decl n l)
-instance Store (RoleBinder n l)
 instance Store (RolePiBinder n l)
 instance Store (DataDefParams n)
 instance Store (DataDef n)
