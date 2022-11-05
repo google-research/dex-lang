@@ -82,6 +82,8 @@ type NameAndArgs = (SourceName, [Group])
 type CDecl = WithSrc CDecl'
 data CDecl'
   = CLet Group CBlock
+  -- Arrow binder <-
+  | CBind Group CBlock
   -- name, args, type, body.  The header should contain the parameters,
   -- optional effects, and return type
   | CDef SourceName Group (Maybe Group) CBlock
@@ -475,8 +477,8 @@ cBlock' = Left <$> realBlock <|> Right <$> cGroupNoSeparators where
 
 cDecl :: Parser CDecl
 cDecl = instanceDef True <|> (do
-  lhs <- funDefLet <|> (try $ simpleLet <* lookAhead (sym "="))
-  rhs <- sym "=" >> cBlock
+  lhs <- funDefLet <|> (try simpleLet)
+  rhs <- cBlock
   return $ lhs rhs) <|> (ExprDecl <$> cGroup)
 
 instanceDef :: Bool -> Parser CDecl
@@ -497,17 +499,21 @@ instanceMethod = do
   return (fromString v, rhs)
 
 simpleLet :: Parser (CBlock -> CDecl)
-simpleLet = withSrc1 do
+simpleLet = withSrc1 $ do
   binder <- cGroupNoEqual
-  return $ CLet binder
+  next <- nextChar
+  case next of
+    '=' -> sym  "=" >> return (CLet  binder)
+    '<' -> sym "<-" >> return (CBind binder)
+    _   -> fail ""
 
 funDefLet :: Parser (CBlock -> CDecl)
-funDefLet = label "function definition" $ mayBreak $ withSrc1 do
+funDefLet = label "function definition" (mayBreak $ withSrc1 do
   keyWord DefKW
   name <- anyName
   args <- cGroupNoColon <|> pure (WithSrc Nothing CEmpty)
   typeAnn <- optional (sym ":" >> cGroupNoEqual)
-  return (CDef name args typeAnn)
+  return (CDef name args typeAnn)) <* sym "="
 
 cGroup :: Parser Group
 cGroup = makeExprParser (withSrc leafGroup) ops
