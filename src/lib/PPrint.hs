@@ -1142,6 +1142,7 @@ instance Pretty CDecl where
 
 instance Pretty CDecl' where
   pretty (CLet pat blk) = pArg pat <+> "=" <+> p blk
+  pretty (CBind pat blk) = pArg pat <+> "<-" <+> p blk
   pretty (CDef name args (Just ty) blk) =
     "def " <> fromString name <> " " <> pArg args <> " : " <> pArg ty <> " ="
       <> nest 2 (hardline <> p blk)

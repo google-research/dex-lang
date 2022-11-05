@@ -222,6 +222,7 @@ effectOpDef (v, Just rp, rhs) = UEffectOpDef rp (fromString v) <$> block rhs
 decl :: LetAnn -> CDecl -> SyntaxM (UDecl VoidS VoidS)
 decl ann = dropSrc decl' where
   decl' (CLet binder body) = ULet ann <$> patOptAnn binder <*> block body
+  decl' (CBind _ _) = throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
   decl' (CDef name params maybeTy body) = do
     params' <- concat <$> (mapM argument $ nary Juxtapose params)
     case maybeTy of
@@ -409,6 +410,11 @@ method (name, body) = UMethodDef (fromString name) <$> block body
 block :: CBlock -> SyntaxM (UExpr VoidS)
 block (CBlock []) = throw SyntaxErr "Block must end in expression"
 block (CBlock [ExprDecl g]) = expr g
+block (CBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
+  binder' <- patOptAnn binder
+  rhs' <- block rhs
+  body <- block $ CBlock ds
+  return $ WithSrcE pos $ UApp rhs' $ ns $ ULam $ ULamExpr PlainArrow binder' body
 block (CBlock (d@(WithSrc pos _):ds)) = do
   d' <- decl PlainLet d
   e' <- block $ CBlock ds
