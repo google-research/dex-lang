@@ -35,8 +35,9 @@ module Builder (
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
   emitTopLet, emitImpFunBinding, emitSpecialization, emitAtomRules,
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
-  extendImpCache, queryImpCache, extendIxLoweredCache, queryIxLoweredCache,
+  extendImpCache, queryImpCache, finishSpecializedDict,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
+  queryIxDictCache, extendIxDictCache,
   extendObjCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv, emitLoweredFun,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -79,7 +80,7 @@ import CheapReduction
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
-import Util (enumerate, transitiveClosureM, bindM2)
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
 import Err
 import Types.Core
 import Core
@@ -351,15 +352,6 @@ queryImpCache v = do
   cache <- impCache <$> getCache
   return $ lookupEMap cache v
 
-extendIxLoweredCache :: TopBuilder m => AtomName n -> AtomName n -> m n ()
-extendIxLoweredCache specialized lowered =
-  extendCache $ mempty { ixLoweredCache = eMapSingleton specialized lowered }
-
-queryIxLoweredCache :: EnvReader m => AtomName n -> m n (Maybe (AtomName n))
-queryIxLoweredCache v = do
-  cache <- ixLoweredCache <$> getCache
-  return $ lookupEMap cache v
-
 emitLoweredFun :: (Mut n, TopBuilder m) => NameHint -> NaryLamExpr n -> m n (AtomName n)
 emitLoweredFun hint f = do
   fTy <- naryLamExprType f
@@ -373,6 +365,19 @@ querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (A
 querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
+
+extendIxDictCache :: TopBuilder m => AbsDict n -> Name SpecializedDictNameC n -> m n ()
+extendIxDictCache absDict name =
+  extendCache $ mempty { ixDictCache = eMapSingleton absDict name }
+
+queryIxDictCache :: EnvReader m => AbsDict n -> m n (Maybe (Name SpecializedDictNameC n))
+queryIxDictCache v = do
+  cache <- ixDictCache <$> getCache
+  return $ lookupEMap cache v
+
+finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [NaryLamExpr n] -> m n ()
+finishSpecializedDict name methods =
+  emitPartialTopEnvFrag $ mempty {fragFinishSpecializedDict = toSnocList [(name, methods)]}
 
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> FunObjCodeName n -> m n ()
 extendObjCache fImp fObj =
@@ -1367,14 +1372,11 @@ applyIxMethod dict method args = case dict of
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
   DictCon (ExplicitMethods d params) -> do
-    SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
-    let f = fs !! fromEnum method
+    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+    NaryLamExpr bs _ body <- return $ fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
-    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName f
-    Just fSimpName <- queryIxLoweredCache f
-    TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fSimpName
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
   _ -> do
     methodImpl <- emitOp $ ProjMethod dict (fromEnum method)

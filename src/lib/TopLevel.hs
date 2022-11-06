@@ -15,6 +15,7 @@ module TopLevel (
 
 import Data.Foldable (toList)
 import Data.Functor
+import Control.Category ((>>>))
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
@@ -24,6 +25,7 @@ import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.List (partition)
+import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
@@ -604,18 +606,42 @@ evalBlock typed = do
   applyRecon recon result
 {-# SCC evalBlock #-}
 
-evalSpecializations :: (Topper m, Mut n) => [AtomName n] -> m n ()
-evalSpecializations vs = forM_ vs \v -> do
-  lookupAtomName v >>= \case
-    TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
-      queryImpCache v >>= \case
-        Nothing -> compileTopLevelFun v
-        Just _ -> return ()
-    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
-      queryIxLoweredCache v >>= \case
-        Nothing -> lowerIxMethod v
-        Just _ -> return ()
-    _ -> return ()
+evalSpecializations :: (Topper m, Mut n) => [AtomName n] -> [SpecDictName n] -> m n ()
+evalSpecializations vs sdVs = do
+  forM_ vs \v -> do
+    lookupAtomName v >>= \case
+      TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
+        queryImpCache v >>= \case
+          Nothing -> compileTopLevelFun v
+          Just _ -> return ()
+      _ -> return ()
+  forM_ sdVs \d -> do
+    SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) _) <- lookupEnv d
+    methods <- forM [minBound..maxBound] \method -> do
+      ty <- liftEnvReaderM $ ixMethodType method absDict
+      lamExpr <- liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
+        dict <- applyNaryAbs (sink absDict) extraArgs
+        let actualArgs = case method of Size -> []  -- size is thunked
+                                        _    -> map Var methodArgs
+        applyIxMethod dict method actualArgs
+      simplifyTopFunction lamExpr
+    finishSpecializedDict d methods
+
+ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType n)
+ixMethodType method absDict = do
+  refreshAbs absDict \extraArgBs dict -> do
+    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
+      Pi (PiType b _ resultTy) -> do
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest b Empty
+        return $ NaryPiType allBs Pure resultTy
+      -- non-function methods are thunked
+      ty -> do
+        Abs unitBinder ty' <- toConstAbs ty
+        let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest unitPiBinder Empty
+        return $ NaryPiType allBs Pure ty'
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -648,14 +674,6 @@ execUDecl mname decl = do
       emitSourceMap =<< applyUDeclAbs declAbs result'
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
-
-lowerIxMethod :: (Topper m, Mut n) => AtomName n -> m n ()
-lowerIxMethod fname = do
-  fPreSimp <- specializedFunPreSimpDefinition fname
-  fSimp <- simplifyTopFunction fPreSimp
-  -- TODO: actually do the lowering (lowering only handles blocks, not functions, right now)
-  fSimpName <- emitLoweredFun (getNameHint fname) fSimp
-  extendIxLoweredCache fname fSimpName
 
 compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
 compileTopLevelFun fname = do
@@ -712,13 +730,6 @@ specializedFunPreSimpDefinition fname = do
         let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
         ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
         naryApp (sink f') $ staticArgs' <> map Var originalArgs
-    IxMethodSpecialization method absDict@(Abs bs _) -> do
-      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
-        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
-        dict <- applyNaryAbs (sink absDict) extraArgs
-        let actualArgs = case method of Size -> []  -- size is thunked
-                                        _    -> map Var methodArgs
-        applyIxMethod dict method actualArgs
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
@@ -986,9 +997,11 @@ instance Topper TopperM
 instance TopBuilder TopperM where
   emitBinding = emitBindingDefault
   emitEnv (Abs frag result) = do
-    PairE result' (ListE names) <- TopperM $ emitEnv $
-      Abs frag $ PairE result (ListE (boundNamesList frag))
-    evalSpecializations names
+    result' `PairE` ListE names `PairE` ListE dictNames <- TopperM $ emitEnv $
+      Abs frag $ result
+         `PairE` ListE (boundNamesList frag)
+         `PairE` ListE (boundNamesList frag)
+    evalSpecializations names dictNames
     return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont

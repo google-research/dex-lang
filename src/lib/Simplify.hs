@@ -393,19 +393,19 @@ emitIxDictSpecialization :: DictExpr n -> SimplifyM i n (DictExpr n)
 emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
 emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
 emitIxDictSpecialization ixDict = do
-  (Abs bs (PairE (DictTy dictTy@(DictType sn _ _)) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
-  ab <- liftTopBuilderHoisted do
-    methodImplNames <- forM [minBound..maxBound] \methodName -> do
-      let s = IxMethodSpecialization methodName (sink (Abs bs ixDict'))
-      querySpecializationCache s >>= \case
+  (dictAbs, params) <- generalizeIxDict (DictCon ixDict)
+  sdName <- queryIxDictCache dictAbs >>= \case
+    Just name -> return name
+    Nothing -> do
+      ab <- liftTopBuilderHoisted do
+        dName <- emitBinding "d" $ sink $ SpecializedDictBinding $ SpecializedDict dictAbs Nothing
+        extendIxDictCache (sink dictAbs) dName
+        return dName
+      maybeD <- emitHoistedEnv ab
+      case maybeD of
         Just name -> return name
-        _ -> emitSpecialization s
-    emitBinding (getNameHint (sn ++ "_sd")) $ sink $ SpecializedDictBinding $
-      SpecializedDictDef (sink (Abs bs dictTy)) methodImplNames
-  maybeD <- emitHoistedEnv ab
-  case maybeD of
-    Just d -> return $ ExplicitMethods d params
-    Nothing -> error "Couldn't hoist specialized dictionary"
+        Nothing -> error "Couldn't hoist specialized dictionary"
+  return $ ExplicitMethods sdName params
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o
@@ -764,12 +764,10 @@ projectDictMethod d i = do
       case i of
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
-    DictCon (ExplicitMethods methodImplName params) -> do
-      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv methodImplName
-      let f = fs !! i
-      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ (Abs bs dict'))) <- lookupAtomName f
-      dict'' <- applySubst (bs @@> map SubstVal params) dict'
-      projectDictMethod dict'' i
+    DictCon (ExplicitMethods sd params) -> do
+      SpecializedDictBinding (SpecializedDict (Abs bs dict) _) <- lookupEnv sd
+      dict' <- applySubst (bs @@> map SubstVal params) dict
+      projectDictMethod dict' i
     DictCon (IxFin n) -> projectIxFinMethod (toEnum i) n
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 

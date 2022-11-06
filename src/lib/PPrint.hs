@@ -464,8 +464,6 @@ instance Pretty (TopFunBinding n) where
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
     "Specialization" <+> p f <+> p bs <+> p args
-  pretty (IxMethodSpecialization method (Abs bs d)) =
-    "IxMethodSpecialization" <+> p method <+> p bs <+> p d
 
 instance Pretty IxMethod where
   pretty method = p $ show method

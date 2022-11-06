@@ -2767,7 +2767,7 @@ generalizeDictRec dict = do
       return $ InstanceDict instanceName args'
     IxFin _ -> IxFin <$> Var <$> freshInferenceName NatTy
     ExplicitMethods d params -> do
-       SpecializedDictBinding (SpecializedDictDef (Abs bs _) _) <- lookupEnv d
+       SpecializedDictBinding (SpecializedDict (Abs bs _) _) <- lookupEnv d
        let bs' = fmapNest (\(b:>ty) -> RolePiBinder b ty PlainArrow DataParam) bs
        params' <- generalizeInstanceArgs bs' params
        return $ ExplicitMethods d params'
