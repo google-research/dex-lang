@@ -51,9 +51,7 @@ prepareFunctionForExport cc f = do
       case sinkFromTop $ EmptyAbs argSig of
         Abs argSig' UnitE -> liftEnvReaderM $ exportArgRecon naryPi argSig'
   f' <- asNaryLam naryPi f
-  fSimp <- simplifyTopFunction f'
-  evalRequiredSpecializations fSimp
-  NaryLamExpr bs Pure body <- hoistIxDicts fSimp
+  NaryLamExpr bs Pure body <- simplifyTopFunction f'
   loweredAbs <- liftEnvReaderM $ refreshAbs (Abs bs body) \(NonEmptyNest b' bs') body' -> do
     Abs (Nest b' bs') <$> lowerFullySequential body'
   fImp <- toImpExportedFunction cc loweredAbs argRecon

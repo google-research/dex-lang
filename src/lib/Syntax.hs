@@ -51,7 +51,7 @@ module Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize,
     SubstVal (..), AtomName, DataDefName, ClassName, MethodName, InstanceName, AtomSubstVal,
-    SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
+    SpecDictName, SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
     SourceOrInternalName (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),

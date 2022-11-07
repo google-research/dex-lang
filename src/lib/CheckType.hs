@@ -424,20 +424,24 @@ dictExprType e = case e of
     liftM DictTy $ ixDictType $ TC $ Fin n'
   ExplicitMethods d args -> do
     SpecializedDictBinding def <- lookupEnv =<< substM d
-    SpecializedDictDef (Abs bs dictTy) methodFunNames <- return def
+    SpecializedDict (Abs bs dict) maybeMethodFuns <- return def
     args' <- mapM substM args
-    dictTy'@(DictType _ className params) <- applySubst (bs @@> map SubstVal args') dictTy
+    dict' <- applySubst (bs @@> map SubstVal args') dict
+    dictTy@(DictTy (DictType _ className params)) <- getType dict'
     ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
     let pbs' = fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) pbs
-    forMZipped_ methodTys methodFunNames \(MethodType _ methodTy) methodFunName -> do
-      reqTy <- checkedApplyNaryAbs (Abs pbs' methodTy) params
-      let extendedArgs = case reqTy of
-            Pi _ -> args
-            _ -> args ++ [UnitVal]
-      methodFunTy <- getType $ Var methodFunName
-      actualTy  <- checkApp methodFunTy extendedArgs
-      checkAlphaEq reqTy actualTy
-    return $ DictTy dictTy'
+    case maybeMethodFuns of
+      Nothing -> return ()
+      Just methodFuns -> do
+        forMZipped_ methodTys methodFuns \(MethodType _ methodTy) methodFun -> do
+          reqTy <- checkedApplyNaryAbs (Abs pbs' methodTy) params
+          let extendedArgs = case reqTy of
+                Pi _ -> args
+                _ -> args ++ [UnitVal]
+          fTy <- naryLamExprType methodFun
+          actualTy  <- checkApp (naryPiTypeAsType fTy) extendedArgs
+          checkAlphaEq reqTy actualTy
+    return dictTy
 
 instance HasType DictExpr where
   getTypeE e = dictExprType e

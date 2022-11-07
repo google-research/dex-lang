@@ -471,11 +471,6 @@ lookupSourceMap sourceName = do
     [ModuleVar _ (Just x)] -> return $ Just x
     _   -> return Nothing
 
-updateEnv :: Color c => Name c n -> Binding c n -> Env n -> Env n
-updateEnv v rhs env =
-  env { topEnv = (topEnv env) { envDefs = RecSubst $ updateSubstFrag v rhs bs } }
-  where (RecSubst bs) = envDefs $ topEnv env
-
 refreshBinders
   :: (EnvExtender m, BindsEnv b, SubstB Name b)
   => b n l

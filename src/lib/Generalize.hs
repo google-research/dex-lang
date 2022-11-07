@@ -17,13 +17,13 @@ import LabeledItems
 
 type Generalized (e::E) (n::S) = (Abs (Nest Binder) e n, [Atom n])
 
-generalizeIxDict :: EnvReader m => Dict n -> m n (Generalized (PairE Type Dict) n)
+generalizeIxDict :: EnvReader m => Dict n -> m n (Generalized Dict n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
   dictTy <- getType dict'
   dictTyGeneralized <- generalizeType dictTy
   dictGeneralized <- liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
-  return $ PairE dictTyGeneralized dictGeneralized
+  return dictGeneralized
 {-# INLINE generalizeIxDict #-}
 
 generalizeArgs ::EnvReader m => Nest PiBinder n l -> [Atom n] -> m n (Generalized (ListE Atom) n)

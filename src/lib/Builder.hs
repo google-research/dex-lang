@@ -30,12 +30,14 @@ module Builder (
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
-  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
+  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
+  runTopBuilderT, TopBuilder2, emitBindingDefault,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
   emitTopLet, emitImpFunBinding, emitSpecialization, emitAtomRules,
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
-  extendImpCache, queryImpCache, extendIxLoweredCache, queryIxLoweredCache,
+  extendImpCache, queryImpCache, finishSpecializedDict,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
+  queryIxDictCache, extendIxDictCache,
   extendObjCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv, emitLoweredFun,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -78,7 +80,7 @@ import CheapReduction
 import MTL1
 import {-# SOURCE #-} Interpreter
 import LabeledItems
-import Util (enumerate, transitiveClosureM, bindM2)
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
 import Err
 import Types.Core
 import Core
@@ -261,12 +263,22 @@ class (EnvReader m, MonadFail1 m)
   -- `emitBinding` is expressible in terms of `emitEnv` but it can be
   -- implemented more efficiently by avoiding a double substitution
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
+  -- TODO: do we actually need `emitBinding`? Top emissions probably aren't hot.
   emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
   emitEnv :: (Mut n, SinkableE e, SubstE Name e) => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: SinkableE e
                   => (forall l. (Mut l, DExt n l) => m l (e l))
                   -> m n (Abs TopEnvFrag e n)
+
+emitBindingDefault
+  :: (TopBuilder m, Mut n, Color c)
+  => NameHint -> Binding c n -> m n (Name c n)
+emitBindingDefault hint binding = do
+  ab <- liftEnvReaderM $ withFreshBinder hint binding \b'-> do
+    let topFrag = TopEnvFrag (toEnvFrag (b':>binding)) mempty
+    return $ Abs topFrag $ binderName b'
+  emitEnv ab
 
 emitPartialTopEnvFrag :: TopBuilder m => PartialTopEnvFrag n -> m n ()
 emitPartialTopEnvFrag frag = emitNamelessEnv $ TopEnvFrag emptyOutFrag frag
@@ -339,15 +351,6 @@ queryImpCache v = do
   cache <- impCache <$> getCache
   return $ lookupEMap cache v
 
-extendIxLoweredCache :: TopBuilder m => AtomName n -> AtomName n -> m n ()
-extendIxLoweredCache specialized lowered =
-  extendCache $ mempty { ixLoweredCache = eMapSingleton specialized lowered }
-
-queryIxLoweredCache :: EnvReader m => AtomName n -> m n (Maybe (AtomName n))
-queryIxLoweredCache v = do
-  cache <- ixLoweredCache <$> getCache
-  return $ lookupEMap cache v
-
 emitLoweredFun :: (Mut n, TopBuilder m) => NameHint -> NaryLamExpr n -> m n (AtomName n)
 emitLoweredFun hint f = do
   fTy <- naryLamExprType f
@@ -361,6 +364,19 @@ querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (A
 querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
+
+extendIxDictCache :: TopBuilder m => AbsDict n -> Name SpecializedDictNameC n -> m n ()
+extendIxDictCache absDict name =
+  extendCache $ mempty { ixDictCache = eMapSingleton absDict name }
+
+queryIxDictCache :: EnvReader m => AbsDict n -> m n (Maybe (Name SpecializedDictNameC n))
+queryIxDictCache v = do
+  cache <- ixDictCache <$> getCache
+  return $ lookupEMap cache v
+
+finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [NaryLamExpr n] -> m n ()
+finishSpecializedDict name methods =
+  emitPartialTopEnvFrag $ mempty {fragFinishSpecializedDict = toSnocList [(name, methods)]}
 
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> FunObjCodeName n -> m n ()
 extendObjCache fImp fObj =
@@ -1355,14 +1371,11 @@ applyIxMethod dict method args = case dict of
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
   DictCon (ExplicitMethods d params) -> do
-    SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
-    let f = fs !! fromEnum method
+    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+    NaryLamExpr bs _ body <- return $ fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
-    TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) <- lookupAtomName f
-    Just fSimpName <- queryIxLoweredCache f
-    TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fSimpName
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
   _ -> do
     methodImpl <- emitOp $ ProjMethod dict (fromEnum method)

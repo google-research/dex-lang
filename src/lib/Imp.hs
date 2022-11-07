@@ -352,7 +352,6 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
                 Just fImp <- queryImpCache v
                 result <- emitCall piTy fImp $ toList xs
                 returnVal result
-              _ -> notASimpExpr
         _ -> notASimpExpr
       _ -> notASimpExpr
   TabApp f' xs' -> do
@@ -1550,7 +1549,7 @@ unsafeFromOrdinalImp (IxType _ dict) i = do
   case dict of
     DictCon (IxFin n) -> return $ Con $ Newtype (TC $ Fin n) i'
     DictCon (ExplicitMethods d params) -> do
-      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
+      SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
     _ -> error $ "Not a simplified dict: " ++ pprint dict
 
@@ -1559,15 +1558,13 @@ indexSetSizeImp (IxType _ dict) = do
   ans <- case dict of
     DictCon (IxFin n) -> return n
     DictCon (ExplicitMethods d params) -> do
-      SpecializedDictBinding (SpecializedDictDef _ fs) <- lookupEnv d
+      SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
     _ -> error $ "Not a simplified dict: " ++ pprint dict
   fromScalarAtom $ unwrapBaseNewtype ans
 
-appSpecializedIxMethod :: Emits n => AtomName n -> [Atom n] -> SubstImpM i n (Atom n)
-appSpecializedIxMethod f args = do
-  Just fLoweredName <- queryIxLoweredCache f
-  TopFunBound _ (LoweredTopFun (NaryLamExpr bs _ body)) <- lookupAtomName fLoweredName
+appSpecializedIxMethod :: Emits n => NaryLamExpr n -> [Atom n] -> SubstImpM i n (Atom n)
+appSpecializedIxMethod (NaryLamExpr bs _ body) args = do
   dropSubst $ extendSubst (bs @@> map SubstVal args) $ translateBlock Nothing body
 
 -- === Abstracting link-time objects ===

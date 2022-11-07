@@ -25,6 +25,7 @@ import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import Data.Word
 import Data.Maybe
 import Data.Functor
+import Data.Foldable (toList)
 import Data.Hashable
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
@@ -39,7 +40,7 @@ import Foreign.Ptr
 import Name
 import Err
 import LabeledItems
-import Util (FileHash, onFst)
+import Util (FileHash, onFst, SnocList (..), toSnocList)
 
 import Types.Primitives
 import Types.Source
@@ -103,6 +104,7 @@ type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
 type PtrName      = Name PtrNameC
+type SpecDictName = Name SpecializedDictNameC
 type FunObjCodeName = Name FunObjCodeNameC
 
 type AtomNameBinder = NameBinder AtomNameC
@@ -304,7 +306,7 @@ data DictExpr (n::S) =
    -- TODO: the function atoms should be names. We could enforce that syntactically but then
    -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
    -- top function names.
- | ExplicitMethods (Name SpecializedDictNameC n) [Atom n] -- dict type, names of parameterized method functions, parameters
+ | ExplicitMethods (SpecDictName n) [Atom n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -396,7 +398,8 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
   , fragCustomRules     :: CustomRules n
   , fragLoadedModules   :: LoadedModules n
   , fragLoadedObjects   :: LoadedObjects n
-  , fragLocalModuleEnv  :: ModuleEnv n }
+  , fragLocalModuleEnv  :: ModuleEnv n
+  , fragFinishSpecializedDict :: SnocList (SpecDictName n, [NaryLamExpr n]) }
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
@@ -413,14 +416,7 @@ emptyImportStatus = ImportStatus mempty mempty
 
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec AtomName n
-    -- This holds the result of lowering the `IxMethodSpecialization`
-    -- specialization requests to a simplified/lowered function. The key is the
-    -- name of the specialization "request" and the value is the name of the
-    -- simplified/lowered version.
-  , ixLoweredCache :: EMap AtomName AtomName n
-    -- This is to hold the results of translating specialized top-level
-    -- functions. TODO: `Cache` might not be the best term for this, since we
-    -- sometimes *require* that the cache entry exist.
+  , ixDictCache :: EMap AbsDict SpecDictName n
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName FunObjCodeName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -430,6 +426,11 @@ data Cache (n::S) = Cache
   , parsedDeps :: M.Map ModuleSourceName (FileHash, [ModuleSourceName])
   , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
+
+updateEnv :: Color c => Name c n -> Binding c n -> Env n -> Env n
+updateEnv v rhs env =
+  env { topEnv = (topEnv env) { envDefs = RecSubst $ updateSubstFrag v rhs bs } }
+  where (RecSubst bs) = envDefs $ topEnv env
 
 -- === runtime function and variable representations ===
 
@@ -564,16 +565,27 @@ instance SubstE AtomSubstVal EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
+type AbsDict = Abs (Nest Binder) Dict
+
 data SpecializedDictDef n =
-  -- dict type abstracted over local params, method names
-  SpecializedDictDef (Abs (Nest Binder) DictType n) [AtomName n]
-  deriving (Show, Generic)
+   SpecializedDict
+     -- Dict is abstracted over local "data" params. The methods are
+     (AbsDict n)
+     -- Methods (thunked if nullary), if they're available.
+     -- We create specialized dict names during simplification, but we don't
+     -- actually simplify/lower them until we return to TopLevel
+     (Maybe [NaryLamExpr n])
+   deriving (Show, Generic)
 
 instance GenericE SpecializedDictDef where
-  type RepE SpecializedDictDef = PairE (Abs (Nest Binder) DictType) (ListE AtomName)
-  fromE (SpecializedDictDef ab methods) = ab `PairE` ListE methods
+  type RepE SpecializedDictDef = AbsDict `PairE` MaybeE (ListE NaryLamExpr)
+  fromE (SpecializedDict ab methods) = ab `PairE` methods'
+    where methods' = case methods of Just xs -> LeftE (ListE xs)
+                                     Nothing -> RightE UnitE
   {-# INLINE fromE #-}
-  toE   (ab `PairE` ListE methods) = SpecializedDictDef ab methods
+  toE   (ab `PairE` methods) = SpecializedDict ab methods'
+    where methods' = case methods of LeftE (ListE xs) -> Just xs
+                                     RightE UnitE     -> Nothing
   {-# INLINE toE #-}
 
 instance SinkableE      SpecializedDictDef
@@ -612,7 +624,6 @@ data SpecializationSpec (n::S) =
    -- The additional binders are for "data" components of the specialization types, like
    -- `n` in `Fin n`.
    AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
- | IxMethodSpecialization IxMethod (Abs (Nest Binder) IxDict n)
    deriving (Show, Generic)
 
 atomBindingType :: Binding AtomNameC n -> Type n
@@ -1478,7 +1489,7 @@ instance GenericE DictExpr where
  {- InstantiatedGiven -} (PairE Atom (ListE Atom))
  {- SuperclassProj -}    (PairE Atom (LiftE Int))
  {- IxFin -}             (Atom)
- {- ExplicitMethods -}   (Name SpecializedDictNameC `PairE` ListE Atom)
+ {- ExplicitMethods -}   (SpecDictName `PairE` ListE Atom)
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
@@ -1503,7 +1514,7 @@ instance SubstE AtomSubstVal DictExpr
 instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec AtomName
-    `PairE` EMap AtomName AtomName
+    `PairE` EMap AbsDict SpecDictName
     `PairE` EMap AtomName ImpFunName
     `PairE` EMap ImpFunName FunObjCodeName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
@@ -1537,7 +1548,7 @@ instance Monoid (Cache n) where
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
   Cache x1 x2 x3 x4 x5 x6 <> Cache y1 y2 y3 y4 y5 y6 =
-    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5) (x6<>y6)
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5) (y6<>x6)
 
 instance GenericB LamBinder where
   type RepB LamBinder =         LiftB (PairE Type (LiftE Arrow))
@@ -1880,20 +1891,15 @@ instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
-  type RepE SpecializationSpec = EitherE2
-         (PairE AtomName (Abs (Nest Binder) (ListE Type)))
-         (PairE (LiftE IxMethod) (Abs (Nest Binder) IxDict))
-  fromE (AppSpecialization fname (Abs bs args))    = Case0 (PairE fname (Abs bs args))
-  fromE (IxMethodSpecialization method (Abs bs d)) = Case1 (PairE (LiftE method) (Abs bs d))
+  type RepE SpecializationSpec =
+         PairE AtomName (Abs (Nest Binder) (ListE Type))
+  fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
-  toE (Case0 (PairE fname (Abs bs args)))       = AppSpecialization fname (Abs bs args)
-  toE (Case1 (PairE (LiftE method) (Abs bs d))) = IxMethodSpecialization method (Abs bs d)
-  toE _ = error "impossible"
+  toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
   {-# INLINE toE #-}
 
 instance HasNameHint (SpecializationSpec n) where
   getNameHint (AppSpecialization f _) = getNameHint f
-  getNameHint (IxMethodSpecialization ixMethod _) = getNameHint $ show ixMethod
 
 instance SubstE AtomSubstVal SpecializationSpec where
   substE env (AppSpecialization f ab) = do
@@ -1902,8 +1908,6 @@ instance SubstE AtomSubstVal SpecializationSpec where
                SubstVal (Var v) -> v
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
-  substE env (IxMethodSpecialization ixMethod ab) =
-    IxMethodSpecialization ixMethod $ substE env ab
 
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
@@ -2065,11 +2069,14 @@ instance GenericE PartialTopEnvFrag where
                               `PairE` LoadedModules
                               `PairE` LoadedObjects
                               `PairE` ModuleEnv
-  fromE (PartialTopEnvFrag cache rules loadedM loadedO env) =
-    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env
+                              `PairE` ListE (PairE SpecDictName (ListE NaryLamExpr))
+  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d) =
+    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d'
+    where d' = ListE $ [name `PairE` ListE methods | (name, methods) <- toList d]
   {-# INLINE fromE #-}
-  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env) =
-    PartialTopEnvFrag cache rules loadedM loadedO env
+  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d) =
+    PartialTopEnvFrag cache rules loadedM loadedO env d'
+    where d' = toSnocList [(name, methods) | name `PairE` ListE methods <- fromListE d]
   {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
@@ -2077,11 +2084,11 @@ instance HoistableE     PartialTopEnvFrag
 instance SubstE Name    PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 x4 x5 <> PartialTopEnvFrag y1 y2 y3 y4 y5 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5)
+  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 =
+    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6)
 
 instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty
+  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance GenericB TopEnvFrag where
@@ -2112,10 +2119,11 @@ instance OutFrag TopEnvFrag where
 instance ExtOutMap Env TopEnvFrag where
   extendOutMap env
     (TopEnvFrag (EnvFrag frag _)
-    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv')) = result
+    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d')) = resultWithDictMethods
     where
       Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
       result = Env newTopEnv newModuleEnv
+      resultWithDictMethods = foldr addMethods result (toList d')
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
@@ -2139,6 +2147,12 @@ instance ExtOutMap Env TopEnvFrag where
           newImportedSC  = flip foldMap newTransImports  $ moduleSynthCandidates . lookupModulePure
 
       lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
+
+addMethods :: (SpecDictName n, [NaryLamExpr n]) -> Env n -> Env n
+addMethods (dName, methods) e = do
+  let SpecializedDictBinding (SpecializedDict dAbs _) = lookupEnvPure e dName
+  let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
+  updateEnv dName newBinding e
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ topEnv env) v

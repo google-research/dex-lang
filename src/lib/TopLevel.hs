@@ -11,10 +11,11 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
-  loadObject, toCFunction, evalRequiredSpecializations, hoistIxDicts) where
+  loadObject, toCFunction) where
 
 import Data.Foldable (toList)
 import Data.Functor
+import Control.Category ((>>>))
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
@@ -24,10 +25,10 @@ import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.List (partition)
+import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
-import Generalize
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -67,7 +68,6 @@ import ImpToLLVM
 import Optimize
 import Runtime
 import QueryType
-import GenericTraversal
 
 -- === top-level monad ===
 
@@ -594,10 +594,8 @@ evalBlock typed = do
   eopt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock eopt
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
-  evalRequiredSpecializations simplifiedBlock
   SimplifiedBlock simp recon <- return simplifiedBlock
-  simp' <- hoistIxDicts simp
-  opt <- whenOpt simp' $ checkPass OptPass . optimize
+  opt <- whenOpt simp $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
@@ -608,17 +606,42 @@ evalBlock typed = do
   applyRecon recon result
 {-# SCC evalBlock #-}
 
-evalRequiredSpecializations
-  :: (Topper m, Mut n, SinkableE e, SubstE Name e, HoistableE e)
-  => e n -> m n ()
-evalRequiredSpecializations e = do
-  forM_ (freeAtomVarsList e) \v -> do
+evalSpecializations :: (Topper m, Mut n) => [AtomName n] -> [SpecDictName n] -> m n ()
+evalSpecializations vs sdVs = do
+  forM_ vs \v -> do
     lookupAtomName v >>= \case
       TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
         queryImpCache v >>= \case
           Nothing -> compileTopLevelFun v
           Just _ -> return ()
       _ -> return ()
+  forM_ sdVs \d -> do
+    SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) _) <- lookupEnv d
+    methods <- forM [minBound..maxBound] \method -> do
+      ty <- liftEnvReaderM $ ixMethodType method absDict
+      lamExpr <- liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
+        dict <- applyNaryAbs (sink absDict) extraArgs
+        let actualArgs = case method of Size -> []  -- size is thunked
+                                        _    -> map Var methodArgs
+        applyIxMethod dict method actualArgs
+      simplifyTopFunction lamExpr
+    finishSpecializedDict d methods
+
+ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType n)
+ixMethodType method absDict = do
+  refreshAbs absDict \extraArgBs dict -> do
+    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
+      Pi (PiType b _ resultTy) -> do
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest b Empty
+        return $ NaryPiType allBs Pure resultTy
+      -- non-function methods are thunked
+      ty -> do
+        Abs unitBinder ty' <- toConstAbs ty
+        let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest unitPiBinder Empty
+        return $ NaryPiType allBs Pure ty'
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -643,8 +666,7 @@ execUDecl mname decl = do
               -- artifacts).
               when (n == 0) do
                 let s = AppSpecialization f (Abs Empty (ListE []))
-                fSpecial <- emitSpecialization s
-                evalRequiredSpecializations (Var fSpecial)
+                void $ emitSpecialization s
               return $ Var f
             Nothing -> throw TypeErr $
               "Not a valid @noinline function type: " ++ pprint ty
@@ -653,23 +675,11 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-lowerIxMethod :: (Topper m, Mut n) => AtomName n -> m n ()
-lowerIxMethod fname = do
-  fPreSimp <- specializedFunPreSimpDefinition fname
-  fSimp <- simplifyTopFunction fPreSimp
-  evalRequiredSpecializations fSimp
-  fSimp' <- hoistIxDicts fSimp
-  -- TODO: actually do the lowering (lowering only handles blocks, not functions, right now)
-  fSimpName <- emitLoweredFun (getNameHint fname) fSimp'
-  extendIxLoweredCache fname fSimpName
-
 compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  evalRequiredSpecializations fSimp
-  fSimp' <- hoistIxDicts fSimp
-  fImp <- toImpStandaloneFunction fSimp'
+  fImp <- toImpStandaloneFunction fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -720,13 +730,6 @@ specializedFunPreSimpDefinition fname = do
         let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
         ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
         naryApp (sink f') $ staticArgs' <> map Var originalArgs
-    IxMethodSpecialization method absDict@(Abs bs _) -> do
-      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
-        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
-        dict <- applyNaryAbs (sink absDict) extraArgs
-        let actualArgs = case method of Size -> []  -- size is thunked
-                                        _    -> map Var methodArgs
-        applyIxMethod dict method actualArgs
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
@@ -972,85 +975,6 @@ getFilteredLogger = do
   logger  <- getLogger
   return $ FilteredLogger shouldLog logger
 
--- === hoisting Ix dicts ===
-
-hoistIxDicts
-  :: ( Topper m, Mut n, GenericallyTraversableE e
-     , SinkableE e, SubstE Name e, HoistableE e)
-  => e n -> m n (e n)
-hoistIxDicts e = do
-  Abs (IxHoistingEmissions envFrag methodNames) (PairE e' (IxHoistingState UnitE)) <-
-    liftGenericTraverserMTopEmissions (IxHoistingState UnitE) $ traverseGenericE (sink e)
-  (PairE (ListE methodNames') e'') <- emitEnv $ Abs envFrag (PairE (ListE methodNames) e')
-  forM_ methodNames' \v -> do
-    lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun (IxMethodSpecialization _ _)) -> do
-        queryIxLoweredCache v >>= \case
-          Nothing -> lowerIxMethod v
-          Just _ -> return ()
-      _ -> error "Expected a method name"
-  return e''
-
-type IxHoistingM = GenericTraverserM IxHoistingEmissions IxHoistingState
-
-data IxHoistingEmissions (n::S) (l::S) =
-  -- env frag, names of specialized methods we need to lower
-  IxHoistingEmissions (TopEnvFrag n l) [AtomName l]
-
-newtype IxHoistingState (n::S) = IxHoistingState (UnitE n)
-        deriving (SinkableE, HoistableState, SubstE Name)
-
-instance GenericTraverser IxHoistingEmissions IxHoistingState where
-  traverseAtom = \case
-    DictCon d -> do
-      d' <- substM d
-      dTy <- getType d'
-      DictCon <$> case dTy of
-        DictTy (DictType "Ix" _ _) -> emitIxDictSpecialization d'
-        _ -> return d'
-    atom -> traverseAtomDefault atom
-
-emitIxDictSpecialization :: DictExpr n -> IxHoistingM i n (DictExpr n)
-emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
-emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
-emitIxDictSpecialization ixDict = do
-  (Abs bs (PairE (DictTy dictTy) ixDict'), params) <- generalizeIxDict (DictCon ixDict)
-  (Abs frag (PairE (ListE methodNames) dictName)) <- liftTopBuilderHoisted do
-    methodImplNames <- forM [minBound..maxBound] \methodName -> do
-      let s = IxMethodSpecialization methodName (sink (Abs bs ixDict'))
-      querySpecializationCache s >>= \case
-        Just name -> return name
-        _ -> emitSpecialization s
-    d <- emitBinding "d" $ sink $ SpecializedDictBinding $
-           SpecializedDictDef (sink (Abs bs dictTy)) methodImplNames
-    return $ PairE (ListE methodImplNames) d
-  maybeD <- emitHoistedEnv $ Abs (IxHoistingEmissions frag methodNames) dictName
-  case maybeD of
-    Just d -> return $ ExplicitMethods d params
-    Nothing -> error "Couldn't hoist specialized dictionary"
-
-instance GenericB IxHoistingEmissions where
-  type RepB IxHoistingEmissions = PairB TopEnvFrag (LiftB (ListE AtomName))
-  fromB (IxHoistingEmissions frag names) = PairB frag (LiftB (ListE names))
-  toB   (PairB frag (LiftB (ListE names))) = IxHoistingEmissions frag names
-
-instance ProvesExt   IxHoistingEmissions
-instance SinkableB   IxHoistingEmissions
-instance HoistableB  IxHoistingEmissions
-instance BindsNames  IxHoistingEmissions
-instance SubstB Name IxHoistingEmissions
-
-instance OutFrag IxHoistingEmissions where
-  emptyOutFrag = IxHoistingEmissions emptyOutFrag []
-  {-# INLINE emptyOutFrag #-}
-  catOutFrags s (IxHoistingEmissions frag1 names1) (IxHoistingEmissions frag2 names2) =
-    withExtEvidence frag2 $
-      IxHoistingEmissions (catOutFrags s frag1 frag2) (map sink names1 <> names2)
-  {-# INLINE catOutFrags #-}
-
-instance ExtOutMap Env IxHoistingEmissions where
-  extendOutMap env (IxHoistingEmissions frag1 _) = extendOutMap env frag1
-
 -- === instances ===
 
 instance PassCtxReader (TopperM n) where
@@ -1071,14 +995,14 @@ instance (Monad1 m, ConfigReader (m n)) => ConfigReader (StateT1 s m n) where
 instance Topper TopperM
 
 instance TopBuilder TopperM where
-  -- Log bindings as they are emitted
-  emitBinding hint binding = do
-    name <- TopperM $ emitBinding hint binding
-    logTop $ MiscLog $ "=== Top name ===\n" ++ pprint name ++ " =\n"
-                      ++ pprint binding ++ "\n===\n"
-    return name
-
-  emitEnv env = TopperM $ emitEnv env
+  emitBinding = emitBindingDefault
+  emitEnv (Abs frag result) = do
+    result' `PairE` ListE names `PairE` ListE dictNames <- TopperM $ emitEnv $
+      Abs frag $ result
+         `PairE` ListE (boundNamesList frag)
+         `PairE` ListE (boundNamesList frag)
+    evalSpecializations names dictNames
+    return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont
 
