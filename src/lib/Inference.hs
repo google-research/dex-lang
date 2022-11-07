@@ -2739,7 +2739,10 @@ synthTopBlock block = do
 -- Given a simplified dict (an Atom of type `DictTy _` in the
 -- post-simplification IR), and a requested, more general, dict type, generalize
 -- the dict to match the more general type. This is only possible because we
--- require that instances are polymorphic in data-role parameters.
+-- require that instances are polymorphic in data-role parameters. It would be
+-- valid to implement `generalizeDict` by re-synthesizing the whole dictionary,
+-- but we know that the derivation tree has to be the same, so we take the
+-- shortcut of just generalizing the data parameters.
 generalizeDict :: (EnvReader m) => Type n -> Dict n-> m n (Dict n)
 generalizeDict ty dict = do
   result <- liftSolverM $ solveLocal $ generalizeDictAndUnify (sink ty) (sink dict)
@@ -2779,6 +2782,11 @@ generalizeInstanceArgs :: EmitsInf n => Nest RolePiBinder n l -> [Atom n] -> Sol
 generalizeInstanceArgs Empty [] = return []
 generalizeInstanceArgs (Nest (RolePiBinder b ty _ role) bs) (arg:args) = do
   arg' <- case role of
+    -- XXX: for `TypeParam` we can just emit a fresh inference name rather than
+    -- traversing the whole type like we do in `Generalize.hs`. The reason is
+    -- that it's valid to implement `generalizeDict` by synthesizing an entirely
+    -- fresh dictionary, and if we were to do that, we would infer this type
+    -- parameter exactly as we do here, using inference.
     TypeParam -> Var <$> freshInferenceName TyKind
     DictParam -> generalizeDictAndUnify ty arg
     DataParam -> Var <$> freshInferenceName ty

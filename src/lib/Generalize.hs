@@ -38,6 +38,9 @@ generalizeArgs reqTys allArgs =  liftGeneralizerM $ runSubstReaderT idSubst do
       arg' <- case ty' of
         TyKind   -> liftSubstReaderT $ generalizeType arg
         DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
+        -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+        -- non-type, non-dict arguments (e.g. a function). We just don't
+        -- generalize in that case.
         _ -> return arg
       args'' <- extendSubst (b@>SubstVal arg') $ go bs args
       return $ arg' : args''
@@ -83,6 +86,9 @@ emitGeneralizationParameter ty val = GeneralizerM do
   Abs b v <- return $ newName noHint
   let emission = Abs (RNest REmpty (GeneralizationEmission (b:>ty) val)) v
   emitDoubleInplaceTHoisted emission >>= \case
+    -- This will hoist above binders appearing in types (e.g. pi binders, and
+    -- dependent pair binders). As long as those variables are only used in
+    -- DataParam roles, this hoisting should succeed.
     Nothing -> error $ "expected atom to be hoistable " ++ pprint val
     Just v' -> return v'
 
