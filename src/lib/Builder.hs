@@ -275,10 +275,9 @@ emitBindingDefault
   :: (TopBuilder m, Mut n, Color c)
   => NameHint -> Binding c n -> m n (Name c n)
 emitBindingDefault hint binding = do
-  Abs b v <- freshNameM hint
-  ab <- liftEnvReaderM $ refreshAbs (Abs (b:>binding) v) \b' v' -> do
-    let topFrag = TopEnvFrag (toEnvFrag b') mempty
-    return $ Abs topFrag v'
+  ab <- liftEnvReaderM $ withFreshBinder hint binding \b'-> do
+    let topFrag = TopEnvFrag (toEnvFrag (b':>binding)) mempty
+    return $ Abs topFrag $ binderName b'
   emitEnv ab
 
 emitPartialTopEnvFrag :: TopBuilder m => PartialTopEnvFrag n -> m n ()

@@ -214,12 +214,12 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyBlock body
       Nothing -> do
-        resultTy' <- simplifyType resultTy
+        resultTy' <- simplifyAtom resultTy
         isData resultTy' >>= \case
           True -> do
             eff' <- substM eff
             alts' <- forM alts \(Abs b body) -> do
-              bTy' <- simplifyType $ binderType b
+              bTy' <- simplifyAtom $ binderType b
               buildAbs (getNameHint b) bTy' \x ->
                 extendSubst (b @> Rename x) $
                   buildBlock $ simplifyBlock body
@@ -459,16 +459,16 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _    -> substM atom
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
-    ty' <- simplifyType ty
+    ty' <- simplifyAtom ty
     withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
       extendRenamer (b@>binderName b') $
-        Pi <$> (PiType b' <$> substM eff <*> simplifyType resultTy)
+        Pi <$> (PiType b' <$> substM eff <*> simplifyAtom resultTy)
   TabPi (TabPiType (b:>IxType t d) resultTy) -> do
-    t' <- simplifyType t
-    d' <- simplifyDict d
+    t' <- simplifyAtom t
+    d' <- simplifyAtom d
     withFreshBinder (getNameHint b) (IxType t' d') \b' -> do
       extendRenamer (b@>binderName b') $
-        TabPi <$> (TabPiType (b':>IxType t' d') <$> simplifyType resultTy)
+        TabPi <$> (TabPiType (b':>IxType t' d') <$> simplifyAtom resultTy)
   DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
   Con con -> Con <$> (inline traversePrimCon) simplifyAtom con
@@ -506,9 +506,9 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyAtom body
       Nothing -> do
-        rTy' <- simplifyType rTy
+        rTy' <- simplifyAtom rTy
         alts' <- forM alts \(Abs b body) -> do
-          bTy' <- simplifyType $ binderType b
+          bTy' <- simplifyAtom $ binderType b
           buildAbs (getNameHint b) bTy' \xs ->
             extendSubst (b @> Rename xs) $
               simplifyAtom body
@@ -516,16 +516,6 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
-
--- We use a different name because the implementations might need to diverge.
-simplifyType :: Type i -> SimplifyM i o (Type o)
-simplifyType = simplifyAtom
-{-# INLINE simplifyType #-}
-
--- We use a different name because the implementations might need to diverge.
-simplifyDict :: Dict i -> SimplifyM i o (Dict o)
-simplifyDict = simplifyAtom
-{-# INLINE simplifyDict #-}
 
 simplifyVar :: AtomName i -> SimplifyM i o (Atom o)
 simplifyVar v = do
@@ -774,7 +764,7 @@ projectDictMethod d i = do
 simplifyHof :: Emits o => NameHint -> Hof i -> SimplifyM i o (Atom o)
 simplifyHof hint hof = case hof of
   For d ixDict lam -> do
-    ixTy@(IxType _ ixDict') <- ixTyFromDict =<< simplifyDict ixDict
+    ixTy@(IxType _ ixDict') <- ixTyFromDict =<< simplifyAtom ixDict
     (lam', Abs b recon) <- simplifyLam lam
     ans <- liftM Var $ emitHinted hint $ Hof $ For d ixDict' lam'
     case recon of
