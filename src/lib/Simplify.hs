@@ -755,6 +755,10 @@ projectDictMethod d i = do
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
     DictCon (ExplicitMethods sd params) -> do
+      -- We don't produce the specialized methods until after simplification. So
+      -- during simplification we can't be sure that the second field of
+      -- `SpecializedDict` will be non-Nothing. Thus, we use the explicit
+      -- definition instead.
       SpecializedDictBinding (SpecializedDict (Abs bs dict) _) <- lookupEnv sd
       dict' <- applySubst (bs @@> map SubstVal params) dict
       projectDictMethod dict' i

@@ -459,7 +459,7 @@ dictExprType e = case e of
   ExplicitMethods v params -> do
     params' <- mapM substM params
     SpecializedDictBinding (SpecializedDict (Abs bs dict) _) <- lookupEnv =<< substM v
-    getType =<< applySubst (bs @@> map SubstVal params') dict
+    dropSubst $ extendSubst (bs @@> map SubstVal params') $ getTypeE dict
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
