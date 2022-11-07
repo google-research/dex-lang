@@ -569,7 +569,7 @@ type AbsDict = Abs (Nest Binder) Dict
 
 data SpecializedDictDef n =
    SpecializedDict
-     -- Dict is abstracted over local "data" params. The methods are
+     -- Dict, abstracted over "data" params.
      (AbsDict n)
      -- Methods (thunked if nullary), if they're available.
      -- We create specialized dict names during simplification, but we don't
@@ -2150,9 +2150,12 @@ instance ExtOutMap Env TopEnvFrag where
 
 addMethods :: (SpecDictName n, [NaryLamExpr n]) -> Env n -> Env n
 addMethods (dName, methods) e = do
-  let SpecializedDictBinding (SpecializedDict dAbs _) = lookupEnvPure e dName
-  let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
-  updateEnv dName newBinding e
+  let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
+  case oldMethods of
+    Nothing -> do
+      let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
+      updateEnv dName newBinding e
+    Just _ -> error "shouldn't be adding methods if we already have them"
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ topEnv env) v

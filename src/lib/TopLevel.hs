@@ -616,7 +616,7 @@ evalSpecializations vs sdVs = do
           Just _ -> return ()
       _ -> return ()
   forM_ sdVs \d -> do
-    SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) _) <- lookupEnv d
+    SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) Nothing) <- lookupEnv d
     methods <- forM [minBound..maxBound] \method -> do
       ty <- liftEnvReaderM $ ixMethodType method absDict
       lamExpr <- liftBuilder $ buildNaryLamExpr ty \allArgs -> do
