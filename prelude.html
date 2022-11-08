@@ -1459,9 +1459,9 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   result
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_table_ptr {a b n} [<span class="type-name">Storable</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (action <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} b) <span class="symbol">:</span> {<span class="type-name">IO</span>} b <span class="symbol">=</span>
-  with_alloc (size n) <span class="symbol">\</span>ptr<span class="symbol">.</span>
-    <span class="keyword">for</span> i<span class="symbol">.</span> store (ptr <span class="symbol">+&gt;&gt;</span> ordinal i) xs<span class="symbol">.</span>i
-    action ptr
+  ptr <span class="symbol">&lt;-</span> with_alloc (size n)
+  <span class="keyword">for</span> i<span class="symbol">.</span> store (ptr <span class="symbol">+&gt;&gt;</span> ordinal i) xs<span class="symbol">.</span>i
+  action ptr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> table_from_ptr {a} [<span class="type-name">Storable</span> a] (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> a) <span class="symbol">:</span> {<span class="type-name">IO</span>} n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> load <span class="symbol">$</span> ptr <span class="symbol">+&gt;&gt;</span> ordinal i
@@ -1557,18 +1557,18 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 <p>TODO: Move this to be with reductions?
 It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cumsum {n a} [<span class="type-name">Add</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  with_state zero <span class="symbol">\</span>total<span class="symbol">.</span>
-    <span class="keyword">for</span> i<span class="symbol">.</span>
-      newTotal <span class="symbol">=</span> get total <span class="symbol">+</span> xs<span class="symbol">.</span>i
-      total <span class="symbol">:=</span> newTotal
-      newTotal
+  total <span class="symbol">&lt;-</span> with_state zero
+  <span class="keyword">for</span> i<span class="symbol">.</span>
+    newTotal <span class="symbol">=</span> get total <span class="symbol">+</span> xs<span class="symbol">.</span>i
+    total <span class="symbol">:=</span> newTotal
+    newTotal
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cumsum_low {n a} [<span class="type-name">Add</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  with_state zero <span class="symbol">\</span>total<span class="symbol">.</span>
-    <span class="keyword">for</span> i<span class="symbol">.</span>
-      oldTotal <span class="symbol">=</span> get total
-      total <span class="symbol">:=</span> oldTotal <span class="symbol">+</span> xs<span class="symbol">.</span>i
-      oldTotal
+  total <span class="symbol">&lt;-</span> with_state zero
+  <span class="keyword">for</span> i<span class="symbol">.</span>
+    oldTotal <span class="symbol">=</span> get total
+    total <span class="symbol">:=</span> oldTotal <span class="symbol">+</span> xs<span class="symbol">.</span>i
+    oldTotal
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Automatic differentiation</h2>
 </div></div><div class="cell"><div class="prose-block"><h3>AD operations</h3>
@@ -1793,16 +1793,18 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_dynamic_buffer {a b} [<span class="type-name">Storable</span> a]
       (action<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} b) <span class="symbol">:</span> {<span class="type-name">IO</span>} b <span class="symbol">=</span>
   initMaxSize <span class="symbol">=</span> 256
-  with_alloc 1 <span class="symbol">\</span>sizePtr<span class="symbol">.</span> with_alloc 1 <span class="symbol">\</span>maxSizePtr<span class="symbol">.</span> with_alloc 1 <span class="symbol">\</span>bufferPtr<span class="symbol">.</span>
-    store sizePtr 0
-    store maxSizePtr initMaxSize
-    store bufferPtr <span class="symbol">$</span> malloc initMaxSize
-    result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">MkDynBuffer</span> {
-        size    <span class="symbol">=</span> sizePtr
-      <span class="symbol">,</span> maxSize <span class="symbol">=</span> maxSizePtr
-      <span class="symbol">,</span> buffer  <span class="symbol">=</span> bufferPtr }
-    free <span class="symbol">$</span> load bufferPtr
-    result
+  sizePtr <span class="symbol">&lt;-</span> with_alloc 1
+  store sizePtr 0
+  maxSizePtr <span class="symbol">&lt;-</span> with_alloc 1
+  store maxSizePtr initMaxSize
+  bufferPtr <span class="symbol">&lt;-</span> with_alloc 1
+  store bufferPtr <span class="symbol">$</span> malloc initMaxSize
+  result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">MkDynBuffer</span> {
+      size    <span class="symbol">=</span> sizePtr
+    <span class="symbol">,</span> maxSize <span class="symbol">=</span> maxSizePtr
+    <span class="symbol">,</span> buffer  <span class="symbol">=</span> bufferPtr }
+  free <span class="symbol">$</span> load bufferPtr
+  result
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maybe_increase_buffer_size {a} [<span class="type-name">Storable</span> a]
       ((<span class="type-name">MkDynBuffer</span> db)<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (sizeDelta<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
@@ -2018,7 +2020,8 @@ Nor does it promise a particular level of precision for numeric values.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- A little iteration combinator
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iter {a eff} (body<span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">IterResult</span> a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a  <span class="symbol">=</span>
-  result <span class="symbol">=</span> yield_state <span class="type-name">Nothing</span> <span class="symbol">\</span>resultRef<span class="symbol">.</span> with_state 0 <span class="symbol">\</span>i<span class="symbol">.</span>
+  result <span class="symbol">=</span> yield_state <span class="type-name">Nothing</span> <span class="symbol">\</span>resultRef<span class="symbol">.</span>
+    i <span class="symbol">&lt;-</span> with_state 0
     while <span class="keyword">do</span>
       continue <span class="symbol">=</span> is_nothing <span class="symbol">$</span> get resultRef
       <span class="keyword">if</span> continue <span class="keyword">then</span>
@@ -2065,16 +2068,16 @@ Nor does it promise a particular level of precision for numeric values.</p>
   (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
   <span class="comment">-- TODO: allow reading longer files!
 </span>  n <span class="symbol">=</span> 4096
-  with_alloc n <span class="symbol">\</span>ptr<span class="symbol">:</span>(<span class="type-name">Ptr</span> <span class="type-name">Char</span>)<span class="symbol">.</span>
-    with_dynamic_buffer <span class="symbol">\</span>buf<span class="symbol">.</span>
-      iter <span class="symbol">\</span>_<span class="symbol">.</span>
-        (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
-        numRead <span class="symbol">=</span> i_to_w32 <span class="symbol">$</span> i64_to_i <span class="symbol">$</span> freadFFI rawPtr (i_to_i64 1) (n_to_i64 n) stream&#39;
-        extend_dynamic_buffer buf <span class="symbol">$</span> string_from_char_ptr numRead ptr
-        <span class="keyword">if</span> numRead <span class="symbol">==</span> n_to_w32 n
-          <span class="keyword">then</span> <span class="type-name">Continue</span>
-          <span class="keyword">else</span> <span class="type-name">Done</span> ()
-      load_dynamic_buffer buf
+  ptr<span class="symbol">:</span>(<span class="type-name">Ptr</span> <span class="type-name">Char</span>) <span class="symbol">&lt;-</span> with_alloc n
+  buf <span class="symbol">&lt;-</span> with_dynamic_buffer
+  iter <span class="symbol">\</span>_<span class="symbol">.</span>
+    (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
+    numRead <span class="symbol">=</span> i_to_w32 <span class="symbol">$</span> i64_to_i <span class="symbol">$</span> freadFFI rawPtr (i_to_i64 1) (n_to_i64 n) stream&#39;
+    extend_dynamic_buffer buf <span class="symbol">$</span> string_from_char_ptr numRead ptr
+    <span class="keyword">if</span> numRead <span class="symbol">==</span> n_to_w32 n
+      <span class="keyword">then</span> <span class="type-name">Continue</span>
+      <span class="keyword">else</span> <span class="type-name">Done</span> ()
+  load_dynamic_buffer buf
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Print</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_output_stream (_<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Stream</span> <span class="type-name">WriteMode</span> <span class="symbol">=</span>
@@ -2490,16 +2493,16 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
     <span class="keyword">else</span> 0 <span class="symbol">==</span> %and x&#39; (%isub x&#39; (1<span class="symbol">::</span><span class="type-name">NatRep</span>))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> natlog2 (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
-  tmp <span class="symbol">=</span> yield_state 0 <span class="symbol">\</span>ansRef<span class="symbol">.</span>
-    run_state 1 <span class="symbol">\</span>cmpRef<span class="symbol">.</span>
-      while <span class="keyword">do</span>
-        <span class="keyword">if</span> x <span class="symbol">&gt;=</span> (get cmpRef)
-          <span class="keyword">then</span>
-            ansRef <span class="symbol">:=</span> (get ansRef) <span class="symbol">+</span> 1
-            cmpRef <span class="symbol">:=</span> rep_to_nat <span class="symbol">$</span> %shl (nat_to_rep <span class="symbol">$</span> get cmpRef) (1 <span class="symbol">::</span> <span class="type-name">NatRep</span>)
-            <span class="type-name">True</span>
-          <span class="keyword">else</span>
-            <span class="type-name">False</span>
+  tmp <span class="symbol">=</span> yield_state 0 <span class="symbol">\</span>ans<span class="symbol">.</span>
+    cmp <span class="symbol">&lt;-</span> run_state 1
+    while <span class="keyword">do</span>
+      <span class="keyword">if</span> x <span class="symbol">&gt;=</span> (get cmp)
+        <span class="keyword">then</span>
+          ans <span class="symbol">:=</span> (get ans) <span class="symbol">+</span> 1
+          cmp <span class="symbol">:=</span> rep_to_nat <span class="symbol">$</span> %shl (nat_to_rep <span class="symbol">$</span> get cmp) (1 <span class="symbol">::</span> <span class="type-name">NatRep</span>)
+          <span class="type-name">True</span>
+        <span class="keyword">else</span>
+          <span class="type-name">False</span>
   unsafe_nat_diff tmp 1  <span class="comment">-- TODO: something less horrible
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> general_integer_power {a} (times<span class="command">:a</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) (one<span class="command">:a</span>) (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
@@ -2507,17 +2510,18 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </span>  <span class="comment">-- This could be nicer if there were a way to explicitly
 </span>  <span class="comment">-- specify which typelcass instance to use for Mul.
 </span>  yield_state one <span class="symbol">\</span>ans<span class="symbol">.</span>
-    with_state power <span class="symbol">\</span>pow<span class="symbol">.</span> with_state base <span class="symbol">\</span>z<span class="symbol">.</span>
-      while <span class="keyword">do</span>
-        <span class="keyword">if</span> get pow <span class="symbol">&gt;</span> 0
-          <span class="keyword">then</span>
-            <span class="keyword">if</span> is_odd (get pow)
-              <span class="keyword">then</span> ans <span class="symbol">:=</span> times (get ans) (get z)
-            z <span class="symbol">:=</span> times (get z) (get z)
-            pow <span class="symbol">:=</span> intdiv2 (get pow)
-            <span class="type-name">True</span>
-          <span class="keyword">else</span>
-            <span class="type-name">False</span>
+    pow <span class="symbol">&lt;-</span> with_state power
+    z <span class="symbol">&lt;-</span> with_state base
+    while <span class="keyword">do</span>
+      <span class="keyword">if</span> get pow <span class="symbol">&gt;</span> 0
+        <span class="keyword">then</span>
+          <span class="keyword">if</span> is_odd (get pow)
+            <span class="keyword">then</span> ans <span class="symbol">:=</span> times (get ans) (get z)
+          z <span class="symbol">:=</span> times (get z) (get z)
+          pow <span class="symbol">:=</span> intdiv2 (get pow)
+          <span class="type-name">True</span>
+        <span class="keyword">else</span>
+          <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow {a} [<span class="type-name">Mul</span> a] (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   general_integer_power (<span class="symbol">*</span>) one base power
@@ -2546,20 +2550,20 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concat {n a} (lists<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="type-name">List</span> a)) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
   totalSize <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> list_length lists<span class="symbol">.</span>i
   <span class="type-name">AsList</span> _ <span class="symbol">$</span> with_state 0 <span class="symbol">\</span>listIdx<span class="symbol">.</span>
-    with_state 0 <span class="symbol">\</span>eltIdx<span class="symbol">.</span>
-      <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> totalSize)<span class="symbol">.</span>
-        while <span class="keyword">do</span>
-          continue <span class="symbol">=</span> get eltIdx <span class="symbol">&gt;=</span> list_length (lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_))
-          <span class="keyword">if</span> continue
-            <span class="keyword">then</span>
-              eltIdx <span class="symbol">:=</span> 0
-              listIdx <span class="symbol">:=</span> get listIdx <span class="symbol">+</span> 1
-            <span class="keyword">else</span> ()
-          continue
-        (<span class="type-name">AsList</span> _ xs) <span class="symbol">=</span> lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_)
-        eltIdxVal <span class="symbol">=</span> get eltIdx
-        eltIdx <span class="symbol">:=</span> eltIdxVal <span class="symbol">+</span> 1
-        xs<span class="symbol">.</span>(eltIdxVal<span class="symbol">@</span>_)
+    eltIdx <span class="symbol">&lt;-</span> with_state 0
+    <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> totalSize)<span class="symbol">.</span>
+      while <span class="keyword">do</span>
+        continue <span class="symbol">=</span> get eltIdx <span class="symbol">&gt;=</span> list_length (lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_))
+        <span class="keyword">if</span> continue
+          <span class="keyword">then</span>
+            eltIdx <span class="symbol">:=</span> 0
+            listIdx <span class="symbol">:=</span> get listIdx <span class="symbol">+</span> 1
+          <span class="keyword">else</span> ()
+        continue
+      (<span class="type-name">AsList</span> _ xs) <span class="symbol">=</span> lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_)
+      eltIdxVal <span class="symbol">=</span> get eltIdx
+      eltIdx <span class="symbol">:=</span> eltIdxVal <span class="symbol">+</span> 1
+      xs<span class="symbol">.</span>(eltIdxVal<span class="symbol">@</span>_)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cat_maybes {a n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Maybe</span> a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
   (num_res<span class="symbol">,</span> res_inds) <span class="symbol">=</span> yield_state (0<span class="symbol">::</span><span class="type-name">Nat</span><span class="symbol">,</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="type-name">Nothing</span>) <span class="symbol">\</span>ref<span class="symbol">.</span>
