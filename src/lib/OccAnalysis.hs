@@ -78,7 +78,7 @@ instance SinkableE FV where
 instance HoistableState FV where
   -- By this point we need to make sure that none of the AccessInfo in the map
   -- refer to the binder being hoisted above.
-  hoistState _ b (FV ns) = FV $ case hoistFilterNameMapE b ns of
+  hoistState _ b (FV ns) = FV $ case hoistNameMapE b ns of
     HoistFailure vs -> error $ "Could not hoist: " ++ show vs ++ " escaped"
     HoistSuccess ns' -> ns'
   {-# INLINE hoistState #-}

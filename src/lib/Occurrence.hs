@@ -87,12 +87,11 @@ class MaxPlus a where
   max :: a -> a -> a
   plus :: a -> a -> a
 
-instance (MaxPlus a) => MaxPlus (M.IntMap a) where
+instance (MaxPlus a) => MaxPlus (NameMap c a n) where
   zero = mempty
-  max = M.unionWith max
-  plus = M.unionWith plus
+  max  = unionWithNameMap max
+  plus = unionWithNameMap plus
 
-deriving instance (MaxPlus a) => MaxPlus (NameMap c a n)
 deriving instance (MaxPlus (e n)) => MaxPlus (NameMapE c e n)
 
 -- === Access ===
@@ -187,7 +186,8 @@ data IxExpr (n::S) =
   -- Unknown deterministic function of the given names
   | Deterministic [Name AtomNameC n]
   -- All indices are accessed, or we are conservatively assuming they are
-  -- because we don't know which are accessed.
+  -- because we don't know which are accessed.  See note "IxAll semantics" in
+  -- "Notes".
   | IxAll
   -- TODO(precision) Could add more constructors to capture other indexing
   -- expressions, such as `from_ordinal _ $ ordinal i + 1`.  If that's
@@ -681,7 +681,9 @@ instance ApproxConst v => ApproxConst (M.IntMap v) where
 
 -- === Usage info including static usage ===
 
--- The `Int` is the count of static occurrences
+-- The `Int` is the count of static occurrences, i.e., how many times references
+-- to this binding occur in the source code.  We track this separately from the
+-- (dynamic) Access so we can control code blow-up during inlining.
 data AccessInfo n = AccessInfo Int (Access n)
   deriving (Show)
 
@@ -713,6 +715,8 @@ usageInfo (AccessInfo s dyn) =
 
 -- === Notes ===
 
+-- Projection (inlining tuple-typed bindings)
+--
 -- Adding Projection is pretty easy: projections slice the reference,
 -- so have a defined order interleaved with At.
 -- - If a body is parametrically polymorphic in the reference, it's safe
@@ -733,6 +737,8 @@ usageInfo (AccessInfo s dyn) =
 --     without needing formal Max nodes?
 --   - Come to think of it, is the same thing true of At?
 
+-- Sum and Max
+--
 -- In general:
 -- - max over Sum unions the indices and does an indexwise max and emits Sum
 -- - max over Max unions the indices and does an indexwise max and emits Max
@@ -746,6 +752,62 @@ usageInfo (AccessInfo s dyn) =
 --   compute whether a given object is accessed exactly once everywhere,
 --   so as to try to inline an effectful operation.  (That said, inlining
 --   effects also requires paying attention to the order of the accesses.)
+
+-- IxAll semantics
+--
+-- IxAll can actually also mean "accessed at one unknown index".  Logically this
+-- is fine because the Access is an overapproximation.  It can arise when, e.g.,
+-- indexing by the content of a reference, since the analysis doesn't trace what
+-- values might occupy that reference.
+--
+-- Some examples may help clarify.
+--
+-- Example 1
+--   xs = for ...
+--   with_state ... \ref.
+--     xs.(get ref)
+--
+-- - The indexing is represented by `Location IxAll One`
+-- - It doesn't change when it goes above the `ref` binder
+-- - `xs` will look inlinable, which is fine because it's only accessed once.
+--   In fact, it's probably very beneficial to inline `xs` because it's only
+--   accessed at one location, but the analysis doesn't notice that.
+--
+-- Example 2
+--   xs = for ...
+--   with_state ... \ref.
+--     for i.
+--       xs.(get ref)
+--
+-- - The indexing is represented by `Location IxAll One`
+-- - Going above the `i` binder turns this into `Location IxAll Unbounded`
+--   because there is no proof that the accesses are distinct across loop
+--   iterations (and indeed they are not if the reference is not modified)
+-- - `xs` will not look inlinable, which is sound and not even too conservative
+--   because the same element may be accessed many times.
+--
+-- Example 3
+--   xs = for n. for ...
+--   with_state ... \ref.
+--     for i.
+--       xs.i.(get ref)
+--
+-- - The outer indexing is represented by `Location IxAll One`
+-- - The inner indexing is represented by `Location (Var i) (Location IxAll One)`
+-- - Going above the `i` binder turns this into `Location IxAll (Location IxAll
+--   One)`.  This is sound because there _is_ a proof that the accesses are
+--   distinct across loop iterations -- each `xs.i` subarray is accessed in at
+--   most one unknown location.
+-- - `xs` will look inlinable.
+--
+-- TODO(precision) Could add a constructor to IxExpr to model "accessed at just
+-- one unknown index", which might support trying harder to inline an array if
+-- very few of its elements are actually read.  The case to imagine is a big
+-- array whose elements have fairly uniform costs to compute, and which is
+-- accessed at just a few (potentially colliding) indices.  Then inlining
+-- duplicates work on some elements, but saves work overall.  The current
+-- analysis would, however, conservatively avoid inlining such an array because
+-- of the per-element work duplication.
 
 -- === Boring instances ===
 

@@ -84,8 +84,8 @@ module Name (
   boundNamesList,
   NameMap (..), hoistFilterNameMap,
   insertNameMap, lookupNameMap, singletonNameMap, toListNameMap,
-  NameMapE (..), hoistFilterNameMapE, hoistFilterNameMapEWith,
-  hoistFilterNameMapEWithM, insertNameMapE,
+  unionWithNameMap,
+  NameMapE (..), hoistNameMapE, insertNameMapE,
   lookupNameMapE, singletonNameMapE, toListNameMapE,
   unionWithNameMapE, traverseNameMapE, mapNameMapE,
   ) where
@@ -3353,26 +3353,13 @@ mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
 newtype NameMapE (c::C) (e:: E) (n::S) = NameMapE (NameMap c (e n) n)
   deriving (Eq, Semigroup, Monoid)
 
-hoistFilterNameMapE :: (BindsNames b, HoistableE e, ShowE e)
-                    => b n l -> NameMapE c e l -> HoistExcept (NameMapE c e n)
-hoistFilterNameMapE b (NameMapE nmap) =
+-- Filters out the entry(ies) for the binder being hoisted above,
+-- and hoists the values of the remaining entries.
+hoistNameMapE :: (BindsNames b, HoistableE e, ShowE e)
+              => b n l -> NameMapE c e l -> HoistExcept (NameMapE c e n)
+hoistNameMapE b (NameMapE nmap) =
   NameMapE <$> (traverseNameMap (hoist b) $ hoistFilterNameMap b nmap) where
-{-# INLINE hoistFilterNameMapE #-}
-
-hoistFilterNameMapEWith :: (BindsNames b, HoistableE e, ShowE e)
-  => b n l -> (Abs b e n -> e n) -> NameMapE c e l -> NameMapE c e n
-hoistFilterNameMapEWith b f (NameMapE nmap) =
-  NameMapE $ mapNameMap doit $ hoistFilterNameMap b nmap where
-  doit v = f $ Abs b v
-{-# INLINE hoistFilterNameMapEWith #-}
-
-hoistFilterNameMapEWithM
-  :: (Applicative f, BindsNames b, HoistableE e, ShowE e)
-  => b n l -> (Abs b e n -> f (e n)) -> NameMapE c e l -> f (NameMapE c e n)
-hoistFilterNameMapEWithM b f (NameMapE nmap) =
-  NameMapE <$> (traverseNameMap doit $ hoistFilterNameMap b nmap) where
-  doit v = f $ Abs b v
-{-# INLINE hoistFilterNameMapEWithM #-}
+{-# INLINE hoistNameMapE #-}
 
 insertNameMapE :: Name c n -> e n -> NameMapE c e n -> NameMapE c e n
 insertNameMapE n x (NameMapE nmap) = NameMapE $ insertNameMap n x nmap
@@ -3402,7 +3389,7 @@ traverseNameMapE f (NameMapE nmap) = NameMapE <$> traverseNameMap f nmap
 
 mapNameMapE :: (e1 n -> e2 n)
             -> NameMapE c e1 n -> NameMapE c e2 n
-mapNameMapE f = runIdentity . traverseNameMapE (pure . f)
+mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
 {-# INLINE mapNameMapE #-}
 
 instance (Color c, SinkableE e) => SinkableE (NameMapE c e) where
