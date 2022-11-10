@@ -29,3 +29,18 @@ def foo (_:Unit) : Nat = sum xs
 foo ()
 > 6
 
+'Regression test for #1152.  The standalone function is just here to
+make the size of the tables unknown.  The actual bug is in Alegbra
+handling an expression like `sum_{i=0}^k k * i` where the same
+name occurs in the monomial and the limit.
+
+def LowerTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(..i)=>v
+def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(i..)=>v
+
+@noinline
+def bar (n : Nat) : Float =
+  (for k. for j:(..k). 0.0, for k. for j:(k..). 0.0) :: (LowerTriMat (Fin n) Float & UpperTriMat (Fin n) Float)
+  0.0
+
+bar 2
+> 0.
