@@ -9,10 +9,10 @@ module Interpreter (indices, indicesLimit, applyIntBinOp, applyIntCmpOp, applyFl
 import Data.Word
 import Syntax
 
-indices :: EnvReader m => IxType n -> m n [Atom n]
-indicesLimit :: EnvReader m => Int -> IxType n -> m n (Either Word32 [Atom n])
+indices :: EnvReader m => IxType r n -> m n [Atom r n]
+indicesLimit :: EnvReader m => Int -> IxType r n -> m n (Either Word32 [Atom r n])
 
-applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
-applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom n -> Atom n -> Atom n
-applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
-applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom n -> Atom n
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom r n -> Atom r n -> Atom r n
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n

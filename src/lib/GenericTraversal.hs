@@ -1,9 +1,10 @@
-
 -- Copyright 2021 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
+
+{-# LANGUAGE UndecidableInstances #-}
 
 module GenericTraversal
   ( GenericTraverser (..), GenericallyTraversableE (..)
@@ -22,7 +23,7 @@ import MTL1
 import LabeledItems
 import Util (onSndM)
 
-liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM UnitB s n n a -> m n (a, s n)
+liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
   liftM runHardFail $ liftDoubleBuilderTNoEmissions $
     runStateT1 (runSubstReaderT idSubst $ runGenericTraverserM' m) s
@@ -32,7 +33,7 @@ liftGenericTraverserMTopEmissions
   :: ( EnvReader m, SinkableE e, SubstE Name e, SinkableE s
      , SubstE Name s, ExtOutMap Env frag, OutFrag frag)
   => s n
-  -> (forall l. DExt n l => GenericTraverserM frag s l l (e l))
+  -> (forall l. DExt n l => GenericTraverserM r frag s l l (e l))
   -> m n (Abs frag (PairE e s) n)
 liftGenericTraverserMTopEmissions s m =
   liftM runHardFail $ liftDoubleBuilderT do
@@ -40,30 +41,30 @@ liftGenericTraverserMTopEmissions s m =
     return $ PairE e s'
 {-# INLINE liftGenericTraverserMTopEmissions #-}
 
-newtype GenericTraverserM f s i o a =
+newtype GenericTraverserM r f s i o a =
   GenericTraverserM
-    { runGenericTraverserM' :: SubstReaderT AtomSubstVal (StateT1 s (DoubleBuilderT f HardFailM)) i o a }
-    deriving (Functor, Applicative, Monad, SubstReader AtomSubstVal, MonadFail, Fallible, MonadState (s o))
+    { runGenericTraverserM' :: SubstReaderT (AtomSubstVal r) (StateT1 s (DoubleBuilderT r f HardFailM)) i o a }
+    deriving (Functor, Applicative, Monad, SubstReader (AtomSubstVal r), MonadFail, Fallible, MonadState (s o))
 
-deriving instance GenericTraverser f s => EnvExtender     (GenericTraverserM f s i)
-deriving instance GenericTraverser f s => ScopeReader     (GenericTraverserM f s i)
-deriving instance GenericTraverser f s => EnvReader       (GenericTraverserM f s i)
-deriving instance GenericTraverser f s => ScopableBuilder (GenericTraverserM f s i)
-deriving instance GenericTraverser f s => Builder         (GenericTraverserM f s i)
-deriving instance GenericTraverser f s => HoistingTopBuilder f (GenericTraverserM f s i)
+deriving instance GenericTraverser r f s => EnvExtender     (GenericTraverserM r f s i)
+deriving instance GenericTraverser r f s => ScopeReader     (GenericTraverserM r f s i)
+deriving instance GenericTraverser r f s => EnvReader       (GenericTraverserM r f s i)
+deriving instance GenericTraverser r f s => ScopableBuilder r (GenericTraverserM r f s i)
+deriving instance GenericTraverser r f s => Builder r         (GenericTraverserM r f s i)
+deriving instance GenericTraverser r f s => HoistingTopBuilder f (GenericTraverserM r f s i)
 
 class (SubstB Name f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
-      => GenericTraverser f s where
-  traverseExpr :: Emits o => Expr i -> GenericTraverserM f s i o (Expr o)
+      => GenericTraverser r f s where
+  traverseExpr :: Emits o => Expr r i -> GenericTraverserM r f s i o (Expr r o)
   traverseExpr = traverseExprDefault
 
-  traverseInlineExpr :: Emits o => Expr i -> GenericTraverserM f s i o (Either (Atom o) (Expr o))
+  traverseInlineExpr :: Emits o => Expr r i -> GenericTraverserM r f s i o (Either (Atom r o) (Expr r o))
   traverseInlineExpr e = Right <$> traverseExpr e
 
-  traverseAtom :: Atom i -> GenericTraverserM f s i o (Atom o)
+  traverseAtom :: Atom r i -> GenericTraverserM r f s i o (Atom r o)
   traverseAtom = traverseAtomDefault
 
-traverseExprDefault :: Emits o => GenericTraverser f s => Expr i -> GenericTraverserM f s i o (Expr o)
+traverseExprDefault :: Emits o => GenericTraverser r f s => Expr r i -> GenericTraverserM r f s i o (Expr r o)
 traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   App g xs -> App <$> tge g <*> mapM tge xs
   TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
@@ -75,7 +76,7 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   Handle hndName args body ->
     Handle <$> substM hndName <*> mapM tge args <*> tge body
 
-traverseAtomDefault :: GenericTraverser f s => Atom i -> GenericTraverserM f s i o (Atom o)
+traverseAtomDefault :: GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam (LamExpr b body) -> traverseLamBinder b \b' -> Lam . LamExpr b' <$> tge body
@@ -114,30 +115,33 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   BoxedRef _ -> nyi
   where nyi = error $ "not implemented: " ++ pprint atom
 
-traverseExtLabeledItems :: GenericTraverser f s => ExtLabeledItems (Atom i) (AtomName i)
-                        -> GenericTraverserM f s i o (ExtLabeledItems (Atom o) (AtomName o))
+traverseExtLabeledItems
+  :: forall r f s i o.
+     GenericTraverser r f s
+  => ExtLabeledItems (Atom r i) (AtomName r i)
+  -> GenericTraverserM r f s i o (ExtLabeledItems (Atom r o) (AtomName r o))
 traverseExtLabeledItems (Ext items rest) = do
   items' <- mapM tge items
-  rest' <- flip traverse rest \r -> substM (Var r) >>= \case
+  rest' <- flip traverse rest \r -> substM (Var r :: Atom r i) >>= \case
     Var r' -> return r'
     _ -> error "Not implemented"
   return $ Ext items' rest'
 
-tge :: (GenericallyTraversableE e, GenericTraverser f s)
-    => e i -> GenericTraverserM f s i o (e o)
+tge :: (GenericallyTraversableE r e, GenericTraverser r f s)
+    => e i -> GenericTraverserM r f s i o (e o)
 tge = traverseGenericE
 
-class GenericallyTraversableE (e::E) where
-  traverseGenericE :: GenericTraverser f s => e i -> GenericTraverserM f s i o (e o)
+class GenericallyTraversableE (r::IR) (e::E) | e -> r where
+  traverseGenericE :: GenericTraverser r f s => e i -> GenericTraverserM r f s i o (e o)
 
-instance GenericallyTraversableE Atom where
+instance GenericallyTraversableE r (Atom r) where
   traverseGenericE = traverseAtom
 
-instance GenericallyTraversableE Block where
+instance GenericallyTraversableE r (Block r) where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
 
-instance GenericallyTraversableE FieldRowElems where
+instance GenericallyTraversableE r (FieldRowElems r) where
   traverseGenericE elems = do
     els' <- fromFieldRowElems <$> substM elems
     dropSubst $ fieldRowElemsFromList <$> forM els' \case
@@ -145,20 +149,20 @@ instance GenericallyTraversableE FieldRowElems where
       DynField  labVar ty -> DynField labVar <$> tge ty
       DynFields rowVar    -> return $ DynFields rowVar
 
-instance GenericallyTraversableE DataDefParams where
+instance GenericallyTraversableE r (DataDefParams r) where
   traverseGenericE (DataDefParams params) =
     DataDefParams <$> mapM (onSndM tge) params
 
-instance GenericallyTraversableE DepPairType where
+instance GenericallyTraversableE r (DepPairType r) where
   traverseGenericE (DepPairType (b:>lty) rty) = do
     lty' <- tge lty
     withFreshBinder (getNameHint b) lty' \b' -> do
       extendRenamer (b@>binderName b') $ DepPairType (b':>lty') <$> tge rty
 
-instance GenericallyTraversableE IxType where
+instance GenericallyTraversableE r (IxType r) where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
 
-instance GenericallyTraversableE DictExpr where
+instance GenericallyTraversableE r (DictExpr r) where
   traverseGenericE e = confuseGHC >>= \_ -> case e of
     InstanceDict v args -> InstanceDict <$> substM v <*> mapM tge args
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
@@ -166,10 +170,10 @@ instance GenericallyTraversableE DictExpr where
     IxFin n ->  IxFin <$> tge n
     ExplicitMethods d params -> ExplicitMethods <$> substM d <*> mapM tge params
 
-instance GenericallyTraversableE DictType where
+instance GenericallyTraversableE r (DictType r) where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params
 
-instance GenericallyTraversableE NaryLamExpr where
+instance GenericallyTraversableE r (NaryLamExpr r) where
   traverseGenericE (NaryLamExpr bs effs body) = do
     traverseBinderNest (nonEmptyToNest bs) \bs' -> do
       effs' <- substM effs
@@ -180,10 +184,10 @@ instance GenericallyTraversableE NaryLamExpr where
           Nothing -> error "impossible"
 
 traverseBinderNest
-  :: GenericTraverser f s
-  => Nest Binder i i'
-  -> (forall o'. DExt o o' => Nest Binder o o' -> GenericTraverserM f s i' o' a)
-  -> GenericTraverserM f s i o a
+  :: GenericTraverser r f s
+  => Nest (Binder r) i i'
+  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> GenericTraverserM r f s i' o' a)
+  -> GenericTraverserM r f s i o a
 traverseBinderNest Empty cont = getDistinct >>= \Distinct -> cont Empty
 traverseBinderNest (Nest (b:>ty) bs) cont = do
   ty' <- tge ty
@@ -192,30 +196,30 @@ traverseBinderNest (Nest (b:>ty) bs) cont = do
       traverseBinderNest bs \bs' -> do
         cont (Nest (b':>ty') bs')
 
-instance (GenericallyTraversableE e1, GenericallyTraversableE e2) =>
-  (GenericallyTraversableE (EitherE e1 e2)) where
+instance (GenericallyTraversableE r e1, GenericallyTraversableE r e2) =>
+  (GenericallyTraversableE r (EitherE e1 e2)) where
   traverseGenericE ( LeftE e) =  LeftE <$> tge e
   traverseGenericE (RightE e) = RightE <$> tge e
 
 traverseBlock
-  :: (GenericTraverser f s, Emits o)
-  => Block i -> GenericTraverserM f s i o (Atom o)
+  :: (GenericTraverser r f s, Emits o)
+  => Block r i -> GenericTraverserM r f s i o (Atom r o)
 traverseBlock (Block _ decls result) = traverseDeclNest decls $ traverseAtom result
 
 traverseDeclNest
-  :: (GenericTraverser f s, Emits o)
-  => Nest Decl i i'
-  -> (forall o'. (Emits o', Ext o o') => GenericTraverserM f s i' o' (e o'))
-  -> GenericTraverserM f s i o (e o)
+  :: (GenericTraverser r f s, Emits o)
+  => Nest (Decl r) i i'
+  -> (forall o'. (Emits o', Ext o o') => GenericTraverserM r f s i' o' (e o'))
+  -> GenericTraverserM r f s i o (e o)
 traverseDeclNest decls cont = do
   s <- getSubst
   s' <- traverseDeclNestS s decls
   withSubst s' cont
 {-# INLINE traverseDeclNest #-}
 
-traverseDeclNestS :: (GenericTraverser f s, Emits o)
-                  => Subst AtomSubstVal l o -> Nest Decl l i'
-                  -> GenericTraverserM f s i o (Subst AtomSubstVal i' o)
+traverseDeclNestS :: (GenericTraverser r f s, Emits o)
+                  => Subst (AtomSubstVal r) l o -> Nest (Decl r) l i'
+                  -> GenericTraverserM r f s i o (Subst (AtomSubstVal r) i' o)
 traverseDeclNestS !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -226,18 +230,18 @@ traverseDeclNestS !s = \case
     traverseDeclNestS (s <>> sExt) rest
 
 traverseAlt
-  :: GenericTraverser f s
-  => Alt i
-  -> GenericTraverserM f s i o (Alt o)
+  :: GenericTraverser r f s
+  => Alt r i
+  -> GenericTraverserM r f s i o (Alt r o)
 traverseAlt (Abs (b:>ty) body) = do
   ty' <- tge ty
   buildAbs (getNameHint b) ty' \v -> extendRenamer (b@>v) $ tge body
 
 traverseLamBinder
-  :: GenericTraverser f s
-  => LamBinder i i'
-  -> (forall o'. DExt o o' => LamBinder o o' -> GenericTraverserM f s i' o' a)
-  -> GenericTraverserM f s i o a
+  :: GenericTraverser r f s
+  => LamBinder r i i'
+  -> (forall o'. DExt o o' => LamBinder r o o' -> GenericTraverserM r f s i' o' a)
+  -> GenericTraverserM r f s i o a
 traverseLamBinder (LamBinder b ty arr eff) cont = do
   ty' <- tge ty
   let hint = getNameHint b

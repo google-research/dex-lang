@@ -1148,7 +1148,7 @@ liftCompile dev subst m =
 opSubstVal :: Operand -> OperandSubstVal AtomNameC n
 opSubstVal x = OperandSubstVal x
 
-lookupImpVar :: Compiler m => AtomName i -> m i o Operand
+lookupImpVar :: Compiler m => SAtomName i -> m i o Operand
 lookupImpVar v = lookupSubstM v <&> \case
   OperandSubstVal x -> x
   RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"

@@ -307,9 +307,9 @@ evalSourceBlock' mname block = case sbContents block of
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
     where
-      getLinearizationType :: Type n -> RNest PiBinder n l
-                           -> [Type l] -> Type l
-                           -> EnvReaderT FallibleM l (Int, Type n)
+      getLinearizationType :: CType n -> RNest (PiBinder CoreIR) n l
+                           -> [CType l] -> CType l
+                           -> EnvReaderT FallibleM l (Int, CType n)
       getLinearizationType fullTy implicitArgs revArgTys = \case
         Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
           unless (eff == Pure) $ throw TypeErr $
@@ -375,7 +375,7 @@ evalSourceBlock' mname block = case sbContents block of
             <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
         where
           but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-          prependImplicit :: RNest PiBinder n l -> Type l -> Type n
+          prependImplicit :: RNest (PiBinder CoreIR) n l -> CType l -> CType n
           prependImplicit is ty = case is of
             REmpty -> ty
             RNest is' i -> prependImplicit is' $ Pi $ PiType i Pure ty
@@ -570,13 +570,13 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalUType :: (Topper m, Mut n) => UType VoidS -> m n (Type n)
+evalUType :: (Topper m, Mut n) => UType VoidS -> m n (CType n)
 evalUType ty = do
   logTop $ PassInfo Parse $ pprint ty
   renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
   checkPass TypePass $ checkTopUType renamed
 
-evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (Atom n)
+evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
 evalUExpr expr = do
   logTop $ PassInfo Parse $ pprint expr
   renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
@@ -589,7 +589,7 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   NoOptimize -> return x
   Optimize   -> act x
 
-evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
+evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
 evalBlock typed = do
   eopt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock eopt
@@ -606,7 +606,7 @@ evalBlock typed = do
   applyRecon recon result
 {-# SCC evalBlock #-}
 
-evalSpecializations :: (Topper m, Mut n) => [AtomName n] -> [SpecDictName n] -> m n ()
+evalSpecializations :: (Topper m, Mut n) => [CAtomName n] -> [SpecDictName n] -> m n ()
 evalSpecializations vs sdVs = do
   forM_ vs \v -> do
     lookupAtomName v >>= \case
@@ -628,7 +628,7 @@ evalSpecializations vs sdVs = do
       simplifyTopFunction lamExpr
     finishSpecializedDict d methods
 
-ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType n)
+ixMethodType :: IxMethod -> AbsDict CoreIR n -> EnvReaderM n (NaryPiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
     let extraArgBs' = fmapNest plainPiBinder extraArgBs
@@ -675,7 +675,7 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
+compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
@@ -720,7 +720,7 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
-  :: (MonadFail1 m, EnvReader m) => AtomName n -> m n (NaryLamExpr n)
+  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (NaryLamExpr SimpIR n)
 specializedFunPreSimpDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
   case s of
@@ -734,7 +734,7 @@ specializedFunPreSimpDefinition fname = do
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
 -- "noinline" function and defer its simplification.
-forceDeferredInlining :: EnvReader m => AtomName n -> m n (Atom n)
+forceDeferredInlining :: EnvReader m => CAtomName n -> m n (CAtom n)
 forceDeferredInlining v =
   lookupAtomName v >>= \case
     TopFunBound _ (AwaitingSpecializationArgsTopFun _ f) -> return f
@@ -754,7 +754,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
@@ -775,7 +775,7 @@ evalLLVM block = do
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
+  applyNaryAbs reconAtom $ (map SubstVal resultValsNoPtrs :: [CAtomSubstVal AtomNameC n])
 {-# SCC evalLLVM #-}
 
 compileToObjCode
@@ -796,7 +796,7 @@ impNameToObj v = do
     Nothing -> throw CompilerErr
       $ "Expected to find an object cache entry for: " ++ pprint v
 
-evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (Atom n)
+evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
