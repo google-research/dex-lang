@@ -57,7 +57,9 @@ mul :: Polynomial n-> Polynomial n -> Polynomial n
 mul (Polynomial x) (Polynomial y) =
   poly [ (cx * cy, mulMono mx my)
        | (mx, cx) <- toList x, (my, cy) <- toList y]
-  where mulMono (Monomial mx) (Monomial my) = Monomial $ unionWith (+) mx my
+
+mulMono :: Monomial n -> Monomial n -> Monomial n
+mulMono (Monomial mx) (Monomial my) = Monomial $ unionWith (+) mx my
 
 add :: Polynomial n -> Polynomial n -> Polynomial n
 add x y = Polynomial $ unionWith (+) (fromPolynomial x) (fromPolynomial y)
@@ -80,15 +82,18 @@ sum lim (Abs i p) = sumPolys polys
 sumMono :: PolyName n -> Abs PolyBinder Monomial n -> Polynomial n
 sumMono lim (Abs b (Monomial m)) = case lookup (binderName b) m of
   -- TODO: Implement the formula for arbitrary order polynomials
-  Nothing  -> poly [(1, Monomial $ insert lim 1 c)]
+  Nothing  -> poly [ (   1, mulMono c $ mono [(lim, 1)])]
   Just 0   -> error "Each variable appearing in a monomial should have a positive power"
   -- Summing exclusive of `lim`: Sum_{i=1}^{n-1} i = (n-1)n/2 = 1/2 n^2 - 1/2 n
-  Just 1   -> poly [(1/2, Monomial $ insert lim 2 c), (-1/2, Monomial $ insert lim 1 c)]
+  Just 1   -> poly [ ( 1/2, mulMono c $ mono [(lim, 2)])
+                   , (-1/2, mulMono c $ mono [(lim, 1)])]
   -- Summing exclusive of `lim`: Sum_{i=1}^{n-1} i^2 = (n-1)n(2n-1)/6 = 1/3 n^3 - 1/2 n^2 + 1/6 n
-  Just 2   -> poly [(1/3, Monomial $ insert lim 3 c), (-1/2, Monomial $ insert lim 2 c), (1/6, Monomial $ insert lim 1 c)]
+  Just 2   -> poly [ ( 1/3, mulMono c $ mono [(lim, 3)])
+                   , (-1/2, mulMono c $ mono [(lim, 2)])
+                   , ( 1/6, mulMono c $ mono [(lim, 1)])]
   (Just n) -> error $ "Triangular arrays of order " ++ show n ++ " not implemented yet!"
   where
-    c = fromMonomial $ ignoreHoistFailure $ hoist b $  -- failure impossible
+    c = ignoreHoistFailure $ hoist b $  -- failure impossible
           Monomial $ delete (binderName b) m
 
 -- === Constructors and singletons ===
