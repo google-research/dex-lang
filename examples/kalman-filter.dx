@@ -36,7 +36,7 @@ def makeGaussianFromCovariance {n} (mean:Vec n) (covariance: SqMat n) : Gaussian
 
 def logDensity {n} (g:Gaussian n) (x:Vec n) : LogProb =
    d = x - get_at #mean g
-   normalizer = - (i_to_f (size n) / 2.0) * log (2.0 * pi) - 0.5 * get_at #logDetCov g
+   normalizer = - (n_to_f (size n) / 2.0) * log (2.0 * pi) - 0.5 * get_at #logDetCov g
    -0.5 * (d `vdot` (get_at #precision g **. d)) + normalizer
 
 def scaleGaussian {i o} (scaleMat:Mat o i) (g:Gaussian i) : Gaussian o =
@@ -178,7 +178,7 @@ def kalmanFilterStep {latentsIx obsIx}
   , predictedLatents = applyTransition (get_at #transition model) filteredLatents
   , filteredObs      = obsProb }
 
--- Workaround for a Dex bug with references to records
+-- Workaround for Dex bug #821 with references to records
 def gaussianToTup {n} (g:Gaussian n) : (Vec n & SqMat n & SqMat n & Float) =
   ( get_at #mean g
   , get_at #covariance g
@@ -219,7 +219,7 @@ random_walk : Model (Fin 1) (Fin 1) =
   , latentsPrior = isotropic      1.0 }
 
 myObs = for i:(Fin 100).
-  (for j:(Fin 1). i_to_f $ ordinal i)
+  (for j:(Fin 1). n_to_f $ ordinal i)
 
 %time
 results = kalmanFilter myObs random_walk
@@ -324,7 +324,7 @@ def array_concat {n1 n2 a} (xs1: n1=>a) (xs2: n2=>a) : ((n1 | n2 ) => a) =
 
 def yPlot2Concatenate {n1 n2} (ys1:n1=>Float) (ys2:n2=>Float)
       : Plot (n1 | n2) Float Float Unit =
-  xs = for i. i_to_f $ ordinal i
+  xs = for i. n_to_f $ ordinal i
   xy_plot xs (array_concat ys1 ys2)
 
 %time
@@ -341,8 +341,8 @@ forecast_p95s = for i. upper_p95 forecast.i
 
 def yPlot2Overlay {n1 n2} (ys1:n1=>Float) (ys2:n2=>Float)
       : Plot (n1 | n2) Float Float Unit =
-  xs1 = for i:n1. i_to_f $ ordinal i
-  xs2 = for i:n2. i_to_f $ ordinal i
+  xs1 = for i:n1. n_to_f $ ordinal i
+  xs2 = for i:n2. n_to_f $ ordinal i
   xy_plot (array_concat xs1 xs2) (array_concat ys1 ys2)
 
 %time
@@ -354,8 +354,8 @@ def plotSeriesAndForecast {n1 n2}
       : Plot (n1 | (n2 | n2)) Float Float Float =
   forecast_means = for i. (get_at #mean forecast.i).(from_ordinal _ 0)
   forecast_p95s = for i. upper_p95 forecast.i
-  xs1 = for i:n1. i_to_f $ ordinal i
-  xs2 = for i:n2. i_to_f $ size n1 + ordinal i
+  xs1 = for i:n1. n_to_f $ ordinal i
+  xs2 = for i:n2. n_to_f $ size n1 + ordinal i
   (xyc_plot (array_concat xs1 $ array_concat xs2 xs2)
             (array_concat series $ array_concat forecast_means forecast_p95s)
             $ (array_concat (for i:n1. 0.0) $ array_concat (for i:n2. 0.5) (for i:n2. 1.0)))
