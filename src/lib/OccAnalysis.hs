@@ -100,6 +100,14 @@ useManyTimes (FV fvs) = FV $ mapNameMapE update fvs where
   -- Note: Could do something more elaborate here to keep track of
   -- which indices of each object are used much, but for now there's
   -- no need, because any Unbounded count will inhibit inlining.
+
+  -- TODO(Oddity) This will also set apparent indexing depth to zero.  The
+  -- indexing depth that occurrence analysis counts is relevant for assessing
+  -- work preservation, in that an inlining might only be work-preserving if it
+  -- leads to canceling against an indexing expression (or several).  However,
+  -- no inlining into a `while` loop is work-preserving in any case, so zero is
+  -- sound.  It does look odd on test cases, though, if the binding is clearly
+  -- indexed inside the while.
   update (AccessInfo s _) = AccessInfo s $ accessMuch
 
 -- Change all the AccessInfos to assume their objects are _statically_ used many
@@ -111,7 +119,7 @@ useManyTimesStatic :: FV n -> FV n
 useManyTimesStatic (FV fvs) = FV $ mapNameMapE update fvs where
   -- TODO(code cleanliness): Do we want to change the static counter to a Count
   -- so the Unbounded constructor is available here?
-  update (AccessInfo _ d) = AccessInfo 1000 d
+  update (AccessInfo _ d) = AccessInfo maxBound d
 
 -- === Monad ===
 
@@ -152,15 +160,6 @@ isolated :: OCCM n a -> OCCM n (a, FV n)
 isolated action = do
   r <- ask
   lift11 $ lift11 $ runStateT1 (runReaderT1 r action) mempty
-
--- Run the given action with its own FV state, and merge it afterward.
--- This way the action can munge its state itself based on local
--- information and know it's not affecting the surrounding state.
-locally :: OCCM n a -> OCCM n a
-locally action = do
-  (a, fvs) <- isolated action
-  modify (<> fvs)
-  return a
 
 -- Extend the IxExpr environment
 extend :: (BindsOneName b 'AtomNameC)
@@ -221,8 +220,16 @@ summary atom = case atom of
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown obj = do
   freeIxs <- mapM ixExpr $ freeAtomVarsList obj
-  let freeIterationNames = nub $ concatMap freeAtomVarsList freeIxs
-  return $ Deterministic $ freeIterationNames
+  if any (== IxAll) freeIxs then
+    return IxAll
+  else
+    let freeIterationNames = nub $ concatMap freeAtomVarsList freeIxs
+    -- TODO(correctness) Should we detect whether `obj` is an expression with a
+    -- funny effect like `IO` and fall back from `Deterministic` to `IxAll`?
+    -- (For reader, writer, and state effects such a fallback should not be
+    -- necessary, because the summary of the reference should already have any
+    -- necessary `IxAll` in it.)
+    in return $ Deterministic $ freeIterationNames
 
 -- === The actual occurrence analysis ===
 
@@ -230,7 +237,6 @@ class HasOCC (e::E) where
   occ :: Access n -> e n -> OCCM n (e n)
   default occ :: (GenericE e, HasOCC (RepE e)) => Access n -> e n -> OCCM n (e n)
   occ a e = confuseGHC >>= \_ -> toE <$> occ a (fromE e)
-  {-# INLINE occ #-}
 
 instance HasOCC (Name AtomNameC) where
   occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo 1 a)) $> n
@@ -247,20 +253,15 @@ instance HasOCC Block where
     (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> occ a ans
     (NoBlockAnn      , _    ) -> error "should be unreachable"
     (BlockAnn ty effs, _    ) -> do
-      -- The free vars accumulated in the state of OCCM should
-      -- correspond to the free vars of the Abs of the block answer,
-      -- by the decls traversed so far. occNest takes care to uphold
-      -- this invariant, but we temporarily reset the state to an
-      -- empty map, just so that names from the surrounding block
-      -- don't end up influencing elimination decisions here. Note
-      -- that we restore the state (and accumulate free vars of the
-      -- analyzed block into it) right after occNest.
-      Abs decls' ans' <- locally $ occNest a decls ans
+      Abs decls' ans' <- occNest a decls ans
       ty' <- occ accessOnce ty  -- TODO Is free variable counting enough here?
       countFreeVarsAsOccurrences effs
       return $ Block (BlockAnn ty' effs) decls' ans'
 
 -- TODO(optimization) Could reuse the free variable caching from dce here too.
+
+-- TODO(sanity checking) Could also be good to add the DEBUG check from dce that
+-- every free variable appears in the FV map.
 
 data ElimResult n where
   ElimSuccess :: Abs (Nest Decl) Atom n -> ElimResult n
@@ -272,15 +273,11 @@ occNest a decls ans = case decls of
   Empty -> Abs Empty <$> occ a ans
   Nest d@(Let _ binding) ds -> do
     isPureDecl <- isPure binding
-    -- Note that we only ever analyze the abs below under this refreshAbs,
-    -- which will remove any references to b upon exit (it happens
-    -- because refreshAbs of StateT1 triggers hoistState, which we
-    -- implement by deleting the entries that can't hoist).
     dceAttempt <- refreshAbs (Abs d (Abs ds ans))
       \d'@(Let b' (DeclBinding _ _ expr')) (Abs ds' ans') -> do
         exprIx <- summaryExpr $ sink expr'
         extend b' exprIx do
-          below <- locally $ occNest (sink a) ds' ans'
+          below <- occNest (sink a) ds' ans'
           accessInfo <- getAccessInfo $ binderName d'
           let usage = usageInfo accessInfo
           let dceAttempt = case isPureDecl of
@@ -339,6 +336,11 @@ instance HasOCC Expr where
 occAlt :: Access n -> IxExpr n -> Alt n -> OCCM n (Alt n)
 occAlt acc scrut alt = do
   refreshAbs alt \b@(nb:>_) body -> do
+    -- We use `unknown` here as a conservative approximation of the case binder
+    -- being the scrutinee with the top constructor removed.  If we statically
+    -- knew what that constructor was we could remove it, but I guess that
+    -- case-of-known-constructor optimization would have already eliminated this
+    -- case statement in that event.
     scrutIx <- unknown $ sink scrut
     extend nb scrutIx do
       body' <- occ (sink acc) body
@@ -376,10 +378,18 @@ instance HasOCC (ComposeE PrimHof Atom) where
       -- We will process the combining function when we meet it in MExtend ops
       -- (but we won't attempt to eliminate dead code in it).
       empty' <- occ accessOnce empty
-      -- The body is exactly one-shot, and shouldn't index with the reference
-      -- parameter.  (But if it does, Deterministic [] seems reasonable, because
-      -- RunWriter syntehsizes the reference, presumably independently of
-      -- anything else.)  Same for the heap parameter.
+      -- There is no way to read from the reference in a Writer, so the only way
+      -- an indexing expression can depend on it is by referring to the
+      -- reference itself.  One way to so refer that is opaque to occurrence
+      -- analysis would be to pass the reference to a standalone function which
+      -- returns an index (presumably without actually reading any information
+      -- from said reference).
+      --
+      -- To cover this case, we write `Deterministic []` here.  This is correct,
+      -- because RunWriter creates the reference without reading any external
+      -- names.  In particular, in the event of `RunWriter` in a loop, the
+      -- different references across loop iterations are not distinguishable.
+      -- The same argument holds for the heap parameter.
       bd' <- oneShot2 a (Deterministic []) (Deterministic []) bd
       return $ RunWriter Nothing (BaseMonoid empty' combine) bd'
     RunWriter (Just _) _ _ ->
@@ -451,7 +461,6 @@ instance HasOCC Atom where
     _ -> generic
     where
       generic = toE <$> (occ a $ fromE atom)
-  {-# INLINE occ #-}
 
 instance HasOCC TabLamExpr where
   occ _ view = inlinedLater view
@@ -462,7 +471,14 @@ instance HasOCC (ComposeE PrimOp Atom) where
     valIx <- summary val
     -- Treat the combining function as inlined here and called once
     void $ oneShot2 accessOnce (Deterministic []) valIx combine
-    -- Do not change it
+    -- Do not change the expression
+    -- TODO(correctness) There is a potential bug here.  If the combining
+    -- function contains some internally dead code, it both won't be removed by
+    -- this traversal and won't be counted as referencing its free variables.
+    -- This could then lead us to make a bad inlining decision about said free
+    -- variables.  Unless I am mistaken, that requires the monoid instance to
+    -- have been defined nested, which I think is rare enough that I'm inclined
+    -- let the possible bug slide until it occurs.
     return expr
   -- I'm pretty sure the others are all strict, and not usefully analyzable
   -- for what they do to the incoming access pattern.
@@ -472,17 +488,14 @@ instance HasOCC (ComposeE PrimOp Atom) where
 -- === The generic instances ===
 
 instance HasOCC e => HasOCC (ComposeE PrimCon e) where
-  -- These too
   occ _ (ComposeE con) = ComposeE <$> traverse (occ accessOnce) con
   {-# INLINE occ #-}
 
 instance HasOCC e => HasOCC (ComposeE PrimTC e) where
-  -- And these
   occ _ (ComposeE tc) = ComposeE <$> traverse (occ accessOnce) tc
   {-# INLINE occ #-}
 
 instance HasOCC e => HasOCC (ComposeE LabeledItems e) where
-  -- And these
   occ _ (ComposeE items) = ComposeE <$> traverse (occ accessOnce) items
   {-# INLINE occ #-}
 
@@ -535,8 +548,6 @@ instance (BindsEnv b, SubstB Name b, HoistableB b, SubstE Name e, HasOCC e)
     -- the AccessInfos reference this binder.  We should avoid triggering this
     -- generic instance in any situation where that can happen.
     a'@(Abs b' _) <- refreshAbs a \b e -> Abs b <$> occ (sink access) e
-    -- Should this be countFreeVarsAsOccurrences or should we recur
-    -- occurrence analysis?
     countFreeVarsAsOccurrencesB b'
     return a'
   {-# INLINE occ #-}

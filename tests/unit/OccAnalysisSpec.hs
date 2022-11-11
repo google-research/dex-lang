@@ -144,8 +144,8 @@ spec = do
         , "  xs.(1@_)"
         ]
       -- Arguably, should be able to prove that zero levels of exposed indexing
-      -- (not one) suffice for inlining xs to be safe here, but doesn't prove it
-      -- yet.
+      -- (not one) suffice for inlining xs to be safe here, but the current
+      -- occurrence analysis doesn't prove it yet.
       ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
     it "detects nested single-uses cases despite index arithmetic" do
       ann <- analyze cfg env
@@ -310,17 +310,19 @@ spec = do
         , "        ref := (get ref) + xs.i"
         , "      False"
         ]
-      -- TODO Why is this coming up as 0 indexing depth?  Should be 1.
+      -- Note: This comes up as 0 indexing depth because `while` ignores the
+      -- indexing depth information and sets it to zero.  See comment in
+      -- `useManyTimes` for an explanation.
       ann `shouldBe` OccInfo (UsageInfo 1 (0,Unbounded))
-    it "understands index-defining bindings" do
+    it "does not crash on index-defining bindings" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 10 | Fin 3) => Float = unreachable ()"
-        , "  for i."
-        , "    j = Left i"
+        , "  for i:(Fin 10)."
+        , "    j = Left (unsafe_from_ordinal _ $ ordinal i)"
         , "    xs.j"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
     it "understands indexing by literals" do
       ann <- analyze cfg env
         [ ":p"
