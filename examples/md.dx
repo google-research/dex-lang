@@ -82,10 +82,8 @@ def pair_energy {dim n}
   (displacement: Displacement dim)
   (r: n=>Vec dim)
   : Float =
-  sum for (i, j).
-    case (ordinal i) < (ordinal j) of
-      True  -> energy $ norm $ displacement r.i r.j
-      False -> 0.0
+  sum $ for i. sum for j:(..<i).
+    energy $ norm $ displacement r.i r.(inject _ j)
 
 '## Minimization Functions
 
@@ -199,8 +197,8 @@ R_init_small = rand_mat N_small d (\k. L_small * rand k) (new_key 0)
 :html render_svg (draw_system 0.5 R_init_small) ((0.0, 0.0), (L_small, L_small))
 > <html output>
 >
-> Compile time: 277.664 ms
-> Run time:     15.644 ms 
+> Compile time: 309.318 ms
+> Run time:     17.076 ms 
 
 'Define energy function.  Note the `preiodic_displacement`, which means
 our system will be evolving on a torus.
@@ -214,7 +212,7 @@ def energy {n d} (pos: n=>d=>Float) : Float
 > Float32
 
 energy R_init_small
-> 74.689995
+> 74.690056
 
 'Initialize a simulation
 
@@ -224,7 +222,7 @@ state_small = fire_descent_init 0.1 0.1 energy R_init_small
 initial, as expected:
 
 energy $ get_position $ fire_descent_step free_shift energy state_small
-> 71.78412
+> 71.78407
 
 'Now we can test that our code basically works by running 100 steps of
 minimization.
@@ -234,8 +232,8 @@ minimization.
   s' = fire_descent_step (periodic_shift L_small) energy s
   (s', energy $ get_position s')
 >
-> Compile time: 525.343 ms
-> Run time:     1.349 s 
+> Compile time: 698.365 ms
+> Run time:     942.147 ms 
 
 'Here's how the energy decreases over time.
 
@@ -243,8 +241,8 @@ minimization.
 :html show_plot $ y_plot energies
 > <html output>
 >
-> Compile time: 690.704 ms
-> Run time:     2.965 ms 
+> Compile time: 724.795 ms
+> Run time:     3.076 ms 
 
 'Here's what the system looks like after minimization.
 
@@ -252,8 +250,8 @@ minimization.
 :html render_svg (draw_system 0.5 (get_position state_small')) ((0.0, 0.0), (L_small, L_small))
 > <html output>
 >
-> Compile time: 276.340 ms
-> Run time:     13.222 ms 
+> Compile time: 318.742 ms
+> Run time:     14.919 ms 
 
 '## Neighbors optimization
 
@@ -372,8 +370,8 @@ bucket_size = 10
 %time
 tbl = cell_table grid_size bucket_size cell_size $ get_position state_small'
 >
-> Compile time: 118.997 ms
-> Run time:     22.975 us 
+> Compile time: 128.647 ms
+> Run time:     14.530 us 
 
 'We have a table of cells with atoms in them
 
@@ -461,8 +459,8 @@ def periodic_near {atom_ix}
 res = (neighbor_list 4000 tbl
   (periodic_near 1.0 L_small $ get_position state_small') $ get_position state_small')
 >
-> Compile time: 95.243 ms
-> Run time:     130.425 us 
+> Compile time: 104.015 ms
+> Run time:     134.844 us 
 
 'In that configuration, we find this many pairs of neighbors:
 
@@ -526,9 +524,9 @@ state_nl =
   fire_descent_init 0.1 0.1 energy_func R_init_small
 
 energy R_init_small
-> 74.689995
+> 74.690056
 energy $ get_position $ fire_descent_step free_shift energy state_small
-> 71.78412
+> 71.78407
 
 -- A helper for short-circuiting `any` computation
 def fast_any {n eff} [Ix n] (f: n -> {|eff} Bool) : {|eff} Bool =
@@ -602,22 +600,22 @@ def simulate {atom_ix}
 > 3572 new neighbor list size
 > 3554 new neighbor list size
 >
-> Compile time: 1.604 s
-> Run time:     41.986 ms 
+> Compile time: 1.768 s
+> Run time:     17.954 ms 
 
 %time
 :html show_plot $ y_plot energies_nl
 > <html output>
 >
-> Compile time: 674.513 ms
-> Run time:     3.613 ms 
+> Compile time: 738.194 ms
+> Run time:     3.072 ms 
 
 %time
 :html render_svg (draw_system 0.5 (get_position state_nl')) ((0.0, 0.0), (L_small, L_small))
 > <html output>
 >
-> Compile time: 278.686 ms
-> Run time:     15.103 ms 
+> Compile time: 327.153 ms
+> Run time:     14.981 ms 
 
 'But of course the point of the exercise is that this now scales up to
 larger systems because it avoids the quadratic energy computation.
@@ -635,8 +633,8 @@ R_init_large = rand_mat N_large d (\k. L_large * rand k) (new_key 0)
 :html render_svg (draw_system 0.2 R_init_large) ((0.0, 0.0), (L_large, L_large))
 > <html output>
 >
-> Compile time: 298.110 ms
-> Run time:     15.438 ms 
+> Compile time: 302.700 ms
+> Run time:     16.298 ms 
 
 state_large =
   energy_func = (energy_nl L_large $ just_neighbor_list 1.0 L_large R_init_large)
@@ -667,8 +665,8 @@ state_large =
 > 3572 new neighbor list size
 > 3554 new neighbor list size
 >
-> Compile time: 1.609 s
-> Run time:     18.003 ms 
+> Compile time: 1.724 s
+> Run time:     18.361 ms 
 
 'Energy decrease
 
@@ -676,8 +674,8 @@ state_large =
 :html show_plot $ y_plot energies_large_nl
 > <html output>
 >
-> Compile time: 722.463 ms
-> Run time:     3.417 ms 
+> Compile time: 757.663 ms
+> Run time:     3.450 ms 
 
 'System state after minimization.
 
@@ -685,6 +683,6 @@ state_large =
 :html render_svg (draw_system 0.2 (get_position state_large_nl')) ((0.0, 0.0), (L_large, L_large))
 > <html output>
 >
-> Compile time: 288.290 ms
-> Run time:     15.147 ms 
+> Compile time: 301.748 ms
+> Run time:     15.928 ms 
 
