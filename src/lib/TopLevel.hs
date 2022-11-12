@@ -720,7 +720,7 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
-  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (NaryLamExpr SimpIR n)
+  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (NaryLamExpr CoreIR n)
 specializedFunPreSimpDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
   case s of

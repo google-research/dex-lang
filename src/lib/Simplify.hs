@@ -833,7 +833,7 @@ simplifyHof hint hof = case hof of
   Seq _ _ _ _ -> error "Shouldn't ever see a Seq in Simplify"
   RememberDest _ _ -> error "Shouldn't ever see a RememberDest in Simplify"
 
-simplifyBlock :: Emits o => SBlock i -> SimplifyM i o (SAtom o)
+simplifyBlock :: Emits o => CBlock i -> SimplifyM i o (SAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result
 
 exceptToMaybeBlock :: Emits o => CBlock i -> SimplifyM i o (SAtom o)
@@ -920,10 +920,10 @@ hasExceptions expr = do
 
 {-# SPECIALIZE
   buildNaryAbs
-    :: (SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
-    => EmptyAbs (Nest Binder) n
-    -> (forall l. DExt n l => [AtomName l] -> SimplifyM i l (e l))
-    -> SimplifyM i n (Abs (Nest Binder) e n) #-}
+    :: (SinkableE e, SubstE Name e, SubstE (AtomSubstVal SimpIR) e, HoistableE e)
+    => EmptyAbs (Nest (Binder SimpIR)) n
+    -> (forall l. DExt n l => [AtomName SimpIR l] -> SimplifyM i l (e l))
+    -> SimplifyM i n (Abs (Nest (Binder SimpIR)) e n) #-}
 
 -- Note [Confuse GHC]
 -- I can't explain this, but for some reason using this function in strategic

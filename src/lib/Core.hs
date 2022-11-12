@@ -672,7 +672,7 @@ fromNaryLamExact exactDepth lam = do
   guard $ realDepth == exactDepth
   return naryLam
 
-fromNaryLam :: Int -> Atom r n-> Maybe (Int, NaryLamExpr r n)
+fromNaryLam :: Int -> Atom r n -> Maybe (Int, NaryLamExpr r n)
 fromNaryLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
 fromNaryLam maxDepth = \case
   (Lam (LamExpr (LamBinder b ty _ effs) body)) ->

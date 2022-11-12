@@ -49,8 +49,13 @@ import Types.Imp
 
 -- === IR variants ===
 
+-- CoreIR is the IR after inference and before simplification
 data IR = CoreIR
-type SimpIR = CoreIR  -- TODO: actually distinguish these two
+-- SimpIR is the IR after simplification
+-- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
+-- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
+-- thing has SimpIR vibes".
+type SimpIR = CoreIR
 
 type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
@@ -125,7 +130,10 @@ data Decl (r::IR) (n::S) (l::S) = Let (AtomNameBinder n l) (DeclBinding r n)
      deriving (Show, Generic)
 type Decls r = Nest (Decl r)
 
--- TODO: make this a newtype with an unsafe constructor
+-- TODO: make this a newtype with an unsafe constructor The idea is that the `r`
+-- parameter will play a role a bit like the `c` parameter in names: if you have
+-- an `AtomName r n` and you look up its definition in the `Env`, you're sure to
+-- get an `AtomBinding r n`.
 type AtomName (r::IR) = Name AtomNameC
 type AtomNameBinder   = NameBinder AtomNameC
 
