@@ -25,7 +25,7 @@ import Err
 import MTL1
 import QueryType
 
-type PolyName = Name AtomNameC
+type PolyName = SAtomName
 type PolyBinder = NameBinder AtomNameC
 
 type Constant = Rational
@@ -42,8 +42,8 @@ newtype Polynomial (n::S) =
 -- This is the main entrypoint. Doing polynomial math sometimes lets
 -- us compute sums in closed form. This tries to compute
 -- `\sum_{i=0}^(lim-1) body`. `i`, `lim`, and `body` should all have type `Nat`.
-sumUsingPolys :: (Builder m, Fallible1 m, Emits n)
-              => Atom n -> Abs Binder Block n -> m n (Atom n)
+sumUsingPolys :: (Builder SimpIR m, Fallible1 m, Emits n)
+              => SAtom n -> Abs (Binder SimpIR) SBlock n -> m n (SAtom n)
 sumUsingPolys lim (Abs i body) = do
   sumAbs <- refreshAbs (Abs i body) \(i':>_) body' -> do
     blockAsPoly body' >>= \case
@@ -117,15 +117,15 @@ _showPoly (Polynomial p) =
 -- === core expressions as polynomials ===
 
 type PolySubstVal = SubstVal AtomNameC (MaybeE Polynomial)
-type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 BuilderM) i o a
+type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpIR)) i o a
 
 blockAsPoly
   :: (EnvExtender m, EnvReader m)
-  => Block n -> m n (Maybe (Polynomial n))
+  => SBlock n -> m n (Maybe (Polynomial n))
 blockAsPoly (Block _ decls result) =
   liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ blockAsPolyRec decls result
 
-blockAsPolyRec :: Nest Decl i i' -> Atom i' -> BlockTraverserM i o (Polynomial o)
+blockAsPolyRec :: Nest (Decl SimpIR) i i' -> SAtom i' -> BlockTraverserM i o (Polynomial o)
 blockAsPolyRec decls result = case decls of
   Empty -> atomAsPoly result
   Nest (Let b (DeclBinding _ _ expr)) restDecls -> do
@@ -133,13 +133,13 @@ blockAsPolyRec decls result = case decls of
     extendSubst (b@>SubstVal p) $ blockAsPolyRec restDecls result
 
   where
-    atomAsPoly :: Atom i -> BlockTraverserM i o (Polynomial o)
+    atomAsPoly :: SAtom i -> BlockTraverserM i o (Polynomial o)
     atomAsPoly = \case
       Var v       -> varAsPoly v
       IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
       _ -> empty
 
-    varAsPoly :: AtomName i -> BlockTraverserM i o (Polynomial o)
+    varAsPoly :: SAtomName i -> BlockTraverserM i o (Polynomial o)
     varAsPoly v = getSubst <&> (!v) >>= \case
       SubstVal NothingE   -> empty
       SubstVal (JustE cp) -> return cp
@@ -149,7 +149,7 @@ blockAsPolyRec decls result = case decls of
           IdxRepTy -> return $ poly [(1, mono [(v', 1)])]
           _ -> empty
 
-    exprAsPoly :: Expr i -> BlockTraverserM i o (Polynomial o)
+    exprAsPoly :: SExpr i -> BlockTraverserM i o (Polynomial o)
     exprAsPoly e = case e of
       Atom a -> atomAsPoly a
       Op (BinOp op x y) -> case op of
@@ -172,7 +172,7 @@ blockAsPolyRec decls result = case decls of
 -- coefficients. This is why we have to find the least common multiples and do the
 -- accumulation over numbers multiplied by that LCM. We essentially do fixed point
 -- fractional math here.
-emitPolynomial :: (Emits n, Builder m) => Polynomial n -> m n (Atom n)
+emitPolynomial :: (Emits n, Builder SimpIR m) => Polynomial n -> m n (SAtom n)
 emitPolynomial (Polynomial p) = do
   let constLCM = asAtom $ foldl lcm 1 $ fmap (denominator . snd) $ toList p
   monoAtoms <- flip traverse (toList p) $ \(m, c) -> do
@@ -186,12 +186,12 @@ emitPolynomial (Polynomial p) = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-emitMonomial :: (Emits n, Builder m) => Monomial n -> m n (Atom n)
+emitMonomial :: (Emits n, Builder SimpIR m) => Monomial n -> m n (SAtom n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> ipow (Var v) e
   foldM imul (IdxRepVal 1) varAtoms
 
-ipow :: (Emits n, Builder m) => Atom n -> Int -> m n (Atom n)
+ipow :: (Emits n, Builder SimpIR m) => SAtom n -> Int -> m n (SAtom n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 
 -- === instances ===

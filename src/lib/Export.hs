@@ -30,11 +30,11 @@ import Util (scanM)
 import Lower
 import TopLevel
 
-exportFunctions :: FilePath -> [(String, Atom n)] -> Env n -> IO ()
+exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
-prepareFunctionForExport :: (Mut n, Topper m) => ExportCC -> Atom n -> m n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport :: (Mut n, Topper m) => ExportCC -> CAtom n -> m n (ImpFunction n, ExportedSignature VoidS)
 prepareFunctionForExport cc f = do
   naryPi <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
@@ -58,7 +58,7 @@ prepareFunctionForExport cc f = do
   return (fImp, sig)
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => NaryPiType n -> m n (ExportedSignature n)
+                      => NaryPiType CoreIR n -> m n (ExportedSignature n)
     naryPiToExportSig (NaryPiType (NonEmptyNest tb tbs) effs resultTy) = do
         case effs of
           Pure -> return ()
@@ -66,7 +66,8 @@ prepareFunctionForExport cc f = do
         goArgs Empty [] (Nest tb tbs) resultTy
       where
         goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-               => Nest ExportArg n l' -> [AtomName l'] -> Nest PiBinder l' l -> Type l -> m l' (ExportedSignature n)
+               => Nest ExportArg n l' -> [CAtomName l'] -> Nest (PiBinder CoreIR) l' l
+               -> CType l -> m l' (ExportedSignature n)
         goArgs argSig argVs piBs piRes = case piBs of
           Empty -> goResult piRes \resSig ->
             return $ ExportedSignature argSig resSig $ case cc of
@@ -86,7 +87,7 @@ prepareFunctionForExport cc f = do
                      ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
 
         goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
-                 => Type l
+                 => CType l
                  -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
                  -> m l a
         goResult ty cont = case ty of
@@ -100,17 +101,17 @@ prepareFunctionForExport cc f = do
 
     exportArgRecon
       :: (EnvReader m, EnvExtender m)
-      => NaryPiType n
+      => NaryPiType CoreIR n
       -> Nest ExportArg n l
-      -> m n (Abs (Nest IBinder) (ListE Block) n)
+      -> m n (Abs (Nest IBinder) (ListE CBlock) n)
     exportArgRecon (NaryPiType (NonEmptyNest tb tbs) _ _) topArgs =
       go [] (Abs (Nest tb tbs) UnitE) topArgs
       where
         go :: (EnvReader m, EnvExtender m)
-           => [Block n]
-           -> Abs (Nest PiBinder) UnitE n
+           => [CBlock n]
+           -> Abs (Nest (PiBinder CoreIR)) UnitE n
            -> Nest ExportArg n l
-           -> m n (Abs (Nest IBinder) (ListE Block) n)
+           -> m n (Abs (Nest IBinder) (ListE CBlock) n)
         go argRecons dexArgs = \case
           Empty -> case dexArgs of
             Abs Empty UnitE -> return $ Abs Empty $ ListE argRecons
@@ -128,7 +129,7 @@ prepareFunctionForExport cc f = do
                     _ -> error "Expected an atomic block"
                 _ -> error "zip error: dex args should correspond 1-to-1 with export args"
 
-        typeRecon :: EnvExtender m => ExportType n -> Type n -> Atom n -> m n (IType, Block n)
+        typeRecon :: EnvExtender m => ExportType n -> CType n -> CAtom n -> m n (IType, CBlock n)
         typeRecon ety dexTy v = case ety of
           ScalarType sbt -> do
             resultWrapped <- wrapScalarNewtypes dexTy v
@@ -141,8 +142,8 @@ prepareFunctionForExport cc f = do
                 tableAtom (sink resultEltTy) (sink v) (sink $ ListE shape) []
               return (PtrType (Heap CPU, Scalar sbt), block)
             where
-              tableAtom :: Emits n => Type n -> Atom n -> ListE ExportDim n
-                        -> [(Atom n, ExportDim n)] -> BuilderM n (Atom n)
+              tableAtom :: Emits n => CType n -> CAtom n -> ListE ExportDim n
+                        -> [(CAtom n, ExportDim n)] -> BuilderM CoreIR n (CAtom n)
               tableAtom eltTy basePtr (ListE shapeTail) typedIdxs = case shapeTail of
                 (ity:rest) -> buildTabLam noHint (exportDimToIxType ity) \i -> do
                   let typedIdxs' = [(sink ix, sink t) | (ix, t) <- typedIdxs]
@@ -162,7 +163,7 @@ prepareFunctionForExport cc f = do
                 return $ unwrapBaseNewtype ordNat
               dup x = (x, x)
 
-    toExportType :: Fallible m => Type n -> m (ExportType n)
+    toExportType :: Fallible m => CType n -> m (ExportType n)
     toExportType ty = case ty of
       BaseTy (Scalar sbt) -> return $ ScalarType sbt
       NatTy               -> return $ ScalarType IdxRepScalarBaseTy
@@ -172,13 +173,13 @@ prepareFunctionForExport cc f = do
       _ -> unsupported
       where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 
-    wrapScalarNewtypes :: EnvReader m => Type n -> Atom n -> m n (Atom n)
+    wrapScalarNewtypes :: EnvReader m => CType n -> CAtom n -> m n (CAtom n)
     wrapScalarNewtypes ty x = case ty of
       NatTy             -> return $ Con $ Newtype NatTy x
       BaseTy (Scalar _) -> return x
       _ -> error $ "not a scalar type: " ++ pprint ty
 
-    parseTabTy :: Type n -> Maybe (ExportType n)
+    parseTabTy :: CType n -> Maybe (ExportType n)
     parseTabTy = go []
       where
         go shape = \case
@@ -194,7 +195,7 @@ prepareFunctionForExport cc f = do
               HoistFailure _  -> Nothing
           _ -> Nothing
 
-    tabTyElementTy :: Type n -> Maybe (Type n)
+    tabTyElementTy :: CType n -> Maybe (CType n)
     tabTyElementTy ty = case ty of
       BaseTy (Scalar _) -> return ty
       NatTy             -> return ty
@@ -209,17 +210,17 @@ prepareFunctionForExport cc f = do
 
 data ArgVisibility = ImplicitArg | ExplicitArg
 
-exportDimToIxType :: ExportDim n -> IxType n
+exportDimToIxType :: ExportDim n -> IxType CoreIR n
 exportDimToIxType dim = IxType (TC (Fin dim')) (DictCon $ IxFin dim')
   where dim' = finArg dim
 
-finArg :: ExportDim n -> Atom n
+finArg :: ExportDim n -> CAtom n
 finArg dim = case dim of
   ExportDimVar v -> Con $ Newtype NatTy $ Var v
   ExportDimLit n -> NatVal $ fromIntegral n
 
 data ExportDim n =
-   ExportDimVar (AtomName n)
+   ExportDimVar (CAtomName n)
  | ExportDimLit Int
 
 data ExportType n = RectContArrayPtr ScalarBaseType [ExportDim n]
@@ -230,11 +231,11 @@ newtype ExportResult n l = ExportResult               (BinderP AtomNameC ExportT
 data ExportedSignature n = forall l l'.
   ExportedSignature { exportedArgSig   :: Nest ExportArg n l
                     , exportedResSig   :: Nest ExportResult l l'
-                    , exportedCCallSig :: [AtomName l']
+                    , exportedCCallSig :: [CAtomName l']
                     }
 
 instance GenericE ExportDim where
-  type RepE ExportDim = EitherE AtomName (LiftE Int)
+  type RepE ExportDim = EitherE CAtomName (LiftE Int)
   fromE = \case
     ExportDimVar v -> LeftE v
     ExportDimLit n -> RightE (LiftE n)
