@@ -486,45 +486,45 @@ toConstAbsPure e = Abs (UnsafeMakeBinder n) (unsafeCoerceE e)
 
 -- === type classes for traversing names ===
 
-class FromName v => SubstE (v::V) (e::E) where
+class FromName v => SubstE (v::V) (e::E) (e'::E) | e v -> e' where
   -- TODO: can't make an alias for these constraints because of impredicativity
-  substE :: Distinct o => (Scope o, Subst v i o) -> e i -> e o
+  substE :: Distinct o => (Scope o, Subst v i o) -> e i -> e' o
 
-  default substE :: (GenericE e, SubstE v (RepE e), Distinct o)
+  default substE :: (GenericE e, SubstE v (RepE e) (RepE e'), Distinct o)
                  => (Scope o, Subst v i o) -> e i -> e o
   substE env e = toE $ substE env (fromE e)
 
-class (FromName v, SinkableB b) => SubstB (v::V) (b::B) where
+class (FromName v, SinkableB b) => SubstB (v::V) (b::B) (b'::B) | v b -> b' where
   substB
     :: Distinct o
     => (Scope o, Subst v i o)
     -> b i i'
-    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b o o' -> a)
+    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b' o o' -> a)
     -> a
 
   default substB
-    :: (GenericB b, SubstB v (RepB b))
+    :: (GenericB b, GenericB b', SubstB v (RepB b) (RepB b'))
     => Distinct o
     => (Scope o, Subst v i o)
     -> b i i'
-    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b o o' -> a)
+    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b' o o' -> a)
     -> a
   substB env b cont =
     substB env (fromB b) \env' b' ->
       cont env' $ toB b'
 
-class ( FromName substVal, SinkableV v
-      , forall c. Color c => SubstE substVal (v c))
-      => SubstV (substVal::V) (v::V)
+class ( FromName substVal, SinkableV v, SinkableV v'
+      , forall c. Color c => SubstE substVal (v c) (v' c))
+      => SubstV (substVal::V) (v::V) (v'::V) | substVal v -> v'
 
-type HasNamesE e = (SubstE Name e, HoistableE e)
+type HasNamesE e = (SubstE Name e e, HoistableE e)
 type HasNamesB = SubstB Name
 
 instance SubstV Name Name where
-instance Color c => SubstE Name (Name c) where
+instance Color c => SubstE Name (Name c) (Name c) where
   substE (_, env) name = env ! name
 
-instance (Color c, SinkableV v, FromName v) => SubstB v (NameBinder c) where
+instance (Color c, SinkableV v, FromName v) => SubstB v (NameBinder c) (NameBinder c) where
   substB (scope, env) b cont = do
     withFresh (getNameHint b) scope \b' -> do
       let scope' = scope `extendOutMap` toScopeFrag b'
@@ -769,7 +769,7 @@ instance BindsNames b => ProvesExt  (NonEmptyNest b)
 instance BindsNames b => BindsNames (NonEmptyNest b)
 instance HoistableB b => HoistableB (NonEmptyNest b)
 instance SinkableB  b => SinkableB  (NonEmptyNest b)
-instance (BindsNames b, SinkableV v, SubstB v b) => SubstB v (NonEmptyNest b)
+instance (BindsNames b, SinkableV v, SubstB v b b') => SubstB v (NonEmptyNest b) (NonEmptyNest b')
 
 applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
                => Scope o -> SubstFrag v h i o -> e i -> e o
@@ -1013,22 +1013,23 @@ class ColorsNotEqual a b where
   notEqProof :: ColorsEqual a b -> r
 
 instance (Color c, ColorsNotEqual cMatch c)
-         => (SubstE (SubstVal cMatch atom) (Name c)) where
+         => (SubstE (SubstVal cMatch atom) (Name c) (Name c)) where
   substE (_, env) name =
     case env ! name of
       Rename name' -> name'
       SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
 
-instance (SubstE (SubstVal cMatch atom) atom, Color c)
-         => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom c) where
+instance (SubstE (SubstVal cMatch atom) atom atom', Color c)
+         => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom  c)
+                                          (SubstVal cMatch atom' c) where
   substE (_, env) (Rename name) = env ! name
   substE env (SubstVal val) = SubstVal $ substE env val
 
 instance (SubstE (SubstVal cMatch atom) atom, SinkableE atom)
          => SubstV (SubstVal cMatch atom) (SubstVal cMatch atom) where
 
-instance (Color c, SinkableE atom, SubstE Name atom)
-         => SubstE Name (SubstVal cMatch atom c) where
+instance (Color c, SinkableE atom, SubstE Name atom atom')
+         => SubstE Name (SubstVal cMatch atom c) (SubstVal cMatch atom' c) where
   substE (_, env) (Rename name) = Rename $ env ! name
   substE (scope, env) (SubstVal atom) = SubstVal $ substE (scope, env) atom
 
@@ -1325,7 +1326,7 @@ instance (HoistableE e, AlphaEqE e) => Eq (EKey e n) where
 instance (HoistableE e, AlphaEqE e, AlphaHashableE e) => Hashable (EKey e n) where
   hashWithSalt salt (EKey e) = alphaHashWithSalt salt e
 
-instance SubstE v   e => SubstE v   (EKey e)
+instance SubstE v e e' => SubstE v (EKey e) (EKey e')
 instance HoistableE e => HoistableE (EKey e)
 instance SinkableE  e => SinkableE  (EKey e)
 instance Store (e n) => Store (EKey e n)
@@ -2025,7 +2026,7 @@ instance (SinkableB b, SinkableE e) => SinkableE (Abs b e) where
 instance (HoistableB b, HoistableE e) => HoistableE (Abs b e) where
   freeVarsE (Abs b e) = freeVarsB b <> hoistFilterNameSet b (freeVarsE e)
 
-instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
+instance (SubstB v b b', SubstE v e e') => SubstE v (Abs b e) (Abs b' e') where
   substE env (Abs b body) = do
     substB env b \env' b' -> Abs b' $ substE env' body
 
@@ -2039,10 +2040,10 @@ instance (SinkableB b1, SinkableB b2) => SinkableB (PairB b1 b2) where
       sinkingProofB fresh' b2 \fresh'' b2' ->
         cont fresh'' (PairB b1' b2')
 
-instance ( BindsNames b1, SubstB v b1
-         , BindsNames b2, SubstB v b2
+instance ( BindsNames b1, SubstB v b1 b1'
+         , BindsNames b2, SubstB v b2 b2'
          , SinkableV v, FromName v)
-         => SubstB v (PairB b1 b2) where
+         => SubstB v (PairB b1 b2) (PairB b1' b2') where
   substB env (PairB b1 b2) cont =
     substB env b1 \env' b1' ->
       substB env' b2 \env'' b2' ->
@@ -2060,7 +2061,7 @@ instance HoistableE e => HoistableB (LiftB e) where
   freeVarsB (LiftB e) = freeVarsE e
   {-# INLINE freeVarsB #-}
 
-instance (SinkableE e, SubstE v e) => SubstB v (LiftB e) where
+instance (SinkableE e, SubstE v e e') => SubstB v (LiftB e) (LiftB e') where
   substB env@(_, subst) (LiftB e) cont = case tryApplyIdentitySubst subst e of
     Just e' -> cont env $ LiftB e'
     Nothing -> cont env $ LiftB $ substE env e
@@ -2083,7 +2084,7 @@ instance (SinkableB b1, SinkableB b2) => SinkableB (EitherB b1 b2) where
     sinkingProofB fresh b \fresh' b' ->
       cont fresh' (RightB b')
 
-instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
+instance (SubstB v b1 b1', SubstB v b2 b2') => SubstB v (EitherB b1 b2) (EitherB b1' b2') where
   substB env (LeftB b) cont =
     substB env b \env' b' ->
       cont env' $ LeftB b'
@@ -2097,7 +2098,7 @@ instance GenericB (BinderP c ann) where
   toB   (PairB (LiftB ann) b) = b:>ann
 
 instance (Color c, SinkableE ann) => SinkableB (BinderP c ann)
-instance (Color c, SinkableE ann, SubstE v ann, SinkableV v) => SubstB v (BinderP c ann)
+instance (Color c, SinkableE ann, SubstE v ann ann', SinkableV v) => SubstB v (BinderP c ann) (BinderP c ann')
 instance Color c => ProvesExt  (BinderP c ann)
 instance Color c => BindsNames (BinderP c ann) where
   toScopeFrag (b :> _) = toScopeFrag b
@@ -2106,7 +2107,7 @@ instance BindsNames b => ProvesExt  (RNest b) where
 instance BindsNames b => BindsNames (RNest b) where
   toScopeFrag REmpty = id
   toScopeFrag (RNest rest b) = toScopeFrag rest >>> toScopeFrag b
-instance (BindsNames b, SubstB v b, SinkableV v) => SubstB v (RNest b) where
+instance (BindsNames b, SubstB v b b', SinkableV v) => SubstB v (RNest b) (RNest b') where
   substB env (RNest bs b) cont =
     substB env bs \env' bs' ->
       substB env' b \env'' b' ->
@@ -2118,8 +2119,8 @@ instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
 
-instance (BindsNames b, SubstB v b, SinkableV v)
-         => SubstB v (Nest b) where
+instance (BindsNames b, SubstB v b b', SinkableV v)
+         => SubstB v (Nest b) (Nest b') where
   substB env (Nest b bs) cont =
     substB env b \env' b' ->
       substB env' bs \env'' bs' ->
@@ -2132,7 +2133,7 @@ instance SinkableE UnitE where
 instance HoistableE UnitE where
   freeVarsE UnitE = mempty
 
-instance FromName v => SubstE v UnitE where
+instance FromName v => SubstE v UnitE UnitE where
   substE _ UnitE = UnitE
 
 instance (Functor f, SinkableE e) => SinkableE (ComposeE f e) where
@@ -2141,7 +2142,7 @@ instance (Functor f, SinkableE e) => SinkableE (ComposeE f e) where
 instance (Traversable f, HoistableE e) => HoistableE (ComposeE f e) where
   freeVarsE (ComposeE xs) = foldMap freeVarsE xs
 
-instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
+instance (Traversable f, SubstE v e e') => SubstE v (ComposeE f e) (ComposeE f e') where
   substE env (ComposeE xs) = ComposeE $ fmap (substE env) xs
 
 -- alternatively we could use Zippable, but we'd want to be able to derive it
@@ -2168,7 +2169,7 @@ instance OutFrag UnitB where
   catOutFrags _ UnitB UnitB = UnitB
   {-# INLINE catOutFrags #-}
 
-instance FromName v => SubstB v UnitB where
+instance FromName v => SubstB v UnitB UnitB where
   substB env UnitB cont = cont env UnitB
 
 instance SinkableB VoidB where
@@ -2184,7 +2185,7 @@ instance HoistableB VoidB where
 instance AlphaEqB VoidB where
   withAlphaEqB _ _ _ = error "impossible"
 
-instance FromName v => SubstB v VoidB where
+instance FromName v => SubstB v VoidB VoidB where
   substB _ _ _ = error "impossible"
 
 instance SinkableE const => SinkableV (ConstE const)
@@ -2200,7 +2201,7 @@ instance HoistableE VoidE where
 instance AlphaEqE VoidE where
   alphaEqE _ _ = error "impossible"
 
-instance FromName v => SubstE v VoidE where
+instance FromName v => SubstE v VoidE VoidE where
   substE _ _ = error "impossible"
 
 instance (SinkableE e1, SinkableE e2) => SinkableE (PairE e1 e2) where
@@ -2210,7 +2211,7 @@ instance (SinkableE e1, SinkableE e2) => SinkableE (PairE e1 e2) where
 instance (HoistableE e1, HoistableE e2) => HoistableE (PairE e1 e2) where
   freeVarsE (PairE e1 e2) = freeVarsE e1 <> freeVarsE e2
 
-instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
+instance (SubstE v e1 e1', SubstE v e2 e2') => SubstE v (PairE e1 e2) (PairE e1' e2') where
   substE env (PairE x y) = PairE (substE env x) (substE env y)
 
 instance (SinkableE e1, SinkableE e2) => SinkableE (EitherE e1 e2) where
@@ -2221,7 +2222,7 @@ instance (HoistableE e1, HoistableE e2) => HoistableE (EitherE e1 e2) where
   freeVarsE (LeftE  e) = freeVarsE e
   freeVarsE (RightE e) = freeVarsE e
 
-instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
+instance (SubstE v e1 e1', SubstE v e2 e2') => SubstE v (EitherE e1 e2) (EitherE e1' e2') where
   substE env (LeftE  x) = LeftE  $ substE env x
   substE env (RightE x) = RightE $ substE env x
 
@@ -2256,7 +2257,7 @@ instance (EqE k, HashableE k) => GenericE (HashMapE k v) where
   {-# INLINE toE #-}
 instance (EqE k, HashableE k, SinkableE k  , SinkableE   v) => SinkableE   (HashMapE k v)
 instance (EqE k, HashableE k, HoistableE k , HoistableE  v) => HoistableE  (HashMapE k v)
-instance (EqE k, HashableE k, SubstE Name k, SubstE Name v) => SubstE Name (HashMapE k v)
+instance (EqE k, HashableE k, SubstE Name k k', SubstE Name v v') => SubstE Name (HashMapE k v) (HashMapE k' v')
 
 instance SinkableE (LiftE a) where
   sinkingProofE _ (LiftE x) = LiftE x
@@ -2264,16 +2265,16 @@ instance SinkableE (LiftE a) where
 instance HoistableE (LiftE a) where
   freeVarsE (LiftE _) = mempty
 
-instance FromName v => SubstE v (LiftE a) where
+instance FromName v => SubstE v (LiftE a) (LiftE a) where
   substE _ (LiftE x) = LiftE x
 
 instance Eq a => AlphaEqE (LiftE a) where
   alphaEqE (LiftE x) (LiftE y) = unless (x == y) zipErr
 
-instance SubstE v e => SubstE v (ListE e) where
+instance SubstE v e e' => SubstE v (ListE e) (ListE e') where
   substE env (ListE xs) = ListE $ map (substE env) xs
 
-instance SubstE v e => SubstE v (NonEmptyListE e) where
+instance SubstE v e e' => SubstE v (NonEmptyListE e) (NonEmptyListE e') where
   substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
@@ -2451,10 +2452,11 @@ instance (HoistableE e0, HoistableE e1, HoistableE e2,
     Case7 e -> freeVarsE e
   {-# INLINE freeVarsE #-}
 
-instance (SubstE v e0, SubstE v e1, SubstE v e2,
-          SubstE v e3, SubstE v e4, SubstE v e5,
-          SubstE v e6, SubstE v e7)
-            => SubstE v (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
+instance (SubstE v e0 e0', SubstE v e1 e1', SubstE v e2 e2',
+          SubstE v e3 e3', SubstE v e4 e4', SubstE v e5 e5',
+          SubstE v e6 e6', SubstE v e7 e7')
+            => SubstE v (EitherE8 e0  e1  e2  e3  e4  e5  e6  e7 )
+                        (EitherE8 e0' e1' e2' e3' e4' e5' e6' e7') where
   substE env = \case
     Case0 e -> Case0 $ substE env e
     Case1 e -> Case1 $ substE env e
@@ -3163,7 +3165,7 @@ instance SinkableV v => SinkableE (SubstFrag v i i') where
 instance HoistableV v => HoistableE (SubstFrag v i i') where
   freeVarsE frag = foldMapSubstFrag freeVarsE frag
 
-instance SubstV substVal v => SubstE substVal (SubstFrag v i i') where
+instance SubstV substVal v v' => SubstE substVal (SubstFrag v i i') (SubstFrag v' i i') where
    substE env frag = fmapSubstFrag (\_ val -> substE env val) frag
 
 -- === unsafe coercions ===
