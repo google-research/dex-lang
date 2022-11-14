@@ -11,6 +11,7 @@
 module Builder (
   emit, emitHinted, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
+  buildScopedAssumeNoDecls,
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
@@ -29,7 +30,7 @@ module Builder (
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
   buildCase, emitMaybeCase, buildSplitCase,
-  emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
+  emitBlock, emitDecls, BuilderEmissions, emitExprToAtom, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
   runTopBuilderT, TopBuilder2, emitBindingDefault,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
@@ -113,6 +114,7 @@ emitOp op = Var <$> emit (Op op)
 
 emitUnOp :: (Builder r m, Emits n) => UnOp -> Atom r n -> m n (Atom r n)
 emitUnOp op x = emitOp $ UnOp op x
+{-# INLINE emitUnOp #-}
 
 emitBlock :: (Builder r m, Emits n) => Block r n -> m n (Atom r n)
 emitBlock (Block _ decls result) = emitDecls decls result
@@ -129,9 +131,24 @@ emitDecls' (Nest (Let b (DeclBinding ann _ expr)) rest) e = do
   v <- emitDecl (getNameHint b) ann expr'
   extendSubst (b @> v) $ emitDecls' rest e
 
+emitExprToAtom :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
+emitExprToAtom (Atom atom) = return atom
+emitExprToAtom expr = Var <$> emit expr
+{-# INLINE emitExprToAtom #-}
+
 emitAtomToName :: (Builder r m, Emits n) => NameHint -> Atom r n -> m n (AtomName r n)
 emitAtomToName _ (Var v) = return v
 emitAtomToName hint x = emitHinted hint (Atom x)
+{-# INLINE emitAtomToName #-}
+
+buildScopedAssumeNoDecls :: (SinkableE e, ScopableBuilder r m)
+  => (forall l. (Emits l, DExt n l) => m l (e l))
+  -> m n (e n)
+buildScopedAssumeNoDecls cont = do
+  buildScoped cont >>= \case
+    (Abs Empty e) -> return e
+    _ -> error "Expected no decl emissions"
+{-# INLINE buildScopedAssumeNoDecls #-}
 
 -- === "Hoisting" top-level builder class ===
 
