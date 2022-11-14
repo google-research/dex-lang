@@ -102,7 +102,7 @@ module Syntax (
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam,
     fromNaryTabLam, fromNaryTabLamExact,
-    fromNaryLamExact, fromNaryPiType,
+    fromNaryLamExact, fromNaryForExpr, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
     WithCNameInterface (..), FunObjCode, FunObjCodeName, IFunBinder (..),

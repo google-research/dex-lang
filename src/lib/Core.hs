@@ -486,10 +486,19 @@ substBinders
   -> (forall o'. DExt o o' => b o o' -> m i' o' a)
   -> m i o a
 substBinders b cont = do
-  ab <- substM $ Abs b $ idSubstFrag b
-  refreshAbs ab \b' subst ->
-    extendSubst subst $ cont b'
+  substBindersFrag b \subst b' -> extendSubst subst $ cont b'
 {-# INLINE substBinders #-}
+
+substBindersFrag
+  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, SubstV Name v, SubstB Name b, BindsEnv b)
+  => b i i'
+  -> (forall o'. DExt o o' => SubstFrag v i i' o' -> b o o' -> m i o' a)
+  -> m i o a
+substBindersFrag b cont = do
+  ab <- substM $ Abs b $ idSubstFrag b
+  refreshAbs ab \b' subst -> cont subst b'
+{-# INLINE substBindersFrag #-}
 
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
@@ -664,6 +673,17 @@ a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 (==>) :: ScopeReader m => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b
 
+-- These `fromNary` functions traverse a chain of unary structures (LamExpr,
+-- TabLamExpr, PiType, respectively) up to the given maxDepth, and return the
+-- discovered binders packed as the nary structure (NaryLamExpr or NaryPiType),
+-- including a count of how many binders there were.
+-- - If there are no binders, return Nothing.
+-- - If there are more than maxDepth binders, only return maxDepth of them, and
+--   leave the others in the unary structure.
+-- - The `exact` versions only succeed if at least maxDepth binders were
+--   present, in which case exactly maxDepth binders are packed into the nary
+--   structure.  Excess binders, if any, are still left in the unary structures.
+
 -- first argument is the number of args expected
 fromNaryLamExact :: Int -> Atom r n -> Maybe (NaryLamExpr r n)
 fromNaryLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
@@ -705,6 +725,19 @@ fromNaryTabLamExact exactDepth lam = do
   (realDepth, naryLam) <- fromNaryTabLam exactDepth lam
   guard $ realDepth == exactDepth
   return naryLam
+
+fromNaryForExpr :: Int -> Expr r n -> Maybe (Int, NaryLamExpr r n)
+fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected positive number of args"
+fromNaryForExpr maxDepth = \case
+  (Hof (For _ _ (Lam (LamExpr (LamBinder b ty _ Pure) body)))) ->
+    extend <|> (Just $ (1, NaryLamExpr (NonEmptyNest (b:>ty) Empty) Pure body))
+    where
+      extend = do
+        expr <- exprBlock body
+        guard $ maxDepth > 1
+        (d, NaryLamExpr (NonEmptyNest b2 bs2) effs2 body2) <- fromNaryForExpr (maxDepth - 1) expr
+        return $ (d + 1, NaryLamExpr (NonEmptyNest (b:>ty) (Nest b2 bs2)) effs2 body2)
+  _ -> Nothing
 
 -- first argument is the number of args expected
 fromNaryPiType :: Int -> Type r n -> Maybe (NaryPiType r n)

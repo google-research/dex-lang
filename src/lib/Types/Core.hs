@@ -1027,7 +1027,14 @@ pattern AtomicBlock :: Atom r n -> Block r n
 pattern AtomicBlock atom <- Block _ Empty atom
   where AtomicBlock atom = Block NoBlockAnn Empty atom
 
+exprBlock :: Block r n -> Maybe (Expr r n)
+exprBlock (Block _ (Nest (Let b (DeclBinding _ _ expr)) Empty) (Var n))
+  | n == binderName b = Just expr
+exprBlock _ = Nothing
+{-# INLINE exprBlock #-}
+
 pattern BinaryLamExpr :: LamBinder r n l1 -> LamBinder r l1 l2 -> Block r l2 -> LamExpr r n
+
 pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
 
 pattern MaybeTy :: Type r n -> Type r n

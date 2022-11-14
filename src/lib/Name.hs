@@ -786,13 +786,18 @@ instance HoistableB b => HoistableB (NonEmptyNest b)
 instance SinkableB  b => SinkableB  (NonEmptyNest b)
 instance (BindsNames b, SinkableV v, SubstB v b) => SubstB v (NonEmptyNest b)
 
-applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
+applySubstFragPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
                => Scope o -> SubstFrag v h i o -> e i -> e o
-applySubstPure scope substFrag x = do
+applySubstFragPure scope substFrag x = do
   let fullSubst = sink idSubst <>> substFrag
-  case tryApplyIdentitySubst fullSubst x of
+  applySubstPure scope fullSubst x
+
+applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Distinct o)
+               => Scope o -> Subst v i o -> e i -> e o
+applySubstPure scope subst x = do
+  case tryApplyIdentitySubst subst x of
     Just x' -> x'
-    Nothing -> fmapNames scope (fullSubst !) x
+    Nothing -> fmapNames scope (subst !) x
 
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
            => Ext h o
@@ -800,7 +805,7 @@ applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
 applySubst substFrag x = do
   Distinct <- getDistinct
   scope <- unsafeGetScope
-  return $ applySubstPure scope substFrag x
+  return $ applySubstFragPure scope substFrag x
 {-# INLINE applySubst #-}
 
 applyAbs :: ( SinkableV v, SinkableE e
@@ -3218,6 +3223,12 @@ instance HoistableV v => HoistableE (SubstFrag v i i') where
 
 instance SubstV substVal v => SubstE substVal (SubstFrag v i i') where
    substE env frag = fmapSubstFrag (\_ val -> substE env val) frag
+
+instance SubstV substVal v => SubstE substVal (Subst v i) where
+  substE env = \case
+    Subst f frag -> Subst (\n -> substE env (f n)) $ substE env frag
+    UnsafeMakeIdentitySubst
+      -> Subst (\n -> substE env (fromName $ unsafeCoerceE n)) emptyInFrag
 
 -- === unsafe coercions ===
 
