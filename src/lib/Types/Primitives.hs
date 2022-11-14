@@ -257,11 +257,19 @@ instance Pretty Arrow where
     ImplicitArrow  -> "?->"
     ClassArrow     -> "?=>"
 
-data LetAnn = PlainLet
-            | NoInlineLet
-            | OccInfoPure UsageInfo
-            | OccInfoImpure UsageInfo
-              deriving (Show, Eq, Generic)
+data LetAnn =
+  -- Binding with no additional information
+    PlainLet
+  -- Binding explicitly tagged "do not inline"
+  | NoInlineLet
+  -- Bound expression is pure, and the binding's occurrences are summarized by
+  -- the UsageInfo
+  | OccInfoPure UsageInfo
+  -- Bound expression is impure, and the binding's occurrences are summarized by
+  -- the UsageInfo.  For now, the inliner does not distinguish different effects,
+  -- so no additional information on effects is needed.
+  | OccInfoImpure UsageInfo
+  deriving (Show, Eq, Generic)
 
 -- === Primitive scalar values and base types ===
 

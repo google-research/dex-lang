@@ -121,7 +121,7 @@ module Syntax (
     pattern ProdTy, pattern ProdVal,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern BinaryLamExpr,
-    pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
+    pattern NothingAtom, pattern JustAtom, pattern AtomicBlock, exprBlock,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern SISourceName, pattern SIInternalName,
     pattern OneEffect,
