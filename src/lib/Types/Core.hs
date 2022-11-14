@@ -17,6 +17,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
@@ -35,6 +36,7 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 
 import GHC.Stack
 import GHC.Generics (Generic (..))
+import GHC.Exts (Constraint)
 import Data.Store (Store (..))
 import Foreign.Ptr
 
@@ -49,8 +51,44 @@ import Types.Imp
 
 -- === IR variants ===
 
--- CoreIR is the IR after inference and before simplification
-data IR = CoreIR
+data IR =
+   -- CoreIR is the IR after inference and before simplification
+   CoreIR
+ | SimpToImpIR  -- only used during the Simp-to-Imp translation
+ | AnyIR        -- used for deserialization only
+
+data IRPredicate =
+   Is IR
+ -- TODO: find a way to make this safe and derive it automatically. For now, we
+ -- assert it manually for the valid cases we know about.
+ | IsSubsetOf IR
+
+type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
+type family Sat' (r::IR) (p::IRPredicate) where
+  Sat' r (Is r)                              = True
+  Sat' CoreIR (IsSubsetOf SimpToImpIR)       = True
+  Sat' _ _ = False
+
+data ReifiedSat (r::IR) (p::IRPredicate) where
+  ReifiedSat :: Sat r p => ReifiedSat r p
+
+newtype WrapWithSat (r::IR) (p::IRPredicate) (a :: *) =
+  WrapWithSat { fromWrapWithSat :: Sat r p => a }
+
+fabricateReifiedSat :: ReifiedSat r p
+fabricateReifiedSat = undefined
+
+instance Generic (ReifiedSat r p) where
+  type Rep (ReifiedSat r p) = Rep ()
+  from _ = from ()
+  {-# INLINE from #-}
+  to _ = fabricateReifiedSat
+  {-# INLINE to #-}
+
+deriving instance Eq (ReifiedSat r p)
+instance Hashable (ReifiedSat r p)
+instance Store (ReifiedSat r p)
+
 -- SimpIR is the IR after simplification
 -- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
 -- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
@@ -79,40 +117,58 @@ type SAtomName  = AtomName SimpIR
 unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
 unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
 
+-- XXX: the intention is that we won't have to use these much
+unsafeCoerceFromAnyIR :: forall (r::IR) (e::IR->E) (n::S). e AnyIR n -> e r n
+unsafeCoerceFromAnyIR = unsafeCoerceIRE
+
 unsafeCoerceIRB :: forall (r'::IR) (r::IR) (b::IR->B) (n::S) (l::S) . b r n l -> b r' n l
 unsafeCoerceIRB = TrulyUnsafe.unsafeCoerce
 
+class CovariantInIR (e::IR->E)
+-- For now we're "implementing" this instances manually as needed because we
+-- don't actually need very many of them, but we should figure out a more
+-- uniform way to do it.
+instance CovariantInIR NaryLamExpr
+instance CovariantInIR Atom
+instance CovariantInIR Block
+
+-- This is safe, assuming the constraints have been implemented correctly.
+injectIRE :: (CovariantInIR e, r `Sat` IsSubsetOf r') => e r n -> e r' n
+injectIRE = unsafeCoerceIRE
+
 -- === core IR ===
 
-data Atom (r::IR) (n::S) =
-   Var (AtomName r n)
- | Lam (LamExpr r n)
- | Pi  (PiType  r n)
- | TabLam (TabLamExpr r n)
- | TabPi  (TabPiType r n)
- | DepPairTy (DepPairType r n)
- | DepPair   (Atom r n) (Atom r n) (DepPairType r n)
- | TypeCon SourceName (DataDefName n) (DataDefParams r n)
- | DictCon (DictExpr r n)
- | DictTy  (DictType r n)
- | LabeledRow (FieldRowElems r n)
- | RecordTy  (FieldRowElems r n)
- | VariantTy (ExtLabeledItems (Type r n) (AtomName r n))
- | Con (Con r n)
- | TC  (TC  r n)
- | Eff (EffectRow n)
-   -- only used within Simplify
- | ACase (Atom r n) [AltP r (Atom r) n] (Type r n)
+data Atom (r::IR) (n::S) where
+ Var        :: AtomName r n    -> Atom r n
+ Lam        :: LamExpr r n     -> Atom r n
+ Pi         :: PiType  r n     -> Atom r n
+ TabLam     :: TabLamExpr r n  -> Atom r n
+ TabPi      :: TabPiType r n   -> Atom r n
+ DepPairTy  :: DepPairType r n -> Atom r n
+ DepPair    :: Atom r n -> Atom r n -> DepPairType r n          -> Atom r n
+ TypeCon    :: SourceName -> DataDefName n -> DataDefParams r n -> Atom r n
+ DictCon    :: DictExpr r n                              -> Atom r n
+ DictTy     :: DictType r n                              -> Atom r n
+ LabeledRow :: FieldRowElems r n                         -> Atom r n
+ RecordTy   :: FieldRowElems r n                         -> Atom r n
+ VariantTy  :: ExtLabeledItems (Type r n) (AtomName r n) -> Atom r n
+ Con        :: Con r n -> Atom r n
+ TC         :: TC  r n -> Atom r n
+ Eff        :: EffectRow n -> Atom r n
+ -- only used within Simplify
+ ACase ::  Atom r n -> [AltP r (Atom r) n] -> Type r n -> Atom r n
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
- | DepPairRef (Atom r n) (Abs (Binder r) (Atom r) n) (DepPairType r n)
- | BoxedRef (Abs (NonDepNest r (BoxPtr r)) (Atom r) n)
- -- access a nested member of a binder
+ DepPairRef ::  Atom r n -> Abs (Binder r) (Atom r) n -> DepPairType r n -> Atom r n
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
  -- here may also appear in the type of the atom. (We maintain this
  -- invariant during substitution and in Builder.hs.)
- | ProjectElt (NE.NonEmpty Projection) (AtomName r n)
-   deriving (Show, Generic)
+ ProjectElt :: NE.NonEmpty Projection -> AtomName r n     -> Atom r n
+ BoxedRef   :: r `Sat` Is SimpToImpIR
+            => Abs (NonDepNest r (BoxPtr r)) (Atom r) n   -> Atom r n
+
+deriving instance Show (Atom r n)
+deriving via WrapE (Atom r) n instance Generic (Atom r n)
 
 data Expr r n =
    App (Atom r n) (NonEmpty (Atom r n))
@@ -1168,7 +1224,8 @@ instance SubstE (AtomSubstVal r) (FieldRowElems r) where
 newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
   ExtLabeledItemsE
    { fromExtLabeledItemsE :: ExtLabeledItems (e1 n) (e2 n) }
-   deriving Show
+   deriving (Show, Generic)
+instance (Store (e1 n), Store (e2 n)) => Store (ExtLabeledItemsE e1 e2 n)
 
 instance GenericE (Atom r) where
   -- As tempting as it might be to reorder cases here, the current permutation
@@ -1205,7 +1262,8 @@ instance GenericE (Atom r) where
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
             ) (EitherE2
-  {- BoxedRef -}   ( Abs (NonDepNest r (BoxPtr r)) (Atom r) )
+  {- BoxedRef -}   (LiftE (ReifiedSat r (Is SimpToImpIR))
+                    `PairE` ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
   {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r))
 
   fromE atom = case atom of
@@ -1228,7 +1286,7 @@ instance GenericE (Atom r) where
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
-    BoxedRef ab -> Case5 $ Case0 ab
+    BoxedRef ab -> Case5 $ Case0 $ LiftE ReifiedSat `PairE` ab
     DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
   {-# INLINE fromE #-}
 
@@ -1263,7 +1321,7 @@ instance GenericE (Atom r) where
       Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       _ -> error "impossible"
     Case5 val -> case val of
-      Case0 ab -> BoxedRef ab
+      Case0 (LiftE ReifiedSat `PairE` ab) -> BoxedRef ab
       Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"

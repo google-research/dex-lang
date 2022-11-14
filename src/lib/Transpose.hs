@@ -300,7 +300,6 @@ transposeAtom atom ct = case atom of
   TC _            -> notTangent
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
-  BoxedRef _       -> error "Unexpected ref"
   DepPairRef _ _ _ -> error "Unexpected ref"
   ProjectElt idxs v -> do
     lookupSubstM v >>= \case
