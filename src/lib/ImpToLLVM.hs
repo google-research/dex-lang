@@ -685,7 +685,13 @@ gridDimX = emitExternCall spec []
   where spec = ptxSpecialReg "llvm.nvvm.read.ptx.sreg.nctaid.x"
 
 ptxSpecialReg :: L.Name -> ExternFunSpec
-ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
+ptxSpecialReg name = ExternFunSpec name i32 [] attrs []
+  where
+#if MIN_VERSION_llvm_hs(16,0,0)
+    attrs = [FA.NoUnwind]  -- TODO: Add memory(none) once llvm-hs supports it
+#else
+    attrs = [FA.ReadNone, FA.NoUnwind]
+#endif
 
 gpuUnaryIntrinsic :: LLVMBuilder m => UnOp -> Operand -> m Operand
 gpuUnaryIntrinsic op x = case typeOf x of
