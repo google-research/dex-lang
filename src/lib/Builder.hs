@@ -91,7 +91,7 @@ class (EnvReader m, EnvExtender m, Fallible1 m)
       => Builder (r::IR) (m::MonadKind1) | m -> r where
   emitDecl :: Emits n => NameHint -> LetAnn -> Expr r n -> m n (AtomName r n)
 
-class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) where
+class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
   buildScoped
     :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))

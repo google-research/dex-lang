@@ -103,7 +103,7 @@ prepareFunctionForExport cc f = do
       :: (EnvReader m, EnvExtender m)
       => NaryPiType CoreIR n
       -> Nest ExportArg n l
-      -> m n (Abs (Nest IBinder) (ListE CBlock) n)
+      -> m n (Abs (Nest (Binder SimpIR)) (ListE CBlock) n)
     exportArgRecon (NaryPiType (NonEmptyNest tb tbs) _ _) topArgs =
       go [] (Abs (Nest tb tbs) UnitE) topArgs
       where
@@ -111,21 +111,21 @@ prepareFunctionForExport cc f = do
            => [CBlock n]
            -> Abs (Nest (PiBinder CoreIR)) UnitE n
            -> Nest ExportArg n l
-           -> m n (Abs (Nest IBinder) (ListE CBlock) n)
+           -> m n (Abs (Nest (Binder SimpIR)) (ListE CBlock) n)
         go argRecons dexArgs = \case
           Empty -> case dexArgs of
             Abs Empty UnitE -> return $ Abs Empty $ ListE argRecons
             _ -> error "zip error: dex args should correspond 1-to-1 with export args"
           Nest (ExportArg _ b) bs ->
-            refreshAbs (Abs b (EmptyAbs bs)) \(v':>ety) (Abs bs' UnitE) ->
+            refreshAbs (Abs b (EmptyAbs bs)) \(v:>ety) (Abs bs' UnitE) ->
               sinkM dexArgs >>= \case
                 Abs (Nest (PiBinder dexB dexArgTy _) restDexArgs) UnitE -> do
-                  (ity, block) <- typeRecon (sink ety) dexArgTy $ Var $ binderName v'
+                  (ity, block) <- typeRecon (sink ety) dexArgTy $ Var $ binderName v
                   case block of
                     AtomicBlock dexArgAtom -> do
                       restDexArgs' <- applySubst (dexB@>SubstVal dexArgAtom) $ Abs restDexArgs UnitE
                       Abs ibs' allRecons' <- go (sinkList argRecons ++ [sink block]) restDexArgs' bs'
-                      return $ Abs (Nest (IBinder v' ity) ibs') allRecons'
+                      return $ Abs (Nest (v :> BaseTy ity) ibs') allRecons'
                     _ -> error "Expected an atomic block"
                 _ -> error "zip error: dex args should correspond 1-to-1 with export args"
 

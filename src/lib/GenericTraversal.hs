@@ -110,9 +110,13 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   ProjectElt _ _ -> substM atom
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
+  -- TODO(dougalm): We don't need these because we don't use generic traversals
+  -- on anything except SimpIR and CoreIR. We should add that as a constraint on
+  -- `r` and then we can delete these cases.
   ACase _ _ _ -> nyi
   DepPairRef _ _ _ -> nyi
   BoxedRef _ -> nyi
+  AtomicIVar _ _ -> nyi
   where nyi = error $ "not implemented: " ++ pprint atom
 
 traverseExtLabeledItems

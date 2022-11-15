@@ -288,6 +288,7 @@ instance PrettyPrec (Atom r n) where
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
       "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
+    AtomicIVar v _ -> atPrec ArgPrec $ p v
 
 instance Pretty (BoxPtr r n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
@@ -499,6 +500,7 @@ instance Pretty (Binding s n) where
     HandlerBinding _ -> "<handler-binding>"
     EffectOpBinding _ -> "<effect-op-binding>"
     SpecializedDictBinding _ -> "<specialized-dict-binding>"
+    ImpNameBinding ty -> "Imp name of type: " <+> p ty
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
@@ -855,6 +857,7 @@ indented doc = nest 2 (hardline <> doc) <> hardline
 instance Pretty (IExpr n) where
   pretty (ILit v) = p v
   pretty (IVar v _) = p v
+  pretty (IPtrLit v _) = p v
 
 instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
 

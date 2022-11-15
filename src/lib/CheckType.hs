@@ -173,6 +173,7 @@ instance Color c => CheckableE (Binding c) where
     HandlerBinding    h                 -> HandlerBinding    <$> substM h
     EffectOpBinding   op                -> EffectOpBinding   <$> substM op
     SpecializedDictBinding def          -> SpecializedDictBinding <$> substM def
+    ImpNameBinding    ty                -> ImpNameBinding    <$> return ty
 
 instance CheckableE (AtomBinding r) where
   checkE binding = case binding of
@@ -279,6 +280,14 @@ instance HasType r (Atom r) where
         extendSubst (bs @@> vs) do
           bodyTy <- getTypeE body
           liftHoistExcept $ hoist bs' bodyTy
+    AtomicIVar (LeftE v) t -> do
+      ImpNameBinding t' <- lookupEnv =<< substM v
+      assertEq t t' ""
+      return $ BaseTy t
+    AtomicIVar (RightE v) t -> do
+      PtrBinding pt <- lookupEnv =<< substM v
+      assertEq t (litType $ PtrLit pt) ""
+      return $ BaseTy t
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
