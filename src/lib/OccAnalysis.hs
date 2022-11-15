@@ -31,7 +31,7 @@ import QueryType
 -- annotation holding a summary of how that binding is used.  It also eliminates
 -- unused pure bindings as it goes, since it has all the needed information.
 
-analyzeOccurrences :: (EnvReader m) => Block n -> m n (Block n)
+analyzeOccurrences :: (EnvReader m) => SBlock n -> m n (SBlock n)
 analyzeOccurrences = liftOCCM . occ accessOnce 
 {-# SCC analyzeOccurrences #-}
 
@@ -129,7 +129,7 @@ liftOCCM action = liftEnvReaderM $ fst
   <$> runStateT1 (runReaderT1 mempty action) mempty
 {-# INLINE liftOCCM #-}
 
-getAccessInfo :: AtomName n -> OCCM n (AccessInfo n)
+getAccessInfo :: SAtomName n -> OCCM n (AccessInfo n)
 getAccessInfo name = fromMaybe zero <$> gets (lookupNameMapE name . freeVars)
 {-# INLINE getAccessInfo #-}
 
@@ -158,7 +158,7 @@ extend b ix = local (<> singletonNameMapE (binderName b) ix)
 -- Look up the `IxExpr` for a given name.  If the name doesn't occur in the map,
 -- we return a `Occ.Var` of the name itself, thus claiming that the name is its
 -- own summary.  This is what we want for `for` binders and top-level names.
-ixExpr :: AtomName n -> OCCM n (IxExpr n)
+ixExpr :: SAtomName n -> OCCM n (IxExpr n)
 ixExpr name = do
   ixExprs <- ask
   case lookupNameMapE name ixExprs of
@@ -176,12 +176,12 @@ inlinedLater obj = do
 
 -- === Computing IxExpr summaries ===
 
-summaryExpr :: Expr n -> OCCM n (IxExpr n)
+summaryExpr :: SExpr n -> OCCM n (IxExpr n)
 summaryExpr = \case
   Atom atom -> summary atom
   expr -> unknown expr
 
-summary :: Atom n -> OCCM n (IxExpr n)
+summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
   Var name -> ixExpr name
   Lam _ -> invalid "Lam"
@@ -233,7 +233,7 @@ instance HasOCC (Name InstanceNameC) where occ _ n = return n
 instance HasOCC (Name ClassNameC   ) where occ _ n = return n
 instance HasOCC (Name SpecializedDictNameC) where occ _ n = return n
 
-instance HasOCC Block where
+instance HasOCC SBlock where
   occ a (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> occ a ans
     (NoBlockAnn      , _    ) -> error "should be unreachable"
@@ -246,17 +246,17 @@ instance HasOCC Block where
 -- TODO What, actually, is the right thing to do for type annotations?  Do we
 -- want a rule like "we never inline into type annotations", or such?  For
 -- now, traversing with the main analysis seems safe.
-occTy :: Atom n -> OCCM n (Atom n)
+occTy :: SAtom n -> OCCM n (SAtom n)
 occTy ty = occ accessOnce ty
 
 -- TODO(optimization) Could reuse the free variable caching from dce here too.
 
-data ElimResult n where
-  ElimSuccess :: Abs (Nest Decl) Atom n -> ElimResult n
-  ElimFailure :: Decl n l -> UsageInfo -> Abs (Nest Decl) Atom l -> ElimResult n
+data ElimResult (n::S) where
+  ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
+  ElimFailure :: SDecl n l -> UsageInfo -> Abs (Nest SDecl) SAtom l -> ElimResult n
 
-occNest :: Access n -> Nest Decl n l -> Atom l
-        -> OCCM n (Abs (Nest Decl) Atom n)
+occNest :: Access n -> Nest SDecl n l -> SAtom l
+        -> OCCM n (Abs (Nest SDecl) SAtom n)
 occNest a decls ans = case decls of
   Empty -> Abs Empty <$> occ a ans
   Nest d@(Let _ binding) ds -> do
@@ -302,13 +302,13 @@ checkAllFreeVariablesMentioned e = do
   return ()
 #endif
 
-instance HasOCC DeclBinding where
+instance HasOCC (DeclBinding SimpIR) where
   occ a (DeclBinding ann ty expr) = do
     expr' <- occ a expr
     ty' <- occTy ty
     return $ DeclBinding ann ty' expr'
 
-instance HasOCC Expr where
+instance HasOCC SExpr where
   occ a expr = case expr of
     (TabApp array (NE.toList -> ixs)) -> do
       (a', ixs') <- go a ixs
@@ -333,7 +333,7 @@ instance HasOCC Expr where
 
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
-occAlt :: Access n -> IxExpr n -> Alt n -> OCCM n (Alt n)
+occAlt :: Access n -> IxExpr n -> Alt SimpIR n -> OCCM n (Alt SimpIR n)
 occAlt acc scrut alt = do
   refreshAbs alt \b@(nb:>_) body -> do
     -- We use `unknown` here as a conservative approximation of the case binder
@@ -346,13 +346,13 @@ occAlt acc scrut alt = do
       body' <- occ (sink acc) body
       return $ Abs b body'
 
-occurrenceAndSummary :: Atom n -> OCCM n (IxExpr n, Atom n)
+occurrenceAndSummary :: SAtom n -> OCCM n (IxExpr n, SAtom n)
 occurrenceAndSummary atom = do
   atom' <- occ accessOnce atom
   ix <- summary atom'
   return (ix, atom')
 
-instance HasOCC (ComposeE PrimHof Atom) where
+instance HasOCC (ComposeE PrimHof SAtom) where
   occ a (ComposeE hof) = ComposeE <$> case hof of
     For ann ixDict bd -> do
       ixDict' <- inlinedLater ixDict
@@ -424,13 +424,13 @@ instance HasOCC (ComposeE PrimHof Atom) where
       error "Expecting to do occurrence analysis before destination passing."
 
 -- Occurrence analysis of the body of a one-shot unary lambda Atom.
-oneShot :: Access n -> IxExpr n -> Atom n -> OCCM n (Atom n)
+oneShot :: Access n -> IxExpr n -> SAtom n -> OCCM n (SAtom n)
 oneShot acc binderSummary bd =
   occLam bd \b' body -> extend b' (sink binderSummary) do
     occ (sink acc) body
 
 -- Occurrence analysis of the body of a one-shot binary lambda Atom.
-oneShot2 :: Access n -> IxExpr n -> IxExpr n -> Atom n -> OCCM n (Atom n)
+oneShot2 :: Access n -> IxExpr n -> IxExpr n -> SAtom n -> OCCM n (SAtom n)
 oneShot2 acc binderSummary1 binderSummary2 bd =
   occLam bd \b' (AtomicBlock body)
     -> AtomicBlock <$> do
@@ -438,10 +438,10 @@ oneShot2 acc binderSummary1 binderSummary2 bd =
         oneShot (sink acc) (sink binderSummary2) body
 
 -- Going under a lambda binder.
-occLam :: Atom n
+occLam :: SAtom n
        -> (forall l. DExt n l
-           => (NameBinder 'AtomNameC n l) -> Block l -> OCCM l (Block l))
-       -> OCCM n (Atom n)
+           => (NameBinder 'AtomNameC n l) -> SBlock l -> OCCM l (SBlock l))
+       -> OCCM n (SAtom n)
 occLam bd cont = case bd of
   Lam (LamExpr (LamBinder b ty arr eff) body) -> do
     ty' <- occTy ty
@@ -454,7 +454,7 @@ occLam bd cont = case bd of
     return $ Lam $ LamExpr (LamBinder b' ty' arr eff') body'
   _ -> error "Not a lambda expression"
 
-instance HasOCC Atom where
+instance HasOCC SAtom where
   occ a atom = case atom of
     Lam _ -> error "Expecting all Lam Atoms to be covered by their contexts"
     ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
@@ -462,11 +462,11 @@ instance HasOCC Atom where
     where
       generic = toE <$> (occ a $ fromE atom)
 
-instance HasOCC TabLamExpr where
+instance HasOCC (TabLamExpr SimpIR) where
   occ _ view = inlinedLater view
   {-# INLINE occ #-}
 
-instance HasOCC (ComposeE PrimOp Atom) where
+instance HasOCC (ComposeE PrimOp SAtom) where
   occ _ (ComposeE (PrimEffect ref (MExtend (BaseMonoid empty combine) val))) = do
     val' <- occ accessOnce val
     valIx <- summary val'
@@ -501,19 +501,19 @@ instance HasOCC e => HasOCC (ComposeE LabeledItems e) where
   {-# INLINE occ #-}
 
 instance (HasOCC e1, HasOCC e2) => HasOCC (ExtLabeledItemsE e1 e2)
-instance HasOCC LamExpr where
+instance HasOCC (LamExpr SimpIR) where
   occ _ _ = error "Impossible"
   {-# INLINE occ #-}
-instance HasOCC PiType
-instance HasOCC TabPiType
-instance HasOCC DepPairType
+instance HasOCC (PiType SimpIR)
+instance HasOCC (TabPiType SimpIR)
+instance HasOCC (DepPairType SimpIR)
 instance HasOCC EffectRow
 instance HasOCC Effect
-instance HasOCC DictExpr
-instance HasOCC DictType
-instance HasOCC FieldRowElems
-instance HasOCC FieldRowElem
-instance HasOCC DataDefParams
+instance HasOCC (DictExpr SimpIR)
+instance HasOCC (DictType SimpIR)
+instance HasOCC (FieldRowElems SimpIR)
+instance HasOCC (FieldRowElem SimpIR)
+instance HasOCC (DataDefParams SimpIR)
 
 -- === The instances for RepE types ===
 

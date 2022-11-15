@@ -27,20 +27,20 @@ import Types.Primitives
 import Types.Source
 import TopLevel
 
-sourceTextToBlocks :: (Topper m, Mut n) => Text -> m n [Block n]
+sourceTextToBlocks :: (Topper m, Mut n) => Text -> m n [SBlock n]
 sourceTextToBlocks source = do
   let (UModule _ deps sourceBlocks) = parseUModule Main source
   mapM_ ensureModuleLoaded deps
   catMaybes <$> mapM sourceBlockToBlock sourceBlocks
 
-sourceBlockToBlock :: (Topper m, Mut n) => SourceBlock -> m n (Maybe (Block n))
+sourceBlockToBlock :: (Topper m, Mut n) => SourceBlock -> m n (Maybe (SBlock n))
 sourceBlockToBlock block = case sbContents block of
   Misc (ImportModule moduleName)  -> importModule moduleName >> return Nothing
   Command (EvalExpr Printed) expr -> Just <$> uExprToBlock expr
   UnParseable _ s -> throw ParseErr s
   _ -> error $ "Unexpected SourceBlock " ++ pprint block ++ " in unit tests"
 
-uExprToBlock :: (Topper m, Mut n) => UExpr 'VoidS -> m n (Block n)
+uExprToBlock :: (Topper m, Mut n) => UExpr 'VoidS -> m n (SBlock n)
 uExprToBlock expr = do
   renamed <- renameSourceNamesUExpr expr
   typed <- inferTopUExpr renamed
@@ -49,9 +49,9 @@ uExprToBlock expr = do
   (SimplifiedBlock block IdentityRecon) <- simplifyTopBlock synthed
   return block
 
-findRunIOAnnotation :: Block n -> LetAnn
+findRunIOAnnotation :: SBlock n -> LetAnn
 findRunIOAnnotation (Block _ decls _) = go decls where
-  go :: Nest Decl n l -> LetAnn
+  go :: Nest SDecl n l -> LetAnn
   go (Nest (Let _ (DeclBinding ann _ (Hof (RunIO _)))) _) = ann
   go (Nest _ rest) = go rest
   go Empty = error "RunIO not found"
