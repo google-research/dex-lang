@@ -310,10 +310,7 @@ spec = do
         , "        ref := (get ref) + xs.i"
         , "      False"
         ]
-      -- Note: This comes up as 0 indexing depth because `while` ignores the
-      -- indexing depth information and sets it to zero.  See comment in
-      -- `useManyTimes` for an explanation.
-      ann `shouldBe` OccInfo (UsageInfo 1 (0,Unbounded))
+      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
     it "does not crash on index-defining bindings" do
       ann <- analyze cfg env
         [ ":p"

@@ -164,8 +164,12 @@ deriving instance Show (Access n)
 accessOnce :: Access n
 accessOnce = Location [] One
 
-accessMuch :: Access n
-accessMuch = Location [] Unbounded
+accessMuch :: Access n -> Access n
+accessMuch = \case
+  Location ixs _ -> Location ixs Unbounded
+  Any as -> Any $ map accessMuch as
+  All as -> All $ map accessMuch as
+  ForEach b a -> ForEach b $ accessMuch a
 
 -- Prepend the given indexing expression onto an existing Access
 location :: IxExpr n -> Access n -> Access n

@@ -10,7 +10,7 @@ module OccAnalysis (
 
 import Control.Monad.State.Strict
 import Data.Functor
-import Data.List (foldl', nub)
+import Data.List (foldl')
 import Data.List.NonEmpty qualified as NE
 import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
@@ -97,18 +97,7 @@ abstractFor b (FV fvs) = FV $ mapNameMapE update fvs where
 -- times, as in the body of a `while`.
 useManyTimes :: FV n -> FV n
 useManyTimes (FV fvs) = FV $ mapNameMapE update fvs where
-  -- Note: Could do something more elaborate here to keep track of
-  -- which indices of each object are used much, but for now there's
-  -- no need, because any Unbounded count will inhibit inlining.
-
-  -- TODO(Oddity) This will also set apparent indexing depth to zero.  The
-  -- indexing depth that occurrence analysis counts is relevant for assessing
-  -- work preservation, in that an inlining might only be work-preserving if it
-  -- leads to canceling against an indexing expression (or several).  However,
-  -- no inlining into a `while` loop is work-preserving in any case, so zero is
-  -- sound.  It does look odd on test cases, though, if the binding is clearly
-  -- indexed inside the while.
-  update (AccessInfo s _) = AccessInfo s $ accessMuch
+  update (AccessInfo s d) = AccessInfo s $ accessMuch d
 
 -- Change all the AccessInfos to assume their objects are _statically_ used many
 -- times, as for expressions that will be inlined unpredictably.
@@ -218,18 +207,14 @@ summary atom = case atom of
       DictHole _ _ -> invalid "DictHole"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
-unknown obj = do
-  freeIxs <- mapM ixExpr $ freeAtomVarsList obj
-  if any (== IxAll) freeIxs then
-    return IxAll
-  else
-    let freeIterationNames = nub $ concatMap freeAtomVarsList freeIxs
-    -- TODO(correctness) Should we detect whether `obj` is an expression with a
-    -- funny effect like `IO` and fall back from `Deterministic` to `IxAll`?
-    -- (For reader, writer, and state effects such a fallback should not be
-    -- necessary, because the summary of the reference should already have any
-    -- necessary `IxAll` in it.)
-    in return $ Deterministic $ freeIterationNames
+unknown _ = return IxAll
+  -- TODO(precision) It should be possible to return `Deterministic <free
+  -- variables>` in most cases.  That's only unsound if
+  -- - Any of the ixExpr of the free variables are themselves IxAll (which is
+  --   easy to detect); or
+  -- - The object has a funny effect like `IO`.  (Note that we wouldn't have to
+  --   detect reader, writer, and state effects specially, because the summary
+  --   of the reference should already have any necessary `IxAll` in it.)
 
 -- === The actual occurrence analysis ===
 
@@ -254,14 +239,17 @@ instance HasOCC Block where
     (NoBlockAnn      , _    ) -> error "should be unreachable"
     (BlockAnn ty effs, _    ) -> do
       Abs decls' ans' <- occNest a decls ans
-      ty' <- occ accessOnce ty  -- TODO Is free variable counting enough here?
+      ty' <- occTy ty
       countFreeVarsAsOccurrences effs
       return $ Block (BlockAnn ty' effs) decls' ans'
 
--- TODO(optimization) Could reuse the free variable caching from dce here too.
+-- TODO What, actually, is the right thing to do for type annotations?  Do we
+-- want a rule like "we never inline into type annotations", or such?  For
+-- now, traversing with the main analysis seems safe.
+occTy :: Atom n -> OCCM n (Atom n)
+occTy ty = occ accessOnce ty
 
--- TODO(sanity checking) Could also be good to add the DEBUG check from dce that
--- every free variable appears in the FV map.
+-- TODO(optimization) Could reuse the free variable caching from dce here too.
 
 data ElimResult n where
   ElimSuccess :: Abs (Nest Decl) Atom n -> ElimResult n
@@ -278,6 +266,7 @@ occNest a decls ans = case decls of
         exprIx <- summaryExpr $ sink expr'
         extend b' exprIx do
           below <- occNest (sink a) ds' ans'
+          checkAllFreeVariablesMentioned below
           accessInfo <- getAccessInfo $ binderName d'
           let usage = usageInfo accessInfo
           let dceAttempt = case isPureDecl of
@@ -300,11 +289,23 @@ occNest a decls ans = case decls of
         let binding'' = DeclBinding (OccInfo usage) ty expr
         return $ Abs (Nest (Let b' binding'') ds'') ans''
 
+checkAllFreeVariablesMentioned :: HoistableE e => e n -> OCCM n ()
+checkAllFreeVariablesMentioned e = do
+#ifdef DEX_DEBUG
+  FV fvs <- get
+  forM_ (nameSetToList (freeVarsE e)) \name ->
+    case lookupNameMapE name fvs of
+      Just _ -> return ()
+      Nothing -> error $ "Free variable map missing free variable " ++ show name
+#else
+  void $ return e  -- Refer to `e` in this branch to avoid a GHC warning
+  return ()
+#endif
+
 instance HasOCC DeclBinding where
   occ a (DeclBinding ann ty expr) = do
     expr' <- occ a expr
-    -- TODO(optimization) Is free variable counting enough for types?
-    ty' <- occ accessOnce ty
+    ty' <- occTy ty
     return $ DeclBinding ann ty' expr'
 
 instance HasOCC Expr where
@@ -318,8 +319,7 @@ instance HasOCC Expr where
       scrutIx <- summary scrut
       (alts', innerFVs) <- unzip <$> mapM (isolated . occAlt a scrutIx) alts
       modify (<> foldl' Occ.max zero innerFVs)
-      -- TODO(optimization) Is free variable counting enough for types?
-      ty' <- occ accessOnce ty
+      ty' <- occTy ty
       countFreeVarsAsOccurrences effs
       return $ Case scrut' alts' ty' effs
     _ -> generic
@@ -429,7 +429,7 @@ oneShot acc binderSummary bd =
   occLam bd \b' body -> extend b' (sink binderSummary) do
     occ (sink acc) body
 
--- Occurrence analysis of the body of a one-shot biary lambda Atom.
+-- Occurrence analysis of the body of a one-shot binary lambda Atom.
 oneShot2 :: Access n -> IxExpr n -> IxExpr n -> Atom n -> OCCM n (Atom n)
 oneShot2 acc binderSummary1 binderSummary2 bd =
   occLam bd \b' (AtomicBlock body)
@@ -444,7 +444,7 @@ occLam :: Atom n
        -> OCCM n (Atom n)
 occLam bd cont = case bd of
   Lam (LamExpr (LamBinder b ty arr eff) body) -> do
-    ty' <- occ accessOnce ty  -- TODO Is free variable counting enough here?
+    ty' <- occTy ty
     (Abs b' (body' `PairE` eff')) <-
       refreshAbs (Abs (b:>ty') (body `PairE` eff))
         \(b':>_) (body' `PairE` eff') -> do
@@ -467,19 +467,20 @@ instance HasOCC TabLamExpr where
   {-# INLINE occ #-}
 
 instance HasOCC (ComposeE PrimOp Atom) where
-  occ _ expr@(ComposeE (PrimEffect _ (MExtend (BaseMonoid _ combine) val))) = do
-    valIx <- summary val
+  occ _ (ComposeE (PrimEffect ref (MExtend (BaseMonoid empty combine) val))) = do
+    val' <- occ accessOnce val
+    valIx <- summary val'
+    ref' <- occ accessOnce ref
+    -- TODO(precision) The empty value of the monoid is presumably dead here,
+    -- but we pretend like it's not to make sure that occurrence analysis
+    -- results mention every free variable in the traversed expression.  This
+    -- may lead to missing an opportunity to inline something into the empty
+    -- value of the given monoid, since references thereto will be overcounted.
+    empty' <- occ accessOnce empty
     -- Treat the combining function as inlined here and called once
-    void $ oneShot2 accessOnce (Deterministic []) valIx combine
-    -- Do not change the expression
-    -- TODO(correctness) There is a potential bug here.  If the combining
-    -- function contains some internally dead code, it both won't be removed by
-    -- this traversal and won't be counted as referencing its free variables.
-    -- This could then lead us to make a bad inlining decision about said free
-    -- variables.  Unless I am mistaken, that requires the monoid instance to
-    -- have been defined nested, which I think is rare enough that I'm inclined
-    -- let the possible bug slide until it occurs.
-    return expr
+    combine' <- oneShot2 accessOnce (Deterministic []) valIx combine
+    return $ ComposeE (PrimEffect ref'
+                       (MExtend (BaseMonoid empty' combine') val'))
   -- I'm pretty sure the others are all strict, and not usefully analyzable
   -- for what they do to the incoming access pattern.
   occ _ (ComposeE op) = ComposeE <$> traverse (occ accessOnce) op
