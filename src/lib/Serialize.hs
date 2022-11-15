@@ -43,11 +43,11 @@ import Util (restructure)
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
 
-pprintVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
+pprintVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 pprintVal val = docAsStr <$> prettyVal val
 {-# SCC pprintVal #-}
 
-getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
+getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs of
   Just (ptrAtom, n) -> do
     lookupAtomName ptrAtom >>= \case
@@ -61,7 +61,7 @@ getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs 
     xs' <- getTableElements xs
     forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
   where
-    tryParseStringContent :: Atom n -> Maybe (AtomName n, Word32)
+    tryParseStringContent :: CAtom n -> Maybe (CAtomName n, Word32)
     tryParseStringContent tabAtom  = do
       TabLam (TabLamExpr i body) <- return tabAtom
       FinConst n <- return $ binderType i
@@ -80,7 +80,7 @@ getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs 
 getDexString x = error $ "Not a string: " ++ pprint x
 {-# SCC getDexString #-}
 
-getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n [Atom n]
+getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n [CAtom n]
 getTableElements tab = do
   TabTy b _ <- getType tab
   idxs <- indices $ binderAnn b
@@ -88,7 +88,7 @@ getTableElements tab = do
 
 -- Pretty-print values, e.g. for displaying in the REPL.
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
-prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
+prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n (Doc ann)
 prettyVal val = case val of
   -- Pretty-print tables.
   TabVal _ _ -> do
@@ -143,7 +143,7 @@ prettyVal val = case val of
     return $ "(" <> lhs' <+> ",>" <+> rhs' <> ")" <+> "::" <+> ty'
   atom -> return $ prettyPrec atom LowestPrec
   where
-    prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> Atom n -> m n (Doc ann)
+    prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> CAtom n -> m n (Doc ann)
     prettyData dataDefName t rep = do
       DataDef _ _ dataCons <- lookupDataDef dataDefName
       DataConDef conName _ idxs <- return $ dataCons !! t

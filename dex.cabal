@@ -280,6 +280,7 @@ foreign-library Dex
   ghc-options:         -Wall
                        -fPIC
                        -optP-Wno-nonportable-include-path
+                       -Wno-unticked-promoted-constructors
   default-language:    Haskell2010
   default-extensions:  BlockArguments
                      , DataKinds

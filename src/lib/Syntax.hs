@@ -125,7 +125,12 @@ module Syntax (
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern SISourceName, pattern SIInternalName,
     pattern OneEffect,
-    (-->), (?-->), (--@), (==>)) where
+    (-->), (?-->), (--@), (==>),
+    IR (..), SimpIR,
+    CAtom, CType, CExpr, CBlock, CDecl, CDecls, CAtomSubstVal, CAtomName,
+    SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName,
+    unsafeCoerceIRE, unsafeCoerceIRB
+    ) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Foreign.Ptr

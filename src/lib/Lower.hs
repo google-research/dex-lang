@@ -36,7 +36,7 @@ import GenericTraversal
 import Util (foldMapM, enumerate)
 
 -- A binder for the destination of block result, body.
-type DestBlock = Abs Binder Block
+type DestBlock = Abs (Binder SimpIR) SBlock
 
 -- === For loop resolution ===
 
@@ -67,7 +67,7 @@ type DestBlock = Abs Binder Block
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-lowerFullySequential :: EnvReader m => Block n -> m n (DestBlock n)
+lowerFullySequential :: EnvReader m => SBlock n -> m n (DestBlock n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   resultDestTy <- RawRefTy <$> getTypeSubst b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
@@ -76,7 +76,7 @@ lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
       traverseBlockWithDest dest b $> UnitVal
 
 data LFS (n::S) = LFS
-type LowerM = GenericTraverserM UnitB LFS
+type LowerM = GenericTraverserM SimpIR UnitB LFS
 instance SinkableE LFS where
   sinkingProofE _ LFS = LFS
 instance HoistableState LFS where
@@ -85,7 +85,7 @@ instance HoistableState LFS where
 
 -- It would be nice to figure out a way to not have to update the effect
 -- annotations manually... The only interesting cases below are really For and TabCon.
-instance GenericTraverser UnitB LFS where
+instance GenericTraverser SimpIR UnitB LFS where
   traverseExpr expr = case expr of
     Op (TabCon ty els) -> traverseTabCon Nothing ty els
     Hof (For dir ixDict (Lam body)) -> traverseFor Nothing dir ixDict body
@@ -105,7 +105,9 @@ instance GenericTraverser UnitB LFS where
 
 type Dest = Atom
 
-traverseFor :: Emits o => Maybe (Dest o) -> ForAnn -> Atom i -> LamExpr i -> LowerM i o (Expr o)
+traverseFor
+  :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> SAtom i -> LamExpr SimpIR i
+  -> LowerM i o (SExpr o)
 traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = do
   ansTy <- getTypeSubst $ Hof $ For dir ixDict $ Lam lam
   ixDict' <- substM ixDict
@@ -132,7 +134,7 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
       let seqHof = Hof $ Seq dir ixDict' initDest body'
       Op . Freeze . ProjectElt (ProjectProduct 0 NE.:| []) <$> emit seqHof
 
-traverseTabCon :: Emits o => Maybe (Dest o) -> Type i -> [Atom i] -> LowerM i o (Expr o)
+traverseTabCon :: Emits o => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
 traverseTabCon maybeDest tabTy elems = do
   tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
   dest <- case maybeDest of
@@ -171,10 +173,10 @@ traverseTabCon maybeDest tabTy elems = do
 type DestAssignment (i'::S) (o::S) = AtomNameMap (ProjDest o) i'
 
 data ProjDest o
-  = FullDest (Dest o)
-  | ProjDest (NE.NonEmpty Projection) (Dest o)  -- dest corresponds to the projection applied to name
+  = FullDest (Dest SimpIR o)
+  | ProjDest (NE.NonEmpty Projection) (Dest SimpIR o)  -- dest corresponds to the projection applied to name
 
-lookupDest :: DestAssignment i' o -> AtomName i' -> Maybe (ProjDest o)
+lookupDest :: DestAssignment i' o -> SAtomName i' -> Maybe (ProjDest o)
 lookupDest = flip lookupNameMap
 
 -- Matches up the free variables of the atom, with the given dest. For example, if the
@@ -184,13 +186,13 @@ lookupDest = flip lookupNameMap
 -- as much as possible, but it can lead to unnecessary copies being done at run-time.
 --
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
-decomposeDest :: Emits o => Dest o -> Atom i' -> LowerM i o (Maybe (DestAssignment i' o))
+decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
   Var v -> return $ Just $ singletonNameMap v $ FullDest dest
   ProjectElt ps v -> return $ Just $ singletonNameMap v $ ProjDest ps dest
   _ -> return Nothing
 
-traverseBlockWithDest :: Emits o => Dest o -> Block i -> LowerM i o (Atom o)
+traverseBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
 traverseBlockWithDest dest (Block _ decls ans) = do
   decomposeDest dest ans >>= \case
     Nothing -> do
@@ -211,7 +213,8 @@ traverseBlockWithDest dest (Block _ decls ans) = do
 
 traverseDeclNestWithDestS
   :: forall i i' l o. (Emits o, DistinctBetween l i')
-  => DestAssignment i' o -> Subst AtomSubstVal l o -> Nest Decl l i' -> LowerM i o (Subst AtomSubstVal i' o)
+  => DestAssignment i' o -> Subst (AtomSubstVal SimpIR) l o -> Nest (Decl SimpIR) l i'
+  -> LowerM i o (Subst (AtomSubstVal SimpIR) i' o)
 traverseDeclNestWithDestS destMap s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -221,7 +224,7 @@ traverseDeclNestWithDestS destMap s = \case
     v <- emitDecl (getNameHint b) ann expr'
     traverseDeclNestWithDestS destMap (s <>> (b @> Rename v)) rest
 
-traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> Expr i -> LowerM i o (Expr o)
+traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 traverseExprWithDest dest expr = case expr of
   Op (TabCon ty els) -> traverseTabCon tabDest ty els
   Hof (For dir ixDict (Lam body)) -> traverseFor tabDest dir ixDict body
@@ -244,7 +247,9 @@ traverseExprWithDest dest expr = case expr of
           place d ans
           return $ Atom ans
 
-    traverseRWS :: RWS -> Atom i -> (Maybe (Dest o) -> Atom o -> LowerM i o (Hof o)) -> LowerM i o (Expr o)
+    traverseRWS
+      :: RWS -> SAtom i -> (Maybe (Dest SimpIR o) -> SAtom o
+      -> LowerM i o (Hof SimpIR o)) -> LowerM i o (SExpr o)
     traverseRWS rws (Lam (BinaryLamExpr hb rb body)) mkHof = do
       unpackRWSDest dest >>= \case
         Nothing -> generic
@@ -271,7 +276,7 @@ traverseExprWithDest dest expr = case expr of
         ProjDest _ _ -> return Nothing
 
 
-place :: Emits o => ProjDest o -> Atom o -> LowerM i o ()
+place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
   FullDest d -> void $ emitOp $ Place d x
   ProjDest p d -> void $ emitOp $ Place d $ getProjection (NE.toList p) x
@@ -291,7 +296,7 @@ data Stability
   deriving (Eq, Show)
 
 data VSubstValC (c::C) (n::S) where
-  VVal :: Stability -> Atom n -> VSubstValC AtomNameC n
+  VVal :: Stability -> SAtom n -> VSubstValC AtomNameC n
 type VAtom = VSubstValC AtomNameC
 instance SinkableV VSubstValC
 instance SinkableE (VSubstValC c) where
@@ -300,9 +305,9 @@ instance SinkableE (VSubstValC c) where
 instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
 
-type TopVectorizeM = BuilderT (ReaderT Word32 HardFailM)
+type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 HardFailM)
 
-vectorizeLoops :: EnvReader m => Word32 -> Block n -> m n (Block n)
+vectorizeLoops :: EnvReader m => Word32 -> SBlock n -> m n (SBlock n)
 vectorizeLoops vectorByteWidth (Block _ decls ans) = do
   liftM (runHardFail . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
     s <- vectorizeLoopsRec emptyInFrag decls
@@ -310,7 +315,7 @@ vectorizeLoops vectorByteWidth (Block _ decls ans) = do
 {-# INLINE vectorizeLoops #-}
 
 vectorizeLoopsRec :: (Ext i o, Emits o)
-                  => SubstFrag Name i i' o -> Nest Decl i' i''
+                  => SubstFrag Name i i' o -> Nest SDecl i' i''
                   -> TopVectorizeM o (SubstFrag Name i i'' o)
 vectorizeLoopsRec frag = \case
   Empty -> return frag
@@ -336,8 +341,8 @@ atMostOneEffect eff scrutinee = case scrutinee of
   _ -> False
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
-             => Word32 -> Type o -> SubstFrag Name i i' o -> LamExpr i'
-             -> TopVectorizeM o (Atom o)
+             => Word32 -> SType o -> SubstFrag Name i i' o -> LamExpr SimpIR i'
+             -> TopVectorizeM o (SAtom o)
 vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
   if atMostOneEffect InitEffect eff
     then do
@@ -367,17 +372,17 @@ fromNameVAtom v = case eqColorRep @c @AtomNameC of
   _ -> error "Unexpected non-atom name"
 
 newtype VectorizeM i o a =
-  VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT (ReaderT Word32 HardFailM)) i o a }
+  VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, Fallible, MonadFail, SubstReader VSubstValC
-           , Builder, EnvReader, EnvExtender, ScopeReader, ScopableBuilder )
+           , Builder SimpIR, EnvReader, EnvExtender, ScopeReader, ScopableBuilder SimpIR)
 
 getLoopWidth :: VectorizeM i o Word32
 getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
 
-vectorizeBlock :: Emits o => Block i -> VectorizeM i o (VAtom o)
-vectorizeBlock (Block _ decls (ans :: Atom i')) = go decls
+vectorizeBlock :: Emits o => SBlock i -> VectorizeM i o (VAtom o)
+vectorizeBlock (Block _ decls (ans :: SAtom i')) = go decls
   where
-    go :: Emits o => Nest Decl i i' -> VectorizeM i o (VAtom o)
+    go :: Emits o => Nest SDecl i i' -> VectorizeM i o (VAtom o)
     go = \case
       Empty -> vectorizeAtom ans
       Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -385,7 +390,7 @@ vectorizeBlock (Block _ decls (ans :: Atom i')) = go decls
         v <- vectorizeExpr expr
         extendSubst (b @> v) $ go rest
 
-vectorizeExpr :: Emits o => Expr i -> VectorizeM i o (VAtom o)
+vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = case expr of
   Atom atom -> vectorizeAtom atom
   Op op -> vectorizeOp op
@@ -404,7 +409,7 @@ vectorizeExpr expr = case expr of
     VVal vy . Var <$> emit (Hof (RunIO (Lam lam')))
   _ -> error $ "Cannot vectorize expr: " ++ pprint expr
 
-vectorizeOp :: Emits o => Op i -> VectorizeM i o (VAtom o)
+vectorizeOp :: Emits o => Op SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeOp op = do
   op' <- (inline traversePrimOp) vectorizeAtom op
   case op' of
@@ -447,7 +452,7 @@ vectorizeOp op = do
       VVal Varying <$> emitOp (PtrLoad ptr')
     _ -> error $ "Can't vectorize op: " ++ pprint op'
 
-vectorizeAtom :: Atom i -> VectorizeM i o (VAtom o)
+vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = case atom of
   Var v -> lookupSubstM v
   ProjectElt p v -> do
@@ -458,7 +463,7 @@ vectorizeAtom atom = case atom of
     subst <- getSubst
     VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
   where
-    uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
+    uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal SimpIR c o
     uniformSubst subst n = case subst ! n of
       VVal Uniform x -> SubstVal x
       _ -> error $ "Can't vectorize atom " ++ pprint atom
@@ -470,7 +475,7 @@ vectorizeAtom atom = case atom of
       (_                       , Uniform          ) -> s
       _ -> error "Invalid projection"
 
-getVectorType :: Type o -> VectorizeM i o (Atom o)
+getVectorType :: SType o -> VectorizeM i o (SAtom o)
 getVectorType ty = case ty of
   BaseTy (Scalar sbt) -> do
     els <- getLoopWidth
@@ -478,7 +483,7 @@ getVectorType ty = case ty of
   -- TODO: Should we support tables?
   _ -> error $ "Can't make a vector of " ++ pprint ty
 
-ensureVarying :: Emits o => VAtom o -> VectorizeM i o (Atom o)
+ensureVarying :: Emits o => VAtom o -> VectorizeM i o (SAtom o)
 ensureVarying (VVal s val) = case s of
   Varying -> return val
   Uniform -> do
@@ -513,7 +518,7 @@ sinkBetween = unsafeCoerceE
 shortenBetween :: forall l n n' b. (ProvesExt b, Ext n' l, DistinctBetween n l) => b n n' -> DistinctBetweenEvidence n' l
 shortenBetween _ = unsafeCoerce $ DistinctBetween @n @l
 
-isDistinctNest :: Nest Decl n l -> Maybe (DistinctBetweenEvidence n l)
+isDistinctNest :: Nest SDecl n l -> Maybe (DistinctBetweenEvidence n l)
 isDistinctNest nest = case noShadows $ toScopeFrag nest of
   True  -> Just $ fabricateDistinctBetweenEvidence
   False -> Nothing

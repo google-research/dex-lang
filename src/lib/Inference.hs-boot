@@ -9,4 +9,4 @@ module Inference (trySynthTerm) where
 import Name
 import Syntax
 
-trySynthTerm :: (Fallible1 m, EnvReader m) => Type n -> m n (Atom n)
+trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> m n (CAtom n)

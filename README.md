@@ -22,6 +22,7 @@ or these example programs:
   * [Basis function regression](https://google-research.github.io/dex-lang/examples/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/examples/brownian_motion.html)
   * [Dynamic programming (Levenshtein distance)](https://google-research.github.io/dex-lang/examples/levenshtein-distance.html)
+  * [Molecular dynamics simulation](https://google-research.github.io/dex-lang/examples/md.html)
 
 Or for a more comprehensive look, there's
 

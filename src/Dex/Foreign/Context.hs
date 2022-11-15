@@ -28,7 +28,7 @@ import Data.Map.Strict    qualified as M
 import Data.ByteString    qualified as BS
 import Data.Text.Encoding qualified as T
 
-import Syntax  hiding (sizeOf)
+import Syntax  hiding (sizeOf, CAtom)
 import TopLevel
 import Name
 import PPrint
@@ -50,7 +50,7 @@ type ExportNativeFunctionAddr = FunPtr () -- points to executable code
 type NativeFunctionTable = M.Map ExportNativeFunctionAddr ExportNativeFunction
 
 data AtomEx where
-  AtomEx :: Atom n -> AtomEx
+  AtomEx :: Atom CoreIR n -> AtomEx
 
 dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do

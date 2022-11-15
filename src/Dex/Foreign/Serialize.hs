@@ -18,7 +18,7 @@ import Foreign.Ptr
 import Foreign.Storable
 
 import Name
-import Syntax
+import Syntax hiding (CAtom)
 import Serialize (pprintVal)
 
 import Dex.Foreign.Context
@@ -78,7 +78,7 @@ dexToCAtom atomPtr resultPtr = do
   AtomEx atom <- fromStablePtr atomPtr
   scalarAtomToCAtom atom
   where
-    scalarAtomToCAtom :: Atom n -> IO CInt
+    scalarAtomToCAtom :: Atom CoreIR n -> IO CInt
     scalarAtomToCAtom atom = case atom of
       Con con -> case con of
         Lit l          -> poke resultPtr (CLit l) $> 1

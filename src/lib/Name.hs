@@ -2371,6 +2371,7 @@ instance Store a => Store (LiftE a n)
 instance (Store (e UnsafeS), Generic (e UnsafeS)) => Store (LiftB e n l)
 instance Store (const n) => Store (ConstE const ignored n)
 instance (Color c, Store (ann n)) => Store (BinderP c ann n l)
+instance (forall a. Store a => Store (f a), Store (e n)) => Store (ComposeE f e n)
 
 instance ( forall c. Color c => Store (v c o')
          , forall c. Color c => Generic (v c o'))
