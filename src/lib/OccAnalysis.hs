@@ -335,7 +335,7 @@ instance HasOCC SExpr where
 -- alternative itself.
 occAlt :: Access n -> IxExpr n -> Alt SimpIR n -> OCCM n (Alt SimpIR n)
 occAlt acc scrut alt = do
-  refreshAbs alt \b@(nb:>_) body -> do
+  (Abs (b':>ty) body') <- refreshAbs alt \b@(nb:>_) body -> do
     -- We use `unknown` here as a conservative approximation of the case binder
     -- being the scrutinee with the top constructor removed.  If we statically
     -- knew what that constructor was we could remove it, but I guess that
@@ -345,6 +345,8 @@ occAlt acc scrut alt = do
     extend nb scrutIx do
       body' <- occ (sink acc) body
       return $ Abs b body'
+  ty' <- occTy ty
+  return $ Abs (b':>ty') body'
 
 occurrenceAndSummary :: SAtom n -> OCCM n (IxExpr n, SAtom n)
 occurrenceAndSummary atom = do
