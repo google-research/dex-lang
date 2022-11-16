@@ -9,14 +9,14 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( blockToImpFunction, ImpFunctionWithRecon (..)
+  ( blockToImpFunction
   , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
-  , impFunType, getIType, abstractLinktimeObjects) where
+  , impFunType, getIType, abstractLinktimeObjects, makeDest
+  , DestPtrInfo (..), AbsPtrs (..), AllocType (..), loadDest) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
-import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -37,9 +37,7 @@ import Types.Primitives
 import Types.Core
 import Types.Imp
 import Algebra
-import RawName qualified as R
 
-type AtomRecon = Abs (Nest (NameBinder ImpNameC)) SIAtom
 type SIAtom   = Atom  SimpToImpIR
 type SIType   = Type  SimpToImpIR
 type SIBlock  = Block SimpToImpIR
@@ -48,10 +46,9 @@ type SIDecl   = Decl  SimpToImpIR
 type SIDecls  = Decls SimpToImpIR
 
 -- TODO: make it purely a function of the type and avoid the AtomRecon
-blockToImpFunction :: EnvReader m
-              => Backend -> CallingConvention
-              -> DestBlock n
-              -> m n (ImpFunctionWithRecon n)
+blockToImpFunction
+  :: EnvReader m => Backend -> CallingConvention
+  -> DestBlock n -> m n (ImpFunction n)
 blockToImpFunction _ cc absBlock = liftImpM $
   translateTopLevel cc absBlock
 {-# SCC blockToImpFunction #-}
@@ -174,26 +171,6 @@ storeArgDests (Abs (Nest (b:>argDest) bs) resultDest) (x:xs) = do
   storeArgDests restDest xs
 storeArgDests _ _ = error "dest/args mismatch"
 
-data ImpFunctionWithRecon n = ImpFunctionWithRecon (ImpFunction n) (AtomRecon n)
-
-instance GenericE ImpFunctionWithRecon where
-  type RepE ImpFunctionWithRecon = PairE ImpFunction AtomRecon
-  fromE (ImpFunctionWithRecon fun recon) = PairE fun recon
-  {-# INLINE fromE #-}
-  toE   (PairE fun recon) = ImpFunctionWithRecon fun recon
-  {-# INLINE toE #-}
-
-instance SinkableE ImpFunctionWithRecon
-instance SubstE Name ImpFunctionWithRecon
-instance CheckableE ImpFunctionWithRecon where
-  checkE (ImpFunctionWithRecon f recon) =
-    -- TODO: CheckableE instance for the recon too
-    ImpFunctionWithRecon <$> checkE f <*> substM recon
-
-instance Pretty (ImpFunctionWithRecon n) where
-  pretty (ImpFunctionWithRecon f recon) =
-    pretty f <> hardline <> "Reconstruction:" <> hardline <> pretty recon
-
 -- === ImpM monad ===
 
 type ImpBuilderEmissions = RNest ImpDecl
@@ -294,34 +271,20 @@ liftImpM cont = do
 
 -- === the actual pass ===
 
--- We don't emit any results when a destination is provided, since they are already
--- going to be available through the dest.
-translateTopLevel :: CallingConvention
-                  -> DestBlock i
-                  -> SubstImpM i o (ImpFunctionWithRecon o)
-translateTopLevel cc (Abs (destb:>destTy') body') = do
-  destTy <- return $ injectIRE destTy'
-  body   <- return $ injectIRE body'
-  ab  <- buildScopedImp do
-    dest <- case destTy of
-      RawRefTy ansTy -> makeAllocDest Unmanaged =<< substM ansTy
-      _ -> error "Expected a reference type for body destination"
-    extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
-    destToAtom dest
-  refreshAbs ab \decls resultAtom -> do
-    (results, recon) <- buildRecon decls resultAtom
-    let funImpl = Abs Empty $ ImpBlock decls results
-    let funTy   = IFunType cc [] (map getIType results)
-    return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
-
-buildRecon :: (HoistableB b, EnvReader m)
-           => b n l
-           -> SIAtom l
-           -> m l ([IExpr l], AtomRecon n)
-buildRecon b x = do
-  let (vs, recon) = captureClosure b x
-  xs <- forM vs \v -> IVar v <$> impVarType v
-  return (xs, recon)
+translateTopLevel :: CallingConvention -> DestBlock o -> SubstImpM o o (ImpFunction o)
+translateTopLevel cc (Abs (destb:>destTy) body) = do
+  resultTy <- case injectIRE destTy of
+    RawRefTy resultTy -> return resultTy
+    _ -> error "Expected a reference type for body destination"
+  let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
+  AbsPtrs (Abs ptrBinders dest) ptrsInfo <- makeDest allocInfo resultTy
+  let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
+  buildImpFunction cc ptrHintTys \vs -> do
+    let substVals = [SubstVal (AtomicIVar (LeftE v) t :: Atom SimpToImpIR _) | (v,t) <- vs]
+    dest' <- applySubst (ptrBinders @@> substVals) dest
+    extendSubst (destb @> SubstVal dest') do
+      void $ translateBlock Nothing $ injectIRE body
+      return []
 
 impVarType :: EnvReader m => ImpName n -> m n BaseType
 impVarType v = do
@@ -923,10 +886,11 @@ instance SubstE Name e => SubstE Name (AbsPtrs e)
 instance SubstE (AtomSubstVal SimpToImpIR) e => SubstE (AtomSubstVal SimpToImpIR) (AbsPtrs e)
 
 -- builds a dest and a list of pointer binders along with their required allocation sizes
-makeDest :: AllocInfo -> SIType n -> SubstImpM i n (AbsPtrs Dest n)
+makeDest :: EnvReader m => AllocInfo -> SIType n -> m n (AbsPtrs Dest n)
 makeDest allocInfo ty =
   liftDestM allocInfo $ buildLocalDest $ makeSingleDest [] $ sink ty
 {-# SCC makeDest #-}
+{-# INLINE makeDest #-}
 
 makeSingleDest :: Mut n => [SAtomName n] -> SIType n -> DestM n (Dest n)
 makeSingleDest depVars ty = do
@@ -1681,23 +1645,6 @@ instance BindsEnv IBinder where
   toEnvFrag (IBinder b ty) =  toEnvFrag $ b :> ImpNameBinding ty
 
 instance SubstB (AtomSubstVal SimpToImpIR) IBinder
-
-captureClosure
-  :: HoistableB b
-  => b n l -> SIAtom l -> ([ImpName l], NaryAbs ImpNameC SIAtom n)
-captureClosure decls result = do
-  let vs = capturedVars decls result
-  let ab = abstractFreeVarsNoAnn vs result
-  case hoist decls ab of
-    HoistSuccess abHoisted -> (vs, abHoisted)
-    HoistFailure _ ->
-      error "shouldn't happen"  -- but it will if we have types that reference
-                                -- local vars. We really need a telescope.
-
-capturedVars :: (Color c, BindsNames b, HoistableE e)
-             => b n l -> e l -> [Name c l]
-capturedVars b e = nameSetToList nameSet
-  where nameSet = R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

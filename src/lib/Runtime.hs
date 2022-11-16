@@ -34,13 +34,13 @@ import CUDA (synchronizeCUDA)
 -- === One-shot evaluation ===
 
 foreign import ccall "dynamic"
-  callFunPtr :: DexExecutable -> Int32 -> Ptr () -> Ptr () -> IO DexExitCode
+  callFunPtr :: DexExecutable -> Int32 -> Ptr () -> IO DexExitCode
 
 foreign import ccall "dynamic"
   callDtor :: DexDestructor -> IO ()
 
 type DexDestructor = FunPtr (IO ())
-type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
+type DexExecutable = FunPtr (Int32 -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
 
@@ -48,33 +48,30 @@ data BenchRequirement =
     NoBench
   | DoBench Bool -- True means "must sync CUDA"
 
-callNativeFun :: NativeFunction -> BenchRequirement -> PassLogger -> [LitVal] -> [BaseType] -> IO [LitVal]
-callNativeFun f bench logger args resultTypes = do
+callNativeFun :: NativeFunction -> BenchRequirement -> PassLogger -> [LitVal] -> IO ()
+callNativeFun f bench logger args = do
   withPipeToLogger logger \fd ->
-    allocaCells (length args) \argsPtr ->
-      allocaCells (length resultTypes) \resultPtr -> do
-        storeLitVals argsPtr args
-        let fPtr = castFunPtr $ nativeFunPtr f
-        evalTime <- checkedCallFunPtr fd argsPtr resultPtr fPtr
-        results <- loadLitVals resultPtr resultTypes
-        case bench of
-          NoBench -> logSkippingFilter logger [EvalTime evalTime Nothing]
-          DoBench shouldSyncCUDA -> do
-            let sync = when shouldSyncCUDA $ synchronizeCUDA
-            (avgTime, benchRuns, totalTime) <- runBench do
-              let (CInt fd') = fdFD fd
-              exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-              unless (exitCode == 0) $ throw RuntimeErr ""
-              freeLitVals resultPtr resultTypes
-              sync
-            logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
-        return results
+    allocaCells (length args) \argsPtr -> do
+      storeLitVals argsPtr args
+      let fPtr = castFunPtr $ nativeFunPtr f
+      evalTime <- checkedCallFunPtr fd argsPtr fPtr
+      case bench of
+        NoBench -> logSkippingFilter logger [EvalTime evalTime Nothing]
+        DoBench shouldSyncCUDA -> do
+          let sync = when shouldSyncCUDA $ synchronizeCUDA
+          (avgTime, benchRuns, totalTime) <- runBench do
+            let (CInt fd') = fdFD fd
+            exitCode <- callFunPtr fPtr fd' argsPtr
+            unless (exitCode == 0) $ throw RuntimeErr ""
+            sync
+          logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
+      return ()
 
-checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
-checkedCallFunPtr fd argsPtr resultPtr fPtr = do
+checkedCallFunPtr :: FD -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr fd argsPtr fPtr = do
   let (CInt fd') = fdFD fd
   (exitCode, duration) <- measureSeconds $ do
-    exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
+    exitCode <- callFunPtr fPtr fd' argsPtr
     return exitCode
   unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
@@ -105,11 +102,11 @@ runBench run = do
 
 -- === serializing scalars ===
 
-loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
-loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
+_loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
+_loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
-freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
-freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+_freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
+_freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
 
 storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs

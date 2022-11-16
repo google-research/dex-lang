@@ -6,7 +6,7 @@
 
 module Interpreter (
   evalBlock, evalDecls, evalExpr, evalAtom,
-  liftInterpM, InterpM, Interp, unsafeLiftInterpMCatch,
+  liftInterpM, interpretBuilder, InterpM, Interp, unsafeLiftInterpMCatch,
   indices, indicesLimit, matchUPat,
   applyIntBinOp, applyIntCmpOp,
   applyFloatBinOp, applyFloatUnOp) where
@@ -54,6 +54,14 @@ liftInterpM cont = do
   resultIO <- liftEnvReaderT $ runSubstReaderT idSubst $ runInterpM' cont
   liftIO resultIO
 {-# INLINE liftInterpM #-}
+
+interpretBuilder
+  :: (EnvReader m, MonadIO1 m, SinkableE e, SubstE (AtomSubstVal r) e)
+  => (forall l. (Emits l, DExt n l) => BuilderM r l (e l))
+  -> m n (e n)
+interpretBuilder cont = do
+  Abs decls result <- liftBuilder $ buildScoped cont
+  liftInterpM $ evalDecls decls $ substM result
 
 -- Variant of liftInterpM meant for internal interpretation.
 -- Discharges the IO unsafely, and catches errors.

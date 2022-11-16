@@ -18,6 +18,7 @@ module TopLevel (
 
 import Data.Foldable (toList)
 import Data.Functor
+import Data.Int
 import Control.Category ((>>>))
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
@@ -64,6 +65,7 @@ import CheckType (checkTypesM)
 #endif
 import SourceRename
 import Inference
+import qualified Interpreter as I
 import Simplify
 import Lower
 import Imp
@@ -757,16 +759,14 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
-evalLLVM block = do
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (SAtom n)
+evalLLVM block@(Abs (_:>destTy) _) = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
   let (cc, _needsSync) =
         case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                         _        -> (EntryFun CUDANotRequired, False)
-  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-    blockToImpFunction backend cc block
-  let IFunType _ _ resultTypes = impFunType impFun
+  impFun <- checkPass ImpPass $ blockToImpFunction backend cc block
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
   reqFunPtrs  <- forM reqFuns impNameToPtr
@@ -775,17 +775,43 @@ evalLLVM block = do
   benchRequired <- requiresBench <$> getPassCtx
   nativeFun <- liftIO $ linkFunObjCode obj dyvarStores
     $ LinktimeVals reqFunPtrs reqDataPtrs
-  resultVals <-
-    liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  -- TODO: this unsafe coerce won't be needed once we treat everything as a
-  -- function, because then we won't need the reconstruction at all. If we were
-  -- going to keep it this way, the right thing to do would be to traverse the
-  -- atom and throw an error if we find any `BoxedRef`
-  Abs bs finalResult <- return reconAtom
-  let substVals = map SubstVal resultValsNoPtrs :: [SubstVal ImpNameC (Atom SimpToImpIR) ImpNameC n]
-  unsafeCoerceIRE <$> applySubst (bs @@> substVals) finalResult
+  dest@(TopDest _ destPtrs) <- makeDestTopLevel destTy
+  liftIO $ callNativeFun nativeFun benchRequired logger (PtrLit <$> destPtrs)
+  loadDestTopLevel dest
+
 {-# SCC evalLLVM #-}
+
+data TopDest (n::S) = TopDest (Atom SimpToImpIR n) [PtrLitVal]
+
+makeDestTopLevel :: (Mut n, Topper m) => SType n -> m n (TopDest n)
+makeDestTopLevel (RawRefTy valTy) = do
+  let allocInfo = (LLVM, CPU, Unmanaged)
+  AbsPtrs (Abs ptrBinders destAtom) ptrsInfo <- makeDest allocInfo (injectIRE valTy)
+  ptrs <- mapM allocDestPtr ptrsInfo
+  ptrSubstVals <- forM ptrs \p ->
+    SubstVal <$> Var @SimpToImpIR <$> emitPtrLit "ptr" p
+  destAtom' <- applySubst (ptrBinders @@> ptrSubstVals) destAtom
+  return $ TopDest destAtom' ptrs
+makeDestTopLevel _ = error "Expected a reference type"
+
+foreign import ccall "malloc_dex" dexMalloc    :: Int64  -> IO (Ptr ())
+
+allocDestPtr :: Topper m => DestPtrInfo n -> m n PtrLitVal
+allocDestPtr (DestPtrInfo ptrTy numelBlock) = do
+  ~(IdxRepVal numel) <- I.liftInterpM $ I.evalBlock numelBlock
+  let elemSize = sizeOf (snd ptrTy)
+  let numBytes = (fromIntegral numel * fromIntegral elemSize) :: Int64
+  ptr <- liftIO $ dexMalloc numBytes
+  return $ PtrLitVal ptrTy ptr
+
+loadDestTopLevel :: Topper m => TopDest n -> m n (SAtom n)
+loadDestTopLevel (TopDest destAtom _) =
+  -- XXX: this unsafeCoerceIRE should be replaced with something that actually
+  -- does the runtime check to ensure we don't have any of the extra cases from
+  -- SimpToImpIR left. (We expect the check to pass because we don't have any
+  -- references or Imp names at the top level.) Can we find a way to generically
+  -- implement some `projectIRE`?
+  liftM unsafeCoerceIRE $ I.interpretBuilder $ loadDest (sink destAtom)
 
 compileToObjCode
   :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
@@ -805,7 +831,7 @@ impNameToObj v = do
     Nothing -> throw CompilerErr
       $ "Expected to find an object cache entry for: " ++ pprint v
 
-evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
+evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (SAtom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
