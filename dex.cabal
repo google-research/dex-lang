@@ -73,6 +73,7 @@ library
                      , MTL1
                      , Name
                      , Occurrence
+                     , OccAnalysis
                      , Optimize
                      , PPrint
                      , RawName
@@ -306,8 +307,10 @@ test-suite spec
                      , hspec
                      , mtl
                      , QuickCheck
+                     , text
                      , dex
-  other-modules:       OccurrenceSpec
+  other-modules:       OccAnalysisSpec
+                     , OccurrenceSpec
                      , RawNameSpec
   default-language:    Haskell2010
   build-tool-depends:  hspec-discover:hspec-discover

@@ -4,8 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Occurrence where
 
@@ -13,8 +13,11 @@ import Prelude hiding (abs, iterate, max, sum)
 import Prelude qualified
 
 import Control.Monad.State.Strict
+import Data.Hashable
 import Data.IntMap.Strict qualified as M
 import Data.List (foldl')
+import Data.Store (Store (..))
+import GHC.Generics (Generic (..))
 
 import Name
 
@@ -84,6 +87,13 @@ class MaxPlus a where
   max :: a -> a -> a
   plus :: a -> a -> a
 
+instance (MaxPlus a) => MaxPlus (NameMap c a n) where
+  zero = mempty
+  max  = unionWithNameMap max
+  plus = unionWithNameMap plus
+
+deriving instance (MaxPlus (e n)) => MaxPlus (NameMapE c e n)
+
 -- === Access ===
 
 -- We represent an upper bound on the pattern by which (the object
@@ -102,7 +112,10 @@ class MaxPlus a where
 data Count =
     Bounded Int
   | Unbounded
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
+
+instance Hashable Count
+instance Store Count
 
 pattern Zero :: Count
 pattern Zero = Bounded 0
@@ -146,7 +159,27 @@ data Access (n::S) where
   -- Corresponds to `for`.
   ForEach :: forall n l. (NameBinder AtomNameC n l) -> Access l -> Access n
 
--- These are the indexing expressions we model.
+deriving instance Show (Access n)
+
+accessOnce :: Access n
+accessOnce = Location [] One
+
+accessMuch :: Access n -> Access n
+accessMuch = \case
+  Location ixs _ -> Location ixs Unbounded
+  Any as -> Any $ map accessMuch as
+  All as -> All $ map accessMuch as
+  ForEach b a -> ForEach b $ accessMuch a
+
+-- Prepend the given indexing expression onto an existing Access
+location :: IxExpr n -> Access n -> Access n
+location ix (Location ixs a) = Location (ix:ixs) a
+location _ _ = error "Cannot nest general Access in Location"
+
+-- These are the indexing expressions we model.  An IxExpr n is an abstraction
+-- of a function from names in the n scope, to either a single index location or
+-- to a set of index locations.  We only track the operations we have a hope of
+-- being able to analyze usefully.
 data IxExpr (n::S) =
   -- Indexing by an identifier in scope
     Var (Name AtomNameC n)
@@ -154,16 +187,17 @@ data IxExpr (n::S) =
   | Product [IxExpr n]
   -- An index of sum type
   | Inject Int (IxExpr n)
-  -- Unknown function of the given names
-  | Unknown [Name AtomNameC n]
-  -- All indices are accessed.  This constructor only appears after
-  -- `iterate`, below.
+  -- Unknown deterministic function of the given names
+  | Deterministic [Name AtomNameC n]
+  -- All indices are accessed, or we are conservatively assuming they are
+  -- because we don't know which are accessed.  See note "IxAll semantics" in
+  -- "Notes".
   | IxAll
-  -- TODO Could add more constructors to capture other indexing
+  -- TODO(precision) Could add more constructors to capture other indexing
   -- expressions, such as `from_ordinal _ $ ordinal i + 1`.  If that's
   -- the only indexing expression the binding is safe to inline, and
   -- inlining even preserves locality, not just work.
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- We give Access semantics by a notional translation into a piece of
 -- code that dynamically counts the number of times every index is
@@ -205,6 +239,11 @@ data IxExpr (n::S) =
 --   The type that `b` iterates over can in principle be fetched from
 --   the Dex program that led to this `ForEach` constructor.  It only
 --   matters for the semantics, so we don't actually store it.
+
+instance MaxPlus (Access n) where
+  zero = Location [] Zero
+  a1 `max` a2 = Any [a1, a2]
+  a1 `plus` a2 = All [a1, a2]
 
 -- === Use ===
 
@@ -253,8 +292,8 @@ data Use (iter::S) =
 -- compilation that turns a Use into a program that dynamically counts
 -- how many times each index is used.
 --
--- Note that now IxExpr permits the `IxAll` constructor, so an
--- `IxExpr` represents a subset of indices rather than a single index.
+-- Note that IxExpr permits the `IxAll` constructor, so an `IxExpr`
+-- represents a subset of indices rather than a single index.
 --
 -- - `Const ct` becomes accumulation
 --     \ref. ref += ct
@@ -310,11 +349,12 @@ instance MaxPlus (Use iter) where
   max _ (Const Unbounded) = Const Unbounded
   max (Const b1) (Const b2) = Const $ b1 `max` b2
   max (Max uses1) (Max uses2) = Max $ uses1 ++ uses2
-  -- TODO This is trying to eliminate zero-valued elements, because
-  -- they can cause (potentially severe) loss of precision downstream.
-  -- However, that relies on upstream construction canonicalizing all
-  -- semantically-zero Uses to the `zero` use, which they may not
-  -- entirely do.
+  -- This is trying to eliminate zero-valued elements, because they can cause
+  -- (potentially severe) loss of precision downstream.  However, that relies on
+  -- upstream construction canonicalizing all semantically-zero Uses to the
+  -- `zero` use.
+  -- TODO Prove or unit-test that upstream cannot construct semantically-zero
+  -- Use objects that are not `== zero`.
   max (Max uses1) use2
     | use2 == zero = Max uses1
     | otherwise = Max $ uses1 ++ [use2]
@@ -332,7 +372,6 @@ instance MaxPlus (Use iter) where
   plus (Max uses1) (Max uses2) = Max uses' where
     uses' = concat $ flip map uses1 (\use1 ->
       flip map uses2 \use2 -> plus use1 use2)
-      -- TODO: Detect overlapping uses here?
   plus u1@(Max _) use2
     | use2 == zero = u1
     | otherwise = plus u1 (Max [use2])
@@ -341,7 +380,7 @@ instance MaxPlus (Use iter) where
     | otherwise = plus (Max [use1]) u2
   plus (Sum uses1) (Sum uses2) = Sum $ uses1 ++ uses2
   plus (Sum uses1) use2
-    -- TODO Is there a way to deduplicate these zero checks?
+    -- TODO(code cleanliness) Is there a way to deduplicate these zero checks?
     | use2 == zero = Sum uses1
     | otherwise = Sum $ uses1 ++ [use2]
   plus use1 (Sum uses2)
@@ -391,8 +430,8 @@ iterate injective ib (At expr use) = At expr' use' where
     flip runState injective $ iterateIxExpr ib expr
   use' = iterate injective' ib use
 iterate injective ib (Max uses) =
-  -- TODO This can be an underapproximation if the upstream structure
-  -- becomes expressive enough, but it's OK for now.  For example,
+  -- TODO(correctness) This can be an underapproximation if the upstream
+  -- structure becomes expressive enough, but it's OK for now.  For example,
   -- consider the access pattern
   --   for i.
   --     if ...
@@ -418,7 +457,7 @@ iterate injective ib (Max uses) =
   --
   -- In fact, that currently always happens.  All distinct functions
   -- that produce indices of type n that Access can currently
-  -- represent are either `Unknown` or have disjoint ranges, so this
+  -- represent are either `Deterministic` or have disjoint ranges, so this
   -- kind of underapproximation cannot yet lead to a mistaken
   -- assertion that some binding is safe to inline.
   foldl' max zero $ map (iterate injective ib) uses
@@ -445,9 +484,9 @@ iterateIxExpr ib (Product elts) =
   Product <$> mapM (iterateIxExpr ib) elts
 iterateIxExpr ib (Inject i elt) =
   Inject i <$> iterateIxExpr ib elt
-iterateIxExpr ib (Unknown names) =
+iterateIxExpr ib (Deterministic names) =
   case hoist ib (ListE names) of
-    HoistSuccess (ListE names') -> return $ Unknown names'
+    HoistSuccess (ListE names') -> return $ Deterministic names'
     -- If we hit a reference to an unknown function of the binder, we
     -- must assume it can hit any data index (which we
     -- over-approximate as it hitting all of them); and we also do not
@@ -530,11 +569,11 @@ exprToSubset (Product exprs) x = Prod (map (flip exprToSubset ()) exprs) x
 exprToSubset (Inject i expr) x =
   Inj Nothing $ M.singleton i $ exprToSubset expr x
 exprToSubset IxAll   x = SAll x
--- An Unknown that survies to this point should only reference
+-- A Deterministic that survies to this point should only reference
 -- iteration-space variables that are scoped over the entire inlining,
 -- like the `Var` constructor.  We overapproximate with `SAll` for the
 -- same reason.
-exprToSubset (Unknown _) x = SAll x
+exprToSubset (Deterministic _) x = SAll x
 
 instance MaxPlus CollapsedUse where
   zero = CConst zero
@@ -585,9 +624,8 @@ smerge merge (Inj a1 elts1) (Inj a2 elts2) = Inj a' elts' where
 smerge merge (Prod elts1 a1) (Prod elts2 a2) = Prod elts' a' where
   -- We approximate the max or the sum of two rectangles as the
   -- smallest rectangle that contains them.
-  -- TODO This needlessly loses precision if one of the aruments is
-  -- actually a zero use; but we hope they are all normalized away
-  -- upstream.
+  -- TODO(precision) This needlessly loses precision if one of the aruments is
+  -- actually a zero use; but we hope they are all normalized away upstream.
   elts' = zipWith max elts1 elts2
   -- The payload of that rectangle is the requested merge if the
   -- arguments intersect, but always the max if they do not.
@@ -615,7 +653,7 @@ intersect (Prod _ _) (Inj _ _) = error "Impossible: index type both a sum and a 
 
 -- === Overapproximating a CollapsedUse with a final Count ===
 
-type IndexInfo = (Int, Count)  -- The int is maximum number of indexed dimensions
+type DynUseInfo = (Int, Count)  -- The int is maximum number of indexed dimensions
 
 instance MaxPlus Int where
   zero = 0
@@ -628,7 +666,7 @@ instance (MaxPlus a, MaxPlus b) => MaxPlus (a, b) where
   (a1, b1) `plus` (a2, b2) = (a1 `plus` a2, b1 `plus` b2)
 
 class ApproxConst a where
-  approxConst :: a -> IndexInfo
+  approxConst :: a -> DynUseInfo
 
 instance ApproxConst CollapsedUse where
   approxConst (CConst ct) = (0, ct)
@@ -637,7 +675,7 @@ instance ApproxConst CollapsedUse where
 instance ApproxConst a => ApproxConst (Subset a) where
   approxConst (SAll use) = approxConst use
   approxConst (Inj (Just all_use) uses) =
-    -- TODO Short-circuit if the all_use is heavy enough
+    -- TODO(optimization) Short-circuit if the all_use is heavy enough
     approxConst all_use `plus` approxConst uses
   approxConst (Inj Nothing uses) = approxConst uses
   approxConst (Prod _ use) = approxConst use
@@ -645,8 +683,44 @@ instance ApproxConst a => ApproxConst (Subset a) where
 instance ApproxConst v => ApproxConst (M.IntMap v) where
   approxConst uses = foldl' max zero $ map approxConst $ M.elems uses
 
+-- === Usage info including static usage ===
+
+-- The `Int` is the count of static occurrences, i.e., how many times references
+-- to this binding occur in the source code.  We track this separately from the
+-- (dynamic) Access so we can control code blow-up during inlining.
+data AccessInfo n = AccessInfo Int (Access n)
+  deriving (Show)
+
+instance MaxPlus (AccessInfo n) where
+  zero = AccessInfo 0 zero
+  -- Note that, since `max` corresponds to `case`, the static count is
+  -- still added
+  (AccessInfo s1 d1) `max` (AccessInfo s2 d2) =
+    AccessInfo (s1 + s2) $ d1 `max` d2
+  (AccessInfo s1 d1) `plus` (AccessInfo s2 d2) =
+    AccessInfo (s1 + s2) $ d1 `plus` d2
+
+instance SinkableE AccessInfo where
+  sinkingProofE rename (AccessInfo n a) = AccessInfo n $ sinkingProofE rename a
+
+data UsageInfo = UsageInfo Int DynUseInfo  -- The `Int` is the static use count
+  deriving (Eq, Generic, Show)
+
+instance MaxPlus UsageInfo where
+  zero = UsageInfo 0 zero
+  -- Note that, since `max` corresponds to `case`, the static count is
+  -- still added
+  (UsageInfo s1 d1) `max` (UsageInfo s2 d2) = UsageInfo (s1 + s2) $ d1 `max` d2
+  (UsageInfo s1 d1) `plus` (UsageInfo s2 d2) = UsageInfo (s1 + s2) $ d1 `plus` d2
+
+usageInfo :: AccessInfo n -> UsageInfo
+usageInfo (AccessInfo s dyn) =
+  UsageInfo s $ approxConst $ collapse $ interp dyn
+
 -- === Notes ===
 
+-- Projection (inlining tuple-typed bindings)
+--
 -- Adding Projection is pretty easy: projections slice the reference,
 -- so have a defined order interleaved with At.
 -- - If a body is parametrically polymorphic in the reference, it's safe
@@ -667,6 +741,8 @@ instance ApproxConst v => ApproxConst (M.IntMap v) where
 --     without needing formal Max nodes?
 --   - Come to think of it, is the same thing true of At?
 
+-- Sum and Max
+--
 -- In general:
 -- - max over Sum unions the indices and does an indexwise max and emits Sum
 -- - max over Max unions the indices and does an indexwise max and emits Max
@@ -680,4 +756,126 @@ instance ApproxConst v => ApproxConst (M.IntMap v) where
 --   compute whether a given object is accessed exactly once everywhere,
 --   so as to try to inline an effectful operation.  (That said, inlining
 --   effects also requires paying attention to the order of the accesses.)
+
+-- IxAll semantics
+--
+-- IxAll can actually also mean "accessed at one unknown index".  Logically this
+-- is fine because the Access is an overapproximation.  It can arise when, e.g.,
+-- indexing by the content of a reference, since the analysis doesn't trace what
+-- values might occupy that reference.
+--
+-- Some examples may help clarify.
+--
+-- Example 1
+--   xs = for ...
+--   with_state ... \ref.
+--     xs.(get ref)
+--
+-- - The indexing is represented by `Location IxAll One`
+-- - It doesn't change when it goes above the `ref` binder
+-- - `xs` will look inlinable, which is fine because it's only accessed once.
+--   In fact, it's probably very beneficial to inline `xs` because it's only
+--   accessed at one location, but the analysis doesn't notice that.
+--
+-- Example 2
+--   xs = for ...
+--   with_state ... \ref.
+--     for i.
+--       xs.(get ref)
+--
+-- - The indexing is represented by `Location IxAll One`
+-- - Going above the `i` binder turns this into `Location IxAll Unbounded`
+--   because there is no proof that the accesses are distinct across loop
+--   iterations (and indeed they are not if the reference is not modified)
+-- - `xs` will not look inlinable, which is sound and not even too conservative
+--   because the same element may be accessed many times.
+--
+-- Example 3
+--   xs = for n. for ...
+--   with_state ... \ref.
+--     for i.
+--       xs.i.(get ref)
+--
+-- - The outer indexing is represented by `Location IxAll One`
+-- - The inner indexing is represented by `Location (Var i) (Location IxAll One)`
+-- - Going above the `i` binder turns this into `Location IxAll (Location IxAll
+--   One)`.  This is sound because there _is_ a proof that the accesses are
+--   distinct across loop iterations -- each `xs.i` subarray is accessed in at
+--   most one unknown location.
+-- - `xs` will look inlinable.
+--
+-- TODO(precision) Could add a constructor to IxExpr to model "accessed at just
+-- one unknown index", which might support trying harder to inline an array if
+-- very few of its elements are actually read.  The case to imagine is a big
+-- array whose elements have fairly uniform costs to compute, and which is
+-- accessed at just a few (potentially colliding) indices.  Then inlining
+-- duplicates work on some elements, but saves work overall.  The current
+-- analysis would, however, conservatively avoid inlining such an array because
+-- of the per-element work duplication.
+
+-- === Boring instances ===
+
+instance GenericE IxExpr where
+  type RepE IxExpr = EitherE5
+    (Name AtomNameC)
+    (ListE IxExpr)
+    (PairE (LiftE Int) IxExpr)
+    (ListE (Name AtomNameC))
+    UnitE
+  fromE = \case
+    (Var n)            -> Case0   n
+    (Product ixs)      -> Case1 $ ListE ixs
+    (Inject i ix)      -> Case2 $ PairE (LiftE i) ix
+    (Deterministic ns) -> Case3 $ ListE ns
+    IxAll              -> Case4   UnitE
+  {-# INLINE fromE #-}
+  toE = \case
+    (Case0 n) -> Var n
+    (Case1 (ListE ixs)) -> Product ixs
+    (Case2 (PairE (LiftE i) ix)) -> Inject i ix
+    (Case3 (ListE ns)) -> Deterministic ns
+    (Case4 UnitE) -> IxAll
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance HoistableE IxExpr
+instance SinkableE IxExpr
+instance SubstE Name IxExpr
+
+instance GenericE Access where
+  type RepE Access = EitherE4
+    (PairE (ListE IxExpr) (LiftE Count))
+    (ListE Access)
+    (ListE Access)
+    (Abs (NameBinder AtomNameC) Access)
+  fromE = \case
+    (Location ixs ct) -> Case0 $ PairE (ListE ixs) (LiftE ct)
+    (Any as) -> Case1 $ ListE as
+    (All as) -> Case2 $ ListE as
+    (ForEach b a) -> Case3 $ Abs b a
+  {-# INLINE fromE #-}
+  toE = \case
+    (Case0 (PairE (ListE ixs) (LiftE ct))) -> Location ixs ct
+    (Case1 (ListE as)) -> Any as
+    (Case2 (ListE as)) -> All as
+    (Case3 (Abs b a))  -> ForEach b a
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance HoistableE Access
+instance SinkableE Access
+instance SubstE Name Access
+
+instance GenericE AccessInfo where
+  type RepE AccessInfo = PairE (LiftE Int) Access
+  fromE (AccessInfo s dyn) = PairE (LiftE s) dyn
+  {-# INLINE fromE #-}
+  toE (PairE (LiftE s) dyn) = AccessInfo s dyn
+  {-# INLINE toE #-}
+
+instance HoistableE AccessInfo
+instance SubstE Name AccessInfo
+
+instance Hashable UsageInfo
+instance Store UsageInfo
 

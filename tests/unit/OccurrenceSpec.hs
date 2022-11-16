@@ -34,7 +34,7 @@ data UIxExpr =
     UVar String
   | UProduct [UIxExpr]
   | UInject Int UIxExpr
-  | UUnknown [String]
+  | UDeterministic [String]
 
 instance IsString UIxExpr where
   fromString = UVar
@@ -85,7 +85,7 @@ resolveNames'' :: UIxExpr -> ResolverM n (IxExpr n)
 resolveNames'' (UVar str) = Var <$> lookupName str
 resolveNames'' (UProduct elts) = Product <$> mapM resolveNames'' elts
 resolveNames'' (UInject i elt) = Inject i <$> resolveNames'' elt
-resolveNames'' (UUnknown names) = Unknown <$> mapM lookupName names
+resolveNames'' (UDeterministic names) = Deterministic <$> mapM lookupName names
 
 lookupName :: String -> ResolverM n (Name 'AtomNameC n)
 lookupName str = do
@@ -122,18 +122,18 @@ left = inj 0
 right :: UIxExpr -> UIxExpr
 right = inj 1
 
-unknown :: [String] -> UIxExpr
-unknown = UUnknown
+det :: [String] -> UIxExpr
+det = UDeterministic
 
 free :: [String] -> UAccessOpen -> UAccess
 free = Free
 
 -- === The actual spec ===
 
-answerC :: UAccessOpen -> IndexInfo
+answerC :: UAccessOpen -> DynUseInfo
 answerC open = answer $ closed open
 
-answer :: UAccess -> IndexInfo
+answer :: UAccess -> DynUseInfo
 answer uaccess = case resolveNames uaccess of
   (Abs _ open) -> approxConst $ collapse $ interp $ open
 
@@ -164,7 +164,7 @@ spec = do
       answerC (seq [ for "i" $ xs . left  "i"
                    , for "i" $ xs . right "i"]) `shouldBe` (1, One)
     it "unknown indexing in a loop" do
-      answerC (for "i" $ xs . unknown ["i"]) `shouldBe` (1, Unbounded)
+      answerC (for "i" $ xs . det ["i"]) `shouldBe` (1, Unbounded)
     it "loop-invariant access" do
       answerC (for "i" $ xs) `shouldBe` (0, Unbounded)
     it "2-D loop-invariant access" do
@@ -199,7 +199,7 @@ spec = do
                 ]
       answerC access `shouldBe` (1, Bounded 1)
     it "taking a 'trace' with one unknown index" do
-      answerC (for "i" $ xs . unknown ["i"] . "i") `shouldBe` (2, One)
+      answerC (for "i" $ xs . det ["i"] . "i") `shouldBe` (2, One)
     it "a tuple-typed index" do
       answerC (for "i" $ for "j" $ xs . tup ["i", "j"]) `shouldBe` (1, One)
     it "a tuple-typed index with an Either inside" do
@@ -233,7 +233,7 @@ spec = do
     it "accessing unknown free index" do
       -- Again, the real answer is (0, One), but the analysis doesn't
       -- know that yet.
-      answer (free ["i"] $ xs . (unknown ["i"])) `shouldBe` (1, One)
+      answer (free ["i"] $ xs . (det ["i"])) `shouldBe` (1, One)
 
 -- === TODO Property-based testing ===
 --
