@@ -14,6 +14,7 @@ import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
 import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec.Debug
 
 import Err
 import LabeledItems
@@ -32,6 +33,11 @@ mustParseit :: Text -> Parser a -> a
 mustParseit s p  = case parseit s p of
   Success x -> x
   Failure e -> error $ "This shouldn't happen:\n" ++ pprint e
+
+debug :: (Show a) => String -> Parser a -> Parser a
+debug lbl action = do
+  ctx <- ask
+  lift $ dbg lbl $ runReaderT action ctx
 
 -- === Lexemes ===
 
@@ -141,7 +147,7 @@ doubleLit = lexeme $
 knownSymStrs :: HS.HashSet String
 knownSymStrs = HS.fromList
   [ ".", ":", "::", "!", "=", "-", "+", "||", "&&"
-  , "$", "&", "&>", "|", ",", ",>", "+=", ":="
+  , "$", "&", "&>", "|", ",", ",>", "<-", "+=", ":="
   , "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>"
   , "..", "<..", "..<", "..<", "<..<", "?", "#", "##", "#?", "#&", "#|", "@"]
 

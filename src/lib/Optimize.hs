@@ -8,7 +8,7 @@
 
 module Optimize
   ( earlyOptimize, optimize
-  , peepholeOp, hoistLoopInvariantIxDest, dceIxDestBlock
+  , peepholeOp, hoistLoopInvariantDest, dceDestBlock
   ) where
 
 import Data.Functor
@@ -28,10 +28,10 @@ import Builder
 import QueryType
 import Util (iota)
 
-earlyOptimize :: EnvReader m => Block n -> m n (Block n)
+earlyOptimize :: EnvReader m => SBlock n -> m n (SBlock n)
 earlyOptimize = unrollTrivialLoops
 
-optimize :: EnvReader m => Block n -> m n (Block n)
+optimize :: EnvReader m => SBlock n -> m n (SBlock n)
 optimize = dceBlock     -- Clean up user code
        >=> unrollLoops
        >=> dceBlock     -- Clean up peephole-optimized code after unrolling
@@ -41,7 +41,7 @@ optimize = dceBlock     -- Clean up user code
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
 
 data UTLS n = UTLS
-type UTLM = GenericTraverserM UTLS
+type UTLM = GenericTraverserM SimpIR UnitB UTLS
 instance SinkableE UTLS where
   sinkingProofE _ UTLS = UTLS
 instance HoistableState UTLS where
@@ -50,17 +50,17 @@ instance HoistableState UTLS where
 
 data IndexSetKind n
   = EmptyIxSet
-  | SingletonIxSet (Atom n)
+  | SingletonIxSet (SAtom n)
   | UnknownIxSet
 
-isTrivialIndex :: Type i -> UTLM i o (IndexSetKind o)
+isTrivialIndex :: Type SimpIR i -> UTLM i o (IndexSetKind o)
 isTrivialIndex = \case
   TC (Fin (NatVal n)) | n <= 0 -> return EmptyIxSet
   TC (Fin (NatVal n)) | n == 1 ->
     return $ SingletonIxSet $ Con $ Newtype (FinConst n) (NatVal 0)
   _ -> return UnknownIxSet
 
-instance GenericTraverser UTLS where
+instance GenericTraverser SimpIR UnitB UTLS where
   traverseExpr expr = case expr of
     Hof (For _ ixDict (Lam (LamExpr b body@(Block _ decls a)))) -> do
       isTrivialIndex (binderType b) >>= \case
@@ -76,12 +76,12 @@ instance GenericTraverser UTLS where
             emitOp $ ThrowError (sink resTy')
     _ -> traverseExprDefault expr
 
-unrollTrivialLoops :: EnvReader m => Block n -> m n (Block n)
+unrollTrivialLoops :: EnvReader m => SBlock n -> m n (SBlock n)
 unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE b
 
 -- === Peephole optimizations ===
 
-peepholeOp :: Op o -> EnvReaderM o (Either (Atom o) (Op o))
+peepholeOp :: Op SimpIR o -> EnvReaderM o (Either (SAtom o) (Op SimpIR o))
 peepholeOp op = case op of
   CastOp (BaseTy (Scalar sTy)) (Con (Lit l)) -> return $ case sTy of
     -- TODO: Support all casts.
@@ -176,7 +176,7 @@ peepholeOp op = case op of
       LessEqual    -> (<=)
       GreaterEqual -> (>=)
 
-peepholeExpr :: Expr o -> EnvReaderM o (Either (Atom o) (Expr o))
+peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
 peepholeExpr expr = case expr of
   Op op -> fmap Op <$> peepholeOp op
   TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
@@ -195,11 +195,11 @@ peepholeExpr expr = case expr of
 
 -- === Loop unrolling ===
 
-unrollLoops :: EnvReader m => Block n -> m n (Block n)
+unrollLoops :: EnvReader m => SBlock n -> m n (SBlock n)
 unrollLoops b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
 
 newtype ULS n = ULS Int deriving Show
-type ULM = GenericTraverserM ULS
+type ULM = GenericTraverserM SimpIR UnitB ULS
 instance SinkableE ULS where
   sinkingProofE _ (ULS c) = ULS c
 instance HoistableState ULS where
@@ -208,7 +208,7 @@ instance HoistableState ULS where
 
 -- TODO: Refine the cost accounting so that operations that will become
 -- constant-foldable after inlining don't count towards it.
-instance GenericTraverser ULS where
+instance GenericTraverser SimpIR UnitB ULS where
   traverseInlineExpr expr = case expr of
     Hof (For Fwd ixDict body@(Lam (LamExpr b _))) -> do
       case binderType b of
@@ -247,22 +247,21 @@ instance GenericTraverser ULS where
         put oldCost $> (ans, newCost)
       {-# INLINE withLocalAccounting #-}
 
-emitSubstBlock :: Emits o => Block i -> ULM i o (Atom o)
+emitSubstBlock :: Emits o => SBlock i -> ULM i o (SAtom o)
 emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 
 -- === Loop invariant code motion ===
 
 -- TODO: Resolve import cycle with Lower
-type IxDestBlock = Abs (Nest Decl) (Abs Binder Block)
+type DestBlock = Abs (Binder SimpIR) SBlock
 
-hoistLoopInvariantIxDest :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
-hoistLoopInvariantIxDest (Abs ixs (Abs (db:>dTy) body)) =
-  liftM fst $ liftGenericTraverserM LICMS $
-    buildScoped $ traverseDeclNest ixs do
-      dTy' <- traverseGenericE dTy
-      buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+hoistLoopInvariantDest :: EnvReader m => DestBlock n -> m n (DestBlock n)
+hoistLoopInvariantDest (Abs (db:>dTy) body) =
+  liftM fst $ liftGenericTraverserM LICMS do
+    dTy' <- traverseGenericE dTy
+    buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
 
-hoistLoopInvariant :: EnvReader m => Block n -> m n (Block n)
+hoistLoopInvariant :: EnvReader m => SBlock n -> m n (SBlock n)
 hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
 
 data LICMS (n::S) = LICMS
@@ -271,7 +270,7 @@ instance SinkableE LICMS where
 instance HoistableState LICMS where
   hoistState _ _ LICMS = LICMS
 
-instance GenericTraverser LICMS where
+instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
     Hof (Seq dir ix (ProdVal dests) (Lam (LamExpr b body))) -> do
       ix' <- traverseAtom ix
@@ -304,9 +303,9 @@ instance GenericTraverser LICMS where
       return $ Hof $ For dir ix' body'
     expr -> traverseExprDefault expr
     where
-      rebuildBody :: LamBinder i i' -> Block i'
-                  -> AtomNameBinder n l -> Type n -> Abs (Nest Decl) Atom l
-                  -> GenericTraverserM LICMS i n (Atom n)
+      rebuildBody :: LamBinder SimpIR i i' -> SBlock i'
+                  -> AtomNameBinder n l -> SType n -> Abs (Nest SDecl) SAtom l
+                  -> GenericTraverserM SimpIR UnitB LICMS i n (SAtom n)
       rebuildBody b body@(Block ann _ _) lnb lbTy bodyAbs = do
         Distinct <- getDistinct
         refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
@@ -318,16 +317,16 @@ instance GenericTraverser LICMS where
             return $ Lam $ LamExpr b'' $ Block ann' decls ans
 
 seqLICM :: Int
-        -> RNest Decl n1 n2      -- hoisted decls
-        -> [AtomName n2]         -- hoisted dests
-        -> AtomNameBinder n2 n3  -- loop binder
-        -> RNest Decl n3 n4      -- loop-dependent decls
-        -> Nest Decl m1 m2       -- decls remaining to process
-        -> Atom m2               -- loop result
-        -> SubstReaderT AtomSubstVal EnvReaderM m1 n4
-             (Abs (Nest Decl)
-                (PairE (ListE AtomName)
-                       (Abs AtomNameBinder (Abs (Nest Decl) Atom))) n1)
+        -> RNest SDecl n1 n2      -- hoisted decls
+        -> [SAtomName n2]         -- hoisted dests
+        -> AtomNameBinder n2 n3   -- loop binder
+        -> RNest SDecl n3 n4      -- loop-dependent decls
+        -> Nest SDecl m1 m2       -- decls remaining to process
+        -> SAtom m2               -- loop result
+        -> SubstReaderT (AtomSubstVal SimpIR) EnvReaderM m1 n4
+             (Abs (Nest SDecl)
+                (PairE (ListE SAtomName)
+                       (Abs AtomNameBinder (Abs (Nest SDecl) SAtom))) n1)
 seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
   Empty -> do
     ans' <- substM ans
@@ -367,12 +366,11 @@ instance HoistableState FV where
 
 type DCEM = StateT1 FV EnvReaderM
 
-dceIxDestBlock :: EnvReader m => IxDestBlock n -> m n (IxDestBlock n)
-dceIxDestBlock idb = liftEnvReaderM $
-  refreshAbs idb \ixs db ->
-    refreshAbs db \d b -> Abs ixs . Abs d <$> dceBlock b
+dceDestBlock :: EnvReader m => DestBlock n -> m n (DestBlock n)
+dceDestBlock idb = liftEnvReaderM $
+  refreshAbs idb \d b -> Abs d <$> dceBlock b
 
-dceBlock :: EnvReader m => Block n -> m n (Block n)
+dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty
 
 class HasDCE (e::E) where
@@ -385,7 +383,7 @@ class HasDCE (e::E) where
 instance Color c => HasDCE (Name c) where
   dce n = modify (<> FV (freeVarsE n)) $> n
 
-instance HasDCE Block where
+instance HasDCE SBlock where
   dce (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> dce ans
     (NoBlockAnn      , _    ) -> error "should be unreachable"
@@ -432,10 +430,10 @@ hoistUsingCachedFVs b e = do
     HoistFailure err -> HoistFailure err
 
 data ElimResult n where
-  ElimSuccess :: Abs (Nest Decl) Atom n -> ElimResult n
-  ElimFailure :: Decl n l -> Abs (Nest Decl) Atom l -> ElimResult n
+  ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
+  ElimFailure :: SDecl n l -> Abs (Nest SDecl) SAtom l -> ElimResult n
 
-dceNest :: Nest Decl n l -> Atom l -> DCEM n (Abs (Nest Decl) Atom n)
+dceNest :: Nest SDecl n l -> SAtom l -> DCEM n (Abs (Nest SDecl) SAtom n)
 dceNest decls ans = case decls of
   Empty -> Abs Empty <$> dce ans
   Nest b@(Let _ decl) bs -> do
@@ -462,22 +460,22 @@ dceNest decls ans = case decls of
 -- The generic instances
 
 instance (HasDCE e1, HasDCE e2) => HasDCE (ExtLabeledItemsE e1 e2)
-instance HasDCE Expr
-instance HasDCE Atom
-instance HasDCE LamExpr
-instance HasDCE TabLamExpr
-instance HasDCE PiType
-instance HasDCE TabPiType
-instance HasDCE DepPairType
+instance HasDCE SExpr
+instance HasDCE SAtom
+instance HasDCE (LamExpr     SimpIR)
+instance HasDCE (TabLamExpr  SimpIR)
+instance HasDCE (PiType      SimpIR)
+instance HasDCE (TabPiType   SimpIR)
+instance HasDCE (DepPairType SimpIR)
 instance HasDCE EffectRow
 instance HasDCE Effect
 instance HasDCE EffectOpType
-instance HasDCE DictExpr
-instance HasDCE DictType
-instance HasDCE FieldRowElems
-instance HasDCE FieldRowElem
-instance HasDCE DataDefParams
-instance HasDCE DeclBinding
+instance HasDCE (DictExpr      SimpIR)
+instance HasDCE (DictType      SimpIR)
+instance HasDCE (FieldRowElems SimpIR)
+instance HasDCE (FieldRowElem  SimpIR)
+instance HasDCE (DataDefParams SimpIR)
+instance HasDCE (DeclBinding   SimpIR)
 
 -- The instances for RepE types
 

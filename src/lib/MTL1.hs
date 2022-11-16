@@ -203,6 +203,10 @@ instance HoistableState (LiftE a) where
   hoistState _ _ (LiftE x) = LiftE x
   {-# INLINE hoistState #-}
 
+instance HoistableState UnitE where
+  hoistState _ _ UnitE = UnitE
+  {-# INLINE hoistState #-}
+
 -------------------- ScopedT1 --------------------
 
 newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =

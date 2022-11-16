@@ -17,6 +17,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
@@ -25,75 +26,173 @@ import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import Data.Word
 import Data.Maybe
 import Data.Functor
+import Data.Foldable (toList)
 import Data.Hashable
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
+import qualified Unsafe.Coerce as TrulyUnsafe
 
 import GHC.Stack
 import GHC.Generics (Generic (..))
+import GHC.Exts (Constraint)
 import Data.Store (Store (..))
 import Foreign.Ptr
 
 import Name
 import Err
 import LabeledItems
-import Util (FileHash, onFst)
+import Util (FileHash, onFst, SnocList (..), toSnocList)
 
 import Types.Primitives
 import Types.Source
 import Types.Imp
 
+-- === IR variants ===
+
+data IR =
+   -- CoreIR is the IR after inference and before simplification
+   CoreIR
+ | SimpToImpIR  -- only used during the Simp-to-Imp translation
+ | AnyIR        -- used for deserialization only
+
+data IRPredicate =
+   Is IR
+ -- TODO: find a way to make this safe and derive it automatically. For now, we
+ -- assert it manually for the valid cases we know about.
+ | IsSubsetOf IR
+
+type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
+type family Sat' (r::IR) (p::IRPredicate) where
+  Sat' r (Is r)                              = True
+  Sat' CoreIR (IsSubsetOf SimpToImpIR)       = True
+  Sat' _ _ = False
+
+data ReifiedSat (r::IR) (p::IRPredicate) where
+  ReifiedSat :: Sat r p => ReifiedSat r p
+
+newtype WrapWithSat (r::IR) (p::IRPredicate) (a :: *) =
+  WrapWithSat { fromWrapWithSat :: Sat r p => a }
+
+fabricateReifiedSat :: ReifiedSat r p
+fabricateReifiedSat = undefined
+
+instance Generic (ReifiedSat r p) where
+  type Rep (ReifiedSat r p) = Rep ()
+  from _ = from ()
+  {-# INLINE from #-}
+  to _ = fabricateReifiedSat
+  {-# INLINE to #-}
+
+deriving instance Eq (ReifiedSat r p)
+instance Hashable (ReifiedSat r p)
+instance Store (ReifiedSat r p)
+
+-- SimpIR is the IR after simplification
+-- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
+-- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
+-- thing has SimpIR vibes".
+type SimpIR = CoreIR
+
+type CAtom  = Atom CoreIR
+type CType  = Type CoreIR
+type CExpr  = Expr CoreIR
+type CBlock = Block CoreIR
+type CDecl  = Decl  CoreIR
+type CDecls = Decls CoreIR
+type CAtomSubstVal = AtomSubstVal CoreIR
+type CAtomName  = AtomName CoreIR
+
+type SAtom  = Atom SimpIR
+type SType  = Type SimpIR
+type SExpr  = Expr SimpIR
+type SBlock = Block SimpIR
+type SDecl  = Decl  SimpIR
+type SDecls = Decls SimpIR
+type SAtomSubstVal = AtomSubstVal SimpIR
+type SAtomName  = AtomName SimpIR
+
+-- XXX: the intention is that we won't have to use these much
+unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
+unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
+
+-- XXX: the intention is that we won't have to use these much
+unsafeCoerceFromAnyIR :: forall (r::IR) (e::IR->E) (n::S). e AnyIR n -> e r n
+unsafeCoerceFromAnyIR = unsafeCoerceIRE
+
+unsafeCoerceIRB :: forall (r'::IR) (r::IR) (b::IR->B) (n::S) (l::S) . b r n l -> b r' n l
+unsafeCoerceIRB = TrulyUnsafe.unsafeCoerce
+
+class CovariantInIR (e::IR->E)
+-- For now we're "implementing" this instances manually as needed because we
+-- don't actually need very many of them, but we should figure out a more
+-- uniform way to do it.
+instance CovariantInIR NaryLamExpr
+instance CovariantInIR Atom
+instance CovariantInIR Block
+
+-- This is safe, assuming the constraints have been implemented correctly.
+injectIRE :: (CovariantInIR e, r `Sat` IsSubsetOf r') => e r n -> e r' n
+injectIRE = unsafeCoerceIRE
+
 -- === core IR ===
 
-data Atom (n::S) =
-   Var (AtomName n)
- | Lam (LamExpr n)
- | Pi  (PiType  n)
- | TabLam (TabLamExpr n)
- | TabPi  (TabPiType n)
- | DepPairTy (DepPairType n)
- | DepPair   (Atom n) (Atom n) (DepPairType n)
- | TypeCon SourceName (DataDefName n) (DataDefParams n)
- | DictCon (DictExpr n)
- | DictTy  (DictType n)
- | LabeledRow (FieldRowElems n)
- | RecordTy  (FieldRowElems n)
- | VariantTy (ExtLabeledItems (Type n) (AtomName n))
- | Con (Con n)
- | TC  (TC  n)
- | Eff (EffectRow n)
-   -- only used within Simplify
- | ACase (Atom n) [AltP Atom n] (Type n)
+data Atom (r::IR) (n::S) where
+ Var        :: AtomName r n    -> Atom r n
+ Lam        :: LamExpr r n     -> Atom r n
+ Pi         :: PiType  r n     -> Atom r n
+ TabLam     :: TabLamExpr r n  -> Atom r n
+ TabPi      :: TabPiType r n   -> Atom r n
+ DepPairTy  :: DepPairType r n -> Atom r n
+ DepPair    :: Atom r n -> Atom r n -> DepPairType r n          -> Atom r n
+ TypeCon    :: SourceName -> DataDefName n -> DataDefParams r n -> Atom r n
+ DictCon    :: DictExpr r n                              -> Atom r n
+ DictTy     :: DictType r n                              -> Atom r n
+ LabeledRow :: FieldRowElems r n                         -> Atom r n
+ RecordTy   :: FieldRowElems r n                         -> Atom r n
+ VariantTy  :: ExtLabeledItems (Type r n) (AtomName r n) -> Atom r n
+ Con        :: Con r n -> Atom r n
+ TC         :: TC  r n -> Atom r n
+ Eff        :: EffectRow n -> Atom r n
+ -- only used within Simplify
+ ACase ::  Atom r n -> [AltP r (Atom r) n] -> Type r n -> Atom r n
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
- | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
- | BoxedRef (Abs (NonDepNest BoxPtr) Atom n)
- -- access a nested member of a binder
+ DepPairRef ::  Atom r n -> Abs (Binder r) (Atom r) n -> DepPairType r n -> Atom r n
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
  -- here may also appear in the type of the atom. (We maintain this
  -- invariant during substitution and in Builder.hs.)
- | ProjectElt (NE.NonEmpty Projection) (AtomName n)
+ ProjectElt :: NE.NonEmpty Projection -> AtomName r n     -> Atom r n
+ BoxedRef   :: r `Sat` Is SimpToImpIR
+            => Abs (NonDepNest r (BoxPtr r)) (Atom r) n   -> Atom r n
+
+deriving instance Show (Atom r n)
+deriving via WrapE (Atom r) n instance Generic (Atom r n)
+
+data Expr r n =
+   App (Atom r n) (NonEmpty (Atom r n))
+ | TabApp (Atom r n) (NonEmpty (Atom r n)) -- TODO: put this in PrimOp?
+ | Case (Atom r n) [Alt r n] (Type r n) (EffectRow n)
+ | Atom (Atom r n)
+ | Op  (Op  r n)
+ | Hof (Hof r n)
+ | Handle (HandlerName n) [Atom r n] (Block r n)
    deriving (Show, Generic)
 
-data Expr n =
-   App (Atom n) (NonEmpty (Atom n))
- | TabApp (Atom n) (NonEmpty (Atom n)) -- TODO: put this in PrimOp?
- | Case (Atom n) [Alt n] (Type n) (EffectRow n)
- | Atom (Atom n)
- | Op  (Op  n)
- | Hof (Hof n)
- | Handle (HandlerName n) [Atom n] (Block n)
-   deriving (Show, Generic)
-
-data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
+data DeclBinding r n = DeclBinding LetAnn (Type r n) (Expr r n)
      deriving (Show, Generic)
-data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
+data Decl (r::IR) (n::S) (l::S) = Let (AtomNameBinder n l) (DeclBinding r n)
      deriving (Show, Generic)
-type Decls = Nest Decl
+type Decls r = Nest (Decl r)
 
-type AtomName     = Name AtomNameC
+-- TODO: make this a newtype with an unsafe constructor The idea is that the `r`
+-- parameter will play a role a bit like the `c` parameter in names: if you have
+-- an `AtomName r n` and you look up its definition in the `Env`, you're sure to
+-- get an `AtomBinding r n`.
+type AtomName (r::IR) = Name AtomNameC
+type AtomNameBinder   = NameBinder AtomNameC
+
 type ClassName    = Name ClassNameC
 type DataDefName  = Name DataDefNameC
 type EffectName   = Name EffectNameC
@@ -103,43 +202,44 @@ type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
 type PtrName      = Name PtrNameC
+type SpecDictName = Name SpecializedDictNameC
 type FunObjCodeName = Name FunObjCodeNameC
-
-type AtomNameBinder = NameBinder AtomNameC
 
 type Effect    = EffectP    Name
 type EffectRow = EffectRowP Name
-type BaseMonoid n = BaseMonoidP (Atom n)
+type BaseMonoid r n = BaseMonoidP (Atom r n)
 
 type AtomBinderP = BinderP AtomNameC
-type Binder = AtomBinderP Type
-type AltP (e::E) = Abs Binder e :: E
-type Alt = AltP Block           :: E
+type Binder r = AtomBinderP (Type r) :: B
+type AltP (r::IR) (e::E) = Abs (Binder r) e :: E
+type Alt r = AltP r (Block r) :: E
 
 -- The additional invariant enforced by this newtype is that the list should
 -- never contain empty StaticFields members, nor StaticFields in two consecutive
 -- positions.
-newtype FieldRowElems (n::S) = UnsafeFieldRowElems { fromFieldRowElems :: [FieldRowElem n] }
-                               deriving (Show, Generic)
+newtype FieldRowElems (r::IR) (n::S) = UnsafeFieldRowElems { fromFieldRowElems :: [FieldRowElem r n] }
+                                       deriving (Show, Generic)
 
-data FieldRowElem (n::S)
-  = StaticFields (LabeledItems (Type n))
-  | DynField     (AtomName n) (Type n)
-  | DynFields    (AtomName n)
+data FieldRowElem (r::IR) (n::S)
+  = StaticFields (LabeledItems (Type r n))
+  | DynField     (AtomName r n) (Type r n)
+  | DynFields    (AtomName r n)
   deriving (Show, Generic)
 
 data DataDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Env
-  DataDef :: SourceName -> Nest PiBinder n l -> [DataConDef l] -> DataDef n
+  DataDef :: SourceName -> Nest (RolePiBinder CoreIR) n l -> [DataConDef l] -> DataDef n
 
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
   -- list of projection indices that recovers elements from the representation.
-  DataConDef SourceName (Type n) [[Projection]]
+  DataConDef SourceName (CType n) [[Projection]]
   deriving (Show, Generic)
 
-newtype DataDefParams n = DataDefParams [(Arrow, Atom n)]
+data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
+
+newtype DataDefParams r n = DataDefParams [(Arrow, Atom r n)]
   deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
@@ -149,63 +249,66 @@ newtype DataDefParams n = DataDefParams [(Arrow, Atom n)]
 -- If the decls are empty we can skip the type annotation, because then we can
 -- cheaply query the result, and, more importantly, there's no risk of having a
 -- type that mentions local variables.
-data Block n where
-  Block :: BlockAnn n l -> Nest Decl n l -> Atom l -> Block n
+data Block (r::IR) (n::S) where
+  Block :: BlockAnn r n l -> Nest (Decl r) n l -> Atom r l -> Block r n
 
-data BlockAnn n l where
-  BlockAnn :: Type n -> EffectRow n -> BlockAnn n l
-  NoBlockAnn :: BlockAnn n n
+data BlockAnn r n l where
+  BlockAnn :: Type r n -> EffectRow n -> BlockAnn r n l
+  NoBlockAnn :: BlockAnn r n n
 
-data LamBinding (n::S) = LamBinding Arrow (Type n)
+data LamBinding (r::IR) (n::S) = LamBinding Arrow (Type r n)
   deriving (Show, Generic)
 
-data LamBinder (n::S) (l::S) =
-  LamBinder (NameBinder AtomNameC n l) (Type n) Arrow (EffectRow l)
+data LamBinder (r::IR) (n::S) (l::S) =
+  LamBinder (AtomNameBinder n l) (Type r n) Arrow (EffectRow l)
   deriving (Show, Generic)
 
-data LamExpr (n::S) where
-  LamExpr :: LamBinder n l -> Block l -> LamExpr n
+data LamExpr (r::IR) (n::S) where
+  LamExpr :: LamBinder r n l -> Block r l -> LamExpr r n
 
 type IxDict = Atom
 
-data IxType (n::S) =
-  IxType { ixTypeType :: Type n
-         , ixTypeDict :: IxDict n }
+data IxMethod = Size | Ordinal | UnsafeFromOrdinal
+     deriving (Show, Generic, Enum, Bounded, Eq)
+
+data IxType (r::IR) (n::S) =
+  IxType { ixTypeType :: Type r n
+         , ixTypeDict :: IxDict r n }
   deriving (Show, Generic)
 
-type IxBinder = BinderP AtomNameC IxType
+type IxBinder r = BinderP AtomNameC (IxType r)
 
-data TabLamExpr (n::S) where
-  TabLamExpr :: IxBinder n l -> Block l -> TabLamExpr n
+data TabLamExpr (r::IR) (n::S) where
+  TabLamExpr :: IxBinder r n l -> Block r l -> TabLamExpr r n
 
-data TabPiType (n::S) where
-  TabPiType :: IxBinder n l -> Type l -> TabPiType n
+data TabPiType (r::IR) (n::S) where
+  TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
 
 -- TODO: sometimes I wish we'd written these this way instead:
 --   data NaryLamExpr (n::S) where
 --     UnaryLamExpr :: LamExpr n -> NaryLamExpr n
 --     NaryLamExpr :: Binder n l -> NaryLamExpr l -> NaryLamExpr n
 -- maybe we should at least make a pattern so we can use it either way.
-data NaryLamExpr (n::S) where
-  NaryLamExpr :: NonEmptyNest Binder n l -> EffectRow l -> Block l
-              -> NaryLamExpr n
+data NaryLamExpr (r::IR) (n::S) where
+  NaryLamExpr :: NonEmptyNest (Binder r) n l -> EffectRow l -> Block r l
+              -> NaryLamExpr r n
 
-data NaryPiType (n::S) where
-  NaryPiType :: NonEmptyNest PiBinder n l -> EffectRow l -> Type l
-             -> NaryPiType n
+data NaryPiType (r::IR) (n::S) where
+  NaryPiType :: NonEmptyNest (PiBinder r) n l -> EffectRow l -> Type r l
+             -> NaryPiType r n
 
-data PiBinding (n::S) = PiBinding Arrow (Type n)
+data PiBinding (r::IR) (n::S) = PiBinding Arrow (Type r n)
   deriving (Show, Generic)
 
-data PiBinder (n::S) (l::S) =
-  PiBinder (NameBinder AtomNameC n l) (Type n) Arrow
+data PiBinder (r::IR) (n::S) (l::S) =
+  PiBinder (AtomNameBinder n l) (Type r n) Arrow
   deriving (Show, Generic)
 
-data PiType  (n::S) where
-  PiType :: PiBinder n l -> EffectRow l -> Type l -> PiType n
+data PiType (r::IR) (n::S) where
+  PiType :: PiBinder r n l -> EffectRow l -> Type r l -> PiType r n
 
-data DepPairType (n::S) where
-  DepPairType :: Binder n l -> Type  l -> DepPairType n
+data DepPairType (r::IR) (n::S) where
+  DepPairType :: Binder r n l -> Type r l -> DepPairType r n
 
 data Projection
   = UnwrapCompoundNewtype  -- Unwrap TypeCon, record or variant
@@ -216,13 +319,14 @@ data Projection
 type Val  = Atom
 type Type = Atom
 type Kind = Type
+type Dict = Atom
 
-type TC  n = PrimTC  (Atom n)
-type Con n = PrimCon (Atom n)
-type Op  n = PrimOp  (Atom n)
-type Hof n = PrimHof (Atom n)
+type TC  r n = PrimTC  (Atom r n)
+type Con r n = PrimCon (Atom r n)
+type Op  r n = PrimOp  (Atom r n)
+type Hof r n = PrimHof (Atom r n)
 
-type AtomSubstVal = SubstVal AtomNameC Atom :: V
+type AtomSubstVal r = SubstVal AtomNameC (Atom r) :: V
 
 data EffectBinder n l where
   EffectBinder :: EffectRow n -> EffectBinder n n
@@ -232,69 +336,80 @@ instance GenericB EffectBinder where
   fromB (EffectBinder effs) = LiftB effs
   toB   (LiftB effs) = EffectBinder effs
 
-data BoxPtr n = BoxPtr (Atom n) (Block n)  -- ptrptr, size
-                deriving (Show, Generic)
+data BoxPtr (r::IR) (n::S) = BoxPtr (Atom r n) (Block r n)  -- ptrptr, size
+                             deriving (Show, Generic)
 
 -- A nest where the annotation of a binder cannot depend on the binders
 -- introduced before it. You can think of it as introducing a bunch of
 -- names into the scope in parallel, but since safer names only reasons
 -- about sequential scope extensions, we encode it differently.
-data NonDepNest ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
-                          deriving (Generic)
+data NonDepNest r ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
+                            deriving (Generic)
 
 -- === type classes ===
 
 data SuperclassBinders n l =
   SuperclassBinders
     { superclassBinders :: Nest AtomNameBinder n l
-    , superclassTypes   :: [Type n] }
+    , superclassTypes   :: [CType n] }
   deriving (Show, Generic)
 
 data ClassDef (n::S) where
   ClassDef
     :: SourceName
-    -> [SourceName]              -- method source names
-    -> Nest Binder n1 n2         -- parameters
-    ->   SuperclassBinders n2 n3 -- superclasses
-    ->   [MethodType n3]         -- method types
+    -> [SourceName]                       -- method source names
+    -> Nest (RolePiBinder CoreIR) n1 n2   -- parameters
+    ->   SuperclassBinders n2 n3          -- superclasses
+    ->   [MethodType n3]                  -- method types
     -> ClassDef n1
+
+data RolePiBinder r n l = RolePiBinder (AtomNameBinder n l) (Type r n) Arrow ParamRole
+     deriving (Show, Generic)
 
 data InstanceDef (n::S) where
   InstanceDef
     :: ClassName n1
-    -> Nest PiBinder n1 n2 -- parameters (types and dictionaries)
-    ->   [Type n2]         -- class parameters
+    -> Nest (RolePiBinder CoreIR) n1 n2 -- parameters (types and dictionaries)
+    ->   [CType n2]                     -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
 
 data InstanceBody (n::S) =
   InstanceBody
-    [Atom n]   -- superclasses dicts
-    [Block n]  -- method definitions
+    [Atom  CoreIR n]   -- superclasses dicts
+    [Block CoreIR n]  -- method definitions
   deriving (Show, Generic)
 
 data MethodType (n::S) =
   MethodType
-    [Bool]    -- indicates explicit args
-    (Type n)  -- actual method type
+    [Bool]     -- indicates explicit args
+    (CType n)  -- actual method type
  deriving (Show, Generic)
 
-data DictType (n::S) = DictType SourceName (ClassName n) [Type n]
+data DictType (r::IR) (n::S) = DictType SourceName (ClassName n) [Type r n]
      deriving (Show, Generic)
 
-data DictExpr (n::S) =
-   InstanceDict (InstanceName n) [Atom n]
+data DictExpr (r::IR) (n::S) =
+   InstanceDict (InstanceName n) [Atom r n]
    -- We use NonEmpty because givens without args can be represented using `Var`.
- | InstantiatedGiven (Atom n) (NonEmpty (Atom n))
- | SuperclassProj (Atom n) Int  -- (could instantiate here too, but we don't need it for now)
+ | InstantiatedGiven (Atom r n) (NonEmpty (Atom r n))
+ | SuperclassProj (Atom r n) Int  -- (could instantiate here too, but we don't need it for now)
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
- | IxFin (Atom n)
+ | IxFin (Atom r n)
+   -- Used for dicts defined by top-level functions, which may take extra data parameters
+   -- TODO: consider bundling `(DictType n, [AtomName r n])` as a top-level
+   -- binding for some `Name DictNameC` to make the IR smaller.
+   -- TODO: the function atoms should be names. We could enforce that syntactically but then
+   -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
+   -- top function names.
+ | ExplicitMethods (SpecDictName n) [Atom r n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
-newtype CustomRules (n::S) = CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
-                             deriving (Semigroup, Monoid, Store)
-data AtomRules (n::S) = CustomLinearize Int SymbolicZeros (Atom n)  -- number of implicit args, linearization function
+newtype CustomRules (n::S) =
+  CustomRules { customRulesMap :: M.Map (AtomName CoreIR n) (AtomRules n) }
+  deriving (Semigroup, Monoid, Store)
+data AtomRules (n::S) = CustomLinearize Int SymbolicZeros (CAtom n)  -- number of implicit args, linearization function
                         deriving (Generic)
 
 -- === envs and modules ===
@@ -380,12 +495,13 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
   , fragCustomRules     :: CustomRules n
   , fragLoadedModules   :: LoadedModules n
   , fragLoadedObjects   :: LoadedObjects n
-  , fragLocalModuleEnv  :: ModuleEnv n }
+  , fragLocalModuleEnv  :: ModuleEnv n
+  , fragFinishSpecializedDict :: SnocList (SpecDictName n, [NaryLamExpr SimpIR n]) }
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
 data SynthCandidates n = SynthCandidates
-  { lambdaDicts       :: [AtomName n]
+  { lambdaDicts       :: [AtomName CoreIR n]
   , instanceDicts     :: M.Map (ClassName n) [InstanceName n] }
   deriving (Show, Generic)
 
@@ -394,9 +510,11 @@ emptyImportStatus = ImportStatus mempty mempty
 
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
+
 data Cache (n::S) = Cache
-  { specializationCache :: EMap SpecializationSpec AtomName n
-  , impCache  :: EMap AtomName ImpFunName n
+  { specializationCache :: EMap SpecializationSpec (AtomName CoreIR) n
+  , ixDictCache :: EMap (AbsDict CoreIR) SpecDictName n
+  , impCache  :: EMap (AtomName CoreIR) ImpFunName n
   , objCache  :: EMap ImpFunName FunObjCodeName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
     -- only want to store one entry per module name as a simple cache eviction
@@ -405,6 +523,11 @@ data Cache (n::S) = Cache
   , parsedDeps :: M.Map ModuleSourceName (FileHash, [ModuleSourceName])
   , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
+
+updateEnv :: Color c => Name c n -> Binding c n -> Env n -> Env n
+updateEnv v rhs env =
+  env { topEnv = (topEnv env) { envDefs = RecSubst $ updateSubstFrag v rhs bs } }
+  where (RecSubst bs) = envDefs $ topEnv env
 
 -- === runtime function and variable representations ===
 
@@ -436,13 +559,13 @@ dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 
 -- TODO: consider making this an open union via a typeable-like class
 data Binding (c::C) (n::S) where
-  AtomNameBinding   :: AtomBinding n                  -> Binding AtomNameC       n
-  DataDefBinding    :: DataDef n                      -> Binding DataDefNameC    n
-  TyConBinding      :: DataDefName n        -> Atom n -> Binding TyConNameC      n
-  DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
-  ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
-  InstanceBinding   :: InstanceDef n                  -> Binding InstanceNameC   n
-  MethodBinding     :: ClassName n   -> Int -> Atom n -> Binding MethodNameC     n
+  AtomNameBinding   :: AtomBinding CoreIR n            -> Binding AtomNameC       n
+  DataDefBinding    :: DataDef n                       -> Binding DataDefNameC    n
+  TyConBinding      :: DataDefName n        -> CAtom n -> Binding TyConNameC      n
+  DataConBinding    :: DataDefName n -> Int -> CAtom n -> Binding DataConNameC    n
+  ClassBinding      :: ClassDef n                      -> Binding ClassNameC      n
+  InstanceBinding   :: InstanceDef n                   -> Binding InstanceNameC   n
+  MethodBinding     :: ClassName n   -> Int -> CAtom n -> Binding MethodNameC     n
   EffectBinding     :: EffectDef n                    -> Binding EffectNameC     n
   HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
   EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
@@ -450,6 +573,7 @@ data Binding (c::C) (n::S) where
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
+  SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
 deriving instance Show (Binding c n)
 
 data EffectOpDef (n::S) where
@@ -489,23 +613,24 @@ instance HoistableE  EffectDef
 instance AlphaEqE EffectDef
 instance AlphaHashableE EffectDef
 instance SubstE Name EffectDef
-instance SubstE AtomSubstVal EffectDef
+instance SubstE (AtomSubstVal CoreIR) EffectDef
 deriving instance Show (EffectDef n)
 deriving via WrapE EffectDef n instance Generic (EffectDef n)
 
 data HandlerDef (n::S) where
   HandlerDef :: EffectName n
-             -> PiBinder n r -- body type arg
-             -> Nest PiBinder r l
+             -> PiBinder CoreIR n r -- body type arg
+             -> Nest (PiBinder CoreIR) r l
                -> EffectRow l
-               -> Type l     -- return type
-               -> [Block l]  -- effect operations
-               -> Block l    -- return body
+               -> CType l          -- return type
+               -> [Block CoreIR l] -- effect operations
+               -> Block CoreIR l   -- return body
              -> HandlerDef n
 
 instance GenericE HandlerDef where
   type RepE HandlerDef =
-    EffectName `PairE` Abs (PiBinder `PairB` Nest PiBinder) (EffectRow `PairE` Type `PairE` ListE Block `PairE` Block)
+    EffectName `PairE` Abs (PiBinder CoreIR `PairB` Nest (PiBinder CoreIR))
+      (EffectRow `PairE` CType `PairE` ListE (Block CoreIR) `PairE` Block CoreIR)
   fromE (HandlerDef name bodyTyArg bs effs ty ops ret) =
     name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)
   toE (name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)) =
@@ -516,16 +641,16 @@ instance HoistableE  HandlerDef
 instance AlphaEqE HandlerDef
 instance AlphaHashableE HandlerDef
 instance SubstE Name HandlerDef
--- instance SubstE AtomSubstVal HandlerDef
+-- instance SubstE (AtomSubstVal r) HandlerDef
 deriving instance Show (HandlerDef n)
 deriving via WrapE HandlerDef n instance Generic (HandlerDef n)
 
 data EffectOpType (n::S) where
-  EffectOpType :: UResumePolicy -> Type n -> EffectOpType n
+  EffectOpType :: UResumePolicy -> CType n -> EffectOpType n
 
 instance GenericE EffectOpType where
   type RepE EffectOpType =
-    LiftE UResumePolicy `PairE` Type
+    LiftE UResumePolicy `PairE` CType
   fromE (EffectOpType pol ty) = LiftE pol `PairE` ty
   toE (LiftE pol `PairE` ty) = EffectOpType pol ty
 
@@ -534,37 +659,73 @@ instance HoistableE  EffectOpType
 instance AlphaEqE EffectOpType
 instance AlphaHashableE EffectOpType
 instance SubstE Name EffectOpType
-instance SubstE AtomSubstVal EffectOpType
+instance SubstE (AtomSubstVal CoreIR) EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
-data AtomBinding (n::S) =
-   LetBound    (DeclBinding   n)
- | LamBound    (LamBinding    n)
- | PiBound     (PiBinding     n)
- | IxBound     (IxType        n)
- | MiscBound   (Type          n)
- | SolverBound (SolverBinding n)
+type AbsDict r = Abs (Nest (Binder r)) (Dict r)
+
+data SpecializedDictDef n =
+   SpecializedDict
+     -- Dict, abstracted over "data" params.
+     (AbsDict CoreIR n)
+     -- Methods (thunked if nullary), if they're available.
+     -- We create specialized dict names during simplification, but we don't
+     -- actually simplify/lower them until we return to TopLevel
+     (Maybe [NaryLamExpr SimpIR n])
+   deriving (Show, Generic)
+
+instance GenericE SpecializedDictDef where
+  type RepE SpecializedDictDef = AbsDict CoreIR `PairE` MaybeE (ListE (NaryLamExpr SimpIR))
+  fromE (SpecializedDict ab methods) = ab `PairE` methods'
+    where methods' = case methods of Just xs -> LeftE (ListE xs)
+                                     Nothing -> RightE UnitE
+  {-# INLINE fromE #-}
+  toE   (ab `PairE` methods) = SpecializedDict ab methods'
+    where methods' = case methods of LeftE (ListE xs) -> Just xs
+                                     RightE UnitE     -> Nothing
+  {-# INLINE toE #-}
+
+instance SinkableE      SpecializedDictDef
+instance HoistableE     SpecializedDictDef
+instance AlphaEqE       SpecializedDictDef
+instance AlphaHashableE SpecializedDictDef
+instance SubstE Name    SpecializedDictDef
+
+data AtomBinding (r::IR) (n::S) =
+   LetBound    (DeclBinding r  n)
+ | LamBound    (LamBinding  r  n)
+ | PiBound     (PiBinding   r  n)
+ | IxBound     (IxType      r  n)
+ | MiscBound   (Type        r  n)
+ | SolverBound (SolverBinding r n)
  | PtrLitBound PtrType (PtrName n)
- | TopFunBound (NaryPiType n) (TopFunBinding n)
+ | TopFunBound (NaryPiType r n) (TopFunBinding n)
    deriving (Show, Generic)
 
 data TopFunBinding (n::S) =
-   UnspecializedTopFun Int (Atom n)    -- num specialization args, definition
- | SpecializedTopFun (SpecializationSpec n) -- Original (unspecialized) function, specialization args
- | SimpTopFun          (NaryLamExpr n)
- | FFITopFun           (ImpFunName n)
+   -- This is for functions marked `@noinline`, before we've seen their use
+   -- sites and discovered what arguments we need to specialize on.
+   AwaitingSpecializationArgsTopFun Int (CAtom n)
+   -- Specification of a specialized function. We still need to simplify, lower,
+   -- and translate-to-Imp this function. When we do that we'll store the result
+   -- in the `impCache`. Or, if we're dealing with ix method specializations, we
+   -- won't go all the way to Imp and we'll store the result in
+   -- `ixLoweredCache`.
+ | SpecializedTopFun (SpecializationSpec n)
+ | LoweredTopFun     (NaryLamExpr SimpIR n)
+ | FFITopFun         (ImpFunName n)
    deriving (Show, Generic)
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-  -- The additional binders are for "data" components of the specialization types, like
-  -- `n` in `Fin n`.
-  AppSpecialization (AtomName n) (Abs (Nest Binder) (ListE Type) n)
-  deriving (Show, Generic)
+   -- The additional binders are for "data" components of the specialization types, like
+   -- `n` in `Fin n`.
+   AppSpecialization (AtomName CoreIR n) (Abs (Nest (Binder CoreIR)) (ListE CType) n)
+   deriving (Show, Generic)
 
-atomBindingType :: Binding AtomNameC n -> Type n
-atomBindingType (AtomNameBinding b) = case b of
+atomBindingType :: AtomBinding r n -> Type r n
+atomBindingType b = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
   PiBound     (PiBinding   _ ty)   -> ty
@@ -576,9 +737,9 @@ atomBindingType (AtomNameBinding b) = case b of
   TopFunBound ty _ -> naryPiTypeAsType ty
 
 -- TODO: Move this to Inference!
-data SolverBinding (n::S) =
-   InfVarBound (Type n) SrcPosCtx
- | SkolemBound (Type n)
+data SolverBinding (r::IR) (n::S) =
+   InfVarBound (Type r n) SrcPosCtx
+ | SkolemBound (Type r n)
    deriving (Show, Generic)
 
 data EnvFrag (n::S) (l::S) =
@@ -661,14 +822,14 @@ bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
         go rest
 
 -- WARNING: This is not exactly faithful, because NaryPiType erases intermediate arrows!
-naryPiTypeAsType :: NaryPiType n -> Type n
+naryPiTypeAsType :: NaryPiType r n -> Type r n
 naryPiTypeAsType (NaryPiType (NonEmptyNest b bs) effs resultTy) = case bs of
   Empty -> Pi $ PiType b effs resultTy
   Nest b' rest -> Pi $ PiType b Pure restTy
     where restTy = naryPiTypeAsType $ NaryPiType (NonEmptyNest b' rest) effs resultTy
 
 -- WARNING: This is not exactly faithful, because NaryLamExpr erases intermediate arrows!
-naryLamExprAsAtom :: NaryLamExpr n -> Atom n
+naryLamExprAsAtom :: NaryLamExpr r n -> Atom r n
 naryLamExprAsAtom (NaryLamExpr (NonEmptyNest (b:>ty) bs) effs body) = case bs of
   Empty -> Lam $ LamExpr (LamBinder b ty PlainArrow effs) body
   Nest b' rest -> Lam $ LamExpr (LamBinder b ty PlainArrow Pure) (AtomicBlock restBody)
@@ -679,28 +840,42 @@ naryLamExprAsAtom (NaryLamExpr (NonEmptyNest (b:>ty) bs) effs body) = case bs of
 -- We're really just defining this so we can have a polymorphic `binderType`.
 -- But maybe we don't need one. Or maybe we can make one using just
 -- `BindsOneName b AtomNameC` and `BindsEnv b`.
-class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
-  binderType :: b n l -> Type n
+class BindsOneName b AtomNameC => BindsOneAtomName (r::IR) (b::B) | b -> r where
+  binderType :: b n l -> Type r n
+  -- binderAtomName :: b n l -> AtomName r l
 
-bindersTypes :: (Distinct l, ProvesExt b, BindsNames b, BindsOneAtomName b)
-             => Nest b n l -> [Type l]
+bindersTypes :: (Distinct l, ProvesExt b, BindsNames b, BindsOneAtomName r b)
+             => Nest b n l -> [Type r l]
 bindersTypes Empty = []
 bindersTypes n@(Nest b bs) = ty : bindersTypes bs
   where ty = withExtEvidence n $ sink (binderType b)
 
-instance BindsOneAtomName (BinderP AtomNameC Type) where
+instance BindsOneAtomName r (BinderP AtomNameC (Type r)) where
   binderType (_ :> ty) = ty
 
-instance BindsOneAtomName LamBinder where
+instance BindsOneAtomName r (LamBinder r) where
   binderType (LamBinder _ ty _ _) = ty
 
-instance BindsOneAtomName PiBinder where
+instance BindsOneAtomName r (PiBinder r) where
   binderType (PiBinder _ ty _) = ty
 
-instance BindsOneAtomName IxBinder where
+instance BindsOneAtomName r (IxBinder r) where
   binderType (_ :> IxType ty _) = ty
 
+instance BindsOneAtomName r (RolePiBinder r) where
+  binderType (RolePiBinder _ ty _ _) = ty
+
+toBinderNest :: BindsOneAtomName r b => Nest b n l -> Nest (Binder r) n l
+toBinderNest Empty = Empty
+toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest bs)
+
 -- === ToBinding ===
+
+atomBindingToBinding :: AtomBinding r n -> Binding AtomNameC n
+atomBindingToBinding b = AtomNameBinding $ unsafeCoerceIRE b
+
+bindingToAtomBinding :: Binding AtomNameC n -> AtomBinding r n
+bindingToAtomBinding (AtomNameBinding b) = unsafeCoerceIRE b
 
 class (SubstE Name e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
   toBinding :: e n -> Binding c n
@@ -708,30 +883,30 @@ class (SubstE Name e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
 instance Color c => ToBinding (Binding c) c where
   toBinding = id
 
-instance ToBinding AtomBinding AtomNameC where
-  toBinding = AtomNameBinding
+instance ToBinding (AtomBinding r) AtomNameC where
+  toBinding = atomBindingToBinding
 
-instance ToBinding DeclBinding AtomNameC where
+instance ToBinding (DeclBinding r) AtomNameC where
   toBinding = toBinding . LetBound
 
-instance ToBinding LamBinding AtomNameC where
+instance ToBinding (LamBinding r) AtomNameC where
   toBinding = toBinding . LamBound
 
-instance ToBinding PiBinding AtomNameC where
+instance ToBinding (PiBinding r) AtomNameC where
   toBinding = toBinding . PiBound
 
-instance ToBinding Atom AtomNameC where
+instance ToBinding (Atom r) AtomNameC where
   toBinding = toBinding . MiscBound
 
-instance ToBinding SolverBinding AtomNameC where
-  toBinding = toBinding . SolverBound
+instance ToBinding (SolverBinding r) AtomNameC where
+  toBinding = toBinding . SolverBound @ r
 
-instance ToBinding IxType AtomNameC where
+instance ToBinding (IxType r) AtomNameC where
   toBinding = toBinding . IxBound
 
 -- We don't need this for now and it seems a little annoying to implement.
 -- If you ever hit this, add a Type n to BoxPtr and return it here.
-instance ToBinding BoxPtr AtomNameC where
+instance ToBinding (BoxPtr r) AtomNameC where
   toBinding = error "not implemented!"
 
 instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
@@ -740,30 +915,31 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 
 -- === HasArgType ===
 
-class HasArgType (e::E) where
-  argType :: e n -> Type n
+class HasArgType (e::E) (r::IR) | e -> r where
+  argType :: e n -> Type r n
 
-instance HasArgType PiType where
+instance HasArgType (PiType r) r where
   argType (PiType (PiBinder _ ty _) _ _) = ty
 
-instance HasArgType TabPiType where
+instance HasArgType (TabPiType r) r where
   argType (TabPiType (_:>IxType ty _) _) = ty
 
-instance HasArgType LamExpr where
+instance HasArgType (LamExpr r) r where
   argType (LamExpr (LamBinder _ ty _ _) _) = ty
 
-instance HasArgType TabLamExpr where
+instance HasArgType (TabLamExpr r) r where
   argType (TabLamExpr (_:>IxType ty _) _) = ty
 
 -- === Pattern synonyms ===
+
 pattern IdxRepScalarBaseTy :: ScalarBaseType
 pattern IdxRepScalarBaseTy = Word32Type
 
 -- Type used to represent indices and sizes at run-time
-pattern IdxRepTy :: Type n
+pattern IdxRepTy :: Type r n
 pattern IdxRepTy = TC (BaseType (Scalar Word32Type))
 
-pattern IdxRepVal :: Word32 -> Atom n
+pattern IdxRepVal :: Word32 -> Atom r n
 pattern IdxRepVal x = Con (Lit (Word32Lit x))
 
 pattern IIdxRepVal :: Word32 -> IExpr n
@@ -773,113 +949,113 @@ pattern IIdxRepTy :: IType
 pattern IIdxRepTy = Scalar Word32Type
 
 -- Type used to represent sum type tags at run-time
-pattern TagRepTy :: Type n
+pattern TagRepTy :: Type r n
 pattern TagRepTy = TC (BaseType (Scalar Word8Type))
 
-pattern TagRepVal :: Word8 -> Atom n
+pattern TagRepVal :: Word8 -> Atom r n
 pattern TagRepVal x = Con (Lit (Word8Lit x))
 
-pattern Word8Ty :: Type n
+pattern Word8Ty :: Type r n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
-pattern ProdTy :: [Type n] -> Type n
+pattern ProdTy :: [Type r n] -> Type r n
 pattern ProdTy tys = TC (ProdType tys)
 
-pattern ProdVal :: [Atom n] -> Atom n
+pattern ProdVal :: [Atom r n] -> Atom r n
 pattern ProdVal xs = Con (ProdCon xs)
 
-pattern Record :: LabeledItems (Type n) -> [Atom n] -> Atom n
+pattern Record :: LabeledItems (Type r n) -> [Atom r n] -> Atom r n
 pattern Record ty xs = Con (Newtype (StaticRecordTy ty) (ProdVal xs))
 
-pattern SumTy :: [Type n] -> Type n
+pattern SumTy :: [Type r n] -> Type r n
 pattern SumTy cs = TC (SumType cs)
 
-pattern SumVal :: [Type n] -> Int -> Atom n -> Atom n
+pattern SumVal :: [Type r n] -> Int -> Atom r n -> Atom r n
 pattern SumVal tys tag payload = Con (SumCon tys tag payload)
 
-pattern PairVal :: Atom n -> Atom n -> Atom n
+pattern PairVal :: Atom r n -> Atom r n -> Atom r n
 pattern PairVal x y = Con (ProdCon [x, y])
 
-pattern PairTy :: Type n -> Type n -> Type n
+pattern PairTy :: Type r n -> Type r n -> Type r n
 pattern PairTy x y = TC (ProdType [x, y])
 
-pattern UnitVal :: Atom n
+pattern UnitVal :: Atom r n
 pattern UnitVal = Con (ProdCon [])
 
-pattern UnitTy :: Type n
+pattern UnitTy :: Type r n
 pattern UnitTy = TC (ProdType [])
 
-pattern BaseTy :: BaseType -> Type n
+pattern BaseTy :: BaseType -> Type r n
 pattern BaseTy b = TC (BaseType b)
 
-pattern PtrTy :: PtrType -> Type n
+pattern PtrTy :: PtrType -> Type r n
 pattern PtrTy ty = BaseTy (PtrType ty)
 
-pattern RefTy :: Atom n -> Type n -> Type n
+pattern RefTy :: Atom r n -> Type r n -> Type r n
 pattern RefTy r a = TC (RefType (Just r) a)
 
-pattern RawRefTy :: Type n -> Type n
+pattern RawRefTy :: Type r n -> Type r n
 pattern RawRefTy a = TC (RefType Nothing a)
 
-pattern TabTy :: IxBinder n l -> Type l -> Type n
+pattern TabTy :: IxBinder r n l -> Type r l -> Type r n
 pattern TabTy b body = TabPi (TabPiType b body)
 
-pattern FinTy :: Atom n -> Type n
+pattern FinTy :: Atom r n -> Type r n
 pattern FinTy n = TC (Fin n)
 
-pattern NatTy :: Type n
+pattern NatTy :: Type r n
 pattern NatTy = TC Nat
 
-pattern NatVal :: Word32 -> Atom n
+pattern NatVal :: Word32 -> Atom r n
 pattern NatVal n = Con (Newtype NatTy (IdxRepVal n))
 
-pattern TabVal :: IxBinder n l -> Block l -> Atom n
+pattern TabVal :: IxBinder r n l -> Block r l -> Atom r n
 pattern TabVal b body = TabLam (TabLamExpr b body)
 
-pattern TyKind :: Kind n
+pattern TyKind :: Kind r n
 pattern TyKind = TC TypeKind
 
-pattern EffKind :: Kind n
+pattern EffKind :: Kind r n
 pattern EffKind = TC EffectRowKind
 
-pattern LabeledRowKind :: Kind n
+pattern LabeledRowKind :: Kind r n
 pattern LabeledRowKind = TC LabeledRowKindTC
 
-pattern FinConst :: Word32 -> Type n
+pattern FinConst :: Word32 -> Type r n
 pattern FinConst n = TC (Fin (NatVal n))
 
-pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
+pattern BinaryFunTy :: PiBinder r n l1 -> PiBinder r l1 l2 -> EffectRow l2 -> Type r l2 -> Type r n
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
-pattern AtomicBlock :: Atom n -> Block n
+pattern AtomicBlock :: Atom r n -> Block r n
 pattern AtomicBlock atom <- Block _ Empty atom
   where AtomicBlock atom = Block NoBlockAnn Empty atom
 
-pattern BinaryLamExpr :: LamBinder n l1 -> LamBinder l1 l2 -> Block l2 -> LamExpr n
+pattern BinaryLamExpr :: LamBinder r n l1 -> LamBinder r l1 l2 -> Block r l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
 
-pattern MaybeTy :: Type n -> Type n
+pattern MaybeTy :: Type r n -> Type r n
 pattern MaybeTy a = SumTy [UnitTy, a]
 
-pattern NothingAtom :: Type n -> Atom n
+pattern NothingAtom :: Type r n -> Atom r n
 pattern NothingAtom a = SumVal [UnitTy, a] 0 UnitVal
 
-pattern JustAtom :: Type n -> Atom n -> Atom n
+pattern JustAtom :: Type r n -> Atom r n -> Atom r n
 pattern JustAtom a x = SumVal [UnitTy, a] 1 x
 
-pattern BoolTy :: Type n
+pattern BoolTy :: Type r n
 pattern BoolTy = Word8Ty
 
-pattern FalseAtom :: Atom n
+pattern FalseAtom :: Atom r n
 pattern FalseAtom = Con (Lit (Word8Lit 0))
 
-pattern TrueAtom :: Atom n
+pattern TrueAtom :: Atom r n
 pattern TrueAtom = Con (Lit (Word8Lit 1))
 
-fieldRowElemsFromList :: [FieldRowElem n] -> FieldRowElems n
+fieldRowElemsFromList :: [FieldRowElem r n] -> FieldRowElems r n
 fieldRowElemsFromList = foldr prependFieldRowElem (UnsafeFieldRowElems [])
 
-prependFieldRowElem :: FieldRowElem n -> FieldRowElems n -> FieldRowElems n
+prependFieldRowElem :: FieldRowElem r n -> FieldRowElems r n -> FieldRowElems r n
 prependFieldRowElem e (UnsafeFieldRowElems els) = case e of
   DynField  _ _ -> UnsafeFieldRowElems $ e : els
   DynFields _   -> UnsafeFieldRowElems $ e : els
@@ -888,13 +1064,14 @@ prependFieldRowElem e (UnsafeFieldRowElems els) = case e of
     (StaticFields items':rest) -> UnsafeFieldRowElems $ StaticFields (items <> items') : rest
     _                          -> UnsafeFieldRowElems $ e : els
 
-extRowAsFieldRowElems :: ExtLabeledItems (Type n) (AtomName n) -> FieldRowElems n
+extRowAsFieldRowElems :: ExtLabeledItems (Type r n) (AtomName r n) -> FieldRowElems r n
 extRowAsFieldRowElems (Ext items ext) = UnsafeFieldRowElems $ itemsEl ++ extEl
   where
     itemsEl = if null items then [] else [StaticFields items]
     extEl = case ext of Nothing -> []; Just r -> [DynFields r]
 
-fieldRowElemsAsExtRow :: Alternative f => FieldRowElems n -> f (ExtLabeledItems (Type n) (AtomName n))
+fieldRowElemsAsExtRow
+  :: Alternative f => FieldRowElems r n -> f (ExtLabeledItems (Type r n) (AtomName r n))
 fieldRowElemsAsExtRow (UnsafeFieldRowElems els) = case els of
   []                                -> pure $ Ext mempty Nothing
   [DynFields r]                     -> pure $ Ext mempty (Just r)
@@ -902,7 +1079,7 @@ fieldRowElemsAsExtRow (UnsafeFieldRowElems els) = case els of
   [StaticFields items, DynFields r] -> pure $ Ext items  (Just r)
   _ -> empty
 
-_getAtMostSingleStatic :: Atom n -> Maybe (LabeledItems (Type n))
+_getAtMostSingleStatic :: Atom r n -> Maybe (LabeledItems (Type r n))
 _getAtMostSingleStatic = \case
   RecordTy (UnsafeFieldRowElems els) -> case els of
     [] -> Just mempty
@@ -910,18 +1087,18 @@ _getAtMostSingleStatic = \case
     _ -> Nothing
   _ -> Nothing
 
-pattern StaticRecordTy :: LabeledItems (Type n) -> Atom n
+pattern StaticRecordTy :: LabeledItems (Type r n) -> Atom r n
 pattern StaticRecordTy items <- (_getAtMostSingleStatic -> Just items)
   where StaticRecordTy items = RecordTy (fieldRowElemsFromList [StaticFields items])
 
-pattern RecordTyWithElems :: [FieldRowElem n] -> Atom n
+pattern RecordTyWithElems :: [FieldRowElem r n] -> Atom r n
 pattern RecordTyWithElems elems <- RecordTy (UnsafeFieldRowElems elems)
   where RecordTyWithElems elems = RecordTy $ fieldRowElemsFromList elems
 
 -- === Typeclass instances for Name and other Haskell libraries ===
 
 instance GenericE AtomRules where
-  type RepE AtomRules = (LiftE (Int, SymbolicZeros)) `PairE` Atom
+  type RepE AtomRules = (LiftE (Int, SymbolicZeros)) `PairE` CAtom
   fromE (CustomLinearize ni sz a) = LiftE (ni, sz) `PairE` a
   toE (LiftE (ni, sz) `PairE` a) = CustomLinearize ni sz a
 instance SinkableE AtomRules
@@ -930,7 +1107,7 @@ instance AlphaEqE AtomRules
 instance SubstE Name AtomRules
 
 instance GenericE CustomRules where
-  type RepE CustomRules = ListE (PairE AtomName AtomRules)
+  type RepE CustomRules = ListE (PairE (AtomName CoreIR) AtomRules)
   fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
   toE (ListE l) = CustomRules $ M.fromList $ fromPairE <$> l
 instance SinkableE CustomRules
@@ -944,29 +1121,29 @@ instance ProvesExt  EffectBinder
 instance BindsNames EffectBinder
 instance SubstB Name EffectBinder
 
-instance GenericE DataDefParams where
-  type RepE DataDefParams = ListE (PairE (LiftE Arrow) Atom)
+instance GenericE (DataDefParams r) where
+  type RepE (DataDefParams r) = ListE (PairE (LiftE Arrow) (Atom r))
   fromE (DataDefParams xs) = ListE $ map toPairE $ map (onFst LiftE) xs
   {-# INLINE fromE #-}
   toE (ListE xs) = DataDefParams $ map (onFst fromLiftE) $ map fromPairE xs
   {-# INLINE toE #-}
 
 -- We ignore the dictionary parameters because we assume coherence
-instance AlphaEqE DataDefParams where
+instance AlphaEqE (DataDefParams r) where
   alphaEqE (DataDefParams params) (DataDefParams params') =
     alphaEqE (ListE $ plainArrows params) (ListE $ plainArrows params')
 
-instance AlphaHashableE DataDefParams where
+instance AlphaHashableE (DataDefParams r) where
   hashWithSaltE env salt (DataDefParams params) =
     hashWithSaltE env salt (ListE $ plainArrows params)
 
-instance SinkableE           DataDefParams
-instance HoistableE          DataDefParams
-instance SubstE Name         DataDefParams
-instance SubstE AtomSubstVal DataDefParams
+instance SinkableE           (DataDefParams r)
+instance HoistableE          (DataDefParams r)
+instance SubstE Name         (DataDefParams r)
+instance SubstE (AtomSubstVal r) (DataDefParams r)
 
 instance GenericE DataDef where
-  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest PiBinder) (ListE DataConDef))
+  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest (RolePiBinder CoreIR)) (ListE DataConDef))
   fromE (DataDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs (ListE cons))
   {-# INLINE fromE #-}
   toE   (PairE (LiftE sourceName) (Abs bs (ListE cons))) = DataDef sourceName bs cons
@@ -977,12 +1154,12 @@ deriving via WrapE DataDef n instance Generic (DataDef n)
 instance SinkableE DataDef
 instance HoistableE  DataDef
 instance SubstE Name DataDef
-instance SubstE AtomSubstVal DataDef
+instance SubstE (AtomSubstVal CoreIR) DataDef
 instance AlphaEqE DataDef
 instance AlphaHashableE DataDef
 
 instance GenericE DataConDef where
-  type RepE DataConDef = (LiftE (SourceName, [[Projection]])) `PairE` Type
+  type RepE DataConDef = (LiftE (SourceName, [[Projection]])) `PairE` CType
   fromE (DataConDef name repTy idxs) = (LiftE (name, idxs)) `PairE` repTy
   {-# INLINE fromE #-}
   toE   ((LiftE (name, idxs)) `PairE` repTy) = DataConDef name repTy idxs
@@ -990,12 +1167,12 @@ instance GenericE DataConDef where
 instance SinkableE DataConDef
 instance HoistableE  DataConDef
 instance SubstE Name DataConDef
-instance SubstE AtomSubstVal DataConDef
+instance SubstE (AtomSubstVal CoreIR) DataConDef
 instance AlphaEqE DataConDef
 instance AlphaHashableE DataConDef
 
-instance GenericE FieldRowElem where
-  type RepE FieldRowElem = EitherE3 (ExtLabeledItemsE Type UnitE) (AtomName `PairE` Type) AtomName
+instance GenericE (FieldRowElem r) where
+  type RepE (FieldRowElem r) = EitherE3 (ExtLabeledItemsE (Type r) UnitE) (AtomName r `PairE` (Type r)) (AtomName r)
   fromE = \case
     StaticFields items         -> Case0 $ ExtLabeledItemsE $ NoExt items
     DynField  labVarName labTy -> Case1 $ labVarName `PairE` labTy
@@ -1007,25 +1184,25 @@ instance GenericE FieldRowElem where
     Case2 n             -> DynFields n
     _ -> error "unreachable"
   {-# INLINE toE #-}
-instance SinkableE      FieldRowElem
-instance HoistableE     FieldRowElem
-instance SubstE Name    FieldRowElem
-instance AlphaEqE       FieldRowElem
-instance AlphaHashableE FieldRowElem
+instance SinkableE      (FieldRowElem r)
+instance HoistableE     (FieldRowElem r)
+instance SubstE Name    (FieldRowElem r)
+instance AlphaEqE       (FieldRowElem r)
+instance AlphaHashableE (FieldRowElem r)
 
-instance GenericE FieldRowElems where
-  type RepE FieldRowElems = ListE FieldRowElem
+instance GenericE (FieldRowElems r) where
+  type RepE (FieldRowElems r) = ListE (FieldRowElem r)
   fromE = ListE . fromFieldRowElems
   {-# INLINE fromE #-}
   toE = fieldRowElemsFromList . fromListE
   {-# INLINE toE #-}
-instance SinkableE FieldRowElems
-instance HoistableE FieldRowElems
-instance SubstE Name FieldRowElems
-instance AlphaEqE FieldRowElems
-instance AlphaHashableE FieldRowElems
-instance SubstE AtomSubstVal FieldRowElems where
-  substE :: forall i o. Distinct o => (Scope o, Subst AtomSubstVal i o) -> FieldRowElems i -> FieldRowElems o
+instance SinkableE   (FieldRowElems r)
+instance HoistableE  (FieldRowElems r)
+instance SubstE Name (FieldRowElems r)
+instance AlphaEqE    (FieldRowElems r)
+instance AlphaHashableE (FieldRowElems r)
+instance SubstE (AtomSubstVal r) (FieldRowElems r) where
+  substE :: forall i o. Distinct o => (Scope o, Subst (AtomSubstVal r) i o) -> FieldRowElems r i -> FieldRowElems r o
   substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
     where
       substItem = \case
@@ -1042,50 +1219,52 @@ instance SubstE AtomSubstVal FieldRowElems where
           _ -> error "ill-typed substitution"
         StaticFields items -> [StaticFields items']
           where ExtLabeledItemsE (NoExt items') = substE env
-                  (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE Atom AtomName i)
+                  (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE (Atom r) (AtomName r) i)
 
 newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
   ExtLabeledItemsE
    { fromExtLabeledItemsE :: ExtLabeledItems (e1 n) (e2 n) }
-   deriving Show
+   deriving (Show, Generic)
+instance (Store (e1 n), Store (e2 n)) => Store (ExtLabeledItemsE e1 e2 n)
 
-instance GenericE Atom where
+instance GenericE (Atom r) where
   -- As tempting as it might be to reorder cases here, the current permutation
   -- was chosen as to make GHC inliner confident enough to simplify through
   -- toE/fromE entirely. If you wish to modify the order, please consult the
   -- GHC Core dump to make sure you haven't regressed this optimization.
-  type RepE Atom =
+  type RepE (Atom r) =
       EitherE6
               (EitherE2
                    -- We isolate those few cases (and reorder them
                    -- compared to the data definition) because they need special
                    -- handling when you substitute with atoms. The rest just act
                    -- like containers
-  {- Var -}        AtomName
-  {- ProjectElt -} ( LiftE (NE.NonEmpty Projection) `PairE` AtomName )
+  {- Var -}        (AtomName r)
+  {- ProjectElt -} ( LiftE (NE.NonEmpty Projection) `PairE` AtomName r)
             ) (EitherE4
-  {- Lam -}        LamExpr
-  {- Pi -}         PiType
-  {- TabLam -}     TabLamExpr
-  {- TabPi -}      TabPiType
+  {- Lam -}        (LamExpr r)
+  {- Pi -}         (PiType r)
+  {- TabLam -}     (TabLamExpr r)
+  {- TabPi -}      (TabPiType r)
             ) (EitherE5
-  {- DepPairTy -}  DepPairType
-  {- DepPair -}    ( Atom `PairE` Atom `PairE` DepPairType)
-  {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
-  {- DictCon  -}   DictExpr
-  {- DictTy  -}    DictType
+  {- DepPairTy -}  (DepPairType r)
+  {- DepPair -}    ( Atom r `PairE` Atom r `PairE` DepPairType r)
+  {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams r)
+  {- DictCon  -}   (DictExpr r)
+  {- DictTy  -}    (DictType r)
             ) (EitherE3
-  {- LabeledRow -}     ( FieldRowElems )
-  {- RecordTy -}       ( FieldRowElems )
-  {- VariantTy -}      ( ExtLabeledItemsE Type AtomName )
+  {- LabeledRow -}     ( FieldRowElems r)
+  {- RecordTy -}       ( FieldRowElems r)
+  {- VariantTy -}      ( ExtLabeledItemsE (Type r) (AtomName r) )
             ) (EitherE4
-  {- Con -}        (ComposeE PrimCon Atom)
-  {- TC -}         (ComposeE PrimTC  Atom)
+  {- Con -}        (ComposeE PrimCon (Atom r))
+  {- TC -}         (ComposeE PrimTC  (Atom r))
   {- Eff -}        EffectRow
-  {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
+  {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
             ) (EitherE2
-  {- BoxedRef -}   ( Abs (NonDepNest BoxPtr) Atom )
-  {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
+  {- BoxedRef -}   (LiftE (ReifiedSat r (Is SimpToImpIR))
+                    `PairE` ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
+  {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r))
 
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
@@ -1107,7 +1286,7 @@ instance GenericE Atom where
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
-    BoxedRef ab -> Case5 $ Case0 ab
+    BoxedRef ab -> Case5 $ Case0 $ LiftE ReifiedSat `PairE` ab
     DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
   {-# INLINE fromE #-}
 
@@ -1142,20 +1321,20 @@ instance GenericE Atom where
       Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       _ -> error "impossible"
     Case5 val -> case val of
-      Case0 ab -> BoxedRef ab
+      Case0 (LiftE ReifiedSat `PairE` ab) -> BoxedRef ab
       Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-instance SinkableE   Atom
-instance HoistableE  Atom
-instance AlphaEqE    Atom
-instance AlphaHashableE Atom
-instance SubstE Name Atom
+instance SinkableE   (Atom r)
+instance HoistableE  (Atom r)
+instance AlphaEqE    (Atom r)
+instance AlphaHashableE (Atom r)
+instance SubstE Name (Atom r)
 
 -- TODO: special handling of ACase too
-instance SubstE AtomSubstVal Atom where
+instance SubstE (AtomSubstVal r) (Atom r) where
   substE (scope, env) atom = case fromE atom of
     Case0 specialCase -> case specialCase of
       -- Var
@@ -1178,7 +1357,7 @@ instance SubstE AtomSubstVal Atom where
     Case6 rest -> (toE . Case6) $ substE (scope, env) rest
     Case7 rest -> (toE . Case7) $ substE (scope, env) rest
 
-getProjection :: HasCallStack => [Projection] -> Atom n -> Atom n
+getProjection :: HasCallStack => [Projection] -> Atom r n -> Atom r n
 getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (i NE.:| []) name
@@ -1202,16 +1381,16 @@ getProjection (i:is) a = case getProjection is a of
       ProjectProduct i' -> i'
       _ -> error "Not a product projection"
 
-instance GenericE Expr where
-  type RepE Expr =
+instance GenericE (Expr r) where
+  type RepE (Expr r) =
      EitherE7
-        (Atom `PairE` Atom `PairE` ListE Atom)
-        (Atom `PairE` Atom `PairE` ListE Atom)
-        (Atom `PairE` ListE Alt `PairE` Type `PairE` EffectRow)
-        (Atom)
-        (ComposeE PrimOp Atom)
-        (ComposeE PrimHof Atom)
-        (HandlerName `PairE` ListE Atom `PairE` Block)
+        (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
+        (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
+        (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow)
+        (Atom r)
+        (ComposeE PrimOp  (Atom r))
+        (ComposeE PrimHof (Atom r))
+        (HandlerName `PairE` ListE (Atom r) `PairE` (Block r))
   fromE = \case
     App    f (x:|xs)  -> Case0 (f `PairE` x `PairE` ListE xs)
     TabApp f (x:|xs)  -> Case1 (f `PairE` x `PairE` ListE xs)
@@ -1232,12 +1411,12 @@ instance GenericE Expr where
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-instance SinkableE Expr
-instance HoistableE  Expr
-instance AlphaEqE Expr
-instance AlphaHashableE Expr
-instance SubstE Name Expr
-instance SubstE AtomSubstVal Expr
+instance SinkableE      (Expr r)
+instance HoistableE     (Expr r)
+instance AlphaEqE       (Expr r)
+instance AlphaHashableE (Expr r)
+instance SubstE Name    (Expr r)
+instance SubstE (AtomSubstVal r) (Expr r)
 
 instance GenericE (ExtLabeledItemsE e1 e2) where
   type RepE (ExtLabeledItemsE e1 e2) = EitherE (ComposeE LabeledItems e1)
@@ -1255,7 +1434,7 @@ instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2
 instance (AlphaHashableE    e1, AlphaHashableE    e2) => AlphaHashableE    (ExtLabeledItemsE e1 e2)
 instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
 
-instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
+instance SubstE (AtomSubstVal r) (ExtLabeledItemsE (Atom r) (AtomName r)) where
   substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
     let items' = fmap (substE (scope, env)) items
     let ext = case maybeExt of
@@ -1269,8 +1448,8 @@ instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
                   _ -> error "Not a valid labeled row substitution"
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
-instance GenericE Block where
-  type RepE Block = PairE (MaybeE (PairE Type EffectRow)) (Abs (Nest Decl) Atom)
+instance GenericE (Block r) where
+  type RepE (Block r) = PairE (MaybeE (PairE (Type r) EffectRow)) (Abs (Nest (Decl r)) (Atom r))
   fromE (Block (BlockAnn ty effs) decls result) = PairE (JustE (PairE ty effs)) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
   fromE _ = error "impossible"
@@ -1280,67 +1459,67 @@ instance GenericE Block where
   toE   _ = error "impossible"
   {-# INLINE toE #-}
 
-deriving instance Show (BlockAnn n l)
+deriving instance Show (BlockAnn r n l)
 
-instance SinkableE Block
-instance HoistableE  Block
-instance AlphaEqE Block
-instance AlphaHashableE Block
-instance SubstE Name Block
-instance SubstE AtomSubstVal Block
-deriving instance Show (Block n)
-deriving via WrapE Block n instance Generic (Block n)
+instance SinkableE      (Block r)
+instance HoistableE     (Block r)
+instance AlphaEqE       (Block r)
+instance AlphaHashableE (Block r)
+instance SubstE Name    (Block r)
+instance SubstE (AtomSubstVal r) (Block r)
+deriving instance Show (Block r n)
+deriving via WrapE (Block r) n instance Generic (Block r n)
 
-instance GenericE BoxPtr where
-  type RepE BoxPtr = Atom `PairE` Block
+instance GenericE (BoxPtr r) where
+  type RepE (BoxPtr r) = Atom r `PairE` Block r
   fromE (BoxPtr p s) = p `PairE` s
   {-# INLINE fromE #-}
   toE (p `PairE` s) = BoxPtr p s
   {-# INLINE toE #-}
-instance SinkableE BoxPtr
-instance HoistableE BoxPtr
-instance AlphaEqE BoxPtr
-instance AlphaHashableE BoxPtr
-instance SubstE Name BoxPtr
-instance SubstE AtomSubstVal BoxPtr
+instance SinkableE  (BoxPtr r)
+instance HoistableE (BoxPtr r)
+instance AlphaEqE   (BoxPtr r)
+instance AlphaHashableE (BoxPtr r)
+instance SubstE Name (BoxPtr r)
+instance SubstE (AtomSubstVal r) (BoxPtr r)
 
-instance GenericB (NonDepNest ann) where
-  type RepB (NonDepNest ann) = (LiftB (ListE ann)) `PairB` Nest AtomNameBinder
+instance GenericB (NonDepNest r ann) where
+  type RepB (NonDepNest r ann) = (LiftB (ListE ann)) `PairB` Nest AtomNameBinder
   fromB (NonDepNest bs anns) = LiftB (ListE anns) `PairB` bs
   {-# INLINE fromB #-}
   toB (LiftB (ListE anns) `PairB` bs) = NonDepNest bs anns
   {-# INLINE toB #-}
-instance ProvesExt (NonDepNest ann)
-instance BindsNames (NonDepNest ann)
-instance SinkableE ann => SinkableB (NonDepNest ann)
-instance HoistableE ann => HoistableB (NonDepNest ann)
-instance (SubstE Name ann, SinkableE ann) => SubstB Name (NonDepNest ann)
-instance (SubstE AtomSubstVal ann, SinkableE ann) => SubstB AtomSubstVal (NonDepNest ann)
-instance AlphaEqE ann => AlphaEqB (NonDepNest ann)
-instance AlphaHashableE ann => AlphaHashableB (NonDepNest ann)
-deriving instance (Show (ann n)) => Show (NonDepNest ann n l)
+instance ProvesExt (NonDepNest r ann)
+instance BindsNames (NonDepNest r ann)
+instance SinkableE ann => SinkableB (NonDepNest r ann)
+instance HoistableE ann => HoistableB (NonDepNest r ann)
+instance (SubstE Name ann, SinkableE ann) => SubstB Name (NonDepNest r ann)
+instance (SubstE (AtomSubstVal r) ann, SinkableE ann) => SubstB (AtomSubstVal r) (NonDepNest r ann)
+instance AlphaEqE ann => AlphaEqB (NonDepNest r ann)
+instance AlphaHashableE ann => AlphaHashableB (NonDepNest r ann)
+deriving instance (Show (ann n)) => Show (NonDepNest r ann n l)
 
 instance GenericB SuperclassBinders where
-  type RepB SuperclassBinders = PairB (LiftB (ListE Type)) (Nest AtomNameBinder)
+  type RepB SuperclassBinders = PairB (LiftB (ListE CType)) (Nest AtomNameBinder)
   fromB (SuperclassBinders bs tys) = PairB (LiftB (ListE tys)) bs
   toB   (PairB (LiftB (ListE tys)) bs) = SuperclassBinders bs tys
 
 instance BindsNameList SuperclassBinders AtomNameC where
   bindNameList (SuperclassBinders bs _) xs = bindNameList bs xs
 
-instance ProvesExt  SuperclassBinders
-instance BindsNames SuperclassBinders
-instance SinkableB SuperclassBinders
+instance ProvesExt   SuperclassBinders
+instance BindsNames  SuperclassBinders
+instance SinkableB   SuperclassBinders
 instance HoistableB  SuperclassBinders
 instance SubstB Name SuperclassBinders
-instance SubstB AtomSubstVal SuperclassBinders
+instance SubstB (AtomSubstVal CoreIR) SuperclassBinders
 instance AlphaEqB SuperclassBinders
 instance AlphaHashableB SuperclassBinders
 
 instance GenericE ClassDef where
   type RepE ClassDef =
     LiftE (SourceName, [SourceName])
-     `PairE` Abs (Nest Binder) (Abs SuperclassBinders (ListE MethodType))
+     `PairE` Abs (Nest (RolePiBinder CoreIR)) (Abs SuperclassBinders (ListE MethodType))
   fromE (ClassDef name names b scs tys) =
     LiftE (name, names) `PairE` Abs b (Abs scs (ListE tys))
   {-# INLINE fromE #-}
@@ -1353,13 +1532,13 @@ instance HoistableE  ClassDef
 instance AlphaEqE ClassDef
 instance AlphaHashableE ClassDef
 instance SubstE Name ClassDef
-instance SubstE AtomSubstVal ClassDef
+instance SubstE (AtomSubstVal CoreIR) ClassDef
 deriving instance Show (ClassDef n)
 deriving via WrapE ClassDef n instance Generic (ClassDef n)
 
 instance GenericE InstanceDef where
   type RepE InstanceDef =
-    ClassName `PairE` Abs (Nest PiBinder) (ListE Type `PairE` InstanceBody)
+    ClassName `PairE` Abs (Nest (RolePiBinder CoreIR)) (ListE CType `PairE` InstanceBody)
   fromE (InstanceDef name bs params body) =
     name `PairE` Abs bs (ListE params `PairE` body)
   toE (name `PairE` Abs bs (ListE params `PairE` body)) =
@@ -1370,12 +1549,12 @@ instance HoistableE  InstanceDef
 instance AlphaEqE InstanceDef
 instance AlphaHashableE InstanceDef
 instance SubstE Name InstanceDef
-instance SubstE AtomSubstVal InstanceDef
+instance SubstE (AtomSubstVal CoreIR) InstanceDef
 deriving instance Show (InstanceDef n)
 deriving via WrapE InstanceDef n instance Generic (InstanceDef n)
 
 instance GenericE InstanceBody where
-  type RepE InstanceBody = ListE Atom `PairE` ListE Block
+  type RepE InstanceBody = ListE CAtom `PairE` ListE (Block CoreIR)
   fromE (InstanceBody scs methods) = ListE scs `PairE` ListE methods
   toE   (ListE scs `PairE` ListE methods) = InstanceBody scs methods
 
@@ -1384,77 +1563,81 @@ instance HoistableE  InstanceBody
 instance AlphaEqE InstanceBody
 instance AlphaHashableE InstanceBody
 instance SubstE Name InstanceBody
-instance SubstE AtomSubstVal InstanceBody
+instance SubstE (AtomSubstVal CoreIR) InstanceBody
 
 instance GenericE MethodType where
-  type RepE MethodType = PairE (LiftE [Bool]) Type
+  type RepE MethodType = PairE (LiftE [Bool]) CType
   fromE (MethodType explicit ty) = PairE (LiftE explicit) ty
   toE   (PairE (LiftE explicit) ty) = MethodType explicit ty
 
-instance SinkableE MethodType
-instance HoistableE  MethodType
-instance AlphaEqE MethodType
+instance SinkableE      MethodType
+instance HoistableE     MethodType
+instance AlphaEqE       MethodType
 instance AlphaHashableE MethodType
 instance SubstE Name MethodType
-instance SubstE AtomSubstVal MethodType
+instance SubstE (AtomSubstVal CoreIR) MethodType
 
-instance GenericE DictType where
-  type RepE DictType = LiftE SourceName `PairE` ClassName `PairE` ListE Type
+instance GenericE (DictType r) where
+  type RepE (DictType r) = LiftE SourceName `PairE` ClassName `PairE` ListE (Type r)
   fromE (DictType sourceName className params) =
     LiftE sourceName `PairE` className `PairE` ListE params
   toE (LiftE sourceName `PairE` className `PairE` ListE params) =
     DictType sourceName className params
 
-instance SinkableE           DictType
-instance HoistableE          DictType
-instance AlphaEqE            DictType
-instance AlphaHashableE      DictType
-instance SubstE Name         DictType
-instance SubstE AtomSubstVal DictType
+instance SinkableE           (DictType r)
+instance HoistableE          (DictType r)
+instance AlphaEqE            (DictType r)
+instance AlphaHashableE      (DictType r)
+instance SubstE Name         (DictType r)
+instance SubstE (AtomSubstVal r) (DictType r)
 
-instance GenericE DictExpr where
-  type RepE DictExpr =
-    EitherE4
- {- InstanceDict -}      (PairE InstanceName (ListE Atom))
- {- InstantiatedGiven -} (PairE Atom (ListE Atom))
- {- SuperclassProj -}    (PairE Atom (LiftE Int))
- {- IxFin -}             (Atom)
+instance GenericE (DictExpr r) where
+  type RepE (DictExpr r) =
+    EitherE5
+ {- InstanceDict -}      (PairE InstanceName (ListE (Atom r)))
+ {- InstantiatedGiven -} (PairE (Atom r) (ListE (Atom r)))
+ {- SuperclassProj -}    (PairE (Atom r) (LiftE Int))
+ {- IxFin -}             (Atom r)
+ {- ExplicitMethods -}   (SpecDictName `PairE` ListE (Atom r))
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
+    ExplicitMethods sd args -> Case4 (sd `PairE` ListE args)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x -> IxFin x
+    Case4 (sd `PairE` ListE args) -> ExplicitMethods sd args
     _ -> error "impossible"
 
-instance SinkableE           DictExpr
-instance HoistableE          DictExpr
-instance AlphaEqE            DictExpr
-instance AlphaHashableE      DictExpr
-instance SubstE Name         DictExpr
-instance SubstE AtomSubstVal DictExpr
+instance SinkableE           (DictExpr r)
+instance HoistableE          (DictExpr r)
+instance AlphaEqE            (DictExpr r)
+instance AlphaHashableE      (DictExpr r)
+instance SubstE Name         (DictExpr r)
+instance SubstE (AtomSubstVal r) (DictExpr r)
 
 instance GenericE Cache where
   type RepE Cache =
-            EMap SpecializationSpec AtomName
-    `PairE` EMap AtomName ImpFunName
+            EMap SpecializationSpec (AtomName CoreIR)
+    `PairE` EMap (AbsDict CoreIR) SpecDictName
+    `PairE` EMap (AtomName CoreIR) ImpFunName
     `PairE` EMap ImpFunName FunObjCodeName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
     `PairE` ListE (        LiftE ModuleSourceName
                    `PairE` LiftE FileHash
                    `PairE` ListE ModuleName
                    `PairE` ModuleName)
-  fromE (Cache x y z parseCache evalCache) =
-    x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE`
+  fromE (Cache x y z w parseCache evalCache) =
+    x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE`
       ListE [LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
              | (sourceName, ((hashVal, deps), result)) <- M.toList evalCache ]
   {-# INLINE fromE #-}
-  toE   (x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE` ListE evalCache) =
-    Cache x y z parseCache
+  toE   (x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE` ListE evalCache) =
+    Cache x y z w parseCache
       (M.fromList
        [(sourceName, ((hashVal, deps), result))
        | LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
@@ -1468,16 +1651,16 @@ instance SubstE Name Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty mempty mempty mempty
+  mempty = Cache mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 x3 x4 x5 <> Cache y1 y2 y3 y4 y5 =
-    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5)
+  Cache x1 x2 x3 x4 x5 x6 <> Cache y1 y2 y3 y4 y5 y6 =
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5) (y6<>x6)
 
-instance GenericB LamBinder where
-  type RepB LamBinder =         LiftB (PairE Type (LiftE Arrow))
+instance GenericB (LamBinder r) where
+  type RepB (LamBinder r) =         LiftB (PairE (Type r) (LiftE Arrow))
                         `PairB` NameBinder AtomNameC
                         `PairB` LiftB EffectRow
   fromB (LamBinder b ty arr effs) = LiftB (PairE ty (LiftE arr))
@@ -1487,217 +1670,242 @@ instance GenericB LamBinder where
       `PairB` b
       `PairB` LiftB effs) = LamBinder b ty arr effs
 
-instance BindsAtMostOneName LamBinder AtomNameC where
+instance BindsAtMostOneName (LamBinder r) AtomNameC where
   LamBinder b _ _ _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName LamBinder AtomNameC where
+instance BindsOneName (LamBinder r) AtomNameC where
   binderName (LamBinder b _ _ _) = binderName b
   {-# INLINE binderName #-}
 
-instance HasNameHint (LamBinder n l) where
+instance HasNameHint (LamBinder r n l) where
   getNameHint (LamBinder b _ _ _) = getNameHint b
   {-# INLINE getNameHint #-}
 
-instance ProvesExt  LamBinder
-instance BindsNames LamBinder
-instance SinkableB LamBinder
-instance HoistableB  LamBinder
-instance SubstB Name LamBinder
-instance SubstB AtomSubstVal LamBinder
-instance AlphaEqB LamBinder
-instance AlphaHashableB LamBinder
+instance ProvesExt   (LamBinder r)
+instance BindsNames  (LamBinder r)
+instance SinkableB   (LamBinder r)
+instance HoistableB  (LamBinder r)
+instance SubstB Name (LamBinder r)
+instance SubstB (AtomSubstVal r) (LamBinder r)
+instance AlphaEqB (LamBinder r)
+instance AlphaHashableB (LamBinder r)
 
-instance GenericE LamBinding where
-  type RepE LamBinding = PairE (LiftE Arrow) Type
+instance GenericE (LamBinding r) where
+  type RepE (LamBinding r) = PairE (LiftE Arrow) (Type r)
   fromE (LamBinding arr ty) = PairE (LiftE arr) ty
   {-# INLINE fromE #-}
   toE   (PairE (LiftE arr) ty) = LamBinding arr ty
   {-# INLINE toE #-}
 
-instance SinkableE LamBinding
-instance HoistableE  LamBinding
-instance SubstE Name LamBinding
-instance SubstE AtomSubstVal LamBinding
-instance AlphaEqE LamBinding
-instance AlphaHashableE LamBinding
+instance SinkableE     (LamBinding r)
+instance HoistableE    (LamBinding r)
+instance SubstE Name   (LamBinding r)
+instance SubstE (AtomSubstVal r) (LamBinding r)
+instance AlphaEqE       (LamBinding r)
+instance AlphaHashableE (LamBinding r)
 
-instance GenericE LamExpr where
-  type RepE LamExpr = Abs LamBinder Block
+instance GenericE (LamExpr r) where
+  type RepE (LamExpr r) = Abs (LamBinder r) (Block r)
   fromE (LamExpr b block) = Abs b block
   {-# INLINE fromE #-}
   toE   (Abs b block) = LamExpr b block
   {-# INLINE toE #-}
 
-instance SinkableE LamExpr
-instance HoistableE  LamExpr
-instance AlphaEqE LamExpr
-instance AlphaHashableE LamExpr
-instance SubstE Name LamExpr
-instance SubstE AtomSubstVal LamExpr
-deriving instance Show (LamExpr n)
-deriving via WrapE LamExpr n instance Generic (LamExpr n)
+instance SinkableE      (LamExpr r)
+instance HoistableE     (LamExpr r)
+instance AlphaEqE       (LamExpr r)
+instance AlphaHashableE (LamExpr r)
+instance SubstE Name    (LamExpr r)
+instance SubstE (AtomSubstVal r) (LamExpr r)
+deriving instance Show (LamExpr r n)
+deriving via WrapE (LamExpr r) n instance Generic (LamExpr r n)
 
-instance GenericE TabLamExpr where
-  type RepE TabLamExpr = Abs IxBinder Block
+instance GenericE (TabLamExpr r) where
+  type RepE (TabLamExpr r) = Abs (IxBinder r) (Block r)
   fromE (TabLamExpr b block) = Abs b block
   {-# INLINE fromE #-}
   toE   (Abs b block) = TabLamExpr b block
   {-# INLINE toE #-}
 
-instance SinkableE TabLamExpr
-instance HoistableE  TabLamExpr
-instance AlphaEqE TabLamExpr
-instance AlphaHashableE TabLamExpr
-instance SubstE Name TabLamExpr
-instance SubstE AtomSubstVal TabLamExpr
-deriving instance Show (TabLamExpr n)
-deriving via WrapE TabLamExpr n instance Generic (TabLamExpr n)
+instance SinkableE      (TabLamExpr r)
+instance HoistableE     (TabLamExpr r)
+instance AlphaEqE       (TabLamExpr r)
+instance AlphaHashableE (TabLamExpr r)
+instance SubstE Name    (TabLamExpr r)
+instance SubstE (AtomSubstVal r) (TabLamExpr r)
+deriving instance Show (TabLamExpr r n)
+deriving via WrapE (TabLamExpr r) n instance Generic (TabLamExpr r n)
 
-
-instance GenericE PiBinding where
-  type RepE PiBinding = PairE (LiftE Arrow) Type
+instance GenericE (PiBinding r) where
+  type RepE (PiBinding r) = PairE (LiftE Arrow) (Type r)
   fromE (PiBinding arr ty) = PairE (LiftE arr) ty
   {-# INLINE fromE #-}
   toE   (PairE (LiftE arr) ty) = PiBinding arr ty
   {-# INLINE toE #-}
 
-instance SinkableE PiBinding
-instance HoistableE  PiBinding
-instance SubstE Name PiBinding
-instance SubstE AtomSubstVal PiBinding
-instance AlphaEqE PiBinding
-instance AlphaHashableE PiBinding
+instance SinkableE   (PiBinding r)
+instance HoistableE  (PiBinding r)
+instance SubstE Name (PiBinding r)
+instance SubstE (AtomSubstVal r) (PiBinding r)
+instance AlphaEqE (PiBinding r)
+instance AlphaHashableE (PiBinding r)
 
-instance GenericB PiBinder where
-  type RepB PiBinder = BinderP AtomNameC (PairE Type (LiftE Arrow))
+instance GenericB (PiBinder r) where
+  type RepB (PiBinder r) = BinderP AtomNameC (PairE (Type r) (LiftE Arrow))
   fromB (PiBinder b ty arr) = b :> PairE ty (LiftE arr)
   toB   (b :> PairE ty (LiftE arr)) = PiBinder b ty arr
 
-instance BindsAtMostOneName PiBinder AtomNameC where
+instance BindsAtMostOneName (PiBinder r) AtomNameC where
   PiBinder b _ _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName PiBinder AtomNameC where
+instance BindsOneName (PiBinder r) AtomNameC where
   binderName (PiBinder b _ _) = binderName b
   {-# INLINE binderName #-}
 
-instance HasNameHint (PiBinder n l) where
+instance HasNameHint (PiBinder r n l) where
   getNameHint (PiBinder b _ _) = getNameHint b
   {-# INLINE getNameHint #-}
 
-instance ProvesExt  PiBinder
-instance BindsNames PiBinder
-instance SinkableB PiBinder
-instance HoistableB  PiBinder
-instance SubstB Name PiBinder
-instance SubstB AtomSubstVal PiBinder
-instance AlphaEqB PiBinder
-instance AlphaHashableB PiBinder
+instance ProvesExt   (PiBinder r)
+instance BindsNames  (PiBinder r)
+instance SinkableB   (PiBinder r)
+instance HoistableB  (PiBinder r)
+instance SubstB Name (PiBinder r)
+instance SubstB (AtomSubstVal r) (PiBinder r)
+instance AlphaEqB (PiBinder r)
+instance AlphaHashableB (PiBinder r)
 
-instance GenericE PiType where
-  type RepE PiType = Abs PiBinder (PairE EffectRow Type)
+instance GenericE (PiType r) where
+  type RepE (PiType r) = Abs (PiBinder r) (PairE EffectRow (Type r))
   fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
   {-# INLINE fromE #-}
   toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
   {-# INLINE toE #-}
 
-instance SinkableE PiType
-instance HoistableE  PiType
-instance AlphaEqE PiType
-instance AlphaHashableE PiType
-instance SubstE Name PiType
-instance SubstE AtomSubstVal PiType
-deriving instance Show (PiType n)
-deriving via WrapE PiType n instance Generic (PiType n)
+instance SinkableE      (PiType r)
+instance HoistableE     (PiType r)
+instance AlphaEqE       (PiType r)
+instance AlphaHashableE (PiType r)
+instance SubstE Name    (PiType r)
+instance SubstE (AtomSubstVal r) (PiType r)
+deriving instance Show (PiType r n)
+deriving via WrapE (PiType r) n instance Generic (PiType r n)
 
-instance GenericE IxType where
-  type RepE IxType = PairE Type IxDict
+instance GenericB (RolePiBinder r) where
+  type RepB (RolePiBinder r) = BinderP AtomNameC (PairE (Type r) (LiftE (Arrow, ParamRole)))
+  fromB (RolePiBinder b ty arr role) = b :> PairE ty (LiftE (arr, role))
+  {-# INLINE fromB #-}
+  toB   (b :> PairE ty (LiftE (arr, role))) = RolePiBinder b ty arr role
+  {-# INLINE toB #-}
+
+instance HasNameHint (RolePiBinder r n l) where
+  getNameHint (RolePiBinder b _ _ _) = getNameHint b
+  {-# INLINE getNameHint #-}
+
+instance BindsAtMostOneName (RolePiBinder r) AtomNameC where
+  RolePiBinder b _ _ _ @> x = b @> x
+
+instance BindsOneName (RolePiBinder r) AtomNameC where
+  binderName (RolePiBinder b _ _ _) = binderName b
+
+instance ProvesExt   (RolePiBinder r)
+instance BindsNames  (RolePiBinder r)
+instance SinkableB   (RolePiBinder r)
+instance HoistableB  (RolePiBinder r)
+instance SubstB Name (RolePiBinder r)
+instance SubstB (AtomSubstVal r) (RolePiBinder r)
+instance AlphaEqB (RolePiBinder r)
+instance AlphaHashableB (RolePiBinder r)
+
+instance GenericE (IxType r) where
+  type RepE (IxType r) = PairE (Type r) (IxDict r)
   fromE (IxType ty d) = PairE ty d
   {-# INLINE fromE #-}
   toE   (PairE ty d) = IxType ty d
   {-# INLINE toE #-}
 
-instance SinkableE IxType
-instance HoistableE  IxType
-instance SubstE Name IxType
-instance SubstE AtomSubstVal IxType
+instance SinkableE   (IxType r)
+instance HoistableE  (IxType r)
+instance SubstE Name (IxType r)
+instance SubstE (AtomSubstVal r) (IxType r)
 
-instance AlphaEqE IxType where
+instance AlphaEqE (IxType r) where
   alphaEqE (IxType t1 _) (IxType t2 _) = alphaEqE t1 t2
 
-instance AlphaHashableE IxType where
+instance AlphaHashableE (IxType r) where
   hashWithSaltE env salt (IxType t _) = hashWithSaltE env salt t
 
-instance GenericE TabPiType where
-  type RepE TabPiType = Abs IxBinder Type
+instance GenericE (TabPiType r) where
+  type RepE (TabPiType r) = Abs (IxBinder r) (Type r)
   fromE (TabPiType b resultTy) = Abs b resultTy
   {-# INLINE fromE #-}
   toE   (Abs b resultTy) = TabPiType b resultTy
   {-# INLINE toE #-}
 
-instance SinkableE TabPiType
-instance HoistableE  TabPiType
-instance AlphaEqE TabPiType
-instance AlphaHashableE TabPiType
-instance SubstE Name TabPiType
-instance SubstE AtomSubstVal TabPiType
-deriving instance Show (TabPiType n)
-deriving via WrapE TabPiType n instance Generic (TabPiType n)
+instance SinkableE      (TabPiType r)
+instance HoistableE     (TabPiType r)
+instance AlphaEqE       (TabPiType r)
+instance AlphaHashableE (TabPiType r)
+instance SubstE Name    (TabPiType r)
+instance SubstE (AtomSubstVal r) (TabPiType r)
+deriving instance Show (TabPiType r n)
+deriving via WrapE (TabPiType r) n instance Generic (TabPiType r n)
 
-instance GenericE NaryPiType where
-  type RepE NaryPiType = Abs (PairB PiBinder (Nest PiBinder)) (PairE EffectRow Type)
+instance GenericE (NaryPiType r) where
+  type RepE (NaryPiType r) = Abs (PairB (PiBinder r) (Nest (PiBinder r))) (PairE EffectRow (Type r))
   fromE (NaryPiType (NonEmptyNest b bs) eff resultTy) = Abs (PairB b bs) (PairE eff resultTy)
   {-# INLINE fromE #-}
   toE   (Abs (PairB b bs) (PairE eff resultTy)) = NaryPiType (NonEmptyNest b bs) eff resultTy
   {-# INLINE toE #-}
 
-instance SinkableE NaryPiType
-instance HoistableE  NaryPiType
-instance AlphaEqE NaryPiType
-instance AlphaHashableE NaryPiType
-instance SubstE Name NaryPiType
-instance SubstE AtomSubstVal NaryPiType
-deriving instance Show (NaryPiType n)
-deriving via WrapE NaryPiType n instance Generic (NaryPiType n)
-instance Store (NaryPiType n)
+instance SinkableE      (NaryPiType r)
+instance HoistableE     (NaryPiType r)
+instance AlphaEqE       (NaryPiType r)
+instance AlphaHashableE (NaryPiType r)
+instance SubstE Name (NaryPiType r)
+instance SubstE (AtomSubstVal r) (NaryPiType r)
+deriving instance Show (NaryPiType r n)
+deriving via WrapE (NaryPiType r) n instance Generic (NaryPiType r n)
+instance Store (NaryPiType r n)
 
-instance GenericE NaryLamExpr where
-  type RepE NaryLamExpr = Abs (PairB Binder (Nest Binder)) (PairE EffectRow Block)
+instance GenericE (NaryLamExpr r) where
+  type RepE (NaryLamExpr r) = Abs (PairB (Binder r) (Nest (Binder r))) (PairE EffectRow (Block r))
   fromE (NaryLamExpr (NonEmptyNest b bs) eff body) = Abs (PairB b bs) (PairE eff body)
   {-# INLINE fromE #-}
   toE   (Abs (PairB b bs) (PairE eff body)) = NaryLamExpr (NonEmptyNest b bs) eff body
   {-# INLINE toE #-}
 
-instance SinkableE NaryLamExpr
-instance HoistableE  NaryLamExpr
-instance AlphaEqE NaryLamExpr
-instance AlphaHashableE NaryLamExpr
-instance SubstE Name NaryLamExpr
-instance SubstE AtomSubstVal NaryLamExpr
-deriving instance Show (NaryLamExpr n)
-deriving via WrapE NaryLamExpr n instance Generic (NaryLamExpr n)
-instance Store (NaryLamExpr n)
+instance SinkableE (NaryLamExpr r)
+instance HoistableE  (NaryLamExpr r)
+instance AlphaEqE (NaryLamExpr r)
+instance AlphaHashableE (NaryLamExpr r)
+instance SubstE Name (NaryLamExpr r)
+instance SubstE (AtomSubstVal r) (NaryLamExpr r)
+deriving instance Show (NaryLamExpr r n)
+deriving via WrapE (NaryLamExpr r) n instance Generic (NaryLamExpr r n)
+instance Store (NaryLamExpr r n)
 
-instance GenericE DepPairType where
-  type RepE DepPairType = Abs Binder Type
+instance GenericE (DepPairType r) where
+  type RepE (DepPairType r) = Abs (Binder r) (Type r)
   fromE (DepPairType b resultTy) = Abs b resultTy
   {-# INLINE fromE #-}
   toE   (Abs b resultTy) = DepPairType b resultTy
   {-# INLINE toE #-}
 
-instance SinkableE   DepPairType
-instance HoistableE  DepPairType
-instance AlphaEqE    DepPairType
-instance AlphaHashableE DepPairType
-instance SubstE Name DepPairType
-instance SubstE AtomSubstVal DepPairType
-deriving instance Show (DepPairType n)
-deriving via WrapE DepPairType n instance Generic (DepPairType n)
+instance SinkableE   (DepPairType r)
+instance HoistableE  (DepPairType r)
+instance AlphaEqE    (DepPairType r)
+instance AlphaHashableE (DepPairType r)
+instance SubstE Name (DepPairType r)
+instance SubstE (AtomSubstVal r) (DepPairType r)
+deriving instance Show (DepPairType r n)
+deriving via WrapE (DepPairType r) n instance Generic (DepPairType r n)
 
 instance GenericE SynthCandidates where
   type RepE SynthCandidates =
-    ListE AtomName `PairE` ListE (PairE ClassName (ListE InstanceName))
+    ListE (AtomName CoreIR) `PairE` ListE (PairE ClassName (ListE InstanceName))
   fromE (SynthCandidates xs ys) = ListE xs `PairE` ListE ys'
     where ys' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList ys)
   {-# INLINE fromE #-}
@@ -1711,19 +1919,19 @@ instance AlphaEqE       SynthCandidates
 instance AlphaHashableE SynthCandidates
 instance SubstE Name    SynthCandidates
 
-instance GenericE AtomBinding where
-  type RepE AtomBinding =
+instance GenericE (AtomBinding r) where
+  type RepE (AtomBinding r) =
      EitherE2
        (EitherE6
-          DeclBinding     -- LetBound
-          LamBinding      -- LamBound
-          PiBinding       -- PiBound
-          IxType          -- IxBound
-          Type            -- MiscBound
-          SolverBinding)  -- SolverBound
+          (DeclBinding   r)   -- LetBound
+          (LamBinding    r)   -- LamBound
+          (PiBinding     r)   -- PiBound
+          (IxType        r)   -- IxBound
+          (Type          r)   -- MiscBound
+          (SolverBinding r))  -- SolverBound
        (EitherE2
           (PairE (LiftE PtrType) PtrName)   -- PtrLitBound
-          (PairE NaryPiType TopFunBinding)) -- TopFunBound
+          (PairE (NaryPiType r) TopFunBinding)) -- TopFunBound
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
@@ -1752,30 +1960,30 @@ instance GenericE AtomBinding where
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-instance SinkableE AtomBinding
-instance HoistableE  AtomBinding
-instance SubstE Name AtomBinding
-instance SubstE AtomSubstVal AtomBinding
-instance AlphaEqE AtomBinding
-instance AlphaHashableE AtomBinding
+instance SinkableE   (AtomBinding r)
+instance HoistableE  (AtomBinding r)
+instance SubstE Name (AtomBinding r)
+instance SubstE (AtomSubstVal CoreIR) (AtomBinding CoreIR)
+instance AlphaEqE (AtomBinding r)
+instance AlphaHashableE (AtomBinding r)
 
 instance GenericE TopFunBinding where
   type RepE TopFunBinding = EitherE4
-    (LiftE Int `PairE` Atom)  -- UnspecializedTopFun
-    SpecializationSpec        -- SpecializedTopFun
-    NaryLamExpr               -- SimpTopFun
-    ImpFunName                -- FFITopFun
+    (LiftE Int `PairE` CAtom)  -- AwaitingSpecializationArgsTopFun
+    SpecializationSpec         -- SpecializedTopFun
+    (NaryLamExpr CoreIR)       -- LoweredTopFun
+    ImpFunName                 -- FFITopFun
   fromE = \case
-    UnspecializedTopFun n x  -> Case0 $ PairE (LiftE n) x
+    AwaitingSpecializationArgsTopFun n x  -> Case0 $ PairE (LiftE n) x
     SpecializedTopFun x -> Case1 x
-    SimpTopFun        x -> Case2 x
+    LoweredTopFun     x -> Case2 x
     FFITopFun         x -> Case3 x
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (PairE (LiftE n) x) -> UnspecializedTopFun n x
+    Case0 (PairE (LiftE n) x) -> AwaitingSpecializationArgsTopFun n x
     Case1 x                   -> SpecializedTopFun x
-    Case2 x                   -> SimpTopFun        x
+    Case2 x                   -> LoweredTopFun     x
     Case3 x                   -> FFITopFun         x
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1784,12 +1992,13 @@ instance GenericE TopFunBinding where
 instance SinkableE TopFunBinding
 instance HoistableE  TopFunBinding
 instance SubstE Name TopFunBinding
-instance SubstE AtomSubstVal TopFunBinding
+instance SubstE (AtomSubstVal CoreIR) TopFunBinding
 instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
-  type RepE SpecializationSpec = PairE AtomName (Abs (Nest Binder) (ListE Type))
+  type RepE SpecializationSpec =
+         PairE (AtomName CoreIR) (Abs (Nest (Binder CoreIR)) (ListE CType))
   fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
   toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
@@ -1798,7 +2007,7 @@ instance GenericE SpecializationSpec where
 instance HasNameHint (SpecializationSpec n) where
   getNameHint (AppSpecialization f _) = getNameHint f
 
-instance SubstE AtomSubstVal SpecializationSpec where
+instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
   substE env (AppSpecialization f ab) = do
     let f' = case snd env ! f of
                Rename v -> v
@@ -1812,10 +2021,10 @@ instance SubstE Name SpecializationSpec
 instance AlphaEqE SpecializationSpec
 instance AlphaHashableE SpecializationSpec
 
-instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE2
-                              (PairE Type (LiftE SrcPosCtx))
-                              Type
+instance GenericE (SolverBinding r) where
+  type RepE (SolverBinding r) = EitherE2
+                                  (PairE (Type r) (LiftE SrcPosCtx))
+                                  (Type r)
   fromE = \case
     InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
     SkolemBound  ty     -> Case1 ty
@@ -1827,25 +2036,25 @@ instance GenericE SolverBinding where
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-instance SinkableE SolverBinding
-instance HoistableE  SolverBinding
-instance SubstE Name SolverBinding
-instance SubstE AtomSubstVal SolverBinding
-instance AlphaEqE SolverBinding
-instance AlphaHashableE SolverBinding
+instance SinkableE   (SolverBinding r)
+instance HoistableE  (SolverBinding r)
+instance SubstE Name (SolverBinding r)
+instance SubstE (AtomSubstVal r) (SolverBinding r)
+instance AlphaEqE       (SolverBinding r)
+instance AlphaHashableE (SolverBinding r)
 
 instance Color c => GenericE (Binding c) where
   type RepE (Binding c) =
     EitherE2
       (EitherE7
-          AtomBinding
+          (AtomBinding CoreIR)
           DataDef
-          (DataDefName `PairE` Atom)
-          (DataDefName `PairE` LiftE Int `PairE` Atom)
+          (DataDefName `PairE` CAtom)
+          (DataDefName `PairE` LiftE Int `PairE` CAtom)
           (ClassDef)
           (InstanceDef)
-          (ClassName `PairE` LiftE Int `PairE` Atom))
-      (EitherE7
+          (ClassName `PairE` LiftE Int `PairE` CAtom))
+      (EitherE8
           (ImpFunction)
           (LiftE FunObjCode `PairE` LinktimeNames)
           (Module)
@@ -1853,6 +2062,7 @@ instance Color c => GenericE (Binding c) where
           (EffectDef)
           (HandlerDef)
           (EffectOpDef)
+          (SpecializedDictDef)
       )
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
@@ -1869,6 +2079,7 @@ instance Color c => GenericE (Binding c) where
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
+    SpecializedDictBinding def          -> Case1 $ Case7 $ def
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -1886,6 +2097,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
+    Case1 (Case7 def)                                       -> fromJust $ tryAsColor $ SpecializedDictBinding def
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1897,41 +2109,41 @@ instance Color c => SinkableE   (Binding c)
 instance Color c => HoistableE  (Binding c)
 instance Color c => SubstE Name (Binding c)
 
-instance GenericE DeclBinding where
-  type RepE DeclBinding = LiftE LetAnn `PairE` Type `PairE` Expr
+instance GenericE (DeclBinding r) where
+  type RepE (DeclBinding r) = LiftE LetAnn `PairE` Type r `PairE` Expr r
   fromE (DeclBinding ann ty expr) = LiftE ann `PairE` ty `PairE` expr
   {-# INLINE fromE #-}
   toE   (LiftE ann `PairE` ty `PairE` expr) = DeclBinding ann ty expr
   {-# INLINE toE #-}
 
-instance SinkableE DeclBinding
-instance HoistableE  DeclBinding
-instance SubstE Name DeclBinding
-instance SubstE AtomSubstVal DeclBinding
-instance AlphaEqE DeclBinding
-instance AlphaHashableE DeclBinding
+instance SinkableE (DeclBinding r)
+instance HoistableE  (DeclBinding r)
+instance SubstE Name (DeclBinding r)
+instance SubstE (AtomSubstVal r) (DeclBinding r)
+instance AlphaEqE (DeclBinding r)
+instance AlphaHashableE (DeclBinding r)
 
-instance GenericB Decl where
-  type RepB Decl = AtomBinderP DeclBinding
+instance GenericB (Decl r) where
+  type RepB (Decl r) = AtomBinderP (DeclBinding r)
   fromB (Let b binding) = b :> binding
   {-# INLINE fromB #-}
   toB   (b :> binding) = Let b binding
   {-# INLINE toB #-}
 
-instance SinkableB Decl
-instance HoistableB  Decl
-instance SubstB AtomSubstVal Decl
-instance SubstB Name Decl
-instance AlphaEqB Decl
-instance AlphaHashableB Decl
-instance ProvesExt  Decl
-instance BindsNames Decl
+instance SinkableB (Decl r)
+instance HoistableB  (Decl r)
+instance SubstB (AtomSubstVal r) (Decl r)
+instance SubstB Name (Decl r)
+instance AlphaEqB (Decl r)
+instance AlphaHashableB (Decl r)
+instance ProvesExt  (Decl r)
+instance BindsNames (Decl r)
 
-instance BindsAtMostOneName Decl AtomNameC where
+instance BindsAtMostOneName (Decl r) AtomNameC where
   Let b _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName Decl AtomNameC where
+instance BindsOneName (Decl r) AtomNameC where
   binderName (Let b _) = binderName b
   {-# INLINE binderName #-}
 
@@ -1963,11 +2175,14 @@ instance GenericE PartialTopEnvFrag where
                               `PairE` LoadedModules
                               `PairE` LoadedObjects
                               `PairE` ModuleEnv
-  fromE (PartialTopEnvFrag cache rules loadedM loadedO env) =
-    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env
+                              `PairE` ListE (PairE SpecDictName (ListE (NaryLamExpr SimpIR)))
+  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d) =
+    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d'
+    where d' = ListE $ [name `PairE` ListE methods | (name, methods) <- toList d]
   {-# INLINE fromE #-}
-  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env) =
-    PartialTopEnvFrag cache rules loadedM loadedO env
+  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d) =
+    PartialTopEnvFrag cache rules loadedM loadedO env d'
+    where d' = toSnocList [(name, methods) | name `PairE` ListE methods <- fromListE d]
   {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
@@ -1975,11 +2190,11 @@ instance HoistableE     PartialTopEnvFrag
 instance SubstE Name    PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 x4 x5 <> PartialTopEnvFrag y1 y2 y3 y4 y5 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5)
+  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 =
+    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6)
 
 instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty
+  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance GenericB TopEnvFrag where
@@ -2010,10 +2225,11 @@ instance OutFrag TopEnvFrag where
 instance ExtOutMap Env TopEnvFrag where
   extendOutMap env
     (TopEnvFrag (EnvFrag frag _)
-    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv')) = result
+    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d')) = resultWithDictMethods
     where
       Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
       result = Env newTopEnv newModuleEnv
+      resultWithDictMethods = foldr addMethods result (toList d')
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
@@ -2037,6 +2253,15 @@ instance ExtOutMap Env TopEnvFrag where
           newImportedSC  = flip foldMap newTransImports  $ moduleSynthCandidates . lookupModulePure
 
       lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
+
+addMethods :: (SpecDictName n, [NaryLamExpr CoreIR n]) -> Env n -> Env n
+addMethods (dName, methods) e = do
+  let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
+  case oldMethods of
+    Nothing -> do
+      let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
+      updateEnv dName newBinding e
+    Just _ -> error "shouldn't be adding methods if we already have them"
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ topEnv env) v
@@ -2153,39 +2378,42 @@ instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
 
 instance Hashable Projection
+instance Hashable IxMethod
+instance Hashable ParamRole
 
-instance Store (Atom n)
-instance Store (Expr n)
-instance Store (SolverBinding n)
-instance Store (AtomBinding n)
+instance Store (Atom r n)
+instance Store (Expr r n)
+instance Store (SolverBinding r n)
+instance Store (AtomBinding r n)
 instance Store (SpecializationSpec n)
 instance Store (TopFunBinding n)
-instance Store (LamBinding  n)
-instance Store (DeclBinding n)
-instance Store (FieldRowElem  n)
-instance Store (FieldRowElems n)
-instance Store (Decl n l)
-instance Store (DataDefParams n)
+instance Store (LamBinding  r n)
+instance Store (DeclBinding r n)
+instance Store (FieldRowElem  r n)
+instance Store (FieldRowElems r n)
+instance Store (Decl r n l)
+instance Store (RolePiBinder r n l)
+instance Store (DataDefParams r n)
 instance Store (DataDef n)
 instance Store (DataConDef n)
-instance Store (Block n)
-instance Store (LamBinder n l)
-instance Store (LamExpr n)
-instance Store (IxType n)
-instance Store (TabLamExpr n)
-instance Store (PiBinding n)
-instance Store (PiBinder n l)
-instance Store (PiType n)
-instance Store (TabPiType n)
-instance Store (DepPairType  n)
+instance Store (Block r n)
+instance Store (LamBinder r n l)
+instance Store (LamExpr r n)
+instance Store (IxType r n)
+instance Store (TabLamExpr r n)
+instance Store (PiBinding r n)
+instance Store (PiBinder r n l)
+instance Store (PiType r n)
+instance Store (TabPiType r n)
+instance Store (DepPairType  r n)
 instance Store (SuperclassBinders n l)
 instance Store (AtomRules n)
 instance Store (ClassDef     n)
 instance Store (InstanceDef  n)
 instance Store (InstanceBody n)
 instance Store (MethodType   n)
-instance Store (DictType n)
-instance Store (DictExpr n)
+instance Store (DictType r n)
+instance Store (DictExpr r n)
 instance Store (EffectDef n)
 instance Store (EffectOpDef n)
 instance Store (HandlerDef n)
@@ -2197,14 +2425,17 @@ instance Store (ImportStatus n)
 instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
-instance Store (BoxPtr n)
-instance (Store (ann n)) => Store (NonDepNest ann n l)
+instance Store (BoxPtr r n)
+instance (Store (ann n)) => Store (NonDepNest r ann n l)
 instance Store Projection
+instance Store IxMethod
+instance Store ParamRole
+instance Store (SpecializedDictDef n)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!
 
-instance SubstE AtomSubstVal (EffectRowP Name) where
+instance SubstE (AtomSubstVal r) (EffectRowP Name) where
   substE env (EffectRow effs tailVar) = do
     let effs' = S.fromList $ map (substE env) (S.toList effs)
     let tailEffRow = case tailVar of
@@ -2216,7 +2447,7 @@ instance SubstE AtomSubstVal (EffectRowP Name) where
             _ -> error "Not a valid effect substitution"
     extendEffRow effs' tailEffRow
 
-instance SubstE AtomSubstVal (EffectP Name) where
+instance SubstE (AtomSubstVal r) (EffectP Name) where
   substE (_, env) eff = case eff of
     RWSEffect rws Nothing -> RWSEffect rws Nothing
     RWSEffect rws (Just v) -> do

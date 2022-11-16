@@ -126,3 +126,12 @@ data MyPair3 (a:Type) (b:Type) = MkPair3 (x:a) (y:b)
 
 data TableInType n a [Ix n] table:(n=>a) =
   MkTableInType              -- Doesn't store any data except in the type!
+
+'Left arrow <- desugars to a continuation lambda
+(feature test for Issue 1137)
+
+:p
+  x <- with_state 0
+  x := 4
+  get x
+> 4

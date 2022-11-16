@@ -15,6 +15,7 @@ module TopLevel (
 
 import Data.Foldable (toList)
 import Data.Functor
+import Control.Category ((>>>))
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
@@ -24,6 +25,7 @@ import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.List (partition)
+import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
@@ -305,9 +307,9 @@ evalSourceBlock' mname block = case sbContents block of
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
     where
-      getLinearizationType :: Type n -> RNest PiBinder n l
-                           -> [Type l] -> Type l
-                           -> EnvReaderT FallibleM l (Int, Type n)
+      getLinearizationType :: CType n -> RNest (PiBinder CoreIR) n l
+                           -> [CType l] -> CType l
+                           -> EnvReaderT FallibleM l (Int, CType n)
       getLinearizationType fullTy implicitArgs revArgTys = \case
         Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
           unless (eff == Pure) $ throw TypeErr $
@@ -373,7 +375,7 @@ evalSourceBlock' mname block = case sbContents block of
             <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
         where
           but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-          prependImplicit :: RNest PiBinder n l -> Type l -> Type n
+          prependImplicit :: RNest (PiBinder CoreIR) n l -> CType l -> CType n
           prependImplicit is ty = case is of
             REmpty -> ty
             RNest is' i -> prependImplicit is' $ Pi $ PiType i Pure ty
@@ -568,13 +570,13 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalUType :: (Topper m, Mut n) => UType VoidS -> m n (Type n)
+evalUType :: (Topper m, Mut n) => UType VoidS -> m n (CType n)
 evalUType ty = do
   logTop $ PassInfo Parse $ pprint ty
   renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
   checkPass TypePass $ checkTopUType renamed
 
-evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (Atom n)
+evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
 evalUExpr expr = do
   logTop $ PassInfo Parse $ pprint expr
   renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
@@ -587,20 +589,17 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   NoOptimize -> return x
   Optimize   -> act x
 
-evalBlock :: (Topper m, Mut n) => Block n -> m n (Atom n)
+evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
 evalBlock typed = do
   eopt <- checkPass EarlyOptPass $ earlyOptimize typed
   synthed <- checkPass SynthPass $ synthTopBlock eopt
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
-  evalRequiredSpecializations simplifiedBlock
   SimplifiedBlock simp recon <- return simplifiedBlock
   opt <- whenOpt simp $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
-      explicitIx <- emitIx opt
-      instIx <- simplifyIx explicitIx
-      lowered <- checkPass LowerPass $ lowerFullySequential instIx
+      lowered <- checkPass LowerPass $ lowerFullySequential opt
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
         (dceIxDestBlock >=> hoistLoopInvariantIxDest)
       (vopt, errs) <- vectorizeLoops 64 lopt
@@ -611,17 +610,42 @@ evalBlock typed = do
   applyRecon recon result
 {-# SCC evalBlock #-}
 
-evalRequiredSpecializations
-  :: (Topper m, Mut n, SinkableE e, SubstE Name e, HoistableE e)
-  => e n -> m n ()
-evalRequiredSpecializations e = do
-  forM_ (freeAtomVarsList e) \v -> do
+evalSpecializations :: (Topper m, Mut n) => [CAtomName n] -> [SpecDictName n] -> m n ()
+evalSpecializations vs sdVs = do
+  forM_ vs \v -> do
     lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun _) ->
+      TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
         queryImpCache v >>= \case
           Nothing -> compileTopLevelFun v
           Just _ -> return ()
       _ -> return ()
+  forM_ sdVs \d -> do
+    SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) Nothing) <- lookupEnv d
+    methods <- forM [minBound..maxBound] \method -> do
+      ty <- liftEnvReaderM $ ixMethodType method absDict
+      lamExpr <- liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
+        dict <- applyNaryAbs (sink absDict) extraArgs
+        let actualArgs = case method of Size -> []  -- size is thunked
+                                        _    -> map Var methodArgs
+        applyIxMethod dict method actualArgs
+      simplifyTopFunction lamExpr
+    finishSpecializedDict d methods
+
+ixMethodType :: IxMethod -> AbsDict CoreIR n -> EnvReaderM n (NaryPiType CoreIR n)
+ixMethodType method absDict = do
+  refreshAbs absDict \extraArgBs dict -> do
+    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
+      Pi (PiType b _ resultTy) -> do
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest b Empty
+        return $ NaryPiType allBs Pure resultTy
+      -- non-function methods are thunked
+      ty -> do
+        Abs unitBinder ty' <- toConstAbs ty
+        let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
+        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest unitPiBinder Empty
+        return $ NaryPiType allBs Pure ty'
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -639,15 +663,14 @@ execUDecl mname decl = do
           asSpecializableFunction ty >>= \case
             Just (n, fty) -> do
               f <- emitBinding (getNameHint p) $
-                AtomNameBinding $ TopFunBound fty $ UnspecializedTopFun n result
+                AtomNameBinding $ TopFunBound fty $ AwaitingSpecializationArgsTopFun n result
               -- warm up cache if it's already sufficiently specialized
               -- (this is actually here as a workaround for some sort of
               -- caching/linking bug that occurs when we deserialize compilation
               -- artifacts).
               when (n == 0) do
                 let s = AppSpecialization f (Abs Empty (ListE []))
-                fSpecial <- emitSpecialization s
-                evalRequiredSpecializations (Var fSpecial)
+                void $ emitSpecialization s
               return $ Var f
             Nothing -> throw TypeErr $
               "Not a valid @noinline function type: " ++ pprint ty
@@ -656,11 +679,10 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => AtomName n -> m n ()
+compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  evalRequiredSpecializations fSimp
   fImp <- toImpStandaloneFunction fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
@@ -702,24 +724,24 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
 
 -- Get the definition of a specialized function in the pre-simplification IR.
 specializedFunPreSimpDefinition
-  :: (MonadFail1 m, EnvReader m) => AtomName n -> m n (NaryLamExpr n)
+  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (NaryLamExpr CoreIR n)
 specializedFunPreSimpDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
-  AppSpecialization f abStaticArgs@(Abs bs _) <- return s
-  f' <- forceDeferredInlining f
-  liftBuilder do
-    buildNaryLamExpr ty \allArgs -> do
-      let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-      ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
-      naryApp (sink f') $ staticArgs' <> map Var originalArgs
+  case s of
+    AppSpecialization f abStaticArgs@(Abs bs _) -> do
+      f' <- forceDeferredInlining f
+      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+        let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
+        ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
+        naryApp (sink f') $ staticArgs' <> map Var originalArgs
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
 -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
 -- "noinline" function and defer its simplification.
-forceDeferredInlining :: EnvReader m => AtomName n -> m n (Atom n)
+forceDeferredInlining :: EnvReader m => CAtomName n -> m n (CAtom n)
 forceDeferredInlining v =
   lookupAtomName v >>= \case
-    TopFunBound _ (UnspecializedTopFun _ f) -> return f
+    TopFunBound _ (AwaitingSpecializationArgsTopFun _ f) -> return f
     _ -> return $ Var v
 
 toCFunction
@@ -736,7 +758,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
@@ -757,7 +779,7 @@ evalLLVM block = do
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
+  applyNaryAbs reconAtom $ (map SubstVal resultValsNoPtrs :: [CAtomSubstVal AtomNameC n])
 {-# SCC evalLLVM #-}
 
 compileToObjCode
@@ -778,7 +800,7 @@ impNameToObj v = do
     Nothing -> throw CompilerErr
       $ "Expected to find an object cache entry for: " ++ pprint v
 
-evalBackend :: (Topper m, Mut n) => IxDestBlock n -> m n (Atom n)
+evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
@@ -788,6 +810,7 @@ evalBackend block = do
                LLVMCUDA    -> evalLLVM
                Interpreter -> error "TODO"
   eval block
+
 
 withCompileTime :: MonadIO m => m Result -> m Result
 withCompileTime m = do
@@ -957,7 +980,7 @@ getFilteredLogger = do
   logger  <- getLogger
   return $ FilteredLogger shouldLog logger
 
--- -- === instances ===
+-- === instances ===
 
 instance PassCtxReader (TopperM n) where
   getPassCtx = TopperM $ asks topperPassCtx
@@ -977,14 +1000,14 @@ instance (Monad1 m, ConfigReader (m n)) => ConfigReader (StateT1 s m n) where
 instance Topper TopperM
 
 instance TopBuilder TopperM where
-  -- Log bindings as they are emitted
-  emitBinding hint binding = do
-    name <- TopperM $ emitBinding hint binding
-    logTop $ MiscLog $ "=== Top name ===\n" ++ pprint name ++ " =\n"
-                      ++ pprint binding ++ "\n===\n"
-    return name
-
-  emitEnv env = TopperM $ emitEnv env
+  emitBinding = emitBindingDefault
+  emitEnv (Abs frag result) = do
+    result' `PairE` ListE names `PairE` ListE dictNames <- TopperM $ emitEnv $
+      Abs frag $ result
+         `PairE` ListE (boundNamesList frag)
+         `PairE` ListE (boundNamesList frag)
+    evalSpecializations names dictNames
+    return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont
 

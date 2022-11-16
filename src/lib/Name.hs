@@ -18,7 +18,7 @@ module Name (
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendSubInplaceT, extendInplaceTLocal,
   DoubleInplaceT (..), liftDoubleInplaceT,
-  emitDoubleInplaceTHoisted, unsafeEmitDoubleInplaceTHoisted,
+  emitDoubleInplaceTHoisted, canHoistToTopDoubleInplaceT, unsafeEmitDoubleInplaceTHoisted,
   runDoubleInplaceT, DoubleInplaceTResult (..),
   freshExtendSubInplaceT, extendTrivialInplaceT, extendTrivialSubInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -74,14 +74,15 @@ module Name (
   WrapE (..), WrapB (..),
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames,
-  unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
+  unsafeCoerceE, unsafeCoerceM1, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, anyFreeIn, isInNameSet, todoSinkableProof,
   locallyMutableInplaceT, liftBetweenInplaceTs,
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
-  NameMap, hoistFilterNameMap, insertNameMap, lookupNameMap, singletonNameMap, toListNameMap
+  NameMap, hoistFilterNameMap, insertNameMap, lookupNameMap, singletonNameMap, toListNameMap,
+  boundNamesList
   ) where
 
 import Prelude hiding (id, (.))
@@ -1042,6 +1043,7 @@ instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
 instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
+instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1887,6 +1889,14 @@ emitDoubleInplaceTHoisted emission = do
     else
       return Nothing
 
+canHoistToTopDoubleInplaceT
+  :: ( Monad m, ExtOutMap b d1, OutFrag d1
+     , ExtOutMap b d2, OutFrag d2, HoistableE e)
+  => e n -> DoubleInplaceT b d1 d2 m n Bool
+canHoistToTopDoubleInplaceT e = do
+  Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
+  return $ R.containedIn (freeVarsE e) topScopeFrag
+
 unsafeEmitDoubleInplaceTHoisted
   :: ( Monad m, ExtOutMap b d1, OutFrag d1
      , ExtOutMap b d2, OutFrag d2
@@ -1968,6 +1978,7 @@ instance Color PtrNameC        where getColorRep = PtrNameC
 instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
 instance Color HandlerNameC    where getColorRep = HandlerNameC
+instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -1988,6 +1999,7 @@ interpretColor c cont = case c of
   EffectNameC     -> cont $ ColorProxy @EffectNameC
   EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
   HandlerNameC    -> cont $ ColorProxy @HandlerNameC
+  SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
@@ -2149,6 +2161,12 @@ instance SinkableB UnitB where
 instance ProvesExt  UnitB where
 instance BindsNames UnitB where
   toScopeFrag UnitB = id
+
+instance OutFrag UnitB where
+  emptyOutFrag = UnitB
+  {-# INLINE emptyOutFrag #-}
+  catOutFrags _ UnitB UnitB = UnitB
+  {-# INLINE catOutFrags #-}
 
 instance FromName v => SubstB v UnitB where
   substB env UnitB cont = cont env UnitB
@@ -2348,6 +2366,7 @@ instance Store a => Store (LiftE a n)
 instance (Store (e UnsafeS), Generic (e UnsafeS)) => Store (LiftB e n l)
 instance Store (const n) => Store (ConstE const ignored n)
 instance (Color c, Store (ann n)) => Store (BinderP c ann n l)
+instance (forall a. Store a => Store (f a), Store (e n)) => Store (ComposeE f e n)
 
 instance ( forall c. Color c => Store (v c o')
          , forall c. Color c => Generic (v c o'))
@@ -2524,6 +2543,7 @@ data C =
   | EffectNameC
   | EffectOpNameC
   | HandlerNameC
+  | SpecializedDictNameC
   | UnsafeC
     deriving (Eq, Ord, Generic, Show)
 
@@ -2859,6 +2879,9 @@ nameSetToList nameSet =
       Nothing -> Nothing
       Just (_ :: GHC.Exts.Any c UnsafeS) -> Just $ UnsafeMakeName rawName
 
+boundNamesList :: (BindsNames b, Color c) => b n l -> [Name c l]
+boundNamesList b = nameSetToList $ toNameSet $ toScopeFrag b
+
 toNameSet :: ScopeFrag n l -> NameSet l
 toNameSet (UnsafeMakeScopeFrag s) = s
 
@@ -3160,6 +3183,10 @@ unsafeCoerceB = TrulyUnsafe.unsafeCoerce
 unsafeCoerceVC :: forall c' (v::V) c o. v c o -> v c' o
 unsafeCoerceVC = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceVC #-}
+
+unsafeCoerceM1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
+unsafeCoerceM1 = TrulyUnsafe.unsafeCoerce
+{-# NOINLINE [1] unsafeCoerceM1 #-}
 
 -- === instances ===
 

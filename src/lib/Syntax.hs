@@ -19,7 +19,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 
 module Syntax (
-    Type, Kind, BaseType (..), ScalarBaseType (..), Except,
+    Type, Kind, Dict, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
     Binder, Block (..), BlockAnn (..), Decl (..), Decls, DeclBinding (..),
     FieldRowElem (..), FieldRowElems, fromFieldRowElems,
@@ -31,7 +31,7 @@ module Syntax (
     AlwaysEqual (..),
     PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
-    PiBinding (..), PiBinder (..),
+    PiBinding (..), PiBinder (..), RolePiBinder (..), ParamRole (..),
     PiType (..), DepPairType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), SourceNameDef (..), LitProg,
     ForAnn, Val, Op, Con, Hof, TC, SuperclassBinders (..),
@@ -40,7 +40,7 @@ module Syntax (
     SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..), SerializedEnv (..),
     ImportStatus (..), emptyModuleEnv,
     ModuleSourceName (..), LoadedModules (..), LoadedObjects (..), Cache (..),
-    BindsEnv (..), BindsOneAtomName (..), AtomNameBinder,
+    BindsEnv (..), BindsOneAtomName (..), AtomNameBinder, toBinderNest,
     AltP, Alt, AtomBinding (..),
     SolverBinding (..), TopFunBinding (..), SpecializationSpec (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -51,13 +51,13 @@ module Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize,
     SubstVal (..), AtomName, DataDefName, ClassName, MethodName, InstanceName, AtomSubstVal,
-    SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
+    SpecDictName, SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
     SourceOrInternalName (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
-    ULamExpr (..), UPiExpr (..), UTabLamExpr (..),
-    UTabPiExpr (..), UDepPairType (..), IxBinder,
-    TabLamExpr (..), TabPiType (..), IxType (..), IxDict,
+    ULamExpr (..), UPiExpr (..), UTabLamExpr (..), UTabPiExpr (..), IxBinder,
+    TabLamExpr (..), TabPiType (..), IxType (..), IxDict, IxMethod (..),
+    UDepPairType (..),
     UDeclExpr (..), UForExpr (..), UAlt (..),
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
     UMethodDef (..), UAnnBinder (..), UAnnBinderArrow (..),
@@ -125,7 +125,12 @@ module Syntax (
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern SISourceName, pattern SIInternalName,
     pattern OneEffect,
-    (-->), (?-->), (--@), (==>)) where
+    (-->), (?-->), (--@), (==>),
+    IR (..), SimpIR,
+    CAtom, CType, CExpr, CBlock, CDecl, CDecls, CAtomSubstVal, CAtomName,
+    SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName,
+    unsafeCoerceIRE, unsafeCoerceIRB
+    ) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Foreign.Ptr
