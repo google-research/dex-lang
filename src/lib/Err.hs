@@ -8,7 +8,7 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
             Fallible (..), Catchable (..), catchErrExcept,
             FallibleM (..), HardFailM (..), CtxReader (..),
-            SoftResultM (..), runSoftResultM,
+            SoftResultM (..), runSoftResultM, runSoftResultM',
             runFallibleM, runHardFail, throw, throwErr,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftExceptAlt,
@@ -273,6 +273,10 @@ instance Catchable SoftResultM where
 runSoftResultM :: SoftResultM a -> Except a
 runSoftResultM (SoftSuccess x) = Success x
 runSoftResultM (SoftError errs) = Failure errs
+
+runSoftResultM' :: SoftResultM a -> a
+runSoftResultM' (SoftSuccess x) = x
+runSoftResultM' (SoftError errs) = error $ pprint errs
 
 -- === convenience layer ===
 

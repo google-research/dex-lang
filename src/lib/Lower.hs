@@ -21,7 +21,7 @@ import Data.HashMap.Strict qualified as HM
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
 import Control.Category
 import Control.Monad.Reader
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Unsafe.Coerce
 import GHC.Exts (inline)
 
@@ -39,6 +39,8 @@ import QueryType
 import GenericTraversal
 import Simplify (buildBlockSimplified)
 import Util (foldMapM, enumerate)
+import Logging
+import Syntax (Output)
 
 -- A block preceded by a bunch of Ix instance bindings (all Decls bind Atoms)
 type IxBlock = Abs (Nest Decl) Block
@@ -748,22 +750,19 @@ instance SinkableE (VSubstValC c) where
 instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
 
-type TopVectorizeM = BuilderT (ReaderT Word32 SoftResultM)
+-- TODO: `WriterT Errs` should suffice, no need for full `StateT`.
+type TopVectorizeM = BuilderT (ReaderT Word32 (StateT Errs SoftResultM))
 
-vectorizeLoops :: EnvReader m
-               => Word32 -> IxDestBlock n -> m n (PairE IxDestBlock (LiftE Errs) n)
-vectorizeLoops vectorByteWidth ixDestBlock = do
-  result <- liftEnvReaderM do
-    refreshAbs ixDestBlock \xs destBlock -> do
-      destBlock' <- refreshAbs destBlock \d (Block _ decls ans) -> do
-        block' <- liftM (runSoftResultM . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock $ do
-          s <- vectorizeLoopsRec emptyInFrag decls
-          applySubst s ans
-        return $ (Abs d) <$> block'
-      return $ (Abs xs) <$> destBlock'
-  case result of
-    Success vblock -> return $ PairE vblock (LiftE $ Errs [])
-    Failure errs -> return $ PairE ixDestBlock (LiftE errs)
+vectorizeLoops :: (MonadIO (m n), MonadLogger [Output] (m n), EnvReader m)
+               => Word32 -> IxDestBlock n -> m n (IxDestBlock n, Errs)
+vectorizeLoops vectorByteWidth ixDestBlock =liftEnvReaderM do
+  refreshAbs ixDestBlock \xs destBlock -> do
+    (destBlock', errs) <- refreshAbs destBlock \d (Block _ decls ans) -> do
+      (block', errs) <- liftM (runSoftResultM' . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock do
+                  s <- vectorizeLoopsRec emptyInFrag decls
+                  applySubst s ans
+      return $ (Abs d block', errs)
+    return $ (Abs xs destBlock', errs)
 {-# INLINE vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
@@ -774,12 +773,14 @@ addVectErrCtx name payload m =
 throwVectErr :: Fallible m => String -> m a
 throwVectErr msg = throwErr (Err VectorizationErr mempty msg)
 
+prependCtxToErrs :: ErrCtx -> Errs -> Errs
+prependCtxToErrs ctx (Errs errs) =
+  Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx `mappend` ctx') msg) errs
+
 vectorizeLoopsRec :: (Ext i o, Emits o)
                   => SubstFrag Name i i' o -> Nest Decl i' i''
                   -> TopVectorizeM o (SubstFrag Name i i'' o)
 vectorizeLoopsRec frag nest =
-  addVectErrCtx "vectorizeLoopsRec"
-                ("Frag:\n" ++ pprint frag ++ "\nNest:\n" ++ pprint nest) do
   case nest of
     Empty -> return frag
     Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -788,15 +789,21 @@ vectorizeLoopsRec frag nest =
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
         Hof (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) (Lam body))
-          | n `mod` loopWidth == 0 -> do
-            Distinct <- getDistinct
-            let vn = NatVal $ n `div` loopWidth
-            -- TODO: If we fail inside `vectorizeSeq`, then -- under `SoftResultM` -- the remainder
-            -- `nest` will not be inspected, due to laziness and since `vectorizeSeq` will have
-            -- evalutated to a `SoftError`.
-            body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
-            dest' <- applySubst frag dest
-            emit $ Hof $ Seq dir (DictCon $ IxFin vn) dest' body'
+          | n `mod` loopWidth == 0 -> (do
+              Distinct <- getDistinct
+              let vn = NatVal $ n `div` loopWidth
+              body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
+              dest' <- applySubst frag dest
+              emit $ Hof $ Seq dir (DictCon $ IxFin vn) dest' body')
+            `catchErr` \errs -> do
+                let msg = "In `vectorizeLoopsRec`:\nFrag:\n" ++ pprint frag ++ "\nNest:\n" ++ pprint nest
+                    ctx = mempty { messageCtx = [msg] }
+                    errs' = prependCtxToErrs ctx errs
+                errors <- get
+                put (errors `mappend` errs')
+                dest' <- applySubst frag dest
+                body' <- applySubst frag body
+                emit $ Hof $ Seq dir (DictCon $ IxFin $ NatVal n) dest' (Lam body')
         _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 

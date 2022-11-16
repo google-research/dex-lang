@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
@@ -57,7 +58,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
-import Control.Monad.State.Strict (MonadState, StateT (..), runStateT)
+import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
@@ -419,11 +420,22 @@ type BuilderEmissions = RNest Decl
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Env BuilderEmissions m n a }
-  deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
+  deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible, Catchable
            , CtxReader, ScopeReader, Alternative, Searcher
            , MonadWriter w, MonadReader r)
 
 type BuilderM = BuilderT HardFailM
+
+instance MonadState s m => MonadState s (BuilderT m n) where
+  get :: BuilderT m n s
+  get = BuilderT $ UnsafeMakeInplaceT \env decls -> do
+    s <- get
+    return (s, unsafeCoerceB decls, unsafeCoerceE env)
+
+  put :: s -> BuilderT m n ()
+  put s = BuilderT $ UnsafeMakeInplaceT \env decls -> do
+    put s
+    return ((), unsafeCoerceB decls, unsafeCoerceE env)
 
 liftBuilderT :: (Fallible m, EnvReader m') => BuilderT m n a -> m' n (m a)
 liftBuilderT cont = do

@@ -603,7 +603,7 @@ evalBlock typed = do
       lowered <- checkPass LowerPass $ lowerFullySequential instIx
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
         (dceIxDestBlock >=> hoistLoopInvariantIxDest)
-      PairE vopt errs <- vectorizeLoops 64 lopt
+      (vopt, errs) <- vectorizeLoops 64 lopt
       l <- getFilteredLogger
       logFiltered l VectPass $ return [TextOut $ pprint errs]
       vopt' <- checkPass VectPass $ return vopt
