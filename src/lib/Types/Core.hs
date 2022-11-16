@@ -69,26 +69,6 @@ type family Sat' (r::IR) (p::IRPredicate) where
   Sat' CoreIR (IsSubsetOf SimpToImpIR)       = True
   Sat' _ _ = False
 
-data ReifiedSat (r::IR) (p::IRPredicate) where
-  ReifiedSat :: Sat r p => ReifiedSat r p
-
-newtype WrapWithSat (r::IR) (p::IRPredicate) (a :: *) =
-  WrapWithSat { fromWrapWithSat :: Sat r p => a }
-
-fabricateReifiedSat :: ReifiedSat r p
-fabricateReifiedSat = undefined
-
-instance Generic (ReifiedSat r p) where
-  type Rep (ReifiedSat r p) = Rep ()
-  from _ = from ()
-  {-# INLINE from #-}
-  to _ = fabricateReifiedSat
-  {-# INLINE to #-}
-
-deriving instance Eq (ReifiedSat r p)
-instance Hashable (ReifiedSat r p)
-instance Store (ReifiedSat r p)
-
 -- SimpIR is the IR after simplification
 -- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
 -- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
@@ -1262,8 +1242,8 @@ instance GenericE (Atom r) where
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
             ) (EitherE2
-  {- BoxedRef -}   (LiftE (ReifiedSat r (Is SimpToImpIR))
-                    `PairE` ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
+  {- BoxedRef -}   (WhenE (Sat' r (Is SimpToImpIR))
+                    ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
   {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r))
 
   fromE atom = case atom of
@@ -1286,7 +1266,7 @@ instance GenericE (Atom r) where
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
-    BoxedRef ab -> Case5 $ Case0 $ LiftE ReifiedSat `PairE` ab
+    BoxedRef ab -> Case5 $ Case0 $ WhenE ab
     DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
   {-# INLINE fromE #-}
 
@@ -1321,7 +1301,7 @@ instance GenericE (Atom r) where
       Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       _ -> error "impossible"
     Case5 val -> case val of
-      Case0 (LiftE ReifiedSat `PairE` ab) -> BoxedRef ab
+      Case0 (WhenE ab) -> BoxedRef ab
       Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"

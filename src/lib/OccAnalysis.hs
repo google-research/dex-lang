@@ -567,6 +567,8 @@ instance HasOCC UnitE where
 instance HasOCC e => HasOCC (ListE e) where
   occ _ (ListE xs) = ListE <$> traverse (occ accessOnce) xs
   {-# INLINE occ #-}
+instance (p ~ True => HasOCC e) => HasOCC (WhenE p e) where
+  occ a (WhenE e) = WhenE <$> occ a e
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)
