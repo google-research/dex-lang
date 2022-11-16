@@ -23,9 +23,9 @@ import sys
 def file_block(files):
   for fname in files:
     if fname.startswith("doc/"):
-      link_name = fname[len("doc/"):]
+      link_name = fname[len("doc/"):-len(".dx")]
     else:
-      link_name = fname
+      link_name = fname[:-len(".dx")]
     with open(fname, 'r') as f:
       line = f.readline()
       title = re.match(r"' *# ?(.*)", line)
