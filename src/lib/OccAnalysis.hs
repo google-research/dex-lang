@@ -300,6 +300,7 @@ checkAllFreeVariablesMentioned e = do
 #else
   void $ return e  -- Refer to `e` in this branch to avoid a GHC warning
   return ()
+{-# INLINE checkAllFreeVariablesMentioned #-}
 #endif
 
 instance HasOCC (DeclBinding SimpIR) where
