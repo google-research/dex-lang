@@ -781,7 +781,7 @@ compileVoidBlock = void . compileBlock
 compileExpr :: Compiler m => IExpr i -> m i o Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
-  IPtrLit v _ -> lookupSubstM v <&> \case
+  IPtrVar v _ -> lookupSubstM v <&> \case
     PtrSubstVal x -> x
     RenameOperandSubstVal _ -> error "Shouldn't have any ptr literals left"
   IVar v _ -> lookupSubstM v <&> \case

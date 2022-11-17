@@ -38,7 +38,7 @@ type ImpName = Name ImpNameC
 type ImpFunName = Name ImpFunNameC
 data IExpr n = ILit LitVal
              | IVar (ImpName n) BaseType
-             | IPtrLit (Name PtrNameC n) PtrType
+             | IPtrVar (Name PtrNameC n) PtrType
                deriving (Show, Generic)
 
 data IBinder n l = IBinder (NameBinder ImpNameC n l) IType
@@ -308,13 +308,13 @@ instance GenericE IExpr where
   fromE iexpr = case iexpr of
     ILit x       -> Case0 (LiftE x)
     IVar    v ty -> Case1 (v `PairE` LiftE ty)
-    IPtrLit v ty -> Case2 (v `PairE` LiftE ty)
+    IPtrVar v ty -> Case2 (v `PairE` LiftE ty)
   {-# INLINE fromE #-}
 
   toE rep = case rep of
     Case0 (LiftE x) -> ILit x
     Case1 (v `PairE` LiftE ty) -> IVar    v ty
-    Case2 (v `PairE` LiftE ty) -> IPtrLit v ty
+    Case2 (v `PairE` LiftE ty) -> IPtrVar v ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 

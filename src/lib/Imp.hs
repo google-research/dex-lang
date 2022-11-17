@@ -1405,7 +1405,7 @@ emitImpVars ::
   (Emits n, HoistableE e, SubstE (SubstVal ImpNameC SIAtom) e, SinkableE e, SubstE Name e)
   => e n -> SBuilderM n (e n)
 emitImpVars e = do
-  let impVars = nameSetToList (freeVarsE e) :: [ImpName _]
+  let impVars = nameSetToList @ImpNameC (freeVarsE e)
   Abs impBs e' <- return $ abstractFreeVarsNoAnn impVars e
   substVals <- forM impVars \v -> do
     ty <- impVarType v
@@ -1548,10 +1548,10 @@ load x = emitInstr $ IPrimOp $ PtrLoad x
 fromScalarAtom :: SIAtom n -> SubstImpM i n (IExpr n)
 fromScalarAtom atom = confuseGHC >>= \_ -> case atom of
   AtomicIVar (LeftE  v) t               -> return $ IVar    v t
-  AtomicIVar (RightE v) (PtrType ptrTy) -> return $ IPtrLit v ptrTy
+  AtomicIVar (RightE v) (PtrType ptrTy) -> return $ IPtrVar v ptrTy
   Con (Lit x) -> return $ ILit x
   Var v -> lookupAtomName v >>= \case
-    PtrLitBound ptrTy ptrName -> return $ IPtrLit ptrName ptrTy
+    PtrLitBound ptrTy ptrName -> return $ IPtrVar ptrName ptrTy
     -- TODO: just store pointer names in Atom directly and avoid this
     _ -> error "The only atom names left should refer to pointer literals"
   _ -> error $ "Expected scalar, got: " ++ pprint atom
@@ -1560,7 +1560,7 @@ toScalarAtom :: Monad m => IExpr n -> m (SIAtom n)
 toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar    v t     -> return $ AtomicIVar (LeftE  v) t
-  IPtrLit v ptrTy -> return $ AtomicIVar (RightE v) (PtrType ptrTy)
+  IPtrVar v ptrTy -> return $ AtomicIVar (RightE v) (PtrType ptrTy)
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
@@ -1606,11 +1606,11 @@ abstractLinktimeObjects
   => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n], [PtrName n])
 abstractLinktimeObjects f = do
   let allVars = freeVarsE f
-  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList allVars :: [ImpFunName _]) \v ->
+  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @ImpFunNameC allVars) \v ->
     lookupImpFun v <&> \case
       ImpFunction ty _ -> Just (v, ty)
       FFIFunction _ _ -> Nothing
-  (ptrVars, ptrTys) <- unzip <$> forMFilter (nameSetToList allVars :: [PtrName _]) \v -> do
+  (ptrVars, ptrTys) <- unzip <$> forMFilter (nameSetToList @PtrNameC allVars) \v -> do
     (ty, _) <- lookupPtrName v
     return $ Just (v, ty)
   Abs funBs (Abs ptrBs f') <- return $ abstractFreeVarsNoAnn funVars $
@@ -1633,7 +1633,7 @@ impFunType (FFIFunction ty _) = ty
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
 getIType (IVar _ ty) = ty
-getIType (IPtrLit _ ty) = PtrType ty
+getIType (IPtrVar _ ty) = PtrType ty
 
 impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of

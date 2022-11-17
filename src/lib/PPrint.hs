@@ -857,7 +857,7 @@ indented doc = nest 2 (hardline <> doc) <> hardline
 instance Pretty (IExpr n) where
   pretty (ILit v) = p v
   pretty (IVar v _) = p v
-  pretty (IPtrLit v _) = p v
+  pretty (IPtrVar v _) = p v
 
 instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
 

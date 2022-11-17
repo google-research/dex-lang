@@ -4,9 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
--- This is only for the `SubstE (SubstVal ImpNameC CAtom) CAtom` instance, which
--- we plan to delete soon.
-{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module TopLevel (
