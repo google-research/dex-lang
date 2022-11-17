@@ -39,6 +39,8 @@ import Syntax
 import Types.Core
 import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
+import Occurrence (Count (Bounded), UsageInfo (..))
+import Occurrence qualified as Occ
 import Util (restructure)
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
@@ -196,7 +198,7 @@ instance Pretty (DeclBinding r n) where
 instance Pretty (Decl r n l) where
   pretty (Let b (DeclBinding ann ty rhs)) =
     align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    where annDoc = case ann of PlainLet -> mempty; _ -> pretty ann <> " "
+    where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance Pretty (NaryLamExpr r n) where
   pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
@@ -1069,6 +1071,16 @@ instance Pretty LetAnn where
   pretty ann = case ann of
     PlainLet      -> ""
     NoInlineLet   -> "%noinline"
+    OccInfo u     -> p u <> line
+
+instance Pretty UsageInfo where
+  pretty (UsageInfo static (ixDepth, ct)) =
+    "occurs in" <+> p (show static) <+> "places, read"
+    <+> p ct <+> "times, to depth" <+> p (show ixDepth)
+
+instance Pretty Count where
+  pretty (Bounded ct) = "<=" <+> pretty ct
+  pretty Occ.Unbounded = "many"
 
 instance PrettyPrec () where prettyPrec = atPrec ArgPrec . pretty
 

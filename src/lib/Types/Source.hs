@@ -366,7 +366,7 @@ data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
 
 data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerOptPass | LowerPass
-              | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass | VectPass
+              | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass | VectPass | OccAnalysisPass
                 deriving (Ord, Eq, Bounded, Enum, Generic)
 
 instance Show PassName where
@@ -378,7 +378,7 @@ instance Show PassName where
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
     LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
     LowerOptPass -> "lower-opt"; LowerPass -> "lower"
-    EarlyOptPass -> "early-opt"; OptPass -> "opt"
+    EarlyOptPass -> "early-opt"; OptPass -> "opt"; OccAnalysisPass -> "occ-analysis"
     VectPass -> "vect"
 
 data EnvQuery =

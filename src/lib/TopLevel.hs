@@ -11,6 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, loadCache, storeCache, clearCache,
+  ensureModuleLoaded, importModule,
   loadObject, toCFunction) where
 
 import Data.Foldable (toList)
@@ -62,6 +63,7 @@ import CheckType (checkTypesM)
 import SourceRename
 import Inference
 import Simplify
+import OccAnalysis
 import Lower
 import Imp
 import ImpToLLVM
@@ -595,7 +597,8 @@ evalBlock typed = do
   synthed <- checkPass SynthPass $ synthTopBlock eopt
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
-  opt <- whenOpt simp $ checkPass OptPass . optimize
+  analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
+  opt <- whenOpt analyzed $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do

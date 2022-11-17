@@ -81,8 +81,13 @@ module Name (
   updateSubstFrag, nameSetToList, toNameSet, hoistFilterNameSet, NameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence, nameSetRawNames,
   MonadTrans1 (..), collectGarbage,
-  NameMap, hoistFilterNameMap, insertNameMap, lookupNameMap, singletonNameMap, toListNameMap,
-  boundNamesList
+  boundNamesList,
+  NameMap (..), hoistFilterNameMap,
+  insertNameMap, lookupNameMap, singletonNameMap, toListNameMap,
+  unionWithNameMap,
+  NameMapE (..), hoistNameMapE, insertNameMapE,
+  lookupNameMapE, singletonNameMapE, toListNameMapE,
+  unionWithNameMapE, traverseNameMapE, mapNameMapE,
   ) where
 
 import Prelude hiding (id, (.))
@@ -2817,6 +2822,7 @@ class BindsNames b => HoistableB (b::B) where
   freeVarsB b = freeVarsB $ fromB b
 
 data HoistExcept a = HoistSuccess a | HoistFailure [RawName]
+  deriving (Eq, Show)
 
 data ClosedWithScope (e::E) where
   ClosedWithScope :: Distinct n => Scope n -> e n -> ClosedWithScope e
@@ -3330,6 +3336,65 @@ singletonNameMap (UnsafeMakeName n) x = UnsafeNameMap $ R.singleton n x
 toListNameMap :: NameMap c a n -> [(Name c n, a)]
 toListNameMap (UnsafeNameMap raw) = R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
 {-# INLINE toListNameMap #-}
+
+unionWithNameMap :: (a -> a -> a) -> NameMap c a n -> NameMap c a n -> NameMap c a n
+unionWithNameMap f (UnsafeNameMap raw1) (UnsafeNameMap raw2) =
+  UnsafeNameMap $ R.unionWith f raw1 raw2
+{-# INLINE unionWithNameMap #-}
+
+traverseNameMap :: (Applicative f) => (a -> f b)
+                 -> NameMap c a n -> f (NameMap c b n)
+traverseNameMap f (UnsafeNameMap raw) = UnsafeNameMap <$> traverse f raw
+{-# INLINE traverseNameMap #-}
+
+mapNameMap :: (a -> b) -> NameMap c a n -> (NameMap c b n)
+mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
+{-# INLINE mapNameMap #-}
+
+newtype NameMapE (c::C) (e:: E) (n::S) = NameMapE (NameMap c (e n) n)
+  deriving (Eq, Semigroup, Monoid)
+
+-- Filters out the entry(ies) for the binder being hoisted above,
+-- and hoists the values of the remaining entries.
+hoistNameMapE :: (BindsNames b, HoistableE e, ShowE e)
+              => b n l -> NameMapE c e l -> HoistExcept (NameMapE c e n)
+hoistNameMapE b (NameMapE nmap) =
+  NameMapE <$> (traverseNameMap (hoist b) $ hoistFilterNameMap b nmap) where
+{-# INLINE hoistNameMapE #-}
+
+insertNameMapE :: Name c n -> e n -> NameMapE c e n -> NameMapE c e n
+insertNameMapE n x (NameMapE nmap) = NameMapE $ insertNameMap n x nmap
+{-# INLINE insertNameMapE #-}
+
+lookupNameMapE :: Name c n -> NameMapE c e n -> Maybe (e n)
+lookupNameMapE n (NameMapE nmap) = lookupNameMap n nmap
+{-# INLINE lookupNameMapE #-}
+
+singletonNameMapE :: Name c n -> e n -> NameMapE c e n
+singletonNameMapE n x = NameMapE $ singletonNameMap n x
+{-# INLINE singletonNameMapE #-}
+
+toListNameMapE :: NameMapE c e n -> [(Name c n, (e n))]
+toListNameMapE (NameMapE nmap) = toListNameMap nmap
+{-# INLINE toListNameMapE #-}
+
+unionWithNameMapE :: (e n -> e n -> e n) -> NameMapE c e n -> NameMapE c e n -> NameMapE c e n
+unionWithNameMapE f (NameMapE nmap1) (NameMapE nmap2) =
+  NameMapE $ unionWithNameMap f nmap1 nmap2
+{-# INLINE unionWithNameMapE #-}
+
+traverseNameMapE :: (Applicative f) => (e1 n -> f (e2 n))
+                 -> NameMapE c e1 n -> f (NameMapE c e2 n)
+traverseNameMapE f (NameMapE nmap) = NameMapE <$> traverseNameMap f nmap
+{-# INLINE traverseNameMapE #-}
+
+mapNameMapE :: (e1 n -> e2 n)
+            -> NameMapE c e1 n -> NameMapE c e2 n
+mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
+{-# INLINE mapNameMapE #-}
+
+instance (Color c, SinkableE e) => SinkableE (NameMapE c e) where
+  sinkingProofE = undefined
 
 -- === notes ===
 
