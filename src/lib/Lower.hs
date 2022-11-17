@@ -10,7 +10,7 @@ module Lower
   ( lowerFullySequential, DestBlock, vectorizeLoops
   ) where
 
-import Prelude hiding (id, (.))
+import Prelude hiding (abs, id, (.))
 import Data.Word
 import Data.Functor
 import Data.Maybe (fromJust)
@@ -312,15 +312,14 @@ instance PrettyPrec (VSubstValC c n) where
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs SoftResultM))
 
 vectorizeLoops :: (MonadIO (m n), MonadLogger [Output] (m n), EnvReader m)
-               => Word32 -> SBlock n -> m n (SBlock n, Errs)
-vectorizeLoops vectorByteWidth ixDestBlock =liftEnvReaderM do
-  refreshAbs ixDestBlock \xs destBlock -> do
-    (destBlock', errs) <- refreshAbs destBlock \d (Block _ decls ans) -> do
-      (block', errs) <- liftM (runSoftResultM' . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock do
-                  s <- vectorizeLoopsRec emptyInFrag decls
-                  applySubst s ans
-      return $ (Abs d block', errs)
-    return $ (Abs xs destBlock', errs)
+               => Word32 -> Abs (Binder SimpIR) SBlock n
+               -> m n (Abs (Binder SimpIR) SBlock n, Errs)
+vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
+  refreshAbs abs \d (Block _ decls ans) -> do
+    (block', errs) <- liftM (runSoftResultM' . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock do
+                s <- vectorizeLoopsRec emptyInFrag decls
+                applySubst s ans
+    return $ (Abs d block', errs)
 {-# INLINE vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
@@ -414,11 +413,11 @@ getLoopWidth :: VectorizeM i o Word32
 getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
 
 vectorizeBlock :: Emits o => SBlock i -> VectorizeM i o (VAtom o)
-vectorizeBlock block@(Block _ decls (ans :: Atom i')) =
+vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
   addVectErrCtx "vectorizeBlock" ("Block:\n" ++ pprint block) $
     go decls
     where
-      go :: Emits o => Nest Decl i i' -> VectorizeM i o (VAtom o)
+      go :: Emits o => Nest SDecl i i' -> VectorizeM i o (VAtom o)
       go = \case
         Empty -> vectorizeAtom ans
         Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -426,7 +425,7 @@ vectorizeBlock block@(Block _ decls (ans :: Atom i')) =
           v <- vectorizeExpr expr
           extendSubst (b @> v) $ go rest
 
-vectorizeExpr :: Emits o => Expr i -> VectorizeM i o (VAtom o)
+vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
   case expr of
     Atom atom -> vectorizeAtom atom
@@ -446,7 +445,7 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
       VVal vy . Var <$> emit (Hof (RunIO (Lam lam')))
     _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
 
-vectorizeOp :: Emits o => Op i -> VectorizeM i o (VAtom o)
+vectorizeOp :: Emits o => Op SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeOp op = do
   op' <- (inline traversePrimOp) vectorizeAtom op
   case op' of
@@ -489,7 +488,7 @@ vectorizeOp op = do
       VVal Varying <$> emitOp (PtrLoad ptr')
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op'
 
-vectorizeAtom :: Atom i -> VectorizeM i o (VAtom o)
+vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
     Var v -> lookupSubstM v
@@ -511,7 +510,7 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
       subst <- getSubst
       VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
     where
-      uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
+      uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal SimpIR c o
       uniformSubst subst n = case subst ! n of
         VVal Uniform x -> SubstVal x
         -- TODO(nrink): Throw instead of `error`.
@@ -524,7 +523,7 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
         (_                       , Uniform          ) -> return s
         _ -> throwVectErr "Invalid projection"
 
-getVectorType :: Type o -> VectorizeM i o (Atom o)
+getVectorType :: SType o -> VectorizeM i o (SAtom o)
 getVectorType ty = addVectErrCtx "getVectorType" ("Type:\n" ++ pprint ty) do
   case ty of
     BaseTy (Scalar sbt) -> do
