@@ -344,8 +344,8 @@ levenshtein_table [&#39;k&#39;<span class="symbol">,</span> &#39;i&#39;<span cla
 , [4, 4, 3, 2, 1, 2, 3, 4]@(Post (Fin 7))
 , [5, 5, 4, 3, 2, 2, 3, 4]@(Post (Fin 7))
 , [6, 6, 5, 4, 3, 3, 2, 3]@(Post (Fin 7)) ]@(Post (Fin 6))</div><div class="result-block">
-Compile time: 124.165 ms
-Run time:     142.100 us </div></div><div class="cell"><div class="code-block">
+Compile time: 108.029 ms
+Run time:     202.100 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The actual distance is of course just the last element of the table.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein {n m a} [<span class="type-name">Eq</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   (levenshtein_table xs ys)<span class="symbol">.</span>last_ix<span class="symbol">.</span>last_ix
@@ -353,8 +353,8 @@ Run time:     142.100 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">%time
 levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100)
 </div><div class="result-block">0</div><div class="result-block">
-Compile time: 109.100 ms
-Run time:     93.400 us </div></div><div class="cell"><div class="code-block">
+Compile time: 94.711 ms
+Run time:     154.600 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Speed</h2>
 </div></div><div class="cell"><div class="prose-block"><p>To check that we don't embarrass ourselves on performance, let's run
 the Sountsov benchmark: Compute Levenshtein distances for all pairs of
@@ -367,8 +367,8 @@ answer <span class="symbol">=</span> <span class="keyword">for</span> i<span cla
     levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> iint) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> jint)
 </div><div class="result-block">
 Sountsov Benchmark
-Compile time: 224.954 ms
-Run time:     43.387 ms 	(based on 47 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
+Compile time: 216.276 ms
+Run time:     39.449 ms 	(based on 51 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
 </div><div class="result-block">333300</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The straightforward C++ program for this takes about 35ms on my
 workstation, so Dex performance is in the right ballpark.  (And we
@@ -389,8 +389,8 @@ distance function on words:</p>
 </div></div><div class="cell"><div class="code-block">%time
 closest_word &quot;hello&quot;
 </div><div class="result-block">&quot;hello&quot;</div><div class="result-block">
-Compile time: 241.590 ms
-Run time:     152.536 ms </div></div><div class="cell"><div class="code-block">
+Compile time: 210.450 ms
+Run time:     152.548 ms </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">closest_word &quot;kitttens&quot;
 </div><div class="result-block">&quot;kittens&quot;</div></div><div class="cell"><div class="code-block">closest_word &quot;functor&quot;
 </div><div class="result-block">&quot;function&quot;</div></div><div class="cell"><div class="code-block">closest_word &quot;applicative&quot;
