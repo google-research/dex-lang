@@ -4,12 +4,14 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
   ( blockToImpFunction, ImpFunctionWithRecon (..)
   , toImpStandaloneFunction, toImpExportedFunction, ExportCC (..)
-  , PtrBinder, impFunType, getIType, abstractLinktimeObjects) where
+  , impFunType, getIType, abstractLinktimeObjects) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
@@ -37,15 +39,13 @@ import Types.Imp
 import Algebra
 import RawName qualified as R
 
-type AtomRecon = Abs (Nest (NameBinder AtomNameC)) SAtom
+type AtomRecon = Abs (Nest (NameBinder ImpNameC)) SIAtom
 type SIAtom   = Atom  SimpToImpIR
 type SIType   = Type  SimpToImpIR
 type SIBlock  = Block SimpToImpIR
 type SIExpr   = Expr  SimpToImpIR
 type SIDecl   = Decl  SimpToImpIR
 type SIDecls  = Decls SimpToImpIR
-
-type PtrBinder = IBinder
 
 -- TODO: make it purely a function of the type and avoid the AtomRecon
 blockToImpFunction :: EnvReader m
@@ -71,7 +71,8 @@ toImpStandaloneFunction' lam' = do
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty Unmanaged
   let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
   dropSubst $ buildImpFunction CInternalFun ptrHintTys \vs -> do
-    argResultDest' <- applySubst (ptrBinders@@>vs) argResultDest
+    let substVals = [SubstVal (AtomicIVar (LeftE v) t :: Atom SimpToImpIR _) | (v,t) <- vs]
+    argResultDest' <- applySubst (ptrBinders @@> substVals) argResultDest
     (args, resultDest) <- loadArgDests argResultDest'
     extendSubst (bs @@> map SubstVal args) do
       void $ translateBlock (Just $ sink resultDest) body
@@ -85,53 +86,52 @@ data UnpackCC = FlatUnpackCC Int
               | XLAUnpackCC [FormalArg] [FormalArg]
 
 type FormalArg = (NameHint, IType)
-type ActualArg = AtomName SimpToImpIR
+type ActualArg n = (ImpName n, IType)
 
-ccPrepareFormals :: ExportCC -> Nest IBinder n l -> [FormalArg] -> ([FormalArg], UnpackCC)
+ccPrepareFormals :: ExportCC -> Nest (Binder SimpIR) n l -> [FormalArg] -> ([FormalArg], UnpackCC)
 ccPrepareFormals cc args destFormals = case cc of
   FlatExportCC -> do
     (argFormals ++ destFormals, FlatUnpackCC (length argFormals))
   XLAExportCC -> ( [(getNameHint @String "out", i8pp), (getNameHint @String "in", i8pp)]
                  , XLAUnpackCC argFormals destFormals )
   where
-    argFormals = nestToList ((noHint,) . iBinderType) args
+    argFormals = nestToList ((noHint,) . (\(BaseTy t) -> t) . binderType) args
     i8pp = PtrType (Heap CPU, PtrType (Heap CPU, Scalar Word8Type))
 
-ccUnpackActuals :: Emits n => UnpackCC -> [ActualArg n] -> SubstImpM i n ([ActualArg n], [ActualArg n])
+ccUnpackActuals :: Emits n => UnpackCC -> [(ImpName n, BaseType)] -> SubstImpM i n ([ActualArg n], [ActualArg n])
 ccUnpackActuals cc actual = case cc of
   FlatUnpackCC n -> return $ splitAt n actual
   XLAUnpackCC argFormals destFormals -> case actual of
     [outsPtrName, insPtrName] -> do
-      let (outsPtr, insPtr) = (IVar outsPtrName i8pp, IVar insPtrName i8pp)
+      let (outsPtr, insPtr) = (IVar (fst outsPtrName) i8pp, IVar (fst insPtrName) i8pp)
       let loadPtr base i pointeeTy =
             flip cast (PtrType (Heap CPU, pointeeTy)) =<< load =<< impOffset base (IIdxRepVal $ fromIntegral i)
       args <- forM (enumerate argFormals) \(i, (_, argTy)) ->
-        toAtomName <$> case argTy of
+        toArg <$> case argTy of
           PtrType (_, pointeeTy) -> loadPtr insPtr i pointeeTy
           _ -> load =<< loadPtr insPtr i argTy
       -- outsPtr points to the buffer when there's one output, not to the pointer array.
       ptrs <- case destFormals of
-        [(_, destTy)] -> (:[]) . toAtomName <$> cast outsPtr destTy
+        [(_, destTy)] -> (:[]) . toArg <$> cast outsPtr destTy
         _ ->
           forM (enumerate destFormals) \(i, (_, destTy)) ->
-            toAtomName <$> case destTy of
+            toArg <$> case destTy of
               PtrType (_, pointeeTy) -> loadPtr outsPtr i pointeeTy
               _ -> error "Destination arguments should all have pointer types"
       return (args, ptrs)
     _ -> error "Expected two arguments for the XLA calling convention"
   where
-    toAtomName = \case
-      IVar v _ -> v
+    toArg = \case
+      IVar v ty -> (v, ty)
       _ -> error "Expected a variable"
     i8pp = PtrType (Heap CPU, PtrType (Heap CPU, Scalar Word8Type))
 
 toImpExportedFunction :: EnvReader m
                       => ExportCC
                       -> Abs (Nest (Binder SimpIR)) DestBlock n
-                      -> (Abs (Nest IBinder) (ListE SBlock) n)
+                      -> (Abs (Nest (Binder SimpIR)) (ListE SBlock) n)
                       -> m n (ImpFunction n)
 toImpExportedFunction cc def@(Abs bs (Abs d body)) (Abs baseArgBs argRecons) = liftImpM do
-
   -- XXX: We assume that makeDest is deterministic in here! We first run it outside of
   -- the Imp function to infer the set of arguments, and then once again inside the
   -- Imp function to get the destination atom. We could pass it around, but it would have
@@ -145,14 +145,17 @@ toImpExportedFunction cc def@(Abs bs (Abs d body)) (Abs baseArgBs argRecons) = l
   let (ccFormals, ccCtx) = ccPrepareFormals cc baseArgBs ptrFormals
   dropSubst $ buildImpFunction CEntryFun ccFormals \ccActuals -> do
     (args, ptrs) <- ccUnpackActuals ccCtx ccActuals
-    argAtoms <- extendSubst (baseArgBs @@> map SubstVal (Var <$> args)) $
+    argAtoms <- extendSubst (baseArgBs @@> ((SubstVal . actualToAtom) <$> args)) $
       traverse (translateBlock Nothing) $ map injectIRE $ fromListE argRecons
     extendSubst (bs @@> map SubstVal argAtoms) do
       let RawRefTy dTy = injectIRE $ binderType d
       AbsPtrs resDestAbsPtrs _ <- makeDest (LLVM, CPU, Unmanaged) =<< substM dTy
-      resDest <- applyNaryAbs resDestAbsPtrs ptrs
+      resDest <- applyNaryAbs resDestAbsPtrs ((SubstVal . actualToAtom) <$> ptrs)
       extendSubst (d @> SubstVal resDest) $
         translateBlock Nothing (injectIRE body) $> []
+  where
+    actualToAtom :: ActualArg n -> SIAtom n
+    actualToAtom (v, t) = AtomicIVar (LeftE v) t
 {-# SCC toImpExportedFunction #-}
 
 loadArgDests :: Emits n => NaryLamDest n -> SubstImpM i n ([SIAtom n], Dest n)
@@ -249,7 +252,7 @@ instance ImpBuilder ImpM where
         ListE vs' <- extendInplaceT $ Abs (RNest REmpty decl) vs
         return $ MultiResult $ zipWith IVar vs' tys
     where
-     makeImpBinders :: Nest (NameBinder AtomNameC) n l -> [IType] -> Nest IBinder n l
+     makeImpBinders :: Nest (NameBinder ImpNameC) n l -> [IType] -> Nest IBinder n l
      makeImpBinders Empty [] = Empty
      makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
      makeImpBinders _ _ = error "zip error"
@@ -306,26 +309,25 @@ translateTopLevel cc (Abs (destb:>destTy') body') = do
     extendSubst (destb @> SubstVal dest) $ void $ translateBlock Nothing body
     destToAtom dest
   refreshAbs ab \decls resultAtom -> do
-    -- TODO: this unsafe coerce won't be needed once we treat everything as a
-    -- function, because then we won't need the reconstruction at all. If we
-    -- were going to keep it this way, the right thing to do would be to
-    -- traverse the atom and throw an error if we find any `BoxedRef`
-    let resultAtom' = unsafeCoerceIRE resultAtom
-    (results, recon) <- buildRecon decls resultAtom'
+    (results, recon) <- buildRecon decls resultAtom
     let funImpl = Abs Empty $ ImpBlock decls results
     let funTy   = IFunType cc [] (map getIType results)
     return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)
            => b n l
-           -> SAtom l
+           -> SIAtom l
            -> m l ([IExpr l], AtomRecon n)
 buildRecon b x = do
   let (vs, recon) = captureClosure b x
-  xs <- forM vs \v -> do
-    ~(BaseTy ty) <- getType $ Var v
-    return $ IVar v ty
+  xs <- forM vs \v -> IVar v <$> impVarType v
   return (xs, recon)
+
+impVarType :: EnvReader m => ImpName n -> m n BaseType
+impVarType v = do
+  ~(ImpNameBinding ty) <- lookupEnv v
+  return ty
+{-# INLINE impVarType #-}
 
 translateBlock :: forall i o. Emits o
                => MaybeDest o -> SIBlock i -> SubstImpM i o (SIAtom o)
@@ -1396,7 +1398,20 @@ computeOffset idxNest' idxs = do
 sumUsingPolysImp :: Emits n => SIAtom n -> Abs (Binder SimpToImpIR) SIBlock n -> SBuilderM n (SIAtom n)
 sumUsingPolysImp lim (Abs i body) = do
   ab <- hoistDecls i body
-  sumUsingPolys lim ab
+  PairE lim' ab' <- emitImpVars (PairE lim ab) -- Algebra only works with Atom vars
+  sumUsingPolys lim' ab'
+
+emitImpVars ::
+  (Emits n, HoistableE e, SubstE (SubstVal ImpNameC SIAtom) e, SinkableE e, SubstE Name e)
+  => e n -> SBuilderM n (e n)
+emitImpVars e = do
+  let impVars = nameSetToList @ImpNameC (freeVarsE e)
+  Abs impBs e' <- return $ abstractFreeVarsNoAnn impVars e
+  substVals <- forM impVars \v -> do
+    ty <- impVarType v
+    atomVar <- emitAtomToName (getNameHint v) (AtomicIVar (LeftE v) ty)
+    return $ (SubstVal (Var atomVar) :: SubstVal ImpNameC SIAtom ImpNameC _)
+  applySubst (impBs @@> substVals) e'
 
 hoistDecls
   :: ( Builder SimpToImpIR m, EnvReader m, Emits n
@@ -1447,7 +1462,7 @@ withFreshIBinder
   -> (forall l. DExt n l => IBinder n l -> m l a)
   -> m n a
 withFreshIBinder hint ty cont = do
-  withFreshBinder hint (MiscBound $ BaseTy ty) \b ->
+  withFreshBinder hint (ImpNameBinding ty) \b ->
     cont $ IBinder b ty
 {-# INLINE withFreshIBinder #-}
 
@@ -1468,7 +1483,7 @@ emitCall piTy f xs = do
 buildImpFunction
   :: CallingConvention
   -> [(NameHint, IType)]
-  -> (forall l. (Emits l, DExt n l) => [SAtomName l] -> SubstImpM i l [IExpr l])
+  -> (forall l. (Emits l, DExt n l) => [(ImpName l, BaseType)] -> SubstImpM i l [IExpr l])
   -> SubstImpM i n (ImpFunction n)
 buildImpFunction cc argHintsTys body = do
   Abs bs (Abs decls (ListE results)) <-
@@ -1480,7 +1495,7 @@ buildImpFunction cc argHintsTys body = do
 buildImpNaryAbs
   :: (SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => [(NameHint, IType)]
-  -> (forall l. (Emits l, DExt n l) => [SAtomName l] -> SubstImpM i l (e l))
+  -> (forall l. (Emits l, DExt n l) => [(Name ImpNameC l, BaseType)] -> SubstImpM i l (e l))
   -> SubstImpM i n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
 buildImpNaryAbs [] cont = do
   Distinct <- getDistinct
@@ -1489,7 +1504,7 @@ buildImpNaryAbs ((hint,ty) : rest) cont = do
   withFreshIBinder hint ty \b -> do
     ab <- buildImpNaryAbs rest \vs -> do
       v <- sinkM $ binderName b
-      cont (v : vs)
+      cont ((v,ty) : vs)
     Abs bs body <- return ab
     return $ Abs (Nest b bs) body
 
@@ -1532,16 +1547,20 @@ load x = emitInstr $ IPrimOp $ PtrLoad x
 
 fromScalarAtom :: SIAtom n -> SubstImpM i n (IExpr n)
 fromScalarAtom atom = confuseGHC >>= \_ -> case atom of
-  Var v -> do
-    BaseTy b <- getType v
-    return $ IVar v b
+  AtomicIVar (LeftE  v) t               -> return $ IVar    v t
+  AtomicIVar (RightE v) (PtrType ptrTy) -> return $ IPtrVar v ptrTy
   Con (Lit x) -> return $ ILit x
+  Var v -> lookupAtomName v >>= \case
+    PtrLitBound ptrTy ptrName -> return $ IPtrVar ptrName ptrTy
+    -- TODO: just store pointer names in Atom directly and avoid this
+    _ -> error "The only atom names left should refer to pointer literals"
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
 toScalarAtom :: Monad m => IExpr n -> m (SIAtom n)
 toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
-  IVar v _ -> return $ Var v
+  IVar    v t     -> return $ AtomicIVar (LeftE  v) t
+  IPtrVar v ptrTy -> return $ AtomicIVar (RightE v) (PtrType ptrTy)
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
@@ -1587,20 +1606,17 @@ abstractLinktimeObjects
   => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n], [PtrName n])
 abstractLinktimeObjects f = do
   let allVars = freeVarsE f
-  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList allVars) \v ->
+  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @ImpFunNameC allVars) \v ->
     lookupImpFun v <&> \case
       ImpFunction ty _ -> Just (v, ty)
       FFIFunction _ _ -> Nothing
-  (atomVars, ptrVars, ptrTys) <- unzip3 <$> forMFilter (nameSetToList allVars) \v ->
-    lookupAtomName v >>= \case
-      PtrLitBound _ ptrName -> do
-        (ty, _) <- lookupPtrName ptrName
-        return $ Just (v, ptrName, PtrType ty)
-      _ -> return Nothing
+  (ptrVars, ptrTys) <- unzip <$> forMFilter (nameSetToList @PtrNameC allVars) \v -> do
+    (ty, _) <- lookupPtrName v
+    return $ Just (v, ty)
   Abs funBs (Abs ptrBs f') <- return $ abstractFreeVarsNoAnn funVars $
-                                       abstractFreeVarsNoAnn atomVars f
+                                       abstractFreeVarsNoAnn ptrVars f
   let funBs' =  zipWithNest funBs funTys \b ty -> IFunBinder b ty
-  let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> IBinder b ty
+  let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> PtrBinder  b ty
   return (ClosedImpFunction funBs' ptrBs' f', funVars, ptrVars)
 
 -- === type checking imp programs ===
@@ -1617,6 +1633,7 @@ impFunType (FFIFunction ty _) = ty
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
 getIType (IVar _ ty) = ty
+getIType (IPtrVar _ ty) = PtrType ty
 
 impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of
@@ -1661,13 +1678,13 @@ instance BindsEnv ImpDecl where
   toEnvFrag (ImpLet bs _) = toEnvFrag bs
 
 instance BindsEnv IBinder where
-  toEnvFrag (IBinder b ty) = toEnvFrag $ b :> BaseTy ty
+  toEnvFrag (IBinder b ty) =  toEnvFrag $ b :> ImpNameBinding ty
 
 instance SubstB (AtomSubstVal SimpToImpIR) IBinder
 
 captureClosure
-  :: (HoistableB b, HoistableE e, Color c)
-  => b n l -> e l -> ([Name c l], NaryAbs c e n)
+  :: HoistableB b
+  => b n l -> SIAtom l -> ([ImpName l], NaryAbs ImpNameC SIAtom n)
 captureClosure decls result = do
   let vs = capturedVars decls result
   let ab = abstractFreeVarsNoAnn vs result

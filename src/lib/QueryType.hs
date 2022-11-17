@@ -350,6 +350,7 @@ instance HasType r (Atom r) where
         extendSubst (bs @@> map Rename vs) do
           bodyTy <- getTypeE body
           return $ ignoreHoistFailure $ hoist bs' bodyTy
+    AtomicIVar _ t -> return $ BaseTy t
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v

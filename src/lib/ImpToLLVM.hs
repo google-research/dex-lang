@@ -58,7 +58,8 @@ import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTr
 -- === Compile monad ===
 
 data OperandSubstVal (c::C) (n::S) where
-  OperandSubstVal  :: L.Operand -> OperandSubstVal AtomNameC n
+  OperandSubstVal  :: L.Operand -> OperandSubstVal ImpNameC n
+  PtrSubstVal      :: L.Operand -> OperandSubstVal PtrNameC n
   FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal ImpFunNameC   n
   RenameOperandSubstVal :: Name c n -> OperandSubstVal c n -- only used for top-level FFI names
 
@@ -159,21 +160,21 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
         return (defn, sv)
       return (defns, cnames, substVals)
 
-    makePtrDefns :: EnvReader m => Nest IBinder any1 any2
-                 -> m n ([L.Definition], [CName], [OperandSubstVal AtomNameC n])
+    makePtrDefns :: EnvReader m => Nest PtrBinder any1 any2
+                 -> m n ([L.Definition], [CName], [OperandSubstVal PtrNameC n])
     makePtrDefns bs = do
       let cnames = makeNames "dex_const_ptr_" $ nestToList getNameHint bs
-      let tys = nestToList (\(IBinder _ ty) -> ty) bs
-      (defns, substVals) <- unzip <$> forM (zip cnames tys) \(v, ptrTy@(PtrType (_, ty))) -> do
+      let tys = nestToList (\(PtrBinder _ t) -> t) bs
+      (defns, substVals) <- unzip <$> forM (zip cnames tys) \(v, ptrTy@(_, ty)) -> do
         let v' = L.Name $ fromString v
         let ty'    = scalarTy ty
-        let ptrTy' = scalarTy ptrTy
+        let ptrTy' = scalarTy $ PtrType ptrTy
         let defn = L.GlobalDefinition $ L.globalVariableDefaults
                       { L.name = v'
                       , L.type' = ty'
                       , L.linkage = L.External
                       , L.initializer = Nothing }
-        let sv = OperandSubstVal $ L.ConstantOperand $ globalReference ptrTy' v'
+        let sv = PtrSubstVal $ L.ConstantOperand $ globalReference ptrTy' v'
         return (defn, sv)
       return (defns, cnames, substVals)
 
@@ -780,7 +781,12 @@ compileVoidBlock = void . compileBlock
 compileExpr :: Compiler m => IExpr i -> m i o Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
-  IVar v _ -> lookupImpVar v
+  IPtrVar v _ -> lookupSubstM v <&> \case
+    PtrSubstVal x -> x
+    RenameOperandSubstVal _ -> error "Shouldn't have any ptr literals left"
+  IVar v _ -> lookupSubstM v <&> \case
+    OperandSubstVal x -> x
+    RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"
 
 packArgs :: LLVMBuilder m => [Operand] -> m Operand
 packArgs elems = do
@@ -1151,13 +1157,8 @@ liftCompile dev subst m =
     -- TODO: figure out naming discipline properly
     initState = CompileState [] [] [] "start_block" mempty mempty mempty dev
 
-opSubstVal :: Operand -> OperandSubstVal AtomNameC n
+opSubstVal :: Operand -> OperandSubstVal ImpNameC n
 opSubstVal x = OperandSubstVal x
-
-lookupImpVar :: Compiler m => SAtomName i -> m i o Operand
-lookupImpVar v = lookupSubstM v <&> \case
-  OperandSubstVal x -> x
-  RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"
 
 finishBlock :: LLVMBuilder m => L.Terminator -> L.Name -> m ()
 finishBlock term name = do
@@ -1325,4 +1326,3 @@ instance SinkableE (OperandSubstVal c) where
 
 instance FromName OperandSubstVal where
   fromName = RenameOperandSubstVal
-

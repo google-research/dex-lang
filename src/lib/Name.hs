@@ -1049,6 +1049,15 @@ instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
 instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ImpNameC      where notEqProof = \case
+
+instance ColorsNotEqual ImpNameC AtomNameC      where notEqProof = \case
+instance ColorsNotEqual ImpNameC EffectNameC    where notEqProof = \case
+instance ColorsNotEqual ImpNameC HandlerNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC DataDefNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC InstanceNameC  where notEqProof = \case
+instance ColorsNotEqual ImpNameC SpecializedDictNameC  where notEqProof = \case
+instance ColorsNotEqual ImpNameC ClassNameC     where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1984,6 +1993,7 @@ instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
 instance Color HandlerNameC    where getColorRep = HandlerNameC
 instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
+instance Color ImpNameC        where getColorRep = ImpNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -2005,6 +2015,7 @@ interpretColor c cont = case c of
   EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
   HandlerNameC    -> cont $ ColorProxy @HandlerNameC
   SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
+  ImpNameC        -> cont $ ColorProxy @ImpNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
@@ -2294,6 +2305,10 @@ instance Pretty (UnitE n) where
 instance (PrettyE e1, PrettyE e2) => Pretty (PairE e1 e2 n) where
   pretty (PairE e1 e2) = pretty (e1, e2)
 
+instance (PrettyE e1, PrettyE e2) => Pretty (EitherE e1 e2 n) where
+  pretty (LeftE  e) = "LeftE"  <+> pretty e
+  pretty (RightE e) = "RightE" <+> pretty e
+
 instance PrettyE e => Pretty (ListE e n) where
   pretty (ListE e) = pretty e
 
@@ -2550,6 +2565,7 @@ data C =
   | HandlerNameC
   | SpecializedDictNameC
   | UnsafeC
+  | ImpNameC
     deriving (Eq, Ord, Generic, Show)
 
 type E = S -> *       -- expression-y things, covariant in the S param

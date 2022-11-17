@@ -104,8 +104,11 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
     ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
+  -- TODO: we can get rid of these cases. We just need to make the interpreter
+  -- monomorphic, or at least restrict `r` to not allow `SimpToImpIR`.
   BoxedRef _       -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
+  AtomicIVar _ _   -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
   where
     rec x = traverseSurfaceAtomNames x doWithName

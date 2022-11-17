@@ -164,8 +164,11 @@ data Atom (r::IR) (n::S) where
  -- here may also appear in the type of the atom. (We maintain this
  -- invariant during substitution and in Builder.hs.)
  ProjectElt :: NE.NonEmpty Projection -> AtomName r n     -> Atom r n
- BoxedRef   :: r `Sat` Is SimpToImpIR
-            => Abs (NonDepNest r (BoxPtr r)) (Atom r) n   -> Atom r n
+ -- Constructors only used during Simp->Imp translation
+ BoxedRef   :: r `Sat` Is SimpToImpIR => Abs (NonDepNest r (BoxPtr r)) (Atom r) n -> Atom r n
+ -- TODO(dougalm): instead of putting the PtrName here, I think we should (1) disallow
+ -- literal pointers in LitVal, and instead put PtrName in Atom.
+ AtomicIVar :: r `Sat` Is SimpToImpIR => EitherE ImpName PtrName n -> BaseType -> Atom r n
 
 deriving instance Show (Atom r n)
 deriving via WrapE (Atom r) n instance Generic (Atom r n)
@@ -572,8 +575,10 @@ data Binding (c::C) (n::S) where
   ImpFunBinding     :: ImpFunction n                  -> Binding ImpFunNameC     n
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
+  -- TODO: add a case for abstracted pointers, as used in `ClosedImpFunction`
   PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
   SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
+  ImpNameBinding    :: BaseType                       -> Binding ImpNameC n
 deriving instance Show (Binding c n)
 
 data EffectOpDef (n::S) where
@@ -1261,11 +1266,13 @@ instance GenericE (Atom r) where
   {- TC -}         (ComposeE PrimTC  (Atom r))
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
-            ) (EitherE2
+            ) (EitherE3
   {- BoxedRef -}   (LiftE (ReifiedSat r (Is SimpToImpIR))
                     `PairE` ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
-  {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r))
-
+  {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r)
+  {- AtomicIVar -} (LiftE (ReifiedSat r (Is SimpToImpIR))
+                     `PairE` EitherE ImpName PtrName `PairE` LiftE BaseType)
+            )
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
     ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
@@ -1288,6 +1295,7 @@ instance GenericE (Atom r) where
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
     BoxedRef ab -> Case5 $ Case0 $ LiftE ReifiedSat `PairE` ab
     DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
+    AtomicIVar v t -> Case5 $ Case2 $ LiftE ReifiedSat `PairE` v `PairE` LiftE t
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1323,6 +1331,7 @@ instance GenericE (Atom r) where
     Case5 val -> case val of
       Case0 (LiftE ReifiedSat `PairE` ab) -> BoxedRef ab
       Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
+      Case2 (LiftE ReifiedSat `PairE` v `PairE` LiftE t) -> AtomicIVar v t
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -2045,7 +2054,7 @@ instance AlphaHashableE (SolverBinding r)
 
 instance Color c => GenericE (Binding c) where
   type RepE (Binding c) =
-    EitherE2
+    EitherE3
       (EitherE7
           (AtomBinding CoreIR)
           DataDef
@@ -2054,16 +2063,18 @@ instance Color c => GenericE (Binding c) where
           (ClassDef)
           (InstanceDef)
           (ClassName `PairE` LiftE Int `PairE` CAtom))
-      (EitherE8
+      (EitherE7
           (ImpFunction)
           (LiftE FunObjCode `PairE` LinktimeNames)
           (Module)
           (LiftE PtrLitVal)
           (EffectDef)
           (HandlerDef)
-          (EffectOpDef)
+          (EffectOpDef))
+      (EitherE2
           (SpecializedDictDef)
-      )
+          (LiftE BaseType))
+
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
@@ -2079,7 +2090,8 @@ instance Color c => GenericE (Binding c) where
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
-    SpecializedDictBinding def          -> Case1 $ Case7 $ def
+    SpecializedDictBinding def          -> Case2 $ Case0 $ def
+    ImpNameBinding ty                   -> Case2 $ Case1 $ LiftE ty
   {-# INLINE fromE #-}
 
   toE rep = case rep of
@@ -2097,7 +2109,8 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef
-    Case1 (Case7 def)                                       -> fromJust $ tryAsColor $ SpecializedDictBinding def
+    Case2 (Case0 def)                                       -> fromJust $ tryAsColor $ SpecializedDictBinding def
+    Case2 (Case1 (LiftE ty))                                -> fromJust $ tryAsColor $ ImpNameBinding    ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2431,6 +2444,55 @@ instance Store Projection
 instance Store IxMethod
 instance Store ParamRole
 instance Store (SpecializedDictDef n)
+
+-- === substituting Imp names with CAtoms
+
+type IAtomSubstVal = SubstVal ImpNameC (Atom SimpToImpIR)
+instance SubstE IAtomSubstVal (Atom SimpToImpIR) where
+  substE (scope, env) atom = case fromE atom of
+    Case0 rest -> (toE . Case0) $ substE (scope, env) rest
+    Case1 rest -> (toE . Case1) $ substE (scope, env) rest
+    Case2 rest -> (toE . Case2) $ substE (scope, env) rest
+    Case3 rest -> (toE . Case3) $ substE (scope, env) rest
+    Case4 rest -> (toE . Case4) $ substE (scope, env) rest
+    Case5 specialCase -> case specialCase of
+      Case0 rest -> toE $ Case5 $ Case0 $ substE (scope, env) rest
+      Case1 rest -> toE $ Case5 $ Case1 $ substE (scope, env) rest
+      -- AtomicIVar
+      Case2 (LiftE ReifiedSat `PairE` LeftE v `PairE` LiftE ty) -> do
+        case env ! v of
+          Rename v' -> AtomicIVar (LeftE v') ty
+          SubstVal x -> x
+      Case2 (LiftE ReifiedSat `PairE` RightE v `PairE` LiftE ty) -> do
+        case env ! v of
+          Rename v' -> AtomicIVar (RightE v') ty
+      _ -> error "impossible"
+    Case6 rest -> (toE . Case6) $ substE (scope, env) rest
+    Case7 rest -> (toE . Case7) $ substE (scope, env) rest
+
+instance (SubstE IAtomSubstVal ann, SinkableE ann) => SubstB IAtomSubstVal (NonDepNest SimpToImpIR ann)
+instance SubstE IAtomSubstVal (BoxPtr  SimpToImpIR)
+instance SubstE IAtomSubstVal (Expr    SimpToImpIR)
+instance SubstE IAtomSubstVal (Block   SimpToImpIR)
+instance SubstE IAtomSubstVal (DeclBinding SimpToImpIR)
+instance SubstB IAtomSubstVal (Decl        SimpToImpIR)
+instance SubstB IAtomSubstVal (LamBinder   SimpToImpIR)
+instance SubstE IAtomSubstVal (EffectP Name)
+instance SubstE IAtomSubstVal (EffectRowP Name)
+instance SubstE IAtomSubstVal (LamExpr SimpToImpIR)
+instance SubstE IAtomSubstVal (ExtLabeledItemsE (Type SimpToImpIR) UnitE)
+instance SubstE IAtomSubstVal (ExtLabeledItemsE (Type SimpToImpIR) (AtomName SimpToImpIR))
+instance SubstE IAtomSubstVal (FieldRowElem  SimpToImpIR)
+instance SubstE IAtomSubstVal (FieldRowElems SimpToImpIR)
+instance SubstE IAtomSubstVal (DepPairType SimpToImpIR)
+instance SubstE IAtomSubstVal (DataDefParams SimpToImpIR)
+instance SubstE IAtomSubstVal (PiType SimpToImpIR)
+instance SubstB IAtomSubstVal (PiBinder SimpToImpIR)
+instance SubstE IAtomSubstVal (DictExpr SimpToImpIR)
+instance SubstE IAtomSubstVal (DictType SimpToImpIR)
+instance SubstE IAtomSubstVal (TabLamExpr SimpToImpIR)
+instance SubstE IAtomSubstVal (TabPiType SimpToImpIR)
+instance SubstE IAtomSubstVal (IxType SimpToImpIR)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

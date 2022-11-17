@@ -96,7 +96,7 @@ module Syntax (
     freeAtomVarsList,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
     ImpFunction (..), ImpBlock (..), ImpDecl (..), ClosedImpFunction (..),
-    ImpInstr (..), iBinderType,
+    ImpInstr (..), iBinderType, ImpName, PtrBinder (..),
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
     Output (..), PassLogger, PassName (..), Result (..), BenchStats,
     IsCUDARequired (..),

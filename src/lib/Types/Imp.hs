@@ -33,16 +33,15 @@ import Util (IsBool (..))
 
 import Types.Primitives
 
--- We use AtomName because we convert between atoms and imp
--- expressions without chaning names. Maybe we shouldn't do that.
-type ImpName = Name AtomNameC
+type ImpName = Name ImpNameC
 
 type ImpFunName = Name ImpFunNameC
 data IExpr n = ILit LitVal
              | IVar (ImpName n) BaseType
+             | IPtrVar (Name PtrNameC n) PtrType
                deriving (Show, Generic)
 
-data IBinder n l = IBinder (NameBinder AtomNameC n l) IType
+data IBinder n l = IBinder (NameBinder ImpNameC n l) IType
                    deriving (Show, Generic)
 
 type IPrimOp n = PrimOp (IExpr n)
@@ -141,11 +140,12 @@ data IFunBinder n l = IFunBinder (NameBinder ImpFunNameC n l) IFunType
 -- compilation. TODO: enforce actual `VoidS` as the scope parameter.
 data ClosedImpFunction n where
   ClosedImpFunction
-    :: Nest IFunBinder n1 n2  -- binders for required functions
-    -> Nest IBinder    n2 n3  -- binders for required data pointers
+    :: Nest IFunBinder n1 n2 -- binders for required functions
+    -> Nest PtrBinder  n2 n3 -- binders for required data pointers
     -> ImpFunction n3
     -> ClosedImpFunction n1
 
+data PtrBinder n l = PtrBinder (NameBinder PtrNameC n l) PtrType
 data LinktimeNames n = LinktimeNames [Name FunObjCodeNameC n] [Name PtrNameC n]  deriving (Show, Generic)
 data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]                        deriving (Show, Generic)
 
@@ -172,6 +172,26 @@ instance HoistableB  IFunBinder
 instance SubstB Name IFunBinder
 instance AlphaEqB IFunBinder
 instance AlphaHashableB IFunBinder
+
+instance GenericB PtrBinder where
+  type RepB PtrBinder = BinderP PtrNameC (LiftE PtrType)
+  fromB (PtrBinder b ty) = b :> LiftE ty
+  toB   (b :> LiftE ty) = PtrBinder b ty
+
+instance BindsAtMostOneName PtrBinder PtrNameC where
+  PtrBinder b _ @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance HasNameHint (PtrBinder n l) where
+  getNameHint (PtrBinder b _) = getNameHint b
+
+instance ProvesExt   PtrBinder
+instance BindsNames  PtrBinder
+instance SinkableB   PtrBinder
+instance HoistableB  PtrBinder
+instance SubstB Name PtrBinder
+instance AlphaEqB    PtrBinder
+instance AlphaHashableB PtrBinder
 
 -- === instances ===
 
@@ -282,16 +302,19 @@ instance SubstE Name ImpBlock
 deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 
 instance GenericE IExpr where
-  type RepE IExpr = EitherE2 (LiftE LitVal)
-                             (PairE ImpName (LiftE BaseType))
+  type RepE IExpr = EitherE3 (LiftE LitVal)
+                             (PairE ImpName         (LiftE BaseType))
+                             (PairE (Name PtrNameC) (LiftE PtrType))
   fromE iexpr = case iexpr of
-    ILit x -> Case0 (LiftE x)
-    IVar v ty -> Case1 (v `PairE` LiftE ty)
+    ILit x       -> Case0 (LiftE x)
+    IVar    v ty -> Case1 (v `PairE` LiftE ty)
+    IPtrVar v ty -> Case2 (v `PairE` LiftE ty)
   {-# INLINE fromE #-}
 
   toE rep = case rep of
     Case0 (LiftE x) -> ILit x
-    Case1 (v `PairE` LiftE ty) -> IVar v ty
+    Case1 (v `PairE` LiftE ty) -> IVar    v ty
+    Case2 (v `PairE` LiftE ty) -> IPtrVar v ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -302,17 +325,17 @@ instance AlphaHashableE IExpr
 instance SubstE Name IExpr
 
 instance GenericB IBinder where
-  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder AtomNameC)
+  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder ImpNameC)
   fromB (IBinder b ty) = PairB (LiftB (LiftE ty)) b
   toB   (PairB (LiftB (LiftE ty)) b) = IBinder b ty
 
 instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
 
-instance BindsAtMostOneName IBinder AtomNameC where
+instance BindsAtMostOneName IBinder ImpNameC where
   IBinder b _ @> x = b @> x
 
-instance BindsOneName IBinder AtomNameC where
+instance BindsOneName IBinder ImpNameC where
   binderName (IBinder b _) = binderName b
 
 instance BindsNames IBinder where
