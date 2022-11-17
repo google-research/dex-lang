@@ -109,6 +109,8 @@ instance MonadTrans11 (ReaderT1 r) where
   lift11 = ReaderT1 . lift
   {-# INLINE lift11 #-}
 
+deriving instance MonadState s (m n) => MonadState s (ReaderT1 r m n)
+
 instance (SinkableE r, EnvReader m) => EnvReader (ReaderT1 r m) where
   unsafeGetEnv = lift11 unsafeGetEnv
   {-# INLINE unsafeGetEnv #-}

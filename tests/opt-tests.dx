@@ -49,6 +49,7 @@ yield_state 0 \ref.
   (x0, x2)
 -- CHECK: === Result ===
 -- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
+-- CHECK-NEXT: occurs in 1 place
 -- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
 -- CHECK-NEXT: ([[x0]], [[x2]])
 
