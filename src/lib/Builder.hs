@@ -43,8 +43,7 @@ module Builder (
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
-  ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
-  litValToPointerlessAtom, emitPtrLit,
+  ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod, emitPtrLit,
   telescopicCapture, unpackTelescope,
   applyRecon, applyReconAbs, applyIxMethod,
   emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
@@ -470,7 +469,7 @@ runTopBuilderT bindings cont = do
   liftM snd $ runInplaceT bindings $ runTopBuilderT' $ cont
 {-# INLINE runTopBuilderT #-}
 
-type TopBuilder2 (r::IR) (m :: MonadKind2) = forall i. TopBuilder (m i)
+type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
 
 instance (SinkableE e, HoistableState e, TopBuilder m) => TopBuilder (StateT1 e m) where
   emitBinding hint binding = lift11 $ emitBinding hint binding
@@ -1109,16 +1108,8 @@ updateAddAt x = liftEmitBuilder do
 
 -- === builder versions of common top-level emissions ===
 
-litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom r n)
-litValToPointerlessAtom litval = case litval of
-  PtrLit val -> Var <$> emitPtrLit (getNameHint @String "ptr") val
-  _          -> return $ Con $ Lit litval
-
-emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrLitVal -> m n (AtomName r n)
-emitPtrLit hint p@(PtrLitVal ty _) = do
-  ptrName <- emitBinding hint $ PtrBinding p
-  emitBinding hint $ AtomNameBinding $ PtrLitBound ty ptrName
-emitPtrLit _ (PtrSnapshot _ _) = error "only used for serialization"
+emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrLitVal -> m n (PtrName n)
+emitPtrLit hint p = emitBinding hint $ PtrBinding p
 
 emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =

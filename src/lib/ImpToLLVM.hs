@@ -836,7 +836,6 @@ litVal lit = case lit of
   Word64Lit x  -> i64Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
-  PtrLit _ -> error "Shouldn't be compiling pointer literals"
 
 -- TODO: Assert that the integer can be represented in that number of bits!
 withWidth :: Int -> Word32 -> Operand

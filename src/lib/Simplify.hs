@@ -515,6 +515,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
             extendSubst (b @> Rename xs) $
               simplifyAtom body
         return $ ACase e' alts' rTy'
+  -- PtrLit p -> PtrLit <$> substM p
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
 

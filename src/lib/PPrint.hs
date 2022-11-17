@@ -289,6 +289,7 @@ instance PrettyPrec (Atom r n) where
     DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
       "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
     AtomicIVar v _ -> atPrec ArgPrec $ p v
+    -- PtrLit v -> atPrec ArgPrec $ p v
 
 instance Pretty (BoxPtr r n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
@@ -453,7 +454,6 @@ instance Pretty (AtomBinding r n) where
     IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    PtrLitBound _ ptr -> p ptr
     TopFunBound _ f -> p f
 
 instance Pretty (TopFunBinding n) where
@@ -1061,9 +1061,6 @@ instance PrettyPrec LitVal where
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (PtrLit (PtrLitVal ty x)) =
-    atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
-  prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
 
 instance Pretty CallingConvention where
   pretty = p . show

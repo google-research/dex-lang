@@ -37,19 +37,19 @@ import Util ((...), iota, onSndM, restructure)
 import Builder
 import CheapReduction (cheapNormalize)
 
-newtype InterpM (r::IR) (i::S) (o::S) (a:: *) =
-  InterpM { runInterpM' :: SubstReaderT (AtomSubstVal r) (EnvReaderT IO) i o a }
+type VAtom = Atom ValueIR
+
+newtype InterpM (i::S) (o::S) (a:: *) =
+  InterpM { runInterpM' :: SubstReaderT (AtomSubstVal ValueIR) (EnvReaderT IO) i o a }
   deriving ( Functor, Applicative, Monad
            , MonadIO, ScopeReader, EnvReader, MonadFail, Fallible
-           , SubstReader (AtomSubstVal r))
+           , SubstReader (AtomSubstVal ValueIR))
 
-class ( SubstReader (AtomSubstVal r) m, EnvReader2 m
-      , Monad2 m, MonadIO2 m)
-      => Interp r m | m -> r
+class (SubstReader (AtomSubstVal ValueIR) m, EnvReader2 m , Monad2 m, MonadIO2 m) => Interp m
 
-instance Interp r (InterpM r)
+instance Interp InterpM
 
-liftInterpM :: (EnvReader m, MonadIO1 m) => InterpM r n n a -> m n a
+liftInterpM :: (EnvReader m, MonadIO1 m) => InterpM n n a -> m n a
 liftInterpM cont = do
   resultIO <- liftEnvReaderT $ runSubstReaderT idSubst $ runInterpM' cont
   liftIO resultIO
@@ -60,17 +60,17 @@ liftInterpM cont = do
 -- TODO Can we implement a FakeIOT monad transformer that provides
 -- MonadIO but with liftIO = fail ?  Then we could call the interpreter
 -- while guaranteeing that no real IO actually happens.
-unsafeLiftInterpMCatch :: (EnvReader m) => InterpM r n n a -> m n (Except a)
+unsafeLiftInterpMCatch :: (EnvReader m) => InterpM n n a -> m n (Except a)
 unsafeLiftInterpMCatch cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
   return $ unsafePerformIO $ catchIOExcept $ runInterpM env cont
 {-# INLINE unsafeLiftInterpMCatch #-}
 
-evalBlock :: Interp r m => Block r i -> m i o (Atom r o)
+evalBlock :: Interp m => SBlock i -> m i o (VAtom o)
 evalBlock (Block _ decls result) = evalDecls decls $ evalAtom result
 
-evalDecls :: Interp r m => Nest (Decl r) i i' -> m i' o a -> m i o a
+evalDecls :: Interp m => Nest (Decl SimpIR) i i' -> m i' o a -> m i o a
 evalDecls Empty cont = cont
 evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
   result <- evalExpr rhs
@@ -79,10 +79,10 @@ evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
 
 -- XXX: this doesn't go under lambda or pi binders
 traverseSurfaceAtomNames
-  :: (SubstReader (AtomSubstVal r) m, EnvReader2 m)
-  => Atom r i
-  -> (AtomName r i -> m i o (Atom r o))
-  -> m i o (Atom r o)
+  :: (SubstReader (AtomSubstVal ValueIR) m, EnvReader2 m)
+  => SAtom i
+  -> (AtomName r i -> m i o (SAtom o))
+  -> m i o (VAtom o)
 traverseSurfaceAtomNames atom doWithName = case atom of
   Var v -> doWithName v
   Lam _    -> substM atom
@@ -113,7 +113,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   where
     rec x = traverseSurfaceAtomNames x doWithName
 
-evalAtom :: forall i o r m. Interp r m => Atom r i -> m i o (Atom r o)
+evalAtom :: forall i o r m. Interp m => SAtom i -> m i o (VAtom o)
 evalAtom atom = traverseSurfaceAtomNames atom \v -> do
   env <- getSubst
   case env ! v of
@@ -122,13 +122,10 @@ evalAtom atom = traverseSurfaceAtomNames atom \v -> do
       lookupAtomName v' >>= \case
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ evalAtom $ unsafeCoerceIRE @r x
         TopFunBound _ _ -> return $ Var v'
-        PtrLitBound _ ptrName -> do
-          ~(PtrBinding ptr) <- lookupEnv ptrName
-          return $ Con $ Lit $ PtrLit ptr
         bindingInfo -> error $ "shouldn't have irreducible atom names left. Got " ++ pprint bindingInfo
 {-# SCC evalAtom #-}
 
-evalExpr :: Interp r m => Expr r i -> m i o (Atom r o)
+evalExpr :: Interp m => Expr SimpIR i -> m i o (VAtom o)
 evalExpr expr = case expr of
   App f xs -> do
     f' <- evalAtom f
@@ -136,10 +133,10 @@ evalExpr expr = case expr of
     case fromNaryLam (length xs) f' of
       Just (bsCount, NaryLamExpr bs _ body) -> do
         let (xsPref, xsRest) = NE.splitAt bsCount xs'
-        ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock body
+        ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock $ injectIRE body
         case nonEmpty xsRest of
           Nothing    -> return ans
-          Just rest' -> dropSubst $ evalExpr $ App ans rest'
+          Just rest' -> dropSubst $ evalExpr $ injectIRE $ App ans rest'
       Nothing -> error $ "Failed to reduce application!" ++ pprint expr
   -- TODO: de-dup with App
   TabApp f xs -> do
@@ -148,10 +145,10 @@ evalExpr expr = case expr of
     case fromNaryTabLam (length xs) f' of
       Just (bsCount, NaryLamExpr bs _ body) -> do
         let (xsPref, xsRest) = NE.splitAt bsCount xs'
-        ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock body
+        ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock $ injectIRE body
         case nonEmpty xsRest of
           Nothing    -> return ans
-          Just rest' -> dropSubst $ evalExpr $ TabApp ans rest'
+          Just rest' -> dropSubst $ evalExpr $ injectIRE $ TabApp ans rest'
       Nothing -> error "Failed to reduce application!"
   Atom atom -> evalAtom atom
   Op op     -> evalOp op
@@ -171,7 +168,7 @@ evalExpr expr = case expr of
   Handle _ _ _ -> error $ "Not implemented: " ++ pprint expr
 {-# SCC evalExpr #-}
 
-evalOp :: Interp r m => Op r i -> m i o (Atom r o)
+evalOp :: Interp m => Op SimpIR i -> m i o (VAtom o)
 evalOp expr = mapM evalAtom expr >>= \case
   BinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
@@ -193,16 +190,16 @@ evalOp expr = mapM evalAtom expr >>= \case
   UnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  PtrOffset (Con (Lit (PtrLit (PtrLitVal (a, t) p)))) (IdxRepVal i) ->
-    return $ Con $ Lit $ PtrLit (PtrLitVal (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i))
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap CPU, t) p)))) ->
-    Con . Lit <$> liftIO (loadLitVal p t)
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap GPU, t) p)))) ->
-    liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
-      loadCUDAArray hostPtr p (sizeOf t)
-      Con . Lit <$> loadLitVal hostPtr t
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Stack, _) _)))) ->
-    error $ "Unexpected stack pointer in interpreter"
+  -- PtrOffset (Con (Lit (PtrLit (PtrLitVal (a, t) p)))) (IdxRepVal i) ->
+  --   return $ Con $ Lit $ PtrLit (PtrLitVal (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i))
+  -- PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap CPU, t) p)))) ->
+  --   Con . Lit <$> liftIO (loadLitVal p t)
+  -- PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap GPU, t) p)))) ->
+  --   liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
+  --     loadCUDAArray hostPtr p (sizeOf t)
+  --     Con . Lit <$> loadLitVal hostPtr t
+  -- PtrLoad (Con (Lit (PtrLit (PtrLitVal (Stack, _) _)))) ->
+  --   error $ "Unexpected stack pointer in interpreter"
   CastOp destTy x -> do
     sourceTy <- getType x
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
@@ -231,14 +228,13 @@ evalOp expr = mapM evalAtom expr >>= \case
     return $ Con $ Newtype ty $ SumVal (toList tys) ix v
   _ -> error $ "Not implemented: " ++ pprint expr
 
-evalProjectDictMethod :: Interp r m => Atom r o -> Int -> m i o (Atom r o)
+evalProjectDictMethod :: Interp m => VAtom o -> Int -> m i o (VAtom o)
 evalProjectDictMethod d i = cheapNormalize d >>= \case
   DictCon (InstanceDict instanceName args) -> dropSubst do
-    args' <- mapM evalAtom args
     InstanceDef _ bs _ body <- lookupInstanceDef instanceName
     let InstanceBody _ methods = body
     let method = methods !! i
-    extendSubst (bs@@>(SubstVal <$> args')) $
+    extendSubst (bs@@>(SubstVal <$> args)) $
       evalBlock $ unsafeCoerceIRE method
   Con (ExplicitDict _ method) -> do
     case i of
@@ -250,27 +246,26 @@ evalProjectDictMethod d i = cheapNormalize d >>= \case
     let (m, MethodType _ mTy) = (mts !! i, mTys !! i)
     case mTy of
       Pi _ -> return m
-      _    -> dropSubst $ evalExpr $ App (head mts) (UnitVal NE.:| [])
+      _    -> dropSubst $ evalExpr $ injectIRE $ App (head mts) (UnitVal NE.:| [])
   _ -> error $ "Not a simplified dict: " ++ pprint d
 
-matchUPat :: Interp r m => UPat i i' -> Atom r o -> m i o (SubstFrag (AtomSubstVal r) i i' o)
+matchUPat :: Interp m => UPat i i' -> VAtom o -> m i o (SubstFrag (AtomSubstVal ValueIR) i i' o)
 matchUPat (WithSrcB _ pat) x = do
-  x' <- dropSubst $ evalAtom x
-  case (pat, x') of
-    (UPatBinder b, _) -> return $ b @> SubstVal x'
+  case (pat, x) of
+    (UPatBinder b, _) -> return $ b @> SubstVal x
     (UPatCon _ ps, Con (Newtype (TypeCon _ dataDefName _) _)) -> do
       DataDef _ _ cons <- lookupDataDef dataDefName
       case cons of
-        [DataConDef _ _ idxs] -> matchUPats ps [getProjection ix x' | ix <- idxs]
+        [DataConDef _ _ idxs] -> matchUPats ps [getProjection ix x | ix <- idxs]
         _ -> error "Expected a single ADt constructor"
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
     (UPatUnit UnitB, UnitVal) -> return emptyInFrag
     (UPatRecord pats, Record initTys initXs) -> go initTys (restructure initXs initTys) pats
       where
-        go :: Interp r m
-           => LabeledItems (Type r o) -> LabeledItems (Atom r o)
-           -> UFieldRowPat i i' -> m i o (SubstFrag (AtomSubstVal r) i i' o)
+        go :: Interp m
+           => LabeledItems (Type ValueIR o) -> LabeledItems (VAtom o)
+           -> UFieldRowPat i i' -> m i o (SubstFrag (AtomSubstVal ValueIR) i i' o)
         go tys xs = \case
           UEmptyRowPat    -> return emptyInFrag
           URemFieldsPat b -> return $ b @> SubstVal (Record tys $ toList xs)
@@ -299,13 +294,13 @@ matchUPat (WithSrcB _ pat) x = do
         TabTy b _ -> do
           xs <- dropSubst do
             idxs <- indices (binderAnn b)
-            forM idxs \i -> evalExpr $ TabApp tab (i:|[])
+            forM idxs \i -> evalExpr $ injectIRE $ TabApp tab (i:|[])
           matchUPats bs xs
         _ -> error $ "not a table: " ++ pprint tab
     _ -> error "bad pattern match"
   where followedByFrag f m = extendSubst f $ fmap (f <.>) m
 
-matchUPats :: Interp r m => Nest UPat i i' -> [Atom r o] -> m i o (SubstFrag (AtomSubstVal r) i i' o)
+matchUPats :: Interp m => Nest UPat i i' -> [VAtom o] -> m i o (SubstFrag (AtomSubstVal ValueIR) i i' o)
 matchUPats Empty [] = return emptyInFrag
 matchUPats (Nest b bs) (x:xs) = do
   s <- matchUPat b x
@@ -317,41 +312,42 @@ matchUPats _ _ = error "mismatched lengths"
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
 -- We could have a partial version of the interpreter that fails when any IO is to happen.
 liftBuilderInterp ::
-  (forall l. (Emits l, DExt n l) => BuilderM r l (Atom r l))
-  -> InterpM r n n (Atom r n)
-liftBuilderInterp cont = do
-  Abs decls result <- liftBuilder $ buildScoped cont
-  evalDecls decls $ evalAtom result
-{-# SCC liftBuilderInterp #-}
+  (forall l. (Emits l, DExt n l) => BuilderM ValueIR l (VAtom l))
+  -> InterpM n n (VAtom n)
+liftBuilderInterp cont = undefined
+-- liftBuilderInterp cont = do
+--   Abs decls result <- liftBuilder $ buildScoped cont
+--   evalDecls decls $ evalAtom result
+-- {-# SCC liftBuilderInterp #-}
 
-runInterpM :: Distinct n => Env n -> InterpM r n n a -> IO a
+runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
 runInterpM bindings cont =
   runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
 {-# SCC runInterpM #-}
 
-unsafeLiftInterpM :: (EnvReader m) => InterpM r n n a -> m n a
+unsafeLiftInterpM :: (EnvReader m) => InterpM n n a -> m n a
 unsafeLiftInterpM cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
   return $ unsafePerformIO $ runInterpM env cont
 {-# INLINE unsafeLiftInterpM #-}
 
-indices :: EnvReader m => IxType r n -> m n [Atom r n]
+indices :: EnvReader m => IxType ValueIR n -> m n [VAtom n]
 indices ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
   forM (iota size) \i -> interpUnsafeFromOrdinal ixTy $ IdxRepVal i
 {-# SCC indices #-}
 
-interpIndexSetSize :: IxType r n -> InterpM r n n (Atom r n)
+interpIndexSetSize :: IxType ValueIR n -> InterpM n n (VAtom n)
 interpIndexSetSize ixTy = liftBuilderInterp $ indexSetSize $ sink ixTy
 
-interpUnsafeFromOrdinal :: IxType r n -> Atom r n -> InterpM r n n (Atom r n)
+interpUnsafeFromOrdinal :: IxType ValueIR n -> VAtom n -> InterpM n n (VAtom n)
 interpUnsafeFromOrdinal ixTy i = liftBuilderInterp $ unsafeFromOrdinal (sink ixTy) (sink i)
 
 -- A variant of `indices` that accepts an expected number of them and
 -- only tries to construct the set if the expected number matches the
 -- given index set's size.
-indicesLimit :: EnvReader m => Int -> IxType r n -> m n (Either Word32 [Atom r n])
+indicesLimit :: EnvReader m => Int -> IxType ValueIR n -> m n (Either Word32 [VAtom n])
 indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
   ~(IdxRepVal size) <- interpIndexSetSize ixTy
   if size == fromIntegral sizeReq then
@@ -363,7 +359,7 @@ indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
 -- === Helpers for function evaluation over fixed-width types ===
 
 applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
-               => (a -> Atom r n) -> a -> a -> Atom r n) -> Atom r n -> Atom r n -> Atom r n
+               => (a -> VAtom n) -> a -> a -> VAtom n) -> VAtom n -> VAtom n -> VAtom n
 applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
   (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
@@ -372,17 +368,17 @@ applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
   _ -> error "Expected integer atoms"
 
-applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> VAtom n -> VAtom n -> VAtom n
 applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
 
-applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom r n -> Atom r n -> Atom r n
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> VAtom n -> VAtom n -> VAtom n
 applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
 
-applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> VAtom n -> VAtom n -> VAtom n
 applyFloatBinOp f x y = case (x, y) of
   (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
   (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
   _ -> error "Expected float atoms"
 
-applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> VAtom n -> VAtom n
 applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x

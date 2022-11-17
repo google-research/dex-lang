@@ -274,6 +274,7 @@ linearizeAtom atom = case atom of
   DepPairTy _     -> emitZeroT
   TC _            -> emitZeroT
   Eff _           -> emitZeroT
+  PtrCon _        -> emitZeroT
   ProjectElt idxs v ->
     linearizeAtom (Var v) `bindLin` \x ->
       return $ getProjection (toList idxs) x

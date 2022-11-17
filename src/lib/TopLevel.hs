@@ -777,15 +777,18 @@ evalLLVM block = do
     $ LinktimeVals reqFunPtrs reqDataPtrs
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
+  resultAtoms <- mapM cValToAtom resultVals
   -- TODO: this unsafe coerce won't be needed once we treat everything as a
   -- function, because then we won't need the reconstruction at all. If we were
   -- going to keep it this way, the right thing to do would be to traverse the
   -- atom and throw an error if we find any `BoxedRef`
   Abs bs finalResult <- return reconAtom
-  let substVals = map SubstVal resultValsNoPtrs :: [SubstVal ImpNameC (Atom SimpToImpIR) ImpNameC n]
+  let substVals = map SubstVal resultAtoms :: [SubstVal ImpNameC (Atom SimpToImpIR) ImpNameC n]
   unsafeCoerceIRE <$> applySubst (bs @@> substVals) finalResult
 {-# SCC evalLLVM #-}
+
+cValToAtom :: (Topper m, Mut n) => CVal -> m n (Atom SimpToImpIR n)
+cValToAtom = undefined
 
 compileToObjCode
   :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode

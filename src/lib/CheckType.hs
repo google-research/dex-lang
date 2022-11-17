@@ -183,7 +183,6 @@ instance CheckableE (AtomBinding r) where
     IxBound  ixTy       -> IxBound     <$> checkE ixTy
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
-    PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
     TopFunBound ty f -> do
       ty' <- substM ty
       TopFunBound ty' <$> case f of
@@ -280,14 +279,19 @@ instance HasType r (Atom r) where
         extendSubst (bs @@> vs) do
           bodyTy <- getTypeE body
           liftHoistExcept $ hoist bs' bodyTy
-    AtomicIVar (LeftE v) t -> do
+    AtomicIVar v t -> do
       ImpNameBinding t' <- lookupEnv =<< substM v
       assertEq t t' ""
       return $ BaseTy t
-    AtomicIVar (RightE v) t -> do
-      PtrBinding pt <- lookupEnv =<< substM v
-      assertEq t (litType $ PtrLit pt) ""
-      return $ BaseTy t
+    PtrCon v -> case v of
+      AtomPtrName   ptrName ->
+        substM ptrName >>= lookupEnv >>= \case
+        PtrBinding p' -> case p' of
+          PtrLitVal t _ -> return $ PtrTy t
+          PtrSnapshot _ _ -> error "this case is only for serialization"
+      AtomPtrLitVal p -> case p of
+        PtrSnapshot t _ -> return $ PtrTy t
+        PtrLitVal   t _ -> return $ PtrTy t
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v

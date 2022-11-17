@@ -273,6 +273,7 @@ data PtrSnapshot = ByteArray BS.ByteString
                    deriving (Show, Eq, Ord, Generic)
 
 data PtrLitVal = PtrLitVal   PtrType (Ptr ())
+               -- TODO: put this under a specific `IR` parameter
                | PtrSnapshot PtrType PtrSnapshot
                  deriving (Show, Eq, Ord, Generic)
 
@@ -294,12 +295,9 @@ data LitVal = Int64Lit   Int64
             | Word64Lit  Word64
             | Float64Lit Double
             | Float32Lit Float
-              -- XXX: we have to be careful with this, because it can't be
-              -- serialized we only use it in a few places, like the interpreter
-              -- and for passing values to LLVM's JIT. Otherwise, pointers
-              -- should be referred to by name.
-            | PtrLit PtrLitVal
               deriving (Show, Eq, Ord, Generic)
+
+data CVal = CLitVal LitVal | CPtr PtrLitVal
 
 data ScalarBaseType = Int64Type | Int32Type
                     | Word8Type | Word32Type | Word64Type

@@ -93,7 +93,6 @@ peepholeOp op = case op of
       Word64Lit i  -> lit $ Int32Lit  $ fromIntegral i
       Float32Lit _ -> noop
       Float64Lit _ -> noop
-      PtrLit     _ -> noop
     Int64Type -> case l of
       Int32Lit  i  -> lit $ Int64Lit  $ fromIntegral i
       Int64Lit  _  -> lit l
@@ -102,7 +101,6 @@ peepholeOp op = case op of
       Word64Lit i  -> lit $ Int64Lit  $ fromIntegral i
       Float32Lit _ -> noop
       Float64Lit _ -> noop
-      PtrLit     _ -> noop
     Word8Type -> case l of
       Int32Lit  i  -> lit $ Word8Lit  $ fromIntegral i
       Int64Lit  i  -> lit $ Word8Lit  $ fromIntegral i
@@ -111,7 +109,6 @@ peepholeOp op = case op of
       Word64Lit i  -> lit $ Word8Lit  $ fromIntegral i
       Float32Lit _ -> noop
       Float64Lit _ -> noop
-      PtrLit     _ -> noop
     Word32Type -> case l of
       Int32Lit  i  -> lit $ Word32Lit $ fromIntegral i
       Int64Lit  i  -> lit $ Word32Lit $ fromIntegral i
@@ -120,7 +117,6 @@ peepholeOp op = case op of
       Word64Lit i  -> lit $ Word32Lit $ fromIntegral i
       Float32Lit _ -> noop
       Float64Lit _ -> noop
-      PtrLit     _ -> noop
     Word64Type -> case l of
       Int32Lit  i  -> lit $ Word64Lit $ fromIntegral (fromIntegral i :: Word32)
       Int64Lit  i  -> lit $ Word64Lit $ fromIntegral i
@@ -129,7 +125,6 @@ peepholeOp op = case op of
       Word64Lit _  -> lit l
       Float32Lit _ -> noop
       Float64Lit _ -> noop
-      PtrLit     _ -> noop
     _ -> noop
   -- TODO: Support more unary and binary ops.
   BinOp IAdd l r -> return $ case (l, r) of

@@ -48,37 +48,38 @@ pprintVal val = docAsStr <$> prettyVal val
 {-# SCC pprintVal #-}
 
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
-getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs of
-  Just (ptrAtom, n) -> do
-    lookupAtomName ptrAtom >>= \case
-      PtrLitBound _ ptrName -> lookupEnv ptrName >>= \case
-        PtrBinding (PtrLitVal (Heap CPU, Scalar Word8Type) ptr) -> do
-          liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
-        _ -> error "Expected a CPU pointer binding!"
-      _ -> error "Expected a pointer binding!"
-  Nothing -> do
-    liftIO $ hPutStrLn stderr $ "Falling back to a slow path in Dex string retrieval!"
-    xs' <- getTableElements xs
-    forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
-  where
-    tryParseStringContent :: CAtom n -> Maybe (CAtomName n, Word32)
-    tryParseStringContent tabAtom  = do
-      TabLam (TabLamExpr i body) <- return tabAtom
-      FinConst n <- return $ binderType i
-      Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
-      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (UnwrapBaseNewtype NE.:| [UnwrapBaseNewtype]) i')))) <- return offDecl
-      guard $ binderName i == i'
-      Let r (DeclBinding _ _ loadExpr) <- return loadDecl
-      guard $ binderName r == result
-      Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
-      HoistSuccess (Block _ (Nest ioDecl Empty) (Var ioResult)) <- return $ hoist iob iobody
-      Let ioR (DeclBinding _ _ (Op (PtrLoad (Var v1')))) <- return ioDecl
-      guard $ binderName ioR == ioResult
-      guard $ binderName v1 == v1'
-      HoistSuccess ptrAtomTop <- return $ hoist i ptrName
-      return (ptrAtomTop, n)
-getDexString x = error $ "Not a string: " ++ pprint x
-{-# SCC getDexString #-}
+getDexString (Con (Newtype _ (DepPair _ xs _))) = undefined
+-- getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs of
+--   Just (ptrAtom, n) -> do
+--     lookupAtomName ptrAtom >>= \case
+--       PtrLitBound _ ptrName -> lookupEnv ptrName >>= \case
+--         PtrBinding (PtrLitVal (Heap CPU, Scalar Word8Type) ptr) -> do
+--           liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
+--         _ -> error "Expected a CPU pointer binding!"
+--       _ -> error "Expected a pointer binding!"
+--   Nothing -> do
+--     liftIO $ hPutStrLn stderr $ "Falling back to a slow path in Dex string retrieval!"
+--     xs' <- getTableElements xs
+--     forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
+--   where
+--     tryParseStringContent :: CAtom n -> Maybe (CAtomName n, Word32)
+--     tryParseStringContent tabAtom  = do
+--       TabLam (TabLamExpr i body) <- return tabAtom
+--       FinConst n <- return $ binderType i
+--       Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
+--       Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (UnwrapBaseNewtype NE.:| [UnwrapBaseNewtype]) i')))) <- return offDecl
+--       guard $ binderName i == i'
+--       Let r (DeclBinding _ _ loadExpr) <- return loadDecl
+--       guard $ binderName r == result
+--       Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
+--       HoistSuccess (Block _ (Nest ioDecl Empty) (Var ioResult)) <- return $ hoist iob iobody
+--       Let ioR (DeclBinding _ _ (Op (PtrLoad (Var v1')))) <- return ioDecl
+--       guard $ binderName ioR == ioResult
+--       guard $ binderName v1 == v1'
+--       HoistSuccess ptrAtomTop <- return $ hoist i ptrName
+--       return (ptrAtomTop, n)
+-- getDexString x = error $ "Not a string: " ++ pprint x
+-- {-# SCC getDexString #-}
 
 getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n [CAtom n]
 getTableElements tab = do

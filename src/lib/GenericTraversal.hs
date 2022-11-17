@@ -108,6 +108,7 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   RecordTy elems -> RecordTy <$> traverseGenericE elems
   VariantTy ext -> VariantTy <$> traverseExtLabeledItems ext
   ProjectElt _ _ -> substM atom
+  -- PtrCon p -> PtrCon <$> substM p
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
   -- TODO(dougalm): We don't need these because we don't use generic traversals

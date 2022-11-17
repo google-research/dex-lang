@@ -1053,6 +1053,7 @@ instance ColorsNotEqual ImpNameC DataDefNameC   where notEqProof = \case
 instance ColorsNotEqual ImpNameC InstanceNameC  where notEqProof = \case
 instance ColorsNotEqual ImpNameC SpecializedDictNameC  where notEqProof = \case
 instance ColorsNotEqual ImpNameC ClassNameC     where notEqProof = \case
+instance ColorsNotEqual ImpNameC PtrNameC       where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 

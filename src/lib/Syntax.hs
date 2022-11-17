@@ -27,7 +27,7 @@ module Syntax (
     pattern StaticRecordTy, pattern RecordTyWithElems,
     Expr (..), Atom (..), Arrow (..), plainArrows, PrimTC (..), Abs (..),
     DictExpr (..), DictType (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PtrLitVal (..), PtrSnapshot (..),
+    PrimExpr (..), PrimCon (..), LitVal (..), PtrLitVal (..), CVal (..), PtrSnapshot (..),
     AlwaysEqual (..),
     PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),

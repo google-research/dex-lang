@@ -71,7 +71,7 @@ toImpStandaloneFunction' lam' = do
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty Unmanaged
   let ptrHintTys = [(noHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
   dropSubst $ buildImpFunction CInternalFun ptrHintTys \vs -> do
-    let substVals = [SubstVal (AtomicIVar (LeftE v) t :: Atom SimpToImpIR _) | (v,t) <- vs]
+    let substVals = [SubstVal (AtomicIVar v t :: Atom SimpToImpIR _) | (v,t) <- vs]
     argResultDest' <- applySubst (ptrBinders @@> substVals) argResultDest
     (args, resultDest) <- loadArgDests argResultDest'
     extendSubst (bs @@> map SubstVal args) do
@@ -155,7 +155,7 @@ toImpExportedFunction cc def@(Abs bs (Abs d body)) (Abs baseArgBs argRecons) = l
         translateBlock Nothing (injectIRE body) $> []
   where
     actualToAtom :: ActualArg n -> SIAtom n
-    actualToAtom (v, t) = AtomicIVar (LeftE v) t
+    actualToAtom (v, t) = AtomicIVar v t
 {-# SCC toImpExportedFunction #-}
 
 loadArgDests :: Emits n => NaryLamDest n -> SubstImpM i n ([SIAtom n], Dest n)
@@ -1409,7 +1409,7 @@ emitImpVars e = do
   Abs impBs e' <- return $ abstractFreeVarsNoAnn impVars e
   substVals <- forM impVars \v -> do
     ty <- impVarType v
-    atomVar <- emitAtomToName (getNameHint v) (AtomicIVar (LeftE v) ty)
+    atomVar <- emitAtomToName (getNameHint v) (AtomicIVar v ty)
     return $ (SubstVal (Var atomVar) :: SubstVal ImpNameC SIAtom ImpNameC _)
   applySubst (impBs @@> substVals) e'
 
@@ -1547,20 +1547,19 @@ load x = emitInstr $ IPrimOp $ PtrLoad x
 
 fromScalarAtom :: SIAtom n -> SubstImpM i n (IExpr n)
 fromScalarAtom atom = confuseGHC >>= \_ -> case atom of
-  AtomicIVar (LeftE  v) t               -> return $ IVar    v t
-  AtomicIVar (RightE v) (PtrType ptrTy) -> return $ IPtrLit v ptrTy
+  AtomicIVar v t               -> return $ IVar    v t
   Con (Lit x) -> return $ ILit x
-  Var v -> lookupAtomName v >>= \case
-    PtrLitBound ptrTy ptrName -> return $ IPtrLit ptrName ptrTy
-    -- TODO: just store pointer names in Atom directly and avoid this
-    _ -> error "The only atom names left should refer to pointer literals"
+  PtrCon p -> case p of
+    AtomPtrName ptrName -> do
+     (ty, _) <- lookupPtrName ptrName
+     return $ IPtrLit ptrName ty
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
 toScalarAtom :: Monad m => IExpr n -> m (SIAtom n)
 toScalarAtom ie = case ie of
-  ILit l   -> return $ Con $ Lit l
-  IVar    v t     -> return $ AtomicIVar (LeftE  v) t
-  IPtrLit v ptrTy -> return $ AtomicIVar (RightE v) (PtrType ptrTy)
+  ILit l       -> return $ Con $ Lit l
+  IVar    v t  -> return $ AtomicIVar v t
+  IPtrLit p _  -> return $ PtrCon $ AtomPtrName p
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.

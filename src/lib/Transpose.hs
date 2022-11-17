@@ -301,6 +301,7 @@ transposeAtom atom ct = case atom of
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
   DepPairRef _ _ _ -> error "Unexpected ref"
+  PtrCon _        -> return ()
   ProjectElt idxs v -> do
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"

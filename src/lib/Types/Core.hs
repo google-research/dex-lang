@@ -55,6 +55,7 @@ data IR =
    -- CoreIR is the IR after inference and before simplification
    CoreIR
  | SimpToImpIR  -- only used during the Simp-to-Imp translation
+ | ValueIR      -- used in interpreter
  | AnyIR        -- used for deserialization only
 
 data IRPredicate =
@@ -155,6 +156,7 @@ data Atom (r::IR) (n::S) where
  Con        :: Con r n -> Atom r n
  TC         :: TC  r n -> Atom r n
  Eff        :: EffectRow n -> Atom r n
+ PtrCon     :: AtomPtrVal r n -> Atom r n
  -- only used within Simplify
  ACase ::  Atom r n -> [AltP r (Atom r) n] -> Type r n -> Atom r n
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
@@ -166,9 +168,7 @@ data Atom (r::IR) (n::S) where
  ProjectElt :: NE.NonEmpty Projection -> AtomName r n     -> Atom r n
  -- Constructors only used during Simp->Imp translation
  BoxedRef   :: r `Sat` Is SimpToImpIR => Abs (NonDepNest r (BoxPtr r)) (Atom r) n -> Atom r n
- -- TODO(dougalm): instead of putting the PtrName here, I think we should (1) disallow
- -- literal pointers in LitVal, and instead put PtrName in Atom.
- AtomicIVar :: r `Sat` Is SimpToImpIR => EitherE ImpName PtrName n -> BaseType -> Atom r n
+ AtomicIVar :: r `Sat` Is SimpToImpIR => ImpName n -> BaseType -> Atom r n
 
 deriving instance Show (Atom r n)
 deriving via WrapE (Atom r) n instance Generic (Atom r n)
@@ -188,6 +188,11 @@ data DeclBinding r n = DeclBinding LetAnn (Type r n) (Expr r n)
 data Decl (r::IR) (n::S) (l::S) = Let (AtomNameBinder n l) (DeclBinding r n)
      deriving (Show, Generic)
 type Decls r = Nest (Decl r)
+
+data AtomPtrVal (r::IR) (n::S) where
+  AtomPtrName   ::                       PtrName n -> AtomPtrVal r n
+  AtomPtrLitVal :: r `Sat` Is ValueIR => PtrLitVal -> AtomPtrVal r n
+deriving instance Show (AtomPtrVal r n)
 
 -- TODO: make this a newtype with an unsafe constructor The idea is that the `r`
 -- parameter will play a role a bit like the `c` parameter in names: if you have
@@ -704,7 +709,6 @@ data AtomBinding (r::IR) (n::S) =
  | IxBound     (IxType      r  n)
  | MiscBound   (Type        r  n)
  | SolverBound (SolverBinding r n)
- | PtrLitBound PtrType (PtrName n)
  | TopFunBound (NaryPiType r n) (TopFunBinding n)
    deriving (Show, Generic)
 
@@ -738,7 +742,6 @@ atomBindingType b = case b of
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
-  PtrLitBound ty _ -> BaseTy (PtrType ty)
   TopFunBound ty _ -> naryPiTypeAsType ty
 
 -- TODO: Move this to Inference!
@@ -1266,12 +1269,13 @@ instance GenericE (Atom r) where
   {- TC -}         (ComposeE PrimTC  (Atom r))
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
-            ) (EitherE3
+            ) (EitherE4
   {- BoxedRef -}   (LiftE (ReifiedSat r (Is SimpToImpIR))
                     `PairE` ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
   {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r)
   {- AtomicIVar -} (LiftE (ReifiedSat r (Is SimpToImpIR))
-                     `PairE` EitherE ImpName PtrName `PairE` LiftE BaseType)
+                     `PairE` ImpName `PairE` LiftE BaseType)
+  {- PtrLit -}     (UnitE)
             )
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
@@ -1296,6 +1300,7 @@ instance GenericE (Atom r) where
     BoxedRef ab -> Case5 $ Case0 $ LiftE ReifiedSat `PairE` ab
     DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
     AtomicIVar v t -> Case5 $ Case2 $ LiftE ReifiedSat `PairE` v `PairE` LiftE t
+    -- PtrLit p -> Case5 $ Case3 p
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1332,6 +1337,7 @@ instance GenericE (Atom r) where
       Case0 (LiftE ReifiedSat `PairE` ab) -> BoxedRef ab
       Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       Case2 (LiftE ReifiedSat `PairE` v `PairE` LiftE t) -> AtomicIVar v t
+      -- Case3 p -> PtrLit p
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1930,42 +1936,33 @@ instance SubstE Name    SynthCandidates
 
 instance GenericE (AtomBinding r) where
   type RepE (AtomBinding r) =
-     EitherE2
-       (EitherE6
-          (DeclBinding   r)   -- LetBound
-          (LamBinding    r)   -- LamBound
-          (PiBinding     r)   -- PiBound
-          (IxType        r)   -- IxBound
-          (Type          r)   -- MiscBound
-          (SolverBinding r))  -- SolverBound
-       (EitherE2
-          (PairE (LiftE PtrType) PtrName)   -- PtrLitBound
-          (PairE (NaryPiType r) TopFunBinding)) -- TopFunBound
+     (EitherE7
+        (DeclBinding   r)   -- LetBound
+        (LamBinding    r)   -- LamBound
+        (PiBinding     r)   -- PiBound
+        (IxType        r)   -- IxBound
+        (Type          r)   -- MiscBound
+        (SolverBinding r))  -- SolverBound
+        (PairE (NaryPiType r) TopFunBinding) -- TopFunBound
 
   fromE = \case
-    LetBound    x -> Case0 $ Case0 x
-    LamBound    x -> Case0 $ Case1 x
-    PiBound     x -> Case0 $ Case2 x
-    IxBound     x -> Case0 $ Case3 x
-    MiscBound   x -> Case0 $ Case4 x
-    SolverBound x -> Case0 $ Case5 x
-    PtrLitBound x y -> Case1 (Case0 (LiftE x `PairE` y))
-    TopFunBound ty f ->  Case1 (Case1 (ty `PairE` f))
+    LetBound    x -> Case0 x
+    LamBound    x -> Case1 x
+    PiBound     x -> Case2 x
+    IxBound     x -> Case3 x
+    MiscBound   x -> Case4 x
+    SolverBound x -> Case5 x
+    TopFunBound ty f ->  Case6 (ty `PairE` f)
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 x' -> case x' of
-      Case0 x -> LetBound x
-      Case1 x -> LamBound x
-      Case2 x -> PiBound  x
-      Case3 x -> IxBound  x
-      Case4 x -> MiscBound x
-      Case5 x -> SolverBound x
-      _ -> error "impossible"
-    Case1 x' -> case x' of
-      Case0 (LiftE x `PairE` y) -> PtrLitBound x y
-      Case1 (ty `PairE` f) -> TopFunBound ty f
-      _ -> error "impossible"
+    Case0 x -> LetBound x
+    Case1 x -> LamBound x
+    Case2 x -> PiBound  x
+    Case3 x -> IxBound  x
+    Case4 x -> MiscBound x
+    Case5 x -> SolverBound x
+    Case6 (ty `PairE` f) -> TopFunBound ty f
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2459,13 +2456,11 @@ instance SubstE IAtomSubstVal (Atom SimpToImpIR) where
       Case0 rest -> toE $ Case5 $ Case0 $ substE (scope, env) rest
       Case1 rest -> toE $ Case5 $ Case1 $ substE (scope, env) rest
       -- AtomicIVar
-      Case2 (LiftE ReifiedSat `PairE` LeftE v `PairE` LiftE ty) -> do
+      Case2 (LiftE ReifiedSat `PairE` v `PairE` LiftE ty) -> do
         case env ! v of
-          Rename v' -> AtomicIVar (LeftE v') ty
+          Rename v' -> AtomicIVar v' ty
           SubstVal x -> x
-      Case2 (LiftE ReifiedSat `PairE` RightE v `PairE` LiftE ty) -> do
-        case env ! v of
-          Rename v' -> AtomicIVar (RightE v') ty
+      Case3 rest -> toE $ Case5 $ Case3 $ substE (scope, env) rest
       _ -> error "impossible"
     Case6 rest -> (toE . Case6) $ substE (scope, env) rest
     Case7 rest -> (toE . Case7) $ substE (scope, env) rest

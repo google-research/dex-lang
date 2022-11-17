@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun, callDtor, BenchRequirement (..),
+module Runtime (loadCVal, callNativeFun, callDtor, BenchRequirement (..),
                createTLSKey, PThreadKey) where
 
 import Data.Int
@@ -48,15 +48,15 @@ data BenchRequirement =
     NoBench
   | DoBench Bool -- True means "must sync CUDA"
 
-callNativeFun :: NativeFunction -> BenchRequirement -> PassLogger -> [LitVal] -> [BaseType] -> IO [LitVal]
+callNativeFun :: NativeFunction -> BenchRequirement -> PassLogger -> [CVal] -> [BaseType] -> IO [CVal]
 callNativeFun f bench logger args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
-        storeLitVals argsPtr args
+        storeCVals argsPtr args
         let fPtr = castFunPtr $ nativeFunPtr f
         evalTime <- checkedCallFunPtr fd argsPtr resultPtr fPtr
-        results <- loadLitVals resultPtr resultTypes
+        results <- loadCVals resultPtr resultTypes
         case bench of
           NoBench -> logSkippingFilter logger [EvalTime evalTime Nothing]
           DoBench shouldSyncCUDA -> do
@@ -65,7 +65,7 @@ callNativeFun f bench logger args resultTypes = do
               let (CInt fd') = fdFD fd
               exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
               unless (exitCode == 0) $ throw RuntimeErr ""
-              freeLitVals resultPtr resultTypes
+              freeCVals resultPtr resultTypes
               sync
             logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
         return results
@@ -105,17 +105,17 @@ runBench run = do
 
 -- === serializing scalars ===
 
-loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
-loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
+loadCVals :: MonadIO m => Ptr () -> [BaseType] -> m [CVal]
+loadCVals p types = zipWithM loadCVal (ptrArray p) types
 
-freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
-freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+freeCVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
+freeCVals p types = zipWithM_ freeCVal (ptrArray p) types
 
-storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
-storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
+storeCVals :: MonadIO m => Ptr () -> [CVal] -> m ()
+storeCVals p xs = zipWithM_ storeCVal (ptrArray p) xs
 
-loadLitVal :: MonadIO m => Ptr () -> BaseType -> m LitVal
-loadLitVal ptr (Scalar ty) = liftIO case ty of
+loadCVal :: MonadIO m => Ptr () -> BaseType -> m CVal
+loadCVal ptr (Scalar ty) = CLitVal <$> liftIO case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
@@ -123,20 +123,23 @@ loadLitVal ptr (Scalar ty) = liftIO case ty of
   Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
-loadLitVal ptrPtr (PtrType t) = do
+loadCVal ptrPtr (PtrType t) = do
   ptr <- liftIO $ peek $ castPtr ptrPtr
-  return $ PtrLit $ PtrLitVal t ptr
-loadLitVal _ (Vector _ _) = error "Vector loads not implemented"
+  return $ CPtr $ PtrLitVal t ptr
+loadCVal _ (Vector _ _) = error "Vector loads not implemented"
 
-storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
-storeLitVal ptr val = liftIO case val of
+storeCVal :: MonadIO m => Ptr () -> CVal -> m ()
+storeCVal ptr (CLitVal val) = liftIO case val of
   Int64Lit   x -> poke (castPtr ptr) x
   Int32Lit   x -> poke (castPtr ptr) x
   Word8Lit   x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
-  PtrLit (PtrLitVal _ x) -> poke (castPtr ptr) x
   _ -> error "not implemented"
+storeCVal ptr (CPtr (PtrLitVal _ x)) =
+  liftIO $ poke (castPtr ptr) x
+storeCVal _ (CPtr (PtrSnapshot _ _)) =
+  error "Shouldn't be storing a pointer snapshot"
 
 foreign import ccall "free_dex"
   free_cpu :: Ptr () -> IO ()
@@ -148,8 +151,8 @@ free_gpu :: Ptr () -> IO ()
 free_gpu = error "Compiled without GPU support!"
 #endif
 
-freeLitVal :: MonadIO m => Ptr () -> BaseType -> m ()
-freeLitVal litValPtr ty = case ty of
+freeCVal :: MonadIO m => Ptr () -> BaseType -> m ()
+freeCVal litValPtr ty = case ty of
   Scalar  _ -> return ()
   PtrType (Heap CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
   PtrType (Heap GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
