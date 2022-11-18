@@ -689,7 +689,7 @@ ptxSpecialReg :: L.Name -> ExternFunSpec
 ptxSpecialReg name = ExternFunSpec name i32 [] attrs []
   where
 #if MIN_VERSION_llvm_hs(16,0,0)
-    attrs = [FA.NoUnwind]  -- TODO: Add memory(none) once llvm-hs supports it
+    attrs = [FA.Memory FA.readNone, FA.NoUnwind]
 #else
     attrs = [FA.ReadNone, FA.NoUnwind]
 #endif
