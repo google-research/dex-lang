@@ -265,6 +265,8 @@ matchUPat (WithSrcB _ pat) x = do
         _ -> error "Expected a single ADt constructor"
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
+    (UPatDepPair (PairB p1 p2), PairVal x1 x2) -> do
+      matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
     (UPatUnit UnitB, UnitVal) -> return emptyInFrag
     (UPatRecord pats, Record initTys initXs) -> go initTys (restructure initXs initTys) pats
       where

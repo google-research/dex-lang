@@ -285,6 +285,10 @@ pat = propagateSrcB pat' where
     lhs' <- pat lhs
     rhs' <- pat rhs
     return $ UPatPair $ PairB lhs' rhs'
+  pat' (CBin (WithSrc _ DepComma) lhs rhs) = do
+    lhs' <- pat lhs
+    rhs' <- pat rhs
+    return $ UPatDepPair $ PairB lhs' rhs'
   pat' (CBracket Curly g) = case g of
     (WithSrc _ CEmpty) -> return $ UPatRecord UEmptyRowPat
     _ -> UPatRecord <$> (fieldRowPatList Equal $ nary Comma g)

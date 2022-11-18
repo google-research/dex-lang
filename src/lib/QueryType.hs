@@ -224,6 +224,7 @@ projectionIndices ty = case ty of
   StaticRecordTy types -> return $ iota (length types) <&> \i ->
     [ProjectProduct i, UnwrapCompoundNewtype]
   ProdTy tys -> return $ iota (length tys) <&> \i -> [ProjectProduct i]
+  DepPairTy _ -> return $ [[ProjectProduct 0], [ProjectProduct 1]]
   _ -> unsupported
   where unsupported = error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 

@@ -256,6 +256,7 @@ data UPat' (n::S) (l::S) =
    UPatBinder (UBinder AtomNameC n l)
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
+ | UPatDepPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
  -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
  | UPatRecord (UFieldRowPat n l)
