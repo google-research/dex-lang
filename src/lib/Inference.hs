@@ -2032,6 +2032,16 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
       bindLamPat p2 x2 do
         cont
+  UPatDepPair (PairB p1 p2) -> do
+    let x = Var v
+    ty <- getType x
+    _  <- fromDepPairType ty
+    x' <- zonk x  -- ensure it has a dependent pair type before unpacking
+    x1 <- getFst x' >>= zonk >>= emitAtomToName noHint
+    bindLamPat p1 x1 do
+      x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
+      bindLamPat p2 x2 do
+        cont
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< substM conName
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
@@ -2291,6 +2301,10 @@ fromPairType ty = do
   b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
+
+fromDepPairType :: EmitsBoth o => CType o -> InfererM i o (DepPairType CoreIR o)
+fromDepPairType (DepPairTy t) = return t
+fromDepPairType ty = throw TypeErr $ "Expected a dependent pair, but got: " ++ pprint ty
 
 addEffects :: EmitsBoth o => EffectRow o -> InfererM i o ()
 addEffects eff = do

@@ -803,6 +803,7 @@ instance PrettyPrec (UPat' n l) where
   prettyPrec pat = case pat of
     UPatBinder x -> atPrec ArgPrec $ p x
     UPatPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
+    UPatDepPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ",> " <> p y
     UPatUnit UnitB -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
     UPatRecord pats -> atPrec ArgPrec $ prettyUFieldRowPat "," "=" pats
