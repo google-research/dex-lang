@@ -30,7 +30,7 @@ module Name (
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
   EitherE (..), leftsE, rightsE, forgetEitherE,
-  LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
+  LiftE (..), WhenE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
   EitherB (..), forgetEitherB, BinderP (..),
   LiftB, pattern LiftB,
   HashMapE (..), HashableE, nestToNames,
@@ -627,6 +627,16 @@ newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
   deriving (Show, Eq, Generic)
+
+data WhenE (p::Bool) (e::E) (n::S) where
+  WhenE :: (p ~ True) => e n -> WhenE p e n
+
+newtype WrapWithTrue (p::Bool) r = WrapWithTrue { fromWrapWithTrue :: (p ~ True) => r }
+
+withFabricatedTruth :: forall p a. (p ~ True => a) -> a
+withFabricatedTruth cont = fromWrapWithTrue
+  (TrulyUnsafe.unsafeCoerce (WrapWithTrue cont :: WrapWithTrue p a
+                                             ) :: WrapWithTrue True a)
 
 data UnitB (n::S) (l::S) where
   UnitB :: UnitB n n
@@ -1314,6 +1324,9 @@ instance (AlphaHashableB b1, AlphaHashableB b2)
 
 instance AlphaHashableE VoidE where
   hashWithSaltE _ _ _ = error "impossible"
+
+instance (p ~ True => AlphaHashableE e) => AlphaHashableE (WhenE p e) where
+  hashWithSaltE env val (WhenE e) = hashWithSaltE env val e
 
 -- === wrapper for E-kinded things suitable for use as keys ===
 
@@ -2292,6 +2305,18 @@ instance SubstE v e => SubstE v (ListE e) where
 instance SubstE v e => SubstE v (NonEmptyListE e) where
   substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
+instance (p ~ True => SinkableE e) => SinkableE (WhenE p e) where
+  sinkingProofE rename (WhenE e) = WhenE $ sinkingProofE rename e
+
+instance (p ~ True => HoistableE e) => HoistableE (WhenE p e) where
+  freeVarsE (WhenE e) = freeVarsE e
+
+instance (p ~ True => SubstE v e, FromName v) => SubstE v (WhenE p e) where
+  substE (scope, subst) (WhenE e) = WhenE $ substE (scope, subst) e
+
+instance (p ~ True => AlphaEqE e) => AlphaEqE (WhenE p e) where
+  alphaEqE (WhenE e1) (WhenE e2) = alphaEqE e1 e2
+
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = group $
     "(Abs " <> nest 2 (pretty b <> line <> pretty body) <> line <> ")"
@@ -2397,6 +2422,11 @@ instance ( forall c. Color c => Store (v c o)
          => Store (RecSubst v o)
 instance Store (Scope n)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
+
+instance (p ~ True => Store (e n)) => Store (WhenE p e n) where
+  size = VarSize \(WhenE e) -> getSize e
+  peek = withFabricatedTruth @p (WhenE <$> peek)
+  poke (WhenE e) = poke e
 
 
 -- We often have high-degree sum types that need GenericE instances, and
