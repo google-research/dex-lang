@@ -280,7 +280,6 @@ linearizeAtom atom = case atom of
   -- Those should be gone after simplification
   Lam _            -> error "Unexpected non-table lambda"
   ACase _ _ _      -> error "Unexpected ACase"
-  DepPairRef _ _ _ -> error "Unexpected ref"
   where emitZeroT = withZeroT $ substM atom
 
 linearizeBlock :: Emits o => SBlock i -> LinM i o SAtom SAtom
@@ -533,9 +532,6 @@ linearizePrimCon con = case con of
       return $ WithTangent (Con $ Newtype ty' prims) (Con . Newtype (sink tanTy') <$> lins)
     _ -> error $ "Unsupported newtype: " ++ pprint ty
   LabelCon _     -> error "Unexpected label"
-  BaseTypeRef _  -> error "Unexpected ref"
-  TabRef _       -> error "Unexpected ref"
-  ConRef _       -> error "Unexpected ref"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
   where emitZeroT = withZeroT $ substM $ Con con

@@ -140,7 +140,7 @@ prepareFunctionForExport cc f = do
                 Just t -> return t
               block <- liftBuilder $ buildBlock do
                 tableAtom (sink resultEltTy) (sink v) (sink $ ListE shape) []
-              return (PtrType (Heap CPU, Scalar sbt), block)
+              return (PtrType (CPU, Scalar sbt), block)
             where
               tableAtom :: Emits n => CType n -> CAtom n -> ListE ExportDim n
                         -> [(CAtom n, ExportDim n)] -> BuilderM CoreIR n (CAtom n)
@@ -263,7 +263,7 @@ instance SinkableE      ExportType
 instance ToBinding ExportType AtomNameC where
   toBinding = \case
     ScalarType       sbt   -> toBinding $ BaseTy $ Scalar sbt
-    RectContArrayPtr sbt _ -> toBinding $ BaseTy $ PtrType (Heap CPU, Scalar sbt)
+    RectContArrayPtr sbt _ -> toBinding $ BaseTy $ PtrType (CPU, Scalar sbt)
 
 deriving via (BinderP AtomNameC ExportType) instance GenericB   ExportResult
 deriving via (BinderP AtomNameC ExportType) instance ProvesExt  ExportResult

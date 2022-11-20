@@ -682,7 +682,7 @@ compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  fImp <- toImpStandaloneFunction fSimp
+  fImp <- toImpFunction CInternalFun fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -764,8 +764,7 @@ evalLLVM block = do
   let (cc, _needsSync) =
         case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                         _        -> (EntryFun CUDANotRequired, False)
-  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-    blockToImpFunction backend cc block
+  impFun <- checkPass ImpPass $ blockToImpFunction backend cc block
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
@@ -778,13 +777,8 @@ evalLLVM block = do
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  -- TODO: this unsafe coerce won't be needed once we treat everything as a
-  -- function, because then we won't need the reconstruction at all. If we were
-  -- going to keep it this way, the right thing to do would be to traverse the
-  -- atom and throw an error if we find any `BoxedRef`
-  Abs bs finalResult <- return reconAtom
-  let substVals = map SubstVal resultValsNoPtrs :: [SubstVal ImpNameC (Atom SimpToImpIR) ImpNameC n]
-  unsafeCoerceIRE <$> applySubst (bs @@> substVals) finalResult
+  resultTy <- getDestBlockType block
+  coreAtomFromRepValList resultTy resultValsNoPtrs
 {-# SCC evalLLVM #-}
 
 compileToObjCode

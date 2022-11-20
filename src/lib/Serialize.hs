@@ -52,14 +52,16 @@ getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs 
   Just (ptrAtom, n) -> do
     lookupAtomName ptrAtom >>= \case
       PtrLitBound _ ptrName -> lookupEnv ptrName >>= \case
-        PtrBinding (PtrLitVal (Heap CPU, Scalar Word8Type) ptr) -> do
+        PtrBinding (PtrLitVal (CPU, Scalar Word8Type) ptr) -> do
           liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
         _ -> error "Expected a CPU pointer binding!"
       _ -> error "Expected a pointer binding!"
   Nothing -> do
     liftIO $ hPutStrLn stderr $ "Falling back to a slow path in Dex string retrieval!"
     xs' <- getTableElements xs
-    forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
+    forM xs' \case
+      Con (Lit (Word8Lit c)) -> return $ toEnum $ fromIntegral c
+      x -> error $ "bad" ++ pprint x
   where
     tryParseStringContent :: CAtom n -> Maybe (CAtomName n, Word32)
     tryParseStringContent tabAtom  = do
@@ -162,13 +164,12 @@ class HasPtrs a where
 
 takePtrSnapshot :: PtrType -> RawPtr -> IO PtrSnapshot
 takePtrSnapshot _ ptrVal | ptrVal == nullPtr = return NullPtr
-takePtrSnapshot (Heap CPU, ptrTy) ptrVal = case ptrTy of
+takePtrSnapshot (CPU, ptrTy) ptrVal = case ptrTy of
   PtrType eltTy -> do
     childPtrs <- loadPtrPtrs ptrVal
     PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
   _ -> ByteArray <$> loadPtrBytes ptrVal
-takePtrSnapshot (Heap GPU, _) _ = error "Snapshots of GPU memory not implemented"
-takePtrSnapshot (Stack   , _) _ = error "Can't take snapshots of stack memory"
+takePtrSnapshot (GPU, _) _ = error "Snapshots of GPU memory not implemented"
 {-# SCC takePtrSnapshot #-}
 
 loadPtrBytes :: RawPtr -> IO BS.ByteString

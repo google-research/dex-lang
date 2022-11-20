@@ -43,7 +43,7 @@ import Foreign.Ptr
 import Name
 import Err
 import LabeledItems
-import Util (FileHash, onFst, SnocList (..), toSnocList)
+import Util (FileHash, onFst, SnocList (..), toSnocList, Tree (..))
 
 import Types.Primitives
 import Types.Source
@@ -138,17 +138,12 @@ data Atom (r::IR) (n::S) where
  -- only used within Simplify
  ACase ::  Atom r n -> [AltP r (Atom r) n] -> Type r n -> Atom r n
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
- DepPairRef ::  Atom r n -> Abs (Binder r) (Atom r) n -> DepPairType r n -> Atom r n
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
  -- here may also appear in the type of the atom. (We maintain this
  -- invariant during substitution and in Builder.hs.)
- ProjectElt :: NE.NonEmpty Projection -> AtomName r n     -> Atom r n
- -- Constructors only used during Simp->Imp translation
- BoxedRef   :: r `Sat` Is SimpToImpIR => Abs (NonDepNest r (BoxPtr r)) (Atom r) n -> Atom r n
- -- TODO(dougalm): instead of putting the PtrName here, I think we should (1) disallow
- -- literal pointers in LitVal, and instead put PtrName in Atom.
- AtomicIVar :: r `Sat` Is SimpToImpIR => EitherE ImpName PtrName n -> BaseType -> Atom r n
+ ProjectElt :: NE.NonEmpty Projection -> AtomName r n -> Atom r n
+ RepValAtom :: r `Sat` Is SimpToImpIR => DRepVal r n -> Atom r n
 
 deriving instance Show (Atom r n)
 deriving via WrapE (Atom r) n instance Generic (Atom r n)
@@ -394,6 +389,20 @@ newtype CustomRules (n::S) =
   deriving (Semigroup, Monoid, Store)
 data AtomRules (n::S) = CustomLinearize Int SymbolicZeros (CAtom n)  -- number of implicit args, linearization function
                         deriving (Generic)
+
+-- === Runtime representations ===
+
+data RepVal (r::IR) (n::S) = RepVal (Type r n) (Tree (IExpr n))
+     deriving (Show, Generic)
+
+-- "Deferred projection RepVal". We have to defer projections because
+-- `getProjection` doesn't have access to EnvReader, which is needed to figure
+-- out the representation type for user-defined ADTs. We can get rid of it once
+-- we strip newtypes during simplification because then `RepVal` will only be
+-- used to represent newtype-stripped values.
+data DRepVal (r::IR) (n::S) =
+  DRepVal [Projection] (Type r n) (Tree (IExpr n))
+  deriving (Show, Generic)
 
 -- === envs and modules ===
 
@@ -1091,6 +1100,32 @@ instance HoistableE AtomRules
 instance AlphaEqE AtomRules
 instance SubstE Name AtomRules
 
+instance GenericE (RepVal r) where
+  type RepE (RepVal r) = PairE (Type r) (ComposeE Tree IExpr)
+  fromE (RepVal ty tree) = ty `PairE` ComposeE tree
+  toE   (ty `PairE` ComposeE tree) = RepVal ty tree
+
+instance SubstE (AtomSubstVal r) IExpr
+
+instance SinkableE   (RepVal r)
+instance SubstE Name (RepVal r)
+instance SubstE (AtomSubstVal r) (RepVal r)
+instance HoistableE  (RepVal r)
+instance AlphaHashableE (RepVal r)
+instance AlphaEqE (RepVal r)
+
+instance GenericE (DRepVal r) where
+  type RepE (DRepVal r) = LiftE [Projection] `PairE` Type r `PairE` ComposeE Tree IExpr
+  fromE (DRepVal projs ty tree) = LiftE projs `PairE` ty `PairE` ComposeE tree
+  toE   (LiftE projs `PairE` ty `PairE` ComposeE tree) = DRepVal projs ty tree
+
+instance SinkableE   (DRepVal r)
+instance SubstE Name (DRepVal r)
+instance SubstE (AtomSubstVal r) (DRepVal r)
+instance HoistableE  (DRepVal r)
+instance AlphaHashableE (DRepVal r)
+instance AlphaEqE (DRepVal r)
+
 instance GenericE CustomRules where
   type RepE CustomRules = ListE (PairE (AtomName CoreIR) AtomRules)
   fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
@@ -1217,8 +1252,7 @@ instance GenericE (Atom r) where
   -- was chosen as to make GHC inliner confident enough to simplify through
   -- toE/fromE entirely. If you wish to modify the order, please consult the
   -- GHC Core dump to make sure you haven't regressed this optimization.
-  type RepE (Atom r) =
-      EitherE6
+  type RepE (Atom r) = EitherE5
               (EitherE2
                    -- We isolate those few cases (and reorder them
                    -- compared to the data definition) because they need special
@@ -1241,18 +1275,13 @@ instance GenericE (Atom r) where
   {- LabeledRow -}     ( FieldRowElems r)
   {- RecordTy -}       ( FieldRowElems r)
   {- VariantTy -}      ( ExtLabeledItemsE (Type r) (AtomName r) )
-            ) (EitherE4
+            ) (EitherE5
   {- Con -}        (ComposeE PrimCon (Atom r))
   {- TC -}         (ComposeE PrimTC  (Atom r))
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
-            ) (EitherE3
-  {- BoxedRef -}   (WhenE (Sat' r (Is SimpToImpIR))
-                    ( Abs (NonDepNest r (BoxPtr r)) (Atom r) ))
-  {- DepPairRef -} ( Atom r `PairE` Abs (Binder r) (Atom r) `PairE` DepPairType r)
-  {- AtomicIVar -} (WhenE (Sat' r (Is SimpToImpIR))
-                     (EitherE ImpName PtrName `PairE` LiftE BaseType)))
-
+  {- RepValAtom -} ( WhenE (Sat' r (Is SimpToImpIR)) (DRepVal r))
+            )
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
     ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
@@ -1273,9 +1302,7 @@ instance GenericE (Atom r) where
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
     ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
-    BoxedRef ab -> Case5 $ Case0 $ WhenE ab
-    DepPairRef lhs rhs ty -> Case5 $ Case1 $ lhs `PairE` rhs `PairE` ty
-    AtomicIVar v t -> Case5 $ Case2 $ WhenE (v `PairE` LiftE t)
+    RepValAtom rv -> Case4 $ Case4 $ WhenE $ rv
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1307,11 +1334,7 @@ instance GenericE (Atom r) where
       Case1 (ComposeE con) -> TC con
       Case2 effs -> Eff effs
       Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
-      _ -> error "impossible"
-    Case5 val -> case val of
-      Case0 (WhenE ab) -> BoxedRef ab
-      Case1 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
-      Case2 (WhenE (v `PairE` LiftE t)) -> AtomicIVar v t
+      Case4 (WhenE rv) -> RepValAtom rv
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1364,6 +1387,7 @@ getProjection (i:is) a = case getProjection is a of
         -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
         -- do away with it.
         _ -> error "oops"
+  RepValAtom (DRepVal projs ty tree) -> RepValAtom $ DRepVal (i:projs) ty tree
   a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
   where
     iProd = case i of
@@ -2374,6 +2398,8 @@ instance Hashable Projection
 instance Hashable IxMethod
 instance Hashable ParamRole
 
+instance Store (RepVal r n)
+instance Store (DRepVal r n)
 instance Store (Atom r n)
 instance Store (Expr r n)
 instance Store (SolverBinding r n)
@@ -2424,55 +2450,6 @@ instance Store Projection
 instance Store IxMethod
 instance Store ParamRole
 instance Store (SpecializedDictDef n)
-
--- === substituting Imp names with CAtoms
-
-type IAtomSubstVal = SubstVal ImpNameC (Atom SimpToImpIR)
-instance SubstE IAtomSubstVal (Atom SimpToImpIR) where
-  substE (scope, env) atom = case fromE atom of
-    Case0 rest -> (toE . Case0) $ substE (scope, env) rest
-    Case1 rest -> (toE . Case1) $ substE (scope, env) rest
-    Case2 rest -> (toE . Case2) $ substE (scope, env) rest
-    Case3 rest -> (toE . Case3) $ substE (scope, env) rest
-    Case4 rest -> (toE . Case4) $ substE (scope, env) rest
-    Case5 specialCase -> case specialCase of
-      Case0 rest -> toE $ Case5 $ Case0 $ substE (scope, env) rest
-      Case1 rest -> toE $ Case5 $ Case1 $ substE (scope, env) rest
-      -- AtomicIVar
-      Case2 (WhenE  (LeftE v `PairE` LiftE ty)) -> do
-        case env ! v of
-          Rename v' -> AtomicIVar (LeftE v') ty
-          SubstVal x -> x
-      Case2 (WhenE (RightE v `PairE` LiftE ty)) -> do
-        case env ! v of
-          Rename v' -> AtomicIVar (RightE v') ty
-      _ -> error "impossible"
-    Case6 rest -> (toE . Case6) $ substE (scope, env) rest
-    Case7 rest -> (toE . Case7) $ substE (scope, env) rest
-
-instance (SubstE IAtomSubstVal ann, SinkableE ann) => SubstB IAtomSubstVal (NonDepNest SimpToImpIR ann)
-instance SubstE IAtomSubstVal (BoxPtr  SimpToImpIR)
-instance SubstE IAtomSubstVal (Expr    SimpToImpIR)
-instance SubstE IAtomSubstVal (Block   SimpToImpIR)
-instance SubstE IAtomSubstVal (DeclBinding SimpToImpIR)
-instance SubstB IAtomSubstVal (Decl        SimpToImpIR)
-instance SubstB IAtomSubstVal (LamBinder   SimpToImpIR)
-instance SubstE IAtomSubstVal (EffectP Name)
-instance SubstE IAtomSubstVal (EffectRowP Name)
-instance SubstE IAtomSubstVal (LamExpr SimpToImpIR)
-instance SubstE IAtomSubstVal (ExtLabeledItemsE (Type SimpToImpIR) UnitE)
-instance SubstE IAtomSubstVal (ExtLabeledItemsE (Type SimpToImpIR) (AtomName SimpToImpIR))
-instance SubstE IAtomSubstVal (FieldRowElem  SimpToImpIR)
-instance SubstE IAtomSubstVal (FieldRowElems SimpToImpIR)
-instance SubstE IAtomSubstVal (DepPairType SimpToImpIR)
-instance SubstE IAtomSubstVal (DataDefParams SimpToImpIR)
-instance SubstE IAtomSubstVal (PiType SimpToImpIR)
-instance SubstB IAtomSubstVal (PiBinder SimpToImpIR)
-instance SubstE IAtomSubstVal (DictExpr SimpToImpIR)
-instance SubstE IAtomSubstVal (DictType SimpToImpIR)
-instance SubstE IAtomSubstVal (TabLamExpr SimpToImpIR)
-instance SubstE IAtomSubstVal (TabPiType SimpToImpIR)
-instance SubstE IAtomSubstVal (IxType SimpToImpIR)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

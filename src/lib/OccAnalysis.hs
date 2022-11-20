@@ -200,9 +200,6 @@ summary atom = case atom of
       SumAsProd _ _ _ -> unknown atom
       LabelCon _ -> invalid "LabelCon"
       Newtype _ e -> summary e
-      BaseTypeRef _ -> invalid "BaseTypeRef"
-      TabRef _ -> invalid "TabRef"
-      ConRef _ -> invalid "ConRef"
       ExplicitDict _ _ -> invalid "ExplicitDict"
       DictHole _ _ -> invalid "DictHole"
 
@@ -572,8 +569,11 @@ instance HasOCC UnitE where
 instance HasOCC e => HasOCC (ListE e) where
   occ _ (ListE xs) = ListE <$> traverse (occ accessOnce) xs
   {-# INLINE occ #-}
-instance (p ~ True => HasOCC e) => HasOCC (WhenE p e) where
+
+instance HasOCC e => HasOCC (WhenE True e) where
   occ a (WhenE e) = WhenE <$> occ a e
+instance HasOCC (WhenE False e) where
+  occ _ _ = undefined
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

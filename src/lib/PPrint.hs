@@ -284,13 +284,9 @@ instance PrettyPrec (Atom r n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
-    BoxedRef (Abs (NonDepNest b ptrsSizes) body) -> atPrec LowestPrec $
-      "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
+    RepValAtom _ -> atPrec ArgPrec "RepValAtom"
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
-    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
-      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
-    AtomicIVar v _ -> atPrec ArgPrec $ p v
 
 instance Pretty (BoxPtr r n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
@@ -903,22 +899,22 @@ instance Pretty (ImpInstr n)  where
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
-  pretty (Alloc loc t s) =
-    locStr <+> p t <> "[" <> sizeStr <> "]"
-    where
-      locStr = case loc of Stack -> "alloca"
-                           _     -> "alloc"
-      sizeStr = case s of
-        ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
-        _ -> p s
-
+  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> sizeStr s <> "]"
+  pretty (StackAlloc t s) = "alloca" <+> p t <> "[" <> sizeStr s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
+  pretty (DeepCopy depth dest src numel) = "deepcopy" <+> p depth <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"
   pretty IThrowError      = "throwError"
   pretty (ICall f args)   = "call" <+> p f <+> p args
   pretty (IVectorBroadcast v _) = "vbroadcast" <+> p v
   pretty (IVectorIota _) = "viota"
+  pretty (DebugPrint s x) = "debug_print" <+> p (show s) <+> p x
+
+sizeStr :: IExpr n -> Doc ann
+sizeStr s = case s of
+  ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
+  _ -> p s
 
 instance Pretty BaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec BaseType where
@@ -927,9 +923,7 @@ instance PrettyPrec BaseType where
     Vector shape sb -> atPrec ArgPrec $ encloseSep "<" ">" "x" $ (p <$> shape) ++ [p sb]
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
-instance Pretty AddressSpace where
-  pretty Stack    = "stack"
-  pretty (Heap d) = p (show d)
+instance Pretty AddressSpace where pretty d = p (show d)
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
@@ -997,9 +991,6 @@ prettyPrecPrimCon con = case con of
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   Newtype ty e -> atPrec LowestPrec $ pArg e <> "@" <> (parens $ pLowest ty)
-  BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
-  TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e

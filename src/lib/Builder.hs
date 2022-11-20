@@ -44,7 +44,7 @@ module Builder (
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
-  litValToPointerlessAtom, emitPtrLit,
+  litValToPointerlessAtom,
   telescopicCapture, unpackTelescope,
   applyRecon, applyReconAbs, applyIxMethod,
   emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,

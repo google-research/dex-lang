@@ -363,39 +363,50 @@ compileInstr instr = case instr of
       --       For now we generate an invalid memory access, hoping that the
       --       runtime will catch it.
       GPU -> [] <$ load i8 (L.ConstantOperand $ C.Null $ devicePtrTy i8)
-  Alloc a t s -> (:[]) <$> case a of
-    Stack -> alloca (getIntLit l) elemTy  where ILit l = s
-    Heap dev -> do
-      numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
-      case dev of
-        CPU -> case t of
-          -- XXX: it's important to initialize pointers to zero so that we don't
-          --      try to dereference them when we serialize.
-          PtrType _ -> malloc True  elemTy numBytes
-          _         -> malloc False elemTy numBytes
-        -- TODO: initialize GPU pointers too, once we handle serialization
-        GPU -> cuMemAlloc elemTy numBytes
+  Alloc dev t s -> (:[]) <$> do
+    numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
+    case dev of
+      CPU -> case t of
+        -- XXX: it's important to initialize pointers to zero so that we don't
+        --      try to dereference them when we serialize.
+        PtrType _ -> malloc True  elemTy numBytes
+        _         -> malloc False elemTy numBytes
+      -- TODO: initialize GPU pointers too, once we handle serialization
+      GPU -> cuMemAlloc elemTy numBytes
     where elemTy = scalarTy t
+  StackAlloc t s -> do
+      p <- alloca (getIntLit l) elemTy
+      case t of
+        -- XXX: As with `Alloc` we have to initialize pointers to null
+        PtrType _ -> store p (nullPtr elemTy)
+        _ -> return ()
+      return [p]
+    where ILit l = s
+          elemTy = scalarTy t
   Free ptr -> [] <$ do
     let PtrType (addr, _) = getIType ptr
     ptr' <- compileExpr ptr
     case addr of
-      Heap CPU -> free      ptr'
-      Heap GPU -> cuMemFree ptr'
-      Stack -> error "Shouldn't be freeing alloca"
+      CPU -> free      ptr'
+      GPU -> cuMemFree ptr'
   MemCopy dest src numel -> [] <$ do
-    let PtrType (destAddr, ty) = getIType dest
-    let PtrType (srcAddr , _ ) = getIType src
-    destDev <- deviceFromAddr destAddr
-    srcDev  <- deviceFromAddr srcAddr
+    let PtrType (destDev, ty) = getIType dest
+    let PtrType (srcDev , _ ) = getIType src
     dest' <- compileExpr dest >>= castVoidPtr
     src'  <- compileExpr src  >>= castVoidPtr
     numel' <- compileExpr numel >>= (`asIntWidth` i64)
-    numBytes <- numel' `mul` sizeof (scalarTy ty)
+    numBytes <- sizeof (scalarTy ty) `mul` numel'
     case (destDev, srcDev) of
       (CPU, GPU) -> cuMemcpyDToH numBytes src'  dest'
       (GPU, CPU) -> cuMemcpyHToD numBytes dest' src'
-      _ -> error $ "Not implemented"
+      (CPU, CPU) -> memcpy dest' src' numBytes
+      (GPU, GPU) -> error "not implemented"
+  DeepCopy depth dest src numel -> [] <$ do
+    dest' <- compileExpr dest >>= castVoidPtr
+    src'  <- compileExpr src  >>= castVoidPtr
+    numel' <- compileExpr numel >>= (`asIntWidth` i64)
+    numBytes <- numel' `mul` i64Lit ptrSize
+    deepcopy (i64Lit depth) dest' src' numBytes
   Store dest val -> [] <$ do
     dest' <- compileExpr dest
     val'  <- compileExpr val
@@ -483,6 +494,9 @@ compileInstr instr = case instr of
                 emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
                 loadMultiResultAlloc resultTys resultPtr
               _ -> error $ "Unsupported calling convention: " ++ show cc
+  DebugPrint fmtStr x -> [] <$ do
+    x' <- compileExpr x
+    debugPrintf fmtStr x'
 
 -- TODO: use a careful naming discipline rather than strings
 -- (this is only used on the CUDA path which is currently broken anyway)
@@ -600,11 +614,6 @@ compileBinOp op x y = case op of
       Greater      -> IP.SGT
       GreaterEqual -> IP.SGE
       Equal        -> IP.EQ
-
-deviceFromAddr :: LLVMBuilder m => AddressSpace -> m Device
-deviceFromAddr addr = case addr of
-  Heap dev -> return dev
-  Stack -> gets curDevice
 
 -- === MDImp to LLVM CUDA ===
 
@@ -748,8 +757,8 @@ _gpuDebugPrint i32Val = do
     vprintfSpec = ExternFunSpec "vprintf" i32 [] [] [genericPtrTy i8, genericPtrTy i8]
 
 -- Takes a single int64 payload. TODO: implement a varargs version
-_debugPrintf :: LLVMBuilder m => String -> Operand -> m ()
-_debugPrintf fmtStr x = do
+debugPrintf :: LLVMBuilder m => String -> Operand -> m ()
+debugPrintf fmtStr x = do
   let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) fmtStr ++ [0]
   let formatStrArr = L.ConstantOperand $ C.Array i8 chars
   formatStrPtr <- alloca (length chars) i8
@@ -760,7 +769,7 @@ _debugPrintf fmtStr x = do
 _debugPrintfPtr :: LLVMBuilder m => String -> Operand -> m ()
 _debugPrintfPtr s x = do
   x' <- emitInstr i64 $ L.PtrToInt x i64 []
-  _debugPrintf s x'
+  debugPrintf s x'
 
 compileBlock :: Compiler m => ImpBlock i -> m i o [Operand]
 compileBlock (ImpBlock Empty result) = traverse compileExpr result
@@ -851,6 +860,12 @@ i32Lit x = x `withWidth` 32
 i8Lit :: Int -> Operand
 i8Lit x = x `withWidth` 8
 
+i1Lit :: Int -> Operand
+i1Lit x = x `withWidth` 1
+
+nullPtr :: L.Type -> Operand
+nullPtr t = L.ConstantOperand $ C.Null t
+
 withWidthOf :: Int -> Operand -> Operand
 withWidthOf x template = case typeOf template of
   L.IntegerType bits -> x `withWidth` (fromIntegral bits)
@@ -914,6 +929,12 @@ malloc initialize ty bytes = do
     then emitExternCall mallocInitializedFun [bytes64]
     else emitExternCall mallocFun            [bytes64]
   castLPtr ty ptr
+
+deepcopy :: LLVMBuilder m => Operand -> Operand -> Operand -> Operand -> m ()
+deepcopy depth dest src numBytes = emitVoidExternCall deepcopyFun [depth, dest, src, numBytes]
+
+memcpy :: LLVMBuilder m => Operand -> Operand -> Operand -> m ()
+memcpy dest src numBytes = emitVoidExternCall memcpyFun [dest, src, numBytes, i1Lit 0]
 
 free :: LLVMBuilder m => Operand -> m ()
 free ptr = do
@@ -998,9 +1019,8 @@ devicePtrTy ty = pointerType ty $ L.AddrSpace 1
 
 lAddress :: HasCallStack => AddressSpace -> L.AddrSpace
 lAddress s = case s of
-  Stack    -> L.AddrSpace 0
-  Heap CPU -> L.AddrSpace 0
-  Heap GPU -> L.AddrSpace 1
+  CPU -> L.AddrSpace 0
+  GPU -> L.AddrSpace 1
 
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ globalReference ty name
@@ -1232,6 +1252,12 @@ mathFlags = L.noFastMathFlags { L.allowContract = allowContractions }
 
 mallocFun :: ExternFunSpec
 mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]
+
+deepcopyFun :: ExternFunSpec
+deepcopyFun = ExternFunSpec "deep_copy_dex" L.VoidType [] [] [i64, hostVoidp, hostVoidp, i64]
+
+memcpyFun :: ExternFunSpec
+memcpyFun = ExternFunSpec "llvm.memcpy.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, hostVoidp, i64, i1]
 
 mallocInitializedFun :: ExternFunSpec
 mallocInitializedFun =

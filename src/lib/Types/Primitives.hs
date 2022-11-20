@@ -69,10 +69,6 @@ data PrimCon e =
       | SumAsProd [e] e   [e]   -- type, tag, payload
       | LabelCon String
       | Newtype e e           -- type, payload
-      -- References
-      | BaseTypeRef e
-      | TabRef e
-      | ConRef (PrimCon e)
       -- Misc hacks
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
       -- Only used during type inference
@@ -313,7 +309,7 @@ data BaseType = Scalar  ScalarBaseType
                 deriving (Show, Eq, Ord, Generic)
 
 data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
-data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
+type AddressSpace = Device
 type PtrType = (AddressSpace, BaseType)
 
 sizeOf :: BaseType -> Int
@@ -402,7 +398,6 @@ instance AlphaHashableE    (EffectRowP Name)
 
 instance Store Arrow
 instance Store LetAnn
-instance Store AddressSpace
 instance Store RWS
 instance Store Direction
 instance Store UnOp
@@ -423,7 +418,6 @@ instance Store a => Store (PrimHof a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (BaseMonoidP a)
 
-instance Hashable AddressSpace
 instance Hashable RWS
 instance Hashable Direction
 instance Hashable UnOp

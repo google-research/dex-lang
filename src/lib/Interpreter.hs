@@ -104,11 +104,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
     ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
-  -- TODO: we can get rid of these cases. We just need to make the interpreter
-  -- monomorphic, or at least restrict `r` to not allow `SimpToImpIR`.
-  BoxedRef _       -> error "Should only occur in Imp lowering"
-  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
-  AtomicIVar _ _   -> error "Should only occur in Imp lowering"
+  RepValAtom _ -> substM atom
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
   where
     rec x = traverseSurfaceAtomNames x doWithName
@@ -195,14 +191,12 @@ evalOp expr = mapM evalAtom expr >>= \case
     _ -> error $ "Not implemented: " ++ pprint expr
   PtrOffset (Con (Lit (PtrLit (PtrLitVal (a, t) p)))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (PtrLitVal (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i))
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap CPU, t) p)))) ->
+  PtrLoad (Con (Lit (PtrLit (PtrLitVal (CPU, t) p)))) ->
     Con . Lit <$> liftIO (loadLitVal p t)
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap GPU, t) p)))) ->
+  PtrLoad (Con (Lit (PtrLit (PtrLitVal (GPU, t) p)))) ->
     liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
       loadCUDAArray hostPtr p (sizeOf t)
       Con . Lit <$> loadLitVal hostPtr t
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Stack, _) _)))) ->
-    error $ "Unexpected stack pointer in interpreter"
   CastOp destTy x -> do
     sourceTy <- getType x
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++

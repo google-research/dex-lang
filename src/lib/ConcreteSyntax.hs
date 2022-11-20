@@ -1021,4 +1021,4 @@ builtinNames = M.fromList
   where
     binary op = OpExpr $ BinOp op () ()
     unary  op = OpExpr $ UnOp  op ()
-    ptrTy  ty = PtrType (Heap CPU, ty)
+    ptrTy  ty = PtrType (CPU, ty)

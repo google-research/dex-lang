@@ -522,8 +522,10 @@ instance (Traversable f, HasDCE e) => HasDCE (ComposeE f e) where
 instance HasDCE e => HasDCE (ListE e) where
   dce (ListE xs) = ListE <$> traverse dce xs
   {-# INLINE dce #-}
-instance (p ~ True => HasDCE e) => HasDCE (WhenE p e) where
+instance HasDCE e => HasDCE (WhenE True e) where
   dce (WhenE e) = WhenE <$> dce e
+instance HasDCE (WhenE False e) where
+  dce _ = undefined
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

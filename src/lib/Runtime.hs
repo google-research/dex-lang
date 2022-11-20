@@ -151,8 +151,8 @@ free_gpu = error "Compiled without GPU support!"
 freeLitVal :: MonadIO m => Ptr () -> BaseType -> m ()
 freeLitVal litValPtr ty = case ty of
   Scalar  _ -> return ()
-  PtrType (Heap CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
-  PtrType (Heap GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
+  PtrType (CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
+  PtrType (GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
   -- TODO: Handle pointers to pointers
   _ -> error "not implemented"
   where loadPtr = peek (castPtr litValPtr)
