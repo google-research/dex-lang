@@ -290,6 +290,9 @@ unit-tests:
 watch-unit-tests:
 	$(STACK) test --work-dir .stack-work-test $(STACK_FLAGS) --file-watch
 
+unit-tests-dbg:
+	$(STACK) test --work-dir .stack-work-test-dbg --trace $(STACK_FLAGS)
+
 opt-tests: just-build
 	misc/file-check tests/opt-tests.dx $(dex) -O script
 
