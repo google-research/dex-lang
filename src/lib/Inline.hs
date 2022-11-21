@@ -17,6 +17,14 @@ import Name
 import Occurrence hiding (Var)
 import Syntax
 
+-- === External API ===
+
+inlineBindings :: (EnvReader m) => SBlock n -> m n (SBlock n)
+inlineBindings blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop blk
+{-# SCC inlineBindings #-}
+
+-- === Data Structure ===
+
 data InlineExpr (o::S) where
   DoneEx :: SExpr o -> InlineExpr o
   SuspEx :: SExpr i -> Subst InlineSubstVal i o -> InlineExpr o
@@ -43,6 +51,12 @@ newtype InlineM (i::S) (o::S) (a:: *) = InlineM
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible, ScopeReader
            , EnvExtender, EnvReader, SubstReader InlineSubstVal, (Builder SimpIR)
            , (ScopableBuilder SimpIR))
+
+liftInlineM :: (EnvReader m) => InlineM n n a -> m n a
+liftInlineM act = liftBuilder $ runSubstReaderT idSubst $ runInlineM act
+{-# INLINE liftInlineM #-}
+
+-- === Inliner ===
 
 data SizePreservationInfo =
   -- Explicit noinline, or inlining doesn't preserve work
