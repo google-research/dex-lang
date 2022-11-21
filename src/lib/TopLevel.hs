@@ -62,6 +62,7 @@ import CheckType (checkTypesM)
 #endif
 import SourceRename
 import Inference
+import Inline
 import Simplify
 import OccAnalysis
 import Lower
@@ -600,7 +601,8 @@ evalBlock typed = do
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
-  opt <- whenOpt analyzed $ checkPass OptPass . optimize
+  inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
+  opt <- whenOpt inlined $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
