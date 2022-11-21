@@ -12,6 +12,7 @@ test-script.cd
 .stack-work-dbg
 .stack-work-prof
 .stack-work-test
+.stack-work-test-dbg
 .stack-work-ffis
 garbage.hs
 *.lock
