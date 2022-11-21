@@ -629,7 +629,7 @@ newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   deriving (Show, Eq, Generic)
 
 data WhenE (p::Bool) (e::E) (n::S) where
-  WhenE :: (p ~ True) => e n -> WhenE p e n
+  WhenE :: e n -> WhenE True e n
 
 newtype WrapWithTrue (p::Bool) r = WrapWithTrue { fromWrapWithTrue :: (p ~ True) => r }
 
