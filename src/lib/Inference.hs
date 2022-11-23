@@ -3060,7 +3060,7 @@ instance HoistableState DictSynthTraverserS where
 
 instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
   traverseAtom a@(Con (DictHole (AlwaysEqual ctx) ty)) = do
-    ty' <- cheapNormalize =<< substM ty
+    ty' <- cheapNormalize =<< traverseAtom ty
     ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'
     case ans of
       Failure errs -> put (DictSynthTraverserS errs) >> substM a

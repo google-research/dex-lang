@@ -221,7 +221,7 @@ instance PrettyPrec (LamExpr r n) where
     atPrec LowestPrec $ "\\" <> prettyLamHelper lamExpr PrettyLam
 
 instance Pretty (IxType r n) where
-  pretty (IxType ty _) = parens $ "IxType" <+> pretty ty
+  pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
 instance Pretty (TabLamExpr r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (TabLamExpr r n) where
@@ -361,12 +361,18 @@ instance Pretty (PiType r n) where
     in prettyBinder <> (group $ line <> p arr <> prettyEff <> prettyBody)
 
 instance Pretty (TabPiType r n) where
-  pretty (TabPiType (b :> IxType ty _) body) = let
+  pretty (TabPiType (b :> IxType ty dict) body) = let
     prettyBinder = prettyBinderHelper (b:>ty) body
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
-    in prettyBinder <> (group $ line <> "=>" <+> prettyBody)
+    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+
+-- A helper to let us turn dict printing on and off.  We mostly want it off to
+-- reduce clutter in prints and error messages, but when debugging synthesis we
+-- want it on.
+prettyIxDict :: Atom r n -> Doc ann
+prettyIxDict dict = if False then " " <> p dict else mempty
 
 prettyBinderHelper :: HoistableE e => Binder r n l -> e l -> Doc ann
 prettyBinderHelper (b:>ty) body =
@@ -393,10 +399,10 @@ prettyLamHelper lamExpr lamType = let
       Abs Empty (Atom (Lam next@(LamExpr _ _))) ->
         let (binders', effs'', block) = rec next False
         in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      Abs Empty (Hof (For ann _ (Lam next)))
+      Abs Empty (Hof (For ann dict (Lam next)))
         | lamType == PrettyFor ann ->
             let (binders', effs'', block) = rec next False
-            in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
+            in (thisOne <> prettyIxDict dict <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
       _ -> (thisOne <> ".", unsafeCoerceE effs', unsafeCoerceE body')
   (binders, effs, body) = rec lamExpr True
   in prettyLam binders effs body
