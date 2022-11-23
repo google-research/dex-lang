@@ -309,17 +309,22 @@ instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
 
 -- TODO: `WriterT Errs` should suffice, no need for full `StateT`.
-type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs SoftResultM))
+type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
 vectorizeLoops :: (MonadIO (m n), MonadLogger [Output] (m n), EnvReader m)
                => Word32 -> Abs (Binder SimpIR) SBlock n
                -> m n (Abs (Binder SimpIR) SBlock n, Errs)
 vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
   refreshAbs abs \d (Block _ decls ans) -> do
-    (block', errs) <- liftM (runSoftResultM' . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) $ liftBuilderT $ buildBlock do
+    vblock <- liftBuilderT $ buildBlock do
                 s <- vectorizeLoopsRec emptyInFrag decls
                 applySubst s ans
-    return $ (Abs d block', errs)
+    case (runFallibleM . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) vblock of
+      -- The failure case should not occur: vectorization errors should have been
+      -- caught inside `vectorizeLoopsRec` (and should have been added to the
+      -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
+      Failure errs -> error $ pprint errs
+      Success (block', errs) -> return $ (Abs d block', errs)
 {-# INLINE vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
@@ -332,7 +337,7 @@ throwVectErr msg = throwErr (Err VectorizationErr mempty msg)
 
 prependCtxToErrs :: ErrCtx -> Errs -> Errs
 prependCtxToErrs ctx (Errs errs) =
-  Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx `mappend` ctx') msg) errs
+  Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx <> ctx') msg) errs
 
 vectorizeLoopsRec :: (Ext i o, Emits o)
                   => SubstFrag Name i i' o -> Nest SDecl i' i''
@@ -357,7 +362,7 @@ vectorizeLoopsRec frag nest =
                     ctx = mempty { messageCtx = [msg] }
                     errs' = prependCtxToErrs ctx errs
                 errors <- get
-                put (errors `mappend` errs')
+                put (errors <> errs')
                 dest' <- applySubst frag dest
                 body' <- applySubst frag body
                 emit $ Hof $ Seq dir (DictCon $ IxFin $ NatVal n) dest' (Lam body')
@@ -389,7 +394,7 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
           let i = Con $ Newtype (sink newIxTy) $ Con $ Newtype NatTy iOrd
           let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
-      case runSoftResultM result of
+      case runReaderT (fromFallibleM result) mempty of
         Success s -> return s
         Failure errs -> throwErrs errs  -- re-raise inside `TopVectorizeM`
     else throwVectErr "Effectful loop vectorization not implemented!"
@@ -405,7 +410,7 @@ fromNameVAtom v = case eqColorRep @c @AtomNameC of
   _ -> error "Unexpected non-atom name"
 
 newtype VectorizeM i o a =
-  VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 SoftResultM)) i o a }
+  VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
   deriving ( Functor, Applicative, Monad, Fallible, MonadFail, SubstReader VSubstValC
            , Builder SimpIR, EnvReader, EnvExtender, ScopeReader, ScopableBuilder SimpIR)
 

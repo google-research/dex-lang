@@ -8,7 +8,6 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
             Fallible (..), Catchable (..), catchErrExcept,
             FallibleM (..), HardFailM (..), CtxReader (..),
-            SoftResultM (..), runSoftResultM, runSoftResultM',
             runFallibleM, runHardFail, throw, throwErr,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftExceptAlt,
@@ -232,51 +231,6 @@ instance Fallible HardFailM where
 
 instance FallibleApplicative HardFailM where
   mergeErrs cont1 cont2 = (,) <$> cont1 <*> cont2
-
--- === SoftError ===
-
--- TODO(nrink): This is isomorphic to `Except`, but `SoftResultM` also implements
--- `Fallible` and `Catchable`. Try to reduce duplication, perhaps by defining a
--- `newtype` around `Except`.
-data SoftResultM a = SoftSuccess a
-                   | SoftError Errs
-                   deriving (Show, Functor)
-
-instance Applicative SoftResultM where
-  pure x = SoftSuccess x
-
-  (SoftSuccess f) <*> (SoftSuccess x) = SoftSuccess $ f x
-  (SoftError errs) <*> _ = SoftError errs
-  _ <*> (SoftError errs) = SoftError errs
-
-instance Monad SoftResultM where
-  return x = SoftSuccess x
-
-  (SoftSuccess x) >>= k = k x
-  (SoftError errs) >>= _ = SoftError errs
-
-instance MonadFail SoftResultM where
-  fail msg = SoftError $ Errs [Err MonadFailErr mempty msg]
-
-instance Fallible SoftResultM where
-  throwErrs errs = SoftError errs
-
-  addErrCtx _   (SoftSuccess x)  = SoftSuccess x
-  addErrCtx ctx (SoftError (Errs errs)) =
-    let errs' = map (\(Err ty ctx' msg) -> Err ty (ctx `mappend` ctx') msg) errs
-    in SoftError (Errs errs')
-
-instance Catchable SoftResultM where
-  catchErr (SoftSuccess x)  _       = SoftSuccess x
-  catchErr (SoftError errs) handler = handler errs
-
-runSoftResultM :: SoftResultM a -> Except a
-runSoftResultM (SoftSuccess x) = Success x
-runSoftResultM (SoftError errs) = Failure errs
-
-runSoftResultM' :: SoftResultM a -> a
-runSoftResultM' (SoftSuccess x) = x
-runSoftResultM' (SoftError errs) = error $ pprint errs
 
 -- === convenience layer ===
 
