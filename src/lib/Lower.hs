@@ -333,7 +333,7 @@ addVectErrCtx name payload m =
   in addErrCtx ctx m
 
 throwVectErr :: Fallible m => String -> m a
-throwVectErr msg = throwErr (Err VectorizationErr mempty msg)
+throwVectErr msg = throwErr (Err MiscErr mempty msg)
 
 prependCtxToErrs :: ErrCtx -> Errs -> Errs
 prependCtxToErrs ctx (Errs errs) =

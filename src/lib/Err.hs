@@ -61,7 +61,6 @@ data ErrType = NoErr
              | EscapedNameErr
              | ModuleImportErr
              | MonadFailErr
-             | VectorizationErr
                deriving (Show, Eq)
 
 type SrcPosCtx  = Maybe SrcPos
@@ -494,7 +493,6 @@ instance Pretty ErrType where
     EscapedNameErr    -> "Leaked local variables:"
     ModuleImportErr   -> "Module import error: "
     MonadFailErr      -> "MonadFail error (internal error)"
-    VectorizationErr  -> "Vectorization error: "
 
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs
