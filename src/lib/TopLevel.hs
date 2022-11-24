@@ -605,11 +605,12 @@ evalBlock typed = do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
         (dceDestBlock >=> hoistLoopInvariantDest)
-      (vopt, errs) <- vectorizeLoops 64 lopt
-      l <- getFilteredLogger
-      logFiltered l VectPass $ return [TextOut $ pprint errs]
-      vopt' <- checkPass VectPass $ return vopt
-      evalBackend vopt'
+      vopt <- whenOpt lopt \lo -> do
+        (vo, errs) <- vectorizeLoops 64 lo
+        l <- getFilteredLogger
+        logFiltered l VectPass $ return [TextOut $ pprint errs]
+        checkPass VectPass $ return vo
+      evalBackend vopt
   applyRecon recon result
 {-# SCC evalBlock #-}
 
