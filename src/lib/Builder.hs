@@ -352,7 +352,7 @@ queryImpCache v = do
 
 emitLoweredFun :: (Mut n, TopBuilder m) => NameHint -> NaryLamExpr SimpIR n -> m n (AtomName r n)
 emitLoweredFun hint f = do
-  fTy <- naryLamExprType f
+  fTy <- unsafeCoerceIRE <$> naryLamExprType f
   emitBinding hint $ AtomNameBinding $ TopFunBound fTy (LoweredTopFun f)
 
 extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> AtomName r n -> m n ()

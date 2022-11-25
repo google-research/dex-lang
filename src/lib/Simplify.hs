@@ -102,12 +102,14 @@ data WillLinearize = WillLinearize | NoLinearize
 -- This is because top-level functions can have special (AD) rules associated with
 -- them, and we try to preserve their identity for as long as we can. Since the only
 -- elimination form for function is application, we do some extra handling in simplifyApp.
-newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
+newtype SimplifyMP (r::IR) (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM'
-    :: SubstReaderT (AtomSubstVal CoreIR) (DoubleBuilderT SimpIR TopEnvFrag (ReaderT WillLinearize HardFailM)) i o a }
+    :: SubstReaderT (AtomSubstVal r) (DoubleBuilderT SimpIR TopEnvFrag (ReaderT WillLinearize HardFailM)) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
-           , EnvReader, SubstReader (AtomSubstVal CoreIR), MonadFail
+           , EnvReader, SubstReader (AtomSubstVal r), MonadFail
            , Builder SimpIR, HoistingTopBuilder TopEnvFrag)
+
+type SimplifyM = SimplifyMP CoreIR
 
 liftSimplifyM
   :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
@@ -546,7 +548,7 @@ simplifyLam atom = case atom of
     _ -> error "Not a lambda expression"
   where
     doSimpLam :: LamBinder CoreIR i i' -> CBlock i'
-      -> SimplifyM i o (SAtom o, Abs (LamBinder SimpIR) (ReconstructAtom SimpIR) o)
+      -> SimplifyM i o (SAtom o, Abs (LamBinder CoreIR) (ReconstructAtom CoreIR) o)
     doSimpLam b body = do
       (Abs b' body', recon) <- simplifyAbs $ Abs b body
       return $! (Lam $ LamExpr b' body', recon)
@@ -828,21 +830,24 @@ simplifyHof hint hof = case hof of
     transpose lam'
   CatchException lam -> do
     (Lam (LamExpr b body), IdentityReconAbs) <- simplifyLam lam
-    dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
+    dropSubst' $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
   Seq _ _ _ _ -> error "Shouldn't ever see a Seq in Simplify"
   RememberDest _ _ -> error "Shouldn't ever see a RememberDest in Simplify"
 
 simplifyBlock :: Emits o => CBlock i -> SimplifyM i o (SAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result
 
-exceptToMaybeBlock :: Emits o => CBlock i -> SimplifyM i o (SAtom o)
+dropSubst' :: SimplifyMP SimpIR o o a -> SimplifyM i o a
+dropSubst' action = dropSubst $ unsafeCoerceIRM2 action
+
+exceptToMaybeBlock :: Emits o => SBlock i -> SimplifyMP SimpIR i o (SAtom o)
 exceptToMaybeBlock (Block (BlockAnn ty _) decls result) = do
   ty' <- substM ty
   exceptToMaybeDecls ty' decls $ Atom result
 exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr $ Atom result
 exceptToMaybeBlock _ = error "impossible"
 
-exceptToMaybeDecls :: Emits o => CType o -> Nest CDecl i i' -> CExpr i' -> SimplifyM i o (SAtom o)
+exceptToMaybeDecls :: Emits o => SType o -> Nest SDecl i i' -> SExpr i' -> SimplifyMP SimpIR i o (SAtom o)
 exceptToMaybeDecls _ Empty result = exceptToMaybeExpr result
 exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResult = do
   maybeResult <- exceptToMaybeExpr rhs
@@ -855,7 +860,7 @@ exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResu
           (\v -> extendSubst (b@> SubstVal v) $
                    exceptToMaybeDecls (sink resultTy) decls finalResult)
 
-exceptToMaybeExpr :: Emits o => CExpr i -> SimplifyM i o (SAtom o)
+exceptToMaybeExpr :: Emits o => SExpr i -> SimplifyMP SimpIR i o (SAtom o)
 exceptToMaybeExpr expr = case expr of
   Case e alts resultTy _ -> do
     e' <- substM e

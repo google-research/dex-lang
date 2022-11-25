@@ -57,6 +57,12 @@ data IR =
  | SimpToImpIR  -- only used during the Simp-to-Imp translation
  | AnyIR        -- used for deserialization only
 
+-- SimpIR is the IR after simplification
+-- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
+-- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
+-- thing has SimpIR vibes".
+type SimpIR = CoreIR
+
 data IRPredicate =
    Is IR
  -- TODO: find a way to make this safe and derive it automatically. For now, we
@@ -66,14 +72,8 @@ data IRPredicate =
 type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
 type family Sat' (r::IR) (p::IRPredicate) where
   Sat' r (Is r)                              = True
-  Sat' CoreIR (IsSubsetOf SimpToImpIR)       = True
+  Sat' SimpIR (IsSubsetOf SimpToImpIR)       = True
   Sat' _ _ = False
-
--- SimpIR is the IR after simplification
--- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
--- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
--- thing has SimpIR vibes".
-type SimpIR = CoreIR
 
 type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
@@ -103,6 +103,9 @@ unsafeCoerceFromAnyIR = unsafeCoerceIRE
 
 unsafeCoerceIRB :: forall (r'::IR) (r::IR) (b::IR->B) (n::S) (l::S) . b r n l -> b r' n l
 unsafeCoerceIRB = TrulyUnsafe.unsafeCoerce
+
+unsafeCoerceIRM2 :: forall (r'::IR) (r::IR) (m::IR->MonadKind2) (n::S) (l::S) (a:: *). m r n l a -> m r' n l a
+unsafeCoerceIRM2 = TrulyUnsafe.unsafeCoerce
 
 class CovariantInIR (e::IR->E)
 -- For now we're "implementing" this instances manually as needed because we
@@ -1960,7 +1963,7 @@ instance GenericE TopFunBinding where
   type RepE TopFunBinding = EitherE4
     (LiftE Int `PairE` CAtom)  -- AwaitingSpecializationArgsTopFun
     SpecializationSpec         -- SpecializedTopFun
-    (NaryLamExpr CoreIR)       -- LoweredTopFun
+    (NaryLamExpr SimpIR)       -- LoweredTopFun
     ImpFunName                 -- FFITopFun
   fromE = \case
     AwaitingSpecializationArgsTopFun n x  -> Case0 $ PairE (LiftE n) x
@@ -1981,9 +1984,16 @@ instance GenericE TopFunBinding where
 instance SinkableE TopFunBinding
 instance HoistableE  TopFunBinding
 instance SubstE Name TopFunBinding
-instance SubstE (AtomSubstVal CoreIR) TopFunBinding
 instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
+
+instance SubstE (AtomSubstVal CoreIR) TopFunBinding where
+  substE env = \case
+    AwaitingSpecializationArgsTopFun ct body ->
+      AwaitingSpecializationArgsTopFun ct $ substE env body
+    SpecializedTopFun spec -> SpecializedTopFun $ substE env spec
+    LoweredTopFun _ -> error "Substituting CoreIR atoms into already-lowered TopFun"
+    FFITopFun name -> FFITopFun $ substE env name
 
 instance GenericE SpecializationSpec where
   type RepE SpecializationSpec =
@@ -2247,7 +2257,7 @@ instance ExtOutMap Env TopEnvFrag where
 
       lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
 
-addMethods :: (SpecDictName n, [NaryLamExpr CoreIR n]) -> Env n -> Env n
+addMethods :: (SpecDictName n, [NaryLamExpr SimpIR n]) -> Env n -> Env n
 addMethods (dName, methods) e = do
   let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
   case oldMethods of

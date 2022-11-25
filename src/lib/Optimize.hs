@@ -470,7 +470,11 @@ instance HasDCE (TabPiType   SimpIR)
 instance HasDCE (DepPairType SimpIR)
 instance HasDCE EffectRow
 instance HasDCE Effect
-instance HasDCE EffectOpType
+instance HasDCE EffectOpType where
+  -- The type is hard-coded to CoreIR; but maybe types are not different between
+  -- CoreIR and SimpIR?
+  dce (EffectOpType policy ty) =
+    EffectOpType policy . unsafeCoerceIRE <$> (dce $ unsafeCoerceIRE @SimpIR ty)
 instance HasDCE (DictExpr      SimpIR)
 instance HasDCE (DictType      SimpIR)
 instance HasDCE (FieldRowElems SimpIR)
