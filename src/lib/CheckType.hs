@@ -991,23 +991,25 @@ checkArrowAndEffects _ _ = throw TypeErr $ "Only plain arrows may have effects"
 
 checkIntBaseType :: Fallible m => BaseType -> m ()
 checkIntBaseType t = case t of
-  Scalar sbt -> checkSBT sbt
+  Scalar sbt   -> checkSBT sbt
+  Vector _ sbt -> checkSBT sbt
   _ -> notInt
   where
     checkSBT sbt = case sbt of
-      Int64Type -> return ()
-      Int32Type -> return ()
+      Int64Type  -> return ()
+      Int32Type  -> return ()
       Word8Type  -> return ()
       Word32Type -> return ()
       Word64Type -> return ()
-      _         -> notInt
+      _          -> notInt
     notInt = throw TypeErr $
       "Expected a fixed-width scalar integer type, but found: " ++ pprint t
 
 checkFloatBaseType :: Fallible m => BaseType -> m ()
 checkFloatBaseType t = case t of
-  Scalar sbt -> checkSBT sbt
-  _          -> notFloat
+  Scalar sbt   -> checkSBT sbt
+  Vector _ sbt -> checkSBT sbt
+  _            -> notFloat
   where
     checkSBT sbt = case sbt of
       Float64Type -> return ()
@@ -1025,24 +1027,23 @@ checkValidBaseCast :: Fallible m => BaseType -> BaseType -> m ()
 checkValidBaseCast (PtrType _) (PtrType _) = return ()
 checkValidBaseCast (PtrType _) (Scalar Int64Type) = return ()
 checkValidBaseCast (Scalar Int64Type) (PtrType _) = return ()
+checkValidBaseCast (Scalar _) (Scalar _) = return ()
+checkValidBaseCast sourceTy@(Vector sourceSizes _) destTy@(Vector destSizes _) =
+  assertEq sourceSizes destSizes $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 checkValidBaseCast sourceTy destTy =
-  checkScalarType sourceTy >> checkScalarType destTy
-  where
-    checkScalarType ty = case ty of
-      Scalar Int64Type   -> return ()
-      Scalar Int32Type   -> return ()
-      Scalar Word8Type   -> return ()
-      Scalar Word32Type  -> return ()
-      Scalar Word64Type  -> return ()
-      Scalar Float64Type -> return ()
-      Scalar Float32Type -> return ()
-      _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
+  throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckBaseType :: Typer m => HasType r e => e i -> m i o BaseType
 typeCheckBaseType e =
   getTypeE e >>= \case
     TC (BaseType b) -> return b
     ty -> throw TypeErr $ "Expected a base type. Got: " ++ pprint ty
+
+scalarOrVectorLike :: Fallible m => BaseType -> ScalarBaseType -> m BaseType
+scalarOrVectorLike x sbt = case x of
+  Scalar _ -> return $ Scalar sbt
+  Vector sizes _ -> return $ Vector sizes sbt
+  _ -> throw CompilerErr "only scalar or vector base types should occur here"
 
 data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
 data ReturnType   = SameReturn | Word8Return
@@ -1051,16 +1052,17 @@ checkOpArgType :: Fallible m => ArgumentType -> BaseType -> m ()
 checkOpArgType argTy x =
   case argTy of
     SomeIntArg   -> checkIntBaseType   x
-    SomeUIntArg  -> assertEq x (Scalar Word8Type) ""
+    SomeUIntArg  -> do x' <- scalarOrVectorLike x Word8Type
+                       assertEq x x' ""
     SomeFloatArg -> checkFloatBaseType x
 
 checkBinOp :: Fallible m => BinOp -> BaseType -> BaseType -> m BaseType
 checkBinOp op x y = do
   checkOpArgType argTy x
   assertEq x y ""
-  return $ case retTy of
-    SameReturn -> x
-    Word8Return -> Scalar Word8Type
+  case retTy of
+    SameReturn -> return x
+    Word8Return -> scalarOrVectorLike x Word8Type
   where
     (argTy, retTy) = case op of
       IAdd   -> (ia, sr);  ISub   -> (ia, sr)
@@ -1081,9 +1083,9 @@ checkBinOp op x y = do
 checkUnOp :: Fallible m => UnOp -> BaseType -> m BaseType
 checkUnOp op x = do
   checkOpArgType argTy x
-  return $ case retTy of
-    SameReturn -> x
-    Word8Return -> Scalar Word8Type
+  case retTy of
+    SameReturn -> return x
+    _ -> throw CompilerErr "all supported unary operations have the same argument and return type"
   where
     (argTy, retTy) = case op of
       Exp              -> (f, sr)

@@ -308,7 +308,6 @@ instance SinkableE (VSubstValC c) where
 instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
 
--- TODO: `WriterT Errs` should suffice, no need for full `StateT`.
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
 vectorizeLoops :: (MonadIO (m n), MonadLogger [Output] (m n), EnvReader m)
@@ -358,11 +357,10 @@ vectorizeLoopsRec frag nest =
               dest' <- applySubst frag dest
               emit $ Hof $ Seq dir (DictCon $ IxFin vn) dest' body')
             `catchErr` \errs -> do
-                let msg = "In `vectorizeLoopsRec`:\nFrag:\n" ++ pprint frag ++ "\nNest:\n" ++ pprint nest
+                let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
                     errs' = prependCtxToErrs ctx errs
-                errors <- get
-                put (errors <> errs')
+                modify (<> errs')
                 dest' <- applySubst frag dest
                 body' <- applySubst frag body
                 emit $ Hof $ Seq dir (DictCon $ IxFin $ NatVal n) dest' (Lam body')
@@ -381,17 +379,18 @@ vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
 vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
   if atMostOneEffect InitEffect eff
     then do
-      ty' <- case ty of
-        ProdTy [_, ref] -> do
+      (oldIxTy, ty') <- case ty of
+        ProdTy [ixTy, ref] -> do
+          ixTy' <- applySubst frag ixTy
           ref' <- applySubst frag ref
-          return $ ProdTy [newIxTy, ref']
+          return (ixTy', ProdTy [newIxTy, ref'])
         _ -> error "Unexpected seq binder type"
       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
-        buildLam (getNameHint b) arr (sink ty') Pure \ci -> do
+        buildLam (getNameHint b) arr (sink ty') (OneEffect InitEffect) \ci -> do
           (vi, dest) <- fromPair $ Var ci
           let viOrd = unwrapBaseNewtype $ unwrapBaseNewtype vi
           iOrd <- imul viOrd $ IdxRepVal loopWidth
-          let i = Con $ Newtype (sink newIxTy) $ Con $ Newtype NatTy iOrd
+          let i = Con $ Newtype (sink oldIxTy) $ Con $ Newtype NatTy iOrd
           let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
       case runReaderT (fromFallibleM result) mempty of
@@ -425,8 +424,7 @@ vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
       go :: Emits o => Nest SDecl i i' -> VectorizeM i o (VAtom o)
       go = \case
         Empty -> vectorizeAtom ans
-        Nest (Let b (DeclBinding ann _ expr)) rest -> do
-          unless (ann == PlainLet) $ throwVectErr "Encountered a non-plain let?"
+        Nest (Let b (DeclBinding _ _ expr)) rest -> do
           v <- vectorizeExpr expr
           extendSubst (b @> v) $ go rest
 
