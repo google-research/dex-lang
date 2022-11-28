@@ -283,7 +283,14 @@ occNest a decls ans = case decls of
         -- occurrence analysis, and each binding is considered for
         -- inlining separately.
         DeclBinding _ ty expr <- occ accessOnce binding'
-        let binding'' = DeclBinding (OccInfo usage) ty expr
+        -- We save effects information here because the inliner will want to
+        -- query the effects of an expression before it is substituted, and the
+        -- type querying subsystem is not set up to do that.
+        effs <- getEffects expr
+        let ann = if effs == Pure
+              then OccInfoPure usage
+              else OccInfoImpure usage
+        let binding'' = DeclBinding ann ty expr
         return $ Abs (Nest (Let b' binding'') ds'') ans''
 
 checkAllFreeVariablesMentioned :: HoistableE e => e n -> OCCM n ()

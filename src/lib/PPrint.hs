@@ -1085,9 +1085,10 @@ instance Pretty CallingConvention where
 
 instance Pretty LetAnn where
   pretty ann = case ann of
-    PlainLet      -> ""
-    NoInlineLet   -> "%noinline"
-    OccInfo u     -> p u <> line
+    PlainLet        -> ""
+    NoInlineLet     -> "%noinline"
+    OccInfoPure   u -> p u <> line
+    OccInfoImpure u -> p u <> ", impure" <> line
 
 instance Pretty UsageInfo where
   pretty (UsageInfo static (ixDepth, ct)) =
