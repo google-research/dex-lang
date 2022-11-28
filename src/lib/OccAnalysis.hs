@@ -136,12 +136,12 @@ getAccessInfo name = fromMaybe zero <$> gets (lookupNameMapE name . freeVars)
 countFreeVarsAsOccurrences :: (HoistableE e) => e n -> OCCM n ()
 countFreeVarsAsOccurrences obj =
   forM_ (freeAtomVarsList obj) \name -> do
-    modify (<> FV (singletonNameMapE name $ AccessInfo 1 accessOnce))
+    modify (<> FV (singletonNameMapE name $ AccessInfo One accessOnce))
 
 countFreeVarsAsOccurrencesB :: (HoistableB b) => b n l -> OCCM n ()
 countFreeVarsAsOccurrencesB obj =
   forM_ (freeAtomVarsList $ Abs obj UnitE) \name -> do
-    modify (<> FV (singletonNameMapE name $ AccessInfo 1 accessOnce))
+    modify (<> FV (singletonNameMapE name $ AccessInfo One accessOnce))
 
 -- Run the given action with its own FV state, and return the FVs it
 -- accumulates for post-processing.
@@ -221,7 +221,7 @@ class HasOCC (e::E) where
   occ a e = confuseGHC >>= \_ -> toE <$> occ a (fromE e)
 
 instance HasOCC (Name AtomNameC) where
-  occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo 1 a)) $> n
+  occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo One a)) $> n
   {-# INLINE occ #-}
 instance HasOCC (Name HandlerNameC ) where occ _ n = return n
 instance HasOCC (Name DataDefNameC ) where occ _ n = return n
