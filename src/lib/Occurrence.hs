@@ -123,6 +123,9 @@ pattern Zero = Bounded 0
 pattern One :: Count
 pattern One = Bounded 1
 
+pattern Two :: Count
+pattern Two = Bounded 2
+
 instance MaxPlus Count where
   zero = Zero
   max Unbounded _ = Unbounded
@@ -131,6 +134,10 @@ instance MaxPlus Count where
   plus Unbounded _ = Unbounded
   plus _ Unbounded = Unbounded
   plus (Bounded i1) (Bounded i2) = Bounded $ i1 + i2
+
+instance Bounded Count where
+  maxBound = Unbounded
+  minBound = zero
 
 -- An access bound for a compound object determines some paths to some
 -- leaves or subtrees of the object, and how many times that leaf or
@@ -685,33 +692,36 @@ instance ApproxConst v => ApproxConst (M.IntMap v) where
 
 -- === Usage info including static usage ===
 
--- The `Int` is the count of static occurrences, i.e., how many times references
--- to this binding occur in the source code.  We track this separately from the
--- (dynamic) Access so we can control code blow-up during inlining.
-data AccessInfo n = AccessInfo Int (Access n)
+-- The `Count` is the count of static occurrences, i.e., how many times
+-- references to this binding occur in the source code.  We track this
+-- separately from the (dynamic) Access so we can control code blow-up during
+-- inlining.
+data AccessInfo n = AccessInfo Count (Access n)
   deriving (Show)
 
 instance MaxPlus (AccessInfo n) where
-  zero = AccessInfo 0 zero
+  zero = AccessInfo zero zero
   -- Note that, since `max` corresponds to `case`, the static count is
   -- still added
   (AccessInfo s1 d1) `max` (AccessInfo s2 d2) =
-    AccessInfo (s1 + s2) $ d1 `max` d2
+    AccessInfo (s1 `plus` s2) $ d1 `max` d2
   (AccessInfo s1 d1) `plus` (AccessInfo s2 d2) =
-    AccessInfo (s1 + s2) $ d1 `plus` d2
+    AccessInfo (s1 `plus` s2) $ d1 `plus` d2
 
 instance SinkableE AccessInfo where
   sinkingProofE rename (AccessInfo n a) = AccessInfo n $ sinkingProofE rename a
 
-data UsageInfo = UsageInfo Int DynUseInfo  -- The `Int` is the static use count
+data UsageInfo = UsageInfo Count DynUseInfo  -- The `Count` is the static use count
   deriving (Eq, Generic, Show)
 
 instance MaxPlus UsageInfo where
-  zero = UsageInfo 0 zero
+  zero = UsageInfo zero zero
   -- Note that, since `max` corresponds to `case`, the static count is
   -- still added
-  (UsageInfo s1 d1) `max` (UsageInfo s2 d2) = UsageInfo (s1 + s2) $ d1 `max` d2
-  (UsageInfo s1 d1) `plus` (UsageInfo s2 d2) = UsageInfo (s1 + s2) $ d1 `plus` d2
+  (UsageInfo s1 d1) `max` (UsageInfo s2 d2) =
+    UsageInfo (s1 `plus` s2) $ d1 `max` d2
+  (UsageInfo s1 d1) `plus` (UsageInfo s2 d2) =
+    UsageInfo (s1 `plus` s2) $ d1 `plus` d2
 
 usageInfo :: AccessInfo n -> UsageInfo
 usageInfo (AccessInfo s dyn) =
@@ -867,7 +877,7 @@ instance SinkableE Access
 instance SubstE Name Access
 
 instance GenericE AccessInfo where
-  type RepE AccessInfo = PairE (LiftE Int) Access
+  type RepE AccessInfo = PairE (LiftE Count) Access
   fromE (AccessInfo s dyn) = PairE (LiftE s) dyn
   {-# INLINE fromE #-}
   toE (PairE (LiftE s) dyn) = AccessInfo s dyn

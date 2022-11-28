@@ -1092,7 +1092,7 @@ instance Pretty LetAnn where
 
 instance Pretty UsageInfo where
   pretty (UsageInfo static (ixDepth, ct)) =
-    "occurs in" <+> p (show static) <+> "places, read"
+    "occurs in" <+> p static <+> "places, read"
     <+> p ct <+> "times, to depth" <+> p (show ixDepth)
 
 instance Pretty Count where
