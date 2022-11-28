@@ -259,7 +259,8 @@ instance Pretty Arrow where
 
 data LetAnn = PlainLet
             | NoInlineLet
-            | OccInfo UsageInfo
+            | OccInfoPure UsageInfo
+            | OccInfoImpure UsageInfo
               deriving (Show, Eq, Generic)
 
 -- === Primitive scalar values and base types ===
