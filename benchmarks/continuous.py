@@ -30,6 +30,11 @@ import jax
 BASELINE = '8dd1aa8539060a511d0f85779ae2c8019162f567'
 
 
+def mk_env(xdg_home, variant):
+  return { 'XDG_CACHE_HOME': Path(xdg_home) / variant,
+           'LANG': 'en_US.UTF-8' }
+
+
 @dataclass
 class DexEndToEnd:
   """Measures end-to-end time and memory on a published example."""
@@ -39,14 +44,14 @@ class DexEndToEnd:
   baseline_commit: str = BASELINE
 
   def clean(self, code, xdg_home):
-    run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
+    run(code / 'dex', 'clean', env=mk_env(xdg_home, self.variant))
 
   def bench(self, code, xdg_home):
     source = code / 'examples' / (self.name + '.dx')
     total_alloc, total_time = parse_result(
         read_stderr(code / 'dex', '--lib-path', code / 'lib',
                     'script', source, '+RTS', '-s',
-                    env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
+                    env=mk_env(xdg_home, self.variant)))
     return [Result(self.name, 'alloc', total_alloc),
             Result(self.name, 'time', total_time)]
 
@@ -63,14 +68,14 @@ class DexRuntime:
   baseline_commit: str = BASELINE
 
   def clean(self, code, xdg_home):
-    run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
+    run(code / 'dex', 'clean', env=mk_env(xdg_home, self.variant))
 
   def bench(self, code, xdg_home):
     source = code / 'benchmarks' / (self.name + '.dx')
     runtime = parse_result_runtime(
         read(code / 'dex', '--lib-path', code / 'lib',
              'script', source, '+RTS', '-s',
-             env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant}))
+             env=mk_env(xdg_home, self.variant)))
     return [Result(self.name, 'runtime', runtime)]
 
   def baseline(self):
@@ -104,7 +109,7 @@ class PythonSubprocess:
   baseline_commit: str = BASELINE  # Unused but demanded by the driver
 
   def clean(self, code, xdg_home):
-    run(code / 'dex', 'clean', env={'XDG_CACHE_HOME': Path(xdg_home) / self.variant})
+    run(code / 'dex', 'clean', env=mk_env(xdg_home, self.variant))
 
   def bench(self, code, xdg_home):
     dex_py_path = code / 'python'
@@ -165,6 +170,7 @@ BENCHMARKS = [
     DexEndToEnd('psd', 10),
     DexEndToEnd('fluidsim', 10),
     DexEndToEnd('regression', 10),
+    DexEndToEnd('md', 10, baseline_commit='19b16662150ac8a11a9cbc2df67e9f58169ce4ee'),
     DexRuntime('fused_sum', 5),
     DexRuntime('gaussian', 5),
     DexRuntime('jvp_matmul', 5),
