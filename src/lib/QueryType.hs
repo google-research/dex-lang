@@ -13,7 +13,7 @@ module QueryType (
   getMethodIndex,
   instantiateDataDef, applyDataConAbs, dataDefRep,
   instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
-  litType, lamExprTy,
+  litType, lamExprTy, ptrLitType,
   numNaryPiArgs, naryLamExprType, specializedFunType,
   projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
@@ -184,8 +184,11 @@ litType v = case v of
   Word64Lit  _ -> Scalar Word64Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
-  PtrLit (PtrSnapshot t _) -> PtrType t
-  PtrLit (PtrLitVal   t _) -> PtrType t
+  PtrLit p     -> PtrType $ ptrLitType p
+
+ptrLitType :: PtrLitVal -> PtrType
+ptrLitType (PtrSnapshot t _) = t
+ptrLitType (PtrLitVal   t _) = t
 
 lamExprTy :: LamBinder r n l -> Type r l -> Type r n
 lamExprTy (LamBinder b ty arr eff) bodyTy =
@@ -342,6 +345,8 @@ instance HasType r (Atom r) where
     Con con -> getTypePrimCon con
     TC _ -> return TyKind
     Eff _ -> return EffKind
+    PtrVar v -> substM v >>= lookupEnv >>= \case
+      PtrBinding p -> return $ PtrTy $ ptrLitType p
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind

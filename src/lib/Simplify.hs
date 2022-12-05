@@ -476,6 +476,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   Con con -> Con <$> (inline traversePrimCon) simplifyAtom con
   TC tc -> TC <$> (inline traversePrimTC) simplifyAtom tc
   Eff eff -> Eff <$> substM eff
+  PtrVar v -> PtrVar <$> substM v
   TypeCon sn dataDefName (DataDefParams arrParams) -> do
     dataDefName' <- substM dataDefName
     let (arrs, params) = unzip arrParams

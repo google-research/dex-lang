@@ -414,11 +414,11 @@ def mkEmpty (a:Type) : (Fin 0)=>a = []
 > ((Fin 1 & Fin 2) => Float32)
 
 :t [[0.0], [1.0, 2.0]] :: (i:Fin 2)=>(..i)=>Float
-> ((v#0:(Fin 2)) => (..v#0) => Float32)
+> ((i:(Fin 2)) => (..i) => Float32)
 :t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] :: (i:Fin 2)=>(..i)=>(Fin 2)=>Float
-> ((v#0:(Fin 2)) => (..v#0) => (Fin 2) => Float32)
+> ((i:(Fin 2)) => (..i) => (Fin 2) => Float32)
 :t [0@_, 1@_]::((i:Fin 2)=>(..i))
-> ((v#0:(Fin 2)) => ..v#0)
+> ((i:(Fin 2)) => ..i)
 
 def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
   for i j. x.(i, j)

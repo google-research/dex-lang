@@ -183,7 +183,7 @@ instance CheckableE (AtomBinding r) where
     IxBound  ixTy       -> IxBound     <$> checkE ixTy
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
-    PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
+    TopDataBound val -> TopDataBound <$> substM val
     TopFunBound ty f -> do
       ty' <- substM ty
       TopFunBound ty' <$> case f of
@@ -248,6 +248,8 @@ instance HasType r (Atom r) where
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
+    PtrVar v -> substM v >>= lookupEnv >>= \case
+      PtrBinding p -> return $ PtrTy $ ptrLitType p
     TypeCon _ defName params -> do
       def <- lookupDataDef =<< substM defName
       params' <- checkE params

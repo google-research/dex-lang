@@ -462,10 +462,11 @@ instance HasOCC SAtom where
     where
       generic = toE <$> (occ a $ fromE atom)
 
--- We shouldn't need these instances, because Imp names can't appear in SimpIR,
+-- We shouldn't need this instance, because Imp names can't appear in SimpIR,
 -- but we need to add some tricks to make GHC realize that.
 instance HasOCC (Name ImpNameC) where occ _ = error "Unexpected ImpName"
-instance HasOCC (Name PtrNameC) where occ _ = error "Unexpected ptr name"
+
+instance HasOCC (Name PtrNameC) where occ _ x = return x
 
 instance HasOCC (TabLamExpr SimpIR) where
   occ _ view = inlinedLater view

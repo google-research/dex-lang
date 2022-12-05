@@ -44,7 +44,6 @@ module Builder (
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
-  litValToPointerlessAtom,
   telescopicCapture, unpackTelescope,
   applyRecon, applyReconAbs, applyIxMethod,
   emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
@@ -1108,17 +1107,6 @@ updateAddAt x = liftEmitBuilder do
   buildLam noHint PlainArrow ty Pure \v -> addTangent (sink x) (Var v)
 
 -- === builder versions of common top-level emissions ===
-
-litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom r n)
-litValToPointerlessAtom litval = case litval of
-  PtrLit val -> Var <$> emitPtrLit (getNameHint @String "ptr") val
-  _          -> return $ Con $ Lit litval
-
-emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrLitVal -> m n (AtomName r n)
-emitPtrLit hint p@(PtrLitVal ty _) = do
-  ptrName <- emitBinding hint $ PtrBinding p
-  emitBinding hint $ AtomNameBinding $ PtrLitBound ty ptrName
-emitPtrLit _ (PtrSnapshot _ _) = error "only used for serialization"
 
 emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =

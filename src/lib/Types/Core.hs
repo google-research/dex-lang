@@ -135,6 +135,7 @@ data Atom (r::IR) (n::S) where
  Con        :: Con r n -> Atom r n
  TC         :: TC  r n -> Atom r n
  Eff        :: EffectRow n -> Atom r n
+ PtrVar     :: PtrName n   -> Atom r n
  -- only used within Simplify
  ACase ::  Atom r n -> [AltP r (Atom r) n] -> Type r n -> Atom r n
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
@@ -144,6 +145,7 @@ data Atom (r::IR) (n::S) where
  -- invariant during substitution and in Builder.hs.)
  ProjectElt :: NE.NonEmpty Projection -> AtomName r n -> Atom r n
  RepValAtom :: r `Sat` Is SimpToImpIR => DRepVal r n -> Atom r n
+
 
 deriving instance Show (Atom r n)
 deriving via WrapE (Atom r) n instance Generic (Atom r n)
@@ -693,8 +695,8 @@ data AtomBinding (r::IR) (n::S) =
  | IxBound     (IxType      r  n)
  | MiscBound   (Type        r  n)
  | SolverBound (SolverBinding r n)
- | PtrLitBound PtrType (PtrName n)
  | TopFunBound (NaryPiType r n) (TopFunBinding n)
+ | TopDataBound (RepVal SimpToImpIR n)
    deriving (Show, Generic)
 
 data TopFunBinding (n::S) =
@@ -727,8 +729,8 @@ atomBindingType b = case b of
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
-  PtrLitBound ty _ -> BaseTy (PtrType ty)
   TopFunBound ty _ -> naryPiTypeAsType ty
+  TopDataBound (RepVal ty _) -> unsafeCoerceIRE ty
 
 -- TODO: Move this to Inference!
 data SolverBinding (r::IR) (n::S) =
@@ -1275,10 +1277,11 @@ instance GenericE (Atom r) where
   {- LabeledRow -}     ( FieldRowElems r)
   {- RecordTy -}       ( FieldRowElems r)
   {- VariantTy -}      ( ExtLabeledItemsE (Type r) (AtomName r) )
-            ) (EitherE5
+            ) (EitherE6
   {- Con -}        (ComposeE PrimCon (Atom r))
   {- TC -}         (ComposeE PrimTC  (Atom r))
   {- Eff -}        EffectRow
+  {- PtrVar -}     PtrName
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
   {- RepValAtom -} ( WhenE (Sat' r (Is SimpToImpIR)) (DRepVal r))
             )
@@ -1301,8 +1304,9 @@ instance GenericE (Atom r) where
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ effs
-    ACase scrut alts ty -> Case4 $ Case3 $ scrut `PairE` ListE alts `PairE` ty
-    RepValAtom rv -> Case4 $ Case4 $ WhenE $ rv
+    PtrVar v -> Case4 $ Case3 $ v
+    ACase scrut alts ty -> Case4 $ Case4 $ scrut `PairE` ListE alts `PairE` ty
+    RepValAtom rv -> Case4 $ Case5 $ WhenE $ rv
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1333,8 +1337,9 @@ instance GenericE (Atom r) where
       Case0 (ComposeE con) -> Con con
       Case1 (ComposeE con) -> TC con
       Case2 effs -> Eff effs
-      Case3 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
-      Case4 (WhenE rv) -> RepValAtom rv
+      Case3 v -> PtrVar v
+      Case4 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
+      Case5 (WhenE rv) -> RepValAtom rv
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1375,7 +1380,7 @@ getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (i NE.:| []) name
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   Con (ProdCon xs) -> xs !! iProd
-  Con (Newtype _ x) -> x
+  Con (Newtype _ x) | (i ==  UnwrapBaseNewtype) || (i == UnwrapCompoundNewtype) -> x
   DepPair l _ _ | iProd == 0 -> l
   DepPair _ r _ | iProd == 1 -> r
   ACase scrut alts resultTy -> ACase scrut alts' resultTy'
@@ -1392,7 +1397,7 @@ getProjection (i:is) a = case getProjection is a of
   where
     iProd = case i of
       ProjectProduct i' -> i'
-      _ -> error "Not a product projection"
+      _ -> error $ "Not a product projection"
 
 instance GenericE (Expr r) where
   type RepE (Expr r) =
@@ -1943,8 +1948,8 @@ instance GenericE (AtomBinding r) where
           (Type          r)   -- MiscBound
           (SolverBinding r))  -- SolverBound
        (EitherE2
-          (PairE (LiftE PtrType) PtrName)   -- PtrLitBound
-          (PairE (NaryPiType r) TopFunBinding)) -- TopFunBound
+          (PairE (NaryPiType r) TopFunBinding) -- TopFunBound
+          (RepVal SimpToImpIR))                -- TopDataBound
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
@@ -1953,8 +1958,8 @@ instance GenericE (AtomBinding r) where
     IxBound     x -> Case0 $ Case3 x
     MiscBound   x -> Case0 $ Case4 x
     SolverBound x -> Case0 $ Case5 x
-    PtrLitBound x y -> Case1 (Case0 (LiftE x `PairE` y))
-    TopFunBound ty f ->  Case1 (Case1 (ty `PairE` f))
+    TopFunBound ty f ->  Case1 (Case0 (ty `PairE` f))
+    TopDataBound repVal ->  Case1 (Case1 repVal)
   {-# INLINE fromE #-}
 
   toE = \case
@@ -1967,11 +1972,20 @@ instance GenericE (AtomBinding r) where
       Case5 x -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
-      Case0 (LiftE x `PairE` y) -> PtrLitBound x y
-      Case1 (ty `PairE` f) -> TopFunBound ty f
+      Case0 (ty `PairE` f) -> TopFunBound ty f
+      Case1 repVal -> TopDataBound repVal
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
+
+
+-- XXX: this is just to make the `SubstE (AtomSubstVal CoreIR) (AtomBinding
+-- CoreIR)` instance derivable, but it's never actually called. We shouldn't
+-- really need that instance. We currently use it in Inference's
+-- `zonkUnsolvedEnv` but that's only because we allow inference to emit top
+-- bindings. Really it should only be allowed to emit local bindings.
+instance SubstE (AtomSubstVal CoreIR) (RepVal r) where
+  substE _ _ = error "not actually implemented"
 
 instance SinkableE   (AtomBinding r)
 instance HoistableE  (AtomBinding r)

@@ -10,8 +10,12 @@
 
 module Imp
   ( blockToImpFunction, toImpFunction, ExportCC (..), toImpExportedFunction
-  , impFunType, getIType, abstractLinktimeObjects, coreAtomFromRepValList
-  , addImpTracing) where
+  , impFunType, getIType, abstractLinktimeObjects
+  , repValFromFlatList, addImpTracing
+  -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
+  , BufferType (..), IdxNest, IndexStructure, IExprInterpretation (..), typeToTree
+  , computeOffset, getIExprInterpretation
+  ) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
@@ -24,6 +28,7 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict hiding (State)
 import qualified Control.Monad.State.Strict as MTL
 import GHC.Exts (inline)
+import GHC.Stack
 
 import Err
 import MTL1
@@ -34,7 +39,7 @@ import CheckType (CheckableE (..))
 import Lower (DestBlock)
 import LabeledItems
 import QueryType
-import Util (enumerate, forMFilter, forMZipped, Tree (..), zipTrees)
+import Util (enumerate, forMFilter, Tree (..), zipTrees)
 import Types.Primitives
 import Types.Core
 import Types.Imp
@@ -927,8 +932,26 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
       (RepVal _ tree) <- forceDRepVal dRepVal
       return tree
     Var v -> lookupAtomName v >>= \case
-      PtrLitBound t v' -> return $ Leaf $ IPtrVar v' t
-      _ -> error "should only have pointer atom names left"
+      TopDataBound (RepVal _ tree) -> return tree
+      _ -> error "should only have pointer and data atom names left"
+    PtrVar p -> do
+      PtrBinding ptrLit <- lookupEnv p
+      return $ Leaf $ IPtrVar p (ptrLitType ptrLit)
+    ProjectElt projections v ->
+      lookupAtomName v >>= \case
+        TopDataBound (RepVal _ tree) -> applyProjection (toList projections) tree
+        _ -> error "should only have projecting a data atom"
+      where
+        applyProjection :: [Projection] -> Tree (IExpr n) -> SubstImpM i n (Tree (IExpr n))
+        applyProjection [] t = return t
+        applyProjection (i:is) t = do
+          t' <- applyProjection is t
+          case i of
+            UnwrapCompoundNewtype -> return t'
+            UnwrapBaseNewtype     -> return t'
+            ProjectProduct idx    -> case t' of
+              Branch ts -> return $ ts !! idx
+              _ -> error "should only be projecting a branch"
     _ -> error $ "not implemented: " ++ show atom
 
 -- XXX: We used to have a function called `destToAtom` which loaded the value
@@ -1009,92 +1032,19 @@ storeAtom dest x = storeRepVal dest =<< atomToRepVal x
 loadAtom :: forall m n. (ImpBuilder m, Emits n) => Dest n -> m n (SIAtom n)
 loadAtom d = RepValAtom <$> toDRepVal <$> loadRepVal d
 
-coreAtomFromRepValList :: (Fallible1 m, EnvReader m) => SType n -> [CAtom n] -> m n (Atom CoreIR n)
-coreAtomFromRepValList ty xs = do
-  (tree, []) <- runStreamReaderT1 xs $ traverseScalarRepTys (injectIRE ty) \_ -> fromJust <$> readStream
-  liftBuilder $ repValToCoreAtom ty tree
+repValFromFlatList :: (TopBuilder m, Mut n) => SType n -> [LitVal] -> m n (SIRepVal n)
+repValFromFlatList ty xs = do
+  (litValTree, []) <- runStreamReaderT1 xs $ traverseScalarRepTys (injectIRE ty) \_ ->
+    fromJust <$> readStream
+  iExprTree <- mapM litValToIExpr litValTree
+  return $ RepVal (unsafeCoerceIRE ty) iExprTree
 
--- === Reconstructing core atoms ===
-
--- this whole section should disappear when we implement `Show` at the dex level.
-
-data CoreRepVal n = CoreRepVal (Type CoreIR n) (Tree (Atom CoreIR n))
-
-instance SinkableE CoreRepVal where
-  sinkingProofE = undefined
-
-repValToCoreAtom
-  :: SType n -> Tree (CAtom n) -> BuilderM CoreIR n (Atom CoreIR n)
-repValToCoreAtom topTy topTree = do
-  Abs decls result <- buildScoped $ go True $
-    CoreRepVal (sink topTy) (fmap sink topTree)
-  case decls of
-    Empty -> return result
-    _ -> error $ "shouldn't emit decls at the top level"
- where
-  -- We don't want to actually emit except under a table lambda.
-  -- The `topLevel` flag tells us whether that condition holds.
-  -- Ideally we'd pair it with `Emits`, and have a type-level
-  -- `Maybe (Emits n)`.
-  go :: Bool -> Emits n => CoreRepVal n -> BuilderM CoreIR n (Atom CoreIR n)
-  go topLevel repVal@(CoreRepVal ty tree) = case (ty, tree) of
-    (BaseTy _, Leaf x) -> return x
-    (TabPi (TabPiType (_:>iTy) _), _) -> do
-      buildTabLam noHint iTy \i -> do
-        bodyRepVal <- indexCoreRepVal (sink repVal) (Var i)
-        go False bodyRepVal
-    (ProdTy ts, Branch xs) ->
-      ProdVal <$> forMZipped ts xs  \t x -> rec $ CoreRepVal t x
-    (SumTy  ts, Branch (tag:xs)) -> do
-      tag' <- rec $ CoreRepVal TagRepTy tag
-      if topLevel
-        then do
-          xs'  <- zipWithM (\t x -> rec $ CoreRepVal t x) ts xs
-          return $ Con $ SumAsProd ts tag' xs'
-        else do
-          -- If we're under a table lambda, then we can't unconditionally recur
-          -- into each branch because we might end up loading sizes from
-          -- uninitialized memory and then generating `for` loops using them.
-          let enumVal = Con $ SumAsProd (map (const UnitTy) ts) tag' (map (const UnitVal) ts)
-          buildCase enumVal (SumTy ts) \i _ -> do
-            xs' <- mapM (mapM sinkM) xs
-            ts' <- mapM sinkM ts
-            Con <$> SumCon ts' i <$> go topLevel (CoreRepVal (ts'!!i) (xs'!!i))
-    (DepPairTy t, Branch [left, right]) -> do
-      leftVal  <- rec $ CoreRepVal (depPairLeftTy t) left
-      rightTy <- instantiateDepPairTy t leftVal
-      rightVal <- rec $ CoreRepVal (rightTy) right
-      return $ DepPair leftVal rightVal t
-    (TypeCon _ defName params, _) -> do
-      def <- lookupDataDef defName
-      dcs <- instantiateDataDef def params
-      goNewtype $ dataDefRep dcs
-    (StaticRecordTy ts   , _) -> goNewtype (ProdTy $ toList ts)
-    (VariantTy (NoExt ts), _) -> goNewtype (SumTy  $ toList ts)
-    (NatTy, _)      -> goNewtype IdxRepTy
-    (TC (Fin _), _) -> goNewtype NatTy
-    _ -> error $ "unexpected type/tree pair: " ++ pprint ty ++ "\n" ++ show tree
-    where
-      goNewtype t = (Con . Newtype ty) <$> go topLevel (CoreRepVal t tree)
-      rec = go topLevel
-
--- CoreIR version of `indexRepVal` (we could try to de-dup by thinking harder
--- about what they have in common, but wew plan to delete this soon anyway).
-indexCoreRepVal :: Emits n => CoreRepVal n -> Atom CoreIR n -> BuilderM CoreIR n (CoreRepVal n)
-indexCoreRepVal (CoreRepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinal ixTy i
-  leafTys <- typeToTree (unsafeCoerceIRE tabTy)
-  vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
-    BufferPtr (BufferType (EmptyAbs ixStruct) _) <- return $ getIExprInterpretation leafTy
-    ixStruct' <- return $ EmptyAbs (fmapNest (\(ib:>ann) -> ib:> unsafeCoerceIRE ann) ixStruct)
-    offset <- computeOffsetCore ixStruct' ord
-    ptr' <- ptrOffset ptr offset
-    case ixStruct of
-      Nest _ Empty -> unsafePtrLoad ptr'
-      _            -> return ptr'
-  return $ CoreRepVal eltTy' vals'
-indexCoreRepVal _ _ = error "expected table type"
+litValToIExpr :: (TopBuilder m, Mut n) => LitVal -> m n (IExpr n)
+litValToIExpr litval = case litval of
+  PtrLit ptr -> do
+    ptrName <- emitBinding "ptr" $ PtrBinding ptr
+    return $ IPtrVar ptrName (ptrLitType ptr)
+  _ -> return $ ILit litval
 
 -- === Operations on dests ===
 
@@ -1219,15 +1169,6 @@ computeOffset (EmptyAbs (Nest b idxs)) idxOrdinal = do
       stride <- computeElemCount idxs'
       idxOrdinal `imul` stride
 computeOffset _ _ = error "Expected a nonempty nest of idx binders"
-
-computeOffsetCore :: Emits n => IndexStructure CoreIR n -> CAtom n -> BuilderM CoreIR n (CAtom n)
-computeOffsetCore (Abs nest UnitE) idx = do
-  nest' <- return $ fmapNest (\(b:>t) -> b:>unsafeCoerceIRE t) nest
-  idx'  <- return $ unsafeCoerceIRE idx
-  block <- liftBuilder $ buildBlock $
-    computeOffset (sink (EmptyAbs nest')) (sink idx')
-  block' <- return $ unsafeCoerceIRE block
-  emitBlock block'
 
 sumUsingPolysImp
   :: Emits n => Atom SimpToImpIR n
@@ -1430,10 +1371,11 @@ buildBlockImp cont = do
 
 -- === Atom <-> IExpr conversions ===
 
-fromScalarAtom :: Emits n => SIAtom n -> SubstImpM i n (IExpr n)
+fromScalarAtom :: HasCallStack => Emits n => SIAtom n -> SubstImpM i n (IExpr n)
 fromScalarAtom atom = atomToRepVal atom >>= \case
-  RepVal _ (Leaf x) -> return x
-  _ -> error "Not a scalar atom"
+  RepVal ty tree -> case tree of
+    Leaf x -> return x
+    _ -> error $ "Not a scalar atom:" ++ pprint ty
 
 toScalarAtom :: Monad m => IExpr n -> m (SIAtom n)
 toScalarAtom x = return $ RepValAtom $ toDRepVal $ RepVal (BaseTy (getIType x)) (Leaf x)

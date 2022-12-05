@@ -237,6 +237,8 @@ evalSourceBlock'
 evalSourceBlock' mname block = case sbContents block of
   EvalUDecl decl -> execUDecl mname decl
   Command cmd expr -> case cmd of
+    -- TODO: we should filter the top-level emissions we produce in this path
+    -- we want cache entries but we don't want dead names.
     EvalExpr fmt -> when (mname == Main) do
       annExpr <- case fmt of
         Printed -> return expr
@@ -776,9 +778,9 @@ evalLLVM block = do
     $ LinktimeVals reqFunPtrs reqDataPtrs
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   resultTy <- getDestBlockType block
-  coreAtomFromRepValList resultTy resultValsNoPtrs
+  result <- repValFromFlatList resultTy resultVals
+  Var <$> emitBinding "data" (AtomNameBinding $ TopDataBound result)
 {-# SCC evalLLVM #-}
 
 compileToObjCode

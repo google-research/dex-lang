@@ -274,13 +274,31 @@ linearizeAtom atom = case atom of
   DepPairTy _     -> emitZeroT
   TC _            -> emitZeroT
   Eff _           -> emitZeroT
-  ProjectElt idxs v ->
-    linearizeAtom (Var v) `bindLin` \x ->
-      return $ getProjection (toList idxs) x
+  PtrVar _        -> emitZeroT
+  ProjectElt idxs v -> do
+    WithTangent x tx <- linearizeAtom (Var v)
+    (x', idxs') <- linearizeProjections (toList idxs) x
+    return $ WithTangent x' do
+      t <- tx
+      return $ getProjection idxs' t
   -- Those should be gone after simplification
   Lam _            -> error "Unexpected non-table lambda"
   ACase _ _ _      -> error "Unexpected ACase"
   where emitZeroT = withZeroT $ substM atom
+
+-- This applies the projection to the primal, and also returns a list of the
+-- projections that need to be applied to the tangent, which doesn't include
+-- the UnwrapCompoundNewtype corresponding to user-defined data definitions
+-- since these are already stripped off in the tangent.
+linearizeProjections :: EnvReader m => [Projection] -> Atom r n -> m n (Atom r n, [Projection])
+linearizeProjections [] x = return (x, [])
+linearizeProjections (i:is) x = do
+  (x', is') <- linearizeProjections is x
+  xTy' <- getType x'
+  let i' = case (i, xTy') of
+             (UnwrapCompoundNewtype, TypeCon _ _ _) -> []
+             _ -> [i]
+  return (getProjection [i] x', i' ++ is')
 
 linearizeBlock :: Emits o => SBlock i -> LinM i o SAtom SAtom
 linearizeBlock (Block _ decls result) =

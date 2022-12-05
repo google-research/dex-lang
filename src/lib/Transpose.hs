@@ -299,6 +299,7 @@ transposeAtom atom ct = case atom of
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
+  PtrVar _        -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
   ProjectElt idxs v -> do
     lookupSubstM v >>= \case

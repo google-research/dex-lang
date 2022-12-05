@@ -263,6 +263,7 @@ instance PrettyPrec (Atom r n) where
     NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
+    PtrVar v -> atPrec ArgPrec $ p v
     TypeCon "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
       -> atPrec LowestPrec $ ".."  <> pApp i
     TypeCon "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
@@ -451,8 +452,8 @@ instance Pretty (AtomBinding r n) where
     IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    PtrLitBound _ ptr -> p ptr
     TopFunBound _ f -> p f
+    TopDataBound (RepVal ty _) -> "Top data with type: " <+> p ty
 
 instance Pretty (TopFunBinding n) where
   pretty = \case
