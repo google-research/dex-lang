@@ -128,19 +128,29 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 
 %passes vect
 _ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
--- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 4 &
--- CHECK: [[i0:v#[0-9]+]]:<64xInt32> = vbroadcast
--- CHECK: [[i1:v#[0-9]+]]:<64xInt32> = viota
--- CHECK: [[i2:v#[0-9]+]]:<64xInt32> = %iadd [[i0]] [[i1]]
--- CHECK: [[ones:v#[0-9]+]]:<64xInt32> = vbroadcast 1
+-- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 16 &
+-- CHECK: [[i0:v#[0-9]+]]:<16xInt32> = vbroadcast
+-- CHECK: [[i1:v#[0-9]+]]:<16xInt32> = viota
+-- CHECK: [[i2:v#[0-9]+]]:<16xInt32> = %iadd [[i0]] [[i1]]
+-- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
 -- CHECK: %iadd [[i2]] [[ones]]
 
 %passes vect
 _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
 -- CHECK: [[one:v#[0-9]+]]:Float32 = %cast Float32 0x1
--- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 4 &
--- CHECK: [[i0:v#[0-9]+]]:<64xFloat32> = vbroadcast
--- CHECK: [[i1:v#[0-9]+]]:<64xFloat32> = viota
--- CHECK: [[i2:v#[0-9]+]]:<64xFloat32> = %fadd [[i0]] [[i1]]
--- CHECK: [[ones:v#[0-9]+]]:<64xFloat32> = vbroadcast [[one]]
+-- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 16 &
+-- CHECK: [[i0:v#[0-9]+]]:<16xFloat32> = vbroadcast
+-- CHECK: [[i1:v#[0-9]+]]:<16xFloat32> = viota
+-- CHECK: [[i2:v#[0-9]+]]:<16xFloat32> = %fadd [[i0]] [[i1]]
+-- CHECK: [[ones:v#[0-9]+]]:<16xFloat32> = vbroadcast [[one]]
+-- CHECK: %fadd [[i2]] [[ones]]
+
+%passes vect
+_ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
+-- CHECK: [[one:v#[0-9]+]]:Float64 = %cast Float64 0x1
+-- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 32 &
+-- CHECK: [[i0:v#[0-9]+]]:<8xFloat64> = vbroadcast
+-- CHECK: [[i1:v#[0-9]+]]:<8xFloat64> = viota
+-- CHECK: [[i2:v#[0-9]+]]:<8xFloat64> = %fadd [[i0]] [[i1]]
+-- CHECK: [[ones:v#[0-9]+]]:<8xFloat64> = vbroadcast [[one]]
 -- CHECK: %fadd [[i2]] [[ones]]

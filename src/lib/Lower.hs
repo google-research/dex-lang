@@ -346,7 +346,8 @@ vectorizeLoopsRec frag nest =
     Empty -> return frag
     Nest (Let b (DeclBinding ann _ expr)) rest -> do
       vectorByteWidth <- ask
-      let narrowestTypeByteWidth = 1  -- TODO: This is too conservative! Find the shortest type in the loop.
+      expr' <- applySubst frag expr
+      narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
         Hof (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) (Lam body))
@@ -574,3 +575,47 @@ isDistinctNest :: Nest SDecl n l -> Maybe (DistinctBetweenEvidence n l)
 isDistinctNest nest = case noShadows $ toScopeFrag nest of
   True  -> Just $ fabricateDistinctBetweenEvidence
   False -> Nothing
+
+newtype Word32' (n::S) = Word32' Word32
+                       deriving (Eq, Show)
+
+toWord32 :: Word32' n -> Word32
+toWord32 (Word32' x) = x
+
+fromWord32 :: Word32 -> Word32' n
+fromWord32 x = Word32' x
+
+maxWord32' :: Word32' n
+maxWord32' = Word32' (maxBound :: Word32)
+
+instance Ord (Word32' n) where
+  compare (Word32' x) (Word32' y) = compare x y
+
+instance SinkableE Word32' where
+  sinkingProofE _ (Word32' x) = Word32' x
+instance HoistableState Word32' where
+  hoistState _ _ (Word32' x) = Word32' x
+  {-# INLINE hoistState #-}
+
+instance GenericTraverser SimpIR UnitB Word32' where
+  traverseExpr expr = case expr of
+    Op _ -> do expr' <- substM expr
+               ty <- getType expr'
+               modify (min $ typeByteWidth ty)
+               return expr'
+    _ -> traverseExprDefault expr
+
+typeByteWidth :: SType n -> Word32' n
+typeByteWidth ty = case ty of
+ TC (BaseType bt) -> case bt of
+  -- Currently only support vectorization of scalar types (cf. `getVectorType` above):
+  Scalar _ -> fromWord32 . fromInteger . toInteger $ sizeOf bt
+  _ -> maxWord32'
+ _ -> maxWord32'
+
+getNarrowestTypeByteWidth :: (Emits n, EnvReader m) => Expr SimpIR n -> m n Word32
+getNarrowestTypeByteWidth x = do
+  (_, result) <- liftGenericTraverserM maxWord32' (traverseExpr x)
+  if result == maxWord32'
+    then return 1
+    else return $ toWord32 result
