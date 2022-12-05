@@ -1000,11 +1000,16 @@ callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ globalReference ty name
 
 asIntWidth :: LLVMBuilder m => Operand -> L.Type -> m Operand
-asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
+asIntWidth op expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
   LT -> emitInstr expTy $ L.Trunc op expTy []
   EQ -> return op
   GT -> emitInstr expTy $ L.SExt  op expTy []
   where ~(L.IntegerType opWidth) = typeOf op
+asIntWidth op ~expTy@(L.VectorType _ (L.IntegerType expWidth)) = case compare expWidth opWidth of
+  LT -> emitInstr expTy $ L.Trunc op expTy []
+  EQ -> return op
+  GT -> emitInstr expTy $ L.SExt  op expTy []
+  where ~(L.VectorType _ (L.IntegerType opWidth)) = typeOf op
 
 freshParamOpPair :: LLVMBuilder m => [L.ParameterAttribute] -> L.Type -> m (Parameter, Operand)
 freshParamOpPair ptrAttrs ty = do
@@ -1034,6 +1039,12 @@ cpuUnaryIntrinsic :: LLVMBuilder m => UnOp -> Operand -> m Operand
 cpuUnaryIntrinsic op x = case typeOf x of
   L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ".f64" ""
   L.FloatingPointType L.FloatFP  -> dispatchOp fp32 ".f32" "f"
+  ty@(L.VectorType n (L.FloatingPointType L.DoubleFP)) ->
+    let suffix = ".v" ++ show n ++ "f64"
+    in dispatchOp ty suffix ""
+  ty@(L.VectorType n (L.FloatingPointType L.FloatFP)) ->
+    let suffix = ".v" ++ show n ++ "f32"
+    in dispatchOp ty suffix ""
   _ -> error $ "Unsupported CPU floating point type: " ++ show (typeOf x)
   where
     dispatchOp ty llvmSuffix libmSuffix = case op of
@@ -1061,6 +1072,12 @@ cpuBinaryIntrinsic :: LLVMBuilder m => BinOp -> Operand -> Operand -> m Operand
 cpuBinaryIntrinsic op x y = case typeOf x of
   L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ".f64"
   L.FloatingPointType L.FloatFP  -> dispatchOp fp32 ".f32"
+  ty@(L.VectorType n (L.FloatingPointType L.DoubleFP)) ->
+    let suffix = ".v" ++ show n ++ "f64"
+    in dispatchOp ty suffix
+  ty@(L.VectorType n (L.FloatingPointType L.FloatFP)) ->
+    let suffix = ".v" ++ show n ++ "f32"
+    in dispatchOp ty suffix
   _ -> error $ "Unsupported CPU floating point type: " ++ show (typeOf x)
   where
     dispatchOp ty llvmSuffix = case op of
