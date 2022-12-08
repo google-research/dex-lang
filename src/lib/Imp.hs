@@ -29,7 +29,6 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict hiding (State)
 import qualified Control.Monad.State.Strict as MTL
 import GHC.Exts (inline)
-import GHC.Stack
 
 import Err
 import MTL1
@@ -433,7 +432,7 @@ toImpOp maybeDest op = case op of
   IOAlloc ty n -> do
     n' <- fromScalarAtom n
     ptr <- emitInstr $ Alloc CPU ty n'
-    returnVal =<< toScalarAtom ptr
+    returnIExprVal ptr
   IOFree ptr -> do
     ptr' <- fromScalarAtom ptr
     emitStatement $ Free ptr'
@@ -443,9 +442,10 @@ toImpOp maybeDest op = case op of
     arr' <- fromScalarAtom arr
     off' <- fromScalarAtom off
     buf <- impOffset arr' off'
-    returnVal =<< toScalarAtom buf
-  PtrLoad arr ->
-    returnVal =<< toScalarAtom =<< load =<< fromScalarAtom arr
+    returnIExprVal buf
+  PtrLoad arr -> do
+    result <- load =<< fromScalarAtom arr
+    returnIExprVal result
   PtrStore ptr x -> do
     ptr' <- fromScalarAtom ptr
     x'   <- fromScalarAtom x
@@ -463,14 +463,14 @@ toImpOp maybeDest op = case op of
     case (sourceTy, destTy) of
       (BaseTy _, BaseTy bt) -> do
         x' <- fromScalarAtom x
-        returnVal =<< toScalarAtom =<< cast x' bt
+        returnIExprVal =<< cast x' bt
       _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   BitcastOp destTy x -> do
     case destTy of
       BaseTy bt -> do
         x' <- fromScalarAtom x
         ans <- emitInstr $ IBitcastOp bt x'
-        returnVal =<< toScalarAtom ans
+        returnIExprVal ans
       _ -> error "Invalid bitcast"
   Select p x y -> do
     xTy <- getType x
@@ -480,7 +480,7 @@ toImpOp maybeDest op = case op of
         x' <- fromScalarAtom x
         y' <- fromScalarAtom y
         ans <- emitInstr $ IPrimOp $ Select p' x' y'
-        returnVal =<< toScalarAtom ans
+        returnIExprVal ans
       _ -> unsupported
   SumTag con -> case con of
     Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
@@ -525,8 +525,8 @@ toImpOp maybeDest op = case op of
   ExplicitApply _ _       -> unsupported
   VectorBroadcast val vty -> do
     val' <- fromScalarAtom val
-    emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= toScalarAtom >>= returnVal
-  VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= toScalarAtom >>= returnVal
+    emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
+  VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
   VectorSubref ref i vty -> do
     refDest <- atomToDest ref
     refi <- destToAtom <$> indexDest refDest i
@@ -539,11 +539,12 @@ toImpOp maybeDest op = case op of
       _ -> error "Expected a vector type"
   _ -> do
     instr <- IPrimOp <$> (inline traversePrimOp) fromScalarAtom op
-    emitInstr instr >>= toScalarAtom >>= returnVal
+    emitInstr instr >>= returnIExprVal
   where
     unsupported = error $ "Unsupported PrimOp encountered in Imp" ++ pprint op
     resultTyM :: SubstImpM i o (SIType o)
     resultTyM = getType $ Op op
+    returnIExprVal x = returnVal $ toScalarAtom x
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> storeAtom dest atom >> return atom
@@ -792,12 +793,14 @@ stripNewtypes = \case
 
 traverseScalarRepTys :: EnvReader m => SIType n -> (LeafType n -> m n a) -> m n (Tree a)
 traverseScalarRepTys ty f = traverse f =<< typeToTree ty
+{-# INLINE traverseScalarRepTys #-}
 
 storeRepVal :: Emits n => Dest n -> SIRepVal n -> SubstImpM i n ()
 storeRepVal (Dest _ destTree) repVal@(RepVal _ valTree) = do
   leafTys <- valueToTree repVal
   forM_ (zipTrees (zipTrees leafTys destTree) valTree) \((leafTy, ptr), val) -> do
     storeLeaf leafTy ptr val
+{-# INLINE storeRepVal #-}
 
 -- Like `typeToTree`, but when we additionally have the value, we can populate
 -- the existentially-hidden fields.
@@ -836,6 +839,7 @@ valueToTree (RepVal tyTop valTop) = do
       _ -> error "expected a branch"
     _ -> error $ "not implemented " ++ pprint ty
     where rec = go ctx
+{-# INLINE valueToTree #-}
 
 storeLeaf :: Emits n => LeafType n -> IExpr n -> IExpr n -> SubstImpM i n ()
 storeLeaf leafTy dest src= case getRefBufferType leafTy of
@@ -855,6 +859,7 @@ storeLeaf leafTy dest src= case getRefBufferType leafTy of
       load curDest >>= freeBox elemTy
       srcBox <- impOffset (sink src) i >>= load
       cloneBox curDest elemTy Nothing srcBox
+{-# INLINE storeLeaf #-}
 
 freeBox :: Emits n => BufferElementType -> IExpr n -> SubstImpM i n ()
 freeBox elemTy ptr = do
@@ -907,6 +912,7 @@ isNull :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
 isNull p = do
   let PtrType (_, baseTy) = getIType p
   emitInstr $ IPrimOp $ BinOp (ICmp Equal) p (nullPtrIExpr baseTy)
+{-# INLINE isNull #-}
 
 nullPtrIExpr :: BaseType -> IExpr n
 nullPtrIExpr baseTy = ILit $ PtrLit (CPU, baseTy) NullPtr
@@ -919,6 +925,7 @@ loadRepVal (Dest valTy destTree) = do
     case size of
       Singleton -> load ptr
       _         -> return ptr
+{-# INLINE loadRepVal #-}
 
 atomToRepVal :: Emits n => SIAtom n -> SubstImpM i n (SIRepVal n)
 atomToRepVal x = RepVal <$> getType x <*> go x where
@@ -986,6 +993,7 @@ atomToDest (RepValAtom val) = do
   (RepVal ~(RawRefTy valTy) valTree) <- forceDRepVal val
   return $ Dest valTy valTree
 atomToDest atom = error $ "Expected a non-var atom of type `RawRef _`, got: " ++ pprint atom
+{-# INLINE atomToDest #-}
 
 repValToList :: SIRepVal n -> [IExpr n]
 repValToList (RepVal _ tree) = toList tree
@@ -1021,6 +1029,7 @@ emitAllocWithContext ctx ty size = do
         Managed   -> extendAllocsToFree ptr
         Unmanaged -> return ()
       return ptr
+{-# INLINE emitAllocWithContext #-}
 
 canUseStack :: AllocContext -> IExpr n -> Bool
 canUseStack Managed size | isSmall size  = True
@@ -1034,6 +1043,7 @@ getRepBaseTypes :: EnvReader m => SIType n -> m n [BaseType]
 getRepBaseTypes ty = do
   liftM snd $ runStreamWriterT1 $ traverseScalarRepTys ty \leafTy -> do
     writeStream $ iExprInterpretationToBaseType $ getIExprInterpretation leafTy
+{-# INLINE getRepBaseTypes #-}
 
 getDestBaseTypes :: EnvReader m => SIType n -> m n [BaseType]
 getDestBaseTypes ty = do
@@ -1045,6 +1055,7 @@ listToTree ty xs = runStreamReaderT1 xs $ traverseScalarRepTys ty \_ -> fromJust
 
 allocDestUnmanaged :: Emits n => SIType n -> SubstImpM i n (Dest n)
 allocDestUnmanaged = allocDestWithAllocContext Unmanaged
+{-# INLINE allocDestUnmanaged #-}
 
 allocDest :: Emits n => SIType n -> SubstImpM i n (Dest n)
 allocDest = allocDestWithAllocContext Managed
@@ -1056,7 +1067,7 @@ maybeAllocDest Nothing t = allocDest t
 storeAtom :: Emits n => Dest n -> SIAtom n -> SubstImpM i n ()
 storeAtom dest x = storeRepVal dest =<< atomToRepVal x
 
-loadAtom :: forall m n. (ImpBuilder m, Emits n) => Dest n -> m n (SIAtom n)
+loadAtom :: Emits n => Dest n -> SubstImpM i n (SIAtom n)
 loadAtom d = RepValAtom <$> toDRepVal <$> loadRepVal d
 
 repValFromFlatList :: (TopBuilder m, Mut n) => SType n -> [LitVal] -> m n (SIRepVal n)
@@ -1085,6 +1096,7 @@ indexDest (Dest destValTy@(TabTy (b:>idxTy) eltTy) tree) i = do
     offset <- computeOffsetImp ixStruct ord
     impOffset ptr offset
 indexDest _ _ = error "expected a reference to a table"
+{-# INLINE indexDest #-}
 
 -- TODO: direct n-ary version for efficiency?
 naryIndexRepVal :: Emits n => RepVal SimpToImpIR n -> [SIAtom n] -> SubstImpM i n (RepVal SimpToImpIR n)
@@ -1092,6 +1104,7 @@ naryIndexRepVal x [] = return x
 naryIndexRepVal x (ix:ixs) = do
   x' <- indexRepVal x ix
   naryIndexRepVal x' ixs
+{-# INLINE naryIndexRepVal #-}
 
 -- TODO: de-dup with indexDest?
 indexRepVal :: Emits n => RepVal SimpToImpIR n -> SIAtom n -> SubstImpM i n (RepVal SimpToImpIR n)
@@ -1110,6 +1123,7 @@ indexRepVal (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
       _                       -> return ptr'
   return $ RepVal eltTy' vals'
 indexRepVal _ _ = error "expected table type"
+{-# INLINE indexRepVal #-}
 
 projectDest :: Int -> Dest n -> Dest n
 projectDest i (Dest (ProdTy tys) (Branch ds)) =
@@ -1137,7 +1151,7 @@ computeElemCountImp idxs = do
 computeOffsetImp
   :: Emits n => IndexStructure SimpToImpIR n -> IExpr n -> SubstImpM i n (IExpr n)
 computeOffsetImp idxs ixOrd = do
-  ixOrd' <- toScalarAtom ixOrd
+  let ixOrd' = toScalarAtom ixOrd
   result <- coreToImpBuilder do
     PairE idxs' ixOrd'' <- sinkM $ PairE idxs ixOrd'
     computeOffset idxs' ixOrd''
@@ -1216,6 +1230,7 @@ hoistDecls b block = do
   ab <- emitDecls hoistedDecls rest
   refreshAbs ab \b'' blockAbs' ->
     Abs b'' <$> absToBlockInferringTypes blockAbs'
+{-# INLINE hoistDecls #-}
 
 hoistDeclsRec
   :: (BindsNames b, SinkableB b)
@@ -1233,6 +1248,7 @@ hoistDeclsRec b declsAbove (Nest decl declsBelow) result  = do
           Abs hoistedDecls fullResult <- hoistDeclsRec b' declsAbove' declsBelow' result'
           return $ Abs (Nest hoistedDecl hoistedDecls) fullResult
         _ -> hoistDeclsRec b (declsAbove >>> Nest decl' Empty) declsBelow' result'
+{-# INLINE hoistDeclsRec #-}
 
 -- === Imp IR builder ===
 
@@ -1320,10 +1336,12 @@ impCall f args = emitMultiReturnInstr (ICall f args) <&> \case
   NoResults      -> []
   OneResult x    -> [x]
   MultiResult xs -> xs
+{-# INLINE impCall #-}
 
 impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 impOffset ref (IIdxRepVal 0) = return ref
 impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
+{-# INLINE impOffset #-}
 
 cast :: Emits n => IExpr n -> BaseType -> SubstImpM i n (IExpr n)
 cast x bt = emitInstr $ ICastOp bt x
@@ -1400,7 +1418,7 @@ restructureScalarOrPairType topTy topXs =
       (atom2, rest2) <- go t2 rest1
       return (PairVal atom1 atom2, rest2)
     go (BaseTy _) (x:xs) = do
-      x' <- toScalarAtom x
+      let x' = toScalarAtom x
       return (x', xs)
     go ty _ = error $ "Not a scalar or pair: " ++ pprint ty
 
@@ -1413,14 +1431,14 @@ buildBlockImp cont = do
 
 -- === Atom <-> IExpr conversions ===
 
-fromScalarAtom :: HasCallStack => Emits n => SIAtom n -> SubstImpM i n (IExpr n)
+fromScalarAtom :: Emits n => SIAtom n -> SubstImpM i n (IExpr n)
 fromScalarAtom atom = atomToRepVal atom >>= \case
   RepVal ty tree -> case tree of
     Leaf x -> return x
     _ -> error $ "Not a scalar atom:" ++ pprint ty
 
-toScalarAtom :: Monad m => IExpr n -> m (SIAtom n)
-toScalarAtom x = return $ RepValAtom $ toDRepVal $ RepVal (BaseTy (getIType x)) (Leaf x)
+toScalarAtom :: IExpr n -> SIAtom n
+toScalarAtom x = RepValAtom $ toDRepVal $ RepVal (BaseTy (getIType x)) (Leaf x)
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
@@ -1457,7 +1475,7 @@ ordinalImp (IxType _ dict) i = fromScalarAtom =<< do
 
 unsafeFromOrdinalImp :: Emits n => IxType SimpToImpIR n -> IExpr n -> SubstImpM i n (SIAtom n)
 unsafeFromOrdinalImp (IxType _ dict) i = do
-  i' <- (Con . Newtype NatTy) <$> toScalarAtom i
+  let i' = Con $ Newtype NatTy $ toScalarAtom i
   case dict of
     DictCon (IxFin n) -> return $ Con $ Newtype (TC $ Fin n) i'
     DictCon (ExplicitMethods d params) -> do
