@@ -1,6 +1,8 @@
 '# Stats
 Probability distributions and other functions useful for statistical computing.
 
+import linalg
+
 '## Log-space floating point numbers
 When working with probability densities, mass functions, distributions,
 likelihoods, etc., we often work on a logarithmic scale to prevent floating
@@ -329,9 +331,28 @@ instance OrderedDist(Uniform, Float, Float)
       then Exp 0.0
       else if (x > d.high)
         then Exp (-infinity)
-        else Exp $ log (d.high - x) - log (d.high - d.low)
-  def quantile(d, q) = d.low + ((d.high - d.low) * q)
+        else Exp $ log (high - x) - log (high - low)
+  quantile = \(Uniform low high) q.
+    low + ((high - low) * q)
 
+
+'## Multivariate probability distributions
+Some commonly encountered multivariate distributions. 
+### Multivariate Normal distribution
+The [Multivariate Normal distribution](https://en.wikipedia.org/wiki/Multivariate_normal_distribution) is parameterised by its *mean*, `loc`, and Cholesky-factored `scale`.
+
+data MultivariateNormalDist n [Ix n] = MultivariateNormal (n=>Float) (LowerTriMat n Float)
+
+instance Random (MultivariateNormalDist n) (n=>Float) given {n} [Ix n]
+  draw = \(MultivariateNormal loc chol_cov) k.
+    std_norm = for i:n. randn (ixkey k i)
+    loc + for i:n. sum for j:(..i). chol_cov.i.j * std_norm.(inject _ j)
+
+instance Dist (MultivariateNormalDist n) (n=>Float) Float given {n} [Ix n]
+  density = \(MultivariateNormal loc chol_cov) x.
+    y = forward_substitute chol_cov (x - loc)
+    dim = n_to_f (size n)
+    Exp (-(dim / 2) * log (2 * pi) - sum (log (lower_tri_diag chol_cov)) - 0.5 * dot y y)
 
 '## Data summaries
 Some data summary functions. Note that `mean` is provided by the prelude.
