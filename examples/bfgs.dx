@@ -1,0 +1,159 @@
+'# BFGS optimizer
+
+def print_array {n a} [Ix n] [Show a] (prefix:String) (x:n=>a) : {IO} _ =
+  stream = get_output_stream ()
+  fwrite stream $ prefix <> " ["
+  for i:n.
+    if (ordinal i + 1) == size n
+      then fwrite stream $ show x.i
+      else fwrite stream $ show x.i <> ", "
+  fwrite stream "] \n"
+  ()
+
+def outer_product {n m} (x:n=>Float) (y:m=>Float) : (n=>m=>Float) =
+  for i:n. for j:m. x.i * y.j
+
+def zoom (f_line:Float->Float) (a_lo_init:Float) (a_hi_init:Float): Float =
+  c1 = 0.0001
+  c2 = 0.9
+  interp = \x y. 0.5 * (x + y)
+
+  f0 = f_line 0.
+  g0 = grad f_line 0.
+
+  a_hi_ref <- with_state a_hi_init
+  a_lo_ref <- with_state a_lo_init
+  iter \i.
+    a_lo = get a_lo_ref
+    a_hi = get a_hi_ref
+    a_i = interp a_lo a_hi
+    if i > 100
+      then Done a_i
+      else
+        if f_line a_i > (f0 + c1 * a_i * g0) || f_line a_i >= f_line a_lo
+          then 
+            a_hi_ref := a_i
+            Continue
+          else
+            g_i = grad f_line a_i
+            if abs g_i <= (-c2 * g0)
+              then Done a_i
+              else
+                if g_i * (a_hi - a_lo) >= 0.
+                  then a_hi_ref := a_lo
+                a_lo_ref := a_i
+                Continue
+
+def zoom_line_search (f:Float->Float) : Float =
+  c1 = 0.0001
+  c2 = 0.9
+
+  a_max = 1.
+  a_ref <- with_state 0.
+  a_ref_last <- with_state 0.
+  f_0 = f 0.
+  g_0 = grad f 0.
+  max_iter = 10
+
+  iter \i.
+    a_i = get a_ref
+    a_last = get a_ref_last
+    f_i = f a_i
+    if i > max_iter || f_i > (f_0 + c1 * a_i * g_0) || (f_i >= f a_last && i > 1)
+      then Done (zoom f a_last a_i)
+      else
+        g_i = grad f a_i
+        if abs g_i <= (-c2 * g_0)
+          then Done a_i
+          else
+            if g_i >= 0.
+              then Done (zoom f a_i a_last)
+              else 
+                a_ref_last := a_i
+                a_ref := 0.5 * (a_i + a_max)
+                Continue
+
+def line_search (f:Float->Float) : Float =
+  init_step_size = 1. 
+  f_init = f(0.)
+  g = grad f 0.
+  step_size_adjustment = 0.5
+  tol = 0.0001
+
+  step_size_ref <- with_state init_step_size
+  iter \i.
+    step_size = get step_size_ref
+    f_next = f step_size
+    f_wolfe = f_init + tol * step_size * g
+
+    if f_next < f_wolfe || i > 100
+      then Done step_size
+      else
+        step_size_ref := step_size * step_size_adjustment
+        Continue
+  
+def run_lbfgs {n} 
+    (f:n=>Float->Float)
+    (x0:n=>Float)
+    (H0:n=>n=>Float) --dense for now
+    (tol:Float)
+    :{IO} (Float & (n=>Float)) =
+  xref <- with_state x0 
+  H <- with_state H0
+  gref <- with_state (grad f x0)
+  iter \i.
+    print $ "iter " <> show i
+    x = get xref
+    g = get gref
+    print_array "x" x
+    print_array "g" g
+    print $ "f: " <> (show $ f x)
+
+    grad_norm = sqrt $ sum $ for i. g.i * g.i
+    if grad_norm < tol || i > 100
+      then Done (f x, x)
+      else
+        search_direction = -(get H)**.g
+        print_array "search_dir" search_direction
+        H_i = get H
+        print_array "Hessian" (for (i, j). H_i.i.j)
+        f_line = \s:Float. f (x + s .* search_direction)
+        step_size = zoom_line_search f_line 
+        x_diff = step_size .* search_direction
+        print_array "x diff" x_diff
+        print $ "step size: " <> (show step_size)
+        x_next = x + x_diff
+        g_next = grad f x_next
+        grad_diff = g_next - g
+        print_array "grad diff" grad_diff
+
+        rho_inv = vdot grad_diff x_diff
+        if not (rho_inv == 0.)
+            then
+                rho = 1. / rho_inv
+                print $ "rho " <> show rho
+                y = (eye - rho .* outer_product x_diff grad_diff)
+                print_array "y " (for (i, j). y.i.j)
+                z = (eye - rho .* outer_product grad_diff x_diff)
+                print_array "z " (for (i, j). z.i.j)
+                -- Improve low rank update (avoid dense matmuls)
+                H := y ** get H ** z + rho .* outer_product x_diff x_diff
+                print_array "outer prod x_diff" (for (i, j). (outer_product x_diff x_diff).i.j)
+        print_array "new Hessian" (for (i, j). (get H).i.j)
+        
+        xref := x_next
+        gref := g_next
+        Continue
+
+
+def bowl {n} (x:n=>Float) : Float =
+  sum $ for i. x.i * x.i
+
+def rosenbrock (coord:(Fin 2)=>Float) : Float =
+  x = coord.(0@_)
+  y = coord.(1@_)
+  bowl [(1. - x), (10. * (y - x * x))]
+
+%bench "bowl"
+bowl [1., 2.]
+--unsafe_io do run_lbfgs rosenbrock [10., 10.] eye 0.0001
