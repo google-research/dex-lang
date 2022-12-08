@@ -96,8 +96,9 @@ data ImpInstr n =
  | Alloc AddressSpace IType (Size n)
  | StackAlloc IType (Size n)
  | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
- | DeepCopy Int (IExpr n) (IExpr n) (IExpr n)  -- depth, dest, source, numel
  | Free (IExpr n)
+ | InitializeZeros (IExpr n) (IExpr n)  -- ptr, numel
+ | GetAllocSize (IExpr n)  -- gives size in numel
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
  | IBitcastOp IType (IExpr n)
@@ -210,11 +211,12 @@ instance GenericE ImpInstr where
   {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
   {- ICall -}   (ImpFunName `PairE` ListE IExpr)
   {- Store -}   (IExpr `PairE` IExpr)
-    ) (EitherE6
+    ) (EitherE7
   {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
   {- StackAlloc -} (LiftE IType `PairE` Size)
   {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
-  {- DeepCopy -}(LiftE Int `PairE` IExpr `PairE` IExpr `PairE` IExpr)
+  {- InitializeZeros -}  (IExpr `PairE` IExpr)
+  {- GetAllocSize -} IExpr
   {- Free -}    (IExpr)
   {- IThrowE -} (UnitE)
     ) (EitherE3
@@ -242,9 +244,10 @@ instance GenericE ImpInstr where
     Alloc a t s            -> Case2 $ Case0 $ LiftE (a, t) `PairE` s
     StackAlloc t s         -> Case2 $ Case1 $ LiftE t `PairE` s
     MemCopy dest src numel -> Case2 $ Case2 $ dest `PairE` src `PairE` numel
-    DeepCopy depth dest src numel -> Case2 $ Case3 $ LiftE depth `PairE` dest `PairE` src `PairE` numel
-    Free ptr               -> Case2 $ Case4 ptr
-    IThrowError            -> Case2 $ Case5 UnitE
+    InitializeZeros ptr numel -> Case2 $ Case3 $ ptr `PairE` numel
+    GetAllocSize ptr       -> Case2 $ Case4 $ ptr
+    Free ptr               -> Case2 $ Case5 ptr
+    IThrowError            -> Case2 $ Case6 UnitE
 
     ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
     IBitcastOp idt ix -> Case3 $ Case1 $ LiftE idt `PairE` ix
@@ -273,9 +276,10 @@ instance GenericE ImpInstr where
       Case0 (LiftE (a, t) `PairE` s )         -> Alloc a t s
       Case1 (LiftE t `PairE` s )              -> StackAlloc t s
       Case2 (dest `PairE` src `PairE` numel)  -> MemCopy dest src numel
-      Case3 (LiftE depth `PairE` dest `PairE` src `PairE` numel)  -> DeepCopy depth dest src numel
-      Case4 ptr                               -> Free ptr
-      Case5 UnitE                             -> IThrowError
+      Case3 (ptr `PairE` numel)               -> InitializeZeros ptr numel
+      Case4 ptr                               -> GetAllocSize ptr
+      Case5 ptr                               -> Free ptr
+      Case6 UnitE                             -> IThrowError
       _ -> error "impossible"
 
     Case3 instr' -> case instr' of

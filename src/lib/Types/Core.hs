@@ -567,7 +567,7 @@ data Binding (c::C) (n::S) where
   FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   -- TODO: add a case for abstracted pointers, as used in `ClosedImpFunction`
-  PtrBinding        :: PtrLitVal                      -> Binding PtrNameC        n
+  PtrBinding        :: PtrType -> PtrLitVal           -> Binding PtrNameC        n
   SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
   ImpNameBinding    :: BaseType                       -> Binding ImpNameC n
 deriving instance Show (Binding c n)
@@ -2085,7 +2085,7 @@ instance Color c => GenericE (Binding c) where
           (ImpFunction)
           (LiftE FunObjCode `PairE` LinktimeNames)
           (Module)
-          (LiftE PtrLitVal)
+          (LiftE (PtrType, PtrLitVal))
           (EffectDef)
           (HandlerDef)
           (EffectOpDef))
@@ -2104,7 +2104,7 @@ instance Color c => GenericE (Binding c) where
     ImpFunBinding     fun               -> Case1 $ Case0 $ fun
     FunObjCodeBinding x y               -> Case1 $ Case1 $ LiftE x `PairE` y
     ModuleBinding m                     -> Case1 $ Case2 $ m
-    PtrBinding p                        -> Case1 $ Case3 $ LiftE p
+    PtrBinding ty p                     -> Case1 $ Case3 $ LiftE (ty,p)
     EffectBinding   effDef              -> Case1 $ Case4 $ effDef
     HandlerBinding  hDef                -> Case1 $ Case5 $ hDef
     EffectOpBinding opDef               -> Case1 $ Case6 $ opDef
@@ -2123,7 +2123,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case0 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
     Case1 (Case1 (LiftE x `PairE` y))                       -> fromJust $ tryAsColor $ FunObjCodeBinding x y
     Case1 (Case2 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
-    Case1 (Case3 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
+    Case1 (Case3 (LiftE (ty,p)))                            -> fromJust $ tryAsColor $ PtrBinding        ty p
     Case1 (Case4 effDef)                                    -> fromJust $ tryAsColor $ EffectBinding     effDef
     Case1 (Case5 hDef)                                      -> fromJust $ tryAsColor $ HandlerBinding    hDef
     Case1 (Case6 opDef)                                     -> fromJust $ tryAsColor $ EffectOpBinding   opDef

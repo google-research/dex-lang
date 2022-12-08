@@ -51,36 +51,12 @@ char* malloc_dex(int64_t nbytes) {
   return ptr + alignment;
 }
 
-char* dex_malloc_initialized(int64_t nbytes) {
-  char *ptr = malloc_dex(nbytes);
-  memset(ptr, 0, nbytes);
-  return ptr;
-}
-
 void free_dex(char* ptr) {
   free(ptr - alignment);
 }
 
 int64_t dex_allocation_size (char* ptr) {
   return *(reinterpret_cast<int64_t*>(ptr - alignment));
-}
-
-void deep_copy_dex(int64_t depth, char* dest, char* src, int64_t numbytes) {
-  if (depth == 1) {
-    memcpy(dest, src, numbytes);
-  } else {
-    for (int64_t i=0; i < (numbytes / sizeof(char*)); i++) {
-      char* sub_src  = *(((char**)src)  + i);
-      // don't do a copy if the buffer isn't initialized (indicated by a null pointer)
-      if (sub_src) {
-        int64_t box_size = dex_allocation_size(sub_src);
-        char* sub_dest = dex_malloc_initialized(box_size);
-        deep_copy_dex(depth - 1, sub_dest, sub_src, box_size);
-        *(((char**)dest) + i) = sub_dest;
-        // TODO: free the old dest
-      }
-    }
-  }
 }
 
 void* dex_pthread_key_create () {
