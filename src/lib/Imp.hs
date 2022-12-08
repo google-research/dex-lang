@@ -21,6 +21,7 @@ import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
 import Data.Maybe (fromJust)
+import Data.Text.Prettyprint.Doc
 import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -683,11 +684,6 @@ data BufferElementType = UnboxedValue BaseType | BoxedBuffer BufferElementType
 data BufferType n = BufferType (IndexStructure SimpToImpIR n) BufferElementType
 data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType
 
-boxingDepth :: BufferElementType -> Int
-boxingDepth = \case
-  UnboxedValue _ -> 0
-  BoxedBuffer eltTy -> 1 + boxingDepth eltTy
-
 getRefBufferType :: LeafType n -> BufferType n
 getRefBufferType fullLeafTy = case splitLeadingIxs fullLeafTy of
   Abs idxs restLeafTy ->
@@ -842,53 +838,78 @@ valueToTree (RepVal tyTop valTop) = do
     where rec = go ctx
 
 storeLeaf :: Emits n => LeafType n -> IExpr n -> IExpr n -> SubstImpM i n ()
-storeLeaf leafTy destPtr srcVal = do
-  BufferType idxStructure elemTy <- return $ getRefBufferType leafTy
-  case elemTy of
-    UnboxedValue _ -> case idxStructure of
-      Singleton -> store destPtr srcVal
-      _ -> do
-        numelem <- computeElemCountImp idxStructure
-        emitStatement $ MemCopy destPtr srcVal numelem
-    BoxedBuffer elemTy' -> case idxStructure of
-      Singleton -> do
-        -- In the singleton case our "value" is a buffer pointer, representing
-        -- an object like `Fin 3 => Float`. We need to copy its data into a
-        -- fresh buffer and store that pointer in the destination singleton
-        -- buffer. For the copy, we handle the depth=0 case (the value buffer
-        -- just contains raw values) using memcopy and otherwise call into deep
-        -- copy.
-        ifPtrNonNull srcVal do
-          srcVal'  <- sinkM srcVal
-          destPtr' <- sinkM destPtr
-          Just boxIxStructure <- return $ tryGetBoxIdxStructure (sink leafTy)
-          numelem <- computeElemCountImp boxIxStructure
-          let baseTy = elemTypeToBaseType elemTy'
-          newPtr <- emitInstr $ Alloc CPU baseTy numelem
-          case elemTy' of
-            UnboxedValue _ ->
-              emitStatement $ MemCopy newPtr srcVal' numelem
-            BoxedBuffer _ ->
-              emitStatement $ DeepCopy (boxingDepth elemTy') newPtr srcVal' numelem
-          store destPtr' newPtr
-      _ -> do
-        -- In the non-singleton case, our "value" is a buffer of boxed buffes,
-        -- representing a value like `Fin 3 => List Float`. We use deep copy
-        -- directly.
-        let depth = boxingDepth elemTy
-        numelem <- computeElemCountImp idxStructure
-        emitStatement $ DeepCopy depth destPtr srcVal numelem
+storeLeaf leafTy dest src= case getRefBufferType leafTy of
+  BufferType Singleton (UnboxedValue _) -> store dest src
+  BufferType idxStructure (UnboxedValue _) -> do
+    numel <- computeElemCountImp idxStructure
+    emitStatement $ MemCopy dest src numel
+  BufferType Singleton (BoxedBuffer elemTy) -> do
+    load dest >>= freeBox elemTy
+    Just boxIxStructure <- return $ tryGetBoxIdxStructure leafTy
+    boxSize <- computeElemCountImp boxIxStructure
+    cloneBox dest elemTy (Just boxSize) src
+  BufferType idxStructure (BoxedBuffer elemTy) -> do
+    numelem <- computeElemCountImp idxStructure
+    emitLoop "i" Fwd numelem \i -> do
+      curDest <- impOffset (sink dest) i
+      load curDest >>= freeBox elemTy
+      srcBox <- impOffset (sink src) i >>= load
+      cloneBox curDest elemTy Nothing srcBox
 
-ifPtrNonNull
+freeBox :: Emits n => BufferElementType -> IExpr n -> SubstImpM i n ()
+freeBox elemTy ptr = do
+  ifNull ptr (return ()) do
+    ptr' <- sinkM ptr
+    case elemTy of
+      UnboxedValue _ -> return ()
+      BoxedBuffer innerBoxElemTy -> do
+        numElem <- emitInstr $ GetAllocSize ptr'
+        mapOffsetPtrs numElem [ptr'] \[offsetPtr] ->
+          load offsetPtr  >>= freeBox innerBoxElemTy
+    emitStatement $ Free ptr'
+
+-- If the buffer size (in elements) is not provided, then it assumed to be
+-- available by querying the runtime. This means that it must be a pointer
+-- directly obtained by calling `malloc_alloc`, not an offset-derived pointer
+-- thereof.
+cloneBox :: Emits n => IExpr n -> BufferElementType -> Maybe (IExpr n) -> IExpr n -> SubstImpM i n ()
+cloneBox dest elemTy maybeBufferNumElem srcPtr = do
+  ifNull srcPtr
+    (store (sink dest) (nullPtrIExpr $ elemTypeToBaseType elemTy))
+    do
+      numElem <- case maybeBufferNumElem of
+        Just n -> sinkM n
+        Nothing -> emitInstr $ GetAllocSize $ sink srcPtr
+      -- It's "Unmanaged" by the scoped memory system because its lifetime is
+      -- determined by the array it will appear in instead. (Also it has to be
+      -- heap-allocated).
+      newPtr <- emitAllocWithContext Unmanaged (elemTypeToBaseType elemTy) numElem
+      store (sink dest) newPtr
+      case elemTy of
+        UnboxedValue _ -> emitStatement $ MemCopy newPtr (sink srcPtr) numElem
+        BoxedBuffer elemTy' -> do
+          mapOffsetPtrs numElem [newPtr, sink srcPtr] \[newPtrOffset, srcPtrOffset] -> do
+            load srcPtrOffset >>= cloneBox newPtrOffset elemTy' Nothing
+
+ifNull
   :: Emits n
   => IExpr n
   -> (forall l. (Emits l, DExt n l) => SubstImpM i l ())
+  -> (forall l. (Emits l, DExt n l) => SubstImpM i l ())
   -> SubstImpM i n ()
-ifPtrNonNull p cont = do
-  nullPtr <- emitInstr $ ICastOp (getIType p) (ILit (Word64Lit 0))
-  cond <- emitInstr $ IPrimOp $ BinOp (ICmp Equal) p nullPtr
-  body <- buildBlockImp $ cont >> return []
-  void $ emitStatement $ ICond cond (ImpBlock Empty []) body
+ifNull p trueBranch falseBranch = do
+  pIsNull <- isNull p
+  trueBlock  <- buildBlockImp $ [] <$ trueBranch
+  falseBlock <- buildBlockImp $ [] <$ falseBranch
+  emitStatement $ ICond pIsNull trueBlock falseBlock
+
+isNull :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
+isNull p = do
+  let PtrType (_, baseTy) = getIType p
+  emitInstr $ IPrimOp $ BinOp (ICmp Equal) p (nullPtrIExpr baseTy)
+
+nullPtrIExpr :: BaseType -> IExpr n
+nullPtrIExpr baseTy = ILit $ PtrLit (CPU, baseTy) NullPtr
 
 loadRepVal :: (ImpBuilder m, Emits n) => Dest n -> m n (SIRepVal n)
 loadRepVal (Dest valTy destTree) = do
@@ -935,8 +956,8 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
     PtrVar p -> do
-      PtrBinding ptrLit <- lookupEnv p
-      return $ Leaf $ IPtrVar p (ptrLitType ptrLit)
+      PtrBinding ty _ <- lookupEnv p
+      return $ Leaf $ IPtrVar p ty
     ProjectElt projections v ->
       lookupAtomName v >>= \case
         TopDataBound (RepVal _ tree) -> applyProjection (toList projections) tree
@@ -975,11 +996,17 @@ allocDestWithAllocContext :: Emits n => AllocContext -> SIType n -> SubstImpM i 
 allocDestWithAllocContext ctx destValTy = do
   descTree <- typeToTree destValTy
   destTree <- forM descTree \leafTy -> do
-    BufferType size elemTy <- return $ getRefBufferType leafTy
-    numel <- case size of
-      Singleton -> return $ IIdxRepVal 1
-      idxStructure -> computeElemCountImp idxStructure
-    emitAllocWithContext ctx (elemTypeToBaseType elemTy) numel
+    BufferType idxStructure elemTy <- return $ getRefBufferType leafTy
+    numel <- computeElemCountImp idxStructure
+    let baseTy = elemTypeToBaseType elemTy
+    ptr <- emitAllocWithContext ctx baseTy numel
+    case elemTy of
+      UnboxedValue _ -> return ()
+      BoxedBuffer boxElemTy ->
+        case numel of
+          IIdxRepVal 1 -> store ptr (nullPtrIExpr $ elemTypeToBaseType boxElemTy)
+          _ -> emitStatement $ InitializeZeros ptr numel
+    return ptr
   return $ Dest destValTy $ destTree
 
 emitAllocWithContext
@@ -1041,9 +1068,9 @@ repValFromFlatList ty xs = do
 
 litValToIExpr :: (TopBuilder m, Mut n) => LitVal -> m n (IExpr n)
 litValToIExpr litval = case litval of
-  PtrLit ptr -> do
-    ptrName <- emitBinding "ptr" $ PtrBinding ptr
-    return $ IPtrVar ptrName (ptrLitType ptr)
+  PtrLit ty ptr -> do
+    ptrName <- emitBinding "ptr" $ PtrBinding ty ptr
+    return $ IPtrVar ptrName ty
   _ -> return $ ILit litval
 
 -- === Operations on dests ===
@@ -1100,6 +1127,7 @@ destPairUnpack (Dest ty tree) =
 type SBuilderM = BuilderM SimpToImpIR
 
 computeElemCountImp :: Emits n => IndexStructure SimpToImpIR n -> SubstImpM i n (IExpr n)
+computeElemCountImp Singleton = return $ IIdxRepVal 1
 computeElemCountImp idxs = do
   result <- coreToImpBuilder do
     idxs' <- sinkM idxs
@@ -1294,6 +1322,7 @@ impCall f args = emitMultiReturnInstr (ICall f args) <&> \case
   MultiResult xs -> xs
 
 impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
+impOffset ref (IIdxRepVal 0) = return ref
 impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
 
 cast :: Emits n => IExpr n -> BaseType -> SubstImpM i n (IExpr n)
@@ -1327,16 +1356,29 @@ emitSwitch testIdx args cont = do
       otherCases <- buildBlockImp $ rec (curIdx + 1) rest >> return []
       emitStatement $ ICond cond thisCase otherCases
 
+mapOffsetPtrs
+  :: Emits n
+  => IExpr n -> [IExpr n]
+  -> (forall l. (DExt n l, Emits l) => [IExpr l] -> SubstImpM i l ())
+  -> SubstImpM i n ()
+mapOffsetPtrs numelem basePtrs cont = do
+  emitLoop "i" Fwd numelem \i -> do
+    offsetPtrs <- forM basePtrs \basePtr -> impOffset (sink basePtr) i
+    cont offsetPtrs
+
 emitLoop :: Emits n
          => NameHint -> Direction -> IExpr n
          -> (forall l. (DExt n l, Emits l) => IExpr l -> SubstImpM i l ())
          -> SubstImpM i n ()
+emitLoop _ _ (IIdxRepVal 0) _ = return ()
+emitLoop _ _ (IIdxRepVal 1) cont = do
+  Distinct <- getDistinct
+  cont (IIdxRepVal 0)
 emitLoop hint d n cont = do
   loopBody <- do
     withFreshIBinder hint (getIType n) \b@(IBinder _ ty)  -> do
       let i = IVar (binderName b) ty
       body <- buildBlockImp do
-                -- emitDebugPrint "Loop up to %d\n" (sink n)
                 cont =<< sinkM i
                 return []
       return $ Abs b body
@@ -1485,7 +1527,8 @@ impInstrTypes instr = case instr of
   Free _          -> return []
   IThrowError     -> return []
   MemCopy _ _ _   -> return []
-  DeepCopy _ _ _ _ -> return []
+  InitializeZeros _ _ -> return []
+  GetAllocSize _  -> return [IIdxRepTy]
   IFor _ _ _      -> return []
   IWhile _        -> return []
   ICond _ _ _     -> return []
@@ -1524,6 +1567,16 @@ instance BindsEnv IBinder where
 
 instance SubstB (AtomSubstVal SimpToImpIR) IBinder
 
+instance Pretty (LeafType n) where
+  pretty (LeafType ctx base) = pretty ctx <+> pretty base
+
+instance Pretty (TypeCtxLayer r n l) where
+  pretty = \case
+    TabCtx ix            -> pretty ix
+    DepPairCtx (RightB UnitB) -> "dep-pair-instantiated"
+    DepPairCtx (LeftB b)      -> "dep-pair" <+> pretty b
+    RefCtx               -> "refctx"
+
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)
 confuseGHC = getDistinct
@@ -1559,6 +1612,7 @@ traverseDeclBlocks
   -> ImpDecl n l -> m (ImpDecl n l)
 traverseDeclBlocks f (ImpLet bs instr) = ImpLet bs <$> case instr of
   IFor d n (Abs b block) -> IFor d n <$> (Abs b <$> f block)
+  ICond cond block1 block2 -> ICond cond <$> f block1 <*> f block2
   -- TODO: fill in the other cases as needed
   _ -> return instr
 

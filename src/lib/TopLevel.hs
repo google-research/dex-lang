@@ -917,14 +917,11 @@ storeCache env = liftIO do
   BS.writeFile cachePath $ encode sEnv
 
 snapshotPtrs :: MonadIO m => RecSubst Binding n -> m (RecSubst Binding n)
-snapshotPtrs bindings =
-  RecSubst <$> traverseSubstFrag f (fromRecSubst bindings)
-  where
-    f = \case
-      PtrBinding (PtrLitVal ty p) ->
-        liftIO $ PtrBinding . PtrSnapshot ty <$> takePtrSnapshot ty p
-      PtrBinding (PtrSnapshot _ _) -> error "shouldn't have snapshots"
-      b -> return b
+snapshotPtrs bindings = RecSubst <$> traverseSubstFrag
+  (\case
+      PtrBinding ty p -> liftIO $ PtrBinding ty <$> takePtrSnapshot ty p
+      b -> return b)
+  (fromRecSubst bindings)
 
 traverseBindingsTopStateEx
   :: Monad m => TopStateEx
@@ -969,9 +966,7 @@ clearCache = liftIO do
 
 restorePtrSnapshots :: MonadIO m => TopStateEx -> m TopStateEx
 restorePtrSnapshots s = traverseBindingsTopStateEx s \case
-  PtrBinding (PtrSnapshot ty snapshot) ->
-    liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
-  PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
+  PtrBinding ty p  -> liftIO $ PtrBinding ty <$> restorePtrSnapshot p
   b -> return b
 
 getFilteredLogger :: Topper m => m n PassLogger

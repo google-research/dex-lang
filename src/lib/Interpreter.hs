@@ -193,7 +193,7 @@ evalOp expr = mapM evalAtom expr >>= \case
   PtrOffset p (IdxRepVal 0) -> return p
   PtrOffset ptrAtom (IdxRepVal i) -> do
     ((a, t), p) <- inlinePtrLit ptrAtom
-    return $ Con $ Lit $ PtrLit (PtrLitVal (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i))
+    return $ Con $ Lit $ PtrLit (a, t) (PtrLitVal $ p `plusPtr` (sizeOf t * fromIntegral i))
   PtrLoad ptrAtom -> do
     ((a, t), p) <- inlinePtrLit ptrAtom
     case a of
@@ -363,9 +363,9 @@ indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
 
 inlinePtrLit :: (Fallible1 m, EnvReader m) => Atom r n -> m n (PtrType, Ptr ())
 inlinePtrLit (PtrVar v) = do
-  ~(PtrBinding (PtrLitVal t p)) <- lookupEnv v
+  ~(PtrBinding t (PtrLitVal p)) <- lookupEnv v
   return (t, p)
-inlinePtrLit (Con (Lit (PtrLit (PtrLitVal t p)))) = return (t, p)
+inlinePtrLit (Con (Lit (PtrLit t (PtrLitVal p)))) = return (t, p)
 inlinePtrLit _ = fail "not a pointer literal"
 
 -- === Helpers for function evaluation over fixed-width types ===

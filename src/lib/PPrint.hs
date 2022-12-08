@@ -41,7 +41,7 @@ import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
 import Occurrence (Count (Bounded), UsageInfo (..))
 import Occurrence qualified as Occ
-import Util (restructure)
+import Util (restructure, Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -285,9 +285,21 @@ instance PrettyPrec (Atom r n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
-    RepValAtom _ -> atPrec ArgPrec "RepValAtom"
+    RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+
+instance Pretty (DRepVal r n) where
+  pretty (DRepVal [] ty tree) = pretty $ RepVal ty tree
+  pretty (DRepVal projs ty tree) = "Projecting" <+> p projs <+> p (RepVal ty tree)
+
+instance Pretty (RepVal r n) where
+  pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
+
+instance Pretty a => Pretty (Tree a) where
+  pretty = \case
+    Leaf x -> pretty x
+    Branch xs -> pretty xs
 
 instance Pretty (BoxPtr r n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
@@ -493,7 +505,7 @@ instance Pretty (Binding s n) where
     ImpFunBinding f -> pretty f
     FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
-    PtrBinding     _ -> "<ptr>"
+    PtrBinding   _ _ -> "<ptr>"
     -- TODO(alex): do something actually useful here
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
@@ -903,7 +915,8 @@ instance Pretty (ImpInstr n)  where
   pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> sizeStr s <> "]"
   pretty (StackAlloc t s) = "alloca" <+> p t <> "[" <> sizeStr s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
-  pretty (DeepCopy depth dest src numel) = "deepcopy" <+> p depth <+> p dest <+> p src <+> p numel
+  pretty (InitializeZeros ptr numel) = "initializeZeros" <+> p ptr <+> p numel
+  pretty (GetAllocSize ptr) = "getAllocSize" <+> p ptr
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"
   pretty IThrowError      = "throwError"
@@ -1056,9 +1069,10 @@ instance PrettyPrec LitVal where
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (PtrLit (PtrLitVal ty x)) =
+  prettyPrec (PtrLit ty (PtrLitVal x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
-  prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
+  prettyPrec (PtrLit _ NullPtr) = atPrec ArgPrec $ "NullPtr"
+  prettyPrec (PtrLit _ (PtrSnapshot _)) = atPrec ArgPrec "<ptr snapshot>"
 
 instance Pretty CallingConvention where
   pretty = p . show

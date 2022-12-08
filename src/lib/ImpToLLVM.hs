@@ -298,8 +298,6 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     kernel <- makeFunction fName [threadIdParam, nThreadParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition kernel], extraSpecs, [])
-    where
-      idxRepTy = scalarTy $ IIdxRepTy
 
 compileInstr :: Compiler m => ImpInstr i -> m i o [Operand]
 compileInstr instr = case instr of
@@ -366,20 +364,11 @@ compileInstr instr = case instr of
   Alloc dev t s -> (:[]) <$> do
     numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
     case dev of
-      CPU -> case t of
-        -- XXX: it's important to initialize pointers to zero so that we don't
-        --      try to dereference them when we serialize.
-        PtrType _ -> malloc True  elemTy numBytes
-        _         -> malloc False elemTy numBytes
-      -- TODO: initialize GPU pointers too, once we handle serialization
+      CPU -> malloc elemTy numBytes
       GPU -> cuMemAlloc elemTy numBytes
     where elemTy = scalarTy t
   StackAlloc t s -> do
       p <- alloca (getIntLit l) elemTy
-      case t of
-        -- XXX: As with `Alloc` we have to initialize pointers to null
-        PtrType _ -> store p (nullPtr elemTy)
-        _ -> return ()
       return [p]
     where ILit l = s
           elemTy = scalarTy t
@@ -401,12 +390,18 @@ compileInstr instr = case instr of
       (GPU, CPU) -> cuMemcpyHToD numBytes dest' src'
       (CPU, CPU) -> memcpy dest' src' numBytes
       (GPU, GPU) -> error "not implemented"
-  DeepCopy depth dest src numel -> [] <$ do
-    dest' <- compileExpr dest >>= castVoidPtr
-    src'  <- compileExpr src  >>= castVoidPtr
+  InitializeZeros ptr numel -> [] <$ do
+    let PtrType (_, ty) = getIType ptr
+    ptr' <- compileExpr ptr >>= castVoidPtr
     numel' <- compileExpr numel >>= (`asIntWidth` i64)
-    numBytes <- numel' `mul` i64Lit ptrSize
-    deepcopy (i64Lit depth) dest' src' numBytes
+    numBytes <- sizeof (scalarTy ty) `mul` numel'
+    initializeZeros ptr' numBytes
+  GetAllocSize ptr -> do
+    let PtrType (_, ty) = getIType ptr
+    ptr' <- compileExpr ptr
+    numBytes <- getAllocSize ptr'
+    numElem <- numBytes `sdiv` sizeof (scalarTy ty) >>= (`asIntWidth` idxRepTy)
+    return [numElem]
   Store dest val -> [] <$ do
     dest' <- compileExpr dest
     val'  <- compileExpr val
@@ -672,7 +667,6 @@ impKernelToLLVMGPU env (ImpFunction _ (Abs args body)) = do
     LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple
                      [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
-    idxRepTy = scalarTy $ IIdxRepTy
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     kernelMetaId = L.MetadataNodeID 0
     nvvmAnnotations = L.NamedMetadataDefinition "nvvm.annotations" [kernelMetaId]
@@ -845,11 +839,15 @@ litVal lit = case lit of
   Word64Lit x  -> i64Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
-  PtrLit _ -> error "Shouldn't be compiling pointer literals"
+  PtrLit (_, baseTy) NullPtr -> L.ConstantOperand $ C.Null $ hostPtrTy $ scalarTy baseTy
+  PtrLit _ _ -> error "Shouldn't be compiling pointer non-null literals"
 
 -- TODO: Assert that the integer can be represented in that number of bits!
 withWidth :: Int -> Word32 -> Operand
 withWidth x bits = L.ConstantOperand $ C.Int bits $ fromIntegral x
+
+idxRepTy :: L.Type
+idxRepTy = scalarTy $ IIdxRepTy
 
 i64Lit :: Int -> Operand
 i64Lit x = x `withWidth` 64
@@ -862,9 +860,6 @@ i8Lit x = x `withWidth` 8
 
 i1Lit :: Int -> Operand
 i1Lit x = x `withWidth` 1
-
-nullPtr :: L.Type -> Operand
-nullPtr t = L.ConstantOperand $ C.Null t
 
 withWidthOf :: Int -> Operand -> Operand
 withWidthOf x template = case typeOf template of
@@ -903,6 +898,9 @@ sub x y = emitInstr (typeOf x) $ L.Sub False False x y []
 mul :: LLVMBuilder m => Operand -> Operand -> m Operand
 mul x y = emitInstr (typeOf x) $ L.Mul False False x y []
 
+sdiv :: LLVMBuilder m => Operand -> Operand -> m Operand
+sdiv x y = emitInstr (typeOf x) $ L.SDiv False x y []
+
 gep :: LLVMBuilder m => L.Type -> Operand -> Operand -> m Operand
 #if MIN_VERSION_llvm_hs(15,0,0)
 gep pointeeTy ptr i =
@@ -922,19 +920,22 @@ alloca elems ty = do
   return $ L.LocalReference (hostPtrTy ty) v
   where instr = L.Alloca ty (Just $ i32Lit elems) 0 []
 
-malloc :: LLVMBuilder m => Bool -> L.Type -> Operand -> m Operand
-malloc initialize ty bytes = do
+malloc :: LLVMBuilder m => L.Type -> Operand -> m Operand
+malloc ty bytes = do
   bytes64 <- asIntWidth bytes i64
-  ptr <- if initialize
-    then emitExternCall mallocInitializedFun [bytes64]
-    else emitExternCall mallocFun            [bytes64]
+  ptr <- emitExternCall mallocFun [bytes64]
   castLPtr ty ptr
 
-deepcopy :: LLVMBuilder m => Operand -> Operand -> Operand -> Operand -> m ()
-deepcopy depth dest src numBytes = emitVoidExternCall deepcopyFun [depth, dest, src, numBytes]
+getAllocSize :: LLVMBuilder m => Operand ->  m Operand
+getAllocSize ptr = do
+  ptr' <- castLPtr i8 ptr
+  emitExternCall allocSizeFun [ptr']
 
 memcpy :: LLVMBuilder m => Operand -> Operand -> Operand -> m ()
 memcpy dest src numBytes = emitVoidExternCall memcpyFun [dest, src, numBytes, i1Lit 0]
+
+initializeZeros :: LLVMBuilder m => Operand -> Operand -> m ()
+initializeZeros ptr numBytes = emitVoidExternCall memsetFun [ptr, i8Lit 0, numBytes, i1Lit 0]
 
 free :: LLVMBuilder m => Operand -> m ()
 free ptr = do
@@ -1253,15 +1254,14 @@ mathFlags = L.noFastMathFlags { L.allowContract = allowContractions }
 mallocFun :: ExternFunSpec
 mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]
 
-deepcopyFun :: ExternFunSpec
-deepcopyFun = ExternFunSpec "deep_copy_dex" L.VoidType [] [] [i64, hostVoidp, hostVoidp, i64]
+allocSizeFun :: ExternFunSpec
+allocSizeFun = ExternFunSpec "dex_allocation_size" i64 [L.NoAlias] [] [hostPtrTy i8]
 
 memcpyFun :: ExternFunSpec
 memcpyFun = ExternFunSpec "llvm.memcpy.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, hostVoidp, i64, i1]
 
-mallocInitializedFun :: ExternFunSpec
-mallocInitializedFun =
-  ExternFunSpec "dex_malloc_initialized" (hostPtrTy i8) [L.NoAlias] [] [i64]
+memsetFun :: ExternFunSpec
+memsetFun = ExternFunSpec "llvm.memset.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, i8, i64, i1]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]

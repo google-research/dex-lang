@@ -51,7 +51,7 @@ getDexString val = do
   Var v <- return val
   TopDataBound (RepVal _ tree) <- lookupAtomName v
   Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
-  PtrBinding (PtrLitVal (CPU, Scalar Word8Type) ptr) <- lookupEnv ptrName
+  PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
   liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
 
 getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n [CAtom n]
@@ -150,14 +150,15 @@ type RawPtr = Ptr ()
 class HasPtrs a where
   traversePtrs :: Applicative f => (PtrType -> RawPtr -> f RawPtr) -> a -> f a
 
-takePtrSnapshot :: PtrType -> RawPtr -> IO PtrSnapshot
-takePtrSnapshot _ ptrVal | ptrVal == nullPtr = return NullPtr
-takePtrSnapshot (CPU, ptrTy) ptrVal = case ptrTy of
+takePtrSnapshot :: PtrType -> PtrLitVal -> IO PtrLitVal
+takePtrSnapshot _ NullPtr = return NullPtr
+takePtrSnapshot (CPU, ptrTy) (PtrLitVal ptrVal) = case ptrTy of
   PtrType eltTy -> do
     childPtrs <- loadPtrPtrs ptrVal
-    PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
-  _ -> ByteArray <$> loadPtrBytes ptrVal
+    PtrSnapshot <$> PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
+  _ -> PtrSnapshot . ByteArray <$> loadPtrBytes ptrVal
 takePtrSnapshot (GPU, _) _ = error "Snapshots of GPU memory not implemented"
+takePtrSnapshot _ (PtrSnapshot _) = error "Already a snapshot"
 {-# SCC takePtrSnapshot #-}
 
 loadPtrBytes :: RawPtr -> IO BS.ByteString
@@ -165,16 +166,27 @@ loadPtrBytes ptr = do
   numBytes <- fromIntegral <$> dexAllocSize ptr
   liftM BS.pack $ peekArray numBytes $ castPtr ptr
 
-loadPtrPtrs :: RawPtr -> IO [RawPtr]
+loadPtrPtrs :: RawPtr -> IO [PtrLitVal]
 loadPtrPtrs ptr = do
   numBytes <- fromIntegral <$> dexAllocSize ptr
-  peekArray (numBytes `div` ptrSize) $ castPtr ptr
+  childPtrs <- peekArray (numBytes `div` ptrSize) $ castPtr ptr
+  forM childPtrs \childPtr ->
+    if childPtr == nullPtr
+      then return NullPtr
+      else return $ PtrLitVal childPtr
 
-restorePtrSnapshot :: PtrSnapshot -> IO RawPtr
-restorePtrSnapshot snapshot = case snapshot of
-  PtrArray  children -> storePtrPtrs =<< mapM restorePtrSnapshot children
-  ByteArray bytes    -> storePtrBytes bytes
-  NullPtr            -> return nullPtr
+restorePtrSnapshot :: PtrLitVal -> IO PtrLitVal
+restorePtrSnapshot NullPtr = return NullPtr
+restorePtrSnapshot (PtrSnapshot snapshot) = case snapshot of
+  PtrArray  children -> do
+    childrenPtrs <- forM children \child ->
+      restorePtrSnapshot child >>= \case
+        NullPtr -> return nullPtr
+        PtrLitVal p -> return p
+        PtrSnapshot _ -> error "expected a pointer literal"
+    PtrLitVal <$> storePtrPtrs childrenPtrs
+  ByteArray bytes -> PtrLitVal <$> storePtrBytes bytes
+restorePtrSnapshot (PtrLitVal _) = error "not a snapshot"
 {-# SCC restorePtrSnapshot #-}
 
 storePtrBytes :: BS.ByteString -> IO RawPtr

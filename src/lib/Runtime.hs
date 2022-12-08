@@ -125,7 +125,9 @@ loadLitVal ptr (Scalar ty) = liftIO case ty of
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
 loadLitVal ptrPtr (PtrType t) = do
   ptr <- liftIO $ peek $ castPtr ptrPtr
-  return $ PtrLit $ PtrLitVal t ptr
+  PtrLit t <$> if ptr == nullPtr
+    then return NullPtr
+    else return $ PtrLitVal ptr
 loadLitVal _ (Vector _ _) = error "Vector loads not implemented"
 
 storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
@@ -135,7 +137,7 @@ storeLitVal ptr val = liftIO case val of
   Word8Lit   x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
-  PtrLit (PtrLitVal _ x) -> poke (castPtr ptr) x
+  PtrLit _ (PtrLitVal x) -> poke (castPtr ptr) x
   _ -> error "not implemented"
 
 foreign import ccall "free_dex"

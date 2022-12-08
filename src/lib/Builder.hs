@@ -398,9 +398,10 @@ emitObjFile hint objFile names = do
 
 lookupPtrName :: EnvReader m => PtrName n -> m n (PtrType, Ptr ())
 lookupPtrName v = lookupEnv v >>= \case
-  PtrBinding p -> case p of
-    PtrLitVal ty ptr -> return (ty, ptr)
-    PtrSnapshot _ _ -> error "this case is only for serialization"
+  PtrBinding ty p -> case p of
+    PtrLitVal ptr -> return (ty, ptr)
+    PtrSnapshot _ -> error "this case is only for serialization"
+    NullPtr       -> error "not implemented"
 
 getCache :: EnvReader m => m n (Cache n)
 getCache = withEnv $ envCache . topEnv

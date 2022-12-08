@@ -167,7 +167,7 @@ instance Color c => CheckableE (Binding c) where
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     FunObjCodeBinding objfile m         -> FunObjCodeBinding <$> pure objfile <*> substM m
     ModuleBinding     md                -> ModuleBinding     <$> substM md
-    PtrBinding        ptr               -> PtrBinding        <$> return ptr
+    PtrBinding        ty ptr            -> PtrBinding        <$> return ty <*> return ptr
     -- TODO(alex): consider checkE below?
     EffectBinding     eff               -> EffectBinding     <$> substM eff
     HandlerBinding    h                 -> HandlerBinding    <$> substM h
@@ -249,7 +249,7 @@ instance HasType r (Atom r) where
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
     PtrVar v -> substM v >>= lookupEnv >>= \case
-      PtrBinding p -> return $ PtrTy $ ptrLitType p
+      PtrBinding ty _ -> return $ PtrTy ty
     TypeCon _ defName params -> do
       def <- lookupDataDef =<< substM defName
       params' <- checkE params
