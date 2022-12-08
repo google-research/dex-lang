@@ -1261,7 +1261,7 @@ memcpyFun :: ExternFunSpec
 memcpyFun = ExternFunSpec "llvm.memcpy.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, hostVoidp, i64, i1]
 
 memsetFun :: ExternFunSpec
-memsetFun = ExternFunSpec "llvm.memset.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, i8, i64, i1]
+memsetFun = ExternFunSpec "llvm.memset.p0i8.i64" L.VoidType [] [] [hostVoidp, i8, i64, i1]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]
