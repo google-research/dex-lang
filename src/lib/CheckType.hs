@@ -167,7 +167,7 @@ instance Color c => CheckableE (Binding c) where
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     FunObjCodeBinding objfile m         -> FunObjCodeBinding <$> pure objfile <*> substM m
     ModuleBinding     md                -> ModuleBinding     <$> substM md
-    PtrBinding        ptr               -> PtrBinding        <$> return ptr
+    PtrBinding        ty ptr            -> PtrBinding        <$> return ty <*> return ptr
     -- TODO(alex): consider checkE below?
     EffectBinding     eff               -> EffectBinding     <$> substM eff
     HandlerBinding    h                 -> HandlerBinding    <$> substM h
@@ -183,7 +183,7 @@ instance CheckableE (AtomBinding r) where
     IxBound  ixTy       -> IxBound     <$> checkE ixTy
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
-    PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
+    TopDataBound val -> TopDataBound <$> substM val
     TopFunBound ty f -> do
       ty' <- substM ty
       TopFunBound ty' <$> case f of
@@ -248,6 +248,8 @@ instance HasType r (Atom r) where
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
+    PtrVar v -> substM v >>= lookupEnv >>= \case
+      PtrBinding ty _ -> return $ PtrTy ty
     TypeCon _ defName params -> do
       def <- lookupDataDef =<< substM defName
       params' <- checkE params
@@ -263,31 +265,9 @@ instance HasType r (Atom r) where
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
-    DepPairRef l (Abs b r) ty -> do
-      ty' <- checkTypeE TyKind ty
-      l |: RawRefTy (depPairLeftTy ty')
-      checkB b \b' -> do
-        ty'' <- sinkM ty'
-        rTy <- instantiateDepPairTy ty'' $ Var (binderName b')
-        r |: RawRefTy rTy
-      return $ RawRefTy $ DepPairTy ty'
-    BoxedRef (Abs (NonDepNest bs ptrsAndSizes) body) -> do
-      ptrTys <- forM ptrsAndSizes \(BoxPtr ptr numel) -> do
-        numel |: IdxRepTy
-        ty@(PtrTy _) <- getTypeE ptr
-        return ty
-      withFreshBinders ptrTys \bs' vs -> do
-        extendSubst (bs @@> vs) do
-          bodyTy <- getTypeE body
-          liftHoistExcept $ hoist bs' bodyTy
-    AtomicIVar (LeftE v) t -> do
-      ImpNameBinding t' <- lookupEnv =<< substM v
-      assertEq t t' ""
-      return $ BaseTy t
-    AtomicIVar (RightE v) t -> do
-      PtrBinding pt <- lookupEnv =<< substM v
-      assertEq t (litType $ PtrLit pt) ""
-      return $ BaseTy t
+    RepValAtom dRepVal -> do
+      RepVal ty _ <- forceDRepVal =<< substM dRepVal
+      return ty
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -539,31 +519,6 @@ typeCheckPrimCon con = case con of
         e |: dataDefRep cons
       _ -> error $ "Unsupported newtype: " ++ pprint ty
     return ty'
-  BaseTypeRef p -> do
-    (PtrTy (_, b)) <- getTypeE p
-    return $ RawRefTy $ BaseTy b
-  TabRef tabTy -> do
-    TabTy binder (RawRefTy a) <- getTypeE tabTy
-    return $ RawRefTy $ TabTy binder a
-  ConRef conRef -> case conRef of
-    ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM typeCheckRef xs)
-    Newtype ty e -> do
-      ty' <- substM ty
-      case ty' of
-        NatTy      -> e|:(RawRefTy IdxRepTy)
-        TC (Fin _) -> e|:(RawRefTy IdxRepTy)
-        StaticRecordTy tys -> e|:(RawRefTy $ ProdTy $ toList tys)
-        VariantTy (NoExt tys) -> e|:(RawRefTy $ SumTy $ toList tys)
-        TypeCon _ defName params -> do
-          def <- lookupDataDef defName
-          cons <- checkedInstantiateDataDef def params
-          e |: RawRefTy (dataDefRep cons)
-        _ -> error $ "Unsupported newtype reference: " ++ pprint ty
-      return $ RawRefTy ty'
-    SumAsProd tys tag _ -> do    -- TODO: check args!
-      tag |:(RawRefTy TagRepTy)
-      RawRefTy . SumTy <$> traverse substM tys
-    _ -> error $ "Not a valid ref: " ++ pprint conRef
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy method  -> do
     dictTy'@(DictTy (DictType _ className params)) <- checkTypeE TyKind dictTy
@@ -623,7 +578,7 @@ typeCheckPrimOp op = case op of
   IOAlloc t n -> do
     n |: IdxRepTy
     declareEff IOEffect
-    return $ PtrTy (Heap CPU, t)
+    return $ PtrTy (CPU, t)
   IOFree ptr -> do
     PtrTy _ <- getTypeE ptr
     declareEff IOEffect
@@ -762,7 +717,7 @@ typeCheckPrimOp op = case op of
     ty -> error $ "Not a sum type: " ++ pprint ty
   OutputStream ->
     return $ BaseTy $ hostPtrTy $ Scalar Word8Type
-    where hostPtrTy ty = PtrType (Heap CPU, ty)
+    where hostPtrTy ty = PtrType (CPU, ty)
   ProjBaseNewtype x -> getTypeE x >>= projectNewtype
   Perform eff i -> do
     Eff (OneEffect (UserEffect effName)) <- return eff
@@ -987,11 +942,6 @@ checkArgTys (Nest b bs) (x:xs) = do
   checkArgTys bs' xs
 checkArgTys _ _ = throw TypeErr $ "wrong number of args"
 {-# INLINE checkArgTys #-}
-
-typeCheckRef :: Typer m => HasType r e => e i -> m i o (Type r o)
-typeCheckRef x = do
-  TC (RefType _ a) <- getTypeE x
-  return a
 
 checkArrowAndEffects :: Fallible m => Arrow -> EffectRow n -> m ()
 checkArrowAndEffects PlainArrow _ = return ()
@@ -1256,8 +1206,8 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
       resultTys <- checkScalarOrPairType resultTy
       let cc = case length resultTys of
                  0 -> error "Not implemented"
-                 1 -> FFIFun
-                 _ -> FFIMultiResultFun
+                 1 -> FFICC
+                 _ -> FFIMultiResultCC
       return $ IFunType cc [argTy] resultTys
     Nest b' rest -> do
       let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy

@@ -69,10 +69,6 @@ data PrimCon e =
       | SumAsProd [e] e   [e]   -- type, tag, payload
       | LabelCon String
       | Newtype e e           -- type, payload
-      -- References
-      | BaseTypeRef e
-      | TabRef e
-      | ConRef (PrimCon e)
       -- Misc hacks
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
       -- Only used during type inference
@@ -270,24 +266,28 @@ data LetAnn = PlainLet
 
 -- TODO: we could consider using some mmap-able instead of ByteString
 data PtrSnapshot = ByteArray BS.ByteString
-                 | PtrArray [PtrSnapshot]
-                 | NullPtr
+                 | PtrArray [PtrLitVal]
                    deriving (Show, Eq, Ord, Generic)
 
-data PtrLitVal = PtrLitVal   PtrType (Ptr ())
-               | PtrSnapshot PtrType PtrSnapshot
+data PtrLitVal = PtrLitVal (Ptr ())
+               | PtrSnapshot PtrSnapshot
+               | NullPtr
                  deriving (Show, Eq, Ord, Generic)
 
+type PtrStoreRep = Maybe PtrSnapshot
 instance Store PtrSnapshot where
 instance Store PtrLitVal where
   size = SI.VarSize \case
-    PtrSnapshot t p -> SI.getSize (t, p)
-    PtrLitVal _ _ -> error "can't serialize pointer literals"
+    PtrSnapshot p -> SI.getSize (Just p  :: PtrStoreRep)
+    NullPtr       -> SI.getSize (Nothing :: PtrStoreRep)
+    PtrLitVal p   -> error $ "can't serialize pointer literal: " ++ show p
   peek = do
-    (t, p) <- peek
-    return $ PtrSnapshot t p
-  poke (PtrSnapshot t p) = poke (t, p)
-  poke (PtrLitVal _ _) = error "can't serialize pointer literals"
+    peek >>= \case
+      Just p  -> return $ PtrSnapshot p
+      Nothing -> return $ NullPtr
+  poke (PtrSnapshot p) = poke (Just p  :: PtrStoreRep)
+  poke (NullPtr)       = poke (Nothing :: PtrStoreRep)
+  poke (PtrLitVal _)   = error "can't serialize pointer literals"
 
 data LitVal = Int64Lit   Int64
             | Int32Lit   Int32
@@ -300,7 +300,7 @@ data LitVal = Int64Lit   Int64
               -- serialized we only use it in a few places, like the interpreter
               -- and for passing values to LLVM's JIT. Otherwise, pointers
               -- should be referred to by name.
-            | PtrLit PtrLitVal
+            | PtrLit PtrType PtrLitVal
               deriving (Show, Eq, Ord, Generic)
 
 data ScalarBaseType = Int64Type | Int32Type
@@ -313,9 +313,11 @@ data BaseType = Scalar  ScalarBaseType
                 deriving (Show, Eq, Ord, Generic)
 
 data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
-data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
+type AddressSpace = Device
 type PtrType = (AddressSpace, BaseType)
 
+-- TODO: give this a different name, because it could easily get confused with
+-- Foreign.Storable.SizeOf which can have the same type!
 sizeOf :: BaseType -> Int
 sizeOf t = case t of
   Scalar Int64Type   -> 8
@@ -402,7 +404,6 @@ instance AlphaHashableE    (EffectRowP Name)
 
 instance Store Arrow
 instance Store LetAnn
-instance Store AddressSpace
 instance Store RWS
 instance Store Direction
 instance Store UnOp
@@ -423,7 +424,6 @@ instance Store a => Store (PrimHof a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (BaseMonoidP a)
 
-instance Hashable AddressSpace
 instance Hashable RWS
 instance Hashable Direction
 instance Hashable UnOp

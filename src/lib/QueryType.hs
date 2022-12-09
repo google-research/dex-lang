@@ -17,7 +17,7 @@ module QueryType (
   numNaryPiArgs, naryLamExprType, specializedFunType,
   projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
-  isNewtype, instantiateHandlerType,
+  isNewtype, instantiateHandlerType, getDestBlockType, forceDRepVal, toDRepVal,
   ) where
 
 import Control.Category ((>>>))
@@ -54,6 +54,13 @@ getTypeSubst e = do
 getType :: (EnvReader m, HasType r e) => e n -> m n (Type r n)
 getType e = liftTypeQueryM idSubst $ getTypeE e
 {-# INLINE getType #-}
+
+-- TODO: make `DestBlock` a newtype with a real `HasType` instance
+type DestBlock r = Abs (Binder r) (Block r)
+getDestBlockType :: EnvReader m => DestBlock r n -> m n (Type r n)
+getDestBlockType (Abs (_:>RawRefTy ansTy) _) = return ansTy
+getDestBlockType _ = error "Expected a reference type for body destination"
+{-# INLINE getDestBlockType #-}
 
 -- === Querying effects ===
 
@@ -177,8 +184,7 @@ litType v = case v of
   Word64Lit  _ -> Scalar Word64Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
-  PtrLit (PtrSnapshot t _) -> PtrType t
-  PtrLit (PtrLitVal   t _) -> PtrType t
+  PtrLit ty _  -> PtrType ty
 
 lamExprTy :: LamBinder r n l -> Type r l -> Type r n
 lamExprTy (LamBinder b ty arr eff) bodyTy =
@@ -335,6 +341,8 @@ instance HasType r (Atom r) where
     Con con -> getTypePrimCon con
     TC _ -> return TyKind
     Eff _ -> return EffKind
+    PtrVar v -> substM v >>= lookupEnv >>= \case
+      PtrBinding ty _ -> return $ PtrTy ty
     TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
@@ -342,16 +350,9 @@ instance HasType r (Atom r) where
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
     ACase _ _ resultTy -> substM resultTy
-    DepPairRef _ _ ty -> do
-      ty' <- substM ty
-      return $ RawRefTy $ DepPairTy ty'
-    BoxedRef (Abs (NonDepNest bs ptrsAndSizes) body) -> do
-      ptrTys <- forM ptrsAndSizes \(BoxPtr ptr _) -> getTypeE ptr
-      withFreshBinders ptrTys \bs' vs -> do
-        extendSubst (bs @@> map Rename vs) do
-          bodyTy <- getTypeE body
-          return $ ignoreHoistFailure $ hoist bs' bodyTy
-    AtomicIVar _ t -> return $ BaseTy t
+    RepValAtom dRepVal -> do
+      RepVal ty _ <- substM dRepVal >>= forceDRepVal
+      return ty
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -395,10 +396,38 @@ projectNewtype ty = case ty of
   RecordTy _ -> throw CompilerErr "Can't project partially-known records"
   _ -> error $ "not a newtype: " ++ pprint ty
 
-getTypeRef :: HasType r e => e i -> TypeQueryM r i o (Type r o)
-getTypeRef x = do
-  TC (RefType _ a) <- getTypeE x
-  return a
+forceDRepVal
+  :: (r `Sat` Is SimpToImpIR, EnvReader m)
+  => DRepVal r n -> m n (RepVal r n)
+forceDRepVal repVal = liftTypeQueryM idSubst $ forceDRepVal' repVal
+
+forceDRepVal'
+  :: r `Sat` Is SimpToImpIR
+  => DRepVal r n -> TypeQueryM r i n (RepVal r n)
+forceDRepVal' (DRepVal [] ty tree) = return $ RepVal ty tree
+forceDRepVal' (DRepVal (p:ps) ty tree) = do
+  RepVal ty' tree' <- forceDRepVal' (DRepVal ps ty tree)
+  case p of
+    ProjectProduct i -> do
+      case ty' of
+        ProdTy tys -> do
+          Branch trees <- return tree'
+          return $ RepVal (tys!!i) (trees!!i)
+        DepPairTy t -> do
+          Branch [leftTree, rightTree] <- return tree'
+          let leftVal = RepVal (depPairLeftTy t) leftTree
+          case i of
+            0 -> return leftVal
+            1 -> do
+              rightTy <- instantiateDepPairTy t (RepValAtom $ toDRepVal leftVal)
+              return $ RepVal rightTy rightTree
+            _ -> error "bad dependent pair projection index"
+        _ -> error $ "not a product type: " ++ pprint ty'
+    UnwrapCompoundNewtype -> RepVal <$> projectNewtype ty' <*> pure tree'
+    UnwrapBaseNewtype     -> RepVal <$> projectNewtype ty' <*> pure tree'
+
+toDRepVal ::  RepVal r n -> DRepVal r n
+toDRepVal (RepVal ty tree) = DRepVal [] ty tree
 
 instance HasType r (LamExpr r) where
   getTypeE (LamExpr (LamBinder b ty arr effs) body) = do
@@ -425,18 +454,6 @@ getTypePrimCon con = case con of
   SumCon tys _ _ -> SumTy <$> traverse substM tys
   SumAsProd tys _ _ -> SumTy <$> traverse substM tys
   Newtype ty _ -> substM ty
-  BaseTypeRef p -> do
-    (PtrTy (_, b)) <- getTypeE p
-    return $ RawRefTy $ BaseTy b
-  TabRef tabTy -> do
-    TabTy binder (RawRefTy a) <- getTypeE tabTy
-    return $ RawRefTy $ TabTy binder a
-  ConRef conRef -> case conRef of
-    ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM getTypeRef xs)
-    Newtype ty _ -> RawRefTy <$> substM ty
-    SumAsProd tys _ _ -> do
-      RawRefTy . SumTy <$> traverse substM tys
-    _ -> error $ "Not a valid ref: " ++ pprint conRef
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
@@ -553,7 +570,7 @@ getTypePrimOp op = case op of
     getTypeE ref >>= \case
       RefTy h (ProdTy tys) -> return $ RefTy h $ tys !! i
       ty -> error $ "Not a reference to a product: " ++ pprint ty
-  IOAlloc t _ -> return $ PtrTy (Heap CPU, t)
+  IOAlloc t _ -> return $ PtrTy (CPU, t)
   IOFree _ -> return UnitTy
   PtrOffset arr _ -> getTypeE arr
   PtrLoad ptr -> do
@@ -647,7 +664,7 @@ getTypePrimOp op = case op of
     ty -> error $ "Not a sum type: " ++ pprint ty
   OutputStream ->
     return $ BaseTy $ hostPtrTy $ Scalar Word8Type
-    where hostPtrTy ty = PtrType (Heap CPU, ty)
+    where hostPtrTy ty = PtrType (CPU, ty)
   ProjBaseNewtype x -> projectNewtype =<< getTypeE x
   Perform eff i -> do
     Eff (OneEffect (UserEffect effName)) <- return eff

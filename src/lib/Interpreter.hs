@@ -9,7 +9,7 @@ module Interpreter (
   liftInterpM, InterpM, Interp, unsafeLiftInterpMCatch,
   indices, indicesLimit, matchUPat,
   applyIntBinOp, applyIntCmpOp,
-  applyFloatBinOp, applyFloatUnOp) where
+  applyFloatBinOp, applyFloatUnOp, repValToCoreAtom) where
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -33,9 +33,10 @@ import Name
 import Syntax
 import QueryType
 import PPrint ()
-import Util ((...), iota, onSndM, restructure)
+import Util ((...), iota, onSndM, restructure, Tree (..), zipTrees, forMZipped)
 import Builder
 import CheapReduction (cheapNormalize)
+import Imp
 
 newtype InterpM (r::IR) (i::S) (o::S) (a:: *) =
   InterpM { runInterpM' :: SubstReaderT (AtomSubstVal r) (EnvReaderT IO) i o a }
@@ -44,7 +45,7 @@ newtype InterpM (r::IR) (i::S) (o::S) (a:: *) =
            , SubstReader (AtomSubstVal r))
 
 class ( SubstReader (AtomSubstVal r) m, EnvReader2 m
-      , Monad2 m, MonadIO2 m)
+      , Monad2 m, MonadIO2 m, Fallible2 m)
       => Interp r m | m -> r
 
 instance Interp r (InterpM r)
@@ -96,6 +97,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   DictCon _ -> substM atom
   DictTy  _ -> substM atom
   Eff _ -> substM atom
+  PtrVar _ -> substM atom
   TypeCon sn defName (DataDefParams params) -> do
     defName' <- substM defName
     TypeCon sn defName' <$> (DataDefParams <$> mapM (onSndM rec) params)
@@ -104,11 +106,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
     ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
-  -- TODO: we can get rid of these cases. We just need to make the interpreter
-  -- monomorphic, or at least restrict `r` to not allow `SimpToImpIR`.
-  BoxedRef _       -> error "Should only occur in Imp lowering"
-  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
-  AtomicIVar _ _   -> error "Should only occur in Imp lowering"
+  RepValAtom _ -> substM atom
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
   where
     rec x = traverseSurfaceAtomNames x doWithName
@@ -122,9 +120,8 @@ evalAtom atom = traverseSurfaceAtomNames atom \v -> do
       lookupAtomName v' >>= \case
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ evalAtom $ unsafeCoerceIRE @r x
         TopFunBound _ _ -> return $ Var v'
-        PtrLitBound _ ptrName -> do
-          ~(PtrBinding ptr) <- lookupEnv ptrName
-          return $ Con $ Lit $ PtrLit ptr
+        TopDataBound repVal ->
+          unsafeCoerceIRE <$> repValToCoreAtom repVal
         bindingInfo -> error $ "shouldn't have irreducible atom names left. Got " ++ pprint bindingInfo
 {-# SCC evalAtom #-}
 
@@ -193,16 +190,18 @@ evalOp expr = mapM evalAtom expr >>= \case
   UnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  PtrOffset (Con (Lit (PtrLit (PtrLitVal (a, t) p)))) (IdxRepVal i) ->
-    return $ Con $ Lit $ PtrLit (PtrLitVal (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i))
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap CPU, t) p)))) ->
-    Con . Lit <$> liftIO (loadLitVal p t)
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Heap GPU, t) p)))) ->
-    liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
-      loadCUDAArray hostPtr p (sizeOf t)
-      Con . Lit <$> loadLitVal hostPtr t
-  PtrLoad (Con (Lit (PtrLit (PtrLitVal (Stack, _) _)))) ->
-    error $ "Unexpected stack pointer in interpreter"
+  PtrOffset p (IdxRepVal 0) -> return p
+  PtrOffset ptrAtom (IdxRepVal i) -> do
+    ((a, t), p) <- inlinePtrLit ptrAtom
+    return $ Con $ Lit $ PtrLit (a, t) (PtrLitVal $ p `plusPtr` (sizeOf t * fromIntegral i))
+  PtrLoad ptrAtom -> do
+    ((a, t), p) <- inlinePtrLit ptrAtom
+    case a of
+      CPU -> Con . Lit <$> liftIO (loadLitVal p t)
+      GPU ->  do
+        liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
+          loadCUDAArray hostPtr p (sizeOf t)
+          Con . Lit <$> loadLitVal hostPtr t
   CastOp destTy x -> do
     sourceTy <- getType x
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
@@ -362,6 +361,13 @@ indicesLimit sizeReq ixTy = unsafeLiftInterpM $ do
     return $ Left size
 {-# SCC indicesLimit #-}
 
+inlinePtrLit :: (Fallible1 m, EnvReader m) => Atom r n -> m n (PtrType, Ptr ())
+inlinePtrLit (PtrVar v) = do
+  ~(PtrBinding t (PtrLitVal p)) <- lookupEnv v
+  return (t, p)
+inlinePtrLit (Con (Lit (PtrLit t (PtrLitVal p)))) = return (t, p)
+inlinePtrLit _ = fail "not a pointer literal"
+
 -- === Helpers for function evaluation over fixed-width types ===
 
 applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
@@ -388,3 +394,102 @@ applyFloatBinOp f x y = case (x, y) of
 
 applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n
 applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
+
+-- === Working with RepVals ===
+
+-- this whole section should disappear when we implement `Show` at the dex level.
+
+data CoreRepVal n = CoreRepVal (Type CoreIR n) (Tree (Atom CoreIR n))
+
+instance SinkableE CoreRepVal where
+  sinkingProofE = undefined
+
+litIExprToAtom ::  EnvReader m => IExpr n -> m n (Atom CoreIR n)
+litIExprToAtom = \case
+  IVar _ _ -> error "shouldn't have IVar in a literal IExpr"
+  IPtrVar v _ -> return $ PtrVar v
+  ILit x -> return $ Con $ Lit x
+
+repValToCoreAtom :: (EnvReader m, Fallible1 m) => RepVal SimpToImpIR n -> m n (Atom CoreIR n)
+repValToCoreAtom (RepVal topTy topTree) = do
+  topTreeAtoms <- mapM litIExprToAtom topTree
+  liftBuilder do
+    Abs decls result <- buildScoped $ go True $
+      CoreRepVal (sink $ unsafeCoerceIRE topTy) (fmap sink topTreeAtoms)
+    case decls of
+      Empty -> return result
+      _ -> error $ "shouldn't emit decls at the top level"
+ where
+  -- We don't want to actually emit except under a table lambda.
+  -- The `topLevel` flag tells us whether that condition holds.
+  -- Ideally we'd pair it with `Emits`, and have a type-level
+  -- `Maybe (Emits n)`.
+  go :: Emits n
+     => Bool -> CoreRepVal n -> BuilderM CoreIR n (Atom CoreIR n)
+  go topLevel repVal@(CoreRepVal ty tree) = case (ty, tree) of
+    (BaseTy _, Leaf x) -> return x
+    (TabPi (TabPiType (_:>iTy) _), _) -> do
+      buildTabLam noHint iTy \i -> do
+        bodyRepVal <- indexCoreRepVal (sink repVal) (Var i)
+        go False bodyRepVal
+    (ProdTy ts, Branch xs) ->
+      ProdVal <$> forMZipped ts xs  \t x -> rec $ CoreRepVal t x
+    (SumTy  ts, Branch (tag:xs)) -> do
+      tag' <- rec $ CoreRepVal TagRepTy tag
+      if topLevel
+        then do
+          xs'  <- zipWithM (\t x -> rec $ CoreRepVal t x) ts xs
+          return $ Con $ SumAsProd ts tag' xs'
+        else do
+          -- If we're under a table lambda, then we can't unconditionally recur
+          -- into each branch because we might end up loading sizes from
+          -- uninitialized memory and then generating `for` loops using them.
+          let enumVal = Con $ SumAsProd (map (const UnitTy) ts) tag' (map (const UnitVal) ts)
+          buildCase enumVal (SumTy ts) \i _ -> do
+            xs' <- mapM (mapM sinkM) xs
+            ts' <- mapM sinkM ts
+            Con <$> SumCon ts' i <$> go topLevel (CoreRepVal (ts'!!i) (xs'!!i))
+    (DepPairTy t, Branch [left, right]) -> do
+      leftVal  <- rec $ CoreRepVal (depPairLeftTy t) left
+      rightTy <- instantiateDepPairTy t leftVal
+      rightVal <- rec $ CoreRepVal (rightTy) right
+      return $ DepPair leftVal rightVal t
+    (TypeCon _ defName params, _) -> do
+      def <- lookupDataDef defName
+      dcs <- instantiateDataDef def params
+      goNewtype $ dataDefRep dcs
+    (StaticRecordTy ts   , _) -> goNewtype (ProdTy $ toList ts)
+    (VariantTy (NoExt ts), _) -> goNewtype (SumTy  $ toList ts)
+    (NatTy, _)      -> goNewtype IdxRepTy
+    (TC (Fin _), _) -> goNewtype NatTy
+    _ -> error $ "unexpected type/tree pair: " ++ pprint ty ++ "\n" ++ show tree
+    where
+      goNewtype t = (Con . Newtype ty) <$> go topLevel (CoreRepVal t tree)
+      rec = go topLevel
+
+-- CoreIR version of `indexRepVal` (we could try to de-dup by thinking harder
+-- about what they have in common, but wew plan to delete this soon anyway).
+indexCoreRepVal :: Emits n => CoreRepVal n -> Atom CoreIR n -> BuilderM CoreIR n (CoreRepVal n)
+indexCoreRepVal (CoreRepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
+  eltTy' <- applySubst (b@>SubstVal i) eltTy
+  ord <- ordinal ixTy i
+  leafTys <- typeToTree (unsafeCoerceIRE tabTy)
+  vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
+    BufferPtr (BufferType (EmptyAbs ixStruct) _) <- return $ getIExprInterpretation leafTy
+    ixStruct' <- return $ EmptyAbs (fmapNest (\(ib:>ann) -> ib:> unsafeCoerceIRE ann) ixStruct)
+    offset <- computeOffsetCore ixStruct' ord
+    ptr' <- ptrOffset ptr offset
+    case ixStruct of
+      Nest _ Empty -> unsafePtrLoad ptr'
+      _            -> return ptr'
+  return $ CoreRepVal eltTy' vals'
+indexCoreRepVal _ _ = error "expected table type"
+
+computeOffsetCore :: Emits n => IndexStructure CoreIR n -> CAtom n -> BuilderM CoreIR n (CAtom n)
+computeOffsetCore (Abs idxNest UnitE) idx = do
+  idxNest' <- return $ fmapNest (\(b:>t) -> b:>unsafeCoerceIRE t) idxNest
+  idx'  <- return $ unsafeCoerceIRE idx
+  block <- liftBuilder $ buildBlock $
+    computeOffset (sink (EmptyAbs idxNest')) (sink idx')
+  block' <- return $ unsafeCoerceIRE block
+  emitBlock block'

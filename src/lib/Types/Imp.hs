@@ -63,11 +63,18 @@ instance IsBool IsCUDARequired where
   toBool CUDANotRequired = False
 
 data CallingConvention =
-   CEntryFun
- | CInternalFun
- | EntryFun IsCUDARequired
- | FFIFun
- | FFIMultiResultFun
+   -- Scalar args by value, arrays by pointer, dests allocated by caller and passed as pointers.
+   -- Used for standalone functions and for functions called from Python without XLA.
+   StandardCC
+   -- Used for functions called from within an XLA computation.
+ | XLACC
+   -- Dests allocated within the function and passed back to the caller (packed
+   -- in a number-of-results-length buffer supplied by the caller)
+ | EntryFunCC IsCUDARequired
+   -- Scalars only. Args as args, result as result. Used for calling C function
+   -- from Dex that return a single scalar.
+ | FFICC
+ | FFIMultiResultCC
  | CUDAKernelLaunch
  | MCThreadLaunch
    deriving (Show, Eq, Generic)
@@ -94,14 +101,18 @@ data ImpInstr n =
  | ICall (ImpFunName n) [IExpr n]
  | Store (IExpr n) (IExpr n)           -- dest, val
  | Alloc AddressSpace IType (Size n)
+ | StackAlloc IType (Size n)
  | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
  | Free (IExpr n)
+ | InitializeZeros (IExpr n) (IExpr n)  -- ptr, numel
+ | GetAllocSize (IExpr n)  -- gives size in numel
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
  | IBitcastOp IType (IExpr n)
  | IPrimOp (IPrimOp n)
  | IVectorBroadcast (IExpr n) IVectorType
  | IVectorIota                IVectorType
+ | DebugPrint String (IExpr n) -- just prints an int64 value
    deriving (Show, Generic)
 
 iBinderType :: IBinder n l -> IType
@@ -207,18 +218,22 @@ instance GenericE ImpInstr where
   {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
   {- ICall -}   (ImpFunName `PairE` ListE IExpr)
   {- Store -}   (IExpr `PairE` IExpr)
-    ) (EitherE4
+    ) (EitherE7
   {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
+  {- StackAlloc -} (LiftE IType `PairE` Size)
   {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
+  {- InitializeZeros -}  (IExpr `PairE` IExpr)
+  {- GetAllocSize -} IExpr
   {- Free -}    (IExpr)
   {- IThrowE -} (UnitE)
     ) (EitherE3
   {- ICastOp    -} (LiftE IType `PairE` IExpr)
   {- IBitcastOp -} (LiftE IType `PairE` IExpr)
   {- IPrimOp    -} (ComposeE PrimOp IExpr)
-    ) (EitherE2
+    ) (EitherE3
   {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
   {- IVectorIota      -} (              LiftE IVectorType)
+  {- DebugPrint       -} (LiftE String `PairE` IExpr)
     )
 
 
@@ -234,15 +249,19 @@ instance GenericE ImpInstr where
     Store dest val      -> Case1 $ Case3 $ dest `PairE` val
 
     Alloc a t s            -> Case2 $ Case0 $ LiftE (a, t) `PairE` s
-    MemCopy dest src numel -> Case2 $ Case1 $ dest `PairE` src `PairE` numel
-    Free ptr               -> Case2 $ Case2 ptr
-    IThrowError            -> Case2 $ Case3 UnitE
+    StackAlloc t s         -> Case2 $ Case1 $ LiftE t `PairE` s
+    MemCopy dest src numel -> Case2 $ Case2 $ dest `PairE` src `PairE` numel
+    InitializeZeros ptr numel -> Case2 $ Case3 $ ptr `PairE` numel
+    GetAllocSize ptr       -> Case2 $ Case4 $ ptr
+    Free ptr               -> Case2 $ Case5 ptr
+    IThrowError            -> Case2 $ Case6 UnitE
 
     ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
     IBitcastOp idt ix -> Case3 $ Case1 $ LiftE idt `PairE` ix
     IPrimOp op     -> Case3 $ Case2 $ ComposeE op
     IVectorBroadcast v vty -> Case4 $ Case0 $ v `PairE` LiftE vty
     IVectorIota vty        -> Case4 $ Case1 $ LiftE vty
+    DebugPrint s x         -> Case4 $ Case2 $ LiftE s `PairE` x
   {-# INLINE fromE #-}
 
   toE instr = case instr of
@@ -262,9 +281,12 @@ instance GenericE ImpInstr where
 
     Case2 instr' -> case instr' of
       Case0 (LiftE (a, t) `PairE` s )         -> Alloc a t s
-      Case1 (dest `PairE` src `PairE` numel)  -> MemCopy dest src numel
-      Case2 ptr                               -> Free ptr
-      Case3 UnitE                             -> IThrowError
+      Case1 (LiftE t `PairE` s )              -> StackAlloc t s
+      Case2 (dest `PairE` src `PairE` numel)  -> MemCopy dest src numel
+      Case3 (ptr `PairE` numel)               -> InitializeZeros ptr numel
+      Case4 ptr                               -> GetAllocSize ptr
+      Case5 ptr                               -> Free ptr
+      Case6 UnitE                             -> IThrowError
       _ -> error "impossible"
 
     Case3 instr' -> case instr' of
@@ -276,6 +298,7 @@ instance GenericE ImpInstr where
     Case4 instr' -> case instr' of
       Case0 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
       Case1 (          LiftE vty) -> IVectorIota vty
+      Case2 (LiftE s `PairE` x)   -> DebugPrint s x
       _ -> error "impossible"
 
     _ -> error "impossible"

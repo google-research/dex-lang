@@ -589,7 +589,7 @@ toPairE :: (e1 n, e2 n) -> PairE e1 e2 n
 toPairE (x, y) = (PairE x y)
 
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
-     deriving (Show, Eq, Generic)
+     deriving (Show, Eq, Ord, Generic)
 
 leftsE :: [EitherE e1 e2 n] -> [e1 n]
 leftsE = \case

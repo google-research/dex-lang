@@ -299,8 +299,8 @@ transposeAtom atom ct = case atom of
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
+  PtrVar _        -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
-  DepPairRef _ _ _ -> error "Unexpected ref"
   ProjectElt idxs v -> do
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"
@@ -360,9 +360,6 @@ transposeCon con ct = case con of
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   LabelCon _     -> notTangent
-  BaseTypeRef _  -> notTangent
-  TabRef _       -> notTangent
-  ConRef _       -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

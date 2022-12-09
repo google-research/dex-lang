@@ -237,6 +237,8 @@ evalSourceBlock'
 evalSourceBlock' mname block = case sbContents block of
   EvalUDecl decl -> execUDecl mname decl
   Command cmd expr -> case cmd of
+    -- TODO: we should filter the top-level emissions we produce in this path
+    -- we want cache entries but we don't want dead names.
     EvalExpr fmt -> when (mname == Main) do
       annExpr <- case fmt of
         Printed -> return expr
@@ -682,7 +684,7 @@ compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  fImp <- toImpStandaloneFunction fSimp
+  fImp <- toImpFunction StandardCC fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -762,10 +764,9 @@ evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
   let (cc, _needsSync) =
-        case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
-                        _        -> (EntryFun CUDANotRequired, False)
-  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-    blockToImpFunction backend cc block
+        case backend of LLVMCUDA -> (EntryFunCC CUDARequired   , True )
+                        _        -> (EntryFunCC CUDANotRequired, False)
+  impFun <- checkPass ImpPass $ blockToImpFunction backend cc block
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
@@ -777,14 +778,9 @@ evalLLVM block = do
     $ LinktimeVals reqFunPtrs reqDataPtrs
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  -- TODO: this unsafe coerce won't be needed once we treat everything as a
-  -- function, because then we won't need the reconstruction at all. If we were
-  -- going to keep it this way, the right thing to do would be to traverse the
-  -- atom and throw an error if we find any `BoxedRef`
-  Abs bs finalResult <- return reconAtom
-  let substVals = map SubstVal resultValsNoPtrs :: [SubstVal ImpNameC (Atom SimpToImpIR) ImpNameC n]
-  unsafeCoerceIRE <$> applySubst (bs @@> substVals) finalResult
+  resultTy <- getDestBlockType block
+  result <- repValFromFlatList resultTy resultVals
+  Var <$> emitBinding "data" (AtomNameBinding $ TopDataBound result)
 {-# SCC evalLLVM #-}
 
 compileToObjCode
@@ -921,14 +917,11 @@ storeCache env = liftIO do
   BS.writeFile cachePath $ encode sEnv
 
 snapshotPtrs :: MonadIO m => RecSubst Binding n -> m (RecSubst Binding n)
-snapshotPtrs bindings =
-  RecSubst <$> traverseSubstFrag f (fromRecSubst bindings)
-  where
-    f = \case
-      PtrBinding (PtrLitVal ty p) ->
-        liftIO $ PtrBinding . PtrSnapshot ty <$> takePtrSnapshot ty p
-      PtrBinding (PtrSnapshot _ _) -> error "shouldn't have snapshots"
-      b -> return b
+snapshotPtrs bindings = RecSubst <$> traverseSubstFrag
+  (\case
+      PtrBinding ty p -> liftIO $ PtrBinding ty <$> takePtrSnapshot ty p
+      b -> return b)
+  (fromRecSubst bindings)
 
 traverseBindingsTopStateEx
   :: Monad m => TopStateEx
@@ -973,9 +966,7 @@ clearCache = liftIO do
 
 restorePtrSnapshots :: MonadIO m => TopStateEx -> m TopStateEx
 restorePtrSnapshots s = traverseBindingsTopStateEx s \case
-  PtrBinding (PtrSnapshot ty snapshot) ->
-    liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
-  PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
+  PtrBinding ty p  -> liftIO $ PtrBinding ty <$> restorePtrSnapshot p
   b -> return b
 
 getFilteredLogger :: Topper m => m n PassLogger

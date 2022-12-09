@@ -67,7 +67,7 @@ instance Storable CAtom where
         Float32Lit v -> val @Word64 1 4 >> val 2 v
         Word32Lit  v -> val @Word64 1 5 >> val 2 v
         Word64Lit  v -> val @Word64 1 6 >> val 2 v
-        PtrLit     _ -> error "Unsupported"
+        PtrLit   _ _ -> error "Unsupported"
     CRectArray _ _ _ -> error "Unsupported"
     where
       val :: forall a. Storable a => Int -> a -> IO ()

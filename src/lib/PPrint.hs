@@ -41,7 +41,7 @@ import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
 import Occurrence (Count (Bounded), UsageInfo (..))
 import Occurrence qualified as Occ
-import Util (restructure)
+import Util (restructure, Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -263,6 +263,7 @@ instance PrettyPrec (Atom r n) where
     NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
+    PtrVar v -> atPrec ArgPrec $ p v
     TypeCon "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
       -> atPrec LowestPrec $ ".."  <> pApp i
     TypeCon "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
@@ -284,13 +285,21 @@ instance PrettyPrec (Atom r n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
-    BoxedRef (Abs (NonDepNest b ptrsSizes) body) -> atPrec LowestPrec $
-      "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
+    RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
-    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
-      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
-    AtomicIVar v _ -> atPrec ArgPrec $ p v
+
+instance Pretty (DRepVal r n) where
+  pretty (DRepVal [] ty tree) = pretty $ RepVal ty tree
+  pretty (DRepVal projs ty tree) = "Projecting" <+> p projs <+> p (RepVal ty tree)
+
+instance Pretty (RepVal r n) where
+  pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
+
+instance Pretty a => Pretty (Tree a) where
+  pretty = \case
+    Leaf x -> pretty x
+    Branch xs -> pretty xs
 
 instance Pretty (BoxPtr r n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
@@ -461,8 +470,8 @@ instance Pretty (AtomBinding r n) where
     IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    PtrLitBound _ ptr -> p ptr
     TopFunBound _ f -> p f
+    TopDataBound (RepVal ty _) -> "Top data with type: " <+> p ty
 
 instance Pretty (TopFunBinding n) where
   pretty = \case
@@ -502,7 +511,7 @@ instance Pretty (Binding s n) where
     ImpFunBinding f -> pretty f
     FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
-    PtrBinding     _ -> "<ptr>"
+    PtrBinding   _ _ -> "<ptr>"
     -- TODO(alex): do something actually useful here
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
@@ -909,22 +918,23 @@ instance Pretty (ImpInstr n)  where
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
-  pretty (Alloc loc t s) =
-    locStr <+> p t <> "[" <> sizeStr <> "]"
-    where
-      locStr = case loc of Stack -> "alloca"
-                           _     -> "alloc"
-      sizeStr = case s of
-        ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
-        _ -> p s
-
+  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> sizeStr s <> "]"
+  pretty (StackAlloc t s) = "alloca" <+> p t <> "[" <> sizeStr s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
+  pretty (InitializeZeros ptr numel) = "initializeZeros" <+> p ptr <+> p numel
+  pretty (GetAllocSize ptr) = "getAllocSize" <+> p ptr
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"
   pretty IThrowError      = "throwError"
   pretty (ICall f args)   = "call" <+> p f <+> p args
   pretty (IVectorBroadcast v _) = "vbroadcast" <+> p v
   pretty (IVectorIota _) = "viota"
+  pretty (DebugPrint s x) = "debug_print" <+> p (show s) <+> p x
+
+sizeStr :: IExpr n -> Doc ann
+sizeStr s = case s of
+  ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
+  _ -> p s
 
 instance Pretty BaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec BaseType where
@@ -933,9 +943,7 @@ instance PrettyPrec BaseType where
     Vector shape sb -> atPrec ArgPrec $ encloseSep "<" ">" "x" $ (p <$> shape) ++ [p sb]
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
-instance Pretty AddressSpace where
-  pretty Stack    = "stack"
-  pretty (Heap d) = p (show d)
+instance Pretty AddressSpace where pretty d = p (show d)
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
@@ -1003,9 +1011,6 @@ prettyPrecPrimCon con = case con of
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   Newtype ty e -> atPrec LowestPrec $ pArg e <> "@" <> (parens $ pLowest ty)
-  BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
-  TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
@@ -1070,9 +1075,10 @@ instance PrettyPrec LitVal where
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (PtrLit (PtrLitVal ty x)) =
+  prettyPrec (PtrLit ty (PtrLitVal x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
-  prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
+  prettyPrec (PtrLit _ NullPtr) = atPrec ArgPrec $ "NullPtr"
+  prettyPrec (PtrLit _ (PtrSnapshot _)) = atPrec ArgPrec "<ptr snapshot>"
 
 instance Pretty CallingConvention where
   pretty = p . show
