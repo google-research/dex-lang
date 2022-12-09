@@ -150,6 +150,6 @@ xs_obs : N=>Float = for i. rand (ixkey k3 i)
 ys_obs : N=>Float = for i. trueFun xs_obs.i + noise_std * randn (ixkey k4 i)
 M = Fin 40
 xs_pred : M=>Float = for i. rand (ixkey k5 i)
-gprm_predict : M=>Float -> MultivariateNormalDist M = gp_regress_matrix (rbf 0.2) xs mean_fn 0.001 ys
+gprm_predict : M=>Float -> MultivariateNormalDist M = gp_regress_matrix (rbf 0.2) xs_obs mean_fn 0.001 ys_obs
 pred_dist = gprm_predict xs_pred
 
