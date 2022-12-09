@@ -1206,8 +1206,8 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
       resultTys <- checkScalarOrPairType resultTy
       let cc = case length resultTys of
                  0 -> error "Not implemented"
-                 1 -> FFIFun
-                 _ -> FFIMultiResultFun
+                 1 -> FFICC
+                 _ -> FFIMultiResultCC
       return $ IFunType cc [argTy] resultTys
     Nest b' rest -> do
       let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy

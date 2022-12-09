@@ -684,7 +684,7 @@ compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
   fPreSimp <- specializedFunPreSimpDefinition fname
   fSimp <- simplifyTopFunction fPreSimp
-  fImp <- toImpFunction CInternalFun fSimp
+  fImp <- toImpFunction StandardCC fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -764,8 +764,8 @@ evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
   let (cc, _needsSync) =
-        case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
-                        _        -> (EntryFun CUDANotRequired, False)
+        case backend of LLVMCUDA -> (EntryFunCC CUDARequired   , True )
+                        _        -> (EntryFunCC CUDANotRequired, False)
   impFun <- checkPass ImpPass $ blockToImpFunction backend cc block
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun

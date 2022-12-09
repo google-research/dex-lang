@@ -33,9 +33,9 @@ import TopLevel
 import Dex.Foreign.Util
 import Dex.Foreign.Context
 
-intAsCC :: CInt -> ExportCC
-intAsCC 0 = FlatExportCC
-intAsCC 1 = XLAExportCC
+intAsCC :: CInt -> CallingConvention
+intAsCC 0 = StandardCC
+intAsCC 1 = XLACC
 intAsCC _ = error "Unrecognized calling convention"
 
 dexCompile :: Ptr Context -> CInt -> Ptr AtomEx -> IO ExportNativeFunctionAddr
