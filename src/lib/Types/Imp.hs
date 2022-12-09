@@ -63,11 +63,18 @@ instance IsBool IsCUDARequired where
   toBool CUDANotRequired = False
 
 data CallingConvention =
-   CEntryFun
- | CInternalFun
- | EntryFun IsCUDARequired
- | FFIFun
- | FFIMultiResultFun
+   -- Scalar args by value, arrays by pointer, dests allocated by caller and passed as pointers.
+   -- Used for standalone functions and for functions called from Python without XLA.
+   StandardCC
+   -- Used for functions called from within an XLA computation.
+ | XLACC
+   -- Dests allocated within the function and passed back to the caller (packed
+   -- in a number-of-results-length buffer supplied by the caller)
+ | EntryFunCC IsCUDARequired
+   -- Scalars only. Args as args, result as result. Used for calling C function
+   -- from Dex that return a single scalar.
+ | FFICC
+ | FFIMultiResultCC
  | CUDAKernelLaunch
  | MCThreadLaunch
    deriving (Show, Eq, Generic)

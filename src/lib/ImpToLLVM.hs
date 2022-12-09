@@ -187,24 +187,11 @@ compileFunction _ _ _ (FFIFunction ty f) =
   return ([], S.singleton (makeFunSpec f ty), [])
 compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
                 (Abs bs body)) = case cc of
-  FFIFun            -> error "shouldn't be trying to compile an FFI function"
-  FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
-  CInternalFun -> liftCompile CPU env $ do
-    (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
-    unless (null retTys) $ error "CInternalFun doesn't support returning values"
-    void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
-    extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs, [])
-  CEntryFun -> liftCompile CPU env $ do
-    (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
-    unless (null retTys) $ error "CEntryFun doesn't support returning values"
-    initializeOutputStream $ L.ConstantOperand $ C.Int 32 1  -- print to stdout
-    void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
-    extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs, [])
-  EntryFun requiresCUDA -> liftCompile CPU env $ do
+  FFICC            -> error "shouldn't be trying to compile an FFI function"
+  FFIMultiResultCC -> error "shouldn't be trying to compile an FFI function"
+  StandardCC -> goStandardOrXLACC
+  XLACC      -> goStandardOrXLACC
+  EntryFunCC requiresCUDA -> liftCompile CPU env $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -298,6 +285,14 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     kernel <- makeFunction fName [threadIdParam, nThreadParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition kernel], extraSpecs, [])
+  where
+    goStandardOrXLACC = liftCompile CPU env $ do
+      (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
+      unless (null retTys) $ error "StandardCC doesn't support returning values"
+      void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
+      mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
+      extraSpecs <- gets funSpecs
+      return ([L.GlobalDefinition mainFun], extraSpecs, [])
 
 compileInstr :: Compiler m => ImpInstr i -> m i o [Operand]
 compileInstr instr = case instr of
@@ -469,8 +464,7 @@ compileInstr instr = case instr of
     lookupSubstM f >>= \case
       FunctionSubstVal f' lTy (IFunType cc _ _) -> do
         case cc of
-          CEntryFun    -> return ()
-          CInternalFun -> return ()
+          StandardCC -> return ()
           _ -> error $ "Unsupported calling convention: " ++ show cc
         exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
         compileIf exitCode throwRuntimeError (return ())
@@ -481,10 +475,10 @@ compileInstr instr = case instr of
           FFIFunction ty@(IFunType cc _ impResultTys) fname -> do
             let resultTys = map scalarTy impResultTys
             case cc of
-              FFIFun -> do
+              FFICC -> do
                 ans <- emitExternCall (makeFunSpec fname ty) args'
                 return [ans]
-              FFIMultiResultFun -> do
+              FFIMultiResultCC -> do
                 resultPtr <- makeMultiResultAlloc resultTys
                 emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
                 loadMultiResultAlloc resultTys resultPtr
@@ -504,11 +498,11 @@ makeFunSpec name impFunTy =
   where (retTy, argTys) = impFunTyToLLVMTy impFunTy
 
 impFunTyToLLVMTy :: IFunType -> LLVMFunType
-impFunTyToLLVMTy (IFunType FFIFun argTys [resultTy]) =
+impFunTyToLLVMTy (IFunType FFICC argTys [resultTy]) =
   (scalarTy resultTy, map scalarTy argTys)
-impFunTyToLLVMTy (IFunType FFIMultiResultFun argTys _) =
+impFunTyToLLVMTy (IFunType FFIMultiResultCC argTys _) =
   (L.VoidType, hostPtrTy hostVoidp : map scalarTy argTys)
-impFunTyToLLVMTy (IFunType CInternalFun argTys _) =
+impFunTyToLLVMTy (IFunType StandardCC argTys _) =
   (i64, map scalarTy argTys)
 impFunTyToLLVMTy (IFunType _ _ _) = error "not implemented"
 

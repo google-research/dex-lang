@@ -9,7 +9,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( blockToImpFunction, toImpFunction, ExportCC (..), toImpExportedFunction
+  ( blockToImpFunction, toImpFunction
   , impFunType, getIType, abstractLinktimeObjects
   , repValFromFlatList, addImpTracing
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
@@ -39,7 +39,7 @@ import CheckType (CheckableE (..))
 import Lower (DestBlock)
 import LabeledItems
 import QueryType
-import Util (enumerate, forMFilter, Tree (..), zipTrees)
+import Util (forMFilter, Tree (..), zipTrees, enumerate)
 import Types.Primitives
 import Types.Core
 import Types.Imp
@@ -53,114 +53,92 @@ type SIDecl   = Decl  SimpToImpIR
 type SIRepVal = RepVal SimpToImpIR
 type SIDecls  = Decls SimpToImpIR
 
-toImpExportedFunction
-  :: EnvReader m => ExportCC -> Abs (Nest (Binder SimpIR)) DestBlock n
-  -> (Abs (Nest (Binder SimpIR)) (ListE SBlock) n) -> m n (ImpFunction n)
-toImpExportedFunction = undefined
-
 blockToImpFunction :: EnvReader m => Backend -> CallingConvention -> DestBlock n -> m n (ImpFunction n)
 blockToImpFunction _ cc absBlock = liftImpM $ translateTopLevel cc absBlock
 
 toImpFunction
   :: EnvReader m
   => CallingConvention -> NaryLamExpr SimpIR n -> m n (ImpFunction n)
-toImpFunction _cc lam' = do
+toImpFunction cc lam' = do
   lam@(NaryLamExpr bs effs body) <- return $ injectIRE lam'
   case effs of
     Pure -> return ()
     OneEffect IOEffect -> return ()
     _ -> error "effectful functions not implemented"
   ty <- unpackNaryPiType <$> naryLamExprType lam
-  impArgTys <- getNaryLamImpArgTypes ty
-  liftImpM $ buildImpFunction CInternalFun (zip (repeat noHint) impArgTys) \vs -> do
-    (argAtoms, resultDest) <- interpretImpArgs (sink ty) vs
+  impArgTys <- getNaryLamImpArgTypesWithCC cc ty
+  liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
+    (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
     extendSubst (bs @@> (SubstVal <$> argAtoms)) do
       void $ translateBlock (Just $ sink resultDest) body
       return []
-  where
-   getNaryLamImpArgTypes :: EnvReader m => NaryPiType' SimpToImpIR n -> m n [BaseType]
-   getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
-     go :: NaryPiType' SimpToImpIR n -> EnvReaderM n [BaseType]
-     go (Abs bs resultTy) = case bs of
-       Nest piB rest -> do
-         ts <- getRepBaseTypes $ binderType piB
-         refreshAbs (Abs piB (Abs rest resultTy)) \_ restAb -> do
-           tsRest <- go restAb
-           return $ ts ++ tsRest
-       Empty -> getDestBaseTypes resultTy
 
-   interpretImpArgs :: EnvReader m => NaryPiType' SimpToImpIR n -> [IExpr n] -> m n ([SIAtom n], Dest n)
-   interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll where
-      go :: NaryPiType' SimpToImpIR i -> [IExpr o]
-         -> SubstReaderT (AtomSubstVal SimpToImpIR) EnvReaderM i o ([SIAtom o], Dest o)
-      go (Abs bs resultTy) xs = case bs of
-        Nest (PiBinder b argTy _) rest -> do
-          argTy' <- substM argTy
-          (argTree, xsRest) <- listToTree argTy' xs
-          let arg = RepValAtom $ toDRepVal $ RepVal argTy' argTree
-          (args, dest) <- extendSubst (b @> SubstVal arg) $ go (Abs rest resultTy) xsRest
-          return (arg:args, dest)
-        Empty -> do
-          resultTy' <- substM resultTy
-          (destTree, xsRest) <- listToTree resultTy' xs
-          case xsRest of
-            [] -> return ()
-            _  -> error "Shouldn't have any Imp arguments left"
-          return ([], Dest resultTy' destTree)
+getNaryLamImpArgTypesWithCC
+  :: EnvReader m => CallingConvention
+  -> NaryPiType' SimpToImpIR n -> m n [BaseType]
+getNaryLamImpArgTypesWithCC XLACC _ = return [i8pp, i8pp]
+  where i8pp = PtrType (CPU, PtrType (CPU, Scalar Word8Type))
+getNaryLamImpArgTypesWithCC _ t = do
+  (argTyss, destTys) <- getNaryLamImpArgTypes t
+  return $ concat argTyss ++ destTys
+
+interpretImpArgsWithCC
+  :: Emits n => CallingConvention -> NaryPiType' SimpToImpIR n
+  -> [IExpr n] -> SubstImpM i n ([SIAtom n], Dest n)
+interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
+  (argBaseTys, resultBaseTys) <- getNaryLamImpArgTypes t
+  argVals <- forM (enumerate $ concat argBaseTys) \(i, ty) -> case ty of
+    PtrType (_, pointeeTy) -> loadPtr insPtr i pointeeTy
+    _ -> load =<< loadPtr insPtr i ty
+  resultPtrs <- case resultBaseTys of
+    -- outsPtr points directly to the buffer when there's one output, not to the pointer array.
+    [ty] -> (:[]) <$> cast outsPtr ty
+    _ ->
+      forM (enumerate resultBaseTys) \(i, ty) -> case ty of
+        PtrType (_, pointeeTy) -> loadPtr outsPtr i pointeeTy
+        _ -> error "Destination arguments should all have pointer types"
+  interpretImpArgs t (argVals ++ resultPtrs)
+  where
+    loadPtr base i pointeeTy = do
+      ptr <- load =<< impOffset base (IIdxRepVal $ fromIntegral i)
+      cast ptr (PtrType (CPU, pointeeTy))
+interpretImpArgsWithCC _ t xsAll = interpretImpArgs t xsAll
+
+getNaryLamImpArgTypes :: EnvReader m => NaryPiType' SimpToImpIR n -> m n ([[BaseType]], [BaseType])
+getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
+  go :: NaryPiType' SimpToImpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
+  go (Abs bs resultTy) = case bs of
+    Nest piB rest -> do
+      ts <- getRepBaseTypes $ binderType piB
+      refreshAbs (Abs piB (Abs rest resultTy)) \_ restAb -> do
+        (argTys, resultTys) <- go restAb
+        return (ts:argTys, resultTys)
+    Empty -> ([],) <$> getDestBaseTypes resultTy
+
+interpretImpArgs :: EnvReader m => NaryPiType' SimpToImpIR n -> [IExpr n] -> m n ([SIAtom n], Dest n)
+interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll where
+  go :: NaryPiType' SimpToImpIR i -> [IExpr o]
+     -> SubstReaderT (AtomSubstVal SimpToImpIR) EnvReaderM i o ([SIAtom o], Dest o)
+  go (Abs bs resultTy) xs = case bs of
+    Nest (PiBinder b argTy _) rest -> do
+      argTy' <- substM argTy
+      (argTree, xsRest) <- listToTree argTy' xs
+      let arg = RepValAtom $ toDRepVal $ RepVal argTy' argTree
+      (args, dest) <- extendSubst (b @> SubstVal arg) $ go (Abs rest resultTy) xsRest
+      return (arg:args, dest)
+    Empty -> do
+      resultTy' <- substM resultTy
+      (destTree, xsRest) <- listToTree resultTy' xs
+      case xsRest of
+        [] -> return ()
+        _  -> error "Shouldn't have any Imp arguments left"
+      return ([], Dest resultTy' destTree)
 
 -- This just drops the "nonempty" stuff, which makes the recursion easier. TODO: we
 -- should drop the nonempty stuff everywhere. I don't think it helps us.
 type NaryPiType' r = Abs (Nest (PiBinder r)) (Type r)
 unpackNaryPiType :: NaryPiType r n -> NaryPiType' r n
 unpackNaryPiType (NaryPiType bs _ resultTy) = Abs (nonEmptyToNest bs) resultTy
-
--- | Calling convention for exported function.
-data ExportCC = FlatExportCC
-              | XLAExportCC
-
-data UnpackCC = FlatUnpackCC Int
-              | XLAUnpackCC [FormalArg] [FormalArg]
-
-type FormalArg = (NameHint, IType)
-type ActualArg n = (ImpName n, IType)
-
-_ccPrepareFormals :: ExportCC -> Nest (Binder SimpIR) n l -> [FormalArg] -> ([FormalArg], UnpackCC)
-_ccPrepareFormals cc args destFormals = case cc of
-  FlatExportCC -> do
-    (argFormals ++ destFormals, FlatUnpackCC (length argFormals))
-  XLAExportCC -> ( [(getNameHint @String "out", i8pp), (getNameHint @String "in", i8pp)]
-                 , XLAUnpackCC argFormals destFormals )
-  where
-    argFormals = nestToList ((noHint,) . (\(BaseTy t) -> t) . binderType) args
-    i8pp = PtrType (CPU, PtrType (CPU, Scalar Word8Type))
-
-_ccUnpackActuals :: Emits n => UnpackCC -> [(ImpName n, BaseType)] -> SubstImpM i n ([ActualArg n], [ActualArg n])
-_ccUnpackActuals cc actual = case cc of
-  FlatUnpackCC n -> return $ splitAt n actual
-  XLAUnpackCC argFormals destFormals -> case actual of
-    [outsPtrName, insPtrName] -> do
-      let (outsPtr, insPtr) = (IVar (fst outsPtrName) i8pp, IVar (fst insPtrName) i8pp)
-      let loadPtr base i pointeeTy =
-            flip cast (PtrType (CPU, pointeeTy)) =<< load =<< impOffset base (IIdxRepVal $ fromIntegral i)
-      args <- forM (enumerate argFormals) \(i, (_, argTy)) ->
-        toArg <$> case argTy of
-          PtrType (_, pointeeTy) -> loadPtr insPtr i pointeeTy
-          _ -> load =<< loadPtr insPtr i argTy
-      -- outsPtr points to the buffer when there's one output, not to the pointer array.
-      ptrs <- case destFormals of
-        [(_, destTy)] -> (:[]) . toArg <$> cast outsPtr destTy
-        _ ->
-          forM (enumerate destFormals) \(i, (_, destTy)) ->
-            toArg <$> case destTy of
-              PtrType (_, pointeeTy) -> loadPtr outsPtr i pointeeTy
-              _ -> error "Destination arguments should all have pointer types"
-      return (args, ptrs)
-    _ -> error "Expected two arguments for the XLA calling convention"
-  where
-    toArg = \case
-      IVar v ty -> (v, ty)
-      _ -> error "Expected a variable"
-    i8pp = PtrType (CPU, PtrType (CPU, Scalar Word8Type))
 
 -- === ImpM monad ===
 
