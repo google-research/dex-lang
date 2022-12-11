@@ -1292,6 +1292,7 @@ checkDataLike ty = case ty of
     SumType  cs      -> mapM_ recur cs
     Nat              -> return ()
     Fin _            -> return ()
+    RefType _ _      -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty
   where recur = checkDataLike

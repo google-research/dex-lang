@@ -607,8 +607,8 @@ evalBlock typed = do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
         (dceDestBlock >=> hoistLoopInvariantDest)
-      evalBackend lopt
-  applyRecon recon result
+      evalLLVM lopt
+  applyRecon recon (injectIRE result)
 {-# SCC evalBlock #-}
 
 evalSpecializations :: (Topper m, Mut n) => [CAtomName n] -> [SpecDictName n] -> m n ()
@@ -759,7 +759,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (SAtom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
@@ -800,18 +800,6 @@ impNameToObj v = do
     Just v' -> return v'
     Nothing -> throw CompilerErr
       $ "Expected to find an object cache entry for: " ++ pprint v
-
-evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
-evalBackend block = do
-  backend <- backendName <$> getConfig
-  let eval = case backend of
-               MLIR        -> error "TODO"
-               LLVM        -> evalLLVM
-               LLVMMC      -> evalLLVM
-               LLVMCUDA    -> evalLLVM
-               Interpreter -> error "TODO"
-  eval block
-
 
 withCompileTime :: MonadIO m => m Result -> m Result
 withCompileTime m = do

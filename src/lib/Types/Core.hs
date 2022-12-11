@@ -52,8 +52,8 @@ import Types.Imp
 -- === IR variants ===
 
 data IR =
-   -- CoreIR is the IR after inference and before simplification
-   CoreIR
+   CoreIR       -- used after inference and before simplification
+ | SimpIR       -- used after simplification
  | SimpToImpIR  -- only used during the Simp-to-Imp translation
  | AnyIR        -- used for deserialization only
 
@@ -66,14 +66,9 @@ data IRPredicate =
 type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
 type family Sat' (r::IR) (p::IRPredicate) where
   Sat' r (Is r)                              = True
-  Sat' CoreIR (IsSubsetOf SimpToImpIR)       = True
+  Sat' SimpIR (IsSubsetOf SimpToImpIR)       = True
+  Sat' SimpIR (IsSubsetOf CoreIR)            = True
   Sat' _ _ = False
-
--- SimpIR is the IR after simplification
--- TODO: until we make SimpIR and CoreIR separate types, `SimpIR` is just an
--- alias for `CoreIR` and it doesn't mean anything beyond "Dougal thinks this
--- thing has SimpIR vibes".
-type SimpIR = CoreIR
 
 type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
@@ -111,6 +106,8 @@ class CovariantInIR (e::IR->E)
 instance CovariantInIR NaryLamExpr
 instance CovariantInIR Atom
 instance CovariantInIR Block
+instance CovariantInIR Expr
+instance CovariantInIR IxType
 
 -- This is safe, assuming the constraints have been implemented correctly.
 injectIRE :: (CovariantInIR e, r `Sat` IsSubsetOf r') => e r n -> e r' n
@@ -1979,18 +1976,9 @@ instance GenericE (AtomBinding r) where
   {-# INLINE toE #-}
 
 
--- XXX: this is just to make the `SubstE (AtomSubstVal CoreIR) (AtomBinding
--- CoreIR)` instance derivable, but it's never actually called. We shouldn't
--- really need that instance. We currently use it in Inference's
--- `zonkUnsolvedEnv` but that's only because we allow inference to emit top
--- bindings. Really it should only be allowed to emit local bindings.
-instance SubstE (AtomSubstVal CoreIR) (RepVal r) where
-  substE _ _ = error "not actually implemented"
-
 instance SinkableE   (AtomBinding r)
 instance HoistableE  (AtomBinding r)
 instance SubstE Name (AtomBinding r)
-instance SubstE (AtomSubstVal CoreIR) (AtomBinding CoreIR)
 instance AlphaEqE (AtomBinding r)
 instance AlphaHashableE (AtomBinding r)
 
@@ -1998,7 +1986,7 @@ instance GenericE TopFunBinding where
   type RepE TopFunBinding = EitherE4
     (LiftE Int `PairE` CAtom)  -- AwaitingSpecializationArgsTopFun
     SpecializationSpec         -- SpecializedTopFun
-    (NaryLamExpr CoreIR)       -- LoweredTopFun
+    (NaryLamExpr SimpIR)       -- LoweredTopFun
     ImpFunName                 -- FFITopFun
   fromE = \case
     AwaitingSpecializationArgsTopFun n x  -> Case0 $ PairE (LiftE n) x
@@ -2019,7 +2007,6 @@ instance GenericE TopFunBinding where
 instance SinkableE TopFunBinding
 instance HoistableE  TopFunBinding
 instance SubstE Name TopFunBinding
-instance SubstE (AtomSubstVal CoreIR) TopFunBinding
 instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
@@ -2285,7 +2272,7 @@ instance ExtOutMap Env TopEnvFrag where
 
       lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
 
-addMethods :: (SpecDictName n, [NaryLamExpr CoreIR n]) -> Env n -> Env n
+addMethods :: (SpecDictName n, [NaryLamExpr SimpIR n]) -> Env n -> Env n
 addMethods (dName, methods) e = do
   let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
   case oldMethods of

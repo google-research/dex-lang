@@ -28,7 +28,7 @@ import Builder
 import QueryType
 import Util (iota)
 
-earlyOptimize :: EnvReader m => SBlock n -> m n (SBlock n)
+earlyOptimize :: EnvReader m => CBlock n -> m n (CBlock n)
 earlyOptimize = unrollTrivialLoops
 
 optimize :: EnvReader m => SBlock n -> m n (SBlock n)
@@ -41,7 +41,7 @@ optimize = dceBlock     -- Clean up user code
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
 
 data UTLS n = UTLS
-type UTLM = GenericTraverserM SimpIR UnitB UTLS
+type UTLM = GenericTraverserM CoreIR UnitB UTLS
 instance SinkableE UTLS where
   sinkingProofE _ UTLS = UTLS
 instance HoistableState UTLS where
@@ -50,17 +50,17 @@ instance HoistableState UTLS where
 
 data IndexSetKind n
   = EmptyIxSet
-  | SingletonIxSet (SAtom n)
+  | SingletonIxSet (CAtom n)
   | UnknownIxSet
 
-isTrivialIndex :: Type SimpIR i -> UTLM i o (IndexSetKind o)
+isTrivialIndex :: Type CoreIR i -> UTLM i o (IndexSetKind o)
 isTrivialIndex = \case
   TC (Fin (NatVal n)) | n <= 0 -> return EmptyIxSet
   TC (Fin (NatVal n)) | n == 1 ->
     return $ SingletonIxSet $ Con $ Newtype (FinConst n) (NatVal 0)
   _ -> return UnknownIxSet
 
-instance GenericTraverser SimpIR UnitB UTLS where
+instance GenericTraverser CoreIR UnitB UTLS where
   traverseExpr expr = case expr of
     Hof (For _ ixDict (Lam (LamExpr b body@(Block _ decls a)))) -> do
       isTrivialIndex (binderType b) >>= \case
@@ -76,7 +76,7 @@ instance GenericTraverser SimpIR UnitB UTLS where
             emitOp $ ThrowError (sink resTy')
     _ -> traverseExprDefault expr
 
-unrollTrivialLoops :: EnvReader m => SBlock n -> m n (SBlock n)
+unrollTrivialLoops :: EnvReader m => CBlock n -> m n (CBlock n)
 unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE b
 
 -- === Peephole optimizations ===
@@ -470,7 +470,6 @@ instance HasDCE (TabPiType   SimpIR)
 instance HasDCE (DepPairType SimpIR)
 instance HasDCE EffectRow
 instance HasDCE Effect
-instance HasDCE EffectOpType
 instance HasDCE (DictExpr      SimpIR)
 instance HasDCE (DictType      SimpIR)
 instance HasDCE (FieldRowElems SimpIR)

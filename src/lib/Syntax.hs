@@ -126,7 +126,7 @@ module Syntax (
     pattern SISourceName, pattern SIInternalName,
     pattern OneEffect,
     (-->), (?-->), (--@), (==>),
-    IR (..), SimpIR,
+    IR (..),
     CAtom, CType, CExpr, CBlock, CDecl, CDecls, CAtomSubstVal, CAtomName,
     SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName,
     unsafeCoerceIRE, unsafeCoerceIRB
