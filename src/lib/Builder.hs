@@ -40,7 +40,7 @@ module Builder (
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
   queryIxDictCache, extendIxDictCache,
   extendObjCache, queryObjCache,
-  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv, emitLoweredFun,
+  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
@@ -365,11 +365,6 @@ queryImpCache :: EnvReader m => AtomName r n -> m n (Maybe (ImpFunName n))
 queryImpCache v = do
   cache <- impCache <$> getCache
   return $ lookupEMap cache v
-
-emitLoweredFun :: (Mut n, TopBuilder m) => NameHint -> NaryLamExpr SimpIR n -> m n (AtomName r n)
-emitLoweredFun hint f = do
-  fTy <- naryLamExprType f
-  emitBinding hint $ AtomNameBinding $ TopFunBound fTy (LoweredTopFun f)
 
 extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> AtomName r n -> m n ()
 extendSpecializationCache specialization f =
@@ -1549,8 +1544,7 @@ data ReconstructAtom (r::IR) (n::S) =
    IdentityRecon
  | LamRecon (ReconAbs (Atom r) n)
 
-applyRecon :: (EnvReader m, Fallible1 m)
-           => ReconstructAtom r n -> Atom r n -> m n (Atom r n)
+applyRecon :: (EnvReader m, Fallible1 m) => ReconstructAtom r n -> Atom r n -> m n (Atom r n)
 applyRecon IdentityRecon x = return x
 applyRecon (LamRecon ab) x = applyReconAbs ab x
 
@@ -1563,16 +1557,15 @@ applyReconAbs ab x = do
 
 telescopicCapture
   :: (EnvReader m, HoistableE e, HoistableB b)
-  => b n l -> e l -> m l (Atom r l, Type r n, ReconAbs e n)
+  => b n l -> e l -> m l (Atom r l, ReconAbs e n)
 telescopicCapture bs e = do
   vs <- localVarsAndTypeVars bs e
   vTys <- mapM (getType . Var) vs
   let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
   ty <- liftEnvReaderM $ buildTelescopeTy vs tys
   result <- buildTelescopeVal (map Var vsSorted) ty
-  let ty' = ignoreHoistFailure $ hoist bs ty
   let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
-  return (result, ty', ab)
+  return (result, ab)
 
 -- XXX: assumes arguments are toposorted
 buildTelescopeTy :: (EnvReader m, EnvExtender m)

@@ -424,10 +424,26 @@ zonkUnsolvedEnv ss unsolved env =
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
       flip lookupEnvPure v <$> get >>= \case
         AtomNameBinding rhs -> do
-          let rhs' = zonkWithOutMap (InfOutMap env ss mempty mempty) rhs
+          let rhs' = zonkAtomBindingWithOutMap (InfOutMap env ss mempty mempty) rhs
           modify $ updateEnv v $ AtomNameBinding rhs'
           let rhsHasInfVars = runEnvReaderM env $ hasInferenceVars rhs'
           when rhsHasInfVars $ tell $ UnsolvedEnv $ S.singleton v
+
+-- TODO: we need this shim because top level emissions can't implement `SubstE
+-- AtomSubstVal` so GHC doesn't know how to zonk them. If we split up top-level
+-- emissions from local ones in the name color system then we won' thave this
+-- problem.
+zonkAtomBindingWithOutMap
+  :: Distinct n => InfOutMap n -> AtomBinding CoreIR n -> AtomBinding CoreIR n
+zonkAtomBindingWithOutMap outMap = \case
+ LetBound    e -> LetBound    $ zonkWithOutMap outMap e
+ LamBound    e -> LamBound    $ zonkWithOutMap outMap e
+ PiBound     e -> PiBound     $ zonkWithOutMap outMap e
+ IxBound     e -> IxBound     $ zonkWithOutMap outMap e
+ MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
+ SolverBound e -> SolverBound $ zonkWithOutMap outMap e
+ TopFunBound t e -> TopFunBound t e
+ TopDataBound e  -> TopDataBound e
 
 -- TODO: Wouldn't it be faster to carry the set of inference-emitted names in the out map?
 hasInferenceVars :: (EnvReader m, HoistableE e) => e n -> m n Bool
