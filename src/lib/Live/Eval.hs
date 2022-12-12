@@ -9,12 +9,13 @@ module Live.Eval (RFragment (..), SetVal(..), watchAndEvalFile) where
 import Control.Concurrent (forkIO, killThread, readChan, threadDelay, ThreadId)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Data.ByteString qualified as BS
 import Data.Text (Text)
-import Data.Text.IO qualified as T
-import qualified Data.Map.Strict as M
+import Data.Text.Encoding qualified as T
+import Data.Map.Strict qualified as M
 
 import Data.Aeson (ToJSON, toJSON, (.=))
-import qualified Data.Aeson as A
+import Data.Aeson qualified as A
 import Data.Text.Prettyprint.Doc
 import System.Directory (getModificationTime)
 
@@ -317,7 +318,7 @@ forkWatchFile fname chan = onmod fname $ sendFileContents fname chan
 sendFileContents :: String -> PChan Text -> IO ()
 sendFileContents fname chan = do
   putStrLn $ fname ++ " updated"
-  s <- T.readFile fname
+  s <- T.decodeUtf8 <$> BS.readFile fname
   sendPChan chan s
 
 onmod :: FilePath -> IO () -> IO ()

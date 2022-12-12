@@ -16,10 +16,10 @@ import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
 import System.IO (openFile, IOMode (..))
 
+import qualified Data.ByteString as BS
 import Data.List
-import Data.Functor
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Map.Strict as M
 
 import PPrint (toJSONStr, printResult)
@@ -58,7 +58,7 @@ runMode evalMode opts = case evalMode of
   ScriptMode fname fmt onErr -> do
     env <- loadCache
     (litProg, finalEnv) <- runTopperM opts env do
-      source <- liftIO $ T.readFile fname
+      source <- liftIO $ T.decodeUtf8 <$> BS.readFile fname
       evalSourceText source (printIncrementalSource fmt) \result@(Result _ errs) -> do
         printIncrementalResult fmt result
         return case (onErr, errs) of (HaltOnErr, Failure _) -> False; _ -> True
