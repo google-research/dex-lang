@@ -101,6 +101,7 @@ data UExpr' (n::S) =
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
  | UPrimExpr (PrimExpr (UExpr n))
+ | UPrimApp PrimName [UExpr n]
  | ULabel String
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
@@ -388,6 +389,14 @@ data EnvQuery =
  | InternalNameInfo RawName
  | SourceNameInfo   SourceName
    deriving (Show, Generic)
+
+-- === Primitive names ===
+
+data PrimName =
+    UMAsk | UMExtend | UMGet | UMPut
+  | UWhile | ULinearize | UTranspose
+  | URunReader | URunWriter | URunState | URunIO | UCatchException
+  deriving (Show, Enum)
 
 -- === instances ===
 

@@ -56,8 +56,8 @@ run_state 0 \ct.
 :p
   ix = (id' 20)@(Fin 100)
   (for i:(Fin 100). ordinal i + ordinal i).ix
--- CHECK: %runIO
--- CHECK-NOT: %runIO
+-- CHECK: runIO
+-- CHECK-NOT: runIO
 
 -- CHECK-LABEL: Inlining does not violate type IR through beta reduction
 "Inlining does not violate type IR through beta reduction"

@@ -24,8 +24,7 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unRNest, unRNestOnto, toRNest, NonEmptyNest (..),
-  nonEmptyToNest, nestToNonEmpty,
+  Abs (..), Nest (..), RNest (..), unRNest, unRNestOnto, toRNest,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
@@ -56,6 +55,7 @@ module Name (
   withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
   lookupSubstFrag, lookupSubstFragProjected, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
+  pattern UnaryNest, pattern BinaryNest,
   fmapNest, zipWithNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), NameHint, noHint, Color (..),
@@ -384,15 +384,11 @@ type NaryAbs (c::C) = Abs (Nest (NameBinder c)) :: E -> E
 data IsVoidS n where
   IsVoidS :: IsVoidS VoidS
 
-data NonEmptyNest (b::B) (n::S) (l::S) where
-  NonEmptyNest :: b n h -> Nest b h l -> NonEmptyNest b n l
+pattern UnaryNest :: b n l -> Nest b n l
+pattern UnaryNest b = Nest b Empty
 
-nonEmptyToNest :: NonEmptyNest b n l -> Nest b n l
-nonEmptyToNest (NonEmptyNest b bs) = Nest b bs
-
-nestToNonEmpty :: Nest b n l -> Maybe (NonEmptyNest b n l)
-nestToNonEmpty Empty = Nothing
-nestToNonEmpty (Nest b bs) = Just $ NonEmptyNest b bs
+pattern BinaryNest :: b n l1 -> b l1 l2 -> Nest b n l2
+pattern BinaryNest b1 b2 = Nest b1 (Nest b2 Empty)
 
 -- === Sinkings and projections ===
 
@@ -771,23 +767,8 @@ instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   bindNameList (Nest b rest) (x:xs) = b@>x <.> bindNameList rest xs
   bindNameList _ _ = error "length mismatch"
 
-instance GenericB (NonEmptyNest b) where
-  type RepB (NonEmptyNest b) = PairB b (Nest b)
-  fromB (NonEmptyNest b bs) = PairB b bs
-  toB   (PairB b bs) = NonEmptyNest b bs
-
-instance BindsAtMostOneName b c => BindsNameList (NonEmptyNest b) c where
-  bindNameList (NonEmptyNest b bs) (x:xs) = b@>x <.> bindNameList bs xs
-  bindNameList _ _ = error "length mismatch"
-
-instance BindsNames b => ProvesExt  (NonEmptyNest b)
-instance BindsNames b => BindsNames (NonEmptyNest b)
-instance HoistableB b => HoistableB (NonEmptyNest b)
-instance SinkableB  b => SinkableB  (NonEmptyNest b)
-instance (BindsNames b, SinkableV v, SubstB v b) => SubstB v (NonEmptyNest b)
-
 applySubstFragPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
-               => Scope o -> SubstFrag v h i o -> e i -> e o
+                   => Scope o -> SubstFrag v h i o -> e i -> e o
 applySubstFragPure scope substFrag x = do
   let fullSubst = sink idSubst <>> substFrag
   applySubstPure scope fullSubst x
@@ -3305,9 +3286,6 @@ unsafeListToNest :: [b UnsafeS UnsafeS] -> Nest b UnsafeS UnsafeS
 unsafeListToNest l = case l of
   [] -> unsafeCoerceB Empty
   b:rest -> Nest (unsafeCoerceB b) $ unsafeListToNest rest
-
-instance (forall n' l'. Show (b n' l')) => Show (NonEmptyNest b n l) where
-  show (NonEmptyNest b rest) = "(NonEmptyNest " <> show b <> " in " <> show rest <> ")"
 
 instance (forall c. Color c => Store (v c n)) => Store (SubstItem v n) where
   size = VarSize \item@(SubstItem f _) ->

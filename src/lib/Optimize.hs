@@ -62,7 +62,7 @@ isTrivialIndex = \case
 
 instance GenericTraverser CoreIR UnitB UTLS where
   traverseExpr expr = case expr of
-    Hof (For _ ixDict (Lam (LamExpr b body@(Block _ decls a)))) -> do
+    Hof (For _ ixDict (LamExpr (UnaryNest b) body@(Block _ decls a))) -> do
       isTrivialIndex (binderType b) >>= \case
         UnknownIxSet     -> traverseExprDefault expr
         SingletonIxSet i -> do
@@ -211,23 +211,23 @@ instance HoistableState ULS where
 -- constant-foldable after inlining don't count towards it.
 instance GenericTraverser SimpIR UnitB ULS where
   traverseInlineExpr expr = case expr of
-    Hof (For Fwd ixDict body@(Lam (LamExpr b _))) -> do
+    Hof (For Fwd ixDict body@(UnaryLamExpr b _)) -> do
       case binderType b of
         FinConst n -> do
-          (body', bodyCost) <- withLocalAccounting $ traverseAtom body
+          (body', bodyCost) <- withLocalAccounting $ traverseGenericE body
           -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
           case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
             True -> case body' of
-              Lam (LamExpr b' block') -> do
+              UnaryLamExpr b' block' -> do
                 vals <- dropSubst $ forM (iota n) \ord -> do
                   let i = Con $ Newtype (FinConst n) (NatVal ord)
                   extendSubst (b' @> SubstVal i) $ emitSubstBlock block'
                 inc $ fromIntegral n  -- To account for the TabCon we emit below
-                getType body' >>= \case
-                  Pi (PiType (PiBinder tb _ _) _ valTy) -> do
+                getNaryLamExprType body' >>= \case
+                  NaryPiType (UnaryNest (PiBinder tb _ _)) _ valTy -> do
                     let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy
                     return $ Right $ Op $ TabCon tabTy vals
-                  _ -> error "Expected for body to have a Pi type"
+                  _ -> error "Expected body to have a Pi type"
               _ -> error "Expected for body to be a lambda expression"
             False -> do
               inc bodyCost
@@ -273,11 +273,11 @@ instance HoistableState LICMS where
 
 instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
-    Hof (Seq dir ix (ProdVal dests) (Lam (LamExpr b body))) -> do
+    Hof (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
       ix' <- traverseAtom ix
       dests' <- traverse traverseAtom dests
       let numCarries = length dests
-      Abs hdecls destsAndBody <- traverseLamBinder b \b' -> do
+      Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
         Block _ decls ans <- traverseGenericE body
         -- Now, we process the decls and decide which ones to hoist.
@@ -292,9 +292,9 @@ instance GenericTraverser SimpIR UnitB LICMS where
         _ -> error "Expected a dict"
       body' <- rebuildBody b body lnb lbTy bodyAbs
       return $ Hof $ Seq dir ix' dests'' body'
-    Hof (For dir ix (Lam (LamExpr b body))) -> do
+    Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
       ix' <- traverseAtom ix
-      Abs hdecls destsAndBody <- traverseLamBinder b \b' -> do
+      Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         Block _ decls ans <- traverseGenericE body
         liftEnvReaderM $ runSubstReaderT idSubst $
             seqLICM 0 REmpty mempty (asNameBinder b') REmpty decls ans
@@ -304,18 +304,17 @@ instance GenericTraverser SimpIR UnitB LICMS where
       return $ Hof $ For dir ix' body'
     expr -> traverseExprDefault expr
     where
-      rebuildBody :: LamBinder SimpIR i i' -> SBlock i'
+      rebuildBody :: Binder SimpIR i i' -> SBlock i'
                   -> AtomNameBinder n l -> SType n -> Abs (Nest SDecl) SAtom l
-                  -> GenericTraverserM SimpIR UnitB LICMS i n (SAtom n)
+                  -> GenericTraverserM SimpIR UnitB LICMS i n (LamExpr SimpIR n)
       rebuildBody b body@(Block ann _ _) lnb lbTy bodyAbs = do
         Distinct <- getDistinct
         refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
           extendRenamer (b@>binderName lb) do
-            ann'@(BlockAnn _ eff') <- case ann of
+            ann' <- case ann of
               BlockAnn ty eff -> BlockAnn <$> substM ty <*> substM eff
               NoBlockAnn -> BlockAnn <$> getTypeSubst body <*> pure Pure
-            let b'' = LamBinder (asNameBinder lb) (sink lbTy) PlainArrow eff'
-            return $ Lam $ LamExpr b'' $ Block ann' decls ans
+            return $ LamExpr (UnaryNest lb) $ Block ann' decls ans
 
 seqLICM :: Int
         -> RNest SDecl n1 n2      -- hoisted decls
@@ -462,6 +461,9 @@ dceNest decls ans = case decls of
 
 instance (HasDCE e1, HasDCE e2) => HasDCE (ExtLabeledItemsE e1 e2)
 instance HasDCE SExpr
+instance HasDCE (PrimEffect SimpIR)
+instance HasDCE (BaseMonoid SimpIR)
+instance HasDCE (Hof SimpIR)
 instance HasDCE SAtom
 instance HasDCE (LamExpr     SimpIR)
 instance HasDCE (TabLamExpr  SimpIR)

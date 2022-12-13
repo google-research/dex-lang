@@ -26,7 +26,6 @@ import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.List (partition)
-import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
@@ -626,7 +625,7 @@ evalSpecializations vs sdVs = do
     SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) Nothing) <- lookupEnv d
     methods <- forM [minBound..maxBound] \method -> do
       ty <- liftEnvReaderM $ ixMethodType method absDict
-      lamExpr <- liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+      lamExpr <- liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
         let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
         dict <- applyNaryAbs (sink absDict) extraArgs
         let actualArgs = case method of Size -> []  -- size is thunked
@@ -641,13 +640,13 @@ ixMethodType method absDict = do
     let extraArgBs' = fmapNest plainPiBinder extraArgBs
     getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
       Pi (PiType b _ resultTy) -> do
-        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest b Empty
+        let allBs = extraArgBs' >>> Nest b Empty
         return $ NaryPiType allBs Pure resultTy
       -- non-function methods are thunked
       ty -> do
         Abs unitBinder ty' <- toConstAbs ty
         let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
-        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest unitPiBinder Empty
+        let allBs = extraArgBs' >>> Nest unitPiBinder Empty
         return $ NaryPiType allBs Pure ty'
 
 execUDecl
@@ -684,8 +683,8 @@ execUDecl mname decl = do
 
 compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
-  fPreSimp <- specializedFunPreSimpDefinition fname
-  fSimp <- simplifyTopFunction fPreSimp
+  fCore <- specializedFunCoreDefinition fname
+  fSimp <- simplifyTopFunction fCore
   fImp <- toImpFunction StandardCC fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
@@ -725,15 +724,14 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
         destroyLinker l
   return $ NativeFunction ptr destructor
 
--- Get the definition of a specialized function in the pre-simplification IR.
-specializedFunPreSimpDefinition
-  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (NaryLamExpr CoreIR n)
-specializedFunPreSimpDefinition fname = do
+specializedFunCoreDefinition
+  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (LamExpr CoreIR n)
+specializedFunCoreDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
   case s of
     AppSpecialization f abStaticArgs@(Abs bs _) -> do
       f' <- forceDeferredInlining f
-      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+      liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
         let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
         ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
         naryApp (sink f') $ staticArgs' <> map Var originalArgs

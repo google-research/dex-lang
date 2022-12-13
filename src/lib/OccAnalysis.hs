@@ -89,8 +89,8 @@ instance HoistableState FV where
 -- the entry for the binder itself, and the type of NameMapE cannot represent a
 -- map from names in `l` to E-kinded things with names in `n` (though maybe it
 -- should be changed?)
-abstractFor :: DExt n l => (NameBinder AtomNameC n l) -> FV l -> FV l
-abstractFor b (FV fvs) = FV $ mapNameMapE update fvs where
+abstractFor :: DExt n l => Binder SimpIR n l -> FV l -> FV l
+abstractFor (b:>_) (FV fvs) = FV $ mapNameMapE update fvs where
   update (AccessInfo s dyn) = sink $ AccessInfo s $ ForEach b dyn
 
 -- Change all the AccessInfos to assume their objects are dynamically used many
@@ -184,7 +184,6 @@ summaryExpr = \case
 summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
   Var name -> ixExpr name
-  Lam _ -> invalid "Lam"
   Con c -> constructor c
   ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
   _ -> unknown atom
@@ -336,6 +335,12 @@ instance HasOCC SExpr where
         (summ, ix') <- occurrenceAndSummary ix
         return (location summ acc', ix':ixs')
 
+instance HasOCC (ComposeE PrimOp SAtom) where
+  -- I'm pretty sure the others are all strict, and not usefully analyzable
+  -- for what they do to the incoming access pattern.
+  occ _ (ComposeE op) = ComposeE <$> traverse (occ accessOnce) op
+  {-# INLINE occ #-}
+
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
 occAlt :: Access n -> IxExpr n -> Alt SimpIR n -> OCCM n (Alt SimpIR n)
@@ -359,27 +364,24 @@ occurrenceAndSummary atom = do
   ix <- summary atom'
   return (ix, atom')
 
-instance HasOCC (ComposeE PrimHof SAtom) where
-  occ a (ComposeE hof) = ComposeE <$> case hof of
-    For ann ixDict bd -> do
+instance HasOCC (Hof SimpIR) where
+  occ a hof = case hof of
+    For ann ixDict (UnaryLamExpr b body) -> do
       ixDict' <- inlinedLater ixDict
-      bd' <- occLam bd \b body -> do
-        extend b (Occ.Var $ binderName b) do
-          (body', bodyFV) <- isolated (occ accessOnce body)
-          modify (<> abstractFor b bodyFV)
-          return body'
-      return $ For ann ixDict' bd'
-    While bd -> While <$> occLam bd \b' body -> do
-      -- I think IxAll is right, since indexing with a value of Unit type does
-      -- mean indexing with every possible value of the index type.
-      extend b' IxAll do
-        (body', bodyFV) <- isolated (occ accessOnce body)
-        modify (<> useManyTimes bodyFV)
-        return body'
+      occWithBinder (Abs b body) \b' body' -> do
+        extend b' (Occ.Var $ binderName b') do
+          (body'', bodyFV) <- isolated (occ accessOnce body')
+          modify (<> abstractFor b' bodyFV)
+          return $ For ann ixDict' (UnaryLamExpr b' body'')
+    For _ _ _ -> error "For body should be a unary lambda expression"
+    While body -> While <$> do
+      (body', bodyFV) <- isolated (occ accessOnce body)
+      modify (<> useManyTimes bodyFV)
+      return body'
     RunReader ini bd -> do
       ini' <- occ accessOnce ini
       iniIx <- summary ini
-      bd' <- oneShot2 a (Deterministic []) iniIx bd
+      bd' <- oneShot a [Deterministic [], iniIx]bd
       return $ RunReader ini' bd'
     RunWriter Nothing (BaseMonoid empty combine) bd -> do
       -- We will process the combining function when we meet it in MExtend ops
@@ -397,7 +399,7 @@ instance HasOCC (ComposeE PrimHof SAtom) where
       -- names.  In particular, in the event of `RunWriter` in a loop, the
       -- different references across loop iterations are not distinguishable.
       -- The same argument holds for the heap parameter.
-      bd' <- oneShot2 a (Deterministic []) (Deterministic []) bd
+      bd' <- oneShot a [Deterministic [], Deterministic []] bd
       return $ RunWriter Nothing (BaseMonoid empty' combine) bd'
     RunWriter (Just _) _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
@@ -408,62 +410,50 @@ instance HasOCC (ComposeE PrimHof SAtom) where
       -- affecting that reference.  Using `IxAll` is a conservative
       -- approximation (in downstream analysis it means "assume I touch every
       -- value").
-      bd' <- oneShot2 a (Deterministic []) IxAll bd
+      bd' <- oneShot a [Deterministic [], IxAll]bd
       return $ RunState Nothing ini' bd'
     RunState (Just _) _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
-    RunIO bd ->
-      -- I think IxAll is right, since indexing with a value of Unit type
-      -- does mean indexing with every possible value of the index type.
-      RunIO <$> oneShot a IxAll bd
+    RunIO bd -> RunIO <$> occ a bd
     RunInit _ ->
       -- Though this is probably not too hard to implement.  Presumably
       -- the lambda is one-shot.
       error "Expecting to do occurrence analysis before lowering."
-    CatchException _ ->
-      error "Expecting to do occurrence analysis after exception resolution."
-      -- But it's one-shot if we need it: CatchException <$> oneShot bd
-    Linearize _ -> error "Expecting to do occurrence analysis after AD."
-    Transpose _ -> error "Expecting to do occurrence analysis after AD."
     Seq _ _ _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
     RememberDest _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
 
--- Occurrence analysis of the body of a one-shot unary lambda Atom.
-oneShot :: Access n -> IxExpr n -> SAtom n -> OCCM n (SAtom n)
-oneShot acc binderSummary bd =
-  occLam bd \b' body -> extend b' (sink binderSummary) do
-    occ (sink acc) body
+-- -- Occurrence analysis of the body of a one-shot unary lambda Atom.
+-- oneShot2 :: Access n -> IxExpr n -> IxExpr n -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
+-- oneShot2 acc binderSummary1 binderSummary2 (BinaryLamExpr b1 b2 body) = do
+--   occWithBinder (Abs b1 (Abs b2 body)) \b1' (Abs b2' body') -> do
+--     extend b1' (sink binderSummary1) do
+--       UnaryLamExpr b2'' body'' <- oneShot (sink acc) (sink binderSummary2) (UnaryLamExpr b2' body')
+--       return $ BinaryLamExpr b1' b2'' body''
 
--- Occurrence analysis of the body of a one-shot binary lambda Atom.
-oneShot2 :: Access n -> IxExpr n -> IxExpr n -> SAtom n -> OCCM n (SAtom n)
-oneShot2 acc binderSummary1 binderSummary2 bd =
-  occLam bd \b' (AtomicBlock body)
-    -> AtomicBlock <$> do
-      extend b' (sink binderSummary1) do
-        oneShot (sink acc) (sink binderSummary2) body
+oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
+oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
+oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
+  occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
+    extend b' (sink ix) do
+      LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
+      return $ LamExpr (Nest b' bs') body'
+oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.
-occLam :: SAtom n
-       -> (forall l. DExt n l
-           => (NameBinder 'AtomNameC n l) -> SBlock l -> OCCM l (SBlock l))
-       -> OCCM n (SAtom n)
-occLam bd cont = case bd of
-  Lam (LamExpr (LamBinder b ty arr eff) body) -> do
-    ty' <- occTy ty
-    (Abs b' (body' `PairE` eff')) <-
-      refreshAbs (Abs (b:>ty') (body `PairE` eff))
-        \(b':>_) (body' `PairE` eff') -> do
-          countFreeVarsAsOccurrences eff'
-          body'' <- cont b' body'
-          return $ Abs b' (body'' `PairE` eff')
-    return $ Lam $ LamExpr (LamBinder b' ty' arr eff') body'
-  _ -> error "Not a lambda expression"
+occWithBinder
+  :: (SubstE Name e)
+  => Abs (Binder SimpIR) e n
+  -> (forall l. DExt n l => Binder SimpIR n l -> e l -> OCCM l a)
+  -> OCCM n a
+occWithBinder (Abs (b:>ty) body) cont = do
+  ty' <- occTy ty
+  refreshAbs (Abs (b:>ty') body) cont
+{-# INLINE occWithBinder #-}
 
 instance HasOCC SAtom where
   occ a atom = case atom of
-    Lam _ -> error "Expecting all Lam Atoms to be covered by their contexts"
     ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
     _ -> generic
     where
@@ -479,24 +469,25 @@ instance HasOCC (TabLamExpr SimpIR) where
   occ _ view = inlinedLater view
   {-# INLINE occ #-}
 
-instance HasOCC (ComposeE PrimOp SAtom) where
-  occ _ (ComposeE (PrimEffect ref (MExtend (BaseMonoid empty combine) val))) = do
-    val' <- occ accessOnce val
-    valIx <- summary val'
-    ref' <- occ accessOnce ref
-    -- TODO(precision) The empty value of the monoid is presumably dead here,
-    -- but we pretend like it's not to make sure that occurrence analysis
-    -- results mention every free variable in the traversed expression.  This
-    -- may lead to missing an opportunity to inline something into the empty
-    -- value of the given monoid, since references thereto will be overcounted.
-    empty' <- occ accessOnce empty
-    -- Treat the combining function as inlined here and called once
-    combine' <- oneShot2 accessOnce (Deterministic []) valIx combine
-    return $ ComposeE (PrimEffect ref'
-                       (MExtend (BaseMonoid empty' combine') val'))
-  -- I'm pretty sure the others are all strict, and not usefully analyzable
-  -- for what they do to the incoming access pattern.
-  occ _ (ComposeE op) = ComposeE <$> traverse (occ accessOnce) op
+instance HasOCC (PrimEffect SimpIR) where
+  occ _ = \case
+    MExtend (BaseMonoid empty combine) val -> do
+      val' <- occ accessOnce val
+      valIx <- summary val'
+      -- TODO(precision) The empty value of the monoid is presumably dead here,
+      -- but we pretend like it's not to make sure that occurrence analysis
+      -- results mention every free variable in the traversed expression.  This
+      -- may lead to missing an opportunity to inline something into the empty
+      -- value of the given monoid, since references thereto will be overcounted.
+      empty' <- occ accessOnce empty
+      -- Treat the combining function as inlined here and called once
+      combine' <- oneShot accessOnce [Deterministic [], valIx] combine
+      return $ MExtend (BaseMonoid empty' combine') val'
+    -- I'm pretty sure the others are all strict, and not usefully analyzable
+    -- for what they do to the incoming access pattern.
+    MPut x -> MPut <$> occ accessOnce x
+    MGet -> return MGet
+    MAsk -> return MAsk
   {-# INLINE occ #-}
 
 -- === The generic instances ===
