@@ -228,13 +228,21 @@ instance CheckableE (Expr r) where
 instance HasType r (AtomName r) where
   getTypeE name = do
     name' <- substM name
-    atomBindingType <$> lookupAtomName name'
+    (unsafeCoerceIRE . atomBindingType) <$> lookupAtomName name'
   {-# INLINE getTypeE #-}
 
 instance HasType r (Atom r) where
   getTypeE atom = case atom of
     Var name -> getTypeE name
-    Lam lamExpr -> getTypeE lamExpr
+    Lam lam arr effs -> do
+      UnaryLamExpr (b:>ty) body <- return lam
+      ty' <- checkTypeE TyKind ty
+      withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+        effs' <- substM effs >>= flip applyAbs (binderName b')
+        withAllowedEffects effs' do
+          extendRenamer (b@>binderName b') do
+            resultTy <- getTypeE body
+            return $ Pi $ PiType (PiBinder b' ty' arr) effs' resultTy
     Pi piType -> getTypeE piType
     TabLam lamExpr -> getTypeE lamExpr
     TabPi piType -> getTypeE piType
@@ -330,6 +338,13 @@ instance HasType r (Expr r) where
       instantiateHandlerType hndName' r []
     -- TODO(alex): implement
     Handle _ _ _  -> error "not implemented"
+    PrimEffect ref m -> do
+      TC (RefType ~(Just (Var h')) s) <- getTypeE ref
+      case m of
+        MGet      ->         declareEff (RWSEffect State  $ Just h') $> s
+        MPut  x   -> x|:s >> declareEff (RWSEffect State  $ Just h') $> UnitTy
+        MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
+        MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
 
 instance HasType r (Block r) where
   getTypeE (Block NoBlockAnn Empty expr) = do
@@ -362,22 +377,6 @@ instance CheckableE (PiBinding r) where
   checkE (PiBinding arr ty) = do
     ty' <- checkTypeE TyKind ty
     return $ PiBinding arr ty'
-
-instance CheckableB (LamBinder r) where
-  checkB (LamBinder b ty arr effs) cont = do
-    ty' <- checkTypeE TyKind ty
-    let binding = toBinding $ LamBinding arr ty'
-    withFreshBinder (getNameHint b) binding \b' -> do
-      extendRenamer (b@>binderName b') do
-        effs' <- checkE effs
-        withAllowedEffects effs' $
-          cont $ LamBinder b' ty' arr effs'
-
-instance HasType r (LamExpr r) where
-  getTypeE (LamExpr b body) = do
-    checkB b \b' -> do
-      bodyTy <- getTypeE body
-      return $ lamExprTy b' bodyTy
 
 instance HasType r (TabLamExpr r) where
   getTypeE (TabLamExpr b body) = do
@@ -426,9 +425,9 @@ dictExprType e = case e of
           let extendedArgs = case reqTy of
                 Pi _ -> args
                 _ -> args ++ [UnitVal]
-          fTy <- unsafeCoerceIRE <$> naryLamExprType methodFun
-          actualTy  <- checkApp (naryPiTypeAsType fTy) extendedArgs
-          checkAlphaEq reqTy (unsafeCoerceIRE actualTy)
+          fTy <- dropSubst (getLamExprTypeE methodFun)
+          actualTy  <- checkApp (naryPiTypeAsType $ unsafeCoerceIRE @CoreIR fTy) (map (unsafeCoerceIRE @CoreIR) extendedArgs)
+          checkAlphaEq (unsafeCoerceIRE @CoreIR reqTy) actualTy
     return $ unsafeCoerceIRE dictTy
 
 instance HasType r (DictExpr r) where
@@ -556,13 +555,6 @@ typeCheckPrimOp op = case op of
     ty <- getTypeE x
     y |: ty
     return ty
-  PrimEffect ref m -> do
-    TC (RefType ~(Just (Var h')) s) <- getTypeE ref
-    case m of
-      MGet      ->         declareEff (RWSEffect State  $ Just h') $> s
-      MPut  x   -> x|:s >> declareEff (RWSEffect State  $ Just h') $> UnitTy
-      MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
-      MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
     getTypeE ref >>= \case
       TC (RefType h (TabTy (b:>IxType iTy _) eltTy)) -> do
@@ -760,28 +752,24 @@ typeCheckPrimOp op = case op of
   Resume retTy _argTy -> do
     checkTypeE TyKind retTy
 
-typeCheckPrimHof :: Typer m => PrimHof (Atom r i) -> m i o (Type r o)
+typeCheckPrimHof :: Typer m => Hof r i -> m i o (Type r o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixDict f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
-    Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
+    NaryPiType (UnaryNest (PiBinder b argTy _)) _ eltTy <- getLamExprTypeE f
     checkAlphaEq (ixTypeType ixTy) argTy
-    eff' <- liftHoistExcept $ hoist b eff
-    declareEffs eff'
     return $ TabTy (b:>ixTy) eltTy
   While body -> do
-    Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
-    PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy
-    declareEffs eff'
-    checkAlphaEq (BaseTy $ Scalar Word8Type) condTy'
+    condTy <- getTypeE body
+    checkAlphaEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f -> do
-    Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
+    NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprTypeE f
     b' <- liftHoistExcept $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
   Transpose f -> do
-    Pi (PiType (PiBinder binder a LinArrow) Pure b) <- getTypeE f
+    NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprTypeE f
     b' <- liftHoistExcept $ hoist binder b
     b' --@ a
   RunReader r f -> do
@@ -811,21 +799,9 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
         dest |: RawRefTy stateTy
         declareEff InitEffect
     return $ PairTy resultTy stateTy
-  RunIO f -> do
-    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
-    extendAllowedEffect IOEffect $ declareEffs eff'
-    return resultTy'
-  RunInit f -> do
-    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
-    extendAllowedEffect InitEffect $ declareEffs eff'
-    return resultTy'
-  CatchException f -> do
-    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
-    extendAllowedEffect ExceptionEffect $ declareEffs eff'
-    return $ MaybeTy resultTy'
+  RunIO body -> extendAllowedEffect IOEffect $ getTypeE body
+  RunInit body -> extendAllowedEffect InitEffect $ getTypeE body
+  CatchException body -> liftM MaybeTy $ extendAllowedEffect ExceptionEffect $ getTypeE body
   Seq _ ixDict carry f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     carryTy' <- getTypeE carry
@@ -833,33 +809,40 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     case carryTy' of
       ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
       _ -> badCarry
-    Pi (PiType (PiBinder b argTy PlainArrow) eff UnitTy) <- getTypeE f
-    checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') argTy
-    declareEffs =<< liftHoistExcept (hoist b eff)
+    NaryPiType (UnaryNest b) _ _ <- getLamExprTypeE f
+    checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d
-    Pi (PiType b _ UnitTy) <- getTypeE body
+    NaryPiType (UnaryNest b) _ UnitTy <- getLamExprTypeE body
     checkAlphaEq (binderType b) dTy
     return dTy
 
-checkRWSAction :: Typer m => RWS -> Atom r i -> m i o (Type r o, Type r o)
+-- XXX: This allows whatever effects are currently in scope to be used in the body,
+-- because it's usually used in places where that makes sense. But if you're checking
+-- an actual standalone lambda you should supply your own effects.
+getLamExprTypeE :: Typer m => LamExpr r i -> m i o (NaryPiType r o)
+getLamExprTypeE (LamExpr bsTop body) = case bsTop of
+  Empty -> do
+    effs <- substM $ blockEffects body
+    resultTy <- getTypeE body
+    return $ NaryPiType Empty effs resultTy
+  Nest (b:>ty) bs -> do
+    ty' <- checkTypeE TyKind ty
+    withFreshBinder (getNameHint b) ty' \b' ->
+      extendRenamer (b@>binderName b') do
+        NaryPiType bs' eff resultTy <- getLamExprTypeE (LamExpr bs body)
+        return $ NaryPiType (Nest (PiBinder b' ty' PlainArrow) bs') eff resultTy
+
+checkRWSAction :: Typer m => RWS -> LamExpr r i -> m i o (Type r o, Type r o)
 checkRWSAction rws f = do
-  BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
-  allowed <- getAllowedEffects
-  dropSubst $
-    substBinders regionBinder \regionBinder' -> do
-      substBinders refBinder \_ -> do
-        allowed'   <- sinkM allowed
-        eff'       <- substM eff
-        regionName <- sinkM $ binderName regionBinder'
-        withAllowedEffects allowed' $
-          extendAllowedEffect (RWSEffect rws $ Just regionName) $
-            declareEffs eff'
-  PiBinder _ (RefTy _ referentTy) _ <- return refBinder
-  referentTy' <- liftHoistExcept $ hoist regionBinder referentTy
-  resultTy' <- liftHoistExcept $ hoist (PairB regionBinder refBinder) resultTy
-  return (resultTy', referentTy')
+  BinaryLamExpr bH bR body <- return f
+  substBinders bH \bH' -> substBinders bR \bR' -> do
+    h <- sinkM $ binderName bH'
+    extendAllowedEffect (RWSEffect rws $ Just h) do
+      RefTy _ referentTy <- sinkM $ binderType bR'
+      resultTy <- getTypeE body
+      liftM fromPairE $ liftHoistExcept $ hoist (PairB bH' bR') $ PairE resultTy referentTy
 
 checkCase :: Typer m => HasType r body
           => Atom r i -> [AltP r body i] -> Type r i -> EffectRow i -> m i o (Type r o)
@@ -897,7 +880,7 @@ checkApp fTy [] = return fTy
 checkApp fTy xs = case fromNaryPiType (length xs) fTy of
   Just (NaryPiType bs effs resultTy) -> do
     xs' <- mapM substM xs
-    checkArgTys (nonEmptyToNest bs) xs'
+    checkArgTys bs xs'
     let subst = bs @@> fmap SubstVal xs'
     PairE effs' resultTy' <- applySubst subst $ PairE effs resultTy
     declareEffs effs'
@@ -917,17 +900,14 @@ checkTabApp tabTy xs = go tabTy $ toList xs
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
 
-_checkNaryLamExpr :: Typer m => NaryLamExpr r i -> NaryPiType r o -> m i o ()
-_checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
-
 asNaryPiType :: Type r n -> Maybe (NaryPiType r n)
 asNaryPiType ty = case ty of
   Pi (PiType b effs resultTy) -> case effs of
    Pure -> case asNaryPiType resultTy of
-     Just (NaryPiType (NonEmptyNest b' bs) effs' resultTy') ->
-        Just $ NaryPiType (NonEmptyNest b (Nest b' bs)) effs' resultTy'
-     Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
-   _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
+     Just (NaryPiType bs effs' resultTy') ->
+        Just $ NaryPiType (Nest b bs) effs' resultTy'
+     Nothing -> Just $ NaryPiType (Nest b Empty) Pure resultTy
+   _ -> Just $ NaryPiType (Nest b Empty) effs resultTy
   _ -> Nothing
 
 checkArgTys
@@ -1198,7 +1178,7 @@ asFFIFunType ty = return do
   return (impTy, naryPiTy)
 
 checkFFIFunTypeM :: Fallible m => NaryPiType r n -> m  IFunType
-checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
+checkFFIFunTypeM (NaryPiType (Nest b bs) eff resultTy) = do
   argTy <- checkScalar $ binderType b
   case bs of
     Empty -> do
@@ -1210,9 +1190,10 @@ checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
                  _ -> FFIMultiResultCC
       return $ IFunType cc [argTy] resultTys
     Nest b' rest -> do
-      let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy
+      let naryPiRest = NaryPiType (Nest b' rest) eff resultTy
       IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
       return $ IFunType cc (argTy:argTys) resultTys
+checkFFIFunTypeM _ = error "expected at least one argument"
 
 checkScalar :: Fallible m => Type r n -> m BaseType
 checkScalar (BaseTy ty) = return ty
@@ -1233,7 +1214,7 @@ asSpecializableFunction :: EnvReader m => Type r n -> m n (Maybe (Int, NaryPiTyp
 asSpecializableFunction ty =
   case asNaryPiType ty of
     Just piTy@(NaryPiType bs _ _) -> do
-      let n = numStaticArgs $ nonEmptyToNest bs
+      let n = numStaticArgs bs
       return $ Just (n, piTy)
     Nothing -> return Nothing
   where
@@ -1258,8 +1239,8 @@ asFirstOrderFunctionM :: Typer m => Type r i -> m i o (NaryPiType r o)
 asFirstOrderFunctionM ty = case asNaryPiType ty of
   Nothing -> throw TypeErr "Not a monomorphic first-order function"
   Just naryPi@(NaryPiType bs eff resultTy) -> do
-    substBinders bs \(NonEmptyNest b' bs') -> do
-      ts <- mapM sinkM $ bindersTypes $ Nest b' bs'
+    substBinders bs \bs' -> do
+      ts <- mapM sinkM $ bindersTypes bs'
       dropSubst $ mapM_ checkDataLike ts
       Pure <- return eff
       checkDataLike resultTy

@@ -227,6 +227,7 @@ instance SourceRenamableE UExpr' where
     UTypeAnn e ty -> UTypeAnn <$> sourceRenameE e <*> sourceRenameE ty
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
+    UPrimApp p xs -> UPrimApp p <$> mapM sourceRenameE xs
     ULabel name -> return $ ULabel name
     URecord elems -> URecord <$> mapM sourceRenameE elems
     UVariant types label val ->

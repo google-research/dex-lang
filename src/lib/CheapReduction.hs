@@ -194,7 +194,7 @@ instance CheaplyReducibleE r (Atom r) (Atom r) where
     -- means that we will follow the full call chain, so it's really expensive!
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
-    Lam _   -> substM a
+    Lam _ _ _ -> substM a
     Con (DictHole ctx ty') -> do
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthTerm $ unsafeCoerceIRE ty) >>= \case
@@ -252,7 +252,7 @@ instance CheaplyReducibleE r (Expr r) (Atom r) where
     App f' xs' -> do
       f <- cheapReduceE f'
       case fromNaryLamExact (length xs') f of
-        Just (NaryLamExpr bs _ body) -> do
+        Just (LamExpr bs body) -> do
           xs <- mapM cheapReduceE xs'
           let subst = bs @@> fmap SubstVal xs
           dropSubst $ extendSubst subst $ cheapReduceE body

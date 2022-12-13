@@ -23,8 +23,9 @@ module Builder (
   ptrOffset, unsafePtrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
-  buildLam, buildTabLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr, asNaryLam,
+  buildLam, buildTabLam,
+  buildAbs, buildNaryAbs, buildUnaryLamExpr,
+  buildNaryLamExpr, buildNaryLamExprFromPi, asNaryLam,
   buildAlt, buildUnaryAtomAlt,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
@@ -48,7 +49,7 @@ module Builder (
   applyRecon, applyReconAbs, applyIxMethod,
   emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
-  addTangent, updateAddAt, tangentBaseMonoidFor,
+  addTangent, tangentBaseMonoidFor,
   buildEffLam, catMaybesE, runMaybeWhile,
   ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
   HoistingTopBuilder (..), liftTopBuilderHoisted,
@@ -371,7 +372,7 @@ unsafeCoerceRAbsDict :: AbsDict r n -> AbsDict r' n
 unsafeCoerceRAbsDict (Abs bs e) = Abs bs' (unsafeCoerceIRE e)
   where bs' = fmapNest (\(b:>ty) -> b :> unsafeCoerceIRE ty) bs
 
-finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [NaryLamExpr SimpIR n] -> m n ()
+finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [LamExpr SimpIR n] -> m n ()
 finishSpecializedDict name methods =
   emitPartialTopEnvFrag $ mempty {fragFinishSpecializedDict = toSnocList [(name, methods)]}
 
@@ -669,7 +670,7 @@ absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
   return $ Block (BlockAnn ty' effs') decls result
 {-# INLINE absToBlock #-}
 
-buildPureLam :: ScopableBuilder r m
+buildPureLam :: (IsCore r, ScopableBuilder r m)
              => NameHint -> Arrow -> Type r n
              -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
              -> m n (Atom r n)
@@ -690,19 +691,13 @@ buildTabLam hint ty fBody = do
     return $ TabLam $ TabLamExpr (b:>ty) body
 
 buildLam
-  :: ScopableBuilder r m
+  :: (IsCore r, ScopableBuilder r m)
   => NameHint -> Arrow -> Type r n -> EffectRow n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
 buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
 
-buildNullaryLam :: ScopableBuilder r m
-                => EffectRow n
-                -> (forall l. (Emits l, DExt n l) => m l (Atom r l))
-                -> m n (Atom r n)
-buildNullaryLam effs cont = buildLam noHint PlainArrow UnitTy effs \_ -> cont
-
-buildNullaryPi :: Builder r m
+buildNullaryPi :: (IsCore r, Builder r m)
                => EffectRow n
                -> (forall l. DExt n l => m l (Type r l))
                -> m n (Type r n)
@@ -712,7 +707,7 @@ buildNullaryPi effs cont =
     return (sink effs, resultTy)
 
 buildLamGeneral
-  :: ScopableBuilder r m
+  :: (IsCore r, ScopableBuilder r m)
   => NameHint -> Arrow -> Type r n
   -> (forall l.           DExt n l  => AtomName r l -> m l (EffectRow l))
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
@@ -722,11 +717,11 @@ buildLamGeneral hint arr ty fEff fBody = do
     let v = binderName b
     effs <- fEff v
     body <- withAllowedEffects effs $ buildBlock $ fBody $ sink v
-    return $ Lam $ LamExpr (LamBinder b ty arr effs) body
+    return $ Lam (UnaryLamExpr (b:>ty) body) arr (Abs b effs)
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
-buildPureNaryLam :: ScopableBuilder r m
+buildPureNaryLam :: (IsCore r, ScopableBuilder r m)
                  => EmptyAbs (Nest (PiBinder r)) n
                  -> (forall l. DExt n l => [AtomName r l] -> m l (Atom r l))
                  -> m n (Atom r n)
@@ -746,13 +741,13 @@ buildPi :: (Fallible1 m, Builder r m)
         => NameHint -> Arrow -> Type r n
         -> (forall l. DExt n l => AtomName r l -> m l (EffectRow l, Type r l))
         -> m n (PiType r n)
-buildPi hint arr ty body = do
-  withFreshPiBinder hint (PiBinding arr ty) \b -> do
+buildPi hint arr ty body =
+  withFreshBinder hint (PiBinding arr ty) \b -> do
     (effs, resultTy) <- body $ binderName b
-    return $ PiType b effs resultTy
+    return $ PiType (PiBinder b ty arr) effs resultTy
 
 buildNaryPi
-  :: Builder r m
+  :: (IsCore r, Builder r m)
   => EmptyAbs (Nest (Binder r)) n
   -> (forall l. (Distinct l, DExt n l) => [AtomName r l] -> m l (Type r l))
   -> m n (Type r n)
@@ -835,50 +830,50 @@ buildNaryAbsRec ns x = confuseGHC >>= \_ -> case x of
       Abs bs'' ns'' <- buildNaryAbsRec (binderName b' : sinkList ns) bs'
       return $ Abs (Nest b' bs'') ns''
 
--- TODO: probably deprectate this version in favor of `buildNaryLamExpr`
-buildNaryLam
-  :: (ScopableBuilder r m, Emits n)
-  => EmptyAbs (Nest (Binder r)) n
-  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
-  -> m n (Atom r n)
-buildNaryLam binderNest body = do
-  naryAbs <- buildNaryAbs binderNest \vs ->
-    buildBlock $ body $ map sink vs
-  case naryAbsToNaryLam naryAbs of
-    AtomicBlock atom -> return atom
-    block -> emitBlock block
-  where
-    naryAbsToNaryLam :: Abs (Nest (Binder r)) (Block r) n -> Block r n
-    naryAbsToNaryLam (Abs binders block) = case binders of
-      Empty -> block
-      Nest (b:>ty) bs ->
-        AtomicBlock $ Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
-          naryAbsToNaryLam $ Abs bs block
+buildUnaryLamExpr
+  :: (ScopableBuilder r m)
+  => NameHint -> Type r n
+  -> (forall l. (Emits l, Distinct l, DExt n l) => AtomName r l -> m l (Atom r l))
+  -> m n (LamExpr r n)
+buildUnaryLamExpr hint ty cont = do
+  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest (b:>ty))
+  buildNaryLamExpr bs \[v] -> cont v
 
-asNaryLam :: EnvReader m => NaryPiType r n -> Atom r n -> m n (NaryLamExpr r n)
+buildBinaryLamExpr
+  :: (ScopableBuilder r m)
+  => (NameHint, Type r n) -> (NameHint, Type r n)
+  -> (forall l. (Emits l, Distinct l, DExt n l) => AtomName r l -> AtomName r l -> m l (Atom r l))
+  -> m n (LamExpr r n)
+buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
+  bs <- withFreshBinder h1 t1 \b1 -> withFreshBinder h2 (sink t2) \b2 ->
+    return $ EmptyAbs $ BinaryNest (b1:>t1) (b2:>sink t2)
+  buildNaryLamExpr bs \[v1, v2] -> cont v1 v2
+
+asNaryLam :: EnvReader m => NaryPiType r n -> Atom r n -> m n (LamExpr r n)
 asNaryLam ty f = liftBuilder do
-  buildNaryLamExpr ty \xs ->
+  buildNaryLamExprFromPi ty \xs ->
     naryApp (sink f) (map Var $ toList xs)
 
 buildNaryLamExpr
   :: ScopableBuilder r m
+  => (EmptyAbs (Nest (Binder r)) n)
+  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
+  -> m n (LamExpr r n)
+buildNaryLamExpr (Abs bs UnitE) cont = case bs of
+  Empty -> LamExpr Empty <$> buildBlock (cont [])
+  Nest b rest -> do
+    Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
+      rest' <- applySubst (b@>v) $ EmptyAbs rest
+      buildNaryLamExpr rest' \vs -> cont $ sink v : vs
+    return $ LamExpr (Nest b' bs') body'
+
+buildNaryLamExprFromPi
+  :: ScopableBuilder r m
   => NaryPiType r n
-  -> (forall l. (Emits l, Distinct l, DExt n l) => NonEmpty (AtomName r l) -> m l (Atom r l))
-  -> m n (NaryLamExpr r n)
-buildNaryLamExpr (NaryPiType (NonEmptyNest b bs) eff resultTy) cont =
-  case bs of
-    Empty -> do
-      Abs b' (PairE eff' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
-        eff' <- applySubst (b@>v) eff
-        result <- withAllowedEffects eff' $ buildBlock $ cont $ (sink v) :| []
-        return $ PairE eff' result
-      return $ NaryLamExpr (NonEmptyNest b' Empty) eff' body'
-    Nest bnext rest -> do
-      Abs b' lamExpr <- buildAbs (getNameHint b) (binderType b) \v -> do
-        piTy' <- applySubst (b@>v) $ NaryPiType (NonEmptyNest bnext rest) eff resultTy
-        buildNaryLamExpr piTy' \(v':|vs) -> cont $ sink v :| (v':vs)
-      NaryLamExpr (NonEmptyNest bnext' rest') eff' body' <- return $ lamExpr
-      return $ NaryLamExpr (NonEmptyNest b' (Nest bnext' rest')) eff' body'
+  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
+  -> m n (LamExpr r n)
+buildNaryLamExprFromPi (NaryPiType bs _ _) cont = buildNaryLamExpr ab cont
+  where ab = EmptyAbs (fmapNest (\(PiBinder b ty _) -> b:>ty) bs)
 
 buildAlt
   :: ScopableBuilder r m
@@ -940,21 +935,17 @@ buildEffLam
   :: ScopableBuilder r m
   => RWS -> NameHint -> Type r n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> AtomName r l -> m l (Atom r l))
-  -> m n (Atom r n)
+  -> m n (LamExpr r n)
 buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
-  buildLam noHint PlainArrow TyKind Pure \h -> do
-    let ty' = RefTy (Var h) (sink ty)
+  withFreshBinder noHint TyKind \h -> do
+    let ty' = RefTy (Var $ binderName h) (sink ty)
     withFreshBinder hint (LamBinding PlainArrow ty') \b -> do
       let ref = binderName b
-      h' <- sinkM h
-      let eff' = extendEffect (RWSEffect rws (Just h')) (sink eff)
-      body' <- withAllowedEffects eff' $ buildBlock $ body (sink h) $ sink ref
-      -- Contract the type of the produced function to only mention
-      -- the effects actually demanded by the body.  This is safe because
-      -- it's immediately consumed by an effect discharge primitive.
-      effs <- getEffects body'
-      return $ Lam $ LamExpr (LamBinder b ty' PlainArrow effs) body'
+      hVar <- sinkM $ binderName h
+      let eff' = extendEffect (RWSEffect rws (Just hVar)) (sink eff)
+      body' <- withAllowedEffects eff' $ buildBlock $ body (sink hVar) $ sink ref
+      return $ LamExpr (BinaryNest (h:>TyKind) (b:>ty')) body'
 
 buildForAnn
   :: (Emits n, ScopableBuilder r m)
@@ -965,8 +956,7 @@ buildForAnn hint ann ixTy@(IxType iTy ixDict) body = do
   lam <- withFreshBinder hint ixTy \b -> do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
-    effs <- getEffects body'
-    return $ Lam $ LamExpr (LamBinder b iTy PlainArrow effs) body'
+    return $ LamExpr (UnaryNest (b:>iTy)) body'
   liftM Var $ emit $ Hof $ For ann ixDict lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
@@ -1075,7 +1065,7 @@ fromNewtypeWrapper ty = do
 tangentBaseMonoidFor :: Builder r m => Type r n -> m n (BaseMonoid r n)
 tangentBaseMonoidFor ty = do
   zero <- zeroAt ty
-  adder <- liftEmitBuilder $ buildLam noHint PlainArrow ty Pure \v -> updateAddAt $ Var v
+  adder <- liftBuilder $ buildBinaryLamExpr (noHint, ty) (noHint, ty) \x y -> addTangent (Var x) (Var y)
   return $ BaseMonoid zero adder
 
 addTangent :: (Emits n, Builder r m) => Atom r n -> Atom r n -> m n (Atom r n)
@@ -1096,11 +1086,6 @@ addTangent x y = do
       ty -> notTangent ty
     ty -> notTangent ty
     where notTangent ty = error $ "Not a tangent type: " ++ pprint ty
-
-updateAddAt :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n)
-updateAddAt x = liftEmitBuilder do
-  ty <- getType x
-  buildLam noHint PlainArrow ty Pure \v -> addTangent (sink x) (Var v)
 
 -- === builder versions of common top-level emissions ===
 
@@ -1153,7 +1138,7 @@ emitMethod hint classDef explicit idx = do
   f <- Var <$> emitTopLet hint PlainLet (Atom getter)
   emitBinding hint $ MethodBinding classDef idx f
 
-makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom r n)
+makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom CoreIR n)
 makeMethodGetter className explicit methodIdx = liftBuilder do
   className' <- sinkM className
   ClassDef sourceName _ paramBs _ _ <- getClassDef className'
@@ -1337,9 +1322,8 @@ ptrOffset x i = emitOp $ PtrOffset x i
 
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 unsafePtrLoad x = do
-  lam <- liftEmitBuilder $ buildLam noHint PlainArrow UnitTy (OneEffect IOEffect) \_ ->
-    emitOp . PtrLoad =<< sinkM x
-  liftM Var $ emit $ Hof $ RunIO $ lam
+  body <- liftEmitBuilder $ buildBlock $ emitOp . PtrLoad =<< sinkM x
+  liftM Var $ emit $ Hof $ RunIO body
 
 -- === index set type class ===
 
@@ -1360,7 +1344,7 @@ applyIxMethod dict method args = case dict of
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
   DictCon (ExplicitMethods d params) -> do
     SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
-    NaryLamExpr bs _ body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
+    LamExpr bs body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
@@ -1371,7 +1355,7 @@ applyIxMethod dict method args = case dict of
 
 -- This works with `Nat` instead of `IndexRepTy` because it's used alongside
 -- user-defined instances.
-projectIxFinMethod :: EnvReader m => IxMethod -> Atom r n -> m n (Atom r n)
+projectIxFinMethod :: (IsCore r, EnvReader m) => IxMethod -> Atom r n -> m n (Atom r n)
 projectIxFinMethod method n = liftBuilder do
   case method of
     Size -> return n  -- result : Nat
@@ -1453,14 +1437,12 @@ reduceE monoid xs = liftEmitBuilder do
   getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
     buildFor noHint Fwd (sink ty) \i -> do
       x <- tabApp (sink xs) (Var i)
-      emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
+      liftM Var $ emit $ PrimEffect (sink $ Var ref) $ MExtend (sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid r n)
-andMonoid =  liftM (BaseMonoid TrueAtom) do
-  liftBuilder $
-    buildLam noHint PlainArrow BoolTy Pure \x ->
-      buildLam noHint PlainArrow BoolTy Pure \y -> do
-        emitOp $ BinOp BAnd (sink $ Var x) (Var y)
+andMonoid = liftM (BaseMonoid TrueAtom) $ liftBuilder $
+  buildBinaryLamExpr (noHint, BoolTy) (noHint, BoolTy) \x y ->
+    emitOp $ BinOp BAnd (sink $ Var x) (Var y)
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
 mapE :: (Emits n, ScopableBuilder r m)
@@ -1486,10 +1468,9 @@ catMaybesE maybes = do
 emitWhile :: (Emits n, ScopableBuilder r m)
           => (forall l. (Emits l, DExt n l) => m l (Atom r l))
           -> m n ()
-emitWhile body = do
-  eff <- getAllowedEffects
-  lam <- buildNullaryLam eff body
-  void $ emit $ Hof $ While lam
+emitWhile cont = do
+  body <- buildBlock cont
+  void $ emit $ Hof $ While body
 
 -- Dex implementation, for reference
 -- def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
@@ -1513,7 +1494,7 @@ runMaybeWhile body = do
     emitWhile do
       ans <- body
       emitMaybeCase ans Word8Ty
-        (emitOp (PrimEffect (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
+        (emit (PrimEffect (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
         (return)
     return UnitVal
   emitIf hadError (MaybeTy UnitTy)

@@ -42,7 +42,6 @@ data PrimExpr e =
         TCExpr  (PrimTC  e)
       | ConExpr (PrimCon e)
       | OpExpr  (PrimOp  e)
-      | HofExpr (PrimHof e)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimTC e =
@@ -92,7 +91,6 @@ data PrimOp e =
       | CastOp e e                   -- Type, then value. See CheckType.hs for valid coercions.
       | BitcastOp e e                -- Type, then value. See CheckType.hs for valid coercions.
       -- Effects
-      | PrimEffect e (PrimEffect e)
       | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | Resume e e                   -- Resume from effect handler (type, arg)
@@ -152,28 +150,6 @@ data PrimOp e =
 traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')
 traversePrimOp = inline traverse
 {-# INLINABLE traversePrimOp #-}
-
-data PrimHof e =
-        For ForAnn e e        -- ix dict, body lambda
-      | While e
-      | RunReader e e
-      | RunWriter (Maybe e) (BaseMonoidP e) e  -- dest, monoid, body lambda
-      | RunState  (Maybe e) e e  -- dest, initial value, body lambda
-      | RunIO e
-      | RunInit e
-      | CatchException e
-      | Linearize e
-      | Transpose e
-      -- Dex abstract machine ops
-      | Seq Direction e e e   -- ix dict, carry dests, body lambda
-      | RememberDest e e
-        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
-data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
-                     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
-data PrimEffect e = MAsk | MExtend (BaseMonoidP e) e | MGet | MPut e
-    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
            | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
@@ -420,9 +396,6 @@ instance Store (EffectP    Name n)
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
 instance Store a => Store (PrimTC  a)
-instance Store a => Store (PrimHof a)
-instance Store a => Store (PrimEffect a)
-instance Store a => Store (BaseMonoidP a)
 
 instance Hashable RWS
 instance Hashable Direction
@@ -441,6 +414,3 @@ instance Hashable Arrow
 instance Hashable a => Hashable (PrimOp  a)
 instance Hashable a => Hashable (PrimCon a)
 instance Hashable a => Hashable (PrimTC  a)
-instance Hashable a => Hashable (PrimHof a)
-instance Hashable a => Hashable (PrimEffect a)
-instance Hashable a => Hashable (BaseMonoidP a)
