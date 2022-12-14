@@ -82,37 +82,23 @@ data Atom (r::IR) (n::S) where
 deriving instance Show (Atom r n)
 deriving via WrapE (Atom r) n instance Generic (Atom r n)
 
-data Expr r n =
-   App (Atom r n) (NonEmpty (Atom r n))
- | TabApp (Atom r n) (NonEmpty (Atom r n)) -- TODO: put this in PrimOp?
- | Case (Atom r n) [Alt r n] (Type r n) (EffectRow n)
- | Atom (Atom r n)
- | Op  (Op  r n)
- | Hof (Hof r n)
- | PrimEffect (Atom r n) (PrimEffect r n)
- | Handle (HandlerName n) [Atom r n] (Block r n)
-   deriving (Show, Generic)
+data Expr r n where
+ App    :: Atom r n -> NonEmpty (Atom r n)   -> Expr r n
+ TabApp :: Atom r n -> NonEmpty (Atom r n)   -> Expr r n
+ Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow n -> Expr r n
+ Atom   :: Atom r n                          -> Expr r n
+ Hof    :: Hof r n                           -> Expr r n
+ TabCon :: Type r n -> [Atom r n]            -> Expr r n
+ RefOp  :: Atom r n -> RefOp r n             -> Expr r n
+ PrimOp :: PrimOp (Atom r n)                 -> Expr r n
+ UserEffectOp    :: IsCore r    => UserEffectOp r n           -> Expr r n
+ -- TODO: `IsCore r` constraint
+ ProjMethod      :: (Atom r n) -> Int          -> Expr r n
+ RecordVariantOp :: IsCore r    => RecordVariantOp (Atom r n) -> Expr r n
+ DAMOp           :: IsLowered r => DAMOp r n                  -> Expr r n
 
-data Hof r n where
- For       :: ForAnn -> Atom r n -> LamExpr r n -> Hof r n
- While     :: Block r n -> Hof r n
- RunReader :: Atom r n -> LamExpr r n -> Hof r n
- RunWriter :: Maybe (Atom r n) -> BaseMonoid r n -> LamExpr r n -> Hof r n
- RunState  :: Maybe (Atom r n) -> Atom r n -> LamExpr r n -> Hof r n  -- dest, initial value, body lambda
- RunIO     :: Block r n -> Hof r n
- RunInit   :: Block r n -> Hof r n
- CatchException :: IsCore r => Block r n -> Hof r n
- Linearize      :: IsCore r => LamExpr r n -> Hof r n
- Transpose      :: IsCore r => LamExpr r n -> Hof r n
- -- Dex abstract machine ops
- Seq :: Direction -> Atom r n -> Atom r n -> LamExpr r n -> Hof r n   -- ix dict, carry dests, body lambda
- RememberDest :: Atom r n -> LamExpr r n -> Hof r n
-
-deriving instance Show (Hof r n)
-deriving via WrapE (Hof r) n instance Generic (Hof r n)
-
-data PrimEffect r n = MAsk | MExtend (BaseMonoid r n) (Atom r n) | MGet | MPut (Atom r n)
-     deriving (Show, Generic)
+deriving instance Show (Expr r n)
+deriving via WrapE (Expr r) n instance Generic (Expr r n)
 
 data BaseMonoid r n =
   BaseMonoid { baseEmpty   :: Atom r n
@@ -249,7 +235,6 @@ type Dict = Atom
 
 type TC  r n = PrimTC  r (Atom r n)
 type Con r n = PrimCon r (Atom r n)
-type Op  r n = PrimOp    (Atom r n)
 
 type AtomSubstVal r = SubstVal AtomNameC (Atom r) :: V
 
@@ -270,6 +255,48 @@ data BoxPtr (r::IR) (n::S) = BoxPtr (Atom r n) (Block r n)  -- ptrptr, size
 -- about sequential scope extensions, we encode it differently.
 data NonDepNest r ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
                             deriving (Generic)
+
+-- === Various ops ===
+
+data Hof r n where
+ For       :: ForAnn -> Atom r n -> LamExpr r n -> Hof r n
+ While     :: Block r n -> Hof r n
+ RunReader :: Atom r n -> LamExpr r n -> Hof r n
+ RunWriter :: Maybe (Atom r n) -> BaseMonoid r n -> LamExpr r n -> Hof r n
+ RunState  :: Maybe (Atom r n) -> Atom r n -> LamExpr r n -> Hof r n  -- dest, initial value, body lambda
+ RunIO     :: Block r n -> Hof r n
+ RunInit   :: Block r n -> Hof r n
+ CatchException :: IsCore r => Block r n -> Hof r n
+ Linearize      :: IsCore r => LamExpr r n -> Hof r n
+ Transpose      :: IsCore r => LamExpr r n -> Hof r n
+
+deriving instance Show (Hof r n)
+deriving via WrapE (Hof r) n instance Generic (Hof r n)
+
+
+-- Ops for "Dex Abstract Machine"
+data DAMOp r n =
+   Seq Direction (Atom r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
+ | RememberDest (Atom r n) (LamExpr r n)
+ | AllocDest (Atom r n)        -- type
+ | Place (Atom r n) (Atom r n) -- reference, value
+ | Freeze (Atom r n)           -- reference
+   deriving (Show, Generic)
+
+data RefOp r n =
+   MAsk
+ | MExtend (BaseMonoid r n) (Atom r n)
+ | MGet
+ | MPut (Atom r n)
+ | IndexRef (Atom r n)
+ | ProjRef Int
+  deriving (Show, Generic)
+
+data UserEffectOp r n =
+   Handle (HandlerName n) [Atom r n] (Block r n)
+ | Resume (Atom r n) (Atom r n)     -- Resume from effect handler (type, arg)
+ | Perform (Atom r n) Int  -- Call an effect operation (effect name) (op #)
+   deriving (Show, Generic)
 
 -- === IR variants ===
 
@@ -1170,55 +1197,56 @@ instance AlphaEqE (BaseMonoid r)
 instance AlphaHashableE (BaseMonoid r)
 
 instance GenericE (Hof r) where
-  type RepE (Hof r) = EitherE2
-    (EitherE6
-  {- For -}       (LiftE ForAnn `PairE` Atom r `PairE` LamExpr r)
-  {- While -}     (Block r)
-  {- RunReader -} (Atom r `PairE` LamExpr r)
-  {- RunWriter -} (MaybeE (Atom r) `PairE` BaseMonoid r `PairE` LamExpr r)
-  {- RunState -}  (MaybeE (Atom r) `PairE` Atom r `PairE` LamExpr r)
-  {- RunIO -}     (Block r)
-    ) (EitherE6
-  {- RunInit -}        (Block r)
-  {- CatchException -} (WhenE (IsCore' r) (Block r))
-  {- Linearize -}      (WhenE (IsCore' r ) (LamExpr r))
-  {- Transpose -}      (WhenE (IsCore' r ) (LamExpr r))
-  {- Seq -}            (LiftE Direction `PairE` Atom r `PairE` Atom r `PairE` LamExpr r)
-  {- RememberDest -}   (Atom r `PairE` LamExpr r) )
+  type RepE (Hof r) = UnitE
+  -- type RepE (Hof r) = EitherE2
+  --   (EitherE6
+  -- {- For -}       (LiftE ForAnn `PairE` Atom r `PairE` LamExpr r)
+  -- {- While -}     (Block r)
+  -- {- RunReader -} (Atom r `PairE` LamExpr r)
+  -- {- RunWriter -} (MaybeE (Atom r) `PairE` BaseMonoid r `PairE` LamExpr r)
+  -- {- RunState -}  (MaybeE (Atom r) `PairE` Atom r `PairE` LamExpr r)
+  -- {- RunIO -}     (Block r)
+  --   ) (EitherE6
+  -- {- RunInit -}        (Block r)
+  -- {- CatchException -} (WhenE (IsCore' r) (Block r))
+  -- {- Linearize -}      (WhenE (IsCore' r ) (LamExpr r))
+  -- {- Transpose -}      (WhenE (IsCore' r ) (LamExpr r))
+  -- {- Seq -}            (LiftE Direction `PairE` Atom r `PairE` Atom r `PairE` LamExpr r)
+  -- {- RememberDest -}   (Atom r `PairE` LamExpr r) )
 
-  fromE = \case
-    For ann d body      -> Case0 (Case0 (LiftE ann `PairE` d `PairE` body))
-    While body          -> Case0 (Case1 body)
-    RunReader x body    -> Case0 (Case2 (x `PairE` body))
-    RunWriter d bm body -> Case0 (Case3 (toMaybeE d `PairE` bm `PairE` body))
-    RunState  d x body  -> Case0 (Case4 (toMaybeE d `PairE` x `PairE` body))
-    RunIO body          -> Case0 (Case5 body)
-    RunInit body        -> Case1 (Case0 body)
-    CatchException body -> Case1 (Case1 (WhenE body))
-    Linearize body      -> Case1 (Case2 (WhenE body))
-    Transpose body      -> Case1 (Case3 (WhenE body))
-    Seq d x y z         -> Case1 (Case4 (LiftE d `PairE` x `PairE` y `PairE` z))
-    RememberDest x y    -> Case1 (Case5 (x `PairE` y))
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 hof -> case hof of
-      Case0 (LiftE ann `PairE` d `PairE` body) -> For ann d body
-      Case1 body                        -> While body
-      Case2 (x `PairE` body)            -> RunReader x body
-      Case3 (d `PairE` bm `PairE` body) -> RunWriter (fromMaybeE d) bm body
-      Case4 (d `PairE` x `PairE` body)  -> RunState  (fromMaybeE d) x body
-      Case5 body                        -> RunIO     body
-      _ -> error "impossible"
-    Case1 hof -> case hof of
-      Case0 body -> RunInit body
-      Case1 (WhenE body) -> CatchException body
-      Case2 (WhenE body) -> Linearize body
-      Case3 (WhenE body) -> Transpose body
-      Case4 (LiftE d `PairE` x `PairE` y `PairE` z) ->   Seq d x y z
-      Case5 (x `PairE` y) -> RememberDest x y
-      _ -> error "impossible"
-    _ -> error "impossible"
-  {-# INLINE toE #-}
+  -- fromE = \case
+  --   For ann d body      -> Case0 (Case0 (LiftE ann `PairE` d `PairE` body))
+  --   While body          -> Case0 (Case1 body)
+  --   RunReader x body    -> Case0 (Case2 (x `PairE` body))
+  --   RunWriter d bm body -> Case0 (Case3 (toMaybeE d `PairE` bm `PairE` body))
+  --   RunState  d x body  -> Case0 (Case4 (toMaybeE d `PairE` x `PairE` body))
+  --   RunIO body          -> Case0 (Case5 body)
+  --   RunInit body        -> Case1 (Case0 body)
+  --   CatchException body -> Case1 (Case1 (WhenE body))
+  --   Linearize body      -> Case1 (Case2 (WhenE body))
+  --   Transpose body      -> Case1 (Case3 (WhenE body))
+  --   Seq d x y z         -> Case1 (Case4 (LiftE d `PairE` x `PairE` y `PairE` z))
+  --   RememberDest x y    -> Case1 (Case5 (x `PairE` y))
+  -- {-# INLINE fromE #-}
+  -- toE = \case
+  --   Case0 hof -> case hof of
+  --     Case0 (LiftE ann `PairE` d `PairE` body) -> For ann d body
+  --     Case1 body                        -> While body
+  --     Case2 (x `PairE` body)            -> RunReader x body
+  --     Case3 (d `PairE` bm `PairE` body) -> RunWriter (fromMaybeE d) bm body
+  --     Case4 (d `PairE` x `PairE` body)  -> RunState  (fromMaybeE d) x body
+  --     Case5 body                        -> RunIO     body
+  --     _ -> error "impossible"
+  --   Case1 hof -> case hof of
+  --     Case0 body -> RunInit body
+  --     Case1 (WhenE body) -> CatchException body
+  --     Case2 (WhenE body) -> Linearize body
+  --     Case3 (WhenE body) -> Transpose body
+  --     Case4 (LiftE d `PairE` x `PairE` y `PairE` z) ->   Seq d x y z
+  --     Case5 (x `PairE` y) -> RememberDest x y
+  --     _ -> error "impossible"
+  --   _ -> error "impossible"
+  -- {-# INLINE toE #-}
 
 instance SinkableE (Hof r)
 instance HoistableE  (Hof r)
@@ -1227,8 +1255,8 @@ instance SubstE (AtomSubstVal r) (Hof r)
 instance AlphaEqE (Hof r)
 instance AlphaHashableE (Hof r)
 
-instance GenericE (PrimEffect r) where
-  type RepE (PrimEffect r) =
+instance GenericE (RefOp r) where
+  type RepE (RefOp r) =
     EitherE4
       UnitE                         -- MAsk
       (BaseMonoid r `PairE` Atom r) -- MExtend
@@ -1248,12 +1276,12 @@ instance GenericE (PrimEffect r) where
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-instance SinkableE (PrimEffect r)
-instance HoistableE  (PrimEffect r)
-instance SubstE Name (PrimEffect r)
-instance SubstE (AtomSubstVal r) (PrimEffect r)
-instance AlphaEqE (PrimEffect r)
-instance AlphaHashableE (PrimEffect r)
+instance SinkableE (RefOp r)
+instance HoistableE  (RefOp r)
+instance SubstE Name (RefOp r)
+instance SubstE (AtomSubstVal r) (RefOp r)
+instance AlphaEqE (RefOp r)
+instance AlphaHashableE (RefOp r)
 
 instance GenericE (FieldRowElem r) where
   type RepE (FieldRowElem r) = EitherE3 (ExtLabeledItemsE (Type r) UnitE) (AtomName r `PairE` (Type r)) (AtomName r)
@@ -1462,36 +1490,36 @@ getProjection (i:is) a = case getProjection is a of
       _ -> error $ "Not a product projection"
 
 instance GenericE (Expr r) where
-  type RepE (Expr r) =
-     EitherE8
-        (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
-        (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
-        (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow)
-        (Atom r)
-        (ComposeE PrimOp (Atom r))
-        (Atom r `PairE` PrimEffect r)
-        (Hof r)
-        (HandlerName `PairE` ListE (Atom r) `PairE` (Block r))
-  fromE = \case
-    App    f (x:|xs)  -> Case0 (f `PairE` x `PairE` ListE xs)
-    TabApp f (x:|xs)  -> Case1 (f `PairE` x `PairE` ListE xs)
-    Case e alts ty eff -> Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff)
-    Atom x         -> Case3 (x)
-    Op op          -> Case4 (ComposeE op)
-    PrimEffect ref eff -> Case5 (ref `PairE` eff)
-    Hof hof        -> Case6 hof
-    Handle v args body -> Case7 (v `PairE` ListE args `PairE` body)
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 (f `PairE` x `PairE` ListE xs)    -> App    f (x:|xs)
-    Case1 (f `PairE` x `PairE` ListE xs)    -> TabApp f (x:|xs)
-    Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
-    Case3 (x)                               -> Atom x
-    Case4 (ComposeE op)                     -> Op op
-    Case5 (ref `PairE` eff)                 -> PrimEffect ref eff
-    Case6 hof                               -> Hof hof
-    Case7 (v `PairE` ListE args `PairE` body) -> Handle v args body
-  {-# INLINE toE #-}
+  type RepE (Expr r) = UnitE
+  --    EitherE8
+  --       (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
+  --       (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
+  --       (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow)
+  --       (Atom r)
+  --       (ComposeE PrimOp (Atom r))
+  --       (Atom r `PairE` RefOp r)
+  --       (Hof r)
+  --       (HandlerName `PairE` ListE (Atom r) `PairE` (Block r))
+  -- fromE = \case
+  --   App    f (x:|xs)  -> Case0 (f `PairE` x `PairE` ListE xs)
+  --   TabApp f (x:|xs)  -> Case1 (f `PairE` x `PairE` ListE xs)
+  --   Case e alts ty eff -> Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff)
+  --   Atom x         -> Case3 (x)
+  --   Op op          -> Case4 (ComposeE op)
+  --   RefOp ref eff -> Case5 (ref `PairE` eff)
+  --   Hof hof        -> Case6 hof
+  --   Handle v args body -> Case7 (v `PairE` ListE args `PairE` body)
+  -- {-# INLINE fromE #-}
+  -- toE = \case
+  --   Case0 (f `PairE` x `PairE` ListE xs)    -> App    f (x:|xs)
+  --   Case1 (f `PairE` x `PairE` ListE xs)    -> TabApp f (x:|xs)
+  --   Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
+  --   Case3 (x)                               -> Atom x
+  --   Case4 (ComposeE op)                     -> Op op
+  --   Case5 (ref `PairE` eff)                 -> RefOp ref eff
+  --   Case6 hof                               -> Hof hof
+  --   Case7 (v `PairE` ListE args `PairE` body) -> Handle v args body
+  -- {-# INLINE toE #-}
 
 instance SinkableE      (Expr r)
 instance HoistableE     (Expr r)
@@ -2469,7 +2497,7 @@ instance Store IxMethod
 instance Store ParamRole
 instance Store (SpecializedDictDef n)
 instance Store (Hof r n)
-instance Store (PrimEffect r n)
+instance Store (RefOp r n)
 instance Store (BaseMonoid r n)
 
 -- === Orphan instances ===

@@ -9,7 +9,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
-  emit, emitHinted, emitOp, emitUnOp,
+  emit, emitHinted, emitOp, emitExpr, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
@@ -83,6 +83,7 @@ import LabeledItems
 import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
 import Err
 import Types.Core
+import Types.Primitives
 import Core
 
 -- === Ordinary (local) builder class ===
@@ -108,9 +109,13 @@ emitHinted :: (Builder r m, Emits n) => NameHint -> Expr r n -> m n (AtomName r 
 emitHinted hint expr = emitDecl hint PlainLet expr
 {-# INLINE emitHinted #-}
 
-emitOp :: (Builder r m, Emits n) => Op r n -> m n (Atom r n)
-emitOp op = Var <$> emit (Op op)
+emitOp :: (Builder r m, Emits n) => PrimOp (Atom r n) -> m n (Atom r n)
+emitOp op = Var <$> emit (PrimOp op)
 {-# INLINE emitOp #-}
+
+emitExpr :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
+emitExpr expr = Var <$> emit expr
+{-# INLINE emitExpr #-}
 
 emitUnOp :: (Builder r m, Emits n) => UnOp -> Atom r n -> m n (Atom r n)
 emitUnOp op x = emitOp $ UnOp op x
@@ -916,15 +921,15 @@ buildCase scrut resultTy indexedAltBody = do
           eff <- getEffects blk
           return $ blk `PairE` eff
         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
-      liftM Var $ emit $ Case scrut alts resultTy $ mconcat effs
+      emitExpr $ Case scrut alts resultTy $ mconcat effs
 
-buildSplitCase :: (Emits n, ScopableBuilder r m)
+buildSplitCase :: (Emits n, ScopableBuilder r m, IsCore r)
                => LabeledItems (Type r n) -> Atom r n -> Type r n
                -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
                -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
                -> m n (Atom r n)
 buildSplitCase tys scrut resultTy match fallback = do
-  split <- emitOp $ VariantSplit tys scrut
+  split <- emitExpr $ RecordVariantOp $ VariantSplit tys scrut
   buildCase split resultTy \i v ->
     case i of
       0 -> match v
@@ -957,7 +962,7 @@ buildForAnn hint ann ixTy@(IxType iTy ixDict) body = do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
     return $ LamExpr (UnaryNest (b:>iTy)) body'
-  liftM Var $ emit $ Hof $ For ann ixDict lam
+  emitExpr $ Hof $ For ann ixDict lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
          => NameHint -> Direction -> IxType r n
@@ -981,7 +986,7 @@ emitRunWriter
   -> m n (Atom r n)
 emitRunWriter hint accTy bm body = do
   lam <- buildEffLam Writer hint accTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunWriter Nothing bm lam
+  emitExpr $ Hof $ RunWriter Nothing bm lam
 
 emitRunState
   :: (Emits n, ScopableBuilder r m)
@@ -991,7 +996,7 @@ emitRunState
 emitRunState hint initVal body = do
   stateTy <- getType initVal
   lam <- buildEffLam State hint stateTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunState Nothing initVal lam
+  emitExpr $ Hof $ RunState Nothing initVal lam
 
 emitRunReader
   :: (Emits n, ScopableBuilder r m)
@@ -1001,7 +1006,7 @@ emitRunReader
 emitRunReader hint r body = do
   rTy <- getType r
   lam <- buildEffLam Reader hint rTy \h ref -> body h ref
-  liftM Var $ emit $ Hof $ RunReader r lam
+  emitExpr $ Hof $ RunReader r lam
 
 -- === vector space (ish) type class ===
 
@@ -1146,7 +1151,7 @@ makeMethodGetter className explicit methodIdx = liftBuilder do
   buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
     let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
     buildPureLam noHint ClassArrow dictTy \dict ->
-      emitOp $ ProjMethod (Var dict) methodIdx
+      emitExpr $ ProjMethod (Var dict) methodIdx
   where
     zipPiBinders :: [Arrow] -> Nest (RolePiBinder r') i i' -> Nest (PiBinder r) i i'
     zipPiBinders = zipNest \arr (RolePiBinder b ty _ _) -> PiBinder b (unsafeCoerceIRE ty) arr
@@ -1208,7 +1213,7 @@ isub x y = emitOp $ BinOp ISub x y
 
 select :: (Builder r m, Emits n) => Atom r n -> Atom r n -> Atom r n -> m n (Atom r n)
 select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
-select p x y = emitOp $ Select p x y
+select p x y = emitOp $ MiscOp $ Select p x y
 
 div' :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 div' x y = emitOp $ BinOp FDiv x y
@@ -1257,7 +1262,7 @@ getNaryProjRef [] ref = return ref
 getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
 
 getProjRef :: (Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
-getProjRef i r = emitOp $ ProjRef i r
+getProjRef i r = emitExpr $ RefOp r $ ProjRef i
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
@@ -1310,20 +1315,20 @@ naryTabAppHinted hint f xs = case nonEmpty xs of
   Just xs' -> Var <$> emitHinted hint (TabApp f xs')
 
 indexRef :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-indexRef ref i = emitOp $ IndexRef ref i
+indexRef ref i = emitExpr $ RefOp ref $ IndexRef i
 
 naryIndexRef :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
 naryIndexRef ref is = foldM indexRef ref is
 
 ptrOffset :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ptrOffset x (IdxRepVal 0) = return x
-ptrOffset x i = emitOp $ PtrOffset x i
+ptrOffset x i = emitOp $ MemOp $ PtrOffset x i
 {-# INLINE ptrOffset #-}
 
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 unsafePtrLoad x = do
-  body <- liftEmitBuilder $ buildBlock $ emitOp . PtrLoad =<< sinkM x
-  liftM Var $ emit $ Hof $ RunIO body
+  body <- liftEmitBuilder $ buildBlock $ emitOp . MemOp . PtrLoad =<< sinkM x
+  emitExpr $ Hof $ RunIO body
 
 -- === index set type class ===
 
@@ -1350,7 +1355,7 @@ applyIxMethod dict method args = case dict of
           _    -> params ++ args
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
   _ -> do
-    methodImpl <- emitOp $ ProjMethod dict (fromEnum method)
+    methodImpl <- emitExpr $ ProjMethod dict (fromEnum method)
     naryApp methodImpl args
 
 -- This works with `Nat` instead of `IndexRepTy` because it's used alongside
@@ -1397,7 +1402,7 @@ emitIf :: (Emits n, ScopableBuilder r m)
        -> (forall l. (Emits l, DExt n l) => m l (Atom r l))
        -> m n (Atom r n)
 emitIf predicate resultTy trueCase falseCase = do
-  predicate' <- emitOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
+  predicate' <- emitOp $ MiscOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
   buildCase predicate' resultTy \i _ ->
     case i of
       0 -> falseCase
@@ -1421,7 +1426,7 @@ fromJustE :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n)
 fromJustE x = liftEmitBuilder do
   MaybeTy a <- getType x
   emitMaybeCase x a
-    (emitOp $ ThrowError $ sink a)
+    (emitOp $ MiscOp $ ThrowError $ sink a)
     (return)
 
 -- Maybe a -> Bool
@@ -1437,7 +1442,7 @@ reduceE monoid xs = liftEmitBuilder do
   getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
     buildFor noHint Fwd (sink ty) \i -> do
       x <- tabApp (sink xs) (Var i)
-      liftM Var $ emit $ PrimEffect (sink $ Var ref) $ MExtend (sink monoid) x
+      emitExpr $ RefOp (sink $ Var ref) $ MExtend (sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid r n)
 andMonoid = liftM (BaseMonoid TrueAtom) $ liftBuilder $
@@ -1494,7 +1499,7 @@ runMaybeWhile body = do
     emitWhile do
       ans <- body
       emitMaybeCase ans Word8Ty
-        (emit (PrimEffect (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
+        (emit (RefOp (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
         (return)
     return UnitVal
   emitIf hadError (MaybeTy UnitTy)

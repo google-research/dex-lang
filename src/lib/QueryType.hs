@@ -513,22 +513,30 @@ instance HasType r (Expr r) where
       fTy <- getTypeE f
       typeTabApp fTy xs
     Atom x   -> getTypeE x
-    Op   op  -> getTypePrimOp op
+    PrimOp   op  -> undefined -- getTypePrimOp op
     Hof  hof -> getTypeHof hof
     Case _ _ resultTy _ -> substM resultTy
-    Handle hndName [] body -> do
-      hndName' <- substM hndName
-      r <- getTypeE body
-      instantiateHandlerType hndName' r []
-    -- TODO(alex): implement
-    Handle _ _ _  -> error "not implemented"
-    PrimEffect ref m -> do
-      TC (RefType ~(Just (Var _)) s) <- getTypeE ref
-      return case m of
-        MGet        -> s
-        MPut _      -> UnitTy
-        MAsk        -> s
-        MExtend _ _ -> UnitTy
+    -- Handle hndName [] body -> do
+    --   hndName' <- substM hndName
+    --   r <- getTypeE body
+    --   instantiateHandlerType hndName' r []
+    -- -- TODO(alex): implement
+    -- Handle _ _ _  -> error "not implemented"
+    RefOp ref m -> do
+      TC (RefType ~(Just (Var h)) s) <- getTypeE ref
+      case m of
+        MGet        -> return s
+        MPut _      -> return UnitTy
+        MAsk        -> return s
+        MExtend _ _ -> return UnitTy
+        IndexRef i -> do
+          TabTy (b:>_) eltTy <- return s
+          i' <- substM i
+          eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
+          return $ RefTy (Var h) eltTy'
+        ProjRef i -> do
+          ProdTy tys <- return s
+          return $ RefTy (Var h) $ tys !! i
 
 instantiateHandlerType :: EnvReader m => HandlerName n -> Atom r n -> [Atom r n] -> m n (Type r n)
 instantiateHandlerType hndName r args = do
@@ -536,147 +544,133 @@ instantiateHandlerType hndName r args = do
   applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) (unsafeCoerceIRE retTy)
 
 getTypePrimOp :: PrimOp (Atom r i) -> TypeQueryM r i o (Type r o)
-getTypePrimOp op = case op of
-  TabCon ty _ -> substM ty
-  BinOp binop x _ -> do
-    xTy <- getTypeBaseType x
-    return $ TC $ BaseType $ typeBinOp binop xTy
-  UnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
-  Select _ x _ -> getTypeE x
-  IndexRef ref i -> do
-    getTypeE ref >>= \case
-      TC (RefType h (TabTy (b:>_) eltTy)) -> do
-        i' <- substM i
-        eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-        return $ TC $ RefType h eltTy'
-      ty -> error $ "Not a reference to a table: " ++
-                       pprint (Op op) ++ " : " ++ pprint ty
-  ProjRef i ref -> do
-    getTypeE ref >>= \case
-      RefTy h (ProdTy tys) -> return $ RefTy h $ tys !! i
-      ty -> error $ "Not a reference to a product: " ++ pprint ty
-  IOAlloc t _ -> return $ PtrTy (CPU, t)
-  IOFree _ -> return UnitTy
-  PtrOffset arr _ -> getTypeE arr
-  PtrLoad ptr -> do
-    PtrTy (_, t) <- getTypeE ptr
-    return $ BaseTy t
-  PtrStore _ _ -> return UnitTy
-  ThrowError ty -> substM ty
-  ThrowException ty -> substM ty
-  CastOp t _ -> substM t
-  BitcastOp t _ -> substM t
-  RecordCons l r -> do
-    lty <- getTypeE l
-    rty <- getTypeE r
-    case (lty, rty) of
-      (RecordTyWithElems lelems, RecordTyWithElems relems) ->
-        return $ RecordTyWithElems $ lelems ++ relems
-      _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
-  RecordConsDynamic lab val record -> do
-    lab' <- substM lab
-    vty <- getTypeE val
-    rty <- getTypeE record
-    case rty of
-      RecordTy rest -> case lab' of
-        Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem
-                              (StaticFields (labeledSingleton l vty)) rest
-        Var labVar       -> return $ RecordTy $ prependFieldRowElem
-                              (DynField labVar vty) rest
-        _ -> error "Unexpected label atom"
-      _ -> throw TypeErr
-            $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
-  RecordSplitDynamic lab record -> do
-    lab' <- cheapNormalize =<< substM lab
-    rty <- getTypeE record
-    case (lab', rty) of
-      (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
-        let (h, items') = splitLabeledItems (labeledSingleton l ()) items
-        return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
-      (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
-        return $ PairTy ty $ RecordTyWithElems rest
-      -- There are more cases we could implement, but do we need to?
-      _ -> throw TypeErr $ "Can't split a label "
-            <> pprint lab' <> " from atom of type " <> pprint rty
-  RecordSplit fields record -> do
-    fields' <- cheapNormalize =<< substM fields
-    fullty  <- cheapNormalize =<< getTypeE record
-    let splitFailed =
-          throw TypeErr $ "Invalid record split: "
-            <> pprint fields' <> " from " <> pprint fullty
-    case (fields', fullty) of
-      (LabeledRow els, RecordTyWithElems els') ->
-        stripPrefix (fromFieldRowElems els) els' >>= \case
-          Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
-          Nothing -> splitFailed
-      (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
-        return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
-      _ -> splitFailed
-    where
-      stripPrefix = curry \case
-        ([]  , ys  ) -> return $ Just ys
-        (x:xs, y:ys) -> alphaEq x y >>= \case
-          True  -> stripPrefix xs ys
-          False -> case (x, y) of
-            (StaticFields xf, StaticFields yf) -> do
-              NoExt rest <- labeledRowDifference' (NoExt yf) (NoExt xf)
-              return $ Just $ StaticFields rest : ys
-            _ -> return Nothing
-        _ -> return Nothing
-  VariantLift types variant -> do
-    types' <- mapM substM types
-    rty <- getTypeE variant
-    rest <- case rty of
-      VariantTy rest -> return rest
-      _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
-                        <> pprint variant <> " (of type " <> pprint rty <> ")"
-    return $ VariantTy $ prefixExtLabeledItems types' rest
-  VariantSplit types variant -> do
-    types' <- mapM substM types
-    fullty <- getTypeE variant
-    full <- case fullty of
-      VariantTy full -> return full
-      _ -> throw TypeErr $ "Can't split a non-variant object "
-                          <> pprint variant <> " (of type " <> pprint fullty
-                          <> ")"
-    diff <- labeledRowDifference' full (NoExt types')
-    return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
-  VariantMake ty _ _ _ -> substM ty
-  SumTag _ -> return TagRepTy
-  ToEnum t _ -> substM t
-  SumToVariant x -> getTypeE x >>= \case
-    SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
-    ty -> error $ "Not a sum type: " ++ pprint ty
-  OutputStream ->
-    return $ BaseTy $ hostPtrTy $ Scalar Word8Type
-    where hostPtrTy ty = PtrType (CPU, ty)
-  ProjBaseNewtype x -> projectNewtype =<< getTypeE x
-  Perform eff i -> do
-    Eff (OneEffect (UserEffect effName)) <- return eff
-    EffectDef _ ops <- substM effName >>= lookupEffectDef
-    let (_, EffectOpType _pol lamTy) = ops !! i
-    return $ unsafeCoerceIRE lamTy
-  ProjMethod dict i -> do
-    DictTy (DictType _ className params) <- getTypeE dict
-    def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
-    let MethodType _ methodTy = methodTys !! i
-    superclassDicts <- getSuperclassDicts def <$> substM dict
-    let subst = (    paramBs @@> map SubstVal params
-                 <.> classBs @@> map SubstVal superclassDicts)
-    applySubst subst (unsafeCoerceIRE methodTy)
-  ExplicitApply _ _ -> error "shouldn't appear after inference"
-  MonoLiteral _ -> error "shouldn't appear after inference"
-  AllocDest ty -> RawRefTy <$> substM ty
-  Place _ _ -> return UnitTy
-  Freeze ref -> getTypeE ref >>= \case
-    RawRefTy ty -> return ty
-    ty -> error $ "Not a reference type: " ++ pprint ty
-  VectorBroadcast _ vty -> substM vty
-  VectorIota vty -> substM vty
-  VectorSubref ref _ vty -> getTypeE ref >>= \case
-    TC (RefType h _) -> TC . RefType h <$> substM vty
-    ty -> error $ "Not a reference type: " ++ pprint ty
-  Resume retTy _ -> substM retTy
+getTypePrimOp op = undefined
+-- getTypePrimOp op = case op of
+  -- TabCon ty _ -> substM ty
+  -- BinOp binop x _ -> do
+  --   xTy <- getTypeBaseType x
+  --   return $ TC $ BaseType $ typeBinOp binop xTy
+  -- UnOp unop x -> TC . BaseType . typeUnOp unop <$> getTypeBaseType x
+  -- Select _ x _ -> getTypeE x
+  -- IOAlloc t _ -> return $ PtrTy (CPU, t)
+  -- IOFree _ -> return UnitTy
+  -- PtrOffset arr _ -> getTypeE arr
+  -- PtrLoad ptr -> do
+  --   PtrTy (_, t) <- getTypeE ptr
+  --   return $ BaseTy t
+  -- PtrStore _ _ -> return UnitTy
+  -- ThrowError ty -> substM ty
+  -- ThrowException ty -> substM ty
+  -- CastOp t _ -> substM t
+  -- BitcastOp t _ -> substM t
+  -- RecordCons l r -> do
+  --   lty <- getTypeE l
+  --   rty <- getTypeE r
+  --   case (lty, rty) of
+  --     (RecordTyWithElems lelems, RecordTyWithElems relems) ->
+  --       return $ RecordTyWithElems $ lelems ++ relems
+  --     _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
+  -- RecordConsDynamic lab val record -> do
+  --   lab' <- substM lab
+  --   vty <- getTypeE val
+  --   rty <- getTypeE record
+  --   case rty of
+  --     RecordTy rest -> case lab' of
+  --       Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem
+  --                             (StaticFields (labeledSingleton l vty)) rest
+  --       Var labVar       -> return $ RecordTy $ prependFieldRowElem
+  --                             (DynField labVar vty) rest
+  --       _ -> error "Unexpected label atom"
+  --     _ -> throw TypeErr
+  --           $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
+  -- RecordSplitDynamic lab record -> do
+  --   lab' <- cheapNormalize =<< substM lab
+  --   rty <- getTypeE record
+  --   case (lab', rty) of
+  --     (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
+  --       let (h, items') = splitLabeledItems (labeledSingleton l ()) items
+  --       return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
+  --     (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
+  --       return $ PairTy ty $ RecordTyWithElems rest
+  --     -- There are more cases we could implement, but do we need to?
+  --     _ -> throw TypeErr $ "Can't split a label "
+  --           <> pprint lab' <> " from atom of type " <> pprint rty
+  -- RecordSplit fields record -> do
+  --   fields' <- cheapNormalize =<< substM fields
+  --   fullty  <- cheapNormalize =<< getTypeE record
+  --   let splitFailed =
+  --         throw TypeErr $ "Invalid record split: "
+  --           <> pprint fields' <> " from " <> pprint fullty
+  --   case (fields', fullty) of
+  --     (LabeledRow els, RecordTyWithElems els') ->
+  --       stripPrefix (fromFieldRowElems els) els' >>= \case
+  --         Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
+  --         Nothing -> splitFailed
+  --     (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
+  --       return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
+  --     _ -> splitFailed
+  --   where
+  --     stripPrefix = curry \case
+  --       ([]  , ys  ) -> return $ Just ys
+  --       (x:xs, y:ys) -> alphaEq x y >>= \case
+  --         True  -> stripPrefix xs ys
+  --         False -> case (x, y) of
+  --           (StaticFields xf, StaticFields yf) -> do
+  --             NoExt rest <- labeledRowDifference' (NoExt yf) (NoExt xf)
+  --             return $ Just $ StaticFields rest : ys
+  --           _ -> return Nothing
+  --       _ -> return Nothing
+  -- VariantLift types variant -> do
+  --   types' <- mapM substM types
+  --   rty <- getTypeE variant
+  --   rest <- case rty of
+  --     VariantTy rest -> return rest
+  --     _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
+  --                       <> pprint variant <> " (of type " <> pprint rty <> ")"
+  --   return $ VariantTy $ prefixExtLabeledItems types' rest
+  -- VariantSplit types variant -> do
+  --   types' <- mapM substM types
+  --   fullty <- getTypeE variant
+  --   full <- case fullty of
+  --     VariantTy full -> return full
+  --     _ -> throw TypeErr $ "Can't split a non-variant object "
+  --                         <> pprint variant <> " (of type " <> pprint fullty
+  --                         <> ")"
+  --   diff <- labeledRowDifference' full (NoExt types')
+  --   return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
+  -- VariantMake ty _ _ _ -> substM ty
+  -- SumTag _ -> return TagRepTy
+  -- ToEnum t _ -> substM t
+  -- SumToVariant x -> getTypeE x >>= \case
+  --   SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
+  --   ty -> error $ "Not a sum type: " ++ pprint ty
+  -- OutputStream ->
+  --   return $ BaseTy $ hostPtrTy $ Scalar Word8Type
+  --   where hostPtrTy ty = PtrType (CPU, ty)
+  -- Perform eff i -> do
+  --   Eff (OneEffect (UserEffect effName)) <- return eff
+  --   EffectDef _ ops <- substM effName >>= lookupEffectDef
+  --   let (_, EffectOpType _pol lamTy) = ops !! i
+  --   return $ unsafeCoerceIRE lamTy
+  -- ProjMethod dict i -> do
+  --   DictTy (DictType _ className params) <- getTypeE dict
+  --   def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
+  --   let MethodType _ methodTy = methodTys !! i
+  --   superclassDicts <- getSuperclassDicts def <$> substM dict
+  --   let subst = (    paramBs @@> map SubstVal params
+  --                <.> classBs @@> map SubstVal superclassDicts)
+  --   applySubst subst (unsafeCoerceIRE methodTy)
+  -- AllocDest ty -> RawRefTy <$> substM ty
+  -- Place _ _ -> return UnitTy
+  -- Freeze ref -> getTypeE ref >>= \case
+  --   RawRefTy ty -> return ty
+  --   ty -> error $ "Not a reference type: " ++ pprint ty
+  -- VectorBroadcast _ vty -> substM vty
+  -- VectorIota vty -> substM vty
+  -- VectorSubref ref _ vty -> getTypeE ref >>= \case
+  --   TC (RefType h _) -> TC . RefType h <$> substM vty
+  --   ty -> error $ "Not a reference type: " ++ pprint ty
+  -- Resume retTy _ -> substM retTy
 
 getSuperclassDicts :: ClassDef n -> Atom r n -> [Atom r n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
@@ -732,8 +726,8 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunIO f -> getTypeE f
   RunInit f -> getTypeE f
   CatchException f -> MaybeTy <$> getTypeE f
-  Seq _ _ cinit _ -> getTypeE cinit
-  RememberDest d _ -> getTypeE d
+  -- Seq _ _ cinit _ -> getTypeE cinit
+  -- RememberDest d _ -> getTypeE d
 
 getLamExprType :: LamExpr r i -> TypeQueryM r i o (NaryPiType r o)
 getLamExprType (LamExpr bs body) =
@@ -795,24 +789,27 @@ exprEffects expr = case expr of
       Nothing -> error $
         "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint expr
   TabApp _ _ -> return Pure
-  PrimEffect ref m -> do
+  RefOp ref m -> do
     getTypeSubst ref >>= \case
       RefTy (Var h) _ ->
-        return $ case m of
+        return case m of
           MGet      -> OneEffect (RWSEffect State  $ Just h)
           MPut    _ -> OneEffect (RWSEffect State  $ Just h)
           MAsk      -> OneEffect (RWSEffect Reader $ Just h)
           -- XXX: We don't verify the base monoid. See note about RunWriter.
           MExtend _ _ -> OneEffect (RWSEffect Writer $ Just h)
+          IndexRef _ -> Pure
+          ProjRef _  -> Pure
       _ -> error "References must have reference type"
-  Op op   -> case op of
-    ThrowException _ -> return $ OneEffect ExceptionEffect
-    IOAlloc  _ _  -> return $ OneEffect IOEffect
-    IOFree   _    -> return $ OneEffect IOEffect
-    PtrLoad  _    -> return $ OneEffect IOEffect
-    PtrStore _ _  -> return $ OneEffect IOEffect
-    Place    _ _  -> return $ OneEffect InitEffect
-    _ -> return Pure
+  PrimOp op   -> undefined
+  -- Op op   -> case op of
+  --   ThrowException _ -> return $ OneEffect ExceptionEffect
+  --   IOAlloc  _ _  -> return $ OneEffect IOEffect
+  --   IOFree   _    -> return $ OneEffect IOEffect
+  --   PtrLoad  _    -> return $ OneEffect IOEffect
+  --   PtrStore _ _  -> return $ OneEffect IOEffect
+  --   Place    _ _  -> return $ OneEffect InitEffect
+  --   _ -> return Pure
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
     While body    -> getEffectsImpl body
@@ -824,14 +821,14 @@ exprEffects expr = case expr of
     RunIO          f -> deleteEff IOEffect        <$> getEffectsImpl f
     RunInit        f -> deleteEff InitEffect      <$> getEffectsImpl f
     CatchException f -> deleteEff ExceptionEffect <$> getEffectsImpl f
-    Seq _ _ _ f   -> functionEffs f
-    RememberDest _ f -> functionEffs f
+    -- Seq _ _ _ f   -> functionEffs f
+    -- RememberDest _ f -> functionEffs f
     where maybeInit :: Maybe (Atom r i) -> (EffectRow o -> EffectRow o)
           maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
-  Handle v _ body -> do
-    HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef
-    deleteEff (UserEffect eff) <$> getEffectsImpl body
+  -- Handle v _ body -> do
+  --   HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef
+  --   deleteEff (UserEffect eff) <$> getEffectsImpl body
 
 instance HasEffectsE (Block r) r where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs

@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module IRVariants
-  ( IR (..), IRPredicate (..), Sat, Sat', IsCore, IsCore'
+  ( IR (..), IRPredicate (..), Sat, Sat', IsCore, IsCore', IsLowered
   , unsafeCoerceIRE, unsafeCoerceFromAnyIR, unsafeCoerceIRB, injectIRE
   , CovariantInIR, InferenceIR) where
 
@@ -21,6 +21,8 @@ data IR =
 
 -- TODO: make this a hard distinctions
 type InferenceIR = CoreIR  -- used during type inference only
+type LoweredIR   = SimpIR
+
 
 data IRPredicate =
    Is IR
@@ -37,6 +39,7 @@ type family Sat' (r::IR) (p::IRPredicate) where
 
 type IsCore r = r `Sat` Is CoreIR
 type IsCore' r = r `Sat'` Is CoreIR
+type IsLowered r = r `Sat` Is LoweredIR
 
 -- XXX: the intention is that we won't have to use these much
 unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n

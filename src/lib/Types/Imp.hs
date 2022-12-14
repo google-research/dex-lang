@@ -28,7 +28,6 @@ import qualified Data.ByteString       as BS
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
-import IRVariants
 import Name
 import Util (IsBool (..))
 
@@ -45,7 +44,6 @@ data IExpr n = ILit LitVal
 data IBinder n l = IBinder (NameBinder ImpNameC n l) IType
                    deriving (Show, Generic)
 
-type IPrimOp n = PrimOp (IExpr n)
 type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
 type Size = IExpr
@@ -110,7 +108,6 @@ data ImpInstr n =
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
  | IBitcastOp IType (IExpr n)
- | IPrimOp (IPrimOp n)
  | IVectorBroadcast (IExpr n) IVectorType
  | IVectorIota                IVectorType
  | DebugPrint String (IExpr n) -- just prints an int64 value
@@ -208,102 +205,103 @@ instance AlphaHashableB PtrBinder
 -- === instances ===
 
 instance GenericE ImpInstr where
-  type RepE ImpInstr = EitherE5
-      (EitherE4
-  {- IFor -}    (LiftE Direction `PairE` Size `PairE` Abs IBinder ImpBlock)
-  {- IWhile -}  (ImpBlock)
-  {- ICond -}   (IExpr `PairE` ImpBlock `PairE` ImpBlock)
-  {- IQuery -}  (LiftE IFunVar `PairE` IExpr)
-    ) (EitherE4
-  {- ISyncW -}  (UnitE)
-  {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
-  {- ICall -}   (ImpFunName `PairE` ListE IExpr)
-  {- Store -}   (IExpr `PairE` IExpr)
-    ) (EitherE7
-  {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
-  {- StackAlloc -} (LiftE IType `PairE` Size)
-  {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
-  {- InitializeZeros -}  (IExpr `PairE` IExpr)
-  {- GetAllocSize -} IExpr
-  {- Free -}    (IExpr)
-  {- IThrowE -} (UnitE)
-    ) (EitherE3
-  {- ICastOp    -} (LiftE IType `PairE` IExpr)
-  {- IBitcastOp -} (LiftE IType `PairE` IExpr)
-  {- IPrimOp    -} (ComposeE PrimOp IExpr)
-    ) (EitherE3
-  {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
-  {- IVectorIota      -} (              LiftE IVectorType)
-  {- DebugPrint       -} (LiftE String `PairE` IExpr)
-    )
+  type RepE ImpInstr = UnitE
+  -- type RepE ImpInstr = EitherE5
+  --     (EitherE4
+  -- {- IFor -}    (LiftE Direction `PairE` Size `PairE` Abs IBinder ImpBlock)
+  -- {- IWhile -}  (ImpBlock)
+  -- {- ICond -}   (IExpr `PairE` ImpBlock `PairE` ImpBlock)
+  -- {- IQuery -}  (LiftE IFunVar `PairE` IExpr)
+  --   ) (EitherE4
+  -- {- ISyncW -}  (UnitE)
+  -- {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
+  -- {- ICall -}   (ImpFunName `PairE` ListE IExpr)
+  -- {- Store -}   (IExpr `PairE` IExpr)
+  --   ) (EitherE7
+  -- {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
+  -- {- StackAlloc -} (LiftE IType `PairE` Size)
+  -- {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
+  -- {- InitializeZeros -}  (IExpr `PairE` IExpr)
+  -- {- GetAllocSize -} IExpr
+  -- {- Free -}    (IExpr)
+  -- {- IThrowE -} (UnitE)
+  --   ) (EitherE3
+  -- {- ICastOp    -} (LiftE IType `PairE` IExpr)
+  -- {- IBitcastOp -} (LiftE IType `PairE` IExpr)
+  -- {- IPrimOp    -} (ComposeE PrimOp IExpr)
+  --   ) (EitherE3
+  -- {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
+  -- {- IVectorIota      -} (              LiftE IVectorType)
+  -- {- DebugPrint       -} (LiftE String `PairE` IExpr)
+  --   )
 
 
-  fromE instr = case instr of
-    IFor d n ab           -> Case0 $ Case0 $ LiftE d `PairE` n `PairE` ab
-    IWhile body           -> Case0 $ Case1 body
-    ICond p cons alt      -> Case0 $ Case2 $ p `PairE` cons `PairE` alt
-    IQueryParallelism f s -> Case0 $ Case3 $ LiftE f `PairE` s
+  -- fromE instr = case instr of
+  --   IFor d n ab           -> Case0 $ Case0 $ LiftE d `PairE` n `PairE` ab
+  --   IWhile body           -> Case0 $ Case1 body
+  --   ICond p cons alt      -> Case0 $ Case2 $ p `PairE` cons `PairE` alt
+  --   IQueryParallelism f s -> Case0 $ Case3 $ LiftE f `PairE` s
 
-    ISyncWorkgroup      -> Case1 $ Case0 UnitE
-    ILaunch f n args    -> Case1 $ Case1 $ LiftE f `PairE` n `PairE` ListE args
-    ICall f args        -> Case1 $ Case2 $ f `PairE` ListE args
-    Store dest val      -> Case1 $ Case3 $ dest `PairE` val
+  --   ISyncWorkgroup      -> Case1 $ Case0 UnitE
+  --   ILaunch f n args    -> Case1 $ Case1 $ LiftE f `PairE` n `PairE` ListE args
+  --   ICall f args        -> Case1 $ Case2 $ f `PairE` ListE args
+  --   Store dest val      -> Case1 $ Case3 $ dest `PairE` val
 
-    Alloc a t s            -> Case2 $ Case0 $ LiftE (a, t) `PairE` s
-    StackAlloc t s         -> Case2 $ Case1 $ LiftE t `PairE` s
-    MemCopy dest src numel -> Case2 $ Case2 $ dest `PairE` src `PairE` numel
-    InitializeZeros ptr numel -> Case2 $ Case3 $ ptr `PairE` numel
-    GetAllocSize ptr       -> Case2 $ Case4 $ ptr
-    Free ptr               -> Case2 $ Case5 ptr
-    IThrowError            -> Case2 $ Case6 UnitE
+  --   Alloc a t s            -> Case2 $ Case0 $ LiftE (a, t) `PairE` s
+  --   StackAlloc t s         -> Case2 $ Case1 $ LiftE t `PairE` s
+  --   MemCopy dest src numel -> Case2 $ Case2 $ dest `PairE` src `PairE` numel
+  --   InitializeZeros ptr numel -> Case2 $ Case3 $ ptr `PairE` numel
+  --   GetAllocSize ptr       -> Case2 $ Case4 $ ptr
+  --   Free ptr               -> Case2 $ Case5 ptr
+  --   IThrowError            -> Case2 $ Case6 UnitE
 
-    ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
-    IBitcastOp idt ix -> Case3 $ Case1 $ LiftE idt `PairE` ix
-    IPrimOp op     -> Case3 $ Case2 $ ComposeE op
-    IVectorBroadcast v vty -> Case4 $ Case0 $ v `PairE` LiftE vty
-    IVectorIota vty        -> Case4 $ Case1 $ LiftE vty
-    DebugPrint s x         -> Case4 $ Case2 $ LiftE s `PairE` x
-  {-# INLINE fromE #-}
+  --   ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
+  --   IBitcastOp idt ix -> Case3 $ Case1 $ LiftE idt `PairE` ix
+  --   IPrimOp op     -> Case3 $ Case2 $ ComposeE op
+  --   IVectorBroadcast v vty -> Case4 $ Case0 $ v `PairE` LiftE vty
+  --   IVectorIota vty        -> Case4 $ Case1 $ LiftE vty
+  --   DebugPrint s x         -> Case4 $ Case2 $ LiftE s `PairE` x
+  -- {-# INLINE fromE #-}
 
-  toE instr = case instr of
-    Case0 instr' -> case instr' of
-      Case0 (LiftE d `PairE` n `PairE` ab) -> IFor d n ab
-      Case1 body                           -> IWhile body
-      Case2 (p `PairE` cons `PairE` alt)   -> ICond p cons alt
-      Case3 (LiftE f `PairE` s)            -> IQueryParallelism f s
-      _ -> error "impossible"
+  -- toE instr = case instr of
+  --   Case0 instr' -> case instr' of
+  --     Case0 (LiftE d `PairE` n `PairE` ab) -> IFor d n ab
+  --     Case1 body                           -> IWhile body
+  --     Case2 (p `PairE` cons `PairE` alt)   -> ICond p cons alt
+  --     Case3 (LiftE f `PairE` s)            -> IQueryParallelism f s
+  --     _ -> error "impossible"
 
-    Case1 instr' -> case instr' of
-      Case0 UnitE                                     -> ISyncWorkgroup
-      Case1 (LiftE f `PairE` n `PairE` ListE args)    -> ILaunch f n args
-      Case2 (f `PairE` ListE args)                    -> ICall f args
-      Case3 (dest `PairE` val )                       -> Store dest val
-      _ -> error "impossible"
+  --   Case1 instr' -> case instr' of
+  --     Case0 UnitE                                     -> ISyncWorkgroup
+  --     Case1 (LiftE f `PairE` n `PairE` ListE args)    -> ILaunch f n args
+  --     Case2 (f `PairE` ListE args)                    -> ICall f args
+  --     Case3 (dest `PairE` val )                       -> Store dest val
+  --     _ -> error "impossible"
 
-    Case2 instr' -> case instr' of
-      Case0 (LiftE (a, t) `PairE` s )         -> Alloc a t s
-      Case1 (LiftE t `PairE` s )              -> StackAlloc t s
-      Case2 (dest `PairE` src `PairE` numel)  -> MemCopy dest src numel
-      Case3 (ptr `PairE` numel)               -> InitializeZeros ptr numel
-      Case4 ptr                               -> GetAllocSize ptr
-      Case5 ptr                               -> Free ptr
-      Case6 UnitE                             -> IThrowError
-      _ -> error "impossible"
+  --   Case2 instr' -> case instr' of
+  --     Case0 (LiftE (a, t) `PairE` s )         -> Alloc a t s
+  --     Case1 (LiftE t `PairE` s )              -> StackAlloc t s
+  --     Case2 (dest `PairE` src `PairE` numel)  -> MemCopy dest src numel
+  --     Case3 (ptr `PairE` numel)               -> InitializeZeros ptr numel
+  --     Case4 ptr                               -> GetAllocSize ptr
+  --     Case5 ptr                               -> Free ptr
+  --     Case6 UnitE                             -> IThrowError
+  --     _ -> error "impossible"
 
-    Case3 instr' -> case instr' of
-      Case0 (LiftE idt `PairE` ix ) -> ICastOp idt ix
-      Case1 (LiftE idt `PairE` ix ) -> IBitcastOp idt ix
-      Case2 (ComposeE op )          -> IPrimOp op
-      _ -> error "impossible"
+  --   Case3 instr' -> case instr' of
+  --     Case0 (LiftE idt `PairE` ix ) -> ICastOp idt ix
+  --     Case1 (LiftE idt `PairE` ix ) -> IBitcastOp idt ix
+  --     Case2 (ComposeE op )          -> IPrimOp op
+  --     _ -> error "impossible"
 
-    Case4 instr' -> case instr' of
-      Case0 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
-      Case1 (          LiftE vty) -> IVectorIota vty
-      Case2 (LiftE s `PairE` x)   -> DebugPrint s x
-      _ -> error "impossible"
+  --   Case4 instr' -> case instr' of
+  --     Case0 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
+  --     Case1 (          LiftE vty) -> IVectorIota vty
+  --     Case2 (LiftE s `PairE` x)   -> DebugPrint s x
+  --     _ -> error "impossible"
 
-    _ -> error "impossible"
-  {-# INLINE toE #-}
+  --   _ -> error "impossible"
+  -- {-# INLINE toE #-}
 
 instance SinkableE ImpInstr
 instance HoistableE  ImpInstr

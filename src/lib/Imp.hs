@@ -301,8 +301,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     RepValAtom <$> toDRepVal <$> naryIndexRepVal f (toList xs)
   Atom x -> substM x >>= returnVal
   -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
-  Op op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
-  PrimEffect refDest eff -> toImpPrimEffect maybeDest refDest eff
+  -- PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
+  RefOp refDest eff -> toImpRefOp maybeDest refDest eff
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
@@ -341,8 +341,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
       Nothing   -> return atom
       Just dest -> storeAtom dest atom >> return atom
 
-toImpPrimEffect :: Emits o => MaybeDest o -> SIAtom i -> PrimEffect SimpToImpIR i -> SubstImpM i o (SIAtom o)
-toImpPrimEffect maybeDest refDest' m = do
+toImpRefOp :: Emits o => MaybeDest o -> SIAtom i -> RefOp SimpToImpIR i -> SubstImpM i o (SIAtom o)
+toImpRefOp maybeDest refDest' m = do
   refDest <- atomToDest =<< substM refDest'
   substM m >>= \case
     MAsk -> returnVal =<< loadAtom refDest
@@ -488,16 +488,6 @@ toImpOp maybeDest op = case op of
     refDest <- atomToDest ref
     storeAtom refDest val >> returnVal UnitVal
   Freeze ref -> loadAtom =<< atomToDest ref
-  -- Listing branches that should be dead helps GHC cut down on code size.
-  ThrowException _        -> unsupported
-  RecordCons _ _          -> unsupported
-  RecordSplit _ _         -> unsupported
-  RecordConsDynamic _ _ _ -> unsupported
-  RecordSplitDynamic _ _  -> unsupported
-  VariantLift _ _         -> unsupported
-  VariantSplit _ _        -> unsupported
-  ProjMethod _ _          -> unsupported
-  ExplicitApply _ _       -> unsupported
   VectorBroadcast val vty -> do
     val' <- fromScalarAtom val
     emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
@@ -1507,7 +1497,7 @@ getIType (IPtrVar _ ty) = PtrType ty
 
 impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of
-  IPrimOp op      -> return [impOpType op]
+  -- IPrimOp op      -> return [impOpType op]
   ICastOp t _     -> return [t]
   IBitcastOp t _  -> return [t]
   Alloc a ty _    -> return [PtrType (a  , ty)]
@@ -1531,18 +1521,18 @@ impInstrTypes instr = case instr of
     IFunType _ _ resultTys <- impFunType <$> lookupImpFun f
     return resultTys
 
--- TODO: reuse type rules in Type.hs
-impOpType :: IPrimOp n -> IType
-impOpType pop = case pop of
-  BinOp op x _       -> typeBinOp op (getIType x)
-  UnOp  op x         -> typeUnOp  op (getIType x)
-  Select  _ x  _     -> getIType x
-  PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
-  PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
-  OutputStream       -> hostPtrTy $ Scalar Word8Type
-    where hostPtrTy ty = PtrType (CPU, ty)
-  _ -> unreachable
-  where unreachable = error $ "Not allowed in Imp IR: " ++ show pop
+-- -- TODO: reuse type rules in Type.hs
+-- impOpType :: IPrimOp n -> IType
+-- impOpType pop = case pop of
+--   BinOp op x _       -> typeBinOp op (getIType x)
+--   UnOp  op x         -> typeUnOp  op (getIType x)
+--   Select  _ x  _     -> getIType x
+--   PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
+--   PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
+--   OutputStream       -> hostPtrTy $ Scalar Word8Type
+--     where hostPtrTy ty = PtrType (CPU, ty)
+--   _ -> unreachable
+--   where unreachable = error $ "Not allowed in Imp IR: " ++ show pop
 
 instance CheckableE ImpFunction where
   checkE = substM -- TODO!

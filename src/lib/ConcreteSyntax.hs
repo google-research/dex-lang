@@ -101,8 +101,7 @@ type Group = WithSrc Group'
 data Group'
   = CEmpty
   | CIdentifier SourceName
-  | CPrim (PrimExpr CoreIR Group)
-  | CPrimApp PrimName [Group]
+  | CPrim PrimName [Group]
   | CNat Word64
   | CInt Int
   | CString String
@@ -718,8 +717,7 @@ leafGroupNoBrackets = do
     '%'  -> do
       name <- primName
       case strToPrimName name of
-        Just (Left  prim) -> CPrim    <$> traverse (const cGroupNoJuxtDot) prim
-        Just (Right prim) -> CPrimApp prim <$> many cGroupNoJuxtDot
+        Just prim -> CPrim prim <$> many cGroupNoJuxtDot
         Nothing   -> fail $ "Unrecognized primitive: " ++ name
     '#'  -> liftM2 CLabel labelPrefix fieldLabel
     _ | isDigit next -> (    CNat   <$> natLit
@@ -923,23 +921,17 @@ concatPos (pos:rest) = foldl joinPos pos rest
 
 -- === primitive constructors and operators ===
 
-strToPrimName :: String -> Maybe (Either (PrimExpr CoreIR ()) PrimName)
-strToPrimName s = M.lookup s builtinNames
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s primNames
 
-primNameToStr :: PrimExpr r () -> String
-primNameToStr prim = case lookup (coercePrimExpr prim) $ map swap $ M.toList primExprNames of
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
   Just s  -> s
   Nothing -> show prim
 
-coercePrimExpr :: PrimExpr r () -> PrimExpr CoreIR ()
-coercePrimExpr = TrulyUnsafe.unsafeCoerce
-
-showPrimName :: PrimExpr r e -> String
-showPrimName prim = primNameToStr $ fmap (const ()) prim
+showPrimName :: PrimName -> String
+showPrimName prim = primNameToStr prim
 {-# NOINLINE showPrimName #-}
-
-builtinNames :: M.Map String (Either (PrimExpr CoreIR ()) PrimName)
-builtinNames = fmap Left primExprNames <> fmap Right primNames
 
 primNames :: M.Map String PrimName
 primNames = M.fromList
@@ -950,80 +942,81 @@ primNames = M.fromList
   , ("runReader", URunReader), ("runWriter"      , URunWriter), ("runState", URunState)
   , ("runIO"    , URunIO    ), ("catchException" , UCatchException) ]
 
--- TODO: Can we derive these generically? Or use Show/Read?
---       (These prelude-only names don't have to be pretty.)
-primExprNames :: M.Map String (PrimExpr CoreIR ())
-primExprNames = M.fromList
-  [ ("iadd" , binary IAdd),  ("isub"  , binary ISub)
-  , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
-  , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
-  , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
-  , ("irem" , binary IRem)
-  , ("fpow" , binary FPow)
-  , ("and"  , binary BAnd),  ("or"    , binary BOr )
-  , ("not"  , unary  BNot),  ("xor"   , binary BXor)
-  , ("shl"  , binary BShL),  ("shr"   , binary BShR)
-  , ("ieq"  , binary (ICmp P.Equal)), ("feq", binary (FCmp P.Equal))
-  , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
-  , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
-  , ("fneg" , unary  FNeg)
-  , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
-  , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
-  , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
-  , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
-  , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
-  , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
-  , ("erf", unary Erf),      ("erfc", unary Erfc)
-  , ("sumToVariant"   , OpExpr $ SumToVariant ())
-  , ("throwError"     , OpExpr $ ThrowError ())
-  , ("throwException" , OpExpr $ ThrowException ())
-  , ("indexRef"   , OpExpr $ IndexRef () ())
-  , ("select"     , OpExpr $ Select () () ())
-  , ("TyKind"    , TCExpr $ TypeKind)
-  , ("Float64"   , TCExpr $ BaseType $ Scalar Float64Type)
-  , ("Float32"   , TCExpr $ BaseType $ Scalar Float32Type)
-  , ("Int64"     , TCExpr $ BaseType $ Scalar Int64Type)
-  , ("Int32"     , TCExpr $ BaseType $ Scalar Int32Type)
-  , ("Word8"     , TCExpr $ BaseType $ Scalar Word8Type)
-  , ("Word32"    , TCExpr $ BaseType $ Scalar Word32Type)
-  , ("Word64"    , TCExpr $ BaseType $ Scalar Word64Type)
-  , ("Int32Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Int32Type)
-  , ("Word8Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
-  , ("Word32Ptr" , TCExpr $ BaseType $ ptrTy $ Scalar Word32Type)
-  , ("Word64Ptr" , TCExpr $ BaseType $ ptrTy $ Scalar Word64Type)
-  , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
-  , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
-  , ("Nat"       , TCExpr $ Nat)
-  , ("Fin"       , TCExpr $ Fin ())
-  , ("Label"     , TCExpr $ LabelType)
-  , ("Ref"       , TCExpr $ RefType (Just ()) ())
-  , ("PairType"  , TCExpr $ ProdType [(), ()])
-  , ("UnitType"  , TCExpr $ ProdType [])
-  , ("EffKind"   , TCExpr $ EffectRowKind)
-  , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
-  , ("pair", ConExpr $ ProdCon [(), ()])
-  , ("fstRef", OpExpr $ ProjRef 0 ())
-  , ("sndRef", OpExpr $ ProjRef 1 ())
-  , ("cast", OpExpr  $ CastOp () ())
-  , ("bitcast", OpExpr $ BitcastOp () ())
-  , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
-  , ("free" , OpExpr $ IOFree ())
-  , ("ptrOffset", OpExpr $ PtrOffset () ())
-  , ("ptrLoad"  , OpExpr $ PtrLoad ())
-  , ("ptrStore" , OpExpr $ PtrStore () ())
-  , ("dataConTag", OpExpr $ SumTag ())
-  , ("toEnum"    , OpExpr $ ToEnum () ())
-  , ("outputStream", OpExpr $ OutputStream)
-  , ("newtype"    , ConExpr $ Newtype () ())
-  , ("projNewtype", OpExpr $ ProjBaseNewtype ())
-  , ("projMethod0", OpExpr $ ProjMethod () 0)
-  , ("projMethod1", OpExpr $ ProjMethod () 1)
-  , ("projMethod2", OpExpr $ ProjMethod () 2)
-  , ("explicitDict", ConExpr $ ExplicitDict () ())
-  , ("explicitApply", OpExpr $ ExplicitApply () ())
-  , ("monoLit", OpExpr $ MonoLiteral ())
-  ]
-  where
-    binary op = OpExpr $ BinOp op () ()
-    unary  op = OpExpr $ UnOp  op ()
-    ptrTy  ty = PtrType (CPU, ty)
+-- -- TODO: Can we derive these generically? Or use Show/Read?
+-- --       (These prelude-only names don't have to be pretty.)
+-- primExprNames :: M.Map String (PrimExpr CoreIR ())
+-- primExprNames = M.fromList []
+-- primExprNames = M.fromList
+--   [ ("iadd" , binary IAdd),  ("isub"  , binary ISub)
+--   , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
+--   , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
+--   , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
+--   , ("irem" , binary IRem)
+--   , ("fpow" , binary FPow)
+--   , ("and"  , binary BAnd),  ("or"    , binary BOr )
+--   , ("not"  , unary  BNot),  ("xor"   , binary BXor)
+--   , ("shl"  , binary BShL),  ("shr"   , binary BShR)
+--   , ("ieq"  , binary (ICmp P.Equal)), ("feq", binary (FCmp P.Equal))
+--   , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
+--   , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
+--   , ("fneg" , unary  FNeg)
+--   , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
+--   , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
+--   , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
+--   , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
+--   , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
+--   , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
+--   , ("erf", unary Erf),      ("erfc", unary Erfc)
+--   , ("sumToVariant"   , OpExpr $ SumToVariant ())
+--   , ("throwError"     , OpExpr $ ThrowError ())
+--   , ("throwException" , OpExpr $ ThrowException ())
+--   , ("indexRef"   , OpExpr $ IndexRef () ())
+--   , ("select"     , OpExpr $ Select () () ())
+--   , ("TyKind"    , TCExpr $ TypeKind)
+--   , ("Float64"   , TCExpr $ BaseType $ Scalar Float64Type)
+--   , ("Float32"   , TCExpr $ BaseType $ Scalar Float32Type)
+--   , ("Int64"     , TCExpr $ BaseType $ Scalar Int64Type)
+--   , ("Int32"     , TCExpr $ BaseType $ Scalar Int32Type)
+--   , ("Word8"     , TCExpr $ BaseType $ Scalar Word8Type)
+--   , ("Word32"    , TCExpr $ BaseType $ Scalar Word32Type)
+--   , ("Word64"    , TCExpr $ BaseType $ Scalar Word64Type)
+--   , ("Int32Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Int32Type)
+--   , ("Word8Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
+--   , ("Word32Ptr" , TCExpr $ BaseType $ ptrTy $ Scalar Word32Type)
+--   , ("Word64Ptr" , TCExpr $ BaseType $ ptrTy $ Scalar Word64Type)
+--   , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
+--   , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
+--   , ("Nat"       , TCExpr $ Nat)
+--   , ("Fin"       , TCExpr $ Fin ())
+--   , ("Label"     , TCExpr $ LabelType)
+--   , ("Ref"       , TCExpr $ RefType (Just ()) ())
+--   , ("PairType"  , TCExpr $ ProdType [(), ()])
+--   , ("UnitType"  , TCExpr $ ProdType [])
+--   , ("EffKind"   , TCExpr $ EffectRowKind)
+--   , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
+--   , ("pair", ConExpr $ ProdCon [(), ()])
+--   , ("fstRef", OpExpr $ ProjRef 0 ())
+--   , ("sndRef", OpExpr $ ProjRef 1 ())
+--   , ("cast", OpExpr  $ CastOp () ())
+--   , ("bitcast", OpExpr $ BitcastOp () ())
+--   , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
+--   , ("free" , OpExpr $ IOFree ())
+--   , ("ptrOffset", OpExpr $ PtrOffset () ())
+--   , ("ptrLoad"  , OpExpr $ PtrLoad ())
+--   , ("ptrStore" , OpExpr $ PtrStore () ())
+--   , ("dataConTag", OpExpr $ SumTag ())
+--   , ("toEnum"    , OpExpr $ ToEnum () ())
+--   , ("outputStream", OpExpr $ OutputStream)
+--   , ("newtype"    , ConExpr $ Newtype () ())
+--   , ("projNewtype", OpExpr $ ProjBaseNewtype ())
+--   , ("projMethod0", OpExpr $ ProjMethod () 0)
+--   , ("projMethod1", OpExpr $ ProjMethod () 1)
+--   , ("projMethod2", OpExpr $ ProjMethod () 2)
+--   , ("explicitDict", ConExpr $ ExplicitDict () ())
+--   , ("explicitApply", OpExpr $ ExplicitApply () ())
+--   , ("monoLit", OpExpr $ MonoLiteral ())
+--   ]
+--   where
+--     binary op = OpExpr $ BinOp op () ()
+--     unary  op = OpExpr $ UnOp  op ()
+--     ptrTy  ty = PtrType (CPU, ty)

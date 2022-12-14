@@ -39,12 +39,6 @@ import LabeledItems
 import Occurrence
 import IRVariants
 
-data PrimExpr (r::IR) (e:: *) =
-        TCExpr  (PrimTC  r e)
-      | ConExpr (PrimCon r e)
-      | OpExpr  (PrimOp    e)
-        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
 data PrimTC (r::IR) (e:: *) where
   BaseType         :: BaseType       -> PrimTC r e
   ProdType         :: [e]            -> PrimTC r e
@@ -76,6 +70,74 @@ data PrimCon (r::IR) (e:: *) where
   DictHole     :: AlwaysEqual SrcPosCtx -> e -> PrimCon r e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
+data MemOp e =
+   IOAlloc BaseType e
+ | IOFree e
+ | PtrOffset e e
+ | PtrLoad e
+ | PtrStore e e
+   deriving (Show, Generic, Functor, Foldable, Traversable)
+
+data RecordVariantOp e =
+ -- Extensible record and variant operations:
+ -- Concatenate two records.
+   RecordCons e e
+ -- Split off a labeled row from the front of the record.
+ | RecordSplit  e e
+ -- Add a dynamically named field to a record (on the left).
+ -- Args are as follows: label, value, record.
+ | RecordConsDynamic e e e
+ -- Splits a label from the record.
+ | RecordSplitDynamic e e
+ -- Extend a variant with empty alternatives (on the left).
+ -- Left arg contains the types of the empty alternatives to add.
+ | VariantLift  (LabeledItems e) e
+ -- Split {a:A | b:B | ...rest} into (effectively) {a:A | b:B} | {|...rest}.
+ -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
+ -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
+ | VariantSplit (LabeledItems e) e
+ -- type, label, how deeply shadowed, payload
+ | VariantMake e Label Int e
+ -- Ask which constructor was used, as its Word8 index
+ -- Converts sum types returned by primitives to variant-types that
+ -- can be scrutinized in the surface language.
+ | SumToVariant e
+   deriving (Show, Generic)
+
+data PrimOp e =
+   UnOp     UnOp  e
+ | BinOp    BinOp e e
+ | MemOp    (MemOp e)
+ | VectorOp (VectorOp e)
+ | MiscOp   (MiscOp e)
+   deriving (Show, Generic, Functor, Foldable, Traversable)
+
+traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')
+traversePrimOp = inline traverse
+{-# INLINABLE traversePrimOp #-}
+
+data MiscOp e =
+   Select e e e                 -- (3) predicate, val-if-true, val-if-false
+ | CastOp e e                   -- (2) Type, then value. See CheckType.hs for valid coercions.
+ | BitcastOp e e                -- (2) Type, then value. See CheckType.hs for valid coercions.
+ -- Effects
+ | ThrowError e                 -- (1) Hard error (parameterized by result type)
+ | ThrowException e             -- (1) Catchable exceptions (unlike `ThrowError`)
+ -- Tag of a sum type
+ | SumTag e
+ -- Create an enum (payload-free ADT) from a Word8
+ | ToEnum e e
+ -- stdout-like output stream
+ | OutputStream
+   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+data VectorOp e =
+ -- Vector operations
+   VectorBroadcast e e  -- value, vector type
+ | VectorIota e  -- vector type
+ | VectorSubref e e e -- ref, base ix, vector type
+   deriving (Show, Generic, Functor, Foldable, Traversable)
+
 newtype AlwaysEqual a = AlwaysEqual a
         deriving (Show, Generic, Functor, Foldable, Traversable, Hashable, Store)
 instance Eq (AlwaysEqual a) where
@@ -84,74 +146,6 @@ instance Eq (AlwaysEqual a) where
 traversePrimCon :: Applicative f => (e -> f e') -> PrimCon r e -> f (PrimCon r e')
 traversePrimCon = inline traverse
 {-# INLINABLE traversePrimCon #-}
-
-data PrimOp e =
-        TabCon e [e]                 -- table type elements
-      | BinOp BinOp e e
-      | UnOp  UnOp  e
-      | Select e e e                 -- predicate, val-if-true, val-if-false
-      | CastOp e e                   -- Type, then value. See CheckType.hs for valid coercions.
-      | BitcastOp e e                -- Type, then value. See CheckType.hs for valid coercions.
-      -- Effects
-      | ThrowError e                 -- Hard error (parameterized by result type)
-      | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
-      | Resume e e                   -- Resume from effect handler (type, arg)
-      | Perform e Int                -- Call an effect operation (effect name) (op #)
-      -- References
-      | IndexRef e e
-      | ProjRef Int e
-      -- Low-level memory operations
-      | IOAlloc BaseType e
-      | IOFree e
-      | PtrOffset e e
-      | PtrLoad e
-      | PtrStore e e
-      -- Destination operations
-      | AllocDest e  -- type
-      | Place e e    -- reference, value
-      | Freeze e     -- reference
-      -- Vector operations
-      | VectorBroadcast e e  -- value, vector type
-      | VectorIota e  -- vector type
-      | VectorSubref e e e -- ref, base ix, vector type
-      -- Extensible record and variant operations:
-      -- Concatenate two records.
-      | RecordCons   e e
-      -- Split off a labeled row from the front of the record.
-      | RecordSplit  e e
-      -- Add a dynamically named field to a record (on the left).
-      -- Args are as follows: label, value, record.
-      | RecordConsDynamic e e e
-      -- Splits a label from the record.
-      | RecordSplitDynamic e e
-      -- Extend a variant with empty alternatives (on the left).
-      -- Left arg contains the types of the empty alternatives to add.
-      | VariantLift  (LabeledItems e) e
-      -- Split {a:A | b:B | ...rest} into (effectively) {a:A | b:B} | {|...rest}.
-      -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
-      -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
-      | VariantSplit (LabeledItems e) e
-      -- type, label, how deeply shadowed, payload
-      | VariantMake e Label Int e
-      -- Ask which constructor was used, as its Word8 index
-      | SumTag e
-      -- Create an enum (payload-free ADT) from a Word8
-      | ToEnum e e
-      -- Converts sum types returned by primitives to variant-types that
-      -- can be scrutinized in the surface language.
-      | SumToVariant e
-      -- stdout-like output stream
-      | OutputStream
-      -- Odds, ends and hacks.
-      | ProjBaseNewtype e     -- shouldn't appear after inference
-      | ProjMethod e Int  -- project a method from the dict
-      | ExplicitApply e e
-      | MonoLiteral e
-        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
-traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')
-traversePrimOp = inline traverse
-{-# INLINABLE traversePrimOp #-}
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
            | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
@@ -395,7 +389,6 @@ instance Store Device
 instance Store (EffectRowP Name n)
 instance Store (EffectP    Name n)
 
-instance Store a => Store (PrimOp    a)
 instance Store a => Store (PrimCon r a)
 instance Store a => Store (PrimTC  r a)
 
@@ -413,6 +406,5 @@ instance Hashable Device
 instance Hashable LetAnn
 instance Hashable Arrow
 
-instance Hashable a => Hashable (PrimOp    a)
 instance Hashable a => Hashable (PrimCon r a)
 instance Hashable a => Hashable (PrimTC  r a)

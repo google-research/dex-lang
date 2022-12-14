@@ -32,7 +32,6 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
 import Name
-import IRVariants
 import Err
 import LabeledItems
 import Util (File (..))
@@ -101,8 +100,7 @@ data UExpr' (n::S) =
  | UHole
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
- | UPrimExpr (PrimExpr CoreIR (UExpr n))
- | UPrimApp PrimName [UExpr n]
+ | UPrim PrimName [UExpr n]
  | ULabel String
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
@@ -395,7 +393,7 @@ data PrimName =
     UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
-  deriving (Show, Enum)
+  deriving (Show, Eq, Ord, Enum)
 
 -- === instances ===
 

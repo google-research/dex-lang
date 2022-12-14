@@ -259,7 +259,7 @@ instance CheaplyReducibleE r (Expr r) (Atom r) where
         _ -> empty
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?
-    Op (CastOp ty' val') -> do
+    PrimOp (MiscOp (CastOp ty' val')) -> do
       ty <- cheapReduceE ty'
       case ty of
         BaseTy (Scalar Word32Type) -> do
@@ -268,7 +268,7 @@ instance CheaplyReducibleE r (Expr r) (Atom r) where
             Con (Lit (Word64Lit v)) -> return $ Con $ Lit $ Word32Lit $ fromIntegral v
             _ -> empty
         _ -> empty
-    Op (ProjMethod dict i) -> do
+    ProjMethod dict i -> do
       cheapReduceE dict >>= \case
         DictCon (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args

@@ -203,7 +203,7 @@ optAnnotatedBinder (lhs, rhs) = do
   rhs' <- mapM expr rhs
   return $ UAnnBinder (maybe UIgnore fromString lhs')
     $ fromMaybe tyKind rhs'
-  where tyKind = ns $ UPrimExpr $ TCExpr TypeKind
+  where tyKind = undefined -- ns $ UPrim $ TCExpr TypeKind
 
 multiIfaceBinder :: Group -> SyntaxM [UAnnBinder AtomNameC VoidS VoidS]
 multiIfaceBinder = dropSrc \case
@@ -431,8 +431,7 @@ expr = propagateSrcE expr' where
   expr' CEmpty              = return   UHole
   -- Binders (e.g., in pi types) should not hit this case
   expr' (CIdentifier name)  = return $ fromString name
-  expr' (CPrim prim)        = UPrimExpr <$> mapM expr prim
-  expr' (CPrimApp prim xs)  = UPrimApp prim <$> mapM expr xs
+  expr' (CPrim prim xs)     = UPrim prim <$> mapM expr xs
   expr' (CNat word)         = return $ UNatLit word
   expr' (CInt int)          = return $ UIntLit int
   expr' (CString str)       = return $ UApp (fromString "to_list")
@@ -541,10 +540,10 @@ expr = propagateSrcE expr' where
   expr' (CDo blk) = ULam . (ULamExpr PlainArrow (UPatAnn (nsB $ UPatUnit UnitB) Nothing)) <$> block blk
 
 charExpr :: Char -> (UExpr' VoidS)
-charExpr c = UPrimExpr $ ConExpr $ Lit $ Word8Lit $ fromIntegral $ fromEnum c
+charExpr c = undefined -- UPrim $ ConExpr $ Lit $ Word8Lit $ fromIntegral $ fromEnum c
 
 unitExpr :: UExpr' VoidS
-unitExpr = UPrimExpr $ ConExpr $ ProdCon []
+unitExpr = undefined -- UPrim $ ConExpr $ ProdCon []
 
 labelExpr :: LabelPrefix -> String -> UExpr' VoidS
 labelExpr PlainLabel str = ULabel str

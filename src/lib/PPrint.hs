@@ -155,17 +155,17 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 
 instance Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr r n) where
-  prettyPrec (Atom x) = prettyPrec x
-  prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
-  prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof hof) = prettyPrec hof
-  prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
-  prettyPrec (Handle v args body) = atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." body
-  prettyPrec (PrimEffect ref eff) = atPrec LowestPrec $ pApp ref <+> pApp eff
+  prettyPrec (Atom x) = undefined
+  -- prettyPrec (Atom x) = prettyPrec x
+  -- prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
+  -- prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
+  -- prettyPrec (Hof hof) = prettyPrec hof
+  -- prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
+  -- prettyPrec (Handle v args body) = atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." body
+  -- prettyPrec (RefOp ref eff) = atPrec LowestPrec $ pApp ref <+> pApp eff
 
-instance Pretty (PrimEffect r n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (PrimEffect r n) where
+instance Pretty (RefOp r n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (RefOp r n) where
   prettyPrec eff = atPrec LowestPrec case eff of
     MAsk        -> "ask"
     MExtend _ x -> "extend" <+> pApp x
@@ -713,8 +713,7 @@ instance PrettyPrec (UExpr' n) where
     UTypeAnn v ty -> atPrec LowestPrec $
       group $ pApp v <> line <> ":" <+> pApp ty
     UTabCon xs -> atPrec ArgPrec $ p xs
-    UPrimExpr prim -> prettyPrec prim
-    UPrimApp prim xs -> atPrec AppPrec $ p (show prim) <+> p xs
+    UPrim prim xs -> atPrec AppPrec $ p (show prim) <+> p xs
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
@@ -908,7 +907,6 @@ instance Pretty (ImpInstr n)  where
   pretty (IQueryParallelism f s) = "queryParallelism" <+> p f <+> p s
   pretty (ILaunch f size args) =
     "launch" <+> p f <+> p size <+> spaced args
-  pretty (IPrimOp op)     = pLowest op
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
@@ -949,12 +947,6 @@ instance PrettyPrec ScalarBaseType where
     Word8Type   -> "Word8"
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
-
-instance PrettyPrec e => Pretty (PrimExpr r e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimExpr r e) where
-  prettyPrec (TCExpr  e) = prettyPrec e
-  prettyPrec (ConExpr e) = prettyPrec e
-  prettyPrec (OpExpr  e) = prettyPrec e
 
 instance PrettyPrec e => Pretty (PrimTC r e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC r e) where
@@ -1009,52 +1001,54 @@ prettyPrecPrimCon con = case con of
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
-  prettyPrec op = case op of
-    TabCon _ es -> atPrec ArgPrec $ list $ pApp <$> es
-    PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
-    PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
-    RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
-    RecordConsDynamic lab val rec -> atPrec LowestPrec $
-      "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
-    RecordSplit fields val -> atPrec AppPrec $
-      "RecordSplit" <+> pArg fields <+> pArg val
-    VariantLift types val ->
-      prettyVariantLift (fmap (const ()) types) val
-    VariantSplit types val -> atPrec AppPrec $
-      "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
-                     <+> pArg val
-    AllocDest ty -> atPrec LowestPrec $ "alloc" <+> pApp ty
-    Place r v -> atPrec LowestPrec $ pApp r <+> "r:=" <+> pApp v
-    Freeze r  -> atPrec LowestPrec $ "freeze" <+> pApp r
-    VectorBroadcast v vty -> atPrec LowestPrec $ "vbroadcast" <+> pApp v <+> pApp vty
-    VectorIota vty -> atPrec LowestPrec $ "viota" <+> pApp vty
-    VectorSubref ref i _ -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
-    _ -> prettyExprDefault $ OpExpr op
+  prettyPrec op = undefined
+--   prettyPrec op = case op of
+--     TabCon _ es -> atPrec ArgPrec $ list $ pApp <$> es
+--     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
+--     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
+--     RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
+--     RecordConsDynamic lab val rec -> atPrec LowestPrec $
+--       "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
+--     RecordSplit fields val -> atPrec AppPrec $
+--       "RecordSplit" <+> pArg fields <+> pArg val
+--     VariantLift types val ->
+--       prettyVariantLift (fmap (const ()) types) val
+--     VariantSplit types val -> atPrec AppPrec $
+--       "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
+--                      <+> pArg val
+--     AllocDest ty -> atPrec LowestPrec $ "alloc" <+> pApp ty
+--     Place r v -> atPrec LowestPrec $ pApp r <+> "r:=" <+> pApp v
+--     Freeze r  -> atPrec LowestPrec $ "freeze" <+> pApp r
+--     VectorBroadcast v vty -> atPrec LowestPrec $ "vbroadcast" <+> pApp v <+> pApp vty
+--     VectorIota vty -> atPrec LowestPrec $ "viota" <+> pApp vty
+--     VectorSubref ref i _ -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
+--     _ -> prettyExprDefault $ OpExpr op
 
-prettyExprDefault :: PrettyPrec e => PrimExpr r e -> DocPrec ann
-prettyExprDefault expr =
-  case length expr of
-    0 -> atPrec ArgPrec primName
-    _ -> atPrec AppPrec $ pAppArg primName expr
-  where primName = p $ "%" ++ showPrimName expr
+-- prettyOpDefault :: PrettyPrec e => PrimOp e -> DocPrec ann
+-- prettyOpDefault expr =
+--   case length expr of
+--     0 -> atPrec ArgPrec primName
+--     _ -> atPrec AppPrec $ pAppArg primName expr
+--   where primName = p $ "%" ++ showPrimName expr
 
 instance Pretty (Hof r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Hof r n) where
-  prettyPrec hof = atPrec LowestPrec case hof of
-    For ann _ lam -> forStr ann <+> prettyLamHelper PlainArrow lam (PrettyFor ann)
-    While body    -> "while" <+> pArg body
-    RunReader x body    -> "runReader" <+> pArg x <+> pArg body
-    RunWriter _ bm body -> "runWriter" <+> pArg bm <+> pArg body
-    RunState  _ x body  -> "runState"  <+> pArg x <+> pArg body
-    RunIO body          -> "runIO" <+> pArg body
-    RunInit body        -> "runInit" <+> pArg body
-    CatchException body -> "catchException" <+> pArg body
-    Linearize body      -> "linearize" <+> pArg body
-    Transpose body      -> "transpose" <+> pArg body
-    Seq ann _ c lamExpr -> case lamExpr of
-      UnaryLamExpr b body -> "seq" <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
-      _ -> p (show hof) -- shouldn't happen, but crashing pretty printers make debugging hard
-    RememberDest x y    -> "rememberDest" <+> pArg x <+> pArg y
+  prettyPrec hof = undefined -- atPrec LowestPrec case hof of
+  -- prettyPrec hof = atPrec LowestPrec case hof of
+  --   For ann _ lam -> forStr ann <+> prettyLamHelper PlainArrow lam (PrettyFor ann)
+  --   While body    -> "while" <+> pArg body
+  --   RunReader x body    -> "runReader" <+> pArg x <+> pArg body
+  --   RunWriter _ bm body -> "runWriter" <+> pArg bm <+> pArg body
+  --   RunState  _ x body  -> "runState"  <+> pArg x <+> pArg body
+  --   RunIO body          -> "runIO" <+> pArg body
+  --   RunInit body        -> "runInit" <+> pArg body
+  --   CatchException body -> "catchException" <+> pArg body
+  --   Linearize body      -> "linearize" <+> pArg body
+  --   Transpose body      -> "transpose" <+> pArg body
+  --   Seq ann _ c lamExpr -> case lamExpr of
+  --     UnaryLamExpr b body -> "seq" <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
+  --     _ -> p (show hof) -- shouldn't happen, but crashing pretty printers make debugging hard
+  --   RememberDest x y    -> "rememberDest" <+> pArg x <+> pArg y
 
 instance Pretty (BaseMonoid r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (BaseMonoid r n) where
@@ -1207,7 +1201,7 @@ instance Pretty Group where
 
 instance PrettyPrec Group' where
   prettyPrec (CIdentifier n) = atPrec ArgPrec $ fromString n
-  prettyPrec (CPrim prim) = prettyExprDefault prim
+  prettyPrec (CPrim prim args) = undefined -- prettyExprDefault prim
   prettyPrec (CParens blk)  =
     atPrec ArgPrec $ "(" <> p blk <> ")"
   prettyPrec (CBracket b g) =

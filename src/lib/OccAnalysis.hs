@@ -463,7 +463,7 @@ instance HasOCC (TabLamExpr SimpIR) where
   occ _ view = inlinedLater view
   {-# INLINE occ #-}
 
-instance HasOCC (PrimEffect SimpIR) where
+instance HasOCC (RefOp SimpIR) where
   occ _ = \case
     MExtend (BaseMonoid empty combine) val -> do
       val' <- occ accessOnce val

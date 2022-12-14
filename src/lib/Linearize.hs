@@ -21,6 +21,7 @@ import QueryType
 import Util (bindM2)
 import PPrint
 import Types.Core
+import Types.Primitives
 import Core
 
 -- === linearization monad ===
@@ -350,17 +351,21 @@ linearizeExpr expr = case expr of
   TabApp x idxs -> do
     zipLin (linearizeAtom x) (pureLin $ ListE $ map injectCore $ toList idxs) `bindLin`
       \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
-  Op op      -> linearizeOp op
-  PrimEffect ref m -> case m of
-    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ PrimEffect ref' MAsk
+  PrimOp op      -> linearizeOp op
+  RefOp ref m -> case m of
+    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ RefOp ref' MAsk
     MExtend monoid x -> do
       -- TODO: check that we're dealing with a +/0 monoid
       monoid' <- injSubstM monoid
       zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-        liftM Var $ emit $ PrimEffect ref' $ MExtend (sink monoid') x'
-    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ PrimEffect ref' MGet
+        liftM Var $ emit $ RefOp ref' $ MExtend (sink monoid') x'
+    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ RefOp ref' MGet
     MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-                liftM Var $ emit $ PrimEffect ref' $ MPut x'
+                liftM Var $ emit $ RefOp ref' $ MPut x'
+
+    IndexRef i -> zipLin (la ref) (pureLin (injectCore i)) `bindLin`
+                    \(PairE ref' i') -> emitExpr $ RefOp ref' $ IndexRef i'
+    ProjRef i -> la ref `bindLin` \ref' -> emitExpr $ RefOp ref' $ ProjRef i
   Hof e      -> linearizeHof e
   Case e alts resultTy _ -> do
     e' <- injectCore <$> substM e
@@ -377,31 +382,30 @@ linearizeExpr expr = case expr of
           extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do
           applyLinToTangents $ sink linLam
-  Handle _ _ _ -> error "handlers should be gone by now"
-
-linearizeOp :: Emits o => Op SimpIR i -> LinM i o CAtom CAtom
-linearizeOp op = case op of
-  UnOp  uop x       -> linearizeUnOp  uop x
-  BinOp bop x y     -> linearizeBinOp bop x y
-  IndexRef ref i -> zipLin (la ref) (pureLin (injectCore i)) `bindLin`
-                      \(PairE ref' i') -> emitOp $ IndexRef ref' i'
-  ProjRef i ref -> la ref `bindLin` \ref' -> emitOp $ ProjRef i ref'
-  Select p t f -> (pureLin (injectCore p) `zipLin` la t `zipLin` la f) `bindLin`
-                     \(p' `PairE` t' `PairE` f') -> emitOp $ Select p' t' f'
-  -- XXX: This assumes that pointers are always constants
-  PtrLoad _              -> emitZeroT
-  PtrStore _ _           -> emitZeroT
-  PtrOffset _ _          -> emitZeroT
-  IOAlloc _ _            -> emitZeroT
-  IOFree _               -> emitZeroT
-  ThrowError _           -> emitZeroT
-  SumTag _               -> emitZeroT
-  ToEnum _ _             -> emitZeroT
   TabCon ty xs -> do
     ty' <- injSubstM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
-      emitOp $ TabCon (sink ty') xs'
-  CastOp t v             -> do
+      emitExpr $ TabCon (sink ty') xs'
+  where
+    la = linearizeAtom
+
+linearizeOp :: Emits o => PrimOp (Atom SimpIR i) -> LinM i o CAtom CAtom
+linearizeOp op = case op of
+  UnOp  uop x       -> linearizeUnOp  uop x
+  BinOp bop x y     -> linearizeBinOp bop x y
+  -- XXX: This assumes that pointers are always constants
+  MemOp _      -> emitZeroT
+  MiscOp op -> linearizeMiscOp op
+  where
+    emitZeroT = withZeroT $ liftM Var $ emit =<< injSubstM (PrimOp op)
+
+linearizeMiscOp :: Emits o => MiscOp (Atom SimpIR i) -> LinM i o CAtom CAtom
+linearizeMiscOp op = case op of
+  SumTag _     -> emitZeroT
+  ToEnum _ _   -> emitZeroT
+  Select p t f -> (pureLin (injectCore p) `zipLin` la t `zipLin` la f) `bindLin`
+                     \(p' `PairE` t' `PairE` f') -> emitOp $ MiscOp $ Select p' t' f'
+  CastOp t v -> do
     vt <- getType =<< injSubstM v
     t' <- injSubstM t
     vtTangentType <- tangentType vt
@@ -409,34 +413,22 @@ linearizeOp op = case op of
     ((&&) <$> (vtTangentType `alphaEq` vt)
           <*> (tTangentType  `alphaEq` t')) >>= \case
       True -> do
-        linearizeAtom v `bindLin` \v' -> emitOp $ CastOp (sink t') v'
+        linearizeAtom v `bindLin` \v' -> emitOp $ MiscOp $ CastOp (sink t') v'
       False -> do
         WithTangent x xt <- linearizeAtom v
         yt <- case (vtTangentType, tTangentType) of
           (_     , UnitTy) -> return $ UnitVal
           (UnitTy, tt    ) -> zeroAt tt
           _                -> error "Expected at least one side of the CastOp to have a trivial tangent type"
-        y <- emitOp $ CastOp t' x
+        y <- emitOp $ MiscOp $ CastOp t' x
         return $ WithTangent y do xt >> return (sink yt)
-  BitcastOp _ _ -> notImplemented
-  RecordCons l r ->
-    zipLin (la l) (la r) `bindLin` \(PairE l' r') ->
-      emitOp $ RecordCons l' r'
-  RecordSplit f r ->
-    zipLin (la f) (la r) `bindLin` \(PairE f' r') ->
-      emitOp $ RecordSplit f' r'
-  VariantLift ts v ->
-    zipLin (traverseLin pureLin (fmap injectCore ts)) (la v) `bindLin`
-      \(PairE (ComposeE ts') v') -> emitOp $ VariantLift ts' v'
-  VariantSplit ts v ->
-    zipLin (traverseLin pureLin (fmap injectCore ts)) (la v) `bindLin`
-      \(PairE (ComposeE ts') v') -> emitOp $ VariantSplit ts' v'
-  ThrowException _       -> notImplemented
-  SumToVariant _         -> notImplemented
-  OutputStream           -> emitZeroT
+  BitcastOp _ _    -> notImplemented
+  ThrowException _ -> notImplemented
+  ThrowError _     -> emitZeroT
+  OutputStream     -> emitZeroT
   _ -> notImplemented
   where
-    emitZeroT = withZeroT $ liftM Var $ emit =<< injSubstM (Op op)
+    emitZeroT = withZeroT $ liftM Var $ emit =<< injSubstM (PrimOp $ MiscOp op)
     la = linearizeAtom
 
 linearizeUnOp :: Emits o => UnOp -> SAtom i -> LinM i o CAtom CAtom

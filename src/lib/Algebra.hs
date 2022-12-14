@@ -163,7 +163,7 @@ blockAsPolyRec decls result = case decls of
     exprAsPoly :: Expr SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
     exprAsPoly e = case e of
       Atom a -> atomAsPoly a
-      Op (BinOp op x y) -> case op of
+      PrimOp (BinOp op x y) -> case op of
         IAdd -> add <$> atomAsPoly x <*> atomAsPoly y
         IMul -> mul <$> atomAsPoly x <*> atomAsPoly y
         -- XXX: we rely on the wrapping behavior of subtraction on unsigned ints
