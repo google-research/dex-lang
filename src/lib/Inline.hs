@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Inline where
+module Inline (inlineBindings) where
 
 import Data.List.NonEmpty qualified as NE
 
@@ -61,11 +61,11 @@ liftInlineM act = liftBuilder $ runSubstReaderT idSubst $ runInlineM act
 data SizePreservationInfo =
   -- Explicit noinline, or inlining doesn't preserve work
     NoInline
-  -- Used once, ergo size-preserving to inline.  In Secrets, this corresponds to
-  -- either OnceSafe, or OnceUnsafe with whnfOrBot == True
+  -- Used once statically, ergo size-preserving to inline.  In Secrets, this
+  -- corresponds to either OnceSafe, or OnceUnsafe with whnfOrBot == True
   | UsedOnce
-  -- Used more than once, ergo potentially size-increasing to inline.  In
-  -- Secrets, this corresponds to either MultiSafe, or MultiUnsafe with
+  -- Used more than once statically, ergo potentially size-increasing to inline.
+  -- In Secrets, this corresponds to either MultiSafe, or MultiUnsafe with
   -- whnfOrBot == True
   | UsedMulti
   deriving (Eq, Show)
@@ -319,17 +319,22 @@ reconstructTabApp ctx expr ixs =
       -- Note: There's a decision here.  Is it ok to inline the atoms in
       -- `ixsPref` into the body `decls`?  If so, should we pre-process them and
       -- carry them in `DoneEx`, or suspend them in `SuspEx`?  (If not, we can
-      -- emit fresh bindings and use `Rename`.)  This decision affects the
-      -- runtime of the inliner and the code size of the IR the inliner
-      -- produces; since `ixsPref` are atoms, no decision made here can
-      -- duplicate work.
-      -- - Tried going with `SuspEx`, in the interest of "launch and iterate".
-      -- - This creates a bug: what if I'm beta-reducing a body that
-      --   uses one of these binders somewhere I refuse to substitute into,
-      --   like a type annotation?
-      --     (for i:(Fin 2) j:(..i). <stuff>).(<something>)
-      --   The inliner crashes because the substitution is not rename-only.
-      -- - Failed over to "emit fresh bindings and rename".
+      -- emit fresh bindings and use `Rename`.)  We can't make this decision
+      -- properly without annotating the `for` binders with occurrence
+      -- information; even though `ixsPref` itself are atoms, we may be carrying
+      -- suspended inlining decisions that would want to make one an expression,
+      -- and thus force-inlining it may duplicate work.
+      --
+      -- There remains a decision between just emitting bindings, or running
+      -- `mapM (inline $ EmitToAtomCtx Stop)` and inlining the resulting atoms.
+      -- In the work-heavy case where an element of `ixsPref` becomes an
+      -- expression after inlining, the result will be the same; but in the
+      -- work-light case where the element remains an atom, more inlining can
+      -- proceed.  This decision only affects the runtime of the inliner and the
+      -- code size of the IR the inliner produces.
+      --
+      -- Current status: Emitting bindings in the interest if "launch and
+      -- iterate"; have not tried `EmitToAtomCtx`.
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
       s <- getSubst
       let moreSubst = bs @@> map Rename ixsPref'
