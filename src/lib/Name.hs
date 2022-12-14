@@ -2608,7 +2608,7 @@ type B = S -> S -> *  -- binder-y things, covariant in the first param and
 type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
--- We use SubstItem for ColorRep to be able ot unsafeCoerce scopes into name sets in O(1).
+-- We use SubstItem for ColorRep to be able to unsafeCoerce scopes into name sets in O(1).
 type ColorRep = SubstItem GHC.Exts.Any UnsafeS
 type NameSet (n::S) = RawNameMap ColorRep
 

@@ -197,6 +197,10 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
   f : (aa:Type) -> aa -> aa = \bb. \x. myId x
   f Int 1
 > Leaked local variables:[bb]
+> Failed to exchage binders in buildAbsInf
+> Pending emissions:
+> Defaults: 
+> Solver substitution: [(_.4, bb)]
 >
 >   f : (aa:Type) -> aa -> aa = \bb. \x. myId x
 >                               ^^^^^^^^^^^^^^^
