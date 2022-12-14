@@ -25,7 +25,7 @@ import Data.Function ((&))
 import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate, partition)
 import Data.Maybe (fromJust)
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.Text.Prettyprint.Doc (Pretty (..), (<+>))
 import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
@@ -339,6 +339,14 @@ instance SubstE Name Defaults where
     where
       substDefaultSet d = freeVarsE $ substE env $ ListE $ nameSetToList @AtomNameC d
 
+instance Pretty (Defaults n) where
+  pretty (Defaults ints nats) =
+    attach "Names defaulting to Int32" (nameSetToList @AtomNameC ints)
+    <+> attach "Names defaulting to Nat32" (nameSetToList @AtomNameC nats)
+    where
+      attach _ [] = mempty
+      attach s l = s <+> pretty l
+
 zonkDefaults :: SolverSubst n -> Defaults n -> Defaults n
 zonkDefaults s (Defaults d1 d2) =
   Defaults (zonkDefaultSet d1) (zonkDefaultSet d2)
@@ -567,8 +575,16 @@ instance InfBuilder (InfererM i) where
           toPairE <$> runStateT1 (
             runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
         refreshAbs ab \infFrag resultWithState -> do
-          PairB infFrag' b' <- liftHoistExcept $ exchangeBs $ PairB b infFrag
-          return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
+          case exchangeBs $ PairB b infFrag of
+            HoistSuccess (PairB infFrag' b') ->
+              return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
+            HoistFailure vs -> do
+              InfOutFrag emissions defaults solverSubst <- return infFrag
+              throw EscapedNameErr $ (pprint vs)
+                ++ "\nFailed to exchage binders in buildAbsInf"
+                ++ "\nPending emissions:" ++ pprint (unRNest emissions)
+                ++ "\nDefaults:" ++ pprint defaults
+                ++ "\nSolver substitution: " ++ pprint solverSubst
       Abs b (PairE result s') <- extendInplaceT ab
       return (Abs (b:>binding) result, hoistRequiredIfaces b s')
 
@@ -731,7 +747,8 @@ hoistInfStateRec
   -> Except (HoistedSolverState e n)
 hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissions of
  REmpty -> do
-  subst' <- liftHoistExcept $ hoistSolverSubst subst
+  subst' <- liftHoistExcept' "Failed to hoist solver substitution in hoistInfStateRec"
+    $ hoistSolverSubst subst
   let decls' = withSubscopeDistinct decls $
                  resolveDelayedSolve (scope `extendOutMap` toScopeFrag infVars) subst' decls
   return $ HoistedSolverState (dropInferenceNameBindersFV infVars) defaults subst' decls' e
@@ -749,7 +766,9 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
                              defaults subst decls e
           -- If a variable is solved, we eliminate it.
           Just bSolutionUnhoisted -> do
-            bSolution <- liftHoistExcept $ hoist frag bSolutionUnhoisted
+            bSolution <-
+              liftHoistExcept' "Failed to eliminate solved variable in hoistInfStateRec"
+              $ hoist frag bSolutionUnhoisted
             case exchangeBs $ PairB b infVars of
               -- This used to be accepted by the code at some point (and handled the same way
               -- as the Nothing) branch above, but I don't understand why. We don't even seem
@@ -812,10 +831,12 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
 #endif
       LeftE emission -> do
         -- Move the binder below all unsolved inference vars. Failure to do so is
-        -- an inference error --- a variable cannot be solved once we exist the scope
+        -- an inference error --- a variable cannot be solved once we exit the scope
         -- of all variables it mentions in its type.
         -- TODO: Shouldn't this be an ambiguous type error?
-        PairB infVars' (b':>emission') <- liftHoistExcept $ exchangeBs (PairB (b:>emission) infVars)
+        PairB infVars' (b':>emission') <-
+          liftHoistExcept' "Failed to move binder below unsovled inference vars"
+            $ exchangeBs (PairB (b:>emission) infVars)
         -- Now, those are real leakage errors. We never want to leak this var through a solution!
         -- But since we delay hoisting, they will only be raised later.
         let subst' = delayedHoistSolverSubst b' subst
