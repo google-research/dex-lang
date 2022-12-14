@@ -32,11 +32,9 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
-import qualified Unsafe.Coerce as TrulyUnsafe
 
 import GHC.Stack
 import GHC.Generics (Generic (..))
-import GHC.Exts (Constraint)
 import Data.Store (Store (..))
 import Foreign.Ptr
 
@@ -44,78 +42,11 @@ import Name
 import Err
 import LabeledItems
 import Util (FileHash, onFst, SnocList (..), toSnocList, Tree (..))
+import IRVariants
 
 import Types.Primitives
 import Types.Source
 import Types.Imp
-
--- === IR variants ===
-
-data IR =
-   CoreIR       -- used after inference and before simplification
- | SimpIR       -- used after simplification
- | SimpToImpIR  -- only used during the Simp-to-Imp translation
- | AnyIR        -- used for deserialization only
-
-data IRPredicate =
-   Is IR
- -- TODO: find a way to make this safe and derive it automatically. For now, we
- -- assert it manually for the valid cases we know about.
- | IsSubsetOf IR
-
-type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
-type family Sat' (r::IR) (p::IRPredicate) where
-  Sat' r (Is r)                              = True
-  Sat' SimpIR (IsSubsetOf SimpToImpIR)       = True
-  Sat' SimpIR (IsSubsetOf CoreIR)            = True
-  Sat' _ _ = False
-
-type IsCore r = r `Sat` Is CoreIR
-type IsCore' r = r `Sat'` Is CoreIR
-
-type CAtom  = Atom CoreIR
-type CType  = Type CoreIR
-type CExpr  = Expr CoreIR
-type CBlock = Block CoreIR
-type CDecl  = Decl  CoreIR
-type CDecls = Decls CoreIR
-type CAtomSubstVal = AtomSubstVal CoreIR
-type CAtomName  = AtomName CoreIR
-
-type SAtom  = Atom SimpIR
-type SType  = Type SimpIR
-type SExpr  = Expr SimpIR
-type SBlock = Block SimpIR
-type SDecl  = Decl  SimpIR
-type SDecls = Decls SimpIR
-type SAtomSubstVal = AtomSubstVal SimpIR
-type SAtomName  = AtomName SimpIR
-
--- XXX: the intention is that we won't have to use these much
-unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
-unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
-
--- XXX: the intention is that we won't have to use these much
-unsafeCoerceFromAnyIR :: forall (r::IR) (e::IR->E) (n::S). e AnyIR n -> e r n
-unsafeCoerceFromAnyIR = unsafeCoerceIRE
-
-unsafeCoerceIRB :: forall (r'::IR) (r::IR) (b::IR->B) (n::S) (l::S) . b r n l -> b r' n l
-unsafeCoerceIRB = TrulyUnsafe.unsafeCoerce
-
-class CovariantInIR (e::IR->E)
--- For now we're "implementing" this instances manually as needed because we
--- don't actually need very many of them, but we should figure out a more
--- uniform way to do it.
-instance CovariantInIR Atom
-instance CovariantInIR Block
-instance CovariantInIR Expr
-instance CovariantInIR IxType
-instance CovariantInIR LamExpr
-instance CovariantInIR BaseMonoid
-
--- This is safe, assuming the constraints have been implemented correctly.
-injectIRE :: (CovariantInIR e, r `Sat` IsSubsetOf r') => e r n -> e r' n
-injectIRE = unsafeCoerceIRE
 
 -- === core IR ===
 
@@ -316,9 +247,9 @@ type Type = Atom
 type Kind = Type
 type Dict = Atom
 
-type TC  r n = PrimTC  (Atom r n)
-type Con r n = PrimCon (Atom r n)
-type Op  r n = PrimOp  (Atom r n)
+type TC  r n = PrimTC  r (Atom r n)
+type Con r n = PrimCon r (Atom r n)
+type Op  r n = PrimOp    (Atom r n)
 
 type AtomSubstVal r = SubstVal AtomNameC (Atom r) :: V
 
@@ -339,6 +270,33 @@ data BoxPtr (r::IR) (n::S) = BoxPtr (Atom r n) (Block r n)  -- ptrptr, size
 -- about sequential scope extensions, we encode it differently.
 data NonDepNest r ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
                             deriving (Generic)
+
+-- === IR variants ===
+
+instance CovariantInIR Atom
+instance CovariantInIR Block
+instance CovariantInIR Expr
+instance CovariantInIR IxType
+instance CovariantInIR LamExpr
+instance CovariantInIR BaseMonoid
+
+type CAtom  = Atom CoreIR
+type CType  = Type CoreIR
+type CExpr  = Expr CoreIR
+type CBlock = Block CoreIR
+type CDecl  = Decl  CoreIR
+type CDecls = Decls CoreIR
+type CAtomSubstVal = AtomSubstVal CoreIR
+type CAtomName  = AtomName CoreIR
+
+type SAtom  = Atom SimpIR
+type SType  = Type SimpIR
+type SExpr  = Expr SimpIR
+type SBlock = Block SimpIR
+type SDecl  = Decl  SimpIR
+type SDecls = Decls SimpIR
+type SAtomSubstVal = AtomSubstVal SimpIR
+type SAtomName  = AtomName SimpIR
 
 -- === type classes ===
 
@@ -1382,8 +1340,8 @@ instance GenericE (Atom r) where
   {- RecordTy -}       ( FieldRowElems r)
   {- VariantTy -}      ( ExtLabeledItemsE (Type r) (AtomName r) )
             ) (EitherE6
-  {- Con -}        (ComposeE PrimCon (Atom r))
-  {- TC -}         (ComposeE PrimTC  (Atom r))
+  {- Con -}        (ComposeE (PrimCon r) (Atom r))
+  {- TC -}         (ComposeE (PrimTC  r) (Atom r))
   {- Eff -}        EffectRow
   {- PtrVar -}     PtrName
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
@@ -1510,7 +1468,7 @@ instance GenericE (Expr r) where
         (Atom r `PairE` (Atom r) `PairE` ListE (Atom r))
         (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow)
         (Atom r)
-        (ComposeE PrimOp  (Atom r))
+        (ComposeE PrimOp (Atom r))
         (Atom r `PairE` PrimEffect r)
         (Hof r)
         (HandlerName `PairE` ListE (Atom r) `PairE` (Block r))

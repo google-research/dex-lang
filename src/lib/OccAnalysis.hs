@@ -17,6 +17,7 @@ import Control.Monad.Reader.Class
 
 import Core
 import LabeledItems
+import IRVariants
 import Name
 import MTL1
 import Occurrence hiding (Var)
@@ -32,7 +33,7 @@ import QueryType
 -- unused pure bindings as it goes, since it has all the needed information.
 
 analyzeOccurrences :: (EnvReader m) => SBlock n -> m n (SBlock n)
-analyzeOccurrences = liftOCCM . occ accessOnce 
+analyzeOccurrences = liftOCCM . occ accessOnce
 {-# SCC analyzeOccurrences #-}
 
 -- === Overview ===
@@ -485,11 +486,11 @@ instance HasOCC (PrimEffect SimpIR) where
 
 -- === The generic instances ===
 
-instance HasOCC e => HasOCC (ComposeE PrimCon e) where
+instance HasOCC e => HasOCC (ComposeE (PrimCon r) e) where
   occ _ (ComposeE con) = ComposeE <$> traverse (occ accessOnce) con
   {-# INLINE occ #-}
 
-instance HasOCC e => HasOCC (ComposeE PrimTC e) where
+instance HasOCC e => HasOCC (ComposeE (PrimTC r) e) where
   occ _ (ComposeE tc) = ComposeE <$> traverse (occ accessOnce) tc
   {-# INLINE occ #-}
 

@@ -28,6 +28,7 @@ import qualified Data.ByteString       as BS
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
+import IRVariants
 import Name
 import Util (IsBool (..))
 

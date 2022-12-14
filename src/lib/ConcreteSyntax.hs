@@ -31,10 +31,12 @@ import Data.Word
 import GHC.Generics (Generic (..))
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
+import qualified Unsafe.Coerce as TrulyUnsafe
 
 import Err
 import Lexing
 import Name
+import IRVariants
 import Types.Primitives hiding (Equal)
 import Types.Primitives qualified as P
 import Types.Source
@@ -99,7 +101,7 @@ type Group = WithSrc Group'
 data Group'
   = CEmpty
   | CIdentifier SourceName
-  | CPrim (PrimExpr Group)
+  | CPrim (PrimExpr CoreIR Group)
   | CPrimApp PrimName [Group]
   | CNat Word64
   | CInt Int
@@ -921,19 +923,22 @@ concatPos (pos:rest) = foldl joinPos pos rest
 
 -- === primitive constructors and operators ===
 
-strToPrimName :: String -> Maybe (Either (PrimExpr ()) PrimName)
+strToPrimName :: String -> Maybe (Either (PrimExpr CoreIR ()) PrimName)
 strToPrimName s = M.lookup s builtinNames
 
-primNameToStr :: PrimExpr () -> String
-primNameToStr prim = case lookup prim $ map swap $ M.toList primExprNames of
+primNameToStr :: PrimExpr r () -> String
+primNameToStr prim = case lookup (coercePrimExpr prim) $ map swap $ M.toList primExprNames of
   Just s  -> s
   Nothing -> show prim
 
-showPrimName :: PrimExpr e -> String
+coercePrimExpr :: PrimExpr r () -> PrimExpr CoreIR ()
+coercePrimExpr = TrulyUnsafe.unsafeCoerce
+
+showPrimName :: PrimExpr r e -> String
 showPrimName prim = primNameToStr $ fmap (const ()) prim
 {-# NOINLINE showPrimName #-}
 
-builtinNames :: M.Map String (Either (PrimExpr ()) PrimName)
+builtinNames :: M.Map String (Either (PrimExpr CoreIR ()) PrimName)
 builtinNames = fmap Left primExprNames <> fmap Right primNames
 
 primNames :: M.Map String PrimName
@@ -947,7 +952,7 @@ primNames = M.fromList
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)
-primExprNames :: M.Map String (PrimExpr ())
+primExprNames :: M.Map String (PrimExpr CoreIR ())
 primExprNames = M.fromList
   [ ("iadd" , binary IAdd),  ("isub"  , binary ISub)
   , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)

@@ -34,6 +34,7 @@ import qualified Data.Set        as S
 import Types.Primitives
 import Types.Core
 import Types.Source
+import IRVariants
 import Core
 import CheapReduction (cheapNormalize)
 import Err
@@ -431,7 +432,7 @@ instance HasType r (TabLamExpr r) where
         bodyTy <- getTypeE body
         return $ TabTy (b':>ann') bodyTy
 
-getTypePrimCon :: PrimCon (Atom r i) -> TypeQueryM r i o (Type r o)
+getTypePrimCon :: PrimCon r (Atom r i) -> TypeQueryM r i o (Type r o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs

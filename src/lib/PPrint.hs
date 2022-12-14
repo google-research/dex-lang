@@ -950,14 +950,14 @@ instance PrettyPrec ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
-instance PrettyPrec e => Pretty (PrimExpr e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimExpr e) where
+instance PrettyPrec e => Pretty (PrimExpr r e) where pretty = prettyFromPrettyPrec
+instance PrettyPrec e => PrettyPrec (PrimExpr r e) where
   prettyPrec (TCExpr  e) = prettyPrec e
   prettyPrec (ConExpr e) = prettyPrec e
   prettyPrec (OpExpr  e) = prettyPrec e
 
-instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimTC e) where
+instance PrettyPrec e => Pretty (PrimTC r e) where pretty = prettyFromPrettyPrec
+instance PrettyPrec e => PrettyPrec (PrimTC r e) where
   prettyPrec con = case con of
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "Unit"
@@ -975,12 +975,12 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     LabeledRowKindTC -> atPrec ArgPrec "Fields"
     LabelType -> atPrec ArgPrec "Label"
 
-instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimCon e) where
+instance PrettyPrec e => Pretty (PrimCon r e) where pretty = prettyFromPrettyPrec
+instance PrettyPrec e => PrettyPrec (PrimCon r e) where
   prettyPrec = prettyPrecPrimCon
 -- TODO: Define Show instances in user-space and avoid those overlapping instances!
-instance Pretty (PrimCon (Atom r n)) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (PrimCon (Atom r n)) where
+instance Pretty (PrimCon r (Atom r n)) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (PrimCon r (Atom r n)) where
   prettyPrec = \case
     Newtype (StaticRecordTy ty) (ProdVal itemList) ->
       prettyLabeledItems (restructure itemList ty) (line' <> ",") " ="
@@ -992,7 +992,7 @@ instance PrettyPrec (PrimCon (Atom r n)) where
       prettyVariant ls label value
     con -> prettyPrecPrimCon con
 
-prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
+prettyPrecPrimCon :: PrettyPrec e => PrimCon r e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l        -> prettyPrec l
   ProdCon [x]  -> atPrec ArgPrec $ "(" <> pLowest x <> ",)"
@@ -1031,7 +1031,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     VectorSubref ref i _ -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
     _ -> prettyExprDefault $ OpExpr op
 
-prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
+prettyExprDefault :: PrettyPrec e => PrimExpr r e -> DocPrec ann
 prettyExprDefault expr =
   case length expr of
     0 -> atPrec ArgPrec primName

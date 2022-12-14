@@ -37,41 +37,43 @@ import Name
 import Err
 import LabeledItems
 import Occurrence
+import IRVariants
 
-data PrimExpr e =
-        TCExpr  (PrimTC  e)
-      | ConExpr (PrimCon e)
-      | OpExpr  (PrimOp  e)
+data PrimExpr (r::IR) (e:: *) =
+        TCExpr  (PrimTC  r e)
+      | ConExpr (PrimCon r e)
+      | OpExpr  (PrimOp    e)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data PrimTC e =
-        BaseType BaseType
-      | ProdType [e]
-      | SumType [e]
-      | Nat
-      | Fin e
-      | RefType (Maybe e) e
-      | TypeKind
-      | EffectRowKind
-      | LabeledRowKindTC
-      | LabelType
-        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+data PrimTC (r::IR) (e:: *) where
+  BaseType         :: BaseType       -> PrimTC r e
+  ProdType         :: [e]            -> PrimTC r e
+  SumType          :: [e]            -> PrimTC r e
+  Nat              ::                   PrimTC r e
+  Fin              :: e              -> PrimTC r e
+  RefType          :: (Maybe e) -> e -> PrimTC r e
+  TypeKind         ::                   PrimTC r e
+  EffectRowKind    ::                   PrimTC r e
+  LabeledRowKindTC ::                   PrimTC r e
+  LabelType        ::                   PrimTC r e
+  deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-traversePrimTC :: Applicative f => (e -> f e') -> PrimTC e -> f (PrimTC e')
+traversePrimTC :: Applicative f => (e -> f e') -> PrimTC r e -> f (PrimTC r e')
 traversePrimTC = inline traverse
 {-# INLINABLE traversePrimTC #-}
 
-data PrimCon e =
-        Lit LitVal
-      | ProdCon   [e]
-      | SumCon    [e] Int e     -- type, tag, payload
-      | SumAsProd [e] e   [e]   -- type, tag, payload
-      | LabelCon String
-      | Newtype e e           -- type, payload
-      -- Misc hacks
-      | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
-      -- Only used during type inference
-      | DictHole (AlwaysEqual SrcPosCtx) e
+data PrimCon (r::IR) (e:: *) where
+  Lit          :: LitVal            -> PrimCon r e
+  ProdCon      :: [e]               -> PrimCon r e
+  SumCon       :: [e] -> Int -> e   -> PrimCon r e -- type, tag, payload
+  SumAsProd    :: [e] -> e   -> [e] -> PrimCon r e -- type, tag, payload
+  LabelCon     :: String            -> PrimCon r e
+  Newtype      :: e -> e            -> PrimCon r e      -- type, payload
+  -- Misc hacks
+  -- Dict type, method. Used in prelude for `run_accum`.
+  ExplicitDict :: e -> e            -> PrimCon r e
+  -- Only used during type inference
+  DictHole     :: AlwaysEqual SrcPosCtx -> e -> PrimCon r e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 newtype AlwaysEqual a = AlwaysEqual a
@@ -79,7 +81,7 @@ newtype AlwaysEqual a = AlwaysEqual a
 instance Eq (AlwaysEqual a) where
   _ == _ = True
 
-traversePrimCon :: Applicative f => (e -> f e') -> PrimCon e -> f (PrimCon e')
+traversePrimCon :: Applicative f => (e -> f e') -> PrimCon r e -> f (PrimCon r e')
 traversePrimCon = inline traverse
 {-# INLINABLE traversePrimCon #-}
 
@@ -393,9 +395,9 @@ instance Store Device
 instance Store (EffectRowP Name n)
 instance Store (EffectP    Name n)
 
-instance Store a => Store (PrimOp  a)
-instance Store a => Store (PrimCon a)
-instance Store a => Store (PrimTC  a)
+instance Store a => Store (PrimOp    a)
+instance Store a => Store (PrimCon r a)
+instance Store a => Store (PrimTC  r a)
 
 instance Hashable RWS
 instance Hashable Direction
@@ -411,6 +413,6 @@ instance Hashable Device
 instance Hashable LetAnn
 instance Hashable Arrow
 
-instance Hashable a => Hashable (PrimOp  a)
-instance Hashable a => Hashable (PrimCon a)
-instance Hashable a => Hashable (PrimTC  a)
+instance Hashable a => Hashable (PrimOp    a)
+instance Hashable a => Hashable (PrimCon r a)
+instance Hashable a => Hashable (PrimTC  r a)

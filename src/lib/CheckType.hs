@@ -477,7 +477,7 @@ instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
           withExtEvidence (ext1 >>> ext2) $
             cont $ Nest b' rest'
 
-typeCheckPrimTC :: Typer m => PrimTC (Atom r i) -> m i o (Type r o)
+typeCheckPrimTC :: Typer m => PrimTC r (Atom r i) -> m i o (Type r o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   Nat              -> return TyKind
@@ -490,7 +490,7 @@ typeCheckPrimTC tc = case tc of
   LabeledRowKindTC -> return TyKind
   LabelType        -> return TyKind
 
-typeCheckPrimCon :: Typer m => PrimCon (Atom r i) -> m i o (Type r o)
+typeCheckPrimCon :: Typer m => PrimCon r (Atom r i) -> m i o (Type r o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs

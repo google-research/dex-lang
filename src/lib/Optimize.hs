@@ -22,6 +22,7 @@ import Types.Core
 import Types.Primitives
 import MTL1
 import Name
+import IRVariants
 import Core
 import GenericTraversal
 import Builder

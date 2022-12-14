@@ -28,6 +28,7 @@ import Err
 import Name
 import MTL1
 import Core
+import IRVariants
 import Builder
 import PPrint
 import QueryType

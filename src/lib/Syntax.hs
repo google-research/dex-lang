@@ -122,10 +122,11 @@ module Syntax (
     pattern SISourceName, pattern SIInternalName,
     pattern OneEffect, pattern UnaryLamExpr, pattern BinaryLamExpr,
     (-->), (?-->), (--@), (==>),
-    IR (..),
+    IR (..), IRPredicate (..), Sat, Sat', IsCore, IsCore',
+    unsafeCoerceIRE, unsafeCoerceFromAnyIR, unsafeCoerceIRB, injectIRE,
+    CovariantInIR,
     CAtom, CType, CExpr, CBlock, CDecl, CDecls, CAtomSubstVal, CAtomName,
-    SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName,
-    unsafeCoerceIRE, unsafeCoerceIRB
+    SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName
     ) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
@@ -135,6 +136,7 @@ import GHC.Generics (Generic (..))
 
 import Name
 import Err
+import IRVariants
 import Logging
 
 import Core
