@@ -383,37 +383,33 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="type-name">UnsafeAsSet</span> _ intersection
 </div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="prose-block"><h2>Index set for sets of strings</h2>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: Make polymorphic in type.  Waiting on a bugfix.
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- data SetIx a l:(Set a) [Ord a] =
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">StringSetIx</span> l<span class="symbol">:</span>(<span class="type-name">Set</span> <span class="type-name">String</span>) <span class="symbol">=</span>
-  <span class="type-name">MkSetIx</span> <span class="type-name">Nat</span>   <span class="comment">-- TODO: Use (Fin (setSize l)) instead.
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">StringSetIx</span> set) <span class="keyword">given</span> {set}
-  size <span class="symbol">=</span> set_size set
-  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSetIx</span> i)<span class="symbol">.</span> i
-  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkSetIx</span> k
+</div></div><div class="cell"><div class="prose-block"><h2>Sets as a type, whose inhabitants can index arrays</h2>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO Implicit arguments to data definitions
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- (Probably `a` should be implicit)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Element</span> a<span class="symbol">:</span><span class="type-name">Type</span> [<span class="type-name">Ord</span> a] set<span class="symbol">:</span>(<span class="type-name">Set</span> a) <span class="symbol">=</span> <span class="type-name">UnsafeElement</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">StringSetIx</span> set) <span class="keyword">given</span> {set}
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO The set argument could be implicit (inferred from the Element
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- type), but maybe it&#39;s easier to read if it&#39;s explicit.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> member {a} (x<span class="command">:a</span>) (set<span class="symbol">:</span>(<span class="type-name">Set</span> a)) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Element</span> a set) <span class="symbol">=</span>
+  (<span class="type-name">UnsafeAsSet</span> _ elts) <span class="symbol">=</span> set
+  <span class="keyword">case</span> search_sorted elts x <span class="keyword">of</span>
+    <span class="type-name">Just</span> n <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeElement</span> <span class="symbol">$</span> ordinal n
+    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> value {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)} (x<span class="symbol">:</span><span class="type-name">Element</span> a set) <span class="symbol">:</span> a <span class="symbol">=</span>
+  (<span class="type-name">UnsafeAsSet</span> _ elts) <span class="symbol">=</span> set
+  <span class="type-name">UnsafeElement</span> ix <span class="symbol">=</span> x
+  elts<span class="symbol">.</span>(unsafe_from_ordinal _ ix)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)}
+  size <span class="symbol">=</span> set_size set
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeElement</span> n)<span class="symbol">.</span> n
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>n<span class="symbol">.</span> <span class="type-name">UnsafeElement</span> n
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)}
   (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>ix1 ix2<span class="symbol">.</span> ordinal ix1 <span class="symbol">==</span> ordinal ix2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: Add an interface for converting to and from integer indices.
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Compiler can&#39;t handle the associated type yet.
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- interface AssocIx n  -- index sets where indices have data associated with them
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   IxValueType : Type
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   ixValue  : n -&gt; IxValueType n
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   lookupIx : IxValueType n -&gt; n
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> string_to_set_ix {set<span class="symbol">:</span><span class="type-name">Set</span> <span class="type-name">String</span>} (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">StringSetIx</span> set) <span class="symbol">=</span>
-  (<span class="type-name">UnsafeAsSet</span> n elements) <span class="symbol">=</span> set
-  maybeIx <span class="symbol">=</span> search_sorted elements s
-  <span class="keyword">case</span> maybeIx <span class="keyword">of</span>
-    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-    <span class="type-name">Just</span> i <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkSetIx</span> (ordinal i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_ix_to_string {set<span class="symbol">:</span><span class="type-name">Set</span> <span class="type-name">String</span>} (ix<span class="symbol">:</span><span class="type-name">StringSetIx</span> set) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  (<span class="type-name">UnsafeAsSet</span> n elements) <span class="symbol">=</span> set
-  elements<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal ix))
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)}
+  (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>ix1 ix2<span class="symbol">.</span> ordinal ix1 <span class="symbol">&lt;</span> ordinal ix2
+  (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>ix1 ix2<span class="symbol">.</span> ordinal ix1 <span class="symbol">&gt;</span> ordinal ix2
 </div></div></div></body></html>
