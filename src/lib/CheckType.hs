@@ -98,15 +98,19 @@ class (SinkableE e, SubstE Name e, PrettyE e) => HasType (r::IR) (e::E) | e -> r
     (e', ty) <- getTypeAndSubstE e
     -- TODO: Write an alphaEq variant that works modulo an equivalence
     -- relation on names.
-    alphaEq reqTy ty >>= \case
-      True  -> return ()
-      False -> {-# SCC typeNormalization #-} do
-        reqTy' <- cheapNormalize reqTy
-        ty'    <- cheapNormalize ty
-        alphaEq reqTy' ty' >>= \case
-          True  -> return ()
-          False -> throw TypeErr $ pprint reqTy' ++ " != " ++ pprint ty'
+    checkTypesEq reqTy ty
     return e'
+
+checkTypesEq :: Typer m => Type r o -> Type r o -> m i o ()
+checkTypesEq reqTy ty = alphaEq reqTy ty >>= \case
+  True  -> return ()
+  False -> {-# SCC typeNormalization #-} do
+    reqTy' <- cheapNormalize reqTy
+    ty'    <- cheapNormalize ty
+    alphaEq reqTy' ty' >>= \case
+      True  -> return ()
+      False -> throw TypeErr $ pprint reqTy' ++ " != " ++ pprint ty'
+{-# INLINE checkTypesEq #-}
 
 class SinkableE e => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
@@ -427,7 +431,7 @@ dictExprType e = case e of
                 _ -> args ++ [UnitVal]
           fTy <- dropSubst (getLamExprTypeE methodFun)
           actualTy  <- checkApp (naryPiTypeAsType $ unsafeCoerceIRE @CoreIR fTy) (map (unsafeCoerceIRE @CoreIR) extendedArgs)
-          checkAlphaEq (unsafeCoerceIRE @CoreIR reqTy) actualTy
+          checkTypesEq (unsafeCoerceIRE @CoreIR reqTy) actualTy
     return $ unsafeCoerceIRE dictTy
 
 instance HasType r (DictExpr r) where
@@ -451,7 +455,7 @@ instance CheckableE (IxType r) where
     t' <- checkTypeE TyKind t
     (d', dictTy) <- getTypeAndSubstE d
     DictTy (DictType "Ix" _ [tFromDict]) <- return dictTy
-    checkAlphaEq t' tFromDict
+    checkTypesEq t' tFromDict
     return $ IxType t' d'
 
 instance HasType r (TabPiType r) where
@@ -701,7 +705,7 @@ typeCheckPrimOp op = case op of
         forM_ dataConDefs \(DataConDef _ _ idxs) ->
           unless (null idxs) $ throw TypeErr "Not empty"
       VariantTy _ -> return ()  -- TODO: check empty payload
-      SumTy cases -> forM_ cases \cty -> checkAlphaEq cty UnitTy
+      SumTy cases -> forM_ cases \cty -> checkTypesEq cty UnitTy
       _ -> error $ "Not a sum type: " ++ pprint t'
     return t'
   SumToVariant x -> getTypeE x >>= \case
@@ -757,11 +761,11 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixDict f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     NaryPiType (UnaryNest (PiBinder b argTy _)) _ eltTy <- getLamExprTypeE f
-    checkAlphaEq (ixTypeType ixTy) argTy
+    checkTypesEq (ixTypeType ixTy) argTy
     return $ TabTy (b:>ixTy) eltTy
   While body -> do
     condTy <- getTypeE body
-    checkAlphaEq (BaseTy $ Scalar Word8Type) condTy
+    checkTypesEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f -> do
     NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprTypeE f
@@ -810,12 +814,12 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
       ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
       _ -> badCarry
     NaryPiType (UnaryNest b) _ _ <- getLamExprTypeE f
-    checkAlphaEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
+    checkTypesEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d
     NaryPiType (UnaryNest b) _ UnitTy <- getLamExprTypeE body
-    checkAlphaEq (binderType b) dTy
+    checkTypesEq (binderType b) dTy
     return dTy
 
 -- XXX: This allows whatever effects are currently in scope to be used in the body,
@@ -870,7 +874,7 @@ checkAlt :: (HasType r body, Typer m)
          => Type r o -> Type r o -> AltP r body i -> m i o ()
 checkAlt resultTyReq bTyReq (Abs b body) = do
   bTy <- substM $ binderType b
-  checkAlphaEq bTyReq bTy
+  checkTypesEq bTyReq bTy
   substBinders b \_ -> do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
@@ -1088,7 +1092,7 @@ instance CheckableE EffectRow where
     forM_ effTail \v -> do
       v' <- substM v
       ty <- atomBindingType <$> lookupAtomName v'
-      checkAlphaEq EffKind ty
+      checkTypesEq EffKind ty
     substM effRow
 
 declareEff :: Typer m => Effect o -> m i o ()
@@ -1133,7 +1137,7 @@ checkLabeledRow (Ext items rest) = do
   forM_ rest \name -> do
     name' <- lookupSubstM name
     ty <- atomBindingType <$> lookupAtomName name'
-    checkAlphaEq LabeledRowKind ty
+    checkTypesEq LabeledRowKind ty
 
 labeledRowDifference :: Typer m
                      => ExtLabeledItems (Type r o) (AtomName r o)
@@ -1147,7 +1151,7 @@ labeledRowDifference (Ext (LabeledItems items) rest)
       Just types -> forMZipped_
           subtypes
           (NE.fromList $ NE.take (length subtypes) types)
-          checkAlphaEq
+          checkTypesEq
       Nothing -> throw TypeErr $ "Extracting missing label " ++ show label
   -- Extract remaining types from the left.
   let
