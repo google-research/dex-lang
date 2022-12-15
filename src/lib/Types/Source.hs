@@ -32,6 +32,7 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
 import Name
+import IRVariants
 import Err
 import LabeledItems
 import Util (File (..))
@@ -100,8 +101,7 @@ data UExpr' (n::S) =
  | UHole
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
- | UPrimExpr (PrimExpr (UExpr n))
- | UPrimApp PrimName [UExpr n]
+ | UPrim PrimName [UExpr n]
  | ULabel String
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
@@ -112,7 +112,7 @@ data UExpr' (n::S) =
  | UNatLit   Word64
  | UIntLit   Int
  | UFloatLit Double
-  deriving (Show, Generic)
+   deriving (Show, Generic)
 
 type UFieldRowElems (n::S) = [UFieldRowElem n]
 data UFieldRowElem (n::S)
@@ -393,10 +393,16 @@ data EnvQuery =
 -- === Primitive names ===
 
 data PrimName =
-    UMAsk | UMExtend | UMGet | UMPut
+    UPrimTC  (PrimTC CoreIR ())
+  | UPrimCon (PrimCon CoreIR ())
+  | UPrimOp  (PrimOp ())
+  | URecordVariantOp (RecordVariantOp ())
+  | UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
-  deriving (Show, Enum)
+  | UProjBaseNewtype | UExplicitApply | UMonoLiteral
+  | UIndexRef | UProjRef Int | UProjMethod Int
+    deriving (Show, Eq)
 
 -- === instances ===
 

@@ -1123,18 +1123,18 @@ instance Storable Word8
   storage_size = 1
 
 instance Storable Int32
-  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Int32Ptr ptr) x
-  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Int32Ptr ptr)
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast (%Int32Ptr) ptr) x
+  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast (%Int32Ptr) ptr)
   storage_size = 4
 
 instance Storable Word32
-  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Word32Ptr ptr) x
-  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast %Word32Ptr ptr)
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast (%Word32Ptr) ptr) x
+  load  = \(MkPtr ptr)  . %ptrLoad  (internal_cast (%Word32Ptr) ptr)
   storage_size = 4
 
 instance Storable Float32
-  store = \(MkPtr ptr) x. %ptrStore (internal_cast %Float32Ptr ptr) x
-  load = \(MkPtr ptr)   . %ptrLoad  (internal_cast %Float32Ptr ptr)
+  store = \(MkPtr ptr) x. %ptrStore (internal_cast (%Float32Ptr) ptr) x
+  load = \(MkPtr ptr)   . %ptrLoad  (internal_cast (%Float32Ptr) ptr)
   storage_size = 4
 
 instance Storable Nat
@@ -1143,8 +1143,8 @@ instance Storable Nat
   storage_size = storage_size NatRep
 
 instance Storable (Ptr a) given {a}
-  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast %PtrPtr ptr) x
-  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast %PtrPtr ptr)
+  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internal_cast (%PtrPtr) ptr) x
+  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internal_cast (%PtrPtr) ptr)
   storage_size = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types

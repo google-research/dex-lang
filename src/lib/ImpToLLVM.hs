@@ -404,11 +404,22 @@ compileInstr instr = case instr of
     return Nothing
   -- We handle pointer operations explicitly, because we need type information that
   -- might get erased by compileExpr.
-  IPrimOp (PtrLoad ptr) ->
+  IPtrLoad ptr ->
     (:[]) <$> (load (pointeeType $ getIType ptr) =<< compileExpr ptr)
-  IPrimOp (PtrOffset ptr off) ->
+  IPtrOffset ptr off ->
     (:[]) <$> bindM2 (gep (pointeeType $ getIType ptr)) (compileExpr ptr) (compileExpr off)
-  IPrimOp op -> (:[]) <$> (traverse compileExpr op >>= compilePrimOp)
+  IBinOp op x' y' -> do
+    x <- compileExpr x'
+    y <- compileExpr y'
+    (:[]) <$> compileBinOp op x y
+  IUnOp  op x -> (:[]) <$> (compileUnOp  op =<< compileExpr x)
+  ISelect  p' x' y' -> (:[]) <$> do
+    x <- compileExpr x'
+    y <- compileExpr y'
+    p <- compileExpr p'
+    pb <- p `asIntWidth` i1
+    emitInstr (typeOf x) $ L.Select pb x y []
+  IOutputStream -> (:[]) <$> getOutputStream
   IVectorBroadcast v vty -> do
     v' <- compileExpr v
     let vty'@(L.VectorType vlen _) = scalarTy vty
@@ -550,16 +561,6 @@ throwRuntimeError :: LLVMBuilder m => m ()
 throwRuntimeError = do
   deadBlock <- freshName $ getNameHint @String "dead"
   finishBlock (L.Ret (Just $ i64Lit 1) []) deadBlock
-
-compilePrimOp :: LLVMBuilder m => PrimOp Operand -> m Operand
-compilePrimOp pop = case pop of
-  BinOp op x y -> compileBinOp op x y
-  UnOp  op x   -> compileUnOp  op x
-  Select      p  x y -> do
-    pb <- p `asIntWidth` i1
-    emitInstr (typeOf x) $ L.Select pb x y []
-  OutputStream -> getOutputStream
-  _ -> error $ "Can't JIT primop: " ++ pprint pop
 
 compileUnOp :: LLVMBuilder m => UnOp -> Operand -> m Operand
 compileUnOp op x = case op of

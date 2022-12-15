@@ -62,6 +62,7 @@ library
                      , Inference
                      , Inline
                      , Interpreter
+                     , IRVariants
                      , LLVM.Link
                      , LLVM.Compile
                      , LLVM.CUDA

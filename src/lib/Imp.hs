@@ -273,7 +273,7 @@ translateDeclNest decls cont = do
   withSubst s' cont
 {-# INLINE translateDeclNest #-}
 
-translateExpr :: Emits o => MaybeDest o -> SIExpr i -> SubstImpM i o (SIAtom o)
+translateExpr :: forall i o. Emits o => MaybeDest o -> SIExpr i -> SubstImpM i o (SIAtom o)
 translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   Hof hof -> toImpHof maybeDest hof
   App f' xs' -> do
@@ -301,8 +301,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     RepValAtom <$> toDRepVal <$> naryIndexRepVal f (toList xs)
   Atom x -> substM x >>= returnVal
   -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
-  Op op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
-  PrimEffect refDest eff -> toImpPrimEffect maybeDest refDest eff
+  PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
+  RefOp refDest eff -> toImpRefOp maybeDest refDest eff
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
@@ -334,15 +334,50 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
                  void $ extendSubst (b @> SubstVal (sink xs)) $
                    translateBlock (Just $ sink dest) body
             loadAtom dest
-  Handle _ _ _ -> error "handlers should be gone by now"
+  DAMOp damOp -> case damOp of
+    Seq d ixDict carry f -> do
+      UnaryLamExpr b body <- return f
+      ixTy <- ixTyFromDict =<< substM ixDict
+      carry' <- substM carry
+      n <- indexSetSizeImp ixTy
+      emitLoop (getNameHint b) d n \i -> do
+        idx <- unsafeFromOrdinalImp (sink ixTy) i
+        void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
+          translateBlock Nothing body
+      case maybeDest of
+        Nothing -> return carry'
+        Just _  -> error "Unexpected dest"
+    RememberDest d f -> do
+      UnaryLamExpr b body <- return f
+      d' <- substM d
+      void $ extendSubst (b @> SubstVal d') $ translateBlock Nothing body
+      return d'
+    Place ref val -> do
+      val' <- substM val
+      refDest <- atomToDest =<< substM ref
+      storeAtom refDest val' >> returnVal UnitVal
+    Freeze ref -> loadAtom =<< atomToDest =<< substM ref
+    AllocDest ty  -> do
+      d <- liftM destToAtom $ allocDest =<< substM ty
+      returnVal d
+  TabCon ty rows -> do
+    resultTy@(TabPi (TabPiType b _)) <- substM ty
+    let ixTy = binderAnn b
+    dest <- maybeAllocDest maybeDest resultTy
+    forM_ (zip [0..] rows) \(i, row) -> do
+      row' <- substM row
+      ithDest <- indexDest dest =<< unsafeFromOrdinalImp ixTy (IIdxRepVal i)
+      storeAtom ithDest row'
+    loadAtom dest
+  ProjMethod _ _ -> error "shouldn't have this. TODO: check that statically"
   where
     notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> storeAtom dest atom >> return atom
 
-toImpPrimEffect :: Emits o => MaybeDest o -> SIAtom i -> PrimEffect SimpToImpIR i -> SubstImpM i o (SIAtom o)
-toImpPrimEffect maybeDest refDest' m = do
+toImpRefOp :: Emits o => MaybeDest o -> SIAtom i -> RefOp SimpToImpIR i -> SubstImpM i o (SIAtom o)
+toImpRefOp maybeDest refDest' m = do
   refDest <- atomToDest =<< substM refDest'
   substM m >>= \case
     MAsk -> returnVal =<< loadAtom refDest
@@ -361,6 +396,8 @@ toImpPrimEffect maybeDest refDest' m = do
       -- than to go through a general purpose atom.
       storeAtom dest =<< loadAtom refDest
       loadAtom dest
+    IndexRef i -> returnVal =<< (destToAtom <$> indexDest refDest i)
+    ProjRef  i -> returnVal $ destToAtom $ projectDest i refDest
   where
     liftMonoidCombine
       :: Emits n => SIType n -> LamExpr SimpToImpIR n
@@ -389,74 +426,49 @@ toImpPrimEffect maybeDest refDest' m = do
 toImpOp :: forall i o .
            Emits o => MaybeDest o -> PrimOp (SIAtom o) -> SubstImpM i o (SIAtom o)
 toImpOp maybeDest op = case op of
-  TabCon ty rows -> do
-    TabPi (TabPiType b _) <- return ty
-    let ixTy = binderAnn b
-    resultTy <- resultTyM
-    dest <- maybeAllocDest maybeDest resultTy
-    forM_ (zip [0..] rows) \(i, row) -> do
-      ithDest <- indexDest dest =<< unsafeFromOrdinalImp ixTy (IIdxRepVal i)
-      storeAtom ithDest row
-    loadAtom dest
-  IndexRef refDestAtom i -> do
-    refDest <- atomToDest refDestAtom
-    returnVal =<< (destToAtom <$> indexDest refDest i)
-  ProjRef i d -> do
-    d' <- atomToDest d
-    returnVal $ destToAtom $ projectDest i d'
-  IOAlloc ty n -> do
-    n' <- fromScalarAtom n
-    ptr <- emitInstr $ Alloc CPU ty n'
-    returnIExprVal ptr
-  IOFree ptr -> do
-    ptr' <- fromScalarAtom ptr
-    emitStatement $ Free ptr'
-    return UnitVal
-  PtrOffset arr (IdxRepVal 0) -> returnVal arr
-  PtrOffset arr off -> do
-    arr' <- fromScalarAtom arr
-    off' <- fromScalarAtom off
-    buf <- impOffset arr' off'
-    returnIExprVal buf
-  PtrLoad arr -> do
-    result <- load =<< fromScalarAtom arr
-    returnIExprVal result
-  PtrStore ptr x -> do
-    ptr' <- fromScalarAtom ptr
-    x'   <- fromScalarAtom x
-    store ptr' x'
-    return UnitVal
-  ThrowError _ -> do
-    resultTy <- resultTyM
-    dest <- maybeAllocDest maybeDest resultTy
+  BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
+  UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
+  MemOp memOp -> toImpMemOp maybeDest memOp
+  MiscOp miscOp -> toImpMiscOp maybeDest miscOp
+  VectorOp (VectorBroadcast val vty) -> do
+    val' <- fsa val
+    emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
+  VectorOp (VectorIota vty) -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
+  VectorOp (VectorSubref ref i vty) -> do
+    refDest <- atomToDest ref
+    refi <- destToAtom <$> indexDest refDest i
+    refi' <- fsa refi
+    let PtrType (addrSpace, _) = getIType refi'
+    returnVal =<< case vty of
+      BaseTy vty'@(Vector _ _) -> do
+        resultVal <- cast refi' (PtrType (addrSpace, vty'))
+        return $ RepValAtom $ toDRepVal $ RepVal (RawRefTy vty) (Leaf resultVal)
+      _ -> error "Expected a vector type"
+  where
+    fsa = fromScalarAtom
+    returnIExprVal x = returnVal $ toScalarAtom x
+    returnVal atom = case maybeDest of
+      Nothing   -> return atom
+      Just dest -> storeAtom dest atom >> return atom
+
+toImpMiscOp :: Emits o => MaybeDest o -> MiscOp (SIAtom o) -> SubstImpM i o (SIAtom o)
+toImpMiscOp maybeDest op = case op of
+  ThrowError resultTy -> do
     emitStatement IThrowError
     -- XXX: we'd be reading uninitialized data here but it's ok because control never reaches
     -- this point since we just threw an error.
-    loadAtom dest
+    loadAtom =<< maybeAllocDest maybeDest resultTy
   CastOp destTy x -> do
-    sourceTy <- getType x
-    case (sourceTy, destTy) of
-      (BaseTy _, BaseTy bt) -> do
-        x' <- fromScalarAtom x
-        returnIExprVal =<< cast x' bt
-      _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
+    BaseTy _  <- getType x
+    BaseTy bt <- return destTy
+    x' <- fsa x
+    returnIExprVal =<< cast x' bt
   BitcastOp destTy x -> do
-    case destTy of
-      BaseTy bt -> do
-        x' <- fromScalarAtom x
-        ans <- emitInstr $ IBitcastOp bt x'
-        returnIExprVal ans
-      _ -> error "Invalid bitcast"
+    BaseTy bt <- return destTy
+    returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
   Select p x y -> do
-    xTy <- getType x
-    case xTy of
-      BaseTy _ -> do
-        p' <- fromScalarAtom p
-        x' <- fromScalarAtom x
-        y' <- fromScalarAtom y
-        ans <- emitInstr $ IPrimOp $ Select p' x' y'
-        returnIExprVal ans
-      _ -> unsupported
+    BaseTy _ <- getType x
+    returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
   SumTag con -> case con of
     Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
     Con (SumAsProd _ tag _) -> returnVal tag
@@ -480,45 +492,41 @@ toImpOp maybeDest op = case op of
     SumTy cases ->
       return $ Con $ SumAsProd cases i $ cases <&> const UnitVal
     _ -> error $ "Not an enum: " ++ pprint ty
-  SumToVariant c -> do
-    resultTy <- resultTyM
-    return $ Con $ Newtype resultTy $ c
-  AllocDest ty  -> returnVal =<< (destToAtom <$> allocDest ty)
-  Place ref val -> do
-    refDest <- atomToDest ref
-    storeAtom refDest val >> returnVal UnitVal
-  Freeze ref -> loadAtom =<< atomToDest ref
-  -- Listing branches that should be dead helps GHC cut down on code size.
-  ThrowException _        -> unsupported
-  RecordCons _ _          -> unsupported
-  RecordSplit _ _         -> unsupported
-  RecordConsDynamic _ _ _ -> unsupported
-  RecordSplitDynamic _ _  -> unsupported
-  VariantLift _ _         -> unsupported
-  VariantSplit _ _        -> unsupported
-  ProjMethod _ _          -> unsupported
-  ExplicitApply _ _       -> unsupported
-  VectorBroadcast val vty -> do
-    val' <- fromScalarAtom val
-    emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
-  VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
-  VectorSubref ref i vty -> do
-    refDest <- atomToDest ref
-    refi <- destToAtom <$> indexDest refDest i
-    refi' <- fromScalarAtom refi
-    let PtrType (addrSpace, _) = getIType refi'
-    returnVal =<< case vty of
-      BaseTy vty'@(Vector _ _) -> do
-        resultVal <- cast refi' (PtrType (addrSpace, vty'))
-        return $ RepValAtom $ toDRepVal $ RepVal (RawRefTy vty) (Leaf resultVal)
-      _ -> error "Expected a vector type"
-  _ -> do
-    instr <- IPrimOp <$> (inline traversePrimOp) fromScalarAtom op
-    emitInstr instr >>= returnIExprVal
+  OutputStream -> returnIExprVal =<< emitInstr IOutputStream
+  ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
   where
-    unsupported = error $ "Unsupported PrimOp encountered in Imp" ++ pprint op
-    resultTyM :: SubstImpM i o (SIType o)
-    resultTyM = getType $ Op op
+    fsa = fromScalarAtom
+    returnIExprVal x = returnVal $ toScalarAtom x
+    returnVal atom = case maybeDest of
+      Nothing   -> return atom
+      Just dest -> storeAtom dest atom >> return atom
+
+toImpMemOp :: forall i o . Emits o => MaybeDest o -> MemOp (SIAtom o) -> SubstImpM i o (SIAtom o)
+toImpMemOp maybeDest op = case op of
+  IOAlloc ty n -> do
+    n' <- fsa n
+    ptr <- emitInstr $ Alloc CPU ty n'
+    returnIExprVal ptr
+  IOFree ptr -> do
+    ptr' <- fsa ptr
+    emitStatement $ Free ptr'
+    return UnitVal
+  PtrOffset arr (IdxRepVal 0) -> returnVal arr
+  PtrOffset arr off -> do
+    arr' <- fsa arr
+    off' <- fsa off
+    buf <- impOffset arr' off'
+    returnIExprVal buf
+  PtrLoad arr -> do
+    result <- load =<< fsa arr
+    returnIExprVal result
+  PtrStore ptr x -> do
+    ptr' <- fsa ptr
+    x'   <- fsa x
+    store ptr' x'
+    return UnitVal
+  where
+    fsa = fromScalarAtom
     returnIExprVal x = returnVal $ toScalarAtom x
     returnVal atom = case maybeDest of
       Nothing   -> return atom
@@ -551,13 +559,15 @@ toImpHof maybeDest hof = do
         return [ans]
       emitStatement $ IWhile body'
       return UnitVal
-    RunReader r (BinaryLamExpr h ref body) -> do
+    RunReader r f -> do
+      BinaryLamExpr h ref body <- return f
       r' <- substM r
       rDest <- allocDest =<< getType r'
       storeAtom rDest r'
       extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom rDest)) $
         translateBlock maybeDest body
-    RunWriter d (BaseMonoid e _) (BinaryLamExpr h ref body) -> do
+    RunWriter d (BaseMonoid e _) f -> do
+      BinaryLamExpr h ref body <- return f
       let PairTy ansTy accTy = resultTy
       (aDest, wDest) <- case d of
         Nothing -> destPairUnpack <$> maybeAllocDest maybeDest resultTy
@@ -573,7 +583,8 @@ toImpHof maybeDest hof = do
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom wDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom wDest
-    RunState d s (BinaryLamExpr h ref body) -> do
+    RunState d s f -> do
+      BinaryLamExpr h ref body <- return f
       let PairTy ansTy _ = resultTy
       (aDest, sDest) <- case d of
         Nothing -> destPairUnpack <$> maybeAllocDest maybeDest resultTy
@@ -587,22 +598,6 @@ toImpHof maybeDest hof = do
       PairVal <$> loadAtom aDest <*> loadAtom sDest
     RunIO body-> translateBlock maybeDest body
     RunInit body -> translateBlock maybeDest body
-    Seq d ixDict carry (UnaryLamExpr b body) -> do
-      ixTy <- ixTyFromDict =<< substM ixDict
-      carry' <- substM carry
-      n <- indexSetSizeImp ixTy
-      emitLoop (getNameHint b) d n \i -> do
-        idx <- unsafeFromOrdinalImp (sink ixTy) i
-        void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
-          translateBlock Nothing body
-      case maybeDest of
-        Nothing -> return carry'
-        Just _  -> error "Unexpected dest"
-    RememberDest d (UnaryLamExpr b body) -> do
-      d' <- substM d
-      void $ extendSubst (b @> SubstVal d') $ translateBlock Nothing body
-      return d'
-    _ -> error $ "not implemented: " ++ pprint hof
     where
       liftMonoidEmpty :: SIType n -> SIAtom n -> SBuilderM n (SIAtom n)
       liftMonoidEmpty accTy x = do
@@ -882,7 +877,7 @@ ifNull p trueBranch falseBranch = do
 isNull :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
 isNull p = do
   let PtrType (_, baseTy) = getIType p
-  emitInstr $ IPrimOp $ BinOp (ICmp Equal) p (nullPtrIExpr baseTy)
+  emitInstr $ IBinOp (ICmp Equal) p (nullPtrIExpr baseTy)
 {-# INLINE isNull #-}
 
 nullPtrIExpr :: BaseType -> IExpr n
@@ -1311,14 +1306,14 @@ impCall f args = emitMultiReturnInstr (ICall f args) <&> \case
 
 impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 impOffset ref (IIdxRepVal 0) = return ref
-impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
+impOffset ref off = emitInstr $ IPtrOffset ref off
 {-# INLINE impOffset #-}
 
 cast :: Emits n => IExpr n -> BaseType -> SubstImpM i n (IExpr n)
 cast x bt = emitInstr $ ICastOp bt x
 
 load :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
-load x = emitInstr $ IPrimOp $ PtrLoad x
+load x = emitInstr $ IPtrLoad x
 {-# INLINE load #-}
 
 store :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n ()
@@ -1340,7 +1335,7 @@ emitSwitch testIdx args cont = do
     rec _ [arg] = cont arg
     rec curIdx (arg:rest) = do
       curTag     <- fromScalarAtom $ TagRepVal $ fromIntegral curIdx
-      cond       <- emitInstr $ IPrimOp $ BinOp (ICmp Equal) (sink testIdx) curTag
+      cond       <- emitInstr $ IBinOp (ICmp Equal) (sink testIdx) curTag
       thisCase   <- buildBlockImp $ cont arg >> return []
       otherCases <- buildBlockImp $ rec (curIdx + 1) rest >> return []
       emitStatement $ ICond cond thisCase otherCases
@@ -1507,7 +1502,8 @@ getIType (IPtrVar _ ty) = PtrType ty
 
 impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of
-  IPrimOp op      -> return [impOpType op]
+  IBinOp op x _   -> return [typeBinOp op (getIType x)]
+  IUnOp  op x     -> return [typeUnOp  op (getIType x)]
   ICastOp t _     -> return [t]
   IBitcastOp t _  -> return [t]
   Alloc a ty _    -> return [PtrType (a  , ty)]
@@ -1530,19 +1526,11 @@ impInstrTypes instr = case instr of
   ICall f _ -> do
     IFunType _ _ resultTys <- impFunType <$> lookupImpFun f
     return resultTys
-
--- TODO: reuse type rules in Type.hs
-impOpType :: IPrimOp n -> IType
-impOpType pop = case pop of
-  BinOp op x _       -> typeBinOp op (getIType x)
-  UnOp  op x         -> typeUnOp  op (getIType x)
-  Select  _ x  _     -> getIType x
-  PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
-  PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
-  OutputStream       -> hostPtrTy $ Scalar Word8Type
-    where hostPtrTy ty = PtrType (CPU, ty)
-  _ -> unreachable
-  where unreachable = error $ "Not allowed in Imp IR: " ++ show pop
+  ISelect  _ x  _  -> return [getIType x]
+  IPtrLoad ref -> return [ty]  where PtrType (_, ty) = getIType ref
+  IPtrOffset ref _ -> return [PtrType (addr, ty)]  where PtrType (addr, ty) = getIType ref
+  IOutputStream    -> return [hostPtrTy $ Scalar Word8Type]
+  where hostPtrTy ty = PtrType (CPU, ty)
 
 instance CheckableE ImpFunction where
   checkE = substM -- TODO!

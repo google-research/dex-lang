@@ -16,6 +16,7 @@ import Err
 import Name
 import Syntax
 import Types.Core
+import Types.Primitives
 import Builder
 import QueryType
 import Util (enumerate)
@@ -109,7 +110,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
-  void $ liftM Var $ emit $ PrimEffect ref $ MExtend baseMonoid ct
+  void $ liftM Var $ emit $ RefOp ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [SAtomName o]
 getLinRegions = asks fromListE
@@ -179,10 +180,10 @@ transposeExpr expr ct = case expr of
             emitCTToRef refProj ct
           LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
-  Op op -> transposeOp op ct
-  PrimEffect refArg m   -> do
+  PrimOp op -> transposeOp op ct
+  RefOp refArg m   -> do
     refArg' <- substNonlin refArg
-    let emitEff = liftM Var . emit . PrimEffect refArg'
+    let emitEff = liftM Var . emit . RefOp refArg'
     case m of
       MAsk -> do
         baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
@@ -196,6 +197,8 @@ transposeExpr expr ct = case expr of
         transposeAtom x ct'
         zero <- getType ct' >>= zeroAt
         void $ emitEff $ MPut zero
+      IndexRef _ -> notImplemented
+      ProjRef _  -> notImplemented
   Hof hof       -> transposeHof hof ct
   Case e alts _ _ -> do
     linearScrutinee <- isLin e
@@ -209,10 +212,18 @@ transposeExpr expr ct = case expr of
           extendSubst (b @> RenameNonlin v') do
             transposeBlock body (sink ct)
           return UnitVal
-  Handle _ _ _ -> error "handlers should be gone by now"
+  DAMOp _        -> error "unreachable" -- TODO: rule out statically
+  ProjMethod _ _ -> error "unreachable" -- TODO: rule out statically
+  TabCon ty es -> do
+    TabTy b _ <- return ty
+    idxTy <- substNonlin $ binderAnn b
+    forM_ (enumerate es) \(ordinalIdx, e) -> do
+      i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
+      tabApp ct i >>= transposeAtom e
 
-transposeOp :: Emits o => Op SimpIR i -> SAtom o -> TransposeM i o ()
+transposeOp :: Emits o => PrimOp (SAtom i) -> SAtom o -> TransposeM i o ()
 transposeOp op ct = case op of
+  MiscOp miscOp   -> transposeMiscOp miscOp ct
   UnOp  FNeg x    -> transposeAtom x =<< neg ct
   UnOp  _    _    -> notLinear
   BinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct
@@ -224,50 +235,24 @@ transposeOp op ct = case op of
       else transposeAtom y =<< mul ct =<< substNonlin x
   BinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
   BinOp _    _ _  -> notLinear
-  TabCon ty es -> do
-    TabTy b _ <- return ty
-    idxTy <- substNonlin $ binderAnn b
-    forM_ (enumerate es) \(ordinalIdx, e) -> do
-      i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
-      tabApp ct i >>= transposeAtom e
-  IndexRef     _ _      -> notImplemented
-  ProjRef      _ _      -> notImplemented
-  Select       _ _ _    -> notImplemented
-  CastOp       _ _      -> notImplemented
-  BitcastOp    _ _      -> notImplemented
-  RecordCons   _ _      -> unreachable
-  RecordConsDynamic _ _ _ -> unreachable
-  RecordSplitDynamic _ _  -> unreachable
-  RecordSplit  _ _      -> unreachable
-  VariantLift  _ _      -> unreachable
-  VariantSplit _ _      -> unreachable
-  VariantMake  _ _ _ _  -> unreachable
-  SumToVariant _        -> notImplemented
-  PtrStore _ _          -> notLinear
-  PtrLoad    _          -> notLinear
-  PtrOffset _ _         -> notLinear
-  IOAlloc _ _           -> notLinear
-  IOFree _              -> notLinear
+  MemOp _               -> notLinear
+  VectorOp _ -> unreachable
+  where
+    notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
+    unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
+
+transposeMiscOp :: Emits o => MiscOp (SAtom i) -> SAtom o -> TransposeM i o ()
+transposeMiscOp op _ = case op of
   ThrowError   _        -> notLinear
   SumTag _              -> notLinear
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
   OutputStream          -> notLinear
-  ProjBaseNewtype _     -> unreachable
-  Perform _ _           -> unreachable
-  ProjMethod _ _        -> unreachable
-  ExplicitApply _ _     -> unreachable
-  MonoLiteral _         -> unreachable
-  AllocDest _           -> unreachable
-  Place _ _             -> unreachable
-  Freeze _              -> unreachable
-  VectorBroadcast _ _   -> unreachable
-  VectorIota _          -> unreachable
-  VectorSubref _ _ _    -> unreachable
-  Resume _ _            -> notLinear
+  Select       _ _ _    -> notImplemented
+  CastOp       _ _      -> notImplemented
+  BitcastOp    _ _      -> notImplemented
   where
-    notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
-    unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
+    notLinear = error $ "Can't transpose a non-linear operation: " ++ show op
 
 transposeAtom :: HasCallStack => Emits o => SAtom i -> SAtom o -> TransposeM i o ()
 transposeAtom atom ct = case atom of

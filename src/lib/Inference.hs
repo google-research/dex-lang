@@ -38,6 +38,7 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Types.Core
+import Types.Primitives
 import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType, isData)
 import QueryType
 import PPrint (pprintCanonicalized, prettyBlock)
@@ -1099,34 +1100,25 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
     ty' <- zonk =<< checkUType ty
     val' <- checkSigma hint val ty'
     matchRequirement val'
-  UPrimExpr (OpExpr (MonoLiteral (WithSrcE _ l))) -> case l of
+  UPrim UMonoLiteral [WithSrcE _ l] -> case l of
     UIntLit x -> matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x
     UNatLit x -> matchRequirement $ Con $ Lit $ Word32Lit $ fromIntegral x
     _ -> throw MiscErr "argument to %monoLit must be a literal"
-  UPrimExpr (OpExpr (ExplicitApply f x)) -> do
+  UPrim UExplicitApply [f, x] -> do
     f' <- inferFunNoInstantiation f
     x' <- inferRho noHint x
     (liftM Var $ emitHinted hint $ App f' (x':|[])) >>= matchRequirement
-  UPrimExpr (OpExpr (ProjBaseNewtype x)) -> do
+  UPrim UProjBaseNewtype [x] -> do
     x' <- inferRho hint x >>= emitAtomToName hint
     return $ unwrapBaseNewtype $ Var x'
-  UPrimExpr prim -> do
-    prim' <- mapM inferPrimArg prim
-    val <- case prim' of
-      TCExpr  e -> return $ TC e
-      ConExpr e -> return $ Con e
-      OpExpr  e -> Var <$> emitHinted hint (Op e)
-    matchRequirement val
-  UPrimApp prim xs -> do
+  UPrim prim xs -> do
     xs' <- forM xs \x -> do
       inferPrimArg x >>= \case
         Var v -> lookupAtomName v >>= \case
           LetBound (DeclBinding _ _ (Atom e)) -> return e
           _ -> return $ Var v
         x' -> return x'
-    expr' <- matchPrimApp prim xs'
-    val <- Var <$> emit expr'
-    matchRequirement val
+    matchRequirement =<< matchPrimApp prim xs'
   ULabel name -> matchRequirement $ Con $ LabelCon name
   URecord elems ->
     matchRequirement =<< resolveDelay =<< foldM go (Nothing, mempty) (reverse elems)
@@ -1142,7 +1134,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
         UDynField    v e -> do
           v' <- checkRho noHint (WithSrcE Nothing $ UVar v) (TC LabelType)
           e' <- inferRho noHint e
-          rec' <- emitOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
+          rec' <- emitExpr . RecordVariantOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
           return (Just rec', mempty)
         UDynFields   v -> do
           anyFields <- freshInferenceName LabeledRowKind
@@ -1150,7 +1142,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           case delayedRec of
             (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
             _ -> do
-              rec' <- emitOp . RecordCons v' =<< resolveDelay delayedRec
+              rec' <- emitExpr . RecordVariantOp . RecordCons v' =<< resolveDelay delayedRec
               return (Just rec', mempty)
 
       resolveDelay :: EmitsInf o
@@ -1161,7 +1153,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           True  -> return rec
           False -> do
             dr <- getRecord delayedItems
-            emitOp $ RecordCons dr rec
+            emitExpr $ RecordVariantOp $ RecordCons dr rec
         where
           getRecord delayedItems = do
             tys <- traverse getType delayedItems
@@ -1176,7 +1168,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
     let items = prevTys <> labeledSingleton label ty
     let extItems = Ext items $ Just rest
     let i = length $ lookupLabel labels label
-    matchRequirement =<< emitOp (VariantMake (VariantTy extItems) label i value')
+    matchRequirement =<< emitExpr (RecordVariantOp $ VariantMake (VariantTy extItems) label i value')
   URecordTy   elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
   ULabeledRow elems -> matchRequirement =<< LabeledRow . fieldRowElemsFromList . concat <$> mapM inferFieldRowElem elems
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
@@ -1184,7 +1176,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
     row <- freshInferenceName LabeledRowKind
     value' <- zonk =<< (checkRho noHint value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
-    matchRequirement =<< emitOp (VariantLift prev value')
+    matchRequirement =<< emitExpr (RecordVariantOp $ VariantLift prev value')
   UNatLit x -> do
     lookupSourceMap "from_unsigned_integer" >>= \case
       Nothing ->
@@ -1248,42 +1240,56 @@ inferPrimArg x = do
       _ -> throw CompilerErr "Type args to primops must be reducible"
     _ -> emitBlock xBlock
 
-matchPrimApp :: Fallible m => PrimName -> [CAtom o] -> m (CExpr o)
-matchPrimApp p xs = case (p, xs) of
-  (UMAsk    , [ref])    -> return $ PrimEffect ref MAsk
-  (UMGet    , [ref])    -> return $ PrimEffect ref MGet
-  (UMPut    , [ref, x]) -> return $ PrimEffect ref (MPut x)
-  (ULinearize , [f])   -> do f' <- matchUnaryLamArg  f; return $ Hof $ Linearize f'
-  (UTranspose , [f])   -> do f' <- matchUnaryLamArg  f; return $ Hof $ Transpose f'
-  (URunReader, [x, f]) -> do f' <- matchBinaryLamArg f; return $ Hof $ RunReader x f'
-  (URunState , [x, f]) -> do f' <- matchBinaryLamArg f; return $ Hof $ RunState  Nothing x f'
-  (UWhile         , [f]) -> do f' <- matchNullaryLamArg f; return $ Hof $ While f'
-  (URunIO         , [f]) -> do f' <- matchNullaryLamArg f; return $ Hof $ RunIO f'
-  (UCatchException, [f]) -> do f' <- matchNullaryLamArg f; return $ Hof $ CatchException f'
-  (UMExtend , [ref, z, f, x]) -> do
-    f' <- matchBinaryLamArg f
-    return $ PrimEffect ref $ MExtend (BaseMonoid z f') x
-  (URunWriter, [idVal, combiner, f]) -> do
-    combiner' <- matchBinaryLamArg combiner
-    f' <- matchBinaryLamArg f
-    return $ Hof $ RunWriter Nothing (BaseMonoid idVal combiner') f'
-  _ -> throw TypeErr $ "Bad primitive application: " ++ show (p, xs)
-  where
-    matchBinaryLamArg :: Fallible m => Atom r n -> m (LamExpr r n)
-    matchBinaryLamArg x = do
-      Lam (UnaryLamExpr b1 (AtomicBlock (Lam (UnaryLamExpr b2 body) _ _))) _ _ <- return x
-      return $ BinaryLamExpr b1 b2 body
+matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
+matchPrimApp = \case
+ UPrimTC  tc  -> \xs -> TC  <$> restructurePrim tc  xs
+ UPrimCon con -> \xs -> Con <$> restructurePrim con xs
+ UPrimOp  op         -> \xs -> ee =<< (PrimOp          <$> restructurePrim op xs)
+ URecordVariantOp op -> \xs -> ee =<< (RecordVariantOp <$> restructurePrim op xs)
+ UMAsk      -> \case ~[r]    -> ee $ RefOp r MAsk
+ UMGet      -> \case ~[r]    -> ee $ RefOp r MGet
+ UMPut      -> \case ~[r, x] -> ee $ RefOp r $ MPut x
+ UIndexRef  -> \case ~[r, i] -> ee $ RefOp r $ IndexRef i
+ UProjRef i -> \case ~[r]    -> ee $ RefOp r $ ProjRef i
+ UProjMethod i -> \case ~[d] -> ee $ ProjMethod d i
+ ULinearize -> \case ~[f]     -> do f' <- lam1 f; ee $ Hof $ Linearize f'
+ UTranspose -> \case ~[f]     -> do f' <- lam1 f; ee $ Hof $ Transpose f'
+ URunReader -> \case ~[x, f]  -> do f' <- lam2 f; ee $ Hof $ RunReader x f'
+ URunState  -> \case ~[x, f]  -> do f' <- lam2 f; ee $ Hof $ RunState  Nothing x f'
+ UWhile     -> \case ~[f]     -> do f' <- lam0 f; ee $ Hof $ While f'
+ URunIO     -> \case ~[f]     -> do f' <- lam0 f; ee $ Hof $ RunIO f'
+ UCatchException-> \case ~[f] -> do f' <- lam0 f; ee $ Hof $ CatchException f'
+ UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; ee $ RefOp r $ MExtend (BaseMonoid z f') x
+ URunWriter -> \args -> do
+   [idVal, combiner, f] <- return args
+   combiner' <- lam2 combiner
+   f' <- lam2 f
+   ee $ Hof $ RunWriter Nothing (BaseMonoid idVal combiner') f'
+ p -> \case xs -> throw TypeErr $ "Bad primitive application: " ++ show (p, xs)
+ where
+   ee = emitExpr
 
-    matchUnaryLamArg :: Fallible m => Atom r n -> m (LamExpr r n)
-    matchUnaryLamArg x = do
-      Lam (UnaryLamExpr b body) _ _ <- return x
-      return $ UnaryLamExpr b body
+   restructurePrim :: Traversable f => f () -> [CAtom o] -> InfererM i o (f (CAtom o))
+   restructurePrim voidPrim args = do
+     when (length voidPrim /= length args) $ throw TypeErr $
+       "Wrong number of args. Expected " <> show (length voidPrim) <> " got " <> show (length args)
+     return $ restructure args voidPrim
 
-    matchNullaryLamArg :: Fallible m => Atom r n -> m (Block r n)
-    matchNullaryLamArg x = do
-      Lam (UnaryLamExpr b body) _ _ <- return x
-      HoistSuccess body' <- return $ hoist b body
-      return body'
+   lam2 :: Fallible m => Atom r n -> m (LamExpr r n)
+   lam2 x = do
+     Lam (UnaryLamExpr b1 (AtomicBlock (Lam (UnaryLamExpr b2 body) _ _))) _ _ <- return x
+     return $ BinaryLamExpr b1 b2 body
+
+   lam1 :: Fallible m => Atom r n -> m (LamExpr r n)
+   lam1 x = do
+     Lam (UnaryLamExpr b body) _ _ <- return x
+     return $ UnaryLamExpr b body
+
+   lam0 :: Fallible m => Atom r n -> m (Block r n)
+   lam0 x = do
+     Lam (UnaryLamExpr b body) _ _ <- return x
+     HoistSuccess body' <- return $ hoist b body
+     return body'
 
 -- === n-ary applications ===
 
@@ -1419,7 +1425,7 @@ buildNthOrderedAlt alts scrutTy resultTy i v = do
   case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
-      emitOp $ ThrowError resultTy'
+      emitOp $ MiscOp $ ThrowError resultTy'
     Just alt -> applyAbs alt (SubstVal v) >>= emitBlock
 
 -- converts from the ordinal index used in the core IR to the more complicated
@@ -1475,7 +1481,7 @@ buildSortedCase scrut alts resultTy = do
                         resultTy'   <- sinkM resultTy
                         liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
               (\_ -> do resultTy' <- sinkM resultTy
-                        emitOp $ ThrowError resultTy')
+                        emitOp $ MiscOp $ ThrowError resultTy')
         [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
             -- Split off the types skipped by the tail pattern.
             let splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
@@ -1527,7 +1533,7 @@ inferUVar = \case
     throw NotImplementedErr "inferUVar::UEffectVar"  -- TODO(alex): implement
   UEffectOpVar v -> do
     EffectOpBinding (EffectOpDef effName (OpIdx i)) <- lookupEnv v
-    Var <$> (emit $ Op (Perform (Eff (OneEffect (UserEffect effName))) i))
+    emitExpr $ UserEffectOp $ Perform (Eff (OneEffect (UserEffect effName))) i
   UHandlerVar v -> liftBuilder $ buildHandlerLam v
 
 buildHandlerLam :: EmitsBoth n => HandlerName n -> BuilderM CoreIR n (CAtom n)
@@ -1541,7 +1547,7 @@ buildHandlerLam v = do
       buildLam "body" PlainArrow (Pi bodyTy) effRow $ \body -> do
         -- TODO(alex): deal with handler args below
         block <- buildBlock $ app (Var (sink body)) UnitVal
-        Var <$> (emit $ Handle (sink v) [] block)
+        emitExpr $ UserEffectOp $ Handle (sink v) [] block
 
 buildForTypeFromTabType :: EffectRow n -> TabPiType CoreIR n -> InfererM i n (PiType CoreIR n)
 buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
@@ -2171,7 +2177,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
               (WithSrcE Nothing $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
-            [subr, rv''] <- emitUnpacked =<< emitOp (RecordSplit (Var fv') (Var rv'))
+            [subr, rv''] <- emitUnpacked =<< emitExpr (RecordVariantOp $ RecordSplit (Var fv') (Var rv'))
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
           resolveDelay rv \rv' -> do
@@ -2180,7 +2186,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
-            [val, rv''] <- emitUnpacked =<< emitOp (RecordSplitDynamic (Var lv') (Var rv'))
+            [val, rv''] <- emitUnpacked =<< emitExpr (RecordVariantOp $ RecordSplitDynamic (Var lv') (Var rv'))
             bindLamPat p val $ bindPats c (mempty, Empty, rv'') rest
 
       -- Unpacks the record and returns the components in order, as if they
@@ -2202,9 +2208,9 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           tailVar <- freshInferenceName LabeledRowKind
           constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
           [itemsRecord, restRecord] <- getUnpacked =<<
-            emitOp (RecordSplit
+            (emitExpr $ RecordVariantOp (RecordSplit
               (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
-              (Var r))
+              (Var r)))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
           restRecordName <- emitAtomToName noHint restRecord
           bindLamPats ps itemsNestOrdered $ f restRecordName
@@ -2333,7 +2339,7 @@ inferTabCon hint xs reqTy = do
         Nothing -> inferFin
     -- Requested type is not a `Check (TabPi _)`
     _ -> inferFin
-  liftM Var $ emitHinted hint $ Op $ TabCon tabTy xs'
+  liftM Var $ emitHinted hint $ TabCon tabTy xs'
     where
       inferFin = do
         elemTy <- case xs of

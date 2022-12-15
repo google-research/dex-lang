@@ -17,6 +17,7 @@ import Control.Monad.Reader.Class
 
 import Core
 import LabeledItems
+import IRVariants
 import Name
 import MTL1
 import Occurrence hiding (Var)
@@ -32,7 +33,7 @@ import QueryType
 -- unused pure bindings as it goes, since it has all the needed information.
 
 analyzeOccurrences :: (EnvReader m) => SBlock n -> m n (SBlock n)
-analyzeOccurrences = liftOCCM . occ accessOnce 
+analyzeOccurrences = liftOCCM . occ accessOnce
 {-# SCC analyzeOccurrences #-}
 
 -- === Overview ===
@@ -419,10 +420,6 @@ instance HasOCC (Hof SimpIR) where
       -- Though this is probably not too hard to implement.  Presumably
       -- the lambda is one-shot.
       error "Expecting to do occurrence analysis before lowering."
-    Seq _ _ _ _ ->
-      error "Expecting to do occurrence analysis before destination passing."
-    RememberDest _ _ ->
-      error "Expecting to do occurrence analysis before destination passing."
 
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
@@ -461,7 +458,7 @@ instance HasOCC (TabLamExpr SimpIR) where
   occ _ view = inlinedLater view
   {-# INLINE occ #-}
 
-instance HasOCC (PrimEffect SimpIR) where
+instance HasOCC (RefOp SimpIR) where
   occ _ = \case
     MExtend (BaseMonoid empty combine) val -> do
       val' <- occ accessOnce val
@@ -480,15 +477,17 @@ instance HasOCC (PrimEffect SimpIR) where
     MPut x -> MPut <$> occ accessOnce x
     MGet -> return MGet
     MAsk -> return MAsk
+    IndexRef i -> IndexRef <$> occ accessOnce i
+    ProjRef  i -> return $ ProjRef i
   {-# INLINE occ #-}
 
 -- === The generic instances ===
 
-instance HasOCC e => HasOCC (ComposeE PrimCon e) where
+instance HasOCC e => HasOCC (ComposeE (PrimCon r) e) where
   occ _ (ComposeE con) = ComposeE <$> traverse (occ accessOnce) con
   {-# INLINE occ #-}
 
-instance HasOCC e => HasOCC (ComposeE PrimTC e) where
+instance HasOCC e => HasOCC (ComposeE (PrimTC r) e) where
   occ _ (ComposeE tc) = ComposeE <$> traverse (occ accessOnce) tc
   {-# INLINE occ #-}
 
@@ -510,6 +509,7 @@ instance HasOCC (DictType SimpIR)
 instance HasOCC (FieldRowElems SimpIR)
 instance HasOCC (FieldRowElem SimpIR)
 instance HasOCC (DataDefParams SimpIR)
+instance HasOCC (DAMOp SimpIR)
 
 -- === The instances for RepE types ===
 

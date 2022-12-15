@@ -28,6 +28,7 @@ import Runtime
 import Err
 import LabeledItems
 import Types.Core
+import Types.Primitives
 
 import Name
 import Syntax
@@ -150,7 +151,7 @@ evalExpr expr = case expr of
           Just rest' -> dropSubst $ evalExpr $ TabApp ans rest'
       Nothing -> error "Failed to reduce application!"
   Atom atom -> evalAtom atom
-  Op op     -> evalOp op
+  PrimOp op     -> evalOp op
   Case e alts _ _ -> do
     e' <- evalAtom e
     case trySelectBranch e' of
@@ -161,12 +162,21 @@ evalExpr expr = case expr of
   Hof hof -> case hof of
     RunIO body -> evalBlock body
     _ -> error $ "Not implemented: " ++ pprint expr
-  -- TODO(alex): implement
-  Handle _ _ _ -> error $ "Not implemented: " ++ pprint expr
-  _ -> error $ "Not implemented: " ++ pprint expr
+  RecordVariantOp rvo -> case rvo of
+    VariantMake ty' label i v' -> do
+      v <- evalAtom v'
+      ty@(VariantTy (NoExt tys)) <- evalAtom ty'
+      let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
+      return $ Con $ Newtype ty $ SumVal (toList tys) ix v
+    _ -> notImplemented
+  ProjMethod dict' i -> do
+    dict <- evalAtom dict'
+    evalProjectDictMethod dict i
+  _ -> notImplemented
+  where notImplemented = error $ "Not implemented: " ++ pprint expr
 {-# SCC evalExpr #-}
 
-evalOp :: Interp m => Op CoreIR i -> m i o (CAtom o)
+evalOp :: Interp m => PrimOp (CAtom i) -> m i o (CAtom o)
 evalOp expr = mapM evalAtom expr >>= \case
   BinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
@@ -188,45 +198,46 @@ evalOp expr = mapM evalAtom expr >>= \case
   UnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  PtrOffset p (IdxRepVal 0) -> return p
-  PtrOffset ptrAtom (IdxRepVal i) -> do
-    ((a, t), p) <- inlinePtrLit ptrAtom
-    return $ Con $ Lit $ PtrLit (a, t) (PtrLitVal $ p `plusPtr` (sizeOf t * fromIntegral i))
-  PtrLoad ptrAtom -> do
-    ((a, t), p) <- inlinePtrLit ptrAtom
-    case a of
-      CPU -> Con . Lit <$> liftIO (loadLitVal p t)
-      GPU ->  do
-        liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
-          loadCUDAArray hostPtr p (sizeOf t)
-          Con . Lit <$> loadLitVal hostPtr t
-  CastOp destTy x -> do
-    sourceTy <- getType x
-    let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
-                             " -> " ++ pprint destTy
-    case (sourceTy, destTy) of
-      (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
-        (Int64Type, Int32Type) -> do
-          let Con (Lit (Int64Lit v)) = x
-          return $ Con $ Lit $ Int32Lit $ fromIntegral v
-        (Word64Type, Word32Type) -> do
-          let Con (Lit (Word64Lit v)) = x
-          return $ Con $ Lit $ Word32Lit $ fromIntegral v
+  MemOp memOp -> case memOp of
+    PtrOffset p (IdxRepVal 0) -> return p
+    PtrOffset ptrAtom (IdxRepVal i) -> do
+      ((a, t), p) <- inlinePtrLit ptrAtom
+      return $ Con $ Lit $ PtrLit (a, t) (PtrLitVal $ p `plusPtr` (sizeOf t * fromIntegral i))
+    PtrLoad ptrAtom -> do
+      ((a, t), p) <- inlinePtrLit ptrAtom
+      case a of
+        CPU -> Con . Lit <$> liftIO (loadLitVal p t)
+        GPU ->  do
+          liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
+            loadCUDAArray hostPtr p (sizeOf t)
+            Con . Lit <$> loadLitVal hostPtr t
+    _ ->  notImplemented
+  MiscOp miscOp -> case miscOp of
+    CastOp destTy x -> do
+      sourceTy <- getType x
+      let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
+                               " -> " ++ pprint destTy
+      case (sourceTy, destTy) of
+        (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
+          (Int64Type, Int32Type) -> do
+            let Con (Lit (Int64Lit v)) = x
+            return $ Con $ Lit $ Int32Lit $ fromIntegral v
+          (Word64Type, Word32Type) -> do
+            let Con (Lit (Word64Lit v)) = x
+            return $ Con $ Lit $ Word32Lit $ fromIntegral v
+          _ -> failedCast
         _ -> failedCast
-      _ -> failedCast
-  Select cond t f -> case cond of
-    Con (Lit (Word8Lit 0)) -> return f
-    Con (Lit (Word8Lit 1)) -> return t
-    _ -> error $ "Invalid select condition: " ++ pprint cond
-  ToEnum ty@(TypeCon _ defName _) i -> do
-      DataDef _ _ cons <- lookupDataDef defName
-      return $ Con $ Newtype ty $ Con $
-        SumAsProd (cons <&> const UnitTy) i (cons <&> const UnitVal)
-  ProjMethod dict i -> evalProjectDictMethod dict i
-  VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
-    let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
-    return $ Con $ Newtype ty $ SumVal (toList tys) ix v
-  _ -> error $ "Not implemented: " ++ pprint expr
+    Select cond t f -> case cond of
+      Con (Lit (Word8Lit 0)) -> return f
+      Con (Lit (Word8Lit 1)) -> return t
+      _ -> error $ "Invalid select condition: " ++ pprint cond
+    ToEnum ty@(TypeCon _ defName _) i -> do
+        DataDef _ _ cons <- lookupDataDef defName
+        return $ Con $ Newtype ty $ Con $
+          SumAsProd (cons <&> const UnitTy) i (cons <&> const UnitVal)
+    _ ->  notImplemented
+  _ -> notImplemented
+  where notImplemented = error $ "Not implemented: " ++ pprint expr
 
 evalProjectDictMethod :: Interp m => CAtom o -> Int -> m i o (CAtom o)
 evalProjectDictMethod d i = cheapNormalize d >>= \case

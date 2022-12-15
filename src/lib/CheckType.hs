@@ -33,6 +33,7 @@ import QueryType hiding (HasType)
 import CheapReduction
 import {-# SOURCE #-} Interpreter
 import Types.Core
+import Types.Primitives
 import Syntax
 import Name
 import PPrint ()
@@ -333,23 +334,53 @@ instance HasType r (Expr r) where
       fTy <- getTypeE f
       checkTabApp fTy xs
     Atom x   -> getTypeE x
-    Op   op  -> typeCheckPrimOp op
+    PrimOp op -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof
     Case e alts resultTy effs -> checkCase e alts resultTy effs
-    -- TODO(alex): actually check something here? this is a QueryType copy/paste
-    Handle hndName [] body -> do
-      hndName' <- substM hndName
-      r <- getTypeE body
-      instantiateHandlerType hndName' r []
-    -- TODO(alex): implement
-    Handle _ _ _  -> error "not implemented"
-    PrimEffect ref m -> do
-      TC (RefType ~(Just (Var h')) s) <- getTypeE ref
+    RefOp ref m -> do
+      TC (RefType h s) <- getTypeE ref
+      h' <- return case h of
+        Just (Var h') -> Just h'
+        Just UnitTy -> Nothing
+        Nothing -> Nothing
+        _ -> error "expect heap parameter to be a var or UnitTy"
       case m of
-        MGet      ->         declareEff (RWSEffect State  $ Just h') $> s
-        MPut  x   -> x|:s >> declareEff (RWSEffect State  $ Just h') $> UnitTy
-        MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
-        MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
+        MGet      ->         declareEff (RWSEffect State  h') $> s
+        MPut  x   -> x|:s >> declareEff (RWSEffect State  h') $> UnitTy
+        MAsk      ->         declareEff (RWSEffect Reader h') $> s
+        MExtend _ x -> x|:s >> declareEff (RWSEffect Writer h') $> UnitTy
+        IndexRef i -> do
+          TabTy (b:>IxType iTy _) eltTy <- return s
+          i' <- checkTypeE iTy i
+          eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
+          return $ TC $ RefType h eltTy'
+        ProjRef i -> do
+          ProdTy tys <- return s
+          return $ TC $ RefType h $ tys !! i
+    ProjMethod dict i -> do
+      DictTy (DictType _ className params) <- getTypeE dict
+      def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
+      let MethodType _ methodTy = methodTys !! i
+      superclassDicts <- getSuperclassDicts def <$> substM dict
+      let subst = (    paramBs @@> map SubstVal (map (unsafeCoerceIRE @CoreIR) params)
+                   <.> classBs @@> map SubstVal (map (unsafeCoerceIRE @CoreIR) superclassDicts))
+      unsafeCoerceIRE <$> applySubst subst methodTy
+    TabCon ty xs -> do
+      ty'@(TabPi tabPi@(TabPiType b restTy)) <- checkTypeE TyKind ty
+      case fromConstAbs (Abs b restTy) of
+        HoistSuccess elTy -> forM_ xs (|: elTy)
+        HoistFailure _    -> do
+          maybeIdxs <- indicesLimit (length xs) $ binderAnn b
+          case maybeIdxs of
+            (Right idxs) ->
+              forMZipped_ xs idxs \x i -> do
+                eltTy <- instantiateTabPi tabPi i
+                x |: eltTy
+            (Left _) -> fail "zip error"
+      return ty'
+    RecordVariantOp x -> typeCheckRecordVariantOp x
+    DAMOp op -> typeCheckDAMOp op
+    UserEffectOp op -> typeCheckUserEffect op
 
 instance HasType r (Block r) where
   getTypeE (Block NoBlockAnn Empty expr) = do
@@ -482,7 +513,7 @@ instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
           withExtEvidence (ext1 >>> ext2) $
             cont $ Nest b' rest'
 
-typeCheckPrimTC :: Typer m => PrimTC (Atom r i) -> m i o (Type r o)
+typeCheckPrimTC :: Typer m => PrimTC r (Atom r i) -> m i o (Type r o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   Nat              -> return TyKind
@@ -495,7 +526,7 @@ typeCheckPrimTC tc = case tc of
   LabeledRowKindTC -> return TyKind
   LabelType        -> return TyKind
 
-typeCheckPrimCon :: Typer m => PrimCon (Atom r i) -> m i o (Type r o)
+typeCheckPrimCon :: Typer m => PrimCon r (Atom r i) -> m i o (Type r o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
@@ -535,19 +566,7 @@ typeCheckPrimCon con = case con of
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom r i) -> m i o (Type r o)
 typeCheckPrimOp op = case op of
-  TabCon ty xs -> do
-    ty'@(TabPi tabPi@(TabPiType b restTy)) <- checkTypeE TyKind ty
-    case fromConstAbs (Abs b restTy) of
-      HoistSuccess elTy -> forM_ xs (|: elTy)
-      HoistFailure _    -> do
-        maybeIdxs <- indicesLimit (length xs) $ binderAnn b
-        case maybeIdxs of
-          (Right idxs) ->
-            forMZipped_ xs idxs \x i -> do
-              eltTy <- instantiateTabPi tabPi i
-              x |: eltTy
-          (Left _) -> fail "zip error"
-    return ty'
+  VectorOp vOp -> typeCheckVectorOp vOp
   BinOp binop x y -> do
     xTy <- typeCheckBaseType x
     yTy <- typeCheckBaseType y
@@ -555,23 +574,11 @@ typeCheckPrimOp op = case op of
   UnOp  unop  x -> do
     xTy <- typeCheckBaseType x
     TC <$> BaseType <$> checkUnOp unop xTy
-  Select p x y -> do
-    p |: (BaseTy $ Scalar Word8Type)
-    ty <- getTypeE x
-    y |: ty
-    return ty
-  IndexRef ref i -> do
-    getTypeE ref >>= \case
-      TC (RefType h (TabTy (b:>IxType iTy _) eltTy)) -> do
-        i' <- checkTypeE iTy i
-        eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-        return $ TC $ RefType h eltTy'
-      ty -> error $ "Not a reference to a table: " ++
-                       pprint (Op op) ++ " : " ++ pprint ty
-  ProjRef i ref -> do
-    getTypeE ref >>= \case
-      TC (RefType h (ProdTy tys)) -> return $ TC $ RefType h $ tys !! i
-      ty -> error $ "Not a reference to a product: " ++ pprint ty
+  MiscOp x -> typeCheckMiscOp x
+  MemOp x -> typeCheckMemOp x
+
+typeCheckMemOp :: Typer m => MemOp (Atom r i) -> m i o (Type r o)
+typeCheckMemOp = \case
   IOAlloc t n -> do
     n |: IdxRepTy
     declareEff IOEffect
@@ -593,10 +600,15 @@ typeCheckPrimOp op = case op of
     val |: BaseTy t
     declareEff IOEffect
     return $ UnitTy
-  ThrowError ty -> ty|:TyKind >> substM ty
-  ThrowException ty -> do
-    declareEff ExceptionEffect
-    ty|:TyKind >> substM ty
+
+typeCheckMiscOp :: Typer m => MiscOp (Atom r i) -> m i o (Type r o)
+typeCheckMiscOp = \case
+  Select p x y -> do
+    p |: (BaseTy $ Scalar Word8Type)
+    ty <- getTypeE x
+    y |: ty
+    return ty
+
   CastOp t@(Var _) _ -> t |: TyKind >> substM t
   CastOp destTy e -> do
     sourceTy' <- getTypeE e
@@ -611,86 +623,6 @@ typeCheckPrimOp op = case op of
       (BaseTy dbt@(Scalar _), BaseTy sbt@(Scalar _)) | sizeOf sbt == sizeOf dbt ->
         return $ BaseTy dbt
       _ -> throw TypeErr $ "Invalid bitcast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
-  RecordCons l r -> do
-    lty <- getTypeE l
-    rty <- getTypeE r
-    case (lty, rty) of
-      (RecordTyWithElems lelems, RecordTyWithElems relems) ->
-        return $ RecordTyWithElems $ lelems ++ relems
-      _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
-  RecordConsDynamic lab val record -> do
-    lab' <- checkTypeE (TC LabelType) lab
-    vty <- getTypeE val
-    rty <- getTypeE record
-    case rty of
-      RecordTy rest -> case lab' of
-        Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem (StaticFields (labeledSingleton l vty)) rest
-        Var labVar       -> return $ RecordTy $ prependFieldRowElem (DynField labVar vty) rest
-        _ -> error "Unexpected label atom"
-      _ -> throw TypeErr $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
-  RecordSplitDynamic lab record -> do
-    lab' <- cheapNormalize =<< checkTypeE (TC LabelType) lab
-    rty <- getTypeE record
-    case (lab', rty) of
-      (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
-        -- We could cheap normalize the rest to increase the chance of this
-        -- succeeding, but no need to for now.
-        unless (isJust $ lookupLabelHead items l) $ throw TypeErr "Label not immediately present in record"
-        let (h, items') = splitLabeledItems (labeledSingleton l ()) items
-        return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
-      (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
-        return $ PairTy ty $ RecordTyWithElems rest
-      -- There are more cases we could implement, but do we need to?
-      _ -> throw TypeErr $ "Can't split a label " <> pprint lab' <> " from atom of type " <> pprint rty
-  RecordSplit fields record -> do
-    fields' <- cheapNormalize =<< checkTypeE LabeledRowKind fields
-    fullty  <- cheapNormalize =<< getTypeE record
-    let splitFailed = throw TypeErr $ "Invalid record split: " <> pprint fields' <> " from " <> pprint fullty
-    case (fields', fullty) of
-      (LabeledRow els, RecordTyWithElems els') ->
-        stripPrefix (fromFieldRowElems els) els' >>= \case
-          Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
-          Nothing -> splitFailed
-      (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
-        return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
-      _ -> splitFailed
-    where
-      stripPrefix = curry \case
-        ([]  , ys  ) -> return $ Just ys
-        (x:xs, y:ys) -> alphaEq x y >>= \case
-          True  -> stripPrefix xs ys
-          False -> case (x, y) of
-            (StaticFields xf, StaticFields yf) -> do
-              NoExt rest <- labeledRowDifference (NoExt yf) (NoExt xf)
-              return $ Just $ StaticFields rest : ys
-            _ -> return Nothing
-        _ -> return Nothing
-  VariantLift types variant -> do
-    mapM_ (|: TyKind) types
-    types' <- mapM substM types
-    rty <- getTypeE variant
-    rest <- case rty of
-      VariantTy rest -> return rest
-      _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
-                        <> pprint variant <> " (of type " <> pprint rty <> ")"
-    return $ VariantTy $ prefixExtLabeledItems types' rest
-  VariantSplit types variant -> do
-    mapM_ (|: TyKind) types
-    types' <- mapM substM types
-    fullty <- getTypeE variant
-    full <- case fullty of
-      VariantTy full -> return full
-      _ -> throw TypeErr $ "Can't split a non-variant object "
-                          <> pprint variant <> " (of type " <> pprint fullty
-                          <> ")"
-    diff <- labeledRowDifference full (NoExt types')
-    return $ SumTy $ [ VariantTy $ NoExt types', VariantTy diff ]
-  VariantMake ty label i e -> do
-    ty'@(VariantTy (Ext items _)) <- checkTypeE TyKind ty
-    let labelTys = lookupLabel items label
-    unless (0 <= i && i < length labelTys) $ throw TypeErr "Invalid variant index"
-    e |: (labelTys !! i)
-    return ty'
   SumTag x -> do
     getTypeE x >>= \case
       TypeCon _ _ _ -> return ()
@@ -709,37 +641,16 @@ typeCheckPrimOp op = case op of
       SumTy cases -> forM_ cases \cty -> checkTypesEq cty UnitTy
       _ -> error $ "Not a sum type: " ++ pprint t'
     return t'
-  SumToVariant x -> getTypeE x >>= \case
-    SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
-    ty -> error $ "Not a sum type: " ++ pprint ty
   OutputStream ->
     return $ BaseTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (CPU, ty)
-  ProjBaseNewtype x -> getTypeE x >>= projectNewtype
-  Perform eff i -> do
-    Eff (OneEffect (UserEffect effName)) <- return eff
-    EffectDef _ ops <- substM effName >>= lookupEffectDef
-    let (_, EffectOpType _pol lamTy) = ops !! i
-    return $ unsafeCoerceIRE lamTy
-  ProjMethod dict i -> do
-    DictTy (DictType _ className params) <- getTypeE dict
-    def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
-    let MethodType _ methodTy = methodTys !! i
-    superclassDicts <- getSuperclassDicts def <$> substM dict
-    let subst = (    paramBs @@> map SubstVal (map (unsafeCoerceIRE @CoreIR) params)
-                 <.> classBs @@> map SubstVal (map (unsafeCoerceIRE @CoreIR) superclassDicts))
-    unsafeCoerceIRE <$> applySubst subst methodTy
-  ExplicitApply _ _ -> error "shouldn't appear after inference"
-  MonoLiteral _ -> error "should't appear after inference"
-  AllocDest ty -> RawRefTy <$> checkTypeE TyKind ty
-  Place ref val -> do
-    ty <- getTypeE val
-    ref |: RawRefTy ty
-    declareEff InitEffect
-    return UnitTy
-  Freeze ref -> do
-    RawRefTy ty <- getTypeE ref
-    return ty
+  ThrowError ty -> ty|:TyKind >> substM ty
+  ThrowException ty -> do
+    declareEff ExceptionEffect
+    ty|:TyKind >> substM ty
+
+typeCheckVectorOp :: Typer m => VectorOp (Atom r i) -> m i o (Type r o)
+typeCheckVectorOp = \case
   VectorBroadcast v ty -> do
     ty'@(BaseTy (Vector _ sbt)) <- checkTypeE TyKind ty
     v |: BaseTy (Scalar sbt)
@@ -753,9 +664,24 @@ typeCheckPrimOp op = case op of
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
     return $ RawRefTy ty'
+
+typeCheckUserEffect :: Typer m => UserEffectOp r i -> m i o (Type r o)
+typeCheckUserEffect = \case
   -- TODO(alex): check the argument
   Resume retTy _argTy -> do
     checkTypeE TyKind retTy
+  -- TODO(alex): actually check something here? this is a QueryType copy/paste
+  Handle hndName [] body -> do
+    hndName' <- substM hndName
+    r <- getTypeE body
+    instantiateHandlerType hndName' r []
+  -- TODO(alex): implement
+  Handle _ _ _  -> error "not implemented"
+  Perform eff i -> do
+    Eff (OneEffect (UserEffect effName)) <- return eff
+    EffectDef _ ops <- substM effName >>= lookupEffectDef
+    let (_, EffectOpType _pol lamTy) = ops !! i
+    return $ unsafeCoerceIRE lamTy
 
 typeCheckPrimHof :: Typer m => Hof r i -> m i o (Type r o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
@@ -807,6 +733,9 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunIO body -> extendAllowedEffect IOEffect $ getTypeE body
   RunInit body -> extendAllowedEffect InitEffect $ getTypeE body
   CatchException body -> liftM MaybeTy $ extendAllowedEffect ExceptionEffect $ getTypeE body
+
+typeCheckDAMOp :: Typer m => DAMOp r i -> m i o (Type r o)
+typeCheckDAMOp op = addContext ("Checking DAMOp:\n" ++ show op) case op of
   Seq _ ixDict carry f -> do
     ixTy <- ixTyFromDict =<< substM ixDict
     carryTy' <- getTypeE carry
@@ -822,6 +751,15 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     NaryPiType (UnaryNest b) _ UnitTy <- getLamExprTypeE body
     checkTypesEq (binderType b) dTy
     return dTy
+  AllocDest ty -> RawRefTy <$> checkTypeE TyKind ty
+  Place ref val -> do
+    ty <- getTypeE val
+    ref |: RawRefTy ty
+    declareEff InitEffect
+    return UnitTy
+  Freeze ref -> do
+    RawRefTy ty <- getTypeE ref
+    return ty
 
 -- XXX: This allows whatever effects are currently in scope to be used in the body,
 -- because it's usually used in places where that makes sense. But if you're checking
@@ -1052,6 +990,92 @@ checkUnOp op x = do
       BNot             -> (u, sr)
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
+
+typeCheckRecordVariantOp :: Typer m => RecordVariantOp (Atom r i) -> m i o (Type r o)
+typeCheckRecordVariantOp = \case
+  RecordCons l r -> do
+    lty <- getTypeE l
+    rty <- getTypeE r
+    case (lty, rty) of
+      (RecordTyWithElems lelems, RecordTyWithElems relems) ->
+        return $ RecordTyWithElems $ lelems ++ relems
+      _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
+  RecordConsDynamic lab val record -> do
+    lab' <- checkTypeE (TC LabelType) lab
+    vty <- getTypeE val
+    rty <- getTypeE record
+    case rty of
+      RecordTy rest -> case lab' of
+        Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem (StaticFields (labeledSingleton l vty)) rest
+        Var labVar       -> return $ RecordTy $ prependFieldRowElem (DynField labVar vty) rest
+        _ -> error "Unexpected label atom"
+      _ -> throw TypeErr $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
+  RecordSplitDynamic lab record -> do
+    lab' <- cheapNormalize =<< checkTypeE (TC LabelType) lab
+    rty <- getTypeE record
+    case (lab', rty) of
+      (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
+        -- We could cheap normalize the rest to increase the chance of this
+        -- succeeding, but no need to for now.
+        unless (isJust $ lookupLabelHead items l) $ throw TypeErr "Label not immediately present in record"
+        let (h, items') = splitLabeledItems (labeledSingleton l ()) items
+        return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
+      (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
+        return $ PairTy ty $ RecordTyWithElems rest
+      -- There are more cases we could implement, but do we need to?
+      _ -> throw TypeErr $ "Can't split a label " <> pprint lab' <> " from atom of type " <> pprint rty
+  RecordSplit fields record -> do
+    fields' <- cheapNormalize =<< checkTypeE LabeledRowKind fields
+    fullty  <- cheapNormalize =<< getTypeE record
+    let splitFailed = throw TypeErr $ "Invalid record split: " <> pprint fields' <> " from " <> pprint fullty
+    case (fields', fullty) of
+      (LabeledRow els, RecordTyWithElems els') ->
+        stripPrefix (fromFieldRowElems els) els' >>= \case
+          Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
+          Nothing -> splitFailed
+      (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
+        return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
+      _ -> splitFailed
+    where
+      stripPrefix = curry \case
+        ([]  , ys  ) -> return $ Just ys
+        (x:xs, y:ys) -> alphaEq x y >>= \case
+          True  -> stripPrefix xs ys
+          False -> case (x, y) of
+            (StaticFields xf, StaticFields yf) -> do
+              NoExt rest <- labeledRowDifference (NoExt yf) (NoExt xf)
+              return $ Just $ StaticFields rest : ys
+            _ -> return Nothing
+        _ -> return Nothing
+  VariantLift types variant -> do
+    mapM_ (|: TyKind) types
+    types' <- mapM substM types
+    rty <- getTypeE variant
+    rest <- case rty of
+      VariantTy rest -> return rest
+      _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
+                        <> pprint variant <> " (of type " <> pprint rty <> ")"
+    return $ VariantTy $ prefixExtLabeledItems types' rest
+  VariantSplit types variant -> do
+    mapM_ (|: TyKind) types
+    types' <- mapM substM types
+    fullty <- getTypeE variant
+    full <- case fullty of
+      VariantTy full -> return full
+      _ -> throw TypeErr $ "Can't split a non-variant object "
+                          <> pprint variant <> " (of type " <> pprint fullty
+                          <> ")"
+    diff <- labeledRowDifference full (NoExt types')
+    return $ SumTy $ [ VariantTy $ NoExt types', VariantTy diff ]
+  VariantMake ty label i e -> do
+    ty'@(VariantTy (Ext items _)) <- checkTypeE TyKind ty
+    let labelTys = lookupLabel items label
+    unless (0 <= i && i < length labelTys) $ throw TypeErr "Invalid variant index"
+    e |: (labelTys !! i)
+    return ty'
+  SumToVariant x -> getTypeE x >>= \case
+    SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
+    ty -> error $ "Not a sum type: " ++ pprint ty
 
 -- === various helpers for querying types ===
 

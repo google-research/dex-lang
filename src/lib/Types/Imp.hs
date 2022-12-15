@@ -44,7 +44,6 @@ data IExpr n = ILit LitVal
 data IBinder n l = IBinder (NameBinder ImpNameC n l) IType
                    deriving (Show, Generic)
 
-type IPrimOp n = PrimOp (IExpr n)
 type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
 type Size = IExpr
@@ -109,9 +108,14 @@ data ImpInstr n =
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
  | IBitcastOp IType (IExpr n)
- | IPrimOp (IPrimOp n)
  | IVectorBroadcast (IExpr n) IVectorType
  | IVectorIota                IVectorType
+ | IPtrLoad (IExpr n)
+ | IPtrOffset (IExpr n) (IExpr n)
+ | IBinOp BinOp (IExpr n) (IExpr n)
+ | IUnOp  UnOp  (IExpr n)
+ | ISelect (IExpr n) (IExpr n) (IExpr n)
+ | IOutputStream
  | DebugPrint String (IExpr n) -- just prints an int64 value
    deriving (Show, Generic)
 
@@ -226,16 +230,20 @@ instance GenericE ImpInstr where
   {- GetAllocSize -} IExpr
   {- Free -}    (IExpr)
   {- IThrowE -} (UnitE)
-    ) (EitherE3
+    ) (EitherE5
   {- ICastOp    -} (LiftE IType `PairE` IExpr)
   {- IBitcastOp -} (LiftE IType `PairE` IExpr)
-  {- IPrimOp    -} (ComposeE PrimOp IExpr)
-    ) (EitherE3
   {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
   {- IVectorIota      -} (              LiftE IVectorType)
   {- DebugPrint       -} (LiftE String `PairE` IExpr)
+    ) (EitherE6
+  {- IPtrLoad -}      IExpr
+  {- IPtrOffset -}    (IExpr `PairE` IExpr)
+  {- IBinOp -}        (LiftE BinOp `PairE` IExpr `PairE` IExpr)
+  {- IUnOp -}         (LiftE UnOp `PairE` IExpr)
+  {- ISelect -}       (IExpr`PairE` IExpr `PairE`IExpr)
+  {- IOutputStream -} UnitE
     )
-
 
   fromE instr = case instr of
     IFor d n ab           -> Case0 $ Case0 $ LiftE d `PairE` n `PairE` ab
@@ -256,12 +264,18 @@ instance GenericE ImpInstr where
     Free ptr               -> Case2 $ Case5 ptr
     IThrowError            -> Case2 $ Case6 UnitE
 
-    ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
-    IBitcastOp idt ix -> Case3 $ Case1 $ LiftE idt `PairE` ix
-    IPrimOp op     -> Case3 $ Case2 $ ComposeE op
-    IVectorBroadcast v vty -> Case4 $ Case0 $ v `PairE` LiftE vty
-    IVectorIota vty        -> Case4 $ Case1 $ LiftE vty
-    DebugPrint s x         -> Case4 $ Case2 $ LiftE s `PairE` x
+    ICastOp idt ix         -> Case3 $ Case0 $ LiftE idt `PairE` ix
+    IBitcastOp idt ix      -> Case3 $ Case1 $ LiftE idt `PairE` ix
+    IVectorBroadcast v vty -> Case3 $ Case2 $ v `PairE` LiftE vty
+    IVectorIota vty        -> Case3 $ Case3 $ LiftE vty
+    DebugPrint s x         -> Case3 $ Case4 $ LiftE s `PairE` x
+
+    IPtrLoad x     -> Case4 $ Case0 $ x
+    IPtrOffset x y -> Case4 $ Case1 $ x `PairE` y
+    IBinOp op x y  -> Case4 $ Case2 $ LiftE op `PairE` x `PairE` y
+    IUnOp op x     -> Case4 $ Case3 $ LiftE op `PairE` x
+    ISelect x y z  -> Case4 $ Case4 $ x `PairE` y `PairE` z
+    IOutputStream  -> Case4 $ Case5 $ UnitE
   {-# INLINE fromE #-}
 
   toE instr = case instr of
@@ -292,13 +306,9 @@ instance GenericE ImpInstr where
     Case3 instr' -> case instr' of
       Case0 (LiftE idt `PairE` ix ) -> ICastOp idt ix
       Case1 (LiftE idt `PairE` ix ) -> IBitcastOp idt ix
-      Case2 (ComposeE op )          -> IPrimOp op
-      _ -> error "impossible"
-
-    Case4 instr' -> case instr' of
-      Case0 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
-      Case1 (          LiftE vty) -> IVectorIota vty
-      Case2 (LiftE s `PairE` x)   -> DebugPrint s x
+      Case2 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
+      Case3 (          LiftE vty) -> IVectorIota vty
+      Case4 (LiftE s `PairE` x)   -> DebugPrint s x
       _ -> error "impossible"
 
     _ -> error "impossible"

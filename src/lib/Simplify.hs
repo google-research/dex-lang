@@ -36,6 +36,7 @@ import Transpose
 import LabeledItems
 import Types.Primitives
 import Types.Core
+import Util (bindM2)
 
 -- === Simplification ===
 
@@ -194,13 +195,19 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     xs' <- mapM simplifyAtom xs
     simplifyTabApp hint f xs'
   Atom x -> simplifyAtom x
-  -- Handle PrimEffect here, to avoid traversing cb multiple times
-  Op  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
-  PrimEffect ref eff -> do
+  PrimOp  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
+  ProjMethod dict i -> bindM2 projectDictMethod (simplifyAtom dict) (pure i)
+  RefOp ref eff -> do
     ref' <- coreToSimpAtom =<< simplifyAtom ref
-    eff' <- simplifyPrimEffect eff
-    liftM (injectCore . Var) $ emit $ PrimEffect ref' eff'
+    eff' <- simplifyRefOp eff
+    liftM (injectCore . Var) $ emit $ RefOp ref' eff'
   Hof hof -> simplifyHof hint hof
+  RecordVariantOp op -> simplifyRecordVariantOp  =<< mapM simplifyAtom op
+  TabCon ty xs -> do
+    ty' <- coreToSimpAtom =<< simplifyAtom ty
+    xs' <- forM xs \x -> coreToSimpAtom =<< simplifyAtom x
+    liftM injectCore $ emitExpr $ TabCon ty' xs'
+  UserEffectOp _ -> error "not implemented"
   Case scrut alts resultTy eff -> do
     scrut' <- simplifyAtom scrut
     -- TODO: this can fail! We need to handle the case of a non-data scrutinee!
@@ -225,11 +232,9 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
                     coreToSimpAtom =<< simplifyBlock body
             liftM Var $ emitHinted hint $ Case scrutSimp alts' resultTyData eff'
           False -> defuncCase scrutSimp alts resultTy'
-  -- TODO(alex): implement
-  Handle _ _ _ -> error "Not implemented"
 
-simplifyPrimEffect :: Emits o => PrimEffect CoreIR i -> SimplifyM i o (PrimEffect SimpIR o)
-simplifyPrimEffect = \case
+simplifyRefOp :: Emits o => RefOp CoreIR i -> SimplifyM i o (RefOp SimpIR o)
+simplifyRefOp = \case
   MExtend (BaseMonoid em cb) x -> do
     em'  <- coreToSimpAtom =<< simplifyAtom em
     x'   <- coreToSimpAtom =<< simplifyAtom x
@@ -238,6 +243,8 @@ simplifyPrimEffect = \case
   MGet   -> return MGet
   MPut x -> MPut <$> (coreToSimpAtom =<< simplifyAtom x)
   MAsk   -> return MAsk
+  IndexRef x -> IndexRef <$> (coreToSimpAtom =<< simplifyAtom x)
+  ProjRef i -> return $ ProjRef i
 
 caseComputingEffs
   :: forall m n r. (MonadFail1 m, EnvReader m)
@@ -665,9 +672,8 @@ buildSimplifiedBlock cont = do
   block <- makeBlockFromDecls declsResult'
   return $ SimplifiedBlock block recon
 
--- TODO: come up with a coherent strategy for ordering these various reductions
-simplifyOp :: Emits o => Op CoreIR o -> SimplifyM i o (CAtom o)
-simplifyOp op = case op of
+simplifyRecordVariantOp :: Emits o => RecordVariantOp (CAtom o) -> SimplifyM i o (CAtom o)
+simplifyRecordVariantOp op = case op of
   RecordCons left right -> getType left >>= \case
     StaticRecordTy leftTys -> getType right >>= \case
       StaticRecordTy rightTys -> do
@@ -679,7 +685,7 @@ simplifyOp op = case op of
         return $ Record (leftTys <> rightTys) $ toList $ leftItems <> rightItems
       _ -> error "not a record"
     _ -> error "not a record"
-  RecordConsDynamic (Con (LabelCon l)) val rec -> do
+  RecordConsDynamic ~(Con (LabelCon l)) val rec -> do
     valTy <- getType val
     getType rec >>= \case
       StaticRecordTy itemTys -> do
@@ -700,7 +706,7 @@ simplifyOp op = case op of
                          (Record remaining (toList right))
       _ -> error "failed to simplifiy a field row"
     _ -> error "not a record"
-  RecordSplitDynamic (Con (LabelCon l)) rec ->
+  RecordSplitDynamic ~(Con (LabelCon l)) rec ->
     getType rec >>= \case
       StaticRecordTy itemTys -> do
         itemList <- getUnpacked rec
@@ -735,7 +741,7 @@ simplifyOp op = case op of
         -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
         -- Emit a case statement (ordered by the arg type) that splits into the
         -- appropriate piece, changing indices as needed.
-        resTy@(SumTy resTys) <- getType $ Op (VariantSplit leftTys full)
+        resTy@(SumTy resTys) <- getType $ ComposeE $ VariantSplit leftTys full
         let (_, rightTys) = splitLabeledItems leftTys fullTys
         let fullLabels = toList $ reflectLabels fullTys
         let leftLabels = toList $ reflectLabels leftTys
@@ -756,12 +762,16 @@ simplifyOp op = case op of
                 SumVal (sinkList $ toList rightTys)
                        (labelIx rightLabels (label, i - length tys)) v
       _ -> error "Not a variant type"
-  VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
+  VariantMake ~ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
     return $ Con $ Newtype ty $ SumVal (toList tys) ix v
-  ProjMethod dict i -> projectDictMethod dict i
-  -- Those are not no-ops! Builder methods do algebraic simplification!
-  -- TODO: Move peephole optimizations to peepholeOp in Optimize
+  SumToVariant c -> do
+    resultTy <- getType $ ComposeE $ SumToVariant c
+    return $ Con $ Newtype resultTy $ c
+
+-- TODO: come up with a coherent strategy for ordering these various reductions
+simplifyOp :: Emits o => PrimOp (CAtom o) -> SimplifyM i o (CAtom o)
+simplifyOp op = case op of
   BinOp binop x' y' -> do
     x <- coreToSimpAtom x'
     y <- coreToSimpAtom y'
@@ -773,7 +783,7 @@ simplifyOp op = case op of
       ICmp Less  -> ilt x y
       ICmp Equal -> ieq x y
       _ -> fallback
-  Select c' x' y' -> do
+  MiscOp (Select c' x' y') -> do
     c <- coreToSimpAtom c'
     x <- coreToSimpAtom x'
     y <- coreToSimpAtom y'
@@ -879,8 +889,6 @@ simplifyHof hint hof = case hof of
       buildBlock $ exceptToMaybeBlock $ body'
     result <- emitBlock block
     return $ injectCore result
-  Seq _ _ _ _ -> error "Shouldn't ever see a Seq in Simplify"
-  RememberDest _ _ -> error "Shouldn't ever see a RememberDest in Simplify"
 
 simplifyBlock :: Emits o => CBlock i -> SimplifyM i o (CAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result
@@ -921,9 +929,6 @@ exceptToMaybeExpr expr = case expr of
     x' <- substM x
     ty <- getType x'
     return $ JustAtom ty x'
-  Op (ThrowException _) -> do
-    ty <- getTypeSubst expr
-    return $ NothingAtom ty
   Hof (For ann d (UnaryLamExpr b body)) -> do
     ixTy <- ixTyFromDict =<< substM d
     maybes <- buildForAnn (getNameHint b) ann ixTy \i ->
@@ -952,6 +957,9 @@ exceptToMaybeExpr expr = case expr of
       (return $ NothingAtom $ sink a)
       (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink accumResult))
   Hof (While body) -> runMaybeWhile $ exceptToMaybeBlock body
+  PrimOp (MiscOp (ThrowException _)) -> do
+    ty <- getTypeSubst expr
+    return $ NothingAtom ty
   _ -> do
     expr' <- substM expr
     hasExceptions expr' >>= \case

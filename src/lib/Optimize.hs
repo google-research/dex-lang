@@ -22,6 +22,7 @@ import Types.Core
 import Types.Primitives
 import MTL1
 import Name
+import IRVariants
 import Core
 import GenericTraversal
 import Builder
@@ -73,7 +74,7 @@ instance GenericTraverser CoreIR UnitB UTLS where
           ixTy <- ixTyFromDict =<< substM ixDict
           liftM Atom $ buildTabLam noHint ixTy \i -> do
             resTy' <- extendSubst (b @> Rename i) $ getTypeSubst body
-            emitOp $ ThrowError (sink resTy')
+            emitOp $ MiscOp $ ThrowError (sink resTy')
     _ -> traverseExprDefault expr
 
 unrollTrivialLoops :: EnvReader m => CBlock n -> m n (CBlock n)
@@ -81,9 +82,9 @@ unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE
 
 -- === Peephole optimizations ===
 
-peepholeOp :: Op SimpIR o -> EnvReaderM o (Either (SAtom o) (Op SimpIR o))
+peepholeOp :: PrimOp (Atom SimpIR o) -> EnvReaderM o (Either (SAtom o) (PrimOp (Atom SimpIR o)))
 peepholeOp op = case op of
-  CastOp (BaseTy (Scalar sTy)) (Con (Lit l)) -> return $ case sTy of
+  MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case sTy of
     -- TODO: Support all casts.
     Int32Type -> case l of
       Int32Lit  _  -> lit l
@@ -155,14 +156,14 @@ peepholeOp op = case op of
     return $ lit $ Word8Lit $ lv .|. rv
   BinOp BAnd (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
     return $ lit $ Word8Lit $ lv .&. rv
-  ToEnum ty (Con (Lit (Word8Lit tag))) -> Left <$> case ty of
+  MiscOp (ToEnum ty (Con (Lit (Word8Lit tag)))) -> Left <$> case ty of
     TypeCon _ defName _ -> do
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ Newtype ty $ SumVal (cons <&> const UnitTy) (fromIntegral tag) UnitVal
     SumTy cases -> return $ SumVal cases (fromIntegral tag) UnitVal
     _ -> error "Ill typed ToEnum?"
-  SumTag (Con (Newtype _ (SumVal _ tag _))) -> return $ lit $ Word8Lit $ fromIntegral tag
-  SumTag (SumVal _ tag _)                   -> return $ lit $ Word8Lit $ fromIntegral tag
+  MiscOp (SumTag (Con (Newtype _ (SumVal _ tag _)))) -> return $ lit $ Word8Lit $ fromIntegral tag
+  MiscOp (SumTag (SumVal _ tag _))                   -> return $ lit $ Word8Lit $ fromIntegral tag
   _ -> return noop
   where
     noop = Right op
@@ -178,10 +179,10 @@ peepholeOp op = case op of
 
 peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
 peepholeExpr expr = case expr of
-  Op op -> fmap Op <$> peepholeOp op
+  PrimOp op -> fmap PrimOp <$> peepholeOp op
   TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
     lookupAtomName t <&> \case
-      LetBound (DeclBinding ann _ (Op (TabCon _ elems)))
+      LetBound (DeclBinding ann _ (TabCon _ elems))
         | ann /= NoInlineLet ->
         -- It is not safe to assume that this index can always be simplified!
         -- For example, it might be coming from an unsafe_from_ordinal that is
@@ -226,7 +227,7 @@ instance GenericTraverser SimpIR UnitB ULS where
                 getNaryLamExprType body' >>= \case
                   NaryPiType (UnaryNest (PiBinder tb _ _)) _ valTy -> do
                     let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy
-                    return $ Right $ Op $ TabCon tabTy vals
+                    return $ Right $ TabCon tabTy vals
                   _ -> error "Expected `for` body to have a Pi type"
               _ -> error "Expected `for` body to be a lambda expression"
             False -> do
@@ -235,7 +236,7 @@ instance GenericTraverser SimpIR UnitB ULS where
               return $ Right $ Hof $ For Fwd ixDict' body'
         _ -> nothingSpecial
     -- Avoid unrolling loops with large table literals
-    Op (TabCon _ els) -> inc (length els) >> nothingSpecial
+    TabCon _ els -> inc (length els) >> nothingSpecial
     _ -> nothingSpecial
     where
       inc i = modify \(ULS n) -> ULS (n + i)
@@ -273,7 +274,7 @@ instance HoistableState LICMS where
 
 instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
-    Hof (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
+    DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
       ix' <- traverseAtom ix
       dests' <- traverse traverseAtom dests
       let numCarries = length dests
@@ -291,7 +292,7 @@ instance GenericTraverser SimpIR UnitB LICMS where
         DictTy (DictType _ _ [ixTy]) -> PairTy ixTy carryTy
         _ -> error "Expected a dict"
       body' <- rebuildBody b body lnb lbTy bodyAbs
-      return $ Hof $ Seq dir ix' dests'' body'
+      return $ DAMOp $ Seq dir ix' dests'' body'
     Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
       ix' <- traverseAtom ix
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
@@ -346,7 +347,7 @@ seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
               where
                 (nextProj', topDestNames', bsv') =
                   withSubscopeDistinct lbreg $ withExtEvidence b' $ case b' of
-                    Let bn (DeclBinding _ _ (Op (AllocDest _))) ->
+                    Let bn (DeclBinding _ _ (DAMOp (AllocDest _))) ->
                       ( nextProj + 1
                       , binderName bn : sinkList topDestNames
                       , SubstVal $ ProjectElt (ProjectProduct nextProj NE.:| [ProjectProduct 1]) $
@@ -461,7 +462,7 @@ dceNest decls ans = case decls of
 
 instance (HasDCE e1, HasDCE e2) => HasDCE (ExtLabeledItemsE e1 e2)
 instance HasDCE SExpr
-instance HasDCE (PrimEffect SimpIR)
+instance HasDCE (RefOp SimpIR)
 instance HasDCE (BaseMonoid SimpIR)
 instance HasDCE (Hof SimpIR)
 instance HasDCE SAtom
@@ -478,6 +479,7 @@ instance HasDCE (FieldRowElems SimpIR)
 instance HasDCE (FieldRowElem  SimpIR)
 instance HasDCE (DataDefParams SimpIR)
 instance HasDCE (DeclBinding   SimpIR)
+instance HasDCE (DAMOp         SimpIR)
 
 -- The instances for RepE types
 

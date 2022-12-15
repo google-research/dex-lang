@@ -16,6 +16,7 @@ import LabeledItems
 import Name
 import Occurrence hiding (Var)
 import Syntax
+import Types.Core
 
 -- === External API ===
 
@@ -282,7 +283,7 @@ inlineName ctx name =
     SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
     SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
 
-instance Inlinable (PrimEffect SimpIR) where
+instance Inlinable (RefOp SimpIR) where
   inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
   {-# INLINE inline #-}
 
@@ -397,11 +398,11 @@ instance Inlinable e => Inlinable (ComposeE PrimOp e) where
   inline ctx (ComposeE op) =
     (ComposeE <$> traverse (inline Stop) op) >>= reconstruct ctx
   {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE PrimCon e) where
+instance Inlinable e => Inlinable (ComposeE (PrimCon SimpIR) e) where
   inline ctx (ComposeE con) =
     (ComposeE <$> traverse (inline Stop) con) >>= reconstruct ctx
   {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE PrimTC e) where
+instance Inlinable e => Inlinable (ComposeE (PrimTC SimpIR) e) where
   inline ctx (ComposeE tc) =
     (ComposeE <$> traverse (inline Stop) tc) >>= reconstruct ctx
   {-# INLINE inline #-}
@@ -423,6 +424,7 @@ instance Inlinable (DictType SimpIR)
 instance Inlinable (FieldRowElems SimpIR)
 instance Inlinable (FieldRowElem SimpIR)
 instance Inlinable (DataDefParams SimpIR)
+instance Inlinable (DAMOp SimpIR)
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (PairE e1 e2) where
   inline ctx (PairE l r) =

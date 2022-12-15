@@ -32,6 +32,7 @@ import qualified Data.Map.Strict       as M
 
 import Name
 import Err
+import IRVariants
 
 import Types.Core
 import Types.Imp

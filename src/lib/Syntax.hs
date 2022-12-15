@@ -27,14 +27,14 @@ module Syntax (
     pattern StaticRecordTy, pattern RecordTyWithElems,
     Expr (..), Atom (..), Arrow (..), plainArrows, PrimTC (..), Abs (..),
     DictExpr (..), DictType (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PtrLitVal (..), PtrSnapshot (..),
+    PrimCon (..), LitVal (..), PtrLitVal (..), PtrSnapshot (..),
     AlwaysEqual (..),
-    PrimEffect (..), PrimOp (..), Hof (..),
+    RefOp (..), PrimOp (..), Hof (..),
     LamBinding (..), LamExpr (..), EffAbs, lamExprToAtom, naryLamExprToAtom, blockEffects,
     PiBinding (..), PiBinder (..), RolePiBinder (..), ParamRole (..),
     PiType (..), DepPairType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), SourceNameDef (..), LitProg,
-    ForAnn, Val, Op, Con, TC, SuperclassBinders (..),
+    ForAnn, Val, Con, TC, SuperclassBinders (..),
     ClassDef (..), InstanceDef (..), InstanceBody (..), MethodType (..),
     EffectDef (..), EffectOpType (..), EffectName,
     SynthCandidates (..), Env (..), TopEnv (..), ModuleEnv (..), SerializedEnv (..),
@@ -91,7 +91,7 @@ module Syntax (
     getLambdaDicts, getInstanceDicts,
     getAllowedEffects, withAllowedEffects, todoSinkableProof,
     freeAtomVarsList,
-    IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
+    IExpr (..), IBinder (..), IVal, IType, Size, IFunType (..),
     ImpFunction (..), ImpBlock (..), ImpDecl (..), ClosedImpFunction (..),
     ImpInstr (..), iBinderType, ImpName, PtrBinder (..), RepVal (..), DRepVal (..),
     ImpFunName, IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
@@ -122,10 +122,11 @@ module Syntax (
     pattern SISourceName, pattern SIInternalName,
     pattern OneEffect, pattern UnaryLamExpr, pattern BinaryLamExpr,
     (-->), (?-->), (--@), (==>),
-    IR (..),
+    IR (..), IRPredicate (..), Sat, Sat', IsCore, IsCore',
+    unsafeCoerceIRE, unsafeCoerceFromAnyIR, unsafeCoerceIRB, injectIRE,
+    CovariantInIR,
     CAtom, CType, CExpr, CBlock, CDecl, CDecls, CAtomSubstVal, CAtomName,
-    SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName,
-    unsafeCoerceIRE, unsafeCoerceIRB
+    SAtom, SType, SExpr, SBlock, SDecl, SDecls, SAtomSubstVal, SAtomName
     ) where
 
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
@@ -135,6 +136,7 @@ import GHC.Generics (Generic (..))
 
 import Name
 import Err
+import IRVariants
 import Logging
 
 import Core

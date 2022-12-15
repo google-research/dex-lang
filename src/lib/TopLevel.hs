@@ -643,7 +643,7 @@ ixMethodType :: IxMethod -> AbsDict CoreIR n -> EnvReaderM n (NaryPiType CoreIR 
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
     let extraArgBs' = fmapNest plainPiBinder extraArgBs
-    getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
+    getType (ProjMethod dict (fromEnum method)) >>= \case
       Pi (PiType b _ resultTy) -> do
         let allBs = extraArgBs' >>> Nest b Empty
         return $ NaryPiType allBs Pure resultTy

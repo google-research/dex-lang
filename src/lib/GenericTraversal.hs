@@ -19,6 +19,7 @@ import Name
 import Err
 import Builder
 import Syntax
+import Types.Core
 import MTL1
 import LabeledItems
 import Util (onSndM)
@@ -69,13 +70,24 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   App g xs -> App <$> tge g <*> mapM tge xs
   TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
-  Op  op  -> Op   <$> mapM tge op
+  PrimOp  op -> PrimOp <$> mapM tge op
   Hof hof -> Hof  <$> tge hof
-  PrimEffect ref eff -> PrimEffect <$> tge ref <*> tge eff
+  RefOp ref eff -> RefOp <$> tge ref <*> tge eff
   Case scrut alts resultTy effs ->
     Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy <*> substM effs
-  Handle hndName args body ->
-    Handle <$> substM hndName <*> mapM tge args <*> tge body
+  UserEffectOp op -> UserEffectOp <$> case op of
+    Handle v xs body -> Handle <$> substM v <*> mapM tge xs <*> tge body
+    Resume x y       -> Resume <$> tge x <*> tge y
+    Perform x i      -> Perform <$> tge x <*> pure i
+  TabCon ty xs -> TabCon <$> tge ty <*> mapM tge xs
+  ProjMethod d i -> ProjMethod <$> tge d <*> pure i
+  RecordVariantOp op -> RecordVariantOp <$> mapM tge op
+  DAMOp op -> DAMOp <$> case op of
+    Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
+    RememberDest d body  -> RememberDest <$> tge d <*> tge body
+    AllocDest x          -> AllocDest <$> tge x
+    Place x y            -> Place <$> tge x <*> tge y
+    Freeze x             -> Freeze <$> tge x
 
 traverseAtomDefault :: GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
@@ -175,12 +187,14 @@ instance GenericallyTraversableE r (DepPairType r) where
 instance GenericallyTraversableE r (BaseMonoid r) where
   traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withAllowedEffects Pure (tge f)
 
-instance GenericallyTraversableE r (PrimEffect r) where
+instance GenericallyTraversableE r (RefOp r) where
   traverseGenericE = \case
     MGet         -> return MGet
     MPut  x      -> MPut <$> tge x
     MAsk         -> return MAsk
     MExtend bm x -> MExtend <$> tge bm <*> tge x
+    IndexRef x   -> IndexRef <$> tge x
+    ProjRef i    -> return $ ProjRef i
 
 instance GenericallyTraversableE r (IxType r) where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
@@ -212,8 +226,6 @@ instance GenericallyTraversableE r (Hof r) where
     RunIO body           -> RunIO <$> tge body
     RunInit body         -> RunInit <$> tge body
     CatchException body  -> CatchException <$> tge body
-    Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
-    RememberDest d body  -> RememberDest <$> tge d <*> tge body
 
 traverseBinderNest
   :: GenericTraverser r f s
