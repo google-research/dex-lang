@@ -432,6 +432,7 @@ expr = propagateSrcE expr' where
   -- Binders (e.g., in pi types) should not hit this case
   expr' (CIdentifier name)  = return $ fromString name
   expr' (CPrim prim)        = UPrimExpr <$> mapM expr prim
+  expr' (CPrimApp prim xs)  = UPrimApp prim <$> mapM expr xs
   expr' (CNat word)         = return $ UNatLit word
   expr' (CInt int)          = return $ UIntLit int
   expr' (CString str)       = return $ UApp (fromString "to_list")

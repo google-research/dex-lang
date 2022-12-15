@@ -209,7 +209,7 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr r n -> Int
-    ixDepthExpr (Hof (For _ _ (Lam (LamExpr _ body)))) = 1 + ixDepthBlock body
+    ixDepthExpr (Hof (For _ _ (UnaryLamExpr _ body))) = 1 + ixDepthBlock body
     ixDepthExpr (Atom (TabLam (TabLamExpr _ body))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
     ixDepthBlock :: Block r n -> Int
@@ -282,6 +282,18 @@ inlineName ctx name =
     SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
     SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
 
+instance Inlinable (PrimEffect SimpIR) where
+  inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
+  {-# INLINE inline #-}
+
+instance Inlinable (Hof SimpIR) where
+  inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
+  {-# INLINE inline #-}
+
+instance Inlinable (BaseMonoid SimpIR) where
+  inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
+  {-# INLINE inline #-}
+
 instance Inlinable SAtomName where
   inline ctx a = inlineName (EmitToAtomCtx $ EmitToNameCtx ctx) a
 
@@ -314,7 +326,7 @@ reconstructTabApp :: Emits o
   => Context SExpr e o -> SExpr o -> NonEmpty (SAtom i) -> InlineM i o (e o)
 reconstructTabApp ctx expr ixs =
   case fromNaryForExpr (NE.length ixs) expr of
-    Just (bsCount, NaryLamExpr bs _ (Block _ decls result)) -> do
+    Just (bsCount, LamExpr bs (Block _ decls result)) -> do
       let (ixsPref, ixsRest) = NE.splitAt bsCount ixs
       -- Note: There's a decision here.  Is it ok to inline the atoms in
       -- `ixsPref` into the body `decls`?  If so, should we pre-process them and
@@ -381,10 +393,6 @@ instance Inlinable (Name HandlerNameC) where
 instance Inlinable (Name SpecializedDictNameC) where
   inline ctx n = substM n >>= reconstruct ctx
 
-instance Inlinable e => Inlinable (ComposeE PrimHof e) where
-  inline ctx (ComposeE hof) =
-    (ComposeE <$> traverse (inline Stop) hof) >>= reconstruct ctx
-  {-# INLINE inline #-}
 instance Inlinable e => Inlinable (ComposeE PrimOp e) where
   inline ctx (ComposeE op) =
     (ComposeE <$> traverse (inline Stop) op) >>= reconstruct ctx

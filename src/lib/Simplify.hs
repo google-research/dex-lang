@@ -138,16 +138,13 @@ data SimplifiedBlock n = SimplifiedBlock (SBlock n) (ReconstructAtom CoreIR n)
 -- TODO: extend this to work on functions instead of blocks (with blocks still
 -- accessible as nullary functions)
 simplifyTopBlock :: (TopBuilder m, Mut n) => CBlock n -> m n (SimplifiedBlock n)
-simplifyTopBlock block = liftSimplifyM do
-  (Abs UnitB block', Abs UnitB recon) <- simplifyAbs $ Abs UnitB block
-  return $ SimplifiedBlock block' recon
+simplifyTopBlock block = liftSimplifyM $ buildSimplifiedBlock $ simplifyBlock block
 {-# SCC simplifyTopBlock #-}
 
-simplifyTopFunction
-  :: (TopBuilder m, Mut n)
-  => NaryLamExpr CoreIR n -> m n (NaryLamExpr SimpIR n)
-simplifyTopFunction f = do
-  liftSimplifyM $ dropSubst $ simplifyNaryLam $ sink f
+simplifyTopFunction :: (TopBuilder m, Mut n) => LamExpr CoreIR n -> m n (LamExpr SimpIR n)
+simplifyTopFunction f = liftSimplifyM do
+  (lam, IdentityReconAbs) <- simplifyLam f
+  return lam
 {-# SCC simplifyTopFunction #-}
 
 instance GenericE SimplifiedBlock where
@@ -183,15 +180,12 @@ simpDeclsSubst
   -> SimplifyM i o (Subst (AtomSubstVal CoreIR) i' o)
 simpDeclsSubst !s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+  Nest (Let b (DeclBinding _ _ expr)) rest -> do
     let hint = (getNameHint b)
-    x <- withSubst s $ case (ann, expr) of
-      (NoInlineLet, Atom a) ->
-        liftM Var $ emitDecl hint NoInlineLet =<< (Atom <$> simplifyAtom a)
-      _ -> simplifyExpr hint expr
+    x <- withSubst s $ simplifyExpr hint expr
     simpDeclsSubst (s <>> (b@>SubstVal x)) rest
 
-simplifyExpr :: Emits o => NameHint -> CExpr i -> SimplifyM i o (SAtom o)
+simplifyExpr :: Emits o => NameHint -> CExpr i -> SimplifyM i o (CAtom o)
 simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
   App f xs -> do
     xs' <- mapM simplifyAtom xs
@@ -201,17 +195,17 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     simplifyTabApp hint f xs'
   Atom x -> simplifyAtom x
   -- Handle PrimEffect here, to avoid traversing cb multiple times
-  Op (PrimEffect ref (MExtend (BaseMonoid em cb) x)) -> do
-    ref' <- simplifyAtom ref
-    em' <- simplifyAtom em
-    x' <- simplifyAtom x
-    (cb', IdentityReconAbs) <- simplifyBinaryLam cb
-    emitOp $ PrimEffect ref' $ MExtend (BaseMonoid em' cb') x'
   Op  op  -> (inline traversePrimOp) simplifyAtom op >>= simplifyOp
+  PrimEffect ref eff -> do
+    ref' <- coreToSimpAtom =<< simplifyAtom ref
+    eff' <- simplifyPrimEffect eff
+    liftM (injectCore . Var) $ emit $ PrimEffect ref' eff'
   Hof hof -> simplifyHof hint hof
-  Case e alts resultTy eff -> do
-    e' <- simplifyAtom e
-    case trySelectBranch e' of
+  Case scrut alts resultTy eff -> do
+    scrut' <- simplifyAtom scrut
+    -- TODO: this can fail! We need to handle the case of a non-data scrutinee!
+    scrutSimp <- coreToSimpAtom scrut'
+    case trySelectBranch scrut' of
       Just (i, arg) -> do
         Abs b body <- return $ alts !! i
         extendSubst (b @> SubstVal arg) $ simplifyBlock body
@@ -219,25 +213,40 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
         resultTy' <- simplifyAtom resultTy
         isData resultTy' >>= \case
           True -> do
+            -- TODO: this ought to come as a reward for passing the `isData` test
+            resultTyData <- coreToSimpAtom resultTy'
             eff' <- substM eff
             alts' <- forM alts \(Abs b body) -> do
-              bTy' <- simplifyAtom $ binderType b
+              bTy' <- coreToSimpAtom =<< substM (binderType b)
               buildAbs (getNameHint b) bTy' \x ->
                 extendSubst (b @> Rename x) $
-                  buildBlock $ simplifyBlock body
-            liftM Var $ emitHinted hint $ Case e' alts' resultTy' eff'
-          False -> defuncCase e' alts resultTy'
+                  buildBlock do
+                    -- This should succeed because of the `isData` test
+                    coreToSimpAtom =<< simplifyBlock body
+            liftM Var $ emitHinted hint $ Case scrutSimp alts' resultTyData eff'
+          False -> defuncCase scrutSimp alts resultTy'
   -- TODO(alex): implement
   Handle _ _ _ -> error "Not implemented"
 
+simplifyPrimEffect :: Emits o => PrimEffect CoreIR i -> SimplifyM i o (PrimEffect SimpIR o)
+simplifyPrimEffect = \case
+  MExtend (BaseMonoid em cb) x -> do
+    em'  <- coreToSimpAtom =<< simplifyAtom em
+    x'   <- coreToSimpAtom =<< simplifyAtom x
+    (cb', IdentityReconAbs) <- simplifyLam cb
+    return $ MExtend (BaseMonoid em' cb') x'
+  MGet   -> return MGet
+  MPut x -> MPut <$> (coreToSimpAtom =<< simplifyAtom x)
+  MAsk   -> return MAsk
+
 caseComputingEffs
-  :: forall m n. (MonadFail1 m, EnvReader m)
-  => Atom SimpIR n -> [Alt SimpIR n] -> Type SimpIR n -> m n (SExpr n)
+  :: forall m n r. (MonadFail1 m, EnvReader m)
+  => Atom r n -> [Alt r n] -> Type r n -> m n (Expr r n)
 caseComputingEffs scrut alts resultTy = do
   Case scrut alts resultTy <$> foldMapM getEffects alts
 {-# INLINE caseComputingEffs #-}
 
-defuncCase :: Emits o => SAtom o -> [Alt CoreIR i] -> SType o -> SimplifyM i o (SAtom o)
+defuncCase :: Emits o => SAtom o -> [Alt CoreIR i] -> CType o -> SimplifyM i o (CAtom o)
 defuncCase scrut alts resultTy = do
   split <- splitDataComponents resultTy
   (alts', recons) <- unzip <$> mapM (simplifyAlt split) alts
@@ -247,15 +256,14 @@ defuncCase scrut alts resultTy = do
   alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureTys i alt
   caseExpr <- caseComputingEffs scrut alts'' (PairTy (dataTy split) closureSumTy)
   caseResult <- liftM Var $ emit $ caseExpr
-
   (dataVal, sumVal) <- fromPair caseResult
-  reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
-    buildUnaryAtomAlt ty \v -> applyRecon (sink recon) (Var v)
-  let nonDataVal = ACase sumVal reconAlts newNonDataTy
+  reconAlts <- forM (zip closureTys recons) \(ty, recon) -> liftCoreBuilder do
+    buildUnaryAtomAlt (injectCore ty) \v -> applyRecon (sink recon) (Var v)
+  let nonDataVal = ACase (injectCore sumVal) reconAlts newNonDataTy
   Distinct <- getDistinct
   fromSplit split dataVal nonDataVal
   where
-    getAltNonDataTy :: EnvReader m => Alt SimpIR n -> m n (Type SimpIR n)
+    getAltNonDataTy :: EnvReader m => Alt SimpIR n -> m n (SType n)
     getAltNonDataTy (Abs bs body) = liftSubstEnvReaderM do
       substBinders bs \bs' -> do
         ~(PairTy _ ty) <- getTypeSubst body
@@ -273,36 +281,35 @@ defuncCase scrut alts resultTy = do
     -- whose first component is data. The reconstruction returned only
     -- applies to the second component.
     simplifyAlt
-      :: (BindsEnv b, SubstB Name b, SubstB (AtomSubstVal CoreIR) b)
-      => SplitDataNonData n -> Abs b CBlock i
-      -> SimplifyM i o (Abs b SBlock o, ReconstructAtom CoreIR o)
-    simplifyAlt split (Abs bs body) = fromPairE <$> do
-      substBinders bs \bs' -> do
+      :: SplitDataNonData n -> Abs (Binder CoreIR) CBlock i
+      -> SimplifyM i o (Abs (Binder SimpIR) SBlock o, ReconstructAtom CoreIR o)
+    simplifyAlt split (Abs (b:>bTy) body) = fromPairE <$> do
+      -- TODO: this can fail! We need to handle the case of a non-data scrutinee!
+      bTy' <- coreToSimpAtom =<< substM bTy
+      withFreshBinder (getNameHint b) bTy' \b' -> extendSubst (b@>Rename (binderName b')) do
         ab <- buildScoped $ simplifyBlock body
-        refreshAbs ab \decls result -> do
-          let locals = toScopeFrag bs' >>> toScopeFrag decls
+        (resultWithDecls, recon) <- refreshAbs ab \decls result -> do
+          let locals = toScopeFrag b' >>> toScopeFrag decls
           -- TODO: this might be too cautious. The type only needs to
           -- be hoistable above the decls. In principle it can still
           -- mention vars from the lambda binders.
           Distinct <- getDistinct
           (resultData, resultNonData) <- toSplit split result
-          (newResult, newResultTy, reconAbs) <- telescopicCapture locals resultNonData
-          resultDataTy <- getType resultData
-          effs <- declNestEffects decls
-          let ty = PairTy resultDataTy (sink newResultTy)
-          let block = makeBlock decls effs (PairVal resultData newResult) ty
-          return $ PairE (Abs bs' block) (LamRecon reconAbs)
+          (newResult, reconAbs) <- telescopicCapture locals resultNonData
+          return (Abs decls (PairVal resultData newResult), LamRecon reconAbs)
+        block <- makeBlockFromDecls resultWithDecls
+        return $ PairE (Abs (b':>bTy') block) recon
 
 simplifyApp :: forall i o. Emits o
-  => NameHint -> CAtom i -> NonEmpty (SAtom o) -> SimplifyM i o (SAtom o)
+  => NameHint -> CAtom i -> NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyApp hint f xs =
   simplifyFuncAtom f >>= \case
-    Left  lam  -> fast lam
+    Left  (lam, arr, eff)  -> fast lam arr eff
     Right atom -> slow atom
   where
-    fast :: LamExpr CoreIR i' -> SimplifyM i' o (SAtom o)
-    fast lam = case fromNaryLam (NE.length xs) (Lam lam) of
-      Just (bsCount, NaryLamExpr bs _ (Block _ decls atom)) -> do
+    fast :: LamExpr CoreIR i' -> Arrow -> EffAbs i' -> SimplifyM i' o (CAtom o)
+    fast lam arr eff = case fromNaryLam (NE.length xs) (Lam lam arr eff) of
+      Just (bsCount, LamExpr bs (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
             case nonEmpty xsRest of
@@ -310,14 +317,14 @@ simplifyApp hint f xs =
               Just rest' -> simplifyApp hint atom rest'
       Nothing -> error "should never happen"
 
-    slow :: CAtom o -> SimplifyM i o (SAtom o)
+    slow :: CAtom o -> SimplifyM i o (CAtom o)
     slow atom = case atom of
-      Lam lam -> dropSubst $ fast lam
+      Lam lam arr eff -> dropSubst $ fast lam arr eff
       ACase e alts ty -> do
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
         resultTy <- getAppType ty $ toList xs
-        alts' <- forM alts \(Abs b a) -> do
+        alts' <- forM alts \(Abs b a) -> liftCoreBuilder do
           buildAlt (binderType b) \v -> do
             a' <- applySubst (b@>v) a
             naryApp a' (map sink $ toList xs)
@@ -331,22 +338,25 @@ simplifyApp hint f xs =
                 (spec, extraArgs) <- determineSpecializationSpec v specializationArgs
                 ab <- getSpecializedFunction spec
                 Just specializedFunction <- emitHoistedEnv ab
-                naryAppHinted hint (Var specializedFunction)
-                  (extraArgs ++ runtimeArgs)
+                runtimeArgs' <- mapM coreToSimpAtom runtimeArgs -- Runtime args should be "data"
+                injectCore <$> naryAppHinted hint (Var specializedFunction)
+                  (extraArgs ++ runtimeArgs')
               Nothing -> error $ "Specialization of " ++ pprint atom ++
                 " requires saturated application of specialization args."
-          _ -> naryAppHinted hint atom $ toList xs
+          _ -> do
+            xs' <- mapM coreToSimpAtom xs
+            injectCore <$> naryAppHinted hint (Var v) (toList xs')
       _ -> error $ "Unexpected function: " ++ pprint atom
 
-    simplifyFuncAtom :: CAtom i -> SimplifyM i o (Either (LamExpr CoreIR i) (SAtom o))
+    simplifyFuncAtom :: CAtom i -> SimplifyM i o (Either (LamExpr CoreIR i, Arrow, EffAbs i) (CAtom o))
     simplifyFuncAtom func = case func of
-      Lam lam -> return $ Left lam
+      Lam lam arr eff -> return $ Left (lam, arr, eff)
       _ -> Right <$> simplifyAtomAndInline func
 
 -- | Like `simplifyAtom`, but will try to inline function definitions found
 -- in the environment. The only exception is when we're going to differentiate
 -- and the function has a custom derivative rule defined.
-simplifyAtomAndInline :: CAtom i -> SimplifyM i o (SAtom o)
+simplifyAtomAndInline :: CAtom i -> SimplifyM i o (CAtom o)
 simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
   Var v -> do
     env <- getSubst
@@ -358,7 +368,7 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
     Var v -> inlineVar v
     ans -> return ans
   where
-    inlineVar :: SAtomName o -> SimplifyM i o (SAtom o)
+    inlineVar :: SAtomName o -> SimplifyM i o (CAtom o)
     inlineVar v = do
       -- We simplify all applications, except those that have custom linearizations
       -- and are inside a linearization operation.
@@ -375,14 +385,15 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
             _ -> return $ Var v
 
 determineSpecializationSpec
-  :: EnvReader m => SAtomName n -> [SAtom n] -> m n (SpecializationSpec n, [SAtom n])
+  :: EnvReader m => SAtomName n -> [CAtom n] -> m n (SpecializationSpec n, [SAtom n])
 determineSpecializationSpec fname staticArgs = do
   lookupAtomName fname >>= \case
     TopFunBound (NaryPiType bs _ _) _ -> do
       (PairB staticArgBinders _) <- return $
-        splitNestAt (length staticArgs) (nonEmptyToNest bs)
+        splitNestAt (length staticArgs) bs
       (ab, extraArgs) <- generalizeArgs staticArgBinders staticArgs
-      return (AppSpecialization fname ab, extraArgs)
+      extraArgs' <- mapM coreToSimpAtom extraArgs -- Extra args should be "data"
+      return (AppSpecialization fname ab, extraArgs')
     _ -> error "should only be specializing top functions"
 
 getSpecializedFunction :: EnvReader m => SpecializationSpec n -> m n (Abs TopEnvFrag SAtomName n)
@@ -391,7 +402,7 @@ getSpecializedFunction s = do
     Just name -> return $ Abs emptyOutFrag name
     _ -> liftTopBuilderHoisted $ emitSpecialization (sink s)
 
-emitIxDictSpecialization :: DictExpr SimpIR n -> SimplifyM i n (DictExpr SimpIR n)
+emitIxDictSpecialization :: DictExpr CoreIR n -> SimplifyM i n (DictExpr CoreIR n)
 emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
 emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
 emitIxDictSpecialization ixDict = do
@@ -411,15 +422,15 @@ emitIxDictSpecialization ixDict = do
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o
-  => NameHint -> CAtom i -> NonEmpty (SAtom o) -> SimplifyM i o (SAtom o)
+  => NameHint -> CAtom i -> NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyTabApp hint f xs =
   simplifyFuncAtom f >>= \case
     Left  lam  -> fast lam
     Right atom -> slow atom
   where
-    fast :: TabLamExpr SimpIR i' -> SimplifyM i' o (Atom SimpIR o)
+    fast :: TabLamExpr CoreIR i' -> SimplifyM i' o (Atom CoreIR o)
     fast lam = case fromNaryTabLam (NE.length xs) (TabLam lam) of
-      Just (bsCount, NaryLamExpr bs _ (Block _ decls atom)) -> do
+      Just (bsCount, LamExpr bs (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
             case nonEmpty xsRest of
@@ -427,44 +438,102 @@ simplifyTabApp hint f xs =
               Just rest' -> simplifyTabApp hint atom rest'
       Nothing -> error "should never happen"
 
-    slow :: SAtom o -> SimplifyM i o (SAtom o)
+    slow :: CAtom o -> SimplifyM i o (CAtom o)
     slow atom = case atom of
       TabLam   lam       -> dropSubst $ fast lam
       ACase e alts ty -> do
         -- TODO: Don't rebuild the alts here! Factor out Case simplification
         -- with lazy substitution and call it from here!
         resultTy <- getTabAppType ty $ toList xs
-        alts' <- forM alts \(Abs b a) -> do
+        alts' <- forM alts \(Abs b a) -> liftCoreBuilder do
           buildAlt (binderType b) \v -> do
             a' <- applySubst (b@>v) a
             naryTabApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr hint $ caseExpr
-      _ -> naryTabAppHinted hint atom $ toList xs
+      _ -> do
+        atom' <- coreToSimpAtom atom
+        xs' <- mapM coreToSimpAtom (toList xs)
+        injectCore <$> naryTabAppHinted hint atom' xs'
 
-    simplifyFuncAtom :: CAtom i -> SimplifyM i o (Either (TabLamExpr SimpIR i) (SAtom o))
+    simplifyFuncAtom :: CAtom i -> SimplifyM i o (Either (TabLamExpr CoreIR i) (CAtom o))
     simplifyFuncAtom func = case func of
       TabLam lam -> return $ Left lam
       _ -> Right <$> simplifyAtom func
 
-simplifyAtom :: CAtom i -> SimplifyM i o (SAtom o)
+-- TODO: implement this using a safe traversal rather than just coercing after
+-- performing the isData check.
+testIfDataAtom :: EnvReader m => CAtom n -> m n (Maybe (SAtom n))
+testIfDataAtom x = do
+  ty <- getType x
+  isData ty >>= \case
+    True -> return $ Just $ unsafeCoerceIRE x
+    False -> return Nothing
+
+-- TODO: implement this using a safe traversal rather than just coercing after
+-- performing the isData check.
+coreToSimpAtom :: EnvReader m => CAtom n -> m n (SAtom n)
+coreToSimpAtom TyKind = return TyKind -- TODO: figure out why we need this
+coreToSimpAtom x = do
+  testIfDataAtom x >>= \case
+    Just x' -> return x'
+    Nothing -> do
+      xTy <- getType x
+      case xTy of
+        TyKind -> isData x >>= \case
+          True -> return $ unsafeCoerceIRE x
+          False -> error $ "can't convert to simp: " ++ pprint x
+        DictTy (DictType "Ix" _ _) -> return $ unsafeCoerceIRE x
+        _ -> error $ "can't convert to simp: " ++
+          pprint x ++ "    " ++ pprint xTy ++ "   " ++ show x
+
+-- Keeping this distinct because we might want to distinguish types and atoms in
+-- the simplified IR.
+coreToSimpType :: EnvReader m => CAtom n -> m n (SAtom n)
+coreToSimpType = coreToSimpAtom
+
+simplifyIxType :: IxType CoreIR o -> SimplifyM i o (IxType SimpIR o)
+simplifyIxType (IxType t d) = dropSubst do
+  t' <- coreToSimpAtom =<< simplifyAtom t
+  d' <- coreToSimpAtom =<< simplifyAtom d
+  return $ IxType t' d'
+
+makeBlockFromDecls :: EnvReader m => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
+makeBlockFromDecls (Abs Empty result) = return $ AtomicBlock result
+makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
+  ty <- getType result
+  effs <- declNestEffects decls
+  PairE ty' effs' <- return $ ignoreHoistFailure $ hoist decls $ PairE ty effs
+  return $ Block (BlockAnn ty' effs') decls result
+
+injectCore :: CovariantInIR e => e SimpIR n -> e CoreIR n
+injectCore = injectIRE
+
+liftCoreBuilder :: EnvReader m => BuilderM CoreIR n a -> m n a
+liftCoreBuilder = liftBuilder
+{-# INLINE liftCoreBuilder #-}
+
+simplifyAtom :: CAtom i -> SimplifyM i o (CAtom o)
 simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   Var v -> simplifyVar v
   -- Tables that only contain data aren't necessarily getting inlined,
   -- so this might be the last chance to simplify them.
-  TabLam (TabLamExpr b body) -> do
+  TabLam (TabLamExpr (b:>ixTy) body) -> do
     getTypeSubst atom >>= isData >>= \case
       True -> do
-        (Abs b' body', IdentityReconAbs) <- simplifyAbs $ Abs b body
-        return $ TabLam $ TabLamExpr b' body'
+        ixTy' <- simplifyIxType =<< substM ixTy
+        withFreshBinder (getNameHint b) ixTy' \b' ->
+          extendSubst (b@>Rename (binderName b')) do
+            SimplifiedBlock body' IdentityRecon <- buildSimplifiedBlock $ simplifyBlock body
+            return $ injectCore $ TabLam (TabLamExpr (b':>ixTy') body')
       False -> substM atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
-  Lam _    -> substM atom
+  Lam _ _ _  -> substM atom
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- simplifyAtom ty
-    withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
+    withFreshBinder (getNameHint b) (PiBinding arr ty') \b' -> do
       extendRenamer (b@>binderName b') $
-        Pi <$> (PiType b' <$> substM eff <*> simplifyAtom resultTy)
+        Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> simplifyAtom resultTy)
   TabPi (TabPiType (b:>IxType t d) resultTy) -> do
     t' <- simplifyAtom t
     d' <- simplifyAtom d
@@ -532,58 +601,25 @@ simplifyVar v = do
         _ -> return $ Var v'
 
 -- Assumes first order, monormophic
-simplifyNaryLam :: NaryLamExpr CoreIR i -> SimplifyM i o (NaryLamExpr SimpIR o)
-simplifyNaryLam (NaryLamExpr bs effs body) = do
-  (Abs (PairB bs' (LiftB effs')) block, IdentityReconAbs) <-
-     simplifyAbs $ Abs (PairB bs (LiftB effs)) body
-  return $ NaryLamExpr bs' effs' block
-
-simplifyLam :: CAtom i -> SimplifyM i o (SAtom o, Abs (LamBinder CoreIR) (ReconstructAtom CoreIR) o)
-simplifyLam atom = case atom of
-  Lam (LamExpr b body) -> doSimpLam b body
-  _ -> simplifyAtom atom >>= \case
-    Lam (LamExpr b body) -> dropSubst $ doSimpLam b body
-    _ -> error "Not a lambda expression"
-  where
-    doSimpLam :: LamBinder CoreIR i i' -> CBlock i'
-      -> SimplifyM i o (SAtom o, Abs (LamBinder SimpIR) (ReconstructAtom SimpIR) o)
-    doSimpLam b body = do
-      (Abs b' body', recon) <- simplifyAbs $ Abs b body
-      return $! (Lam $ LamExpr b' body', recon)
-
-type BinaryLamBinder = (PairB (LamBinder SimpIR) (LamBinder SimpIR))
-
-simplifyBinaryLam :: Emits o => CAtom i
-  -> SimplifyM i o (SAtom o, Abs BinaryLamBinder (ReconstructAtom CoreIR) o)
-simplifyBinaryLam atom = case atom of
-  Lam (LamExpr b1 (Block _ body1 (Lam (LamExpr b2 body2)))) -> doSimpBinaryLam b1 body1 b2 body2
-  _ -> simplifyAtom atom >>= \case
-    Lam (LamExpr b1 (Block _ body1 (Lam (LamExpr b2 body2)))) -> dropSubst $ doSimpBinaryLam b1 body1 b2 body2
-    _ -> error "Not a binary lambda expression"
-  where
-    doSimpBinaryLam :: LamBinder CoreIR i i' -> Nest CDecl i' i'' -> LamBinder CoreIR i'' i''' -> CBlock i'''
-      -> SimplifyM i o (CAtom o, Abs BinaryLamBinder (ReconstructAtom CoreIR) o)
-    doSimpBinaryLam b1 body1 b2 body2 =
-      substBinders b1 \b1' -> do
-        Abs decls (effs `PairE` (lam2 `PairE` lam2Ty `PairE` (Abs b2' recon'))) <-
-          computeAbsEffects =<< buildScoped
-            (simplifyDecls body1 do
-              (Abs b2' body2', recon) <- simplifyAbs $ Abs b2 body2
-              let lam2' = Lam (LamExpr b2' body2')
-              lam2Ty' <- getType lam2'
-              return (lam2' `PairE` lam2Ty' `PairE` recon))
-        return $ case hoist decls $ Abs b2' recon' of
-          HoistSuccess (Abs b2'' recon'') -> do
-            let binBody = makeBlock decls effs lam2 lam2Ty
-            let binRecon = Abs (b1' `PairB` b2'') recon''
-            (Lam (LamExpr b1' binBody), binRecon)
-          HoistFailure _ -> error "Binary lambda simplification failed: binder/recon depends on intermediate decls"
+simplifyLam
+  :: LamExpr CoreIR i
+  -> SimplifyM i o (LamExpr SimpIR o, Abs (Nest AtomNameBinder) (ReconstructAtom CoreIR) o)
+simplifyLam (LamExpr bsTop body) = case bsTop of
+  Nest (b:>ty) bs -> do
+    ty'<- coreToSimpType =<< simplifyAtom ty
+    withFreshBinder (getNameHint b) ty' \b' -> do
+      extendSubst (b@>Rename (binderName b')) do
+        (LamExpr bs' body', Abs bsRecon recon) <- simplifyLam $ LamExpr bs body
+        return (LamExpr (Nest (b':>ty') bs') body', Abs (Nest b' bsRecon) recon)
+  Empty -> do
+    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
+    return (LamExpr Empty body', Abs Empty recon)
 
 data SplitDataNonData n = SplitDataNonData
   { dataTy    :: SType n
   , nonDataTy :: CType n
-  , toSplit   :: forall m l . (Fallible1 m, EnvReader m) => SAtom l -> m l (SAtom l, CAtom l)
-  , fromSplit :: forall m l . (Fallible1 m, EnvReader m) => SAtom l -> CAtom l -> m l (SAtom l) }
+  , toSplit   :: forall m l . (Fallible1 m, EnvReader m) => CAtom l -> m l (SAtom l, CAtom l)
+  , fromSplit :: forall m l . (Fallible1 m, EnvReader m) => SAtom l -> CAtom l -> m l (CAtom l) }
 
 -- bijection between that type and a (data, non-data) pair type.
 splitDataComponents :: EnvReader m => CType n -> m n (SplitDataNonData n)
@@ -604,10 +640,10 @@ splitDataComponents = \case
           return $ ProdVal zs }
   ty -> isData ty >>= \case
     True -> return $ SplitDataNonData
-      { dataTy = ty
+      { dataTy = unsafeCoerceIRE ty
       , nonDataTy = UnitTy
-      , toSplit = \x -> return (x, UnitVal)
-      , fromSplit = \x _ -> return x }
+      , toSplit = \x -> return (unsafeCoerceIRE x, UnitVal)
+      , fromSplit = \x _ -> return (unsafeCoerceIRE x) }
     False -> return $ SplitDataNonData
       { dataTy = UnitTy
       , nonDataTy = ty
@@ -615,29 +651,22 @@ splitDataComponents = \case
       , fromSplit = \_ x -> return x }
 {-# SPECIALIZE splitDataComponents :: CType o -> SimplifyM i o (SplitDataNonData o) #-}
 
-simplifyAbs
-  :: (BindsEnv b, SubstB Name b, SubstB (AtomSubstVal CoreIR) b)
-  => Abs b CBlock i -> SimplifyM i o (Abs b SBlock o, Abs b (ReconstructAtom CoreIR) o)
-simplifyAbs (Abs bs body@(Block ann _ _)) = fromPairE <$> do
-  substBinders bs \bs' -> do
-    Abs decls (PairE result ansTy) <- buildScoped $ simplifyBlock body >>= withType
-    -- Reuse the input effect annotations, because simplifyBlock never changes them.
-    effs <- case ann of
-      (BlockAnn _ origEffs) -> substM origEffs
-      NoBlockAnn -> return Pure
-    let ansTy' = ignoreHoistFailure $ hoist decls ansTy
-    isData ansTy' >>= \case
-      True -> do
-        let block = Block (BlockAnn ansTy' effs) decls result
-        return $ PairE (Abs bs' block) (Abs bs' IdentityRecon)
-      False -> refreshAbs (Abs decls result) \decls' result' -> do
-        let locals = toScopeFrag decls'
-        (newResult, newResultTy, reconAbs) <- telescopicCapture locals result'
-        let block = Block (BlockAnn (sink newResultTy) (sink effs)) decls' newResult
-        return $ PairE (Abs bs' block) (Abs bs' (LamRecon reconAbs))
+buildSimplifiedBlock
+  :: (forall o'. (Emits o', DExt o o') => SimplifyM i o' (CAtom o'))
+  -> SimplifyM i o (SimplifiedBlock o)
+buildSimplifiedBlock cont = do
+  declsResult <- buildScoped cont
+  (declsResult', recon) <- refreshAbs declsResult \decls result -> do
+    testIfDataAtom result >>= \case
+      Just dataResult -> return (Abs decls dataResult, IdentityRecon)
+      Nothing -> do
+        (newResult, reconAbs) <- telescopicCapture (toScopeFrag decls) result
+        return (Abs decls newResult, LamRecon reconAbs)
+  block <- makeBlockFromDecls declsResult'
+  return $ SimplifiedBlock block recon
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
-simplifyOp :: Emits o => Op CoreIR o -> SimplifyM i o (SAtom o)
+simplifyOp :: Emits o => Op CoreIR o -> SimplifyM i o (CAtom o)
 simplifyOp op = case op of
   RecordCons left right -> getType left >>= \case
     StaticRecordTy leftTys -> getType right >>= \case
@@ -681,67 +710,86 @@ simplifyOp op = case op of
         return $ PairVal (head $ toList val) $
           Record otherItemTys $ toList rest
       _ -> error "not a record"
-  VariantLift leftTys right -> getType right >>= \case
-    VariantTy (NoExt rightTys) -> do
-      let fullTys = leftTys <> rightTys
-      let fullRow = NoExt fullTys
-      let fullLabels = toList $ reflectLabels fullTys
-      let labels = toList $ reflectLabels rightTys
-      -- Emit a case statement (ordered by the arg type) that lifts the type.
-      buildCase right (VariantTy fullRow) \caseIdx v -> do
+  VariantLift leftTys' right' -> injectCore <$> do
+    leftTys <- mapM coreToSimpAtom leftTys'
+    right <- coreToSimpAtom right'
+    getType right >>= \case
+      VariantTy (NoExt rightTys) -> do
+        let fullTys = leftTys <> rightTys
+        let fullRow = NoExt fullTys
+        let fullLabels = toList $ reflectLabels fullTys
+        let labels = toList $ reflectLabels rightTys
+        -- Emit a case statement (ordered by the arg type) that lifts the type.
+        buildCase right (VariantTy fullRow) \caseIdx v -> do
+          -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
+          let (label, i) = labels !! caseIdx
+          let idx = fromJust $ elemIndex (label, i + length (lookupLabel leftTys label)) fullLabels
+          let fullRow'@(NoExt fullRowItems') = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
+          return $ Con $ Newtype (VariantTy fullRow') $ SumVal (toList fullRowItems') idx v
+      _ -> error "not a variant"
+  VariantSplit leftTys' full' -> injectCore <$> do
+    leftTys <- mapM coreToSimpAtom leftTys'
+    full <- coreToSimpAtom full'
+    getType full >>= \case
+      VariantTy (NoExt fullTys) -> do
         -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
-        let (label, i) = labels !! caseIdx
-        let idx = fromJust $ elemIndex (label, i + length (lookupLabel leftTys label)) fullLabels
-        let fullRow'@(NoExt fullRowItems') = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
-        return $ Con $ Newtype (VariantTy fullRow') $ SumVal (toList fullRowItems') idx v
-    _ -> error "not a variant"
-  VariantSplit leftTys full -> getType full >>= \case
-    VariantTy (NoExt fullTys) -> do
-      -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
-      -- Emit a case statement (ordered by the arg type) that splits into the
-      -- appropriate piece, changing indices as needed.
-      resTy@(SumTy resTys) <- getType $ Op op
-      let (_, rightTys) = splitLabeledItems leftTys fullTys
-      let fullLabels = toList $ reflectLabels fullTys
-      let leftLabels = toList $ reflectLabels leftTys
-      let rightLabels = toList $ reflectLabels rightTys
-      buildCase full resTy \caseIdx v -> do
-        let (label, i) = fullLabels !! caseIdx
-        let labelIx labs li = fromJust $ elemIndex li labs
-        let resTys' = sinkList resTys
-        let lTy = sink $ VariantTy $ NoExt leftTys
-        let rTy = sink $ VariantTy $ NoExt rightTys
-        case leftTys `lookupLabel` label of
-          [] -> return $ SumVal resTys' 1 $ Con $ Newtype rTy $
-            SumVal (sinkList $ toList rightTys) (labelIx rightLabels (label, i)) v
-          tys -> if i < length tys
-            then return $ SumVal resTys' 0 $ Con $ Newtype lTy $
-              SumVal (sinkList $ toList leftTys) (labelIx leftLabels (label, i)) v
-            else return $ SumVal resTys' 1 $ Con $ Newtype rTy $
-              SumVal (sinkList $ toList rightTys)
-                     (labelIx rightLabels (label, i - length tys)) v
-    _ -> error "Not a variant type"
+        -- Emit a case statement (ordered by the arg type) that splits into the
+        -- appropriate piece, changing indices as needed.
+        resTy@(SumTy resTys) <- getType $ Op (VariantSplit leftTys full)
+        let (_, rightTys) = splitLabeledItems leftTys fullTys
+        let fullLabels = toList $ reflectLabels fullTys
+        let leftLabels = toList $ reflectLabels leftTys
+        let rightLabels = toList $ reflectLabels rightTys
+        buildCase full resTy \caseIdx v -> do
+          let (label, i) = fullLabels !! caseIdx
+          let labelIx labs li = fromJust $ elemIndex li labs
+          let resTys' = sinkList resTys
+          let lTy = sink $ VariantTy $ NoExt leftTys
+          let rTy = sink $ VariantTy $ NoExt rightTys
+          case leftTys `lookupLabel` label of
+            [] -> return $ SumVal resTys' 1 $ Con $ Newtype rTy $
+              SumVal (sinkList $ toList rightTys) (labelIx rightLabels (label, i)) v
+            tys -> if i < length tys
+              then return $ SumVal resTys' 0 $ Con $ Newtype lTy $
+                SumVal (sinkList $ toList leftTys) (labelIx leftLabels (label, i)) v
+              else return $ SumVal resTys' 1 $ Con $ Newtype rTy $
+                SumVal (sinkList $ toList rightTys)
+                       (labelIx rightLabels (label, i - length tys)) v
+      _ -> error "Not a variant type"
   VariantMake ty@(VariantTy (NoExt tys)) label i v -> do
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
     return $ Con $ Newtype ty $ SumVal (toList tys) ix v
+  ProjMethod dict i -> projectDictMethod dict i
   -- Those are not no-ops! Builder methods do algebraic simplification!
   -- TODO: Move peephole optimizations to peepholeOp in Optimize
-  BinOp ISub x y -> isub x y
-  BinOp IAdd x y -> iadd x y
-  BinOp IMul x y -> imul x y
-  BinOp IDiv x y -> idiv x y
-  BinOp (ICmp Less ) x y -> ilt x y
-  BinOp (ICmp Equal) x y -> ieq x y
-  Select c x y -> select c x y
-  ProjMethod dict i -> projectDictMethod dict i
-  _ -> liftEnvReaderM (peepholeOp op) >>= \case
-    Left  a   -> return a
-    Right op' -> emitOp op'
+  BinOp binop x' y' -> do
+    x <- coreToSimpAtom x'
+    y <- coreToSimpAtom y'
+    injectCore <$> case binop of
+      ISub -> isub x y
+      IAdd -> iadd x y
+      IMul -> imul x y
+      IDiv -> idiv x y
+      ICmp Less  -> ilt x y
+      ICmp Equal -> ieq x y
+      _ -> fallback
+  Select c' x' y' -> do
+    c <- coreToSimpAtom c'
+    x <- coreToSimpAtom x'
+    y <- coreToSimpAtom y'
+    injectCore <$> select c x y
+  _ -> injectCore <$> fallback
+  where
+    fallback = do
+      op' <- (inline traversePrimOp) coreToSimpAtom op
+      liftEnvReaderM (peepholeOp op') >>= \case
+        Left  a   -> return a
+        Right op'' -> emitOp op''
 
-pattern IdentityReconAbs :: Abs binder (ReconstructAtom SimpIR) n
+pattern IdentityReconAbs :: Abs binder (ReconstructAtom CoreIR) n
 pattern IdentityReconAbs <- Abs _ IdentityRecon
 
-projectDictMethod :: Emits o => SAtom o -> Int -> SimplifyM i o (SAtom o)
+projectDictMethod :: Emits o => CAtom o -> Int -> SimplifyM i o (CAtom o)
 projectDictMethod d i = do
   cheapNormalize d >>= \case
     DictCon (InstanceDict instanceName args) -> dropSubst do
@@ -766,83 +814,89 @@ projectDictMethod d i = do
     DictCon (IxFin n) -> projectIxFinMethod (toEnum i) n
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 
-simplifyHof :: Emits o => NameHint -> Hof CoreIR i -> SimplifyM i o (SAtom o)
+simplifyHof :: Emits o => NameHint -> Hof CoreIR i -> SimplifyM i o (CAtom o)
 simplifyHof hint hof = case hof of
   For d ixDict lam -> do
-    ixTy@(IxType _ ixDict') <- ixTyFromDict =<< simplifyAtom ixDict
-    (lam', Abs b recon) <- simplifyLam lam
+    ixTy@(IxType _ ixDict') <- simplifyIxType =<< ixTyFromDict =<< substM ixDict
+    (lam', Abs (UnaryNest b) recon) <- simplifyLam lam
     ans <- liftM Var $ emitHinted hint $ Hof $ For d ixDict' lam'
     case recon of
-      IdentityRecon -> return ans
-      LamRecon reconAbs ->
-        buildTabLam noHint ixTy \i' -> do
-          elt <- tabApp (sink ans) $ Var i'
+      IdentityRecon -> return $ injectCore ans
+      LamRecon reconAbs -> liftCoreBuilder $
+        buildTabLam noHint (injectCore ixTy) \i' -> do
+          elt <- tabApp (injectCore $ sink ans) $ Var i'
           -- TODO Avoid substituting the body of `recon` twice (once
           -- for `applySubst` and once for `applyReconAbs`).  Maybe
           -- by making `applyReconAbs` run in a `SubstReader`?
           reconAbs' <- applySubst (b @> i') reconAbs
           applyReconAbs reconAbs' elt
   While body -> do
-    (lam', IdentityReconAbs) <- simplifyLam body
-    liftM Var $ emitHinted hint $ Hof $ While lam'
+    SimplifiedBlock body' IdentityRecon <- buildSimplifiedBlock $ simplifyBlock body
+    liftM Var $ emitHinted hint $ Hof $ While body'
   RunReader r lam -> do
-    r' <- simplifyAtom r
-    (lam', Abs b recon) <- simplifyBinaryLam lam
+    r' <- coreToSimpAtom =<< simplifyAtom r
+    (lam', Abs b recon) <- simplifyLam lam
     ans <- emitHinted hint $ Hof $ RunReader r' lam'
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' $ Var ans
   RunWriter Nothing (BaseMonoid e combine) lam -> do
-    e' <- simplifyAtom e
-    (combine', IdentityReconAbs) <- simplifyBinaryLam combine
-    (lam', Abs b recon) <- simplifyBinaryLam lam
+    e' <- coreToSimpAtom =<< simplifyAtom e
+    (combine', IdentityReconAbs) <- simplifyLam combine
+    (lam', Abs b recon) <- simplifyLam lam
     let hof' = Hof $ RunWriter Nothing (BaseMonoid e' combine') lam'
     (ans, w) <- fromPair =<< liftM Var (emitHinted hint hof')
     let recon' = ignoreHoistFailure $ hoist b recon
-    ans' <- applyRecon recon' ans
-    return $ PairVal ans' w
+    ans' <- applyRecon recon' (injectCore ans)
+    return $ PairVal ans' (injectCore w)
   RunWriter _ _ _ -> error "Shouldn't see a RunWriter with a dest in Simplify"
   RunState Nothing s lam -> do
-    s' <- simplifyAtom s
-    (lam', Abs b recon) <- simplifyBinaryLam lam
+    s' <- coreToSimpAtom =<< simplifyAtom s
+    (lam', Abs b recon) <- simplifyLam lam
     resultPair <- emitHinted hint $ Hof $ RunState Nothing s' lam'
     (ans, sOut) <- fromPair $ Var resultPair
     let recon' = ignoreHoistFailure $ hoist b recon
-    ans' <- applyRecon recon' ans
-    return $ PairVal ans' sOut
+    ans' <- applyRecon recon' (injectCore ans)
+    return $ PairVal ans' (injectCore sOut)
   RunState _ _ _ -> error "Shouldn't see a RunState with a dest in Simplify"
-  RunIO lam -> do
-    (lam', Abs b recon) <- simplifyLam lam
-    ans <- emitHinted hint $ Hof $ RunIO lam'
-    let recon' = ignoreHoistFailure $ hoist b recon
-    applyRecon recon' $ Var ans
-  RunInit lam -> do
-    (lam', Abs b recon) <- simplifyLam lam
-    ans <- emitHinted hint $ Hof $ RunInit lam'
-    let recon' = ignoreHoistFailure $ hoist b recon
-    applyRecon recon' $ Var ans
+  RunIO body -> do
+    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
+    ans <- emitHinted hint $ Hof $ RunIO body'
+    applyRecon recon $ Var ans
+  RunInit body -> do
+    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
+    ans <- emitHinted hint $ Hof $ RunInit body'
+    applyRecon recon $ Var ans
   Linearize lam -> do
     (lam', IdentityReconAbs) <- local (const WillLinearize) $ simplifyLam lam
     linearize lam'
   Transpose lam -> do
     (lam', IdentityReconAbs) <- simplifyLam lam
-    transpose lam'
-  CatchException lam -> do
-    (Lam (LamExpr b body), IdentityReconAbs) <- simplifyLam lam
-    dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
+    lamTransposed <- transpose lam'
+    return $ Lam (injectIRE lamTransposed) LinArrow (toConstAbsPure Pure)
+  CatchException body-> do
+    SimplifiedBlock body' IdentityRecon <- buildSimplifiedBlock $ simplifyBlock body
+    block <- liftBuilder $ runSubstReaderT idSubst $
+      buildBlock $ exceptToMaybeBlock $ body'
+    result <- emitBlock block
+    return $ injectCore result
   Seq _ _ _ _ -> error "Shouldn't ever see a Seq in Simplify"
   RememberDest _ _ -> error "Shouldn't ever see a RememberDest in Simplify"
 
-simplifyBlock :: Emits o => CBlock i -> SimplifyM i o (SAtom o)
+simplifyBlock :: Emits o => CBlock i -> SimplifyM i o (CAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result
 
-exceptToMaybeBlock :: Emits o => CBlock i -> SimplifyM i o (SAtom o)
+-- === exception-handling pass ===
+
+type HandlerM = SubstReaderT (AtomSubstVal SimpIR) (BuilderM SimpIR)
+
+exceptToMaybeBlock :: Emits o => SBlock i -> HandlerM i o (SAtom o)
 exceptToMaybeBlock (Block (BlockAnn ty _) decls result) = do
   ty' <- substM ty
   exceptToMaybeDecls ty' decls $ Atom result
 exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr $ Atom result
 exceptToMaybeBlock _ = error "impossible"
 
-exceptToMaybeDecls :: Emits o => CType o -> Nest CDecl i i' -> CExpr i' -> SimplifyM i o (SAtom o)
+exceptToMaybeDecls :: Emits o => SType o -> Nest SDecl i i' -> SExpr i' -> HandlerM i o (SAtom o)
 exceptToMaybeDecls _ Empty result = exceptToMaybeExpr result
 exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResult = do
   maybeResult <- exceptToMaybeExpr rhs
@@ -855,7 +909,7 @@ exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResu
           (\v -> extendSubst (b@> SubstVal v) $
                    exceptToMaybeDecls (sink resultTy) decls finalResult)
 
-exceptToMaybeExpr :: Emits o => CExpr i -> SimplifyM i o (SAtom o)
+exceptToMaybeExpr :: Emits o => SExpr i -> HandlerM i o (SAtom o)
 exceptToMaybeExpr expr = case expr of
   Case e alts resultTy _ -> do
     e' <- substM e
@@ -870,14 +924,14 @@ exceptToMaybeExpr expr = case expr of
   Op (ThrowException _) -> do
     ty <- getTypeSubst expr
     return $ NothingAtom ty
-  Hof (For ann d (Lam (LamExpr b body))) -> do
+  Hof (For ann d (UnaryLamExpr b body)) -> do
     ixTy <- ixTyFromDict =<< substM d
     maybes <- buildForAnn (getNameHint b) ann ixTy \i ->
       extendSubst (b@>Rename i) $ exceptToMaybeBlock body
     catMaybesE maybes
   Hof (RunState Nothing s lam) -> do
     s' <- substM s
-    Lam (BinaryLamExpr h ref body) <- return lam
+    BinaryLamExpr h ref body <- return lam
     result  <- emitRunState noHint s' \h' ref' ->
       extendSubst (h @> Rename h' <.> ref @> Rename ref') do
         exceptToMaybeBlock body
@@ -886,8 +940,8 @@ exceptToMaybeExpr expr = case expr of
     emitMaybeCase maybeAns (MaybeTy a)
        (return $ NothingAtom $ sink a)
        (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink newState))
-  Hof (RunWriter Nothing monoid (Lam (BinaryLamExpr h ref body))) -> do
-    monoid' <- mapM substM monoid
+  Hof (RunWriter Nothing monoid (BinaryLamExpr h ref body)) -> do
+    monoid' <- substM monoid
     accumTy <- substM =<< (getReferentTy $ EmptyAbs $ PairB h ref)
     result <- emitRunWriter noHint accumTy monoid' \h' ref' ->
       extendSubst (h @> Rename h' <.> ref @> Rename ref') $
@@ -897,8 +951,7 @@ exceptToMaybeExpr expr = case expr of
     emitMaybeCase maybeAns (MaybeTy a)
       (return $ NothingAtom $ sink a)
       (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink accumResult))
-  Hof (While (Lam (LamExpr b body))) ->
-    runMaybeWhile $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock body
+  Hof (While body) -> runMaybeWhile $ exceptToMaybeBlock body
   _ -> do
     expr' <- substM expr
     hasExceptions expr' >>= \case

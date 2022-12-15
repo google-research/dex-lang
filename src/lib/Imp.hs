@@ -58,14 +58,10 @@ blockToImpFunction _ cc absBlock = liftImpM $ translateTopLevel cc absBlock
 
 toImpFunction
   :: EnvReader m
-  => CallingConvention -> NaryLamExpr SimpIR n -> m n (ImpFunction n)
+  => CallingConvention -> LamExpr SimpIR n -> m n (ImpFunction n)
 toImpFunction cc lam' = do
-  lam@(NaryLamExpr bs effs body) <- return $ injectIRE lam'
-  case effs of
-    Pure -> return ()
-    OneEffect IOEffect -> return ()
-    _ -> error "effectful functions not implemented"
-  ty <- unpackNaryPiType <$> naryLamExprType lam
+  lam@(LamExpr bs body) <- return $ injectIRE lam'
+  ty <- getNaryLamExprType lam
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
     (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
@@ -75,7 +71,7 @@ toImpFunction cc lam' = do
 
 getNaryLamImpArgTypesWithCC
   :: EnvReader m => CallingConvention
-  -> NaryPiType' SimpToImpIR n -> m n [BaseType]
+  -> NaryPiType SimpToImpIR n -> m n [BaseType]
 getNaryLamImpArgTypesWithCC XLACC _ = return [i8pp, i8pp]
   where i8pp = PtrType (CPU, PtrType (CPU, Scalar Word8Type))
 getNaryLamImpArgTypesWithCC _ t = do
@@ -83,7 +79,7 @@ getNaryLamImpArgTypesWithCC _ t = do
   return $ concat argTyss ++ destTys
 
 interpretImpArgsWithCC
-  :: Emits n => CallingConvention -> NaryPiType' SimpToImpIR n
+  :: Emits n => CallingConvention -> NaryPiType SimpToImpIR n
   -> [IExpr n] -> SubstImpM i n ([SIAtom n], Dest n)
 interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
   (argBaseTys, resultBaseTys) <- getNaryLamImpArgTypes t
@@ -104,27 +100,27 @@ interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
       cast ptr (PtrType (CPU, pointeeTy))
 interpretImpArgsWithCC _ t xsAll = interpretImpArgs t xsAll
 
-getNaryLamImpArgTypes :: EnvReader m => NaryPiType' SimpToImpIR n -> m n ([[BaseType]], [BaseType])
+getNaryLamImpArgTypes :: EnvReader m => NaryPiType SimpToImpIR n -> m n ([[BaseType]], [BaseType])
 getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
-  go :: NaryPiType' SimpToImpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
-  go (Abs bs resultTy) = case bs of
+  go :: NaryPiType SimpToImpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
+  go (NaryPiType bs effs resultTy) = case bs of
     Nest piB rest -> do
       ts <- getRepBaseTypes $ binderType piB
-      refreshAbs (Abs piB (Abs rest resultTy)) \_ restAb -> do
-        (argTys, resultTys) <- go restAb
+      refreshAbs (Abs piB (NaryPiType rest effs resultTy)) \_ restPi -> do
+        (argTys, resultTys) <- go restPi
         return (ts:argTys, resultTys)
     Empty -> ([],) <$> getDestBaseTypes resultTy
 
-interpretImpArgs :: EnvReader m => NaryPiType' SimpToImpIR n -> [IExpr n] -> m n ([SIAtom n], Dest n)
+interpretImpArgs :: EnvReader m => NaryPiType SimpToImpIR n -> [IExpr n] -> m n ([SIAtom n], Dest n)
 interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll where
-  go :: NaryPiType' SimpToImpIR i -> [IExpr o]
+  go :: NaryPiType SimpToImpIR i -> [IExpr o]
      -> SubstReaderT (AtomSubstVal SimpToImpIR) EnvReaderM i o ([SIAtom o], Dest o)
-  go (Abs bs resultTy) xs = case bs of
+  go (NaryPiType bs effs resultTy) xs = case bs of
     Nest (PiBinder b argTy _) rest -> do
       argTy' <- substM argTy
       (argTree, xsRest) <- listToTree argTy' xs
       let arg = RepValAtom $ toDRepVal $ RepVal argTy' argTree
-      (args, dest) <- extendSubst (b @> SubstVal arg) $ go (Abs rest resultTy) xsRest
+      (args, dest) <- extendSubst (b @> SubstVal arg) $ go (NaryPiType rest effs resultTy) xsRest
       return (arg:args, dest)
     Empty -> do
       resultTy' <- substM resultTy
@@ -133,12 +129,6 @@ interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll
         [] -> return ()
         _  -> error "Shouldn't have any Imp arguments left"
       return ([], Dest resultTy' destTree)
-
--- This just drops the "nonempty" stuff, which makes the recursion easier. TODO: we
--- should drop the nonempty stuff everywhere. I don't think it helps us.
-type NaryPiType' r = Abs (Nest (PiBinder r)) (Type r)
-unpackNaryPiType :: NaryPiType r n -> NaryPiType' r n
-unpackNaryPiType (NaryPiType bs _ resultTy) = Abs (nonEmptyToNest bs) resultTy
 
 -- === ImpM monad ===
 
@@ -312,6 +302,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   Atom x -> substM x >>= returnVal
   -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
   Op op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
+  PrimEffect refDest eff -> toImpPrimEffect maybeDest refDest eff
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
@@ -350,6 +341,51 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
       Nothing   -> return atom
       Just dest -> storeAtom dest atom >> return atom
 
+toImpPrimEffect :: Emits o => MaybeDest o -> SIAtom i -> PrimEffect SimpToImpIR i -> SubstImpM i o (SIAtom o)
+toImpPrimEffect maybeDest refDest' m = do
+  refDest <- atomToDest =<< substM refDest'
+  substM m >>= \case
+    MAsk -> returnVal =<< loadAtom refDest
+    MExtend (BaseMonoid _ combine) x -> do
+      xTy <- getType x
+      refVal <- loadAtom refDest
+      result <- liftBuilderImp $
+                  liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
+      storeAtom refDest result
+      returnVal UnitVal
+    MPut x -> storeAtom refDest x >> returnVal UnitVal
+    MGet -> do
+      Dest resultTy _ <- return refDest
+      dest <- maybeAllocDest maybeDest resultTy
+      -- It might be more efficient to implement a specialized copy for dests
+      -- than to go through a general purpose atom.
+      storeAtom dest =<< loadAtom refDest
+      loadAtom dest
+  where
+    liftMonoidCombine
+      :: Emits n => SIType n -> LamExpr SimpToImpIR n
+      -> SIAtom n -> SIAtom n -> SBuilderM n (SIAtom n)
+    liftMonoidCombine accTy bc x y = do
+      LamExpr (Nest (_:>baseTy) _) _ <- return bc
+      alphaEq accTy baseTy >>= \case
+        -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
+        True -> do
+          BinaryLamExpr xb yb body <- return bc
+          body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
+          emitBlock body'
+        False -> case accTy of
+          TabTy (b:>ixTy) eltTy -> do
+            buildFor noHint Fwd ixTy \i -> do
+              xElt <- tabApp (sink x) (Var i)
+              yElt <- tabApp (sink y) (Var i)
+              eltTy' <- applySubst (b@>i) eltTy
+              liftMonoidCombine eltTy' (sink bc) xElt yElt
+          _ -> error $ "Base monoid type mismatch: can't lift " ++
+                 pprint baseTy ++ " to " ++ pprint accTy
+    returnVal atom = case maybeDest of
+      Nothing   -> return atom
+      Just dest -> storeAtom dest atom >> return atom
+
 toImpOp :: forall i o .
            Emits o => MaybeDest o -> PrimOp (SIAtom o) -> SubstImpM i o (SIAtom o)
 toImpOp maybeDest op = case op of
@@ -362,45 +398,6 @@ toImpOp maybeDest op = case op of
       ithDest <- indexDest dest =<< unsafeFromOrdinalImp ixTy (IIdxRepVal i)
       storeAtom ithDest row
     loadAtom dest
-  PrimEffect refDest' m -> do
-    refDest <- atomToDest refDest'
-    case m of
-      MAsk -> returnVal =<< loadAtom refDest
-      MExtend (BaseMonoid _ combine) x -> do
-        xTy <- getType x
-        refVal <- loadAtom refDest
-        result <- liftBuilderImp $
-                    liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
-        storeAtom refDest result
-        returnVal UnitVal
-      MPut x -> storeAtom refDest x >> returnVal UnitVal
-      MGet -> do
-        resultTy <- resultTyM
-        dest <- maybeAllocDest maybeDest resultTy
-        -- It might be more efficient to implement a specialized copy for dests
-        -- than to go through a general purpose atom.
-        storeAtom dest =<< loadAtom refDest
-        loadAtom dest
-    where
-      liftMonoidCombine :: Emits n => SIType n -> SIAtom n -> SIAtom n -> SIAtom n -> SBuilderM n (SIAtom n)
-      liftMonoidCombine accTy bc x y = do
-        Pi baseCombineTy <- getType bc
-        let baseTy = argType baseCombineTy
-        alphaEq accTy baseTy >>= \case
-          -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
-          True -> do
-            Lam (BinaryLamExpr xb yb body) <- return bc
-            body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
-            emitBlock body'
-          False -> case accTy of
-            TabTy (b:>ixTy) eltTy -> do
-              buildFor noHint Fwd ixTy \i -> do
-                xElt <- tabApp (sink x) (Var i)
-                yElt <- tabApp (sink y) (Var i)
-                eltTy' <- applySubst (b@>i) eltTy
-                liftMonoidCombine eltTy' (sink bc) xElt yElt
-            _ -> error $ "Base monoid type mismatch: can't lift " ++
-                   pprint baseTy ++ " to " ++ pprint accTy
   IndexRef refDestAtom i -> do
     refDest <- atomToDest refDestAtom
     returnVal =<< (destToAtom <$> indexDest refDest i)
@@ -529,9 +526,9 @@ toImpOp maybeDest op = case op of
 
 toImpFor
   :: Emits o => Maybe (Dest o) -> SIType o -> Direction
-  -> IxDict SimpToImpIR i -> SIAtom i
+  -> IxDict SimpToImpIR i -> LamExpr SimpToImpIR i
   -> SubstImpM i o (SIAtom o)
-toImpFor maybeDest resultTy d ixDict (Lam (LamExpr b body)) = do
+toImpFor maybeDest resultTy d ixDict (UnaryLamExpr b body) = do
   ixTy <- ixTyFromDict =<< substM ixDict
   n <- indexSetSizeImp ixTy
   dest <- maybeAllocDest maybeDest resultTy
@@ -543,24 +540,24 @@ toImpFor maybeDest resultTy d ixDict (Lam (LamExpr b body)) = do
   loadAtom dest
 toImpFor _ _ _ _ _ = error "expected a lambda as the atom argument"
 
-toImpHof :: Emits o => Maybe (Dest o) -> PrimHof (SIAtom i) -> SubstImpM i o (SIAtom o)
+toImpHof :: Emits o => Maybe (Dest o) -> Hof SimpToImpIR i -> SubstImpM i o (SIAtom o)
 toImpHof maybeDest hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
     For d ixDict lam -> toImpFor maybeDest resultTy d ixDict lam
-    While (Lam (LamExpr b body)) -> do
-      body' <- buildBlockImp $ extendSubst (b@>SubstVal UnitVal) do
+    While body -> do
+      body' <- buildBlockImp do
         ans <- fromScalarAtom =<< translateBlock Nothing body
         return [ans]
       emitStatement $ IWhile body'
       return UnitVal
-    RunReader r (Lam (BinaryLamExpr h ref body)) -> do
+    RunReader r (BinaryLamExpr h ref body) -> do
       r' <- substM r
       rDest <- allocDest =<< getType r'
       storeAtom rDest r'
       extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom rDest)) $
         translateBlock maybeDest body
-    RunWriter d (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
+    RunWriter d (BaseMonoid e _) (BinaryLamExpr h ref body) -> do
       let PairTy ansTy accTy = resultTy
       (aDest, wDest) <- case d of
         Nothing -> destPairUnpack <$> maybeAllocDest maybeDest resultTy
@@ -576,7 +573,7 @@ toImpHof maybeDest hof = do
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom wDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom wDest
-    RunState d s (Lam (BinaryLamExpr h ref body)) -> do
+    RunState d s (BinaryLamExpr h ref body) -> do
       let PairTy ansTy _ = resultTy
       (aDest, sDest) <- case d of
         Nothing -> destPairUnpack <$> maybeAllocDest maybeDest resultTy
@@ -588,13 +585,9 @@ toImpHof maybeDest hof = do
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom sDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom sDest
-    RunIO (Lam (LamExpr b body)) ->
-      extendSubst (b@>SubstVal UnitVal) $
-        translateBlock maybeDest body
-    RunInit (Lam (LamExpr b body)) ->
-      extendSubst (b@>SubstVal UnitVal) $
-        translateBlock maybeDest body
-    Seq d ixDict carry (Lam (LamExpr b body)) -> do
+    RunIO body-> translateBlock maybeDest body
+    RunInit body -> translateBlock maybeDest body
+    Seq d ixDict carry (UnaryLamExpr b body) -> do
       ixTy <- ixTyFromDict =<< substM ixDict
       carry' <- substM carry
       n <- indexSetSizeImp ixTy
@@ -605,7 +598,7 @@ toImpHof maybeDest hof = do
       case maybeDest of
         Nothing -> return carry'
         Just _  -> error "Unexpected dest"
-    RememberDest d (Lam (LamExpr b body)) -> do
+    RememberDest d (UnaryLamExpr b body) -> do
       d' <- substM d
       void $ extendSubst (b @> SubstVal d') $ translateBlock Nothing body
       return d'
@@ -911,8 +904,8 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
   go atom = case atom of
     TabLam (TabLamExpr (b:>ixTy) body) -> do
       ty <- getType atom
-      let lamExpr = LamExpr (LamBinder b (ixTypeType ixTy) PlainArrow Pure) body
-      RepValAtom dRepVal <- dropSubst $ toImpFor Nothing ty Fwd (ixTypeDict ixTy) (Lam lamExpr)
+      let lamExpr = UnaryLamExpr (b:>ixTypeType ixTy) body
+      RepValAtom dRepVal <- dropSubst $ toImpFor Nothing ty Fwd (ixTypeDict ixTy) lamExpr
       (RepVal _ tree) <- forceDRepVal dRepVal
       return tree
     RepValAtom dRepVal -> do
@@ -1256,9 +1249,9 @@ withFreshIBinder hint ty cont = do
 emitCall
   :: Emits n => MaybeDest n -> NaryPiType SimpToImpIR n
   -> ImpFunName n -> [SIAtom n] -> SubstImpM i n (SIAtom n)
-emitCall maybeDest piTy f xs = do
-  resultTy <- applyNaryAbs (unpackNaryPiType piTy) (map SubstVal xs)
-  dest <- maybeAllocDest maybeDest resultTy
+emitCall maybeDest (NaryPiType bs _ resultTy) f xs = do
+  resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
+  dest <- maybeAllocDest maybeDest resultTy'
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x
   destImp <- repValToList <$> atomToRepVal (destToAtom dest)
   let impArgs = concat argsImp ++ destImp
@@ -1471,9 +1464,9 @@ indexSetSizeImp (IxType _ dict) = do
     _ -> error $ "Not a simplified dict: " ++ pprint dict
   fromScalarAtom $ unwrapBaseNewtype ans
 
-appSpecializedIxMethod :: Emits n => NaryLamExpr SimpIR n -> [SIAtom n] -> SubstImpM i n (SIAtom n)
+appSpecializedIxMethod :: Emits n => LamExpr SimpIR n -> [SIAtom n] -> SubstImpM i n (SIAtom n)
 appSpecializedIxMethod simpLam args = do
-  NaryLamExpr bs _ body <- return $ injectIRE simpLam
+  LamExpr bs body <- return $ injectIRE simpLam
   dropSubst $ extendSubst (bs @@> map SubstVal args) $ translateBlock Nothing body
 
 -- === Abstracting link-time objects ===

@@ -51,11 +51,11 @@ prepareFunctionForExport cc f = do
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
                       => NaryPiType CoreIR n -> m n (ExportedSignature n)
-    naryPiToExportSig (NaryPiType (NonEmptyNest tb tbs) effs resultTy) = do
+    naryPiToExportSig (NaryPiType tbs effs resultTy) = do
         case effs of
           Pure -> return ()
           _    -> throw TypeErr "Only pure functions can be exported"
-        goArgs Empty [] (Nest tb tbs) resultTy
+        goArgs Empty [] tbs resultTy
       where
         goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
                => Nest ExportArg n l' -> [CAtomName l'] -> Nest (PiBinder CoreIR) l' l
