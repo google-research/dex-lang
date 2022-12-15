@@ -1015,7 +1015,8 @@ Monoids support <code>fold</code> operations, and similar.</li>
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} s <span class="symbol">=</span> snd <span class="symbol">$</span> run_state init action
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_io {a eff} (f<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span><span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
-  %runIO f
+  f&#39; <span class="symbol">:</span> (<span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span><span class="symbol">|</span>eff} a) <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> f ()
+  %runIO f&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unreachable {a} (()<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
   %throwError a
@@ -1573,7 +1574,7 @@ It's a kind of <code>scan</code>.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Automatic differentiation</h2>
 </div></div><div class="cell"><div class="prose-block"><h3>AD operations</h3>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: add vector space constraints
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> %linearize (<span class="symbol">\</span>x<span class="symbol">.</span> f x) x
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> (%linearize (<span class="symbol">\</span>x<span class="symbol">.</span> f x)) x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> jvp {a b} (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">--</span>o b <span class="symbol">=</span> snd (linearize f x)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose_linear {a b} (f<span class="command">:a</span> <span class="symbol">--</span>o b) <span class="symbol">:</span> b <span class="symbol">--</span>o a <span class="symbol">=</span>
   f&#39; <span class="symbol">:</span> a <span class="symbol">--</span>o b <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> f x
@@ -2655,7 +2656,8 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="prose-block"><h2>Exception effect</h2>
 <p>TODO: move <code>error</code> and <code>todo</code> to here.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> catch {a eff} (f<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">Except</span><span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Maybe</span> a <span class="symbol">=</span>
-  ans <span class="symbol">=</span> %catchException f
+  f&#39; <span class="symbol">:</span> (<span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">Except</span><span class="symbol">|</span>eff} a) <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> f ()
+  ans <span class="symbol">=</span> %catchException f&#39;
   <span class="keyword">case</span> %sumToVariant ans <span class="keyword">of</span>
     {<span class="symbol">|</span>c<span class="symbol">=</span>()   <span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
     {<span class="symbol">|</span>c<span class="symbol">|</span>c<span class="symbol">=</span>val<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">Just</span> val
