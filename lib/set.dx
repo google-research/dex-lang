@@ -79,37 +79,33 @@ def set_intersect {a}
   UnsafeAsSet _ intersection
 
 
-'## Index set for sets of strings
+'## Sets as a type, whose inhabitants can index arrays
 
--- Todo: Make polymorphic in type.  Waiting on a bugfix.
--- data SetIx a l:(Set a) [Ord a] =
+-- TODO Implicit arguments to data definitions
+-- (Probably `a` should be implicit)
+data Element a:Type [Ord a] set:(Set a) = UnsafeElement Nat
 
-data StringSetIx l:(Set String) =
-  MkSetIx Nat   -- TODO: Use (Fin (setSize l)) instead.
+-- TODO The set argument could be implicit (inferred from the Element
+-- type), but maybe it's easier to read if it's explicit.
+def member {a} (x:a) (set:(Set a)) : Maybe (Element a set) =
+  (UnsafeAsSet _ elts) = set
+  case search_sorted elts x of
+    Just n -> Just $ UnsafeElement $ ordinal n
+    Nothing -> Nothing
 
-instance Ix (StringSetIx set) given {set}
+def value {a} {set:(Set a)} (x:Element a set) : a =
+  (UnsafeAsSet _ elts) = set
+  UnsafeElement ix = x
+  elts.(unsafe_from_ordinal _ ix)
+
+instance Ix (Element a set) given {a} {set:(Set a)}
   size = set_size set
-  ordinal = \(MkSetIx i). i
-  unsafe_from_ordinal = \k. MkSetIx k
+  ordinal = \(UnsafeElement n). n
+  unsafe_from_ordinal = \n. UnsafeElement n
 
-instance Eq (StringSetIx set) given {set}
+instance Eq (Element a set) given {a} {set:(Set a)}
   (==) = \ix1 ix2. ordinal ix1 == ordinal ix2
 
--- Todo: Add an interface for converting to and from integer indices.
--- Compiler can't handle the associated type yet.
--- interface AssocIx n  -- index sets where indices have data associated with them
---   IxValueType : Type
---   ixValue  : n -> IxValueType n
---   lookupIx : IxValueType n -> n
-
-def string_to_set_ix {set:Set String} (s:String) : Maybe (StringSetIx set) =
-  (UnsafeAsSet n elements) = set
-  maybeIx = search_sorted elements s
-  case maybeIx of
-    Nothing -> Nothing
-    Just i -> Just $ MkSetIx (ordinal i)
-
-def set_ix_to_string {set:Set String} (ix:StringSetIx set) : String =
-  (UnsafeAsSet n elements) = set
-  elements.(unsafe_from_ordinal _ (ordinal ix))
-
+instance Ord (Element a set) given {a} {set:(Set a)}
+  (<) = \ix1 ix2. ordinal ix1 < ordinal ix2
+  (>) = \ix1 ix2. ordinal ix1 > ordinal ix2

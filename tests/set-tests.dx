@@ -52,27 +52,29 @@ emptyset = to_set ([]::(Fin 0)=>String)
 
 names2 = to_set ["Bob", "Alice", "Charlie", "Alice"]
 
-:p size (StringSetIx names2)
+Person = (Element String names2)
+
+:p size Person
 > 3
 
 -- Check that ordinal and unsafeFromOrdinal are inverses.
-roundTrip = for i:(StringSetIx names2).
+roundTrip = for i:Person.
   i == (unsafe_from_ordinal _ (ordinal i))
 :p all roundTrip
 > True
 
--- Check that index to string and string to index are inverses.
-roundTrip2 = for i:(StringSetIx names2).
-  s = set_ix_to_string i
-  ix = string_to_set_ix s
+-- Check that member and value are inverses.
+roundTrip2 = for i:Person.
+  s = value i
+  ix = member s names2
   i == from_just ix
 :p all roundTrip2
 > True
 
-setix : StringSetIx names2 = from_just $ string_to_set_ix "Bob"
+setix : Person = from_just $ member "Bob" names2
 :p setix
-> (MkSetIx 1)
+> (UnsafeElement 1)
 
-setix2 : StringSetIx names2 = from_just $ string_to_set_ix "Charlie"
+setix2 : Person = from_just $ member "Charlie" names2
 :p setix2
-> (MkSetIx 2)
+> (UnsafeElement 2)
