@@ -227,8 +227,8 @@ instance GenericTraverser SimpIR UnitB ULS where
                   NaryPiType (UnaryNest (PiBinder tb _ _)) _ valTy -> do
                     let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy
                     return $ Right $ Op $ TabCon tabTy vals
-                  _ -> error "Expected body to have a Pi type"
-              _ -> error "Expected for body to be a lambda expression"
+                  _ -> error "Expected `for` body to have a Pi type"
+              _ -> error "Expected `for` body to be a lambda expression"
             False -> do
               inc bodyCost
               ixDict' <- traverseGenericE ixDict

@@ -307,7 +307,9 @@ class HasType (r::IR) (e::E) | e -> r where
 instance HasType r (AtomName r) where
   getTypeE name = do
     substM (Var name) >>= \case
-      --- XXX: unsafe. fix!
+      --- XXX: unsafe. fix!  The issue is that we have no way to statically check that
+      --- a name occurring in SimpIR is not referring to a CoreIR binding, or anything
+      --- like that.
       Var name' -> (unsafeCoerceIRE . atomBindingType) <$> lookupAtomName name'
       atom -> getType atom
   {-# INLINE getTypeE #-}
@@ -892,12 +894,12 @@ singletonTypeVal ty = liftEnvReaderT $
 singletonTypeValRec :: Type r i
   -> SubstReaderT Name (EnvReaderT Maybe) i o (Atom r o)
 singletonTypeValRec ty = case ty of
-  -- TODO: put this back if we guard `Pi` with `IsCore` too
-  -- Pi p@(PiType b Pure body) -> do
-  --   p' <- substM p
-  --   substBinders b \(PiBinder b' ty' arr) -> do
-  --     body' <- singletonTypeValRec body
-  --     return $ Lam p' $ LamExpr (UnaryNest (b':>ty')) $ AtomicBlock body'
+   -- TODO: put this back if we guard `Pi` with `IsCore` too
+  Pi (PiType b Pure body) -> do
+    effs <- toConstAbs Pure
+    substBinders b \(PiBinder b' ty' arr) -> do
+      body' <- singletonTypeValRec body
+      return $ Lam (LamExpr (UnaryNest (b':>ty')) $ AtomicBlock body') arr effs
   TabPi (TabPiType b body) ->
     substBinders b \b' -> do
       body' <- singletonTypeValRec body

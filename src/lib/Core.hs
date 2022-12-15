@@ -603,7 +603,7 @@ a ==> b = TabPi <$> nonDepTabPiType a b
 --   present, in which case exactly maxDepth binders are packed into the nary
 --   structure.  Excess binders, if any, are still left in the unary structures.
 blockEffects :: Block r n -> EffectRow n
-blockEffects (Block blockAnn _ _) =case blockAnn of
+blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
   BlockAnn _ eff -> eff
 

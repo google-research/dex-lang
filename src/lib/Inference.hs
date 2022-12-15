@@ -431,7 +431,7 @@ zonkUnsolvedEnv ss unsolved env =
 
 -- TODO: we need this shim because top level emissions can't implement `SubstE
 -- AtomSubstVal` so GHC doesn't know how to zonk them. If we split up top-level
--- emissions from local ones in the name color system then we won' thave this
+-- emissions from local ones in the name color system then we won't have this
 -- problem.
 zonkAtomBindingWithOutMap
   :: Distinct n => InfOutMap n -> AtomBinding CoreIR n -> AtomBinding CoreIR n

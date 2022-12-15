@@ -121,6 +121,8 @@ injectIRE = unsafeCoerceIRE
 
 data Atom (r::IR) (n::S) where
  Var        :: AtomName r n    -> Atom r n
+ -- The binder in the `EffAbs n` is meant to be parallel to the binder in
+ -- the `LamExpr`, of which there must be only one (for now).
  Lam        :: IsCore r => LamExpr r n -> Arrow -> EffAbs n -> Atom r n
  Pi         :: IsCore r => PiType  r n               -> Atom r n
  TabLam     :: TabLamExpr r n  -> Atom r n
@@ -734,6 +736,10 @@ data SpecializationSpec (n::S) =
    AppSpecialization (AtomName CoreIR n) (Abs (Nest (Binder CoreIR)) (ListE CType) n)
    deriving (Show, Generic)
 
+-- It would be nice to let bindings be parametric in the IR, but
+-- there will be CoreIR top-level bindings.  We shouldn't refer
+-- to those from SimpIR, but we're not checking that invariant
+-- statically.
 atomBindingType :: AtomBinding CoreIR n -> Type CoreIR n
 atomBindingType b = case b of
   LetBound    (DeclBinding _ ty _) -> ty

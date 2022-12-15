@@ -232,6 +232,7 @@ instance CheckableE (Expr r) where
 instance HasType r (AtomName r) where
   getTypeE name = do
     name' <- substM name
+    -- See reason in QueryType.hs
     (unsafeCoerceIRE . atomBindingType) <$> lookupAtomName name'
   {-# INLINE getTypeE #-}
 

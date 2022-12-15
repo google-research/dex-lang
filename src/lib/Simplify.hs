@@ -139,6 +139,7 @@ data SimplifiedBlock n = SimplifiedBlock (SBlock n) (ReconstructAtom CoreIR n)
 -- accessible as nullary functions)
 simplifyTopBlock :: (TopBuilder m, Mut n) => CBlock n -> m n (SimplifiedBlock n)
 simplifyTopBlock block = liftSimplifyM $ buildSimplifiedBlock $ simplifyBlock block
+{-# SCC simplifyTopBlock #-}
 
 simplifyTopFunction :: (TopBuilder m, Mut n) => LamExpr CoreIR n -> m n (LamExpr SimpIR n)
 simplifyTopFunction f = liftSimplifyM do

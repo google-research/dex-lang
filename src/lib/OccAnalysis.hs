@@ -424,14 +424,6 @@ instance HasOCC (Hof SimpIR) where
     RememberDest _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
 
--- -- Occurrence analysis of the body of a one-shot unary lambda Atom.
--- oneShot2 :: Access n -> IxExpr n -> IxExpr n -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
--- oneShot2 acc binderSummary1 binderSummary2 (BinaryLamExpr b1 b2 body) = do
---   occWithBinder (Abs b1 (Abs b2 body)) \b1' (Abs b2' body') -> do
---     extend b1' (sink binderSummary1) do
---       UnaryLamExpr b2'' body'' <- oneShot (sink acc) (sink binderSummary2) (UnaryLamExpr b2' body')
---       return $ BinaryLamExpr b1' b2'' body''
-
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
 oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
