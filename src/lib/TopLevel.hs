@@ -608,7 +608,12 @@ evalBlock typed = do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
         (dceDestBlock >=> hoistLoopInvariantDest)
-      evalLLVM lopt
+      vopt <- whenOpt lopt \lo -> do
+        (vo, errs) <- vectorizeLoops 64 lo
+        l <- getFilteredLogger
+        logFiltered l VectPass $ return [TextOut $ pprint errs]
+        checkPass VectPass $ return vo
+      evalLLVM vopt
   applyRecon recon (injectIRE result)
 {-# SCC evalBlock #-}
 
@@ -817,6 +822,7 @@ checkPass name cont = do
   let allowedEffs = case name of
                       LowerPass    -> OneEffect InitEffect
                       LowerOptPass -> OneEffect InitEffect
+                      VectPass     -> OneEffect InitEffect
                       _            -> mempty
   {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
     withAllowedEffects allowedEffs $ checkTypesM result
