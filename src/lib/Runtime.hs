@@ -67,7 +67,7 @@ callNativeFun f bench logger args resultTypes = do
               unless (exitCode == 0) $ throw RuntimeErr ""
               freeLitVals resultPtr resultTypes
               sync
-            logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime))]
+            logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime + evalTime))]
         return results
 
 checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
@@ -93,15 +93,16 @@ runBench :: IO () -> IO (Double, Int, Double)
 runBench run = do
   exampleDuration <- snd <$> measureSeconds run
   test_mode <- (Just "t" ==) <$> E.lookupEnv "DEX_TEST_MODE"
-  let timeBudget = 2 -- seconds
+  let timeBudget = (2 - exampleDuration) `max` 0 -- seconds
   let benchRuns = if test_mode
-        then 1
+        then 0
         else (ceiling $ timeBudget / exampleDuration) :: Int
-  totalTime <- liftM snd $ measureSeconds $ do
+  totalTime' <- liftM snd $ measureSeconds $ do
     forM_ [1..benchRuns] $ const run
-  let avgTime = totalTime / (fromIntegral benchRuns)
+  let totalTime = totalTime' + exampleDuration
+      avgTime = totalTime / (fromIntegral $ benchRuns + 1)
 
-  return (avgTime, benchRuns, totalTime)
+  return (avgTime, benchRuns + 1, totalTime)
 
 -- === serializing scalars ===
 
