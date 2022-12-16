@@ -604,7 +604,9 @@ evalBlock typed = do
   SimplifiedBlock simp recon <- return simplifiedBlock
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
-  opt <- whenOpt inlined $ checkPass OptPass . optimize
+  analyzed2 <- whenOpt inlined $ checkPass OccAnalysisPass . analyzeOccurrences
+  inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
+  opt <- whenOpt inlined2 $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
