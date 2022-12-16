@@ -9,7 +9,7 @@ module Interpreter (indices, indicesLimit, applyIntBinOp, applyIntCmpOp, applyFl
 import Data.Word
 import Syntax
 
-indices :: EnvReader m => IxType r n -> m n [Atom r n]
+indices :: EnvReader m => IxType CoreIR n -> m n [Atom CoreIR n]
 indicesLimit :: EnvReader m => Int -> IxType r n -> m n (Either Word32 [Atom r n])
 
 applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n

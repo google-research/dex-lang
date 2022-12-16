@@ -14,7 +14,6 @@ import Prelude hiding (abs, id, (.))
 import Data.Word
 import Data.Functor
 import Data.Maybe (fromJust)
-import Data.Set qualified as S
 import Data.List.NonEmpty qualified as NE
 import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
 import Control.Category
@@ -91,35 +90,26 @@ instance HoistableState LFS where
 instance GenericTraverser SimpIR UnitB LFS where
   traverseExpr expr = case expr of
     Op (TabCon ty els) -> traverseTabCon Nothing ty els
-    Hof (For dir ixDict (Lam body)) -> traverseFor Nothing dir ixDict body
+    Hof (For dir ixDict body) -> traverseFor Nothing dir ixDict body
     Case _ _ _ _ -> do
       Case e alts ty _ <- traverseExprDefault expr
       eff' <- foldMapM getEffects alts
       return $ Case e alts ty eff'
     _ -> traverseExprDefault expr
-  traverseAtom atom = case atom of
-    Lam _ -> do
-      traverseAtomDefault atom >>= \case
-        Lam (LamExpr (LamBinder b ty arr _) body@(Block ann _ _)) -> do
-          let eff' = case ann of BlockAnn _ e -> e; NoBlockAnn -> Pure
-          return $ Lam $ LamExpr (LamBinder b ty arr eff') body
-        _ -> error "Expected a lambda"
-    _ -> traverseAtomDefault atom
+  traverseAtom atom = traverseAtomDefault atom
 
 type Dest = Atom
 
 traverseFor
   :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> SAtom i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
-traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = do
-  ansTy <- getTypeSubst $ Hof $ For dir ixDict $ Lam lam
+traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
+  ansTy <- getTypeSubst $ Hof $ For dir ixDict $ lam
   ixDict' <- substM ixDict
   ty' <- substM ty
-  eff' <- substM $ ignoreHoistFailure $ hoist ib eff
-  let eff'' = extendEffRow (S.singleton InitEffect) eff'
   case isSingletonType ansTy of
     True -> do
-      body' <- buildLam noHint arr (PairTy ty' UnitTy) eff'' \b' -> do
+      body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
         (i, _) <- fromPair $ Var b'
         extendSubst (ib @> SubstVal i) $ traverseBlock body $> UnitVal
       void $ emit $ Hof $ Seq dir ixDict' UnitVal body'
@@ -129,13 +119,14 @@ traverseFor maybeDest dir ixDict lam@(LamExpr (LamBinder ib ty arr eff) body) = 
         Just  d -> return d
         Nothing -> emitOp $ AllocDest ansTy
       destTy <- getType initDest
-      body' <- buildLam noHint arr (PairTy ty' destTy) eff'' \b' -> do
+      body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
         let dest = getProjection [ProjectProduct 0] destProd
         idest <- emitOp $ IndexRef dest i
         extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body $> UnitVal
       let seqHof = Hof $ Seq dir ixDict' initDest body'
       Op . Freeze . ProjectElt (ProjectProduct 0 NE.:| []) <$> emit seqHof
+traverseFor _ _ _ _ = error "expected a unary lambda expression"
 
 traverseTabCon :: Emits o => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
 traverseTabCon maybeDest tabTy elems = do
@@ -230,9 +221,9 @@ traverseDeclNestWithDestS destMap s = \case
 traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 traverseExprWithDest dest expr = case expr of
   Op (TabCon ty els) -> traverseTabCon tabDest ty els
-  Hof (For dir ixDict (Lam body)) -> traverseFor tabDest dir ixDict body
+  Hof (For dir ixDict body) -> traverseFor tabDest dir ixDict body
   Hof (RunWriter Nothing m body) -> traverseRWS Writer body \ref' body' -> do
-    m' <- traverse traverseGenericE m
+    m' <- traverseGenericE m
     return $ RunWriter ref' m' body'
   Hof (RunState Nothing s body) -> traverseRWS State body \ref' body' -> do
     s' <- traverseAtom s
@@ -251,9 +242,10 @@ traverseExprWithDest dest expr = case expr of
           return $ Atom ans
 
     traverseRWS
-      :: RWS -> SAtom i -> (Maybe (Dest SimpIR o) -> SAtom o
-      -> LowerM i o (Hof SimpIR o)) -> LowerM i o (SExpr o)
-    traverseRWS rws (Lam (BinaryLamExpr hb rb body)) mkHof = do
+      :: RWS -> LamExpr SimpIR i
+      -> (Maybe (Dest SimpIR o) -> LamExpr SimpIR o -> LowerM i o (Hof SimpIR o))
+      -> LowerM i o (SExpr o)
+    traverseRWS rws (LamExpr (BinaryNest hb rb) body) mkHof = do
       unpackRWSDest dest >>= \case
         Nothing -> generic
         Just (bodyDest, refDest) -> do
@@ -350,7 +342,7 @@ vectorizeLoopsRec frag nest =
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
-        Hof (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) (Lam body))
+        Hof (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) body)
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
               let vn = NatVal $ n `div` loopWidth
@@ -364,7 +356,7 @@ vectorizeLoopsRec frag nest =
                 modify (<> errs')
                 dest' <- applySubst frag dest
                 body' <- applySubst frag body
-                emit $ Hof $ Seq dir (DictCon $ IxFin $ NatVal n) dest' (Lam body')
+                emit $ Hof $ Seq dir (DictCon $ IxFin $ NatVal n) dest' body'
         _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 
@@ -376,9 +368,9 @@ atMostOneEffect eff scrutinee = case scrutinee of
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> SType o -> SubstFrag Name i i' o -> LamExpr SimpIR i'
-             -> TopVectorizeM o (SAtom o)
-vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
-  if atMostOneEffect InitEffect eff
+             -> TopVectorizeM o (LamExpr SimpIR o)
+vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
+  if atMostOneEffect InitEffect (blockEffects body)
     then do
       (oldIxTy, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
@@ -387,7 +379,7 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
           return (ixTy', ProdTy [newIxTy, ref'])
         _ -> error "Unexpected seq binder type"
       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
-        buildLam (getNameHint b) arr (sink ty') (OneEffect InitEffect) \ci -> do
+        buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
           (vi, dest) <- fromPair $ Var ci
           let viOrd = unwrapBaseNewtype $ unwrapBaseNewtype vi
           iOrd <- imul viOrd $ IdxRepVal loopWidth
@@ -403,6 +395,7 @@ vectorizeSeq loopWidth newIxTy frag (LamExpr (LamBinder b ty arr eff) body) = do
     iSubst v = case lookupSubstFragProjected frag v of
       Left v'  -> sink $ fromNameVAtom v'
       Right v' -> sink $ fromNameVAtom v'
+vectorizeSeq _ _ _ _ = error "expected a unary lambda expression"
 
 fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
 fromNameVAtom v = case eqColorRep @c @AtomNameC of
@@ -437,17 +430,25 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
     -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
     -- being picky about the IO-inducing ops it supports, and expect it to
     -- complain about FFI calls and the like.
-    Hof (RunIO (Lam (LamExpr (LamBinder b UnitTy PlainArrow _) body))) -> do
-      -- TODO: buildBlockAux?
-      (vy, lam') <- withFreshBinder (getNameHint b) UnitTy \b' -> do
-        Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
-          VVal vy y <- extendSubst (b @> VVal Uniform UnitVal) $ vectorizeBlock body
-          PairE (LiftE vy) <$> withType y
-        body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
-        effs' <- getEffects body'
-        return (vy, LamExpr (LamBinder b' UnitTy PlainArrow effs') body')
-      VVal vy . Var <$> emit (Hof (RunIO (Lam lam')))
+    Hof (RunIO body) -> do
+    -- TODO: buildBlockAux?
+      Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
+        VVal vy y <- vectorizeBlock body
+        PairE (LiftE vy) <$> withType y
+      body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
+      VVal vy . Var <$> emit (Hof (RunIO body'))
     _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
+    -- Hof (RunIO (Lam (LamExpr (LamBinder b UnitTy PlainArrow _) body))) -> do
+    --   -- TODO: buildBlockAux?
+    --   (vy, lam') <- withFreshBinder (getNameHint b) UnitTy \b' -> do
+    --     Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
+    --       VVal vy y <- extendSubst (b @> VVal Uniform UnitVal) $ vectorizeBlock body
+    --       PairE (LiftE vy) <$> withType y
+    --     body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
+    --     effs' <- getEffects body'
+    --     return (vy, LamExpr (LamBinder b' UnitTy PlainArrow effs') body')
+    --   VVal vy . Var <$> emit (Hof (RunIO (Lam lam')))
+    -- _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
 
 vectorizeOp :: Emits o => Op SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeOp op = do

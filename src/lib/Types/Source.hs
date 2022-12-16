@@ -101,6 +101,7 @@ data UExpr' (n::S) =
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
  | UPrimExpr (PrimExpr (UExpr n))
+ | UPrimApp PrimName [UExpr n]
  | ULabel String
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
@@ -256,6 +257,7 @@ data UPat' (n::S) (l::S) =
    UPatBinder (UBinder AtomNameC n l)
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
+ | UPatDepPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
  -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
  | UPatRecord (UFieldRowPat n l)
@@ -367,6 +369,7 @@ data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
 data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerOptPass | LowerPass
               | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass | VectPass | OccAnalysisPass
+              | InlinePass
                 deriving (Ord, Eq, Bounded, Enum, Generic)
 
 instance Show PassName where
@@ -379,13 +382,21 @@ instance Show PassName where
     LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
     LowerOptPass -> "lower-opt"; LowerPass -> "lower"
     EarlyOptPass -> "early-opt"; OptPass -> "opt"; OccAnalysisPass -> "occ-analysis"
-    VectPass -> "vect"
+    VectPass -> "vect"; InlinePass -> "inline"
 
 data EnvQuery =
    DumpSubst
  | InternalNameInfo RawName
  | SourceNameInfo   SourceName
    deriving (Show, Generic)
+
+-- === Primitive names ===
+
+data PrimName =
+    UMAsk | UMExtend | UMGet | UMPut
+  | UWhile | ULinearize | UTranspose
+  | URunReader | URunWriter | URunState | URunIO | UCatchException
+  deriving (Show, Enum)
 
 -- === instances ===
 

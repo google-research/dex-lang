@@ -42,7 +42,6 @@ data PrimExpr e =
         TCExpr  (PrimTC  e)
       | ConExpr (PrimCon e)
       | OpExpr  (PrimOp  e)
-      | HofExpr (PrimHof e)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimTC e =
@@ -69,10 +68,6 @@ data PrimCon e =
       | SumAsProd [e] e   [e]   -- type, tag, payload
       | LabelCon String
       | Newtype e e           -- type, payload
-      -- References
-      | BaseTypeRef e
-      | TabRef e
-      | ConRef (PrimCon e)
       -- Misc hacks
       | ExplicitDict e e  -- Dict type, method. Used in prelude for `run_accum`.
       -- Only used during type inference
@@ -96,7 +91,6 @@ data PrimOp e =
       | CastOp e e                   -- Type, then value. See CheckType.hs for valid coercions.
       | BitcastOp e e                -- Type, then value. See CheckType.hs for valid coercions.
       -- Effects
-      | PrimEffect e (PrimEffect e)
       | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | Resume e e                   -- Resume from effect handler (type, arg)
@@ -156,28 +150,6 @@ data PrimOp e =
 traversePrimOp :: Applicative f => (e -> f e') -> PrimOp e -> f (PrimOp e')
 traversePrimOp = inline traverse
 {-# INLINABLE traversePrimOp #-}
-
-data PrimHof e =
-        For ForAnn e e        -- ix dict, body lambda
-      | While e
-      | RunReader e e
-      | RunWriter (Maybe e) (BaseMonoidP e) e  -- dest, monoid, body lambda
-      | RunState  (Maybe e) e e  -- dest, initial value, body lambda
-      | RunIO e
-      | RunInit e
-      | CatchException e
-      | Linearize e
-      | Transpose e
-      -- Dex abstract machine ops
-      | Seq Direction e e e   -- ix dict, carry dests, body lambda
-      | RememberDest e e
-        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
-data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
-                     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
-data PrimEffect e = MAsk | MExtend (BaseMonoidP e) e | MGet | MPut e
-    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
            | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
@@ -261,33 +233,46 @@ instance Pretty Arrow where
     ImplicitArrow  -> "?->"
     ClassArrow     -> "?=>"
 
-data LetAnn = PlainLet
-            | NoInlineLet
-            | OccInfo UsageInfo
-              deriving (Show, Eq, Generic)
+data LetAnn =
+  -- Binding with no additional information
+    PlainLet
+  -- Binding explicitly tagged "do not inline"
+  | NoInlineLet
+  -- Bound expression is pure, and the binding's occurrences are summarized by
+  -- the UsageInfo
+  | OccInfoPure UsageInfo
+  -- Bound expression is impure, and the binding's occurrences are summarized by
+  -- the UsageInfo.  For now, the inliner does not distinguish different effects,
+  -- so no additional information on effects is needed.
+  | OccInfoImpure UsageInfo
+  deriving (Show, Eq, Generic)
 
 -- === Primitive scalar values and base types ===
 
 -- TODO: we could consider using some mmap-able instead of ByteString
 data PtrSnapshot = ByteArray BS.ByteString
-                 | PtrArray [PtrSnapshot]
-                 | NullPtr
+                 | PtrArray [PtrLitVal]
                    deriving (Show, Eq, Ord, Generic)
 
-data PtrLitVal = PtrLitVal   PtrType (Ptr ())
-               | PtrSnapshot PtrType PtrSnapshot
+data PtrLitVal = PtrLitVal (Ptr ())
+               | PtrSnapshot PtrSnapshot
+               | NullPtr
                  deriving (Show, Eq, Ord, Generic)
 
+type PtrStoreRep = Maybe PtrSnapshot
 instance Store PtrSnapshot where
 instance Store PtrLitVal where
   size = SI.VarSize \case
-    PtrSnapshot t p -> SI.getSize (t, p)
-    PtrLitVal _ _ -> error "can't serialize pointer literals"
+    PtrSnapshot p -> SI.getSize (Just p  :: PtrStoreRep)
+    NullPtr       -> SI.getSize (Nothing :: PtrStoreRep)
+    PtrLitVal p   -> error $ "can't serialize pointer literal: " ++ show p
   peek = do
-    (t, p) <- peek
-    return $ PtrSnapshot t p
-  poke (PtrSnapshot t p) = poke (t, p)
-  poke (PtrLitVal _ _) = error "can't serialize pointer literals"
+    peek >>= \case
+      Just p  -> return $ PtrSnapshot p
+      Nothing -> return $ NullPtr
+  poke (PtrSnapshot p) = poke (Just p  :: PtrStoreRep)
+  poke (NullPtr)       = poke (Nothing :: PtrStoreRep)
+  poke (PtrLitVal _)   = error "can't serialize pointer literals"
 
 data LitVal = Int64Lit   Int64
             | Int32Lit   Int32
@@ -300,7 +285,7 @@ data LitVal = Int64Lit   Int64
               -- serialized we only use it in a few places, like the interpreter
               -- and for passing values to LLVM's JIT. Otherwise, pointers
               -- should be referred to by name.
-            | PtrLit PtrLitVal
+            | PtrLit PtrType PtrLitVal
               deriving (Show, Eq, Ord, Generic)
 
 data ScalarBaseType = Int64Type | Int32Type
@@ -313,9 +298,11 @@ data BaseType = Scalar  ScalarBaseType
                 deriving (Show, Eq, Ord, Generic)
 
 data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
-data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
+type AddressSpace = Device
 type PtrType = (AddressSpace, BaseType)
 
+-- TODO: give this a different name, because it could easily get confused with
+-- Foreign.Storable.SizeOf which can have the same type!
 sizeOf :: BaseType -> Int
 sizeOf t = case t of
   Scalar Int64Type   -> 8
@@ -402,7 +389,6 @@ instance AlphaHashableE    (EffectRowP Name)
 
 instance Store Arrow
 instance Store LetAnn
-instance Store AddressSpace
 instance Store RWS
 instance Store Direction
 instance Store UnOp
@@ -419,11 +405,7 @@ instance Store (EffectP    Name n)
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
 instance Store a => Store (PrimTC  a)
-instance Store a => Store (PrimHof a)
-instance Store a => Store (PrimEffect a)
-instance Store a => Store (BaseMonoidP a)
 
-instance Hashable AddressSpace
 instance Hashable RWS
 instance Hashable Direction
 instance Hashable UnOp
@@ -441,6 +423,3 @@ instance Hashable Arrow
 instance Hashable a => Hashable (PrimOp  a)
 instance Hashable a => Hashable (PrimCon a)
 instance Hashable a => Hashable (PrimTC  a)
-instance Hashable a => Hashable (PrimHof a)
-instance Hashable a => Hashable (PrimEffect a)
-instance Hashable a => Hashable (BaseMonoidP a)

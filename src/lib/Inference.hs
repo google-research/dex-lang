@@ -25,7 +25,7 @@ import Data.Function ((&))
 import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate, partition)
 import Data.Maybe (fromJust)
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.Text.Prettyprint.Doc (Pretty (..), (<+>))
 import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
@@ -339,6 +339,14 @@ instance SubstE Name Defaults where
     where
       substDefaultSet d = freeVarsE $ substE env $ ListE $ nameSetToList @AtomNameC d
 
+instance Pretty (Defaults n) where
+  pretty (Defaults ints nats) =
+    attach "Names defaulting to Int32" (nameSetToList @AtomNameC ints)
+    <+> attach "Names defaulting to Nat32" (nameSetToList @AtomNameC nats)
+    where
+      attach _ [] = mempty
+      attach s l = s <+> pretty l
+
 zonkDefaults :: SolverSubst n -> Defaults n -> Defaults n
 zonkDefaults s (Defaults d1 d2) =
   Defaults (zonkDefaultSet d1) (zonkDefaultSet d2)
@@ -416,10 +424,26 @@ zonkUnsolvedEnv ss unsolved env =
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
       flip lookupEnvPure v <$> get >>= \case
         AtomNameBinding rhs -> do
-          let rhs' = zonkWithOutMap (InfOutMap env ss mempty mempty) rhs
+          let rhs' = zonkAtomBindingWithOutMap (InfOutMap env ss mempty mempty) rhs
           modify $ updateEnv v $ AtomNameBinding rhs'
           let rhsHasInfVars = runEnvReaderM env $ hasInferenceVars rhs'
           when rhsHasInfVars $ tell $ UnsolvedEnv $ S.singleton v
+
+-- TODO: we need this shim because top level emissions can't implement `SubstE
+-- AtomSubstVal` so GHC doesn't know how to zonk them. If we split up top-level
+-- emissions from local ones in the name color system then we won't have this
+-- problem.
+zonkAtomBindingWithOutMap
+  :: Distinct n => InfOutMap n -> AtomBinding CoreIR n -> AtomBinding CoreIR n
+zonkAtomBindingWithOutMap outMap = \case
+ LetBound    e -> LetBound    $ zonkWithOutMap outMap e
+ LamBound    e -> LamBound    $ zonkWithOutMap outMap e
+ PiBound     e -> PiBound     $ zonkWithOutMap outMap e
+ IxBound     e -> IxBound     $ zonkWithOutMap outMap e
+ MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
+ SolverBound e -> SolverBound $ zonkWithOutMap outMap e
+ TopFunBound t e -> TopFunBound t e
+ TopDataBound e  -> TopDataBound e
 
 -- TODO: Wouldn't it be faster to carry the set of inference-emitted names in the out map?
 hasInferenceVars :: (EnvReader m, HoistableE e) => e n -> m n Bool
@@ -567,8 +591,16 @@ instance InfBuilder (InfererM i) where
           toPairE <$> runStateT1 (
             runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
         refreshAbs ab \infFrag resultWithState -> do
-          PairB infFrag' b' <- liftHoistExcept $ exchangeBs $ PairB b infFrag
-          return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
+          case exchangeBs $ PairB b infFrag of
+            HoistSuccess (PairB infFrag' b') ->
+              return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
+            HoistFailure vs -> do
+              InfOutFrag emissions defaults solverSubst <- return infFrag
+              throw EscapedNameErr $ (pprint vs)
+                ++ "\nFailed to exchage binders in buildAbsInf"
+                ++ "\nPending emissions:" ++ pprint (unRNest emissions)
+                ++ "\nDefaults:" ++ pprint defaults
+                ++ "\nSolver substitution: " ++ pprint solverSubst
       Abs b (PairE result s') <- extendInplaceT ab
       return (Abs (b:>binding) result, hoistRequiredIfaces b s')
 
@@ -731,7 +763,8 @@ hoistInfStateRec
   -> Except (HoistedSolverState e n)
 hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissions of
  REmpty -> do
-  subst' <- liftHoistExcept $ hoistSolverSubst subst
+  subst' <- liftHoistExcept' "Failed to hoist solver substitution in hoistInfStateRec"
+    $ hoistSolverSubst subst
   let decls' = withSubscopeDistinct decls $
                  resolveDelayedSolve (scope `extendOutMap` toScopeFrag infVars) subst' decls
   return $ HoistedSolverState (dropInferenceNameBindersFV infVars) defaults subst' decls' e
@@ -749,7 +782,9 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
                              defaults subst decls e
           -- If a variable is solved, we eliminate it.
           Just bSolutionUnhoisted -> do
-            bSolution <- liftHoistExcept $ hoist frag bSolutionUnhoisted
+            bSolution <-
+              liftHoistExcept' "Failed to eliminate solved variable in hoistInfStateRec"
+              $ hoist frag bSolutionUnhoisted
             case exchangeBs $ PairB b infVars of
               -- This used to be accepted by the code at some point (and handled the same way
               -- as the Nothing) branch above, but I don't understand why. We don't even seem
@@ -812,10 +847,12 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
 #endif
       LeftE emission -> do
         -- Move the binder below all unsolved inference vars. Failure to do so is
-        -- an inference error --- a variable cannot be solved once we exist the scope
+        -- an inference error --- a variable cannot be solved once we exit the scope
         -- of all variables it mentions in its type.
         -- TODO: Shouldn't this be an ambiguous type error?
-        PairB infVars' (b':>emission') <- liftHoistExcept $ exchangeBs (PairB (b:>emission) infVars)
+        PairB infVars' (b':>emission') <-
+          liftHoistExcept' "Failed to move binder below unsovled inference vars"
+            $ exchangeBs (PairB (b:>emission) infVars)
         -- Now, those are real leakage errors. We never want to leak this var through a solution!
         -- But since we delay hoisting, they will only be raised later.
         let subst' = delayedHoistSolverSubst b' subst
@@ -943,7 +980,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
       Infer   -> inferULam Pure lamExpr
   UTabLam (UTabLamExpr b body) -> do
     let uLamExpr = ULamExpr PlainArrow b body
-    Lam (LamExpr (LamBinder b' ty' _ _) body') <- case reqTy of
+    Lam (UnaryLamExpr (b':>ty') body') _ _ <- case reqTy of
       Check (TabPi tabPiTy) -> do
         lamPiTy <- buildForTypeFromTabType Pure tabPiTy
         checkULam uLamExpr lamPiTy
@@ -954,7 +991,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
-    lam@(Lam (LamExpr b' _)) <- case reqTy of
+    Lam lam@(UnaryLamExpr b' _) _ _ <- case reqTy of
       Check (TabPi tabPiTy) -> do
         lamPiTy <- buildForTypeFromTabType allowedEff tabPiTy
         checkULam uLamExpr lamPiTy
@@ -1074,18 +1111,21 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
     x' <- inferRho hint x >>= emitAtomToName hint
     return $ unwrapBaseNewtype $ Var x'
   UPrimExpr prim -> do
-    prim' <- forM prim \x -> do
-      xBlock <- buildBlockInf $ inferRho noHint x
-      getType xBlock >>= \case
-        TyKind -> cheapReduce xBlock >>= \case
-          (Just reduced, DictTypeHoistSuccess, []) -> return reduced
-          _ -> throw CompilerErr "Type args to primops must be reducible"
-        _ -> emitBlock xBlock
+    prim' <- mapM inferPrimArg prim
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
       OpExpr  e -> Var <$> emitHinted hint (Op e)
-      HofExpr e -> Var <$> emitHinted hint (Hof e)
+    matchRequirement val
+  UPrimApp prim xs -> do
+    xs' <- forM xs \x -> do
+      inferPrimArg x >>= \case
+        Var v -> lookupAtomName v >>= \case
+          LetBound (DeclBinding _ _ (Atom e)) -> return e
+          _ -> return $ Var v
+        x' -> return x'
+    expr' <- matchPrimApp prim xs'
+    val <- Var <$> emit expr'
     matchRequirement val
   ULabel name -> matchRequirement $ Con $ LabelCon name
   URecord elems ->
@@ -1199,6 +1239,52 @@ inferFieldRowElem = \case
     Var v'         -> return [DynFields v']
     _              -> error "Unexpected Fields atom"
 
+inferPrimArg :: EmitsBoth o => UExpr i -> InfererM i o (CAtom o)
+inferPrimArg x = do
+  xBlock <- buildBlockInf $ inferRho noHint x
+  getType xBlock >>= \case
+    TyKind -> cheapReduce xBlock >>= \case
+      (Just reduced, DictTypeHoistSuccess, []) -> return reduced
+      _ -> throw CompilerErr "Type args to primops must be reducible"
+    _ -> emitBlock xBlock
+
+matchPrimApp :: Fallible m => PrimName -> [CAtom o] -> m (CExpr o)
+matchPrimApp p xs = case (p, xs) of
+  (UMAsk    , [ref])    -> return $ PrimEffect ref MAsk
+  (UMGet    , [ref])    -> return $ PrimEffect ref MGet
+  (UMPut    , [ref, x]) -> return $ PrimEffect ref (MPut x)
+  (ULinearize , [f])   -> do f' <- matchUnaryLamArg  f; return $ Hof $ Linearize f'
+  (UTranspose , [f])   -> do f' <- matchUnaryLamArg  f; return $ Hof $ Transpose f'
+  (URunReader, [x, f]) -> do f' <- matchBinaryLamArg f; return $ Hof $ RunReader x f'
+  (URunState , [x, f]) -> do f' <- matchBinaryLamArg f; return $ Hof $ RunState  Nothing x f'
+  (UWhile         , [f]) -> do f' <- matchNullaryLamArg f; return $ Hof $ While f'
+  (URunIO         , [f]) -> do f' <- matchNullaryLamArg f; return $ Hof $ RunIO f'
+  (UCatchException, [f]) -> do f' <- matchNullaryLamArg f; return $ Hof $ CatchException f'
+  (UMExtend , [ref, z, f, x]) -> do
+    f' <- matchBinaryLamArg f
+    return $ PrimEffect ref $ MExtend (BaseMonoid z f') x
+  (URunWriter, [idVal, combiner, f]) -> do
+    combiner' <- matchBinaryLamArg combiner
+    f' <- matchBinaryLamArg f
+    return $ Hof $ RunWriter Nothing (BaseMonoid idVal combiner') f'
+  _ -> throw TypeErr $ "Bad primitive application: " ++ show (p, xs)
+  where
+    matchBinaryLamArg :: Fallible m => Atom r n -> m (LamExpr r n)
+    matchBinaryLamArg x = do
+      Lam (UnaryLamExpr b1 (AtomicBlock (Lam (UnaryLamExpr b2 body) _ _))) _ _ <- return x
+      return $ BinaryLamExpr b1 b2 body
+
+    matchUnaryLamArg :: Fallible m => Atom r n -> m (LamExpr r n)
+    matchUnaryLamArg x = do
+      Lam (UnaryLamExpr b body) _ _ <- return x
+      return $ UnaryLamExpr b body
+
+    matchNullaryLamArg :: Fallible m => Atom r n -> m (Block r n)
+    matchNullaryLamArg x = do
+      Lam (UnaryLamExpr b body) _ _ <- return x
+      HoistSuccess body' <- return $ hoist b body
+      return body'
+
 -- === n-ary applications ===
 
 -- The reason to infer n-ary applications rather than just handling nested
@@ -1277,12 +1363,13 @@ inferNaryApp fCtx f args = addSrcContext fCtx do
 inferNaryAppArgs
   :: EmitsBoth o
   => NaryPiType CoreIR o -> NonEmpty (UExprArg i) -> InfererM i o (NonEmpty (CAtom o), [UExprArg i])
-inferNaryAppArgs (NaryPiType (NonEmptyNest b Empty) effs resultTy) uArgs = do
+inferNaryAppArgs (NaryPiType Empty _ _) _ = error "shouldn't have nullary function"
+inferNaryAppArgs (NaryPiType (Nest b Empty) effs resultTy) uArgs = do
   let isDependent = binderName b `isFreeIn` PairE effs resultTy
   (x, remaining) <- inferAppArg isDependent b uArgs
   return (x:|[], remaining)
-inferNaryAppArgs (NaryPiType (NonEmptyNest b1 (Nest b2 rest)) effs resultTy) uArgs = do
-  let restNaryPi = NaryPiType (NonEmptyNest b2 rest) effs resultTy
+inferNaryAppArgs (NaryPiType (Nest b1 (Nest b2 rest)) effs resultTy) uArgs = do
+  let restNaryPi = NaryPiType (Nest b2 rest) effs resultTy
   let isDependent = binderName b1 `isFreeIn` restNaryPi
   (x, uArgs') <- inferAppArg isDependent b1 uArgs
   x' <- zonk x
@@ -1481,9 +1568,9 @@ dictTypeFun v = do
     go :: SourceName -> Nest (RolePiBinder CoreIR) n l -> ClassName l -> [CAtomName l] -> CAtom n
     go classSourceName bs className params = case bs of
       Empty -> DictTy $ DictType classSourceName className $ map Var params
-      Nest (RolePiBinder b ty _ _) rest ->
-        Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
-          AtomicBlock $ go classSourceName rest className params
+      Nest (RolePiBinder b ty _ _) rest -> do
+        let lamExpr = UnaryLamExpr (b:>ty) $ AtomicBlock $ go classSourceName rest className params
+        lamExprToAtom lamExpr PlainArrow (Just $ toConstAbsPure Pure)
 
 -- TODO: cache this with the instance def (requires a recursive binding)
 instanceFun :: EnvReader m => InstanceName n -> m n (CAtom n)
@@ -1499,7 +1586,8 @@ instanceFun instanceName = do
       Empty -> DictCon $ InstanceDict name args
       Nest (RolePiBinder b ty arr _) rest -> do
         let restAtom = go rest name args
-        Lam $ LamExpr (LamBinder b ty arr Pure) (AtomicBlock restAtom)
+        let lamExpr = UnaryLamExpr (b:>ty) (AtomicBlock restAtom)
+        lamExprToAtom lamExpr arr (Just $ toConstAbsPure Pure)
 
 buildTyConLam
   :: ScopableBuilder CoreIR m
@@ -1592,7 +1680,7 @@ inferRole ty arr = case arr of
 inferDataDef
   :: EmitsInf o => UDataDef i
   -> InfererM i o (PairE DataDef
-                         (Abs (Nest (RolePiBinder CoreIR)) (ListE (EmptyAbs (Nest (Binder CoreIR))))) o)
+      (Abs (Nest (RolePiBinder CoreIR)) (ListE (EmptyAbs (Nest (Binder CoreIR))))) o)
 inferDataDef (UDataDef tyConName paramBs dataCons) = do
   Abs paramBs' (ListE dataConsWithBs') <-
     withNestedUBindersTyCon paramBs \_ -> do
@@ -2032,6 +2120,16 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
       bindLamPat p2 x2 do
         cont
+  UPatDepPair (PairB p1 p2) -> do
+    let x = Var v
+    ty <- getType x
+    _  <- fromDepPairType ty
+    x' <- zonk x  -- ensure it has a dependent pair type before unpacking
+    x1 <- getFst x' >>= zonk >>= emitAtomToName noHint
+    bindLamPat p1 x1 do
+      x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
+      bindLamPat p2 x2 do
+        cont
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< substM conName
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
@@ -2291,6 +2389,10 @@ fromPairType ty = do
   b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
+
+fromDepPairType :: EmitsBoth o => CType o -> InfererM i o (DepPairType CoreIR o)
+fromDepPairType (DepPairTy t) = return t
+fromDepPairType ty = throw TypeErr $ "Expected a dependent pair, but got: " ++ pprint ty
 
 addEffects :: EmitsBoth o => EffectRow o -> InfererM i o ()
 addEffects eff = do
@@ -2944,7 +3046,8 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
         ClassArrow -> return [Var v]
         _ -> return []
       synthExpr <- extendGivens newGivens $ synthTerm resultTy'
-      return $ Lam $ LamExpr (LamBinder b' argTy arr Pure) (AtomicBlock synthExpr)
+      let lamExpr = UnaryLamExpr (b':>argTy) (AtomicBlock synthExpr)
+      return $ lamExprToAtom lamExpr arr Nothing
   SynthDictType dictTy -> case dictTy of
     DictType "Ix" _ [TC (Fin n)] -> return $ DictCon $ IxFin n
     _ -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
@@ -3046,7 +3149,7 @@ instance HoistableState DictSynthTraverserS where
 
 instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
   traverseAtom a@(Con (DictHole (AlwaysEqual ctx) ty)) = do
-    ty' <- cheapNormalize =<< substM ty
+    ty' <- cheapNormalize =<< traverseAtom ty
     ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'
     case ans of
       Failure errs -> put (DictSynthTraverserS errs) >> substM a
@@ -3077,12 +3180,12 @@ buildLamInf
   -> (forall l. (EmitsBoth l, Ext n l) => CAtomName l -> InfererM i l (CAtom l))
   -> InfererM i n (CAtom n)
 buildLamInf hint arr ty fEff fBody = do
-  Abs (b:>_) (PairE effs body) <-
+  Abs (b:>_) (body `PairE` effs) <-
     buildAbsInf hint (LamBinding arr ty) \v -> do
       effs <- fEff v
       body <- withAllowedEffects effs $ buildBlockInf $ sinkM v >>= fBody
-      return $ PairE effs body
-  return $ Lam $ LamExpr (LamBinder b ty arr effs) body
+      return $ body `PairE` effs
+  return $ lamExprToAtom (UnaryLamExpr (b:>ty) body) arr (Just $ Abs b effs)
 
 buildPiAbsInf
   :: (EmitsInf n, SinkableE e, SubstE Name e, HoistableE e)

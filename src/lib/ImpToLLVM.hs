@@ -58,7 +58,8 @@ import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTr
 -- === Compile monad ===
 
 data OperandSubstVal (c::C) (n::S) where
-  OperandSubstVal  :: L.Operand -> OperandSubstVal AtomNameC n
+  OperandSubstVal  :: L.Operand -> OperandSubstVal ImpNameC n
+  PtrSubstVal      :: L.Operand -> OperandSubstVal PtrNameC n
   FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal ImpFunNameC   n
   RenameOperandSubstVal :: Name c n -> OperandSubstVal c n -- only used for top-level FFI names
 
@@ -159,21 +160,21 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
         return (defn, sv)
       return (defns, cnames, substVals)
 
-    makePtrDefns :: EnvReader m => Nest IBinder any1 any2
-                 -> m n ([L.Definition], [CName], [OperandSubstVal AtomNameC n])
+    makePtrDefns :: EnvReader m => Nest PtrBinder any1 any2
+                 -> m n ([L.Definition], [CName], [OperandSubstVal PtrNameC n])
     makePtrDefns bs = do
       let cnames = makeNames "dex_const_ptr_" $ nestToList getNameHint bs
-      let tys = nestToList (\(IBinder _ ty) -> ty) bs
-      (defns, substVals) <- unzip <$> forM (zip cnames tys) \(v, ptrTy@(PtrType (_, ty))) -> do
+      let tys = nestToList (\(PtrBinder _ t) -> t) bs
+      (defns, substVals) <- unzip <$> forM (zip cnames tys) \(v, ptrTy@(_, ty)) -> do
         let v' = L.Name $ fromString v
         let ty'    = scalarTy ty
-        let ptrTy' = scalarTy ptrTy
+        let ptrTy' = scalarTy $ PtrType ptrTy
         let defn = L.GlobalDefinition $ L.globalVariableDefaults
                       { L.name = v'
                       , L.type' = ty'
                       , L.linkage = L.External
                       , L.initializer = Nothing }
-        let sv = OperandSubstVal $ L.ConstantOperand $ globalReference ptrTy' v'
+        let sv = PtrSubstVal $ L.ConstantOperand $ globalReference ptrTy' v'
         return (defn, sv)
       return (defns, cnames, substVals)
 
@@ -186,24 +187,11 @@ compileFunction _ _ _ (FFIFunction ty f) =
   return ([], S.singleton (makeFunSpec f ty), [])
 compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
                 (Abs bs body)) = case cc of
-  FFIFun            -> error "shouldn't be trying to compile an FFI function"
-  FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
-  CInternalFun -> liftCompile CPU env $ do
-    (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
-    unless (null retTys) $ error "CInternalFun doesn't support returning values"
-    void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
-    extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs, [])
-  CEntryFun -> liftCompile CPU env $ do
-    (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
-    unless (null retTys) $ error "CEntryFun doesn't support returning values"
-    initializeOutputStream $ L.ConstantOperand $ C.Int 32 1  -- print to stdout
-    void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
-    extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs, [])
-  EntryFun requiresCUDA -> liftCompile CPU env $ do
+  FFICC            -> error "shouldn't be trying to compile an FFI function"
+  FFIMultiResultCC -> error "shouldn't be trying to compile an FFI function"
+  StandardCC -> goStandardOrXLACC
+  XLACC      -> goStandardOrXLACC
+  EntryFunCC requiresCUDA -> liftCompile CPU env $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -297,8 +285,14 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     kernel <- makeFunction fName [threadIdParam, nThreadParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition kernel], extraSpecs, [])
-    where
-      idxRepTy = scalarTy $ IIdxRepTy
+  where
+    goStandardOrXLACC = liftCompile CPU env $ do
+      (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
+      unless (null retTys) $ error "StandardCC doesn't support returning values"
+      void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
+      mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
+      extraSpecs <- gets funSpecs
+      return ([L.GlobalDefinition mainFun], extraSpecs, [])
 
 compileInstr :: Compiler m => ImpInstr i -> m i o [Operand]
 compileInstr instr = case instr of
@@ -362,39 +356,47 @@ compileInstr instr = case instr of
       --       For now we generate an invalid memory access, hoping that the
       --       runtime will catch it.
       GPU -> [] <$ load i8 (L.ConstantOperand $ C.Null $ devicePtrTy i8)
-  Alloc a t s -> (:[]) <$> case a of
-    Stack -> alloca (getIntLit l) elemTy  where ILit l = s
-    Heap dev -> do
-      numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
-      case dev of
-        CPU -> case t of
-          -- XXX: it's important to initialize pointers to zero so that we don't
-          --      try to dereference them when we serialize.
-          PtrType _ -> malloc True  elemTy numBytes
-          _         -> malloc False elemTy numBytes
-        -- TODO: initialize GPU pointers too, once we handle serialization
-        GPU -> cuMemAlloc elemTy numBytes
+  Alloc dev t s -> (:[]) <$> do
+    numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
+    case dev of
+      CPU -> malloc elemTy numBytes
+      GPU -> cuMemAlloc elemTy numBytes
     where elemTy = scalarTy t
+  StackAlloc t s -> do
+      p <- alloca (getIntLit l) elemTy
+      return [p]
+    where ILit l = s
+          elemTy = scalarTy t
   Free ptr -> [] <$ do
     let PtrType (addr, _) = getIType ptr
     ptr' <- compileExpr ptr
     case addr of
-      Heap CPU -> free      ptr'
-      Heap GPU -> cuMemFree ptr'
-      Stack -> error "Shouldn't be freeing alloca"
+      CPU -> free      ptr'
+      GPU -> cuMemFree ptr'
   MemCopy dest src numel -> [] <$ do
-    let PtrType (destAddr, ty) = getIType dest
-    let PtrType (srcAddr , _ ) = getIType src
-    destDev <- deviceFromAddr destAddr
-    srcDev  <- deviceFromAddr srcAddr
+    let PtrType (destDev, ty) = getIType dest
+    let PtrType (srcDev , _ ) = getIType src
     dest' <- compileExpr dest >>= castVoidPtr
     src'  <- compileExpr src  >>= castVoidPtr
     numel' <- compileExpr numel >>= (`asIntWidth` i64)
-    numBytes <- numel' `mul` sizeof (scalarTy ty)
+    numBytes <- sizeof (scalarTy ty) `mul` numel'
     case (destDev, srcDev) of
       (CPU, GPU) -> cuMemcpyDToH numBytes src'  dest'
       (GPU, CPU) -> cuMemcpyHToD numBytes dest' src'
-      _ -> error $ "Not implemented"
+      (CPU, CPU) -> memcpy dest' src' numBytes
+      (GPU, GPU) -> error "not implemented"
+  InitializeZeros ptr numel -> [] <$ do
+    let PtrType (_, ty) = getIType ptr
+    ptr' <- compileExpr ptr >>= castVoidPtr
+    numel' <- compileExpr numel >>= (`asIntWidth` i64)
+    numBytes <- sizeof (scalarTy ty) `mul` numel'
+    initializeZeros ptr' numBytes
+  GetAllocSize ptr -> do
+    let PtrType (_, ty) = getIType ptr
+    ptr' <- compileExpr ptr
+    numBytes <- getAllocSize ptr'
+    numElem <- numBytes `sdiv` sizeof (scalarTy ty) >>= (`asIntWidth` idxRepTy)
+    return [numElem]
   Store dest val -> [] <$ do
     dest' <- compileExpr dest
     val'  <- compileExpr val
@@ -462,8 +464,7 @@ compileInstr instr = case instr of
     lookupSubstM f >>= \case
       FunctionSubstVal f' lTy (IFunType cc _ _) -> do
         case cc of
-          CEntryFun    -> return ()
-          CInternalFun -> return ()
+          StandardCC -> return ()
           _ -> error $ "Unsupported calling convention: " ++ show cc
         exitCode <- emitCallInstr lTy f' args' >>= (`asIntWidth` i1)
         compileIf exitCode throwRuntimeError (return ())
@@ -474,14 +475,17 @@ compileInstr instr = case instr of
           FFIFunction ty@(IFunType cc _ impResultTys) fname -> do
             let resultTys = map scalarTy impResultTys
             case cc of
-              FFIFun -> do
+              FFICC -> do
                 ans <- emitExternCall (makeFunSpec fname ty) args'
                 return [ans]
-              FFIMultiResultFun -> do
+              FFIMultiResultCC -> do
                 resultPtr <- makeMultiResultAlloc resultTys
                 emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
                 loadMultiResultAlloc resultTys resultPtr
               _ -> error $ "Unsupported calling convention: " ++ show cc
+  DebugPrint fmtStr x -> [] <$ do
+    x' <- compileExpr x
+    debugPrintf fmtStr x'
 
 -- TODO: use a careful naming discipline rather than strings
 -- (this is only used on the CUDA path which is currently broken anyway)
@@ -494,11 +498,11 @@ makeFunSpec name impFunTy =
   where (retTy, argTys) = impFunTyToLLVMTy impFunTy
 
 impFunTyToLLVMTy :: IFunType -> LLVMFunType
-impFunTyToLLVMTy (IFunType FFIFun argTys [resultTy]) =
+impFunTyToLLVMTy (IFunType FFICC argTys [resultTy]) =
   (scalarTy resultTy, map scalarTy argTys)
-impFunTyToLLVMTy (IFunType FFIMultiResultFun argTys _) =
+impFunTyToLLVMTy (IFunType FFIMultiResultCC argTys _) =
   (L.VoidType, hostPtrTy hostVoidp : map scalarTy argTys)
-impFunTyToLLVMTy (IFunType CInternalFun argTys _) =
+impFunTyToLLVMTy (IFunType StandardCC argTys _) =
   (i64, map scalarTy argTys)
 impFunTyToLLVMTy (IFunType _ _ _) = error "not implemented"
 
@@ -600,11 +604,6 @@ compileBinOp op x y = case op of
       GreaterEqual -> IP.SGE
       Equal        -> IP.EQ
 
-deviceFromAddr :: LLVMBuilder m => AddressSpace -> m Device
-deviceFromAddr addr = case addr of
-  Heap dev -> return dev
-  Stack -> gets curDevice
-
 -- === MDImp to LLVM CUDA ===
 
 ensureHasCUDAContext :: LLVMBuilder m => m ()
@@ -662,7 +661,6 @@ impKernelToLLVMGPU env (ImpFunction _ (Abs args body)) = do
     LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple
                      [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
-    idxRepTy = scalarTy $ IIdxRepTy
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     kernelMetaId = L.MetadataNodeID 0
     nvvmAnnotations = L.NamedMetadataDefinition "nvvm.annotations" [kernelMetaId]
@@ -688,7 +686,7 @@ ptxSpecialReg :: L.Name -> ExternFunSpec
 ptxSpecialReg name = ExternFunSpec name i32 [] attrs []
   where
 #if MIN_VERSION_llvm_hs(16,0,0)
-    attrs = [FA.NoUnwind]  -- TODO: Add memory(none) once llvm-hs supports it
+    attrs = [FA.Memory FA.readNone, FA.NoUnwind]
 #else
     attrs = [FA.ReadNone, FA.NoUnwind]
 #endif
@@ -747,8 +745,8 @@ _gpuDebugPrint i32Val = do
     vprintfSpec = ExternFunSpec "vprintf" i32 [] [] [genericPtrTy i8, genericPtrTy i8]
 
 -- Takes a single int64 payload. TODO: implement a varargs version
-_debugPrintf :: LLVMBuilder m => String -> Operand -> m ()
-_debugPrintf fmtStr x = do
+debugPrintf :: LLVMBuilder m => String -> Operand -> m ()
+debugPrintf fmtStr x = do
   let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) fmtStr ++ [0]
   let formatStrArr = L.ConstantOperand $ C.Array i8 chars
   formatStrPtr <- alloca (length chars) i8
@@ -759,7 +757,7 @@ _debugPrintf fmtStr x = do
 _debugPrintfPtr :: LLVMBuilder m => String -> Operand -> m ()
 _debugPrintfPtr s x = do
   x' <- emitInstr i64 $ L.PtrToInt x i64 []
-  _debugPrintf s x'
+  debugPrintf s x'
 
 compileBlock :: Compiler m => ImpBlock i -> m i o [Operand]
 compileBlock (ImpBlock Empty result) = traverse compileExpr result
@@ -780,7 +778,12 @@ compileVoidBlock = void . compileBlock
 compileExpr :: Compiler m => IExpr i -> m i o Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
-  IVar v _ -> lookupImpVar v
+  IPtrVar v _ -> lookupSubstM v <&> \case
+    PtrSubstVal x -> x
+    RenameOperandSubstVal _ -> error "Shouldn't have any ptr literals left"
+  IVar v _ -> lookupSubstM v <&> \case
+    OperandSubstVal x -> x
+    RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"
 
 packArgs :: LLVMBuilder m => [Operand] -> m Operand
 packArgs elems = do
@@ -830,11 +833,15 @@ litVal lit = case lit of
   Word64Lit x  -> i64Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
-  PtrLit _ -> error "Shouldn't be compiling pointer literals"
+  PtrLit (_, baseTy) NullPtr -> L.ConstantOperand $ C.Null $ hostPtrTy $ scalarTy baseTy
+  PtrLit _ _ -> error "Shouldn't be compiling pointer non-null literals"
 
 -- TODO: Assert that the integer can be represented in that number of bits!
 withWidth :: Int -> Word32 -> Operand
 withWidth x bits = L.ConstantOperand $ C.Int bits $ fromIntegral x
+
+idxRepTy :: L.Type
+idxRepTy = scalarTy $ IIdxRepTy
 
 i64Lit :: Int -> Operand
 i64Lit x = x `withWidth` 64
@@ -844,6 +851,9 @@ i32Lit x = x `withWidth` 32
 
 i8Lit :: Int -> Operand
 i8Lit x = x `withWidth` 8
+
+i1Lit :: Int -> Operand
+i1Lit x = x `withWidth` 1
 
 withWidthOf :: Int -> Operand -> Operand
 withWidthOf x template = case typeOf template of
@@ -882,6 +892,9 @@ sub x y = emitInstr (typeOf x) $ L.Sub False False x y []
 mul :: LLVMBuilder m => Operand -> Operand -> m Operand
 mul x y = emitInstr (typeOf x) $ L.Mul False False x y []
 
+sdiv :: LLVMBuilder m => Operand -> Operand -> m Operand
+sdiv x y = emitInstr (typeOf x) $ L.SDiv False x y []
+
 gep :: LLVMBuilder m => L.Type -> Operand -> Operand -> m Operand
 #if MIN_VERSION_llvm_hs(15,0,0)
 gep pointeeTy ptr i =
@@ -901,13 +914,22 @@ alloca elems ty = do
   return $ L.LocalReference (hostPtrTy ty) v
   where instr = L.Alloca ty (Just $ i32Lit elems) 0 []
 
-malloc :: LLVMBuilder m => Bool -> L.Type -> Operand -> m Operand
-malloc initialize ty bytes = do
+malloc :: LLVMBuilder m => L.Type -> Operand -> m Operand
+malloc ty bytes = do
   bytes64 <- asIntWidth bytes i64
-  ptr <- if initialize
-    then emitExternCall mallocInitializedFun [bytes64]
-    else emitExternCall mallocFun            [bytes64]
+  ptr <- emitExternCall mallocFun [bytes64]
   castLPtr ty ptr
+
+getAllocSize :: LLVMBuilder m => Operand ->  m Operand
+getAllocSize ptr = do
+  ptr' <- castLPtr i8 ptr
+  emitExternCall allocSizeFun [ptr']
+
+memcpy :: LLVMBuilder m => Operand -> Operand -> Operand -> m ()
+memcpy dest src numBytes = emitVoidExternCall memcpyFun [dest, src, numBytes, i1Lit 0]
+
+initializeZeros :: LLVMBuilder m => Operand -> Operand -> m ()
+initializeZeros ptr numBytes = emitVoidExternCall memsetFun [ptr, i8Lit 0, numBytes, i1Lit 0]
 
 free :: LLVMBuilder m => Operand -> m ()
 free ptr = do
@@ -992,9 +1014,8 @@ devicePtrTy ty = pointerType ty $ L.AddrSpace 1
 
 lAddress :: HasCallStack => AddressSpace -> L.AddrSpace
 lAddress s = case s of
-  Stack    -> L.AddrSpace 0
-  Heap CPU -> L.AddrSpace 0
-  Heap GPU -> L.AddrSpace 1
+  CPU -> L.AddrSpace 0
+  GPU -> L.AddrSpace 1
 
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ globalReference ty name
@@ -1168,13 +1189,8 @@ liftCompile dev subst m =
     -- TODO: figure out naming discipline properly
     initState = CompileState [] [] [] "start_block" mempty mempty mempty dev
 
-opSubstVal :: Operand -> OperandSubstVal AtomNameC n
+opSubstVal :: Operand -> OperandSubstVal ImpNameC n
 opSubstVal x = OperandSubstVal x
-
-lookupImpVar :: Compiler m => SAtomName i -> m i o Operand
-lookupImpVar v = lookupSubstM v <&> \case
-  OperandSubstVal x -> x
-  RenameOperandSubstVal _ -> error "Shouldn't have any imp vars left"
 
 finishBlock :: LLVMBuilder m => L.Terminator -> L.Name -> m ()
 finishBlock term name = do
@@ -1249,9 +1265,14 @@ mathFlags = L.noFastMathFlags { L.allowContract = allowContractions }
 mallocFun :: ExternFunSpec
 mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]
 
-mallocInitializedFun :: ExternFunSpec
-mallocInitializedFun =
-  ExternFunSpec "dex_malloc_initialized" (hostPtrTy i8) [L.NoAlias] [] [i64]
+allocSizeFun :: ExternFunSpec
+allocSizeFun = ExternFunSpec "dex_allocation_size" i64 [L.NoAlias] [] [hostPtrTy i8]
+
+memcpyFun :: ExternFunSpec
+memcpyFun = ExternFunSpec "llvm.memcpy.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, hostVoidp, i64, i1]
+
+memsetFun :: ExternFunSpec
+memsetFun = ExternFunSpec "llvm.memset.p0i8.i64" L.VoidType [] [] [hostVoidp, i8, i64, i1]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]
@@ -1342,4 +1363,3 @@ instance SinkableE (OperandSubstVal c) where
 
 instance FromName OperandSubstVal where
   fromName = RenameOperandSubstVal
-

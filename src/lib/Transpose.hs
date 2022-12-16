@@ -21,14 +21,14 @@ import QueryType
 import Util (enumerate)
 import GHC.Stack
 
-transpose :: (MonadFail1 m, EnvReader m) => SAtom n -> m n (SAtom n)
+transpose :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n -> m n (LamExpr SimpIR n)
 transpose lam = liftBuilder do
-  lam'@(Lam (LamExpr b body)) <- sinkM lam
-  Pi (PiType piBinder _ resultTy) <- getType lam'
+  lam'@(UnaryLamExpr b body) <- sinkM lam
+  NaryPiType (UnaryNest piBinder) _ resultTy <- getNaryLamExprType lam'
   let argTy = binderType b
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   runReaderT1 (ListE []) $ runSubstReaderT idSubst $
-    buildLam noHint LinArrow resultTy' Pure \ct ->
+    buildUnaryLamExpr noHint resultTy' \ct ->
       withAccumulator (sink argTy) \refSubstVal ->
         extendSubst (b @> refSubstVal) $
           transposeBlock body (sink $ Var ct)
@@ -109,7 +109,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
-  void $ emitOp $ PrimEffect ref $ MExtend baseMonoid ct
+  void $ liftM Var $ emit $ PrimEffect ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [SAtomName o]
 getLinRegions = asks fromListE
@@ -179,7 +179,23 @@ transposeExpr expr ct = case expr of
             emitCTToRef refProj ct
           LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
-  Op op         -> transposeOp op ct
+  Op op -> transposeOp op ct
+  PrimEffect refArg m   -> do
+    refArg' <- substNonlin refArg
+    let emitEff = liftM Var . emit . PrimEffect refArg'
+    case m of
+      MAsk -> do
+        baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
+        void $ emitEff $ MExtend baseMonoid ct
+      -- XXX: This assumes that the update function uses a tangent (0, +) monoid
+      --      rule for RunWriter.
+      MExtend _ x -> transposeAtom x =<< emitEff MAsk
+      MGet -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
+      MPut x -> do
+        ct' <- emitEff MGet
+        transposeAtom x ct'
+        zero <- getType ct' >>= zeroAt
+        void $ emitEff $ MPut zero
   Hof hof       -> transposeHof hof ct
   Case e alts _ _ -> do
     linearScrutinee <- isLin e
@@ -208,22 +224,6 @@ transposeOp op ct = case op of
       else transposeAtom y =<< mul ct =<< substNonlin x
   BinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
   BinOp _    _ _  -> notLinear
-  PrimEffect refArg m   -> do
-    refArg' <- substNonlin refArg
-    let emitEff = emitOp . PrimEffect refArg'
-    case m of
-      MAsk -> do
-        baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
-        void $ emitEff $ MExtend baseMonoid ct
-      -- XXX: This assumes that the update function uses a tangent (0, +) monoid
-      --      rule for RunWriter.
-      MExtend _ x -> transposeAtom x =<< emitEff MAsk
-      MGet -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
-      MPut x -> do
-        ct' <- emitEff MGet
-        transposeAtom x ct'
-        zero <- getType ct' >>= zeroAt
-        void $ emitEff $ MPut zero
   TabCon ty es -> do
     TabTy b _ <- return ty
     idxTy <- substNonlin $ binderAnn b
@@ -286,7 +286,6 @@ transposeAtom atom ct = case atom of
       ct' <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
       return UnitVal
-  Lam _           -> notTangent
   TabLam _        -> notTangent
   DictCon _       -> notTangent
   DictTy _        -> notTangent
@@ -294,13 +293,12 @@ transposeAtom atom ct = case atom of
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent
   VariantTy _     -> notTangent
-  Pi _            -> notTangent
   TabPi _         -> notTangent
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
+  PtrVar _        -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
-  DepPairRef _ _ _ -> error "Unexpected ref"
   ProjectElt idxs v -> do
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"
@@ -313,13 +311,13 @@ transposeAtom atom ct = case atom of
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()
 transposeHof hof ct = case hof of
-  For ann d (Lam (LamExpr b  body)) -> do
+  For ann d (UnaryLamExpr b  body) -> do
     ixTy <- ixTyFromDict =<< substNonlin d
     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
       ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal
-  RunState Nothing s (Lam (BinaryLamExpr hB refB body)) -> do
+  RunState Nothing s (BinaryLamExpr hB refB body) -> do
     (ctBody, ctState) <- fromPair ct
     (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
@@ -327,7 +325,7 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ctBody)
       return UnitVal
     transposeAtom s cts
-  RunReader r (Lam (BinaryLamExpr hB refB body)) -> do
+  RunReader r (BinaryLamExpr hB refB body) -> do
     accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
     baseMonoid <- getBaseMonoidType accumTy >>= tangentBaseMonoidFor
     (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
@@ -336,7 +334,7 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ct)
       return UnitVal
     transposeAtom r ct'
-  RunWriter Nothing _ (Lam (BinaryLamExpr hB refB body))-> do
+  RunWriter Nothing _ (BinaryLamExpr hB refB body)-> do
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader noHint ctEff \h ref -> do
@@ -360,9 +358,6 @@ transposeCon con ct = case con of
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   LabelCon _     -> notTangent
-  BaseTypeRef _  -> notTangent
-  TabRef _       -> notTangent
-  ConRef _       -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

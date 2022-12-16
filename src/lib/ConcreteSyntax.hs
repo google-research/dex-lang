@@ -100,6 +100,7 @@ data Group'
   = CEmpty
   | CIdentifier SourceName
   | CPrim (PrimExpr Group)
+  | CPrimApp PrimName [Group]
   | CNat Word64
   | CInt Int
   | CString String
@@ -715,7 +716,8 @@ leafGroupNoBrackets = do
     '%'  -> do
       name <- primName
       case strToPrimName name of
-        Just prim -> CPrim <$> traverse (const cGroupNoJuxtDot) prim
+        Just (Left  prim) -> CPrim    <$> traverse (const cGroupNoJuxtDot) prim
+        Just (Right prim) -> CPrimApp prim <$> many cGroupNoJuxtDot
         Nothing   -> fail $ "Unrecognized primitive: " ++ name
     '#'  -> liftM2 CLabel labelPrefix fieldLabel
     _ | isDigit next -> (    CNat   <$> natLit
@@ -919,13 +921,11 @@ concatPos (pos:rest) = foldl joinPos pos rest
 
 -- === primitive constructors and operators ===
 
-type PrimName = PrimExpr ()
-
-strToPrimName :: String -> Maybe PrimName
+strToPrimName :: String -> Maybe (Either (PrimExpr ()) PrimName)
 strToPrimName s = M.lookup s builtinNames
 
-primNameToStr :: PrimName -> String
-primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
+primNameToStr :: PrimExpr () -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList primExprNames of
   Just s  -> s
   Nothing -> show prim
 
@@ -933,10 +933,22 @@ showPrimName :: PrimExpr e -> String
 showPrimName prim = primNameToStr $ fmap (const ()) prim
 {-# NOINLINE showPrimName #-}
 
+builtinNames :: M.Map String (Either (PrimExpr ()) PrimName)
+builtinNames = fmap Left primExprNames <> fmap Right primNames
+
+primNames :: M.Map String PrimName
+primNames = M.fromList
+  [ ("ask"      , UMAsk), ("mextend", UMExtend)
+  , ("get"      , UMGet), ("put"    , UMPut)
+  , ("while"    , UWhile)
+  , ("linearize", ULinearize), ("linearTranspose", UTranspose)
+  , ("runReader", URunReader), ("runWriter"      , URunWriter), ("runState", URunState)
+  , ("runIO"    , URunIO    ), ("catchException" , UCatchException) ]
+
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)
-builtinNames :: M.Map String PrimName
-builtinNames = M.fromList
+primExprNames :: M.Map String (PrimExpr ())
+primExprNames = M.fromList
   [ ("iadd" , binary IAdd),  ("isub"  , binary ISub)
   , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
   , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
@@ -960,20 +972,8 @@ builtinNames = M.fromList
   , ("sumToVariant"   , OpExpr $ SumToVariant ())
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
-  , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
-  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend (BaseMonoid () ()) ())
-  , ("get"        , OpExpr $ PrimEffect () $ MGet)
-  , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("select"     , OpExpr $ Select () () ())
-  , ("while"           , HofExpr $ While ())
-  , ("linearize"       , HofExpr $ Linearize ())
-  , ("linearTranspose" , HofExpr $ Transpose ())
-  , ("runReader"       , HofExpr $ RunReader () ())
-  , ("runWriter"       , HofExpr $ RunWriter Nothing (BaseMonoid () ()) ())
-  , ("runState"        , HofExpr $ RunState  Nothing () ())
-  , ("runIO"           , HofExpr $ RunIO ())
-  , ("catchException"  , HofExpr $ CatchException ())
   , ("TyKind"    , TCExpr $ TypeKind)
   , ("Float64"   , TCExpr $ BaseType $ Scalar Float64Type)
   , ("Float32"   , TCExpr $ BaseType $ Scalar Float32Type)
@@ -1021,4 +1021,4 @@ builtinNames = M.fromList
   where
     binary op = OpExpr $ BinOp op () ()
     unary  op = OpExpr $ UnOp  op ()
-    ptrTy  ty = PtrType (Heap CPU, ty)
+    ptrTy  ty = PtrType (CPU, ty)

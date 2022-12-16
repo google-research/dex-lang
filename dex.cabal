@@ -58,9 +58,10 @@ library
                      , GenericTraversal
                      , Generalize
                      , Imp
-                     , Interpreter
-                     , Inference
                      , ImpToLLVM
+                     , Inference
+                     , Inline
+                     , Interpreter
                      , LLVM.Link
                      , LLVM.Compile
                      , LLVM.CUDA

@@ -78,35 +78,35 @@ spec = do
         , "  xs : (Fin 10) => Float = unreachable ()"
         , "  xs"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (0,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (0, One))
     it "counts indexing in a for as one use" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 10) => Float = unreachable ()"
         , "  for i. xs.i"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, One))
     it "counts indexing depth in nested fors" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 10) => (Fin 3) => Float = unreachable ()"
         , "  for i j. xs.i.j"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (2,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (2, One))
     it "counts two array uses" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 10) => Float = unreachable ()"
         , "  (for i. xs.i, for j. xs.j)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, Two))
     it "counts array and non-array uses" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 10) => Float = unreachable ()"
         , "  (for i. xs.i, xs)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, Two))
     it "counts different case arms as static but not dynamic uses" do
       ann <- analyze cfg env
         [ ":p"
@@ -115,28 +115,28 @@ spec = do
         , "    then for i. xs.i"
         , "    else for j. xs.j"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, One))
     it "understands one index injection" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : ((Fin 10) | (Fin 4)) => Float = unreachable ()"
         , "  for j. xs.(Left j)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, One))
     it "understands distinct index injections" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : ((Fin 10) | (Fin 4)) => Float = unreachable ()"
         , "  (for i. xs.(Left i), for j. xs.(Right j))"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, One))
     it "detects and eschews index arithmetic" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 4) => Float = unreachable ()"
         , "  for i:(Fin 3). xs.((ordinal i + 1)@_)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))
     it "detects non-nested single-uses cases despite index arithmetic" do
       ann <- analyze cfg env
         [ ":p"
@@ -146,21 +146,21 @@ spec = do
       -- Arguably, should be able to prove that zero levels of exposed indexing
       -- (not one) suffice for inlining xs to be safe here, but the current
       -- occurrence analysis doesn't prove it yet.
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, One))
     it "detects nested single-uses cases despite index arithmetic" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 4) => (Fin 3) => Float = unreachable ()"
         , "  for i:(Fin 3). xs.((ordinal i + 1)@_).i"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (2,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (2, One))
     it "detects repeated access" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 4) => Float = unreachable ()"
         , "  for i j:(Fin 5). xs.i"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))
     it "does not count the `trace` pattern as repeated access" do
       ann <- analyze cfg env
         [ ":p"
@@ -170,7 +170,7 @@ spec = do
       -- Arguably, should be able to prove that only one level of exposed
       -- indexing (not two) suffice for inlining xs to be safe here, but doesn't
       -- prove it yet.
-      ann `shouldBe` OccInfo (UsageInfo 1 (2,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (2, One))
     it "solves safe sum-over-max" do
       ann <- analyze cfg env
         [ ":p"
@@ -185,7 +185,7 @@ spec = do
         , "      else xs.(Right (Right j))"
         , "  (ys, zs)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 4 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo (Bounded 4) (1, One))
     it "solves unsafe sum-over-max" do
       ann <- analyze cfg env
         [ ":p"
@@ -201,7 +201,7 @@ spec = do
         , "  (ys, zs)"
         ]
       -- One of the code paths hits the same elements(s)
-      ann `shouldBe` OccInfo (UsageInfo 4 (1,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo (Bounded 4) (1, Two))
     it "does not penalize referring to indices in scope" do
       ann <- analyze cfg env
         [ ":p"
@@ -212,7 +212,7 @@ spec = do
       -- Arguably, should be able to prove that only one level of exposed
       -- indexing (not two) suffice for inlining xs to be safe here, but doesn't
       -- prove it yet.
-      ann `shouldBe` OccInfo (UsageInfo 1 (2,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (2, One))
     it "is conservative about potential collisions between indices in scope" do
       ann <- analyze cfg env
         [ ":p"
@@ -221,7 +221,7 @@ spec = do
         , "  xs : (Fin 10) => (Fin 3) => Float = unreachable ()"
         , "  (for i. xs.i.j, for i. xs.i.k)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (2,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (2, Two))
     it "is not confused by potential collisions at an early indexing depth" do
       ann <- analyze cfg env
         [ ":p"
@@ -230,7 +230,7 @@ spec = do
         , "  xs : (Fin 10) => (Fin 3) => Float = unreachable ()"
         , "  (for i. xs.j.i, for i. xs.k.i)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (2,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (2, Two))
     it "does not crash on indexing by case-bound binders" do
       ann <- analyze cfg env
         [ ":p"
@@ -252,7 +252,7 @@ spec = do
       -- albeit at different iterations of the `i` loop.  To analyze this
       -- correctly, we would need to know that `j` and `k` may collide across
       -- `case` arms, though not within an arm.
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, Unbounded))
     it "does not crash on indexing by state-effect-bound binders" do
       ann <- analyze cfg env
         [ ":p"
@@ -260,7 +260,7 @@ spec = do
         , "  with_state (0 @ Fin 10) \\ref."
         , "    xs.(get ref)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, One))
     it "assumes state references touch everything" do
       ann <- analyze cfg env
         [ ":p"
@@ -269,7 +269,7 @@ spec = do
         , "    for i:(Fin 3)."
         , "      xs.(get ref)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))
     it "assumes state references touch everything even if the initializer doesn't" do
       ann <- analyze cfg env
         [ ":p"
@@ -278,7 +278,7 @@ spec = do
         , "    with_state i \\ref."
         , "      xs.(get ref)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))
     it "analyzes through accum effects" do
       ann <- analyze cfg env
         [ ":p"
@@ -287,7 +287,7 @@ spec = do
         , "    for i."
         , "      ref += xs.i"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, One))
     -- TODO Should probably construct an example of indexing with the ref of a
     -- run_accum (and, for that matter, with the handle of a run_state or
     -- run_accum), but I'm not sure how to make either of those well-typed.
@@ -298,7 +298,7 @@ spec = do
         , "  with_reader (0 @ Fin 10) \\ref."
         , "    xs.(ask ref)"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Bounded 1))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, One))
     it "understands that while loops access repeatedly" do
       ann <- analyze cfg env
         [ ":p"
@@ -310,7 +310,7 @@ spec = do
         , "        ref := (get ref) + xs.i"
         , "      False"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))
     it "does not crash on index-defining bindings" do
       ann <- analyze cfg env
         [ ":p"
@@ -319,14 +319,14 @@ spec = do
         , "    j = Left (unsafe_from_ordinal _ $ ordinal i)"
         , "    xs.j"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 1 (1,Unbounded))
+      ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))
     it "understands indexing by literals" do
       ann <- analyze cfg env
         [ ":p"
         , "  xs : (Fin 10 | Fin 3) => Float = unreachable ()"
         , "  (xs.(0@_), xs.(0@_))"
         ]
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, Two))
     it "is conservative about distict literal indices" do
       ann <- analyze cfg env
         [ ":p"
@@ -335,4 +335,14 @@ spec = do
         ]
       -- TODO In this case, we should be able to detect non-collision of
       -- indexing by 0 and by 1; but assuming they may collide is safe.
-      ann `shouldBe` OccInfo (UsageInfo 2 (1,Bounded 2))
+      ann `shouldBe` OccInfoPure (UsageInfo Two (1, Two))
+    it "is conservative about ix dicts" do
+      ann <- analyze cfg env
+        [ ":p"
+        , "  n : Nat = unreachable ()"
+        , "  xs : (Fin n) => Nat = iota (Fin n)"
+        , "  sum xs"
+        ]
+      -- We consider `n` statically unbounded because we assume that its ix dict
+      -- may be inlined uncontrollably later.
+      ann `shouldBe` OccInfoPure (UsageInfo Unbounded (0, Unbounded))

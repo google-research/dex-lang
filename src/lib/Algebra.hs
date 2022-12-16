@@ -24,11 +24,12 @@ import Name
 import Err
 import MTL1
 import QueryType
+import Util (Tree (..))
 
 -- TODO: we specialized to `SimpToImpIR` because that's the only place where
 -- it's currently used. But we should probably make it polymorphic in `r`.
 
-type PolyName = SAtomName
+type PolyName = EitherE SAtomName ImpName
 type PolyBinder = NameBinder AtomNameC
 
 type Constant = Rational
@@ -54,7 +55,7 @@ sumUsingPolys lim (Abs i body) = do
       Nothing -> throw NotImplementedErr $
         "Algebraic simplification failed to model index computations: " ++ pprint body'
   limName <- emitAtomToName noHint lim
-  emitPolynomial $ sum limName sumAbs
+  emitPolynomial $ sum (LeftE limName) sumAbs
 
 mul :: Polynomial n-> Polynomial n -> Polynomial n
 mul (Polynomial x) (Polynomial y) =
@@ -83,7 +84,7 @@ sum lim (Abs i p) = sumPolys polys
                  mulConst c $ sumMono lim (Abs i m)
 
 sumMono :: PolyName n -> Abs PolyBinder Monomial n -> Polynomial n
-sumMono lim (Abs b (Monomial m)) = case lookup (binderName b) m of
+sumMono lim (Abs b (Monomial m)) = case lookup (LeftE $ binderName b) m of
   -- TODO: Implement the formula for arbitrary order polynomials
   Nothing  -> poly [ (   1, mulMono c $ mono [(lim, 1)])]
   Just 0   -> error "Each variable appearing in a monomial should have a positive power"
@@ -97,7 +98,7 @@ sumMono lim (Abs b (Monomial m)) = case lookup (binderName b) m of
   (Just n) -> error $ "Triangular arrays of order " ++ show n ++ " not implemented yet!"
   where
     c = ignoreHoistFailure $ hoist b $  -- failure impossible
-          Monomial $ delete (binderName b) m
+          Monomial $ delete (LeftE $ binderName b) m
 
 -- === Constructors and singletons ===
 
@@ -138,18 +139,25 @@ blockAsPolyRec decls result = case decls of
   where
     atomAsPoly :: Atom SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
     atomAsPoly = \case
-      Var v       -> varAsPoly v
+      Var v       -> atomNameAsPoly v
+      RepValAtom dRepVal -> do
+        DRepVal _ _ (Leaf (IVar v' _)) <- return dRepVal
+        impNameAsPoly v'
       IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
       _ -> empty
 
-    varAsPoly :: AtomName SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
-    varAsPoly v = getSubst <&> (!v) >>= \case
+    impNameAsPoly :: ImpName i -> BlockTraverserM i o (Polynomial o)
+    impNameAsPoly v = getSubst <&> (!v) >>= \case
+      Rename v' -> return $ poly [(1, mono [(RightE v', 1)])]
+
+    atomNameAsPoly :: AtomName SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
+    atomNameAsPoly v = getSubst <&> (!v) >>= \case
       SubstVal NothingE   -> empty
       SubstVal (JustE cp) -> return cp
       SubstVal _          -> error "impossible"
       Rename   v'         ->
         getType v' >>= \case
-          IdxRepTy -> return $ poly [(1, mono [(v', 1)])]
+          IdxRepTy -> return $ poly [(1, mono [(LeftE v', 1)])]
           _ -> empty
 
     exprAsPoly :: Expr SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
@@ -191,7 +199,11 @@ emitPolynomial (Polynomial p) = do
 
 emitMonomial :: (Emits n, Builder SimpToImpIR m) => Monomial n -> m n (Atom SimpToImpIR n)
 emitMonomial (Monomial m) = do
-  varAtoms <- forM (toList m) \(v, e) -> ipow (Var v) e
+  varAtoms <- forM (toList m) \(v, e) -> case v of
+    LeftE v' -> ipow (Var v') e
+    RightE v' -> do
+      let atom = RepValAtom $ DRepVal [] IdxRepTy (Leaf (IVar v' IIdxRepTy))
+      ipow atom e
   foldM imul (IdxRepVal 1) varAtoms
 
 ipow :: (Emits n, Builder SimpToImpIR m) => Atom SimpToImpIR n -> Int -> m n (Atom SimpToImpIR n)

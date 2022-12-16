@@ -1,0 +1,73 @@
+@noinline
+def id' (x:Nat) : Nat = x
+
+-- CHECK-LABEL: Inline for into for
+"Inline for into for"
+
+%passes inline
+:p
+  xs = for i:(Fin 10). ordinal i
+  for j. xs.j + 2
+-- CHECK: for
+-- CHECK-NOT: for
+
+-- CHECK-LABEL: Inline for into sum
+"Inline for into sum"
+
+%passes inline
+sum for i:(Fin 10). ordinal i
+-- CHECK: for
+-- CHECK-NOT: for
+
+-- CHECK-LABEL: Inline nested for into for
+"Inline nested for into for"
+
+%passes inline
+:p
+  xs = for i:(Fin 10). for j:(Fin 20). ordinal i * ordinal j
+  for j i. xs.i.j + 2
+-- CHECK: for
+-- CHECK-NOT: for
+
+-- CHECK-LABEL: Inlining does not reorder effects
+"Inlining does not reorder effects"
+
+-- Note that it _would be_ legal to reorder independent effects, but
+-- the inliner currently does not do that.  But the effect in this
+-- example is not legal to reorder in any case.
+
+%passes inline
+run_state 0 \ct.
+  xs = for i:(Fin 10).
+    ct := (get ct) + 1
+    ordinal i
+  for j.
+    ct := (get ct) * 2
+    xs.j + 2
+-- CHECK: for
+-- CHECK: for
+
+-- CHECK-LABEL: Inlining does not duplicate the inlinee through beta reduction
+"Inlining does not duplicate the inlinee through beta reduction"
+
+-- The runIO is the error message in the dynamic check that `ix` has
+-- type `Fin 100`.
+%passes inline
+:p
+  ix = (id' 20)@(Fin 100)
+  (for i:(Fin 100). ordinal i + ordinal i).ix
+-- CHECK: runIO
+-- CHECK-NOT: runIO
+
+-- CHECK-LABEL: Inlining does not violate type IR through beta reduction
+"Inlining does not violate type IR through beta reduction"
+
+-- Beta reducing this ix into the `i` index of the `for` should stop
+-- before it produces anything a type expression can't handle, and
+-- thus execute.
+
+:p
+  ix = (1@(Fin 2))
+  sum (for i:(Fin 2) j:(..i). ordinal j).ix
+-- CHECK: 1
+-- CHECK-NOT: Compiler bug

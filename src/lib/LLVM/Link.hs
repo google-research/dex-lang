@@ -77,6 +77,7 @@ addExplicitLinkMap l linkMap = do
   let ptrSymbols = [OrcJIT.JITSymbol (ptrToWordPtr ptr) flags | ptr <- linkedPtrs]
   mangledNames <- mapM (OrcJIT.mangleSymbol l . fromString) linkedNames
   OrcJIT.defineAbsoluteSymbols (linkerDylib l) $ zip mangledNames ptrSymbols
+  mapM_ OrcJIT.disposeMangledSymbol mangledNames
 
 addObjectFile :: Linker -> BS.ByteString -> IO ()
 addObjectFile l objFileContents = do

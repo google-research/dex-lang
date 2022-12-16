@@ -227,6 +227,7 @@ instance SourceRenamableE UExpr' where
     UTypeAnn e ty -> UTypeAnn <$> sourceRenameE e <*> sourceRenameE ty
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
+    UPrimApp p xs -> UPrimApp p <$> mapM sourceRenameE xs
     ULabel name -> return $ ULabel name
     URecord elems -> URecord <$> mapM sourceRenameE elems
     UVariant types label val ->
@@ -458,6 +459,10 @@ instance SourceRenamablePat UPat' where
       sourceRenamePat sibs  p1 \sibs' p1' ->
         sourceRenamePat sibs' p2 \sibs'' p2' ->
           cont sibs'' $ UPatPair $ PairB p1' p2'
+    UPatDepPair (PairB p1 p2) ->
+      sourceRenamePat sibs  p1 \sibs' p1' ->
+        sourceRenamePat sibs' p2 \sibs'' p2' ->
+          cont sibs'' $ UPatDepPair $ PairB p1' p2'
     UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
     UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
     UPatVariant labels label p ->
@@ -550,6 +555,7 @@ instance HasSourceNames UPat where
     UPatBinder b -> sourceNames b
     UPatCon _ bs -> sourceNames bs
     UPatPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
+    UPatDepPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatUnit UnitB -> mempty
     UPatRecord p -> sourceNames p
     UPatVariant _ _ p -> sourceNames p

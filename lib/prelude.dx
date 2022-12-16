@@ -727,7 +727,8 @@ def yield_state
       : {|eff} s = snd $ run_state init action
 
 def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
-  %runIO f
+  f' : (Unit -> {IO|eff} a) = \_. f ()
+  %runIO f'
 
 def unreachable {a} (():Unit) : a = unsafe_io do
   %throwError a
@@ -1302,7 +1303,7 @@ def cumsum_low {n a} [Add a] (xs: n=>a) : n=>a =
 '### AD operations
 
 -- TODO: add vector space constraints
-def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = %linearize (\x. f x) x
+def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = (%linearize (\x. f x)) x
 def jvp {a b} (f:a->b) (x:a) : a --o b = snd (linearize f x)
 def transpose_linear {a b} (f:a --o b) : b --o a =
   f' : a --o b = \x. f x
@@ -2431,7 +2432,8 @@ def dex_test_mode (():Unit) : Bool = unsafe_io do check_env "DEX_TEST_MODE"
 TODO: move `error` and `todo` to here.
 
 def catch {a eff} (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
-  ans = %catchException f
+  f' : (Unit -> {Except|eff} a) = \_. f ()
+  ans = %catchException f'
   case %sumToVariant ans of
     {|c=()   |} -> Nothing
     {|c|c=val|} -> Just val

@@ -285,6 +285,10 @@ pat = propagateSrcB pat' where
     lhs' <- pat lhs
     rhs' <- pat rhs
     return $ UPatPair $ PairB lhs' rhs'
+  pat' (CBin (WithSrc _ DepComma) lhs rhs) = do
+    lhs' <- pat lhs
+    rhs' <- pat rhs
+    return $ UPatDepPair $ PairB lhs' rhs'
   pat' (CBracket Curly g) = case g of
     (WithSrc _ CEmpty) -> return $ UPatRecord UEmptyRowPat
     _ -> UPatRecord <$> (fieldRowPatList Equal $ nary Comma g)
@@ -428,6 +432,7 @@ expr = propagateSrcE expr' where
   -- Binders (e.g., in pi types) should not hit this case
   expr' (CIdentifier name)  = return $ fromString name
   expr' (CPrim prim)        = UPrimExpr <$> mapM expr prim
+  expr' (CPrimApp prim xs)  = UPrimApp prim <$> mapM expr xs
   expr' (CNat word)         = return $ UNatLit word
   expr' (CInt int)          = return $ UIntLit int
   expr' (CString str)       = return $ UApp (fromString "to_list")

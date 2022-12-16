@@ -1,4 +1,4 @@
- -- Copyright 2019 Google LLC
+-- Copyright 2019 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -41,7 +41,7 @@ import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
 import Occurrence (Count (Bounded), UsageInfo (..))
 import Occurrence qualified as Occ
-import Util (restructure)
+import Util (restructure, Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -155,20 +155,22 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 
 instance Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr r n) where
-  prettyPrec (Atom x ) = prettyPrec x
+  prettyPrec (Atom x) = prettyPrec x
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For ann _ (Lam lamExpr))) =
-    atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
-  prettyPrec (Hof (Seq ann _ c (Lam (LamExpr (LamBinder b ty _ effs) body)))) =
-    atPrec LowestPrec $ "seq" <+> pApp ann <+> pApp c <+> prettyLam (p (b:>ty) <> ".") effs body
-  prettyPrec (Hof (RememberDest d (Lam (LamExpr (LamBinder b _ _ effs) body)))) =
-    atPrec LowestPrec $ "remember" <+> pApp d <+> prettyLam ("\\" <> p b <> ".") effs body
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
-  prettyPrec (Handle v args body) =
-      atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." Pure body
+  prettyPrec (Handle v args body) = atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." body
+  prettyPrec (PrimEffect ref eff) = atPrec LowestPrec $ pApp ref <+> pApp eff
+
+instance Pretty (PrimEffect r n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (PrimEffect r n) where
+  prettyPrec eff = atPrec LowestPrec case eff of
+    MAsk        -> "ask"
+    MExtend _ x -> "extend" <+> pApp x
+    MGet        -> "get"
+    MPut x      -> ":=" <+> pApp x
 
 prettyPrecCase :: PrettyE e => Doc ann -> Atom r n -> [AltP r e n] -> EffectRow n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
@@ -200,13 +202,9 @@ instance Pretty (Decl r n l) where
     align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
-instance Pretty (NaryLamExpr r n) where
-  pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
-    "\\" <> (spaced $ fromNest $ Nest b bs) <+> "." <> nest 2 (p body)
-
 instance Pretty (NaryPiType r n) where
-  pretty (NaryPiType (NonEmptyNest b bs) effs resultTy) =
-    (spaced $ fromNest $ Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
+  pretty (NaryPiType bs effs resultTy) =
+    (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance Pretty (PiBinder r n l) where
   pretty (PiBinder b ty arrow) = case arrow of
@@ -217,11 +215,10 @@ instance Pretty (PiBinder r n l) where
 
 instance Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr r n) where
-  prettyPrec lamExpr =
-    atPrec LowestPrec $ "\\" <> prettyLamHelper lamExpr PrettyLam
+  prettyPrec (LamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
 
 instance Pretty (IxType r n) where
-  pretty (IxType ty _) = parens $ "IxType" <+> pretty ty
+  pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
 instance Pretty (TabLamExpr r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (TabLamExpr r n) where
@@ -252,7 +249,7 @@ instance Pretty (Atom r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    Lam lamExpr -> prettyPrec lamExpr
+    Lam lam arr _ -> atPrec LowestPrec $ "\\" <> prettyLamHelper arr lam PrettyLam
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TabLam lamExpr -> prettyPrec lamExpr
     TabPi piType -> atPrec LowestPrec $ align $ p piType
@@ -263,6 +260,7 @@ instance PrettyPrec (Atom r n) where
     NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
+    PtrVar v -> atPrec ArgPrec $ p v
     TypeCon "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
       -> atPrec LowestPrec $ ".."  <> pApp i
     TypeCon "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
@@ -284,12 +282,21 @@ instance PrettyPrec (Atom r n) where
     RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
-    BoxedRef (Abs (NonDepNest b ptrsSizes) body) -> atPrec LowestPrec $
-      "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
+    RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
-    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
-      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
+
+instance Pretty (DRepVal r n) where
+  pretty (DRepVal [] ty tree) = pretty $ RepVal ty tree
+  pretty (DRepVal projs ty tree) = "Projecting" <+> p projs <+> p (RepVal ty tree)
+
+instance Pretty (RepVal r n) where
+  pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
+
+instance Pretty a => Pretty (Tree a) where
+  pretty = \case
+    Leaf x -> pretty x
+    Branch xs -> pretty xs
 
 instance Pretty (BoxPtr r n) where
   pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
@@ -360,12 +367,18 @@ instance Pretty (PiType r n) where
     in prettyBinder <> (group $ line <> p arr <> prettyEff <> prettyBody)
 
 instance Pretty (TabPiType r n) where
-  pretty (TabPiType (b :> IxType ty _) body) = let
+  pretty (TabPiType (b :> IxType ty dict) body) = let
     prettyBinder = prettyBinderHelper (b:>ty) body
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
-    in prettyBinder <> (group $ line <> "=>" <+> prettyBody)
+    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+
+-- A helper to let us turn dict printing on and off.  We mostly want it off to
+-- reduce clutter in prints and error messages, but when debugging synthesis we
+-- want it on.
+prettyIxDict :: Atom r n -> Doc ann
+prettyIxDict dict = if False then " " <> p dict else mempty
 
 prettyBinderHelper :: HoistableE e => Binder r n l -> e l -> Doc ann
 prettyBinderHelper (b:>ty) body =
@@ -375,8 +388,9 @@ prettyBinderHelper (b:>ty) body =
 
 data PrettyLamType = PrettyLam | PrettyFor ForAnn deriving (Eq)
 
-prettyLamHelper :: LamExpr r n -> PrettyLamType -> Doc ann
-prettyLamHelper lamExpr lamType = let
+prettyLamHelper :: Arrow -> LamExpr r n -> PrettyLamType -> Doc ann
+prettyLamHelper arr' lamExpr lamType = uncurry prettyLam $ rec arr' lamExpr True
+ where
   wrap :: Arrow -> Doc ann -> Doc ann
   wrap arr arg = case lamType of
     PrettyLam -> case arr of
@@ -385,28 +399,23 @@ prettyLamHelper lamExpr lamType = let
       ImplicitArrow -> "{" <> arg <> "}"
       ClassArrow    -> "[" <> arg <> "]"
     PrettyFor _ -> arg
-  rec :: LamExpr r n -> Bool -> (Doc ann, EffectRow n, Block r n)
-  rec (LamExpr (LamBinder b ty arr effs') body') first =
-    let thisOne = (if first then "" else line) <> wrap arr (p (b:>ty))
-    in case inlineLastDeclBlock body' of
-      Abs Empty (Atom (Lam next@(LamExpr _ _))) ->
-        let (binders', effs'', block) = rec next False
-        in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      Abs Empty (Hof (For ann _ (Lam next)))
-        | lamType == PrettyFor ann ->
-            let (binders', effs'', block) = rec next False
-            in (thisOne <> binders', unsafeCoerceE (effs' <> effs''), unsafeCoerceE block)
-      _ -> (thisOne <> ".", unsafeCoerceE effs', unsafeCoerceE body')
-  (binders, effs, body) = rec lamExpr True
-  in prettyLam binders effs body
+  rec :: Arrow -> LamExpr r n -> Bool -> (Doc ann, Block r n)
+  rec arr lam first = case lam of
+    UnaryLamExpr (b:>ty) body' -> do
+      let thisOne = (if first then "" else line) <> wrap arr (p (b:>ty))
+      case inlineLastDeclBlock body' of
+        Abs Empty (Atom (Lam next arrNext _)) ->
+          let (binders', block) = rec arrNext next False
+          in (thisOne <> binders', unsafeCoerceE block)
+        Abs Empty (Hof (For ann dict next))
+          | lamType == PrettyFor ann ->
+              let (binders', block) = rec PlainArrow next False
+              in (thisOne <> prettyIxDict dict <> binders', unsafeCoerceE block)
+        _ -> (thisOne <> ".", unsafeCoerceE body')
+    _ -> error "expected a unary lambda expression"
 
-prettyLam :: Doc ann -> EffectRow n -> Block r n -> Doc ann
-prettyLam binders effs body =
-  group $ group (nest 4 $ binders) <> group (nest 2 $ p body) <> lamAnnot
-  where
-    lamAnnot = case effs of
-      Pure -> ""
-      _ -> line <> "lam annotated with effects" <+> p effs
+prettyLam :: Doc ann -> Block r n -> Doc ann
+prettyLam binders body = group $ group (nest 4 $ binders) <> group (nest 2 $ p body)
 
 inlineLastDeclBlock :: Block r n -> Abs (Nest (Decl r)) (Expr r) n
 inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
@@ -454,8 +463,8 @@ instance Pretty (AtomBinding r n) where
     IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    PtrLitBound _ ptr -> p ptr
     TopFunBound _ f -> p f
+    TopDataBound (RepVal ty _) -> "Top data with type: " <+> p ty
 
 instance Pretty (TopFunBinding n) where
   pretty = \case
@@ -495,12 +504,13 @@ instance Pretty (Binding s n) where
     ImpFunBinding f -> pretty f
     FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
-    PtrBinding     _ -> "<ptr>"
+    PtrBinding   _ _ -> "<ptr>"
     -- TODO(alex): do something actually useful here
     EffectBinding _ -> "<effect-binding>"
     HandlerBinding _ -> "<handler-binding>"
     EffectOpBinding _ -> "<effect-op-binding>"
     SpecializedDictBinding _ -> "<specialized-dict-binding>"
+    ImpNameBinding ty -> "Imp name of type: " <+> p ty
 
 instance Pretty (Module n) where
   pretty m = prettyRecord
@@ -704,6 +714,7 @@ instance PrettyPrec (UExpr' n) where
       group $ pApp v <> line <> ":" <+> pApp ty
     UTabCon xs -> atPrec ArgPrec $ p xs
     UPrimExpr prim -> prettyPrec prim
+    UPrimApp prim xs -> atPrec AppPrec $ p (show prim) <+> p xs
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
@@ -801,6 +812,7 @@ instance PrettyPrec (UPat' n l) where
   prettyPrec pat = case pat of
     UPatBinder x -> atPrec ArgPrec $ p x
     UPatPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
+    UPatDepPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ",> " <> p y
     UPatUnit UnitB -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
     UPatRecord pats -> atPrec ArgPrec $ prettyUFieldRowPat "," "=" pats
@@ -857,6 +869,7 @@ indented doc = nest 2 (hardline <> doc) <> hardline
 instance Pretty (IExpr n) where
   pretty (ILit v) = p v
   pretty (IVar v _) = p v
+  pretty (IPtrVar v _) = p v
 
 instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
 
@@ -899,22 +912,23 @@ instance Pretty (ImpInstr n)  where
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (IBitcastOp t x) = "bitcast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
-  pretty (Alloc loc t s) =
-    locStr <+> p t <> "[" <> sizeStr <> "]"
-    where
-      locStr = case loc of Stack -> "alloca"
-                           _     -> "alloc"
-      sizeStr = case s of
-        ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
-        _ -> p s
-
+  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> sizeStr s <> "]"
+  pretty (StackAlloc t s) = "alloca" <+> p t <> "[" <> sizeStr s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
+  pretty (InitializeZeros ptr numel) = "initializeZeros" <+> p ptr <+> p numel
+  pretty (GetAllocSize ptr) = "getAllocSize" <+> p ptr
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"
   pretty IThrowError      = "throwError"
   pretty (ICall f args)   = "call" <+> p f <+> p args
   pretty (IVectorBroadcast v _) = "vbroadcast" <+> p v
   pretty (IVectorIota _) = "viota"
+  pretty (DebugPrint s x) = "debug_print" <+> p (show s) <+> p x
+
+sizeStr :: IExpr n -> Doc ann
+sizeStr s = case s of
+  ILit (Word32Lit x) -> p x  -- print in decimal because it's more readable
+  _ -> p s
 
 instance Pretty BaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec BaseType where
@@ -923,9 +937,7 @@ instance PrettyPrec BaseType where
     Vector shape sb -> atPrec ArgPrec $ encloseSep "<" ">" "x" $ (p <$> shape) ++ [p sb]
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
-instance Pretty AddressSpace where
-  pretty Stack    = "stack"
-  pretty (Heap d) = p (show d)
+instance Pretty AddressSpace where pretty d = p (show d)
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
@@ -943,8 +955,6 @@ instance PrettyPrec e => PrettyPrec (PrimExpr e) where
   prettyPrec (TCExpr  e) = prettyPrec e
   prettyPrec (ConExpr e) = prettyPrec e
   prettyPrec (OpExpr  e) = prettyPrec e
-  prettyPrec (HofExpr e) = prettyPrec e
-
 
 instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
@@ -993,9 +1003,6 @@ prettyPrecPrimCon con = case con of
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   Newtype ty e -> atPrec LowestPrec $ pArg e <> "@" <> (parens $ pLowest ty)
-  BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
-  TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   LabelCon name -> atPrec ArgPrec $ "##" <> p name
   ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
@@ -1004,8 +1011,6 @@ instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
     TabCon _ es -> atPrec ArgPrec $ list $ pApp <$> es
-    PrimEffect ref (MPut    val   ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
-    PrimEffect ref (MExtend _   x ) -> atPrec LowestPrec $ "extend" <+> pApp ref <+> pApp x
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
     RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
@@ -1033,11 +1038,28 @@ prettyExprDefault expr =
     _ -> atPrec AppPrec $ pAppArg primName expr
   where primName = p $ "%" ++ showPrimName expr
 
-instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimHof e) where
-  prettyPrec hof = case hof of
-    For ann _ lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
-    _ -> prettyExprDefault $ HofExpr hof
+instance Pretty (Hof r n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (Hof r n) where
+  prettyPrec hof = atPrec LowestPrec case hof of
+    For ann _ lam -> forStr ann <+> prettyLamHelper PlainArrow lam (PrettyFor ann)
+    While body    -> "while" <+> pArg body
+    RunReader x body    -> "runReader" <+> pArg x <+> pArg body
+    RunWriter _ bm body -> "runWriter" <+> pArg bm <+> pArg body
+    RunState  _ x body  -> "runState"  <+> pArg x <+> pArg body
+    RunIO body          -> "runIO" <+> pArg body
+    RunInit body        -> "runInit" <+> pArg body
+    CatchException body -> "catchException" <+> pArg body
+    Linearize body      -> "linearize" <+> pArg body
+    Transpose body      -> "transpose" <+> pArg body
+    Seq ann _ c lamExpr -> case lamExpr of
+      UnaryLamExpr b body -> "seq" <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
+      _ -> p (show hof) -- shouldn't happen, but crashing pretty printers make debugging hard
+    RememberDest x y    -> "rememberDest" <+> pArg x <+> pArg y
+
+instance Pretty (BaseMonoid r n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (BaseMonoid r n) where
+  prettyPrec (BaseMonoid x f) =
+    atPrec LowestPrec $ "baseMonoid" <+> pArg x <+> pArg f
 
 instance PrettyPrec Direction where
   prettyPrec d = atPrec ArgPrec $ case d of
@@ -1060,22 +1082,24 @@ instance PrettyPrec LitVal where
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (PtrLit (PtrLitVal ty x)) =
+  prettyPrec (PtrLit ty (PtrLitVal x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
-  prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
+  prettyPrec (PtrLit _ NullPtr) = atPrec ArgPrec $ "NullPtr"
+  prettyPrec (PtrLit _ (PtrSnapshot _)) = atPrec ArgPrec "<ptr snapshot>"
 
 instance Pretty CallingConvention where
   pretty = p . show
 
 instance Pretty LetAnn where
   pretty ann = case ann of
-    PlainLet      -> ""
-    NoInlineLet   -> "%noinline"
-    OccInfo u     -> p u <> line
+    PlainLet        -> ""
+    NoInlineLet     -> "%noinline"
+    OccInfoPure   u -> p u <> line
+    OccInfoImpure u -> p u <> ", impure" <> line
 
 instance Pretty UsageInfo where
   pretty (UsageInfo static (ixDepth, ct)) =
-    "occurs in" <+> p (show static) <+> "places, read"
+    "occurs in" <+> p static <+> "places, read"
     <+> p ct <+> "times, to depth" <+> p (show ixDepth)
 
 instance Pretty Count where

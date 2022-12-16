@@ -24,13 +24,12 @@ module Name (
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag, noShadows, checkNoBinders,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
-  Abs (..), Nest (..), RNest (..), unRNest, unRNestOnto, toRNest, NonEmptyNest (..),
-  nonEmptyToNest, nestToNonEmpty,
+  Abs (..), Nest (..), RNest (..), unRNest, unRNestOnto, toRNest,
   PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
   ListE (..), ComposeE (..), MapE (..), NonEmptyListE (..),
   EitherE (..), leftsE, rightsE, forgetEitherE,
-  LiftE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
+  LiftE (..), WhenE (..), EqE, EqV, EqB, OrdE, OrdV, OrdB, VoidB,
   EitherB (..), forgetEitherB, BinderP (..),
   LiftB, pattern LiftB,
   HashMapE (..), HashableE, nestToNames,
@@ -56,6 +55,7 @@ module Name (
   withFreshM, sink, sinkList, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
   lookupSubstFrag, lookupSubstFragProjected, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
+  pattern UnaryNest, pattern BinaryNest,
   fmapNest, zipWithNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), NameHint, noHint, Color (..),
@@ -384,15 +384,11 @@ type NaryAbs (c::C) = Abs (Nest (NameBinder c)) :: E -> E
 data IsVoidS n where
   IsVoidS :: IsVoidS VoidS
 
-data NonEmptyNest (b::B) (n::S) (l::S) where
-  NonEmptyNest :: b n h -> Nest b h l -> NonEmptyNest b n l
+pattern UnaryNest :: b n l -> Nest b n l
+pattern UnaryNest b = Nest b Empty
 
-nonEmptyToNest :: NonEmptyNest b n l -> Nest b n l
-nonEmptyToNest (NonEmptyNest b bs) = Nest b bs
-
-nestToNonEmpty :: Nest b n l -> Maybe (NonEmptyNest b n l)
-nestToNonEmpty Empty = Nothing
-nestToNonEmpty (Nest b bs) = Just $ NonEmptyNest b bs
+pattern BinaryNest :: b n l1 -> b l1 l2 -> Nest b n l2
+pattern BinaryNest b1 b2 = Nest b1 (Nest b2 Empty)
 
 -- === Sinkings and projections ===
 
@@ -589,7 +585,7 @@ toPairE :: (e1 n, e2 n) -> PairE e1 e2 n
 toPairE (x, y) = (PairE x y)
 
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
-     deriving (Show, Eq, Generic)
+     deriving (Show, Eq, Ord, Generic)
 
 leftsE :: [EitherE e1 e2 n] -> [e1 n]
 leftsE = \case
@@ -627,6 +623,16 @@ newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
   deriving (Show, Eq, Generic)
+
+data WhenE (p::Bool) (e::E) (n::S) where
+  WhenE :: e n -> WhenE True e n
+
+newtype WrapWithTrue (p::Bool) r = WrapWithTrue { fromWrapWithTrue :: (p ~ True) => r }
+
+withFabricatedTruth :: forall p a. (p ~ True => a) -> a
+withFabricatedTruth cont = fromWrapWithTrue
+  (TrulyUnsafe.unsafeCoerce (WrapWithTrue cont :: WrapWithTrue p a
+                                             ) :: WrapWithTrue True a)
 
 data UnitB (n::S) (l::S) where
   UnitB :: UnitB n n
@@ -761,28 +767,18 @@ instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   bindNameList (Nest b rest) (x:xs) = b@>x <.> bindNameList rest xs
   bindNameList _ _ = error "length mismatch"
 
-instance GenericB (NonEmptyNest b) where
-  type RepB (NonEmptyNest b) = PairB b (Nest b)
-  fromB (NonEmptyNest b bs) = PairB b bs
-  toB   (PairB b bs) = NonEmptyNest b bs
-
-instance BindsAtMostOneName b c => BindsNameList (NonEmptyNest b) c where
-  bindNameList (NonEmptyNest b bs) (x:xs) = b@>x <.> bindNameList bs xs
-  bindNameList _ _ = error "length mismatch"
-
-instance BindsNames b => ProvesExt  (NonEmptyNest b)
-instance BindsNames b => BindsNames (NonEmptyNest b)
-instance HoistableB b => HoistableB (NonEmptyNest b)
-instance SinkableB  b => SinkableB  (NonEmptyNest b)
-instance (BindsNames b, SinkableV v, SubstB v b) => SubstB v (NonEmptyNest b)
-
-applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
-               => Scope o -> SubstFrag v h i o -> e i -> e o
-applySubstPure scope substFrag x = do
+applySubstFragPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
+                   => Scope o -> SubstFrag v h i o -> e i -> e o
+applySubstFragPure scope substFrag x = do
   let fullSubst = sink idSubst <>> substFrag
-  case tryApplyIdentitySubst fullSubst x of
+  applySubstPure scope fullSubst x
+
+applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Distinct o)
+               => Scope o -> Subst v i o -> e i -> e o
+applySubstPure scope subst x = do
+  case tryApplyIdentitySubst subst x of
     Just x' -> x'
-    Nothing -> fmapNames scope (fullSubst !) x
+    Nothing -> fmapNames scope (subst !) x
 
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
            => Ext h o
@@ -790,7 +786,7 @@ applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
 applySubst substFrag x = do
   Distinct <- getDistinct
   scope <- unsafeGetScope
-  return $ applySubstPure scope substFrag x
+  return $ applySubstFragPure scope substFrag x
 {-# INLINE applySubst #-}
 
 applyAbs :: ( SinkableV v, SinkableE e
@@ -1049,6 +1045,15 @@ instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
 instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
 instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ImpNameC      where notEqProof = \case
+
+instance ColorsNotEqual ImpNameC AtomNameC      where notEqProof = \case
+instance ColorsNotEqual ImpNameC EffectNameC    where notEqProof = \case
+instance ColorsNotEqual ImpNameC HandlerNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC DataDefNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC InstanceNameC  where notEqProof = \case
+instance ColorsNotEqual ImpNameC SpecializedDictNameC  where notEqProof = \case
+instance ColorsNotEqual ImpNameC ClassNameC     where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -1305,6 +1310,9 @@ instance (AlphaHashableB b1, AlphaHashableB b2)
 
 instance AlphaHashableE VoidE where
   hashWithSaltE _ _ _ = error "impossible"
+
+instance (p ~ True => AlphaHashableE e) => AlphaHashableE (WhenE p e) where
+  hashWithSaltE env val (WhenE e) = hashWithSaltE env val e
 
 -- === wrapper for E-kinded things suitable for use as keys ===
 
@@ -1984,6 +1992,7 @@ instance Color EffectNameC     where getColorRep = EffectNameC
 instance Color EffectOpNameC   where getColorRep = EffectOpNameC
 instance Color HandlerNameC    where getColorRep = HandlerNameC
 instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
+instance Color ImpNameC        where getColorRep = ImpNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
 -- only used for storing heterogeneously-colored values and we should
 -- restore their type before we every try to reflect upon their color!
@@ -2005,6 +2014,7 @@ interpretColor c cont = case c of
   EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
   HandlerNameC    -> cont $ ColorProxy @HandlerNameC
   SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
+  ImpNameC        -> cont $ ColorProxy @ImpNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
@@ -2281,6 +2291,18 @@ instance SubstE v e => SubstE v (ListE e) where
 instance SubstE v e => SubstE v (NonEmptyListE e) where
   substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
+instance (p ~ True => SinkableE e) => SinkableE (WhenE p e) where
+  sinkingProofE rename (WhenE e) = WhenE $ sinkingProofE rename e
+
+instance (p ~ True => HoistableE e) => HoistableE (WhenE p e) where
+  freeVarsE (WhenE e) = freeVarsE e
+
+instance (p ~ True => SubstE v e, FromName v) => SubstE v (WhenE p e) where
+  substE (scope, subst) (WhenE e) = WhenE $ substE (scope, subst) e
+
+instance (p ~ True => AlphaEqE e) => AlphaEqE (WhenE p e) where
+  alphaEqE (WhenE e1) (WhenE e2) = alphaEqE e1 e2
+
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = group $
     "(Abs " <> nest 2 (pretty b <> line <> pretty body) <> line <> ")"
@@ -2293,6 +2315,10 @@ instance Pretty (UnitE n) where
 
 instance (PrettyE e1, PrettyE e2) => Pretty (PairE e1 e2 n) where
   pretty (PairE e1 e2) = pretty (e1, e2)
+
+instance (PrettyE e1, PrettyE e2) => Pretty (EitherE e1 e2 n) where
+  pretty (LeftE  e) = "LeftE"  <+> pretty e
+  pretty (RightE e) = "RightE" <+> pretty e
 
 instance PrettyE e => Pretty (ListE e n) where
   pretty (ListE e) = pretty e
@@ -2382,6 +2408,11 @@ instance ( forall c. Color c => Store (v c o)
          => Store (RecSubst v o)
 instance Store (Scope n)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
+
+instance (p ~ True => Store (e n)) => Store (WhenE p e n) where
+  size = VarSize \(WhenE e) -> getSize e
+  peek = withFabricatedTruth @p (WhenE <$> peek)
+  poke (WhenE e) = poke e
 
 
 -- We often have high-degree sum types that need GenericE instances, and
@@ -2550,6 +2581,7 @@ data C =
   | HandlerNameC
   | SpecializedDictNameC
   | UnsafeC
+  | ImpNameC
     deriving (Eq, Ord, Generic, Show)
 
 type E = S -> *       -- expression-y things, covariant in the S param
@@ -2562,7 +2594,7 @@ type B = S -> S -> *  -- binder-y things, covariant in the first param and
 type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
--- We use SubstItem for ColorRep to be able ot unsafeCoerce scopes into name sets in O(1).
+-- We use SubstItem for ColorRep to be able to unsafeCoerce scopes into name sets in O(1).
 type ColorRep = SubstItem GHC.Exts.Any UnsafeS
 type NameSet (n::S) = RawNameMap ColorRep
 
@@ -3173,6 +3205,12 @@ instance HoistableV v => HoistableE (SubstFrag v i i') where
 instance SubstV substVal v => SubstE substVal (SubstFrag v i i') where
    substE env frag = fmapSubstFrag (\_ val -> substE env val) frag
 
+instance SubstV substVal v => SubstE substVal (Subst v i) where
+  substE env = \case
+    Subst f frag -> Subst (\n -> substE env (f n)) $ substE env frag
+    UnsafeMakeIdentitySubst
+      -> Subst (\n -> substE env (fromName $ unsafeCoerceE n)) emptyInFrag
+
 -- === unsafe coercions ===
 
 -- Sometimes we need to break the glass. But at least these are slightly safer
@@ -3248,9 +3286,6 @@ unsafeListToNest :: [b UnsafeS UnsafeS] -> Nest b UnsafeS UnsafeS
 unsafeListToNest l = case l of
   [] -> unsafeCoerceB Empty
   b:rest -> Nest (unsafeCoerceB b) $ unsafeListToNest rest
-
-instance (forall n' l'. Show (b n' l')) => Show (NonEmptyNest b n l) where
-  show (NonEmptyNest b rest) = "(NonEmptyNest " <> show b <> " in " <> show rest <> ")"
 
 instance (forall c. Color c => Store (v c n)) => Store (SubstItem v n) where
   size = VarSize \item@(SubstItem f _) ->

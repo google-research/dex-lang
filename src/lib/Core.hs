@@ -183,12 +183,6 @@ refreshAbsI ab cont = do
   refreshAbsPure (toScope env) ab \_ b e ->
     extendI b $ cont b e
 
-refreshLamI :: EnvReaderI m
-            => LamExpr r i
-            -> (forall i'. DExt i i' => LamBinder r i i' -> Block r i' -> m i' o a)
-            -> m i o a
-refreshLamI _ _ = undefined
-
 instance EnvReader m => EnvReader (EnvReaderIT m i) where
   unsafeGetEnv = EnvReaderIT $ lift unsafeGetEnv
   {-# INLINE unsafeGetEnv #-}
@@ -311,13 +305,6 @@ instance (SinkableE ann, ToBinding ann AtomNameC) => BindsEnv (NonDepNest r ann)
 instance BindsEnv EffectBinder where
   toEnvFrag (EffectBinder effs) = EnvFrag emptyOutFrag $ Just effs
 
-instance BindsEnv (LamBinder r) where
-  toEnvFrag (LamBinder b ty arrow effects) =
-    withExtEvidence b do
-      let binding = toBinding $ sink $ LamBinding arrow ty
-      EnvFrag (RecSubstFrag $ b @> binding)
-                   (Just $ sink effects)
-
 instance BindsEnv (PiBinder r) where
   toEnvFrag :: Distinct l => PiBinder r n l -> EnvFrag n l
   toEnvFrag (PiBinder b ty arr) =
@@ -373,9 +360,6 @@ nestToEnvFrag = nestToEnvFragRec emptyOutFrag
 {-# RULES
       "extendEnv * Empty"  forall env. extendEnv env (nestToEnvFrag (unsafeCoerceB Empty)) = env
   #-}
-
-instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
-  toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest
 
 instance BindsEnv b => (BindsEnv (RNest b)) where
   toEnvFrag n = rnestToEnvFragRec n emptyOutFrag
@@ -486,10 +470,19 @@ substBinders
   -> (forall o'. DExt o o' => b o o' -> m i' o' a)
   -> m i o a
 substBinders b cont = do
-  ab <- substM $ Abs b $ idSubstFrag b
-  refreshAbs ab \b' subst ->
-    extendSubst subst $ cont b'
+  substBindersFrag b \subst b' -> extendSubst subst $ cont b'
 {-# INLINE substBinders #-}
+
+substBindersFrag
+  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, SubstV Name v, SubstB Name b, BindsEnv b)
+  => b i i'
+  -> (forall o'. DExt o o' => SubstFrag v i i' o' -> b o o' -> m i o' a)
+  -> m i o a
+substBindersFrag b cont = do
+  ab <- substM $ Abs b $ idSubstFrag b
+  refreshAbs ab \b' subst -> cont subst b'
+{-# INLINE substBindersFrag #-}
 
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
@@ -515,38 +508,6 @@ withFreshBinders (binding:rest) cont = do
     withFreshBinders rest' \bs vs ->
       cont (Nest (b :> binding) bs)
            (sink (binderName b) : vs)
-
-withFreshLamBinder
-  :: EnvExtender m
-  => NameHint -> LamBinding r n
-  -> Abs (Binder r) EffectRow n
-  -> (forall l. DExt n l => LamBinder r n l -> m l a)
-  -> m n a
-withFreshLamBinder hint binding@(LamBinding arr ty) effAbs cont = do
-  withFreshBinder hint binding \b -> do
-    effs <- applyAbs (sink effAbs) (binderName b)
-    withAllowedEffects effs do
-      cont $ LamBinder b ty arr effs
-
-withFreshPureLamBinder
-  :: EnvExtender m
-  => NameHint -> LamBinding r n
-  -> (forall l. DExt n l => LamBinder r n l -> m l a)
-  -> m n a
-withFreshPureLamBinder hint binding@(LamBinding arr ty) cont = do
-  withFreshBinder hint binding \b -> do
-    withAllowedEffects Pure do
-      cont $ LamBinder b ty arr Pure
-
-withFreshPiBinder
-  :: EnvExtender m
-  => NameHint -> PiBinding r n
-  -> (forall l. DExt n l => PiBinder r n l -> m l a)
-  -> m n a
-withFreshPiBinder hint binding@(PiBinding arr ty) cont = do
-  withFreshBinder hint binding \b ->
-    withAllowedEffects Pure $
-      cont $ PiBinder b ty arr
 
 piBinderAsBinder :: PiBinder r n l -> Binder r n l
 piBinderAsBinder (PiBinder b ty _) = b:>ty
@@ -603,39 +564,6 @@ fromNonDepPiType arr ty = do
   HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return $ (argTy, eff', resultTy')
 
-naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type r n] -> Type r n -> m n (Type r n)
-naryNonDepPiType _ Pure [] resultTy = return resultTy
-naryNonDepPiType _ _    [] _        = error "nullary function can't have effects"
-naryNonDepPiType arr eff [ty] resultTy = Pi <$> nonDepPiType arr ty eff resultTy
-naryNonDepPiType arr eff (ty:tys) resultTy = do
-  innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
-  Pi <$> nonDepPiType arr ty Pure innerFunctionTy
-
-naryNonDepTabPiType :: ScopeReader m =>  [IxType r n] -> Type r n -> m n (Type r n)
-naryNonDepTabPiType [] resultTy = return resultTy
-naryNonDepTabPiType (ty:tys) resultTy = do
-  innerFunctionTy <- naryNonDepTabPiType tys resultTy
-  ty ==> innerFunctionTy
-
-fromNaryNonDepPiType :: (ScopeReader m, MonadFail1 m)
-                     => [Arrow] -> Type r n -> m n ([Type r n], EffectRow n, Type r n)
-fromNaryNonDepPiType [] ty = return ([], Pure, ty)
-fromNaryNonDepPiType [arr] ty = do
-  (argTy, eff, resultTy) <- fromNonDepPiType arr ty
-  return ([argTy], eff, resultTy)
-fromNaryNonDepPiType (arr:arrs) ty = do
-  (argTy, Pure, innerTy) <- fromNonDepPiType arr ty
-  (argTys, eff, resultTy) <- fromNaryNonDepPiType arrs innerTy
-  return (argTy:argTys, eff, resultTy)
-
-fromNaryNonDepTabType :: (ScopeReader m, MonadFail1 m)
-                      => [()] -> Type r n -> m n ([IxType r n], Type r n)
-fromNaryNonDepTabType [] ty = return ([], ty)
-fromNaryNonDepTabType (():rest) ty = do
-  (argTy, innerTy) <- fromNonDepTabType ty
-  (argTys, resultTy) <- fromNaryNonDepTabType rest innerTy
-  return (argTy:argTys, resultTy)
-
 fromNonDepTabType :: (ScopeReader m, MonadFail1 m) => Type r n -> m n (IxType r n, Type r n)
 fromNonDepTabType ty = do
   TabPi (TabPiType (b :> ixTy) resultTy) <- return ty
@@ -652,69 +580,112 @@ infixr 1 ?-->
 infixr 1 -->
 infixr 1 --@
 
-(?-->) :: ScopeReader m => Type r n -> Type r n -> m n (Type r n)
+(?-->) :: IsCore r => ScopeReader m => Type r n -> Type r n -> m n (Type r n)
 a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
 
-(-->) :: ScopeReader m => Type r n -> Type r n -> m n (Type r n)
+(-->) :: IsCore r => ScopeReader m => Type r n -> Type r n -> m n (Type r n)
 a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
 
-(--@) :: ScopeReader m => Type r n -> Type r n -> m n (Type r n)
+(--@) :: ScopeReader m => IsCore r => Type r n -> Type r n -> m n (Type r n)
 a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
 (==>) :: ScopeReader m => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b
 
+-- These `fromNary` functions traverse a chain of unary structures (LamExpr,
+-- TabLamExpr, PiType, respectively) up to the given maxDepth, and return the
+-- discovered binders packed as the nary structure (NaryLamExpr or NaryPiType),
+-- including a count of how many binders there were.
+-- - If there are no binders, return Nothing.
+-- - If there are more than maxDepth binders, only return maxDepth of them, and
+--   leave the others in the unary structure.
+-- - The `exact` versions only succeed if at least maxDepth binders were
+--   present, in which case exactly maxDepth binders are packed into the nary
+--   structure.  Excess binders, if any, are still left in the unary structures.
+blockEffects :: Block r n -> EffectRow n
+blockEffects (Block blockAnn _ _) = case blockAnn of
+  NoBlockAnn -> Pure
+  BlockAnn _ eff -> eff
+
+lamExprToAtom :: IsCore r => LamExpr r n -> Arrow -> Maybe (EffAbs n) -> Atom r n
+lamExprToAtom lam@(UnaryLamExpr (b:>_) block) arr maybeEffAbs = Lam lam arr effAbs
+  where effAbs = case maybeEffAbs of
+          Just e -> e
+          Nothing -> Abs b $ blockEffects block
+lamExprToAtom _ _ _ = error "not a unary lambda expression"
+
+naryLamExprToAtom :: IsCore r => LamExpr r n -> [Arrow] -> Atom r n
+naryLamExprToAtom lam@(LamExpr (Nest b bs) body) (arr:arrs) = case bs of
+  Empty -> lamExprToAtom lam arr Nothing
+  _ -> do
+    let rest = naryLamExprToAtom (LamExpr bs body) arrs
+    Lam (UnaryLamExpr b (AtomicBlock rest)) arr (toConstAbsPure Pure)
+naryLamExprToAtom _ _ = error "unexpected nullary lambda expression"
+
 -- first argument is the number of args expected
-fromNaryLamExact :: Int -> Atom r n -> Maybe (NaryLamExpr r n)
+fromNaryLamExact :: Int -> Atom r n -> Maybe (LamExpr r n)
 fromNaryLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
 fromNaryLamExact exactDepth lam = do
   (realDepth, naryLam) <- fromNaryLam exactDepth lam
   guard $ realDepth == exactDepth
   return naryLam
 
-fromNaryLam :: Int -> Atom r n -> Maybe (Int, NaryLamExpr r n)
+fromNaryLam :: Int -> Atom r n -> Maybe (Int, LamExpr r n)
 fromNaryLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
 fromNaryLam maxDepth = \case
-  (Lam (LamExpr (LamBinder b ty _ effs) body)) ->
-    extend <|> (Just $ (1, NaryLamExpr (NonEmptyNest (b:>ty) Empty) effs body))
+  Lam (LamExpr (Nest b Empty) body) _ (Abs _ effs) ->
+    extend <|> (Just (1, LamExpr (Nest b Empty) body))
     where
       extend = case (effs, body) of
         (Pure, AtomicBlock lam) | maxDepth > 1 -> do
-          (d, NaryLamExpr (NonEmptyNest b2 bs2) effs2 body2) <- fromNaryLam (maxDepth - 1) lam
-          return $ (d + 1, NaryLamExpr (NonEmptyNest (b:>ty) (Nest b2 bs2)) effs2 body2)
+          (d, LamExpr bs body2) <- fromNaryLam (maxDepth - 1) lam
+          return $ (d + 1, LamExpr (Nest b bs) body2)
         _ -> Nothing
   _ -> Nothing
 
-fromNaryTabLam :: Int -> Atom r n -> Maybe (Int, NaryLamExpr r n)
+fromNaryTabLam :: Int -> Atom r n -> Maybe (Int, LamExpr r n)
 fromNaryTabLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
 fromNaryTabLam maxDepth = \case
   (TabLam (TabLamExpr (b:>IxType ty _) body)) ->
-    extend <|> (Just $ (1, NaryLamExpr (NonEmptyNest (b:>ty) Empty) Pure body))
+    extend <|> (Just $ (1, LamExpr (Nest (b:>ty) Empty) body))
     where
       extend = case body of
         AtomicBlock lam | maxDepth > 1 -> do
-          (d, NaryLamExpr (NonEmptyNest b2 bs2) effs2 body2) <- fromNaryTabLam (maxDepth - 1) lam
-          return $ (d + 1, NaryLamExpr (NonEmptyNest (b:>ty) (Nest b2 bs2)) effs2 body2)
+          (d, LamExpr (Nest b2 bs2) body2) <- fromNaryTabLam (maxDepth - 1) lam
+          return $ (d + 1, LamExpr (Nest (b:>ty) (Nest b2 bs2)) body2)
         _ -> Nothing
   _ -> Nothing
 
 -- first argument is the number of args expected
-fromNaryTabLamExact :: Int -> Atom r n -> Maybe (NaryLamExpr r n)
+fromNaryTabLamExact :: Int -> Atom r n -> Maybe (LamExpr r n)
 fromNaryTabLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
 fromNaryTabLamExact exactDepth lam = do
   (realDepth, naryLam) <- fromNaryTabLam exactDepth lam
   guard $ realDepth == exactDepth
   return naryLam
 
+fromNaryForExpr :: Int -> Expr r n -> Maybe (Int, LamExpr r n)
+fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected positive number of args"
+fromNaryForExpr maxDepth = \case
+  Hof (For _ _ (UnaryLamExpr b body)) ->
+    extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
+    where
+      extend = do
+        expr <- exprBlock body
+        guard $ maxDepth > 1
+        (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
+        return (d + 1, LamExpr (Nest b bs) body2)
+  _ -> Nothing
+
 -- first argument is the number of args expected
 fromNaryPiType :: Int -> Type r n -> Maybe (NaryPiType r n)
 fromNaryPiType n _ | n <= 0 = error "expected positive number of args"
 fromNaryPiType 1 ty = case ty of
-  Pi (PiType b effs resultTy) -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
+  Pi (PiType b effs resultTy) -> Just $ NaryPiType (Nest b Empty) effs resultTy
   _ -> Nothing
 fromNaryPiType n (Pi (PiType b1 Pure piTy)) = do
-  NaryPiType (NonEmptyNest b2 bs) effs resultTy <- fromNaryPiType (n-1) piTy
-  Just $ NaryPiType (NonEmptyNest b1 (Nest b2 bs)) effs resultTy
+  NaryPiType (Nest b2 bs) effs resultTy <- fromNaryPiType (n-1) piTy
+  Just $ NaryPiType (Nest b1 (Nest b2 bs)) effs resultTy
 fromNaryPiType _ _ = Nothing
 
 mkConsListTy :: [Type r n] -> Type r n

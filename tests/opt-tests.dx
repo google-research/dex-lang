@@ -49,7 +49,6 @@ yield_state 0 \ref.
   (x0, x2)
 -- CHECK: === Result ===
 -- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
--- CHECK-NEXT: occurs in 1 place
 -- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
 -- CHECK-NEXT: ([[x0]], [[x2]])
 
@@ -88,7 +87,9 @@ _ = for i:(Fin 100). one_f32
 %passes lower-opt
 _ = for i:(Fin 10).
   n = ordinal i + 2
-  for j:(Fin 4). sum for k:(Fin n). ordinal j
+  for j:(Fin 4).
+    xs = for k:(Fin n). ordinal j
+    (sum xs, sum xs)  -- Two uses of xs to defeat the inliner
 -- The alloc for the (ordinal i + 2)-sized array should happen in the i loop,
 -- not in the j loop
 -- CHECK: [[n:v#[0-9]+]]:Word32 = %iadd {{.*}} 0x2

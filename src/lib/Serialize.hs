@@ -19,8 +19,6 @@ import qualified Data.Map.Strict as M
 import Data.Int
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
-import Data.Word
-import System.IO (stderr, hPutStrLn)
 import Foreign.Ptr
 import Foreign.C.String
 import Foreign.Marshal.Array
@@ -38,7 +36,7 @@ import Types.Core
 import QueryType
 import Name
 import PPrint ()
-import Util (restructure)
+import Util (Tree (..), restructure)
 
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
@@ -48,37 +46,13 @@ pprintVal val = docAsStr <$> prettyVal val
 {-# SCC pprintVal #-}
 
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
-getDexString (Con (Newtype _ (DepPair _ xs _))) = case tryParseStringContent xs of
-  Just (ptrAtom, n) -> do
-    lookupAtomName ptrAtom >>= \case
-      PtrLitBound _ ptrName -> lookupEnv ptrName >>= \case
-        PtrBinding (PtrLitVal (Heap CPU, Scalar Word8Type) ptr) -> do
-          liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
-        _ -> error "Expected a CPU pointer binding!"
-      _ -> error "Expected a pointer binding!"
-  Nothing -> do
-    liftIO $ hPutStrLn stderr $ "Falling back to a slow path in Dex string retrieval!"
-    xs' <- getTableElements xs
-    forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
-  where
-    tryParseStringContent :: CAtom n -> Maybe (CAtomName n, Word32)
-    tryParseStringContent tabAtom  = do
-      TabLam (TabLamExpr i body) <- return tabAtom
-      FinConst n <- return $ binderType i
-      Block _ (Nest offDecl (Nest loadDecl Empty)) (Var result) <- return body
-      Let v1 (DeclBinding _ _ (Op (PtrOffset (Var ptrName) (ProjectElt (UnwrapBaseNewtype NE.:| [UnwrapBaseNewtype]) i')))) <- return offDecl
-      guard $ binderName i == i'
-      Let r (DeclBinding _ _ loadExpr) <- return loadDecl
-      guard $ binderName r == result
-      Hof (RunIO (Lam (LamExpr iob iobody))) <- return loadExpr
-      HoistSuccess (Block _ (Nest ioDecl Empty) (Var ioResult)) <- return $ hoist iob iobody
-      Let ioR (DeclBinding _ _ (Op (PtrLoad (Var v1')))) <- return ioDecl
-      guard $ binderName ioR == ioResult
-      guard $ binderName v1 == v1'
-      HoistSuccess ptrAtomTop <- return $ hoist i ptrName
-      return (ptrAtomTop, n)
-getDexString x = error $ "Not a string: " ++ pprint x
-{-# SCC getDexString #-}
+getDexString val = do
+  -- TODO: use a `ByteString` instead of `String`
+  Var v <- return val
+  TopDataBound (RepVal _ tree) <- lookupAtomName v
+  Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
+  PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
+  liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
 
 getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n [CAtom n]
 getTableElements tab = do
@@ -88,8 +62,13 @@ getTableElements tab = do
 
 -- Pretty-print values, e.g. for displaying in the REPL.
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
-prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n (Doc ann)
+prettyVal
+  :: (MonadIO1 m, EnvReader m, Fallible1 m)
+  => Val CoreIR n -> m n (Doc ann)
 prettyVal val = case val of
+  Var v -> lookupAtomName v >>= \case
+    TopDataBound repVal -> repValToCoreAtom repVal >>= prettyVal
+    _ -> return $ prettyPrec val LowestPrec
   -- Pretty-print tables.
   TabVal _ _ -> do
     atoms <- getTableElements val
@@ -127,8 +106,12 @@ prettyVal val = case val of
       return $ pretty $ Newtype vty $ SumVal (toList types) t value
       where t = fromIntegral trep; value = payload !! t
     -- Pretty-print strings
-    Newtype (TypeCon "List" _ (DataDefParams [(PlainArrow, Word8Ty)])) _ -> do
-      s <- getDexString val
+    Newtype (TypeCon "List" _ (DataDefParams [(PlainArrow, Word8Ty)])) payload -> do
+      DepPair _ xs _ <- return payload
+      xs' <- getTableElements xs
+      s <- forM xs' \case
+        Con (Lit (Word8Lit c)) -> return $ toEnum $ fromIntegral c
+        x -> error $ "bad" ++ pprint x
       return $ pretty $ "\"" ++ s ++ "\""
     Newtype (TypeCon _ dataDefName _) (Con (SumCon _ t e)) -> prettyData dataDefName t e
     Newtype (TypeCon _ dataDefName _) (Con (SumAsProd _ (TagRepVal trep) payload)) -> prettyData dataDefName t e
@@ -141,9 +124,16 @@ prettyVal val = case val of
     rhs' <- prettyVal rhs
     ty' <- prettyVal $ DepPairTy ty
     return $ "(" <> lhs' <+> ",>" <+> rhs' <> ")" <+> "::" <+> ty'
+  ProjectElt projections v -> lookupAtomName v >>= \case
+    TopDataBound repVal -> do
+      x <- repValToCoreAtom repVal
+      prettyVal $ getProjection (NE.toList projections) x
+    _ -> error "Only projectable vars left should be data vars"
   atom -> return $ prettyPrec atom LowestPrec
   where
-    prettyData :: (MonadIO1 m, EnvReader m, Fallible1 m) => DataDefName n -> Int -> CAtom n -> m n (Doc ann)
+    prettyData
+      :: (MonadIO1 m, EnvReader m, Fallible1 m)
+      => DataDefName n -> Int -> CAtom n -> m n (Doc ann)
     prettyData dataDefName t rep = do
       DataDef _ _ dataCons <- lookupDataDef dataDefName
       DataConDef conName _ idxs <- return $ dataCons !! t
@@ -160,15 +150,15 @@ type RawPtr = Ptr ()
 class HasPtrs a where
   traversePtrs :: Applicative f => (PtrType -> RawPtr -> f RawPtr) -> a -> f a
 
-takePtrSnapshot :: PtrType -> RawPtr -> IO PtrSnapshot
-takePtrSnapshot _ ptrVal | ptrVal == nullPtr = return NullPtr
-takePtrSnapshot (Heap CPU, ptrTy) ptrVal = case ptrTy of
+takePtrSnapshot :: PtrType -> PtrLitVal -> IO PtrLitVal
+takePtrSnapshot _ NullPtr = return NullPtr
+takePtrSnapshot (CPU, ptrTy) (PtrLitVal ptrVal) = case ptrTy of
   PtrType eltTy -> do
     childPtrs <- loadPtrPtrs ptrVal
-    PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
-  _ -> ByteArray <$> loadPtrBytes ptrVal
-takePtrSnapshot (Heap GPU, _) _ = error "Snapshots of GPU memory not implemented"
-takePtrSnapshot (Stack   , _) _ = error "Can't take snapshots of stack memory"
+    PtrSnapshot <$> PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
+  _ -> PtrSnapshot . ByteArray <$> loadPtrBytes ptrVal
+takePtrSnapshot (GPU, _) _ = error "Snapshots of GPU memory not implemented"
+takePtrSnapshot _ (PtrSnapshot _) = error "Already a snapshot"
 {-# SCC takePtrSnapshot #-}
 
 loadPtrBytes :: RawPtr -> IO BS.ByteString
@@ -176,16 +166,27 @@ loadPtrBytes ptr = do
   numBytes <- fromIntegral <$> dexAllocSize ptr
   liftM BS.pack $ peekArray numBytes $ castPtr ptr
 
-loadPtrPtrs :: RawPtr -> IO [RawPtr]
+loadPtrPtrs :: RawPtr -> IO [PtrLitVal]
 loadPtrPtrs ptr = do
   numBytes <- fromIntegral <$> dexAllocSize ptr
-  peekArray (numBytes `div` ptrSize) $ castPtr ptr
+  childPtrs <- peekArray (numBytes `div` ptrSize) $ castPtr ptr
+  forM childPtrs \childPtr ->
+    if childPtr == nullPtr
+      then return NullPtr
+      else return $ PtrLitVal childPtr
 
-restorePtrSnapshot :: PtrSnapshot -> IO RawPtr
-restorePtrSnapshot snapshot = case snapshot of
-  PtrArray  children -> storePtrPtrs =<< mapM restorePtrSnapshot children
-  ByteArray bytes    -> storePtrBytes bytes
-  NullPtr            -> return nullPtr
+restorePtrSnapshot :: PtrLitVal -> IO PtrLitVal
+restorePtrSnapshot NullPtr = return NullPtr
+restorePtrSnapshot (PtrSnapshot snapshot) = case snapshot of
+  PtrArray  children -> do
+    childrenPtrs <- forM children \child ->
+      restorePtrSnapshot child >>= \case
+        NullPtr -> return nullPtr
+        PtrLitVal p -> return p
+        PtrSnapshot _ -> error "expected a pointer literal"
+    PtrLitVal <$> storePtrPtrs childrenPtrs
+  ByteArray bytes -> PtrLitVal <$> storePtrBytes bytes
+restorePtrSnapshot (PtrLitVal _) = error "not a snapshot"
 {-# SCC restorePtrSnapshot #-}
 
 storePtrBytes :: BS.ByteString -> IO RawPtr

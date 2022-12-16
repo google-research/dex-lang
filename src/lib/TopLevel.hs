@@ -26,7 +26,6 @@ import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.List (partition)
-import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
@@ -62,6 +61,7 @@ import CheckType (checkTypesM)
 #endif
 import SourceRename
 import Inference
+import Inline
 import Simplify
 import OccAnalysis
 import Lower
@@ -237,6 +237,8 @@ evalSourceBlock'
 evalSourceBlock' mname block = case sbContents block of
   EvalUDecl decl -> execUDecl mname decl
   Command cmd expr -> case cmd of
+    -- TODO: we should filter the top-level emissions we produce in this path
+    -- we want cache entries but we don't want dead names.
     EvalExpr fmt -> when (mname == Main) do
       annExpr <- case fmt of
         Printed -> return expr
@@ -598,7 +600,8 @@ evalBlock typed = do
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
-  opt <- whenOpt analyzed $ checkPass OptPass . optimize
+  inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
+  opt <- whenOpt inlined $ checkPass OptPass . optimize
   result <- case opt of
     AtomicBlock result -> return result
     _ -> do
@@ -610,8 +613,8 @@ evalBlock typed = do
         l <- getFilteredLogger
         logFiltered l VectPass $ return [TextOut $ pprint errs]
         checkPass VectPass $ return vo
-      evalBackend vopt
-  applyRecon recon result
+      evalLLVM vopt
+  applyRecon recon (injectIRE result)
 {-# SCC evalBlock #-}
 
 evalSpecializations :: (Topper m, Mut n) => [CAtomName n] -> [SpecDictName n] -> m n ()
@@ -627,7 +630,7 @@ evalSpecializations vs sdVs = do
     SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) Nothing) <- lookupEnv d
     methods <- forM [minBound..maxBound] \method -> do
       ty <- liftEnvReaderM $ ixMethodType method absDict
-      lamExpr <- liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+      lamExpr <- liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
         let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
         dict <- applyNaryAbs (sink absDict) extraArgs
         let actualArgs = case method of Size -> []  -- size is thunked
@@ -642,13 +645,13 @@ ixMethodType method absDict = do
     let extraArgBs' = fmapNest plainPiBinder extraArgBs
     getType (Op $ ProjMethod dict (fromEnum method)) >>= \case
       Pi (PiType b _ resultTy) -> do
-        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest b Empty
+        let allBs = extraArgBs' >>> Nest b Empty
         return $ NaryPiType allBs Pure resultTy
       -- non-function methods are thunked
       ty -> do
         Abs unitBinder ty' <- toConstAbs ty
         let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
-        let allBs = fromJust $ nestToNonEmpty $ extraArgBs' >>> Nest unitPiBinder Empty
+        let allBs = extraArgBs' >>> Nest unitPiBinder Empty
         return $ NaryPiType allBs Pure ty'
 
 execUDecl
@@ -685,9 +688,9 @@ execUDecl mname decl = do
 
 compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
 compileTopLevelFun fname = do
-  fPreSimp <- specializedFunPreSimpDefinition fname
-  fSimp <- simplifyTopFunction fPreSimp
-  fImp <- toImpStandaloneFunction fSimp
+  fCore <- specializedFunCoreDefinition fname
+  fSimp <- simplifyTopFunction fCore
+  fImp <- toImpFunction StandardCC fSimp
   fImpName <- emitImpFunBinding (getNameHint fname) fImp
   extendImpCache fname fImpName
   fObj <- toCFunction (getNameHint fImpName) fImp
@@ -726,15 +729,14 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
         destroyLinker l
   return $ NativeFunction ptr destructor
 
--- Get the definition of a specialized function in the pre-simplification IR.
-specializedFunPreSimpDefinition
-  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (NaryLamExpr CoreIR n)
-specializedFunPreSimpDefinition fname = do
+specializedFunCoreDefinition
+  :: (MonadFail1 m, EnvReader m) => CAtomName n -> m n (LamExpr CoreIR n)
+specializedFunCoreDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
   case s of
     AppSpecialization f abStaticArgs@(Abs bs _) -> do
       f' <- forceDeferredInlining f
-      liftBuilder $ buildNaryLamExpr ty \allArgs -> do
+      liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
         let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
         ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
         naryApp (sink f') $ staticArgs' <> map Var originalArgs
@@ -762,15 +764,14 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (SAtom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
   let (cc, _needsSync) =
-        case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
-                        _        -> (EntryFun CUDANotRequired, False)
-  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
-    blockToImpFunction backend cc block
+        case backend of LLVMCUDA -> (EntryFunCC CUDARequired   , True )
+                        _        -> (EntryFunCC CUDANotRequired, False)
+  impFun <- checkPass ImpPass $ blockToImpFunction backend cc block
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
@@ -782,8 +783,9 @@ evalLLVM block = do
     $ LinktimeVals reqFunPtrs reqDataPtrs
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
-  applyNaryAbs reconAtom $ (map SubstVal resultValsNoPtrs :: [CAtomSubstVal AtomNameC n])
+  resultTy <- getDestBlockType block
+  result <- repValFromFlatList resultTy resultVals
+  Var <$> emitBinding "data" (AtomNameBinding $ TopDataBound result)
 {-# SCC evalLLVM #-}
 
 compileToObjCode
@@ -803,18 +805,6 @@ impNameToObj v = do
     Just v' -> return v'
     Nothing -> throw CompilerErr
       $ "Expected to find an object cache entry for: " ++ pprint v
-
-evalBackend :: (Topper m, Mut n) => DestBlock n -> m n (CAtom n)
-evalBackend block = do
-  backend <- backendName <$> getConfig
-  let eval = case backend of
-               MLIR        -> error "TODO"
-               LLVM        -> evalLLVM
-               LLVMMC      -> evalLLVM
-               LLVMCUDA    -> evalLLVM
-               Interpreter -> error "TODO"
-  eval block
-
 
 withCompileTime :: MonadIO m => m Result -> m Result
 withCompileTime m = do
@@ -921,14 +911,11 @@ storeCache env = liftIO do
   BS.writeFile cachePath $ encode sEnv
 
 snapshotPtrs :: MonadIO m => RecSubst Binding n -> m (RecSubst Binding n)
-snapshotPtrs bindings =
-  RecSubst <$> traverseSubstFrag f (fromRecSubst bindings)
-  where
-    f = \case
-      PtrBinding (PtrLitVal ty p) ->
-        liftIO $ PtrBinding . PtrSnapshot ty <$> takePtrSnapshot ty p
-      PtrBinding (PtrSnapshot _ _) -> error "shouldn't have snapshots"
-      b -> return b
+snapshotPtrs bindings = RecSubst <$> traverseSubstFrag
+  (\case
+      PtrBinding ty p -> liftIO $ PtrBinding ty <$> takePtrSnapshot ty p
+      b -> return b)
+  (fromRecSubst bindings)
 
 traverseBindingsTopStateEx
   :: Monad m => TopStateEx
@@ -973,9 +960,7 @@ clearCache = liftIO do
 
 restorePtrSnapshots :: MonadIO m => TopStateEx -> m TopStateEx
 restorePtrSnapshots s = traverseBindingsTopStateEx s \case
-  PtrBinding (PtrSnapshot ty snapshot) ->
-    liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
-  PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
+  PtrBinding ty p  -> liftIO $ PtrBinding ty <$> restorePtrSnapshot p
   b -> return b
 
 getFilteredLogger :: Topper m => m n PassLogger

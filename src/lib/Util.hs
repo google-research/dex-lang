@@ -17,12 +17,13 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
              whenM, unsnocNonempty, anyM,
              File (..), FileHash, FileContents, addHash, readFileWithHash,
-             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList) where
+             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList, Tree (..), zipTrees) where
 
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
 import Data.Maybe (catMaybes)
+import Data.Hashable (Hashable)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
@@ -33,6 +34,8 @@ import qualified Data.Map.Strict as M
 import Control.Applicative
 import Control.Monad.State.Strict
 import System.CPUTime
+import Data.Store (Store)
+import GHC.Generics (Generic)
 import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)
 
@@ -327,6 +330,18 @@ unsnoc (ReversedList x) = reverse x
 toSnocList :: [a] -> SnocList a
 toSnocList xs = ReversedList $ reverse xs
 {-# INLINE toSnocList #-}
+
+-- === generic tree ===
+
+data Tree a = Leaf a | Branch [Tree a]
+     deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+instance Store a => Store (Tree a)
+instance Hashable a => Hashable (Tree a)
+
+zipTrees :: Tree a -> Tree b -> Tree (a, b)
+zipTrees (Leaf x) (Leaf y) = Leaf (x, y)
+zipTrees (Branch xs) (Branch ys) | length xs == length ys = Branch $ zipWith zipTrees xs ys
+zipTrees _ _ = error "zip error"
 
 -- === bytestrings paired with their hash digest ===
 

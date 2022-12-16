@@ -12,7 +12,9 @@ module MTL1 (
     StateT1, pattern StateT1, runStateT1, evalStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
     ScopedT1, pattern ScopedT1, runScopedT1,
-    FallibleT1, runFallibleT1
+    FallibleT1, runFallibleT1,
+    runStreamWriterT1, StreamWriter (..), StreamWriterT1 (..),
+    runStreamReaderT1, StreamReader (..), StreamReaderT1 (..),
   ) where
 
 import Control.Monad.Reader
@@ -21,10 +23,12 @@ import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Control.Monad.Trans.Except as MTE
 import Control.Applicative
+import Data.Foldable (toList)
 
 import Name
 import Err
 import Core (EnvReader (..), EnvExtender (..))
+import Util (SnocList (..), snoc, emptySnocList)
 
 class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where
   lift11 :: Monad1 m => m n a -> t m n a
@@ -311,3 +315,44 @@ instance ScopeReader m => ScopeReader (FallibleT1 m) where
 instance EnvReader m => EnvReader (FallibleT1 m) where
   unsafeGetEnv = FallibleT1 $ lift $ lift unsafeGetEnv
   {-# INLINE unsafeGetEnv #-}
+
+-------------------- StreamWriter --------------------
+
+class Monad m => StreamWriter w m | m -> w where
+  writeStream :: w -> m ()
+
+newtype StreamWriterT1 (w:: *) (m::MonadKind1) (n::S) (a:: *) =
+  StreamWriterT1 { runStreamWriterT1' :: StateT1 (LiftE (SnocList w)) m n a }
+  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader)
+
+instance Monad1 m => StreamWriter w (StreamWriterT1 w m n) where
+  writeStream w = StreamWriterT1 $ modify (\(LiftE ws) -> LiftE (ws `snoc` w))
+  {-# INLINE writeStream #-}
+
+runStreamWriterT1 :: Monad1 m => StreamWriterT1 w m n a -> m n (a, [w])
+runStreamWriterT1 m = do
+  (ans, LiftE ws) <- runStateT1 (runStreamWriterT1' m) (LiftE emptySnocList)
+  return (ans, toList ws)
+{-# INLINE runStreamWriterT1 #-}
+
+-------------------- StreamReader --------------------
+
+class Monad m => StreamReader r m | m -> r where
+  readStream :: m (Maybe r)
+
+newtype StreamReaderT1 (r:: *) (m::MonadKind1) (n::S) (a:: *) =
+  StreamReaderT1 { runStreamReaderT1' :: StateT1 (LiftE [r]) m n a }
+  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader)
+
+instance Monad1 m => StreamReader r (StreamReaderT1 r m n) where
+  readStream = StreamReaderT1 $ state \(LiftE rs) ->
+    case rs of
+      []       -> (Nothing, LiftE [])
+      (r:rest) -> (Just r , LiftE rest)
+  {-# INLINE readStream #-}
+
+runStreamReaderT1 :: Monad1 m => [r] -> StreamReaderT1 r m n a -> m n (a, [r])
+runStreamReaderT1 rs m = do
+  (ans, LiftE rsRemaining) <- runStateT1 (runStreamReaderT1' m) (LiftE rs)
+  return (ans, rsRemaining)
+{-# INLINE runStreamReaderT1 #-}

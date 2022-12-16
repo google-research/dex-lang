@@ -10,7 +10,7 @@ module GenericTraversal
   ( GenericTraverser (..), GenericallyTraversableE (..)
   , GenericTraverserM (..), liftGenericTraverserM
   , traverseExprDefault, traverseAtomDefault, liftGenericTraverserMTopEmissions
-  , traverseDeclNest, traverseBlock, traverseLamBinder ) where
+  , traverseDeclNest, traverseBlock, traverseBinder ) where
 
 import Control.Monad
 import Control.Monad.State.Class
@@ -70,7 +70,8 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
   Op  op  -> Op   <$> mapM tge op
-  Hof hof -> Hof  <$> mapM tge hof
+  Hof hof -> Hof  <$> tge hof
+  PrimEffect ref eff -> PrimEffect <$> tge ref <*> tge eff
   Case scrut alts resultTy effs ->
     Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy <*> substM effs
   Handle hndName args body ->
@@ -79,12 +80,21 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
 traverseAtomDefault :: GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
-  Lam (LamExpr b body) -> traverseLamBinder b \b' -> Lam . LamExpr b' <$> tge body
+  Lam (UnaryLamExpr (b:>ty) body) arr effs -> do
+    ty' <- tge ty
+    effs' <- substM effs
+    withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+      effs'' <- applyAbs (sink effs') (binderName b')
+      extendRenamer (b@>binderName b') do
+        withAllowedEffects effs'' do
+          body' <- tge body
+          return $ Lam (UnaryLamExpr (b':>ty') body') arr effs'
+  Lam _ _ _ -> error "expected a unary lambda expression"
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty
-    withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
+    withFreshBinder (getNameHint b) (PiBinding arr ty') \b' -> do
       extendRenamer (b@>binderName b') $
-        Pi <$> (PiType b' <$> substM eff <*> tge resultTy)
+        Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> tge resultTy)
   TabLam (TabLamExpr (b:>ty) body) -> do
     ty' <- tge ty
     let hint = getNameHint b
@@ -100,6 +110,7 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
+  PtrVar _ -> substM atom
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr
@@ -110,9 +121,11 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   ProjectElt _ _ -> substM atom
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
+  RepValAtom _ -> substM atom
+  -- TODO(dougalm): We don't need these because we don't use generic traversals
+  -- on anything except SimpIR and CoreIR. We should add that as a constraint on
+  -- `r` and then we can delete these cases.
   ACase _ _ _ -> nyi
-  DepPairRef _ _ _ -> nyi
-  BoxedRef _ -> nyi
   where nyi = error $ "not implemented: " ++ pprint atom
 
 traverseExtLabeledItems
@@ -159,6 +172,16 @@ instance GenericallyTraversableE r (DepPairType r) where
     withFreshBinder (getNameHint b) lty' \b' -> do
       extendRenamer (b@>binderName b') $ DepPairType (b':>lty') <$> tge rty
 
+instance GenericallyTraversableE r (BaseMonoid r) where
+  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withAllowedEffects Pure (tge f)
+
+instance GenericallyTraversableE r (PrimEffect r) where
+  traverseGenericE = \case
+    MGet         -> return MGet
+    MPut  x      -> MPut <$> tge x
+    MAsk         -> return MAsk
+    MExtend bm x -> MExtend <$> tge bm <*> tge x
+
 instance GenericallyTraversableE r (IxType r) where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
 
@@ -173,15 +196,24 @@ instance GenericallyTraversableE r (DictExpr r) where
 instance GenericallyTraversableE r (DictType r) where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params
 
-instance GenericallyTraversableE r (NaryLamExpr r) where
-  traverseGenericE (NaryLamExpr bs effs body) = do
-    traverseBinderNest (nonEmptyToNest bs) \bs' -> do
-      effs' <- substM effs
-      withAllowedEffects effs' do
-        body' <- tge body
-        case nestToNonEmpty bs' of
-          Just bs'' -> return $ NaryLamExpr bs'' effs' body'
-          Nothing -> error "impossible"
+instance GenericallyTraversableE r (LamExpr r) where
+  traverseGenericE (LamExpr bs body) = do
+    traverseBinderNest bs \bs' -> LamExpr bs' <$> tge body
+
+instance GenericallyTraversableE r (Hof r) where
+  traverseGenericE = \case
+    For d ixDict f       -> For d <$> tge ixDict <*> tge f
+    While body           -> While <$> tge body
+    Linearize f          -> Linearize <$> tge f
+    Transpose f          -> Transpose <$> tge f
+    RunReader r f        -> RunReader <$> tge r <*> tge f
+    RunWriter d bm f     -> RunWriter <$> mapM tge d <*> tge bm <*> tge f
+    RunState d s f       -> RunState <$> mapM tge d <*> tge s <*> tge f
+    RunIO body           -> RunIO <$> tge body
+    RunInit body         -> RunInit <$> tge body
+    CatchException body  -> CatchException <$> tge body
+    Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
+    RememberDest d body  -> RememberDest <$> tge d <*> tge body
 
 traverseBinderNest
   :: GenericTraverser r f s
@@ -237,19 +269,15 @@ traverseAlt (Abs (b:>ty) body) = do
   ty' <- tge ty
   buildAbs (getNameHint b) ty' \v -> extendRenamer (b@>v) $ tge body
 
-traverseLamBinder
+traverseBinder
   :: GenericTraverser r f s
-  => LamBinder r i i'
-  -> (forall o'. DExt o o' => LamBinder r o o' -> GenericTraverserM r f s i' o' a)
+  => Binder r i i'
+  -> (forall o'. DExt o o' => Binder r o o' -> GenericTraverserM r f s i' o' a)
   -> GenericTraverserM r f s i o a
-traverseLamBinder (LamBinder b ty arr eff) cont = do
+traverseBinder (b:>ty) cont = do
   ty' <- tge ty
-  let hint = getNameHint b
-  effAbs <- withFreshBinder hint ty' \b' ->
-    extendRenamer (b@>binderName b') do
-      Abs (b':>ty') <$> substM eff
-  withFreshLamBinder hint (LamBinding arr ty') effAbs \b' -> do
-    extendRenamer (b@>binderName b') $ cont b'
+  withFreshBinder (getNameHint b) ty' \b' ->
+    extendRenamer (b@>binderName b') $ cont (b':>ty')
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)
