@@ -1403,18 +1403,18 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   storage_size <span class="symbol">=</span> 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Int32</span>
-  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internal_cast %<span class="type-name">Int32Ptr</span> ptr) x
-  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> %ptrLoad  (internal_cast %<span class="type-name">Int32Ptr</span> ptr)
+  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internal_cast (%<span class="type-name">Int32Ptr</span>) ptr) x
+  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> %ptrLoad  (internal_cast (%<span class="type-name">Int32Ptr</span>) ptr)
   storage_size <span class="symbol">=</span> 4
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Word32</span>
-  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internal_cast %<span class="type-name">Word32Ptr</span> ptr) x
-  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> %ptrLoad  (internal_cast %<span class="type-name">Word32Ptr</span> ptr)
+  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internal_cast (%<span class="type-name">Word32Ptr</span>) ptr) x
+  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> %ptrLoad  (internal_cast (%<span class="type-name">Word32Ptr</span>) ptr)
   storage_size <span class="symbol">=</span> 4
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Float32</span>
-  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internal_cast %<span class="type-name">Float32Ptr</span> ptr) x
-  load <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)   <span class="symbol">.</span> %ptrLoad  (internal_cast %<span class="type-name">Float32Ptr</span> ptr)
+  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internal_cast (%<span class="type-name">Float32Ptr</span>) ptr) x
+  load <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)   <span class="symbol">.</span> %ptrLoad  (internal_cast (%<span class="type-name">Float32Ptr</span>) ptr)
   storage_size <span class="symbol">=</span> 4
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Nat</span>
@@ -1423,8 +1423,8 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   storage_size <span class="symbol">=</span> storage_size <span class="type-name">NatRep</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> (<span class="type-name">Ptr</span> a) <span class="keyword">given</span> {a}
-  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) (<span class="type-name">MkPtr</span> x)<span class="symbol">.</span>         %ptrStore (internal_cast %<span class="type-name">PtrPtr</span> ptr) x
-  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)          <span class="symbol">.</span> <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrLoad  (internal_cast %<span class="type-name">PtrPtr</span> ptr)
+  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) (<span class="type-name">MkPtr</span> x)<span class="symbol">.</span>         %ptrStore (internal_cast (%<span class="type-name">PtrPtr</span>) ptr) x
+  load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)          <span class="symbol">.</span> <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrLoad  (internal_cast (%<span class="type-name">PtrPtr</span>) ptr)
   storage_size <span class="symbol">=</span> 8  <span class="comment">-- TODO: something more portable?
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Storable instances for other types
