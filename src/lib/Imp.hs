@@ -370,7 +370,6 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
       ithDest <- indexDest dest =<< unsafeFromOrdinalImp ixTy (IIdxRepVal i)
       storeAtom ithDest row'
     loadAtom dest
-  ProjMethod _ _ -> error "shouldn't have this. TODO: check that statically"
   where
     notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of
@@ -1042,7 +1041,7 @@ repValFromFlatList ty xs = do
   (litValTree, []) <- runStreamReaderT1 xs $ traverseScalarRepTys (injectIRE ty) \_ ->
     fromJust <$> readStream
   iExprTree <- mapM litValToIExpr litValTree
-  return $ RepVal (unsafeCoerceIRE ty) iExprTree
+  return $ RepVal (injectIRE ty) iExprTree
 
 litValToIExpr :: (TopBuilder m, Mut n) => LitVal -> m n (IExpr n)
 litValToIExpr litval = case litval of
@@ -1432,32 +1431,37 @@ coreToImpBuilder cont = do
 -- === Type classes ===
 
 ordinalImp :: Emits n => IxType SimpToImpIR n -> SIAtom n -> SubstImpM i n (IExpr n)
-ordinalImp (IxType _ dict) i = fromScalarAtom =<< do
-  case dict of
-    DictCon (IxFin _) -> return i
-    DictCon (ExplicitMethods d params) -> do
-      SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
-      appSpecializedIxMethod (fs !! fromEnum Ordinal) (params ++ [i])
-    _ -> error $ "Not a simplified dict: " ++ pprint dict
+ordinalImp (IxType _ dict) i = fromScalarAtom =<< case dict of
+  IxDictFin _ -> return i
+  IxDictSpecialized _ d params -> do
+    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+    appSpecializedIxMethod (fs !! fromEnum Ordinal) (params ++ [i])
+  -- This should be impossible! But it happesn because of careless use of `unsafeFromOrdinalIRE`.
+  -- It'll be fixed when we strip newtypes in the simp pass.
+  IxDictAtom (DictCon (IxFin _)) -> return i
 
 unsafeFromOrdinalImp :: Emits n => IxType SimpToImpIR n -> IExpr n -> SubstImpM i n (SIAtom n)
 unsafeFromOrdinalImp (IxType _ dict) i = do
   let i' = Con $ Newtype NatTy $ toScalarAtom i
   case dict of
-    DictCon (IxFin n) -> return $ Con $ Newtype (TC $ Fin n) i'
-    DictCon (ExplicitMethods d params) -> do
+    IxDictFin n -> return $ Con $ Newtype (TC $ Fin n) i'
+    IxDictSpecialized _ d params -> do
       SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
-    _ -> error $ "Not a simplified dict: " ++ pprint dict
+    -- This should be impossible! But it happesn because of careless use of `unsafeFromOrdinalIRE`.
+    -- It'll be fixed when we strip newtypes in the simp pass.
+    IxDictAtom (DictCon (IxFin n)) -> return $ Con $ Newtype (TC $ Fin n) i'
 
 indexSetSizeImp :: Emits n => IxType SimpToImpIR n -> SubstImpM i n (IExpr n)
 indexSetSizeImp (IxType _ dict) = do
   ans <- case dict of
-    DictCon (IxFin n) -> return n
-    DictCon (ExplicitMethods d params) -> do
+    IxDictFin n -> return n
+    IxDictSpecialized _ d params -> do
       SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
-    _ -> error $ "Not a simplified dict: " ++ pprint dict
+    -- This should be impossible! But it happesn because of careless use of `unsafeFromOrdinalIRE`.
+    -- It'll be fixed when we strip newtypes in the simp pass.
+    IxDictAtom (DictCon (IxFin n)) -> return n
   fromScalarAtom $ unwrapBaseNewtype ans
 
 appSpecializedIxMethod :: Emits n => LamExpr SimpIR n -> [SIAtom n] -> SubstImpM i n (SIAtom n)

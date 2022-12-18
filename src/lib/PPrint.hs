@@ -257,7 +257,12 @@ instance Pretty (DictExpr r n) where
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
-    ExplicitMethods v args -> "ExplicitMethods" <+> p v <+> p args
+
+instance Pretty (IxDict r n) where
+  pretty = \case
+    IxDictAtom x -> p x
+    IxDictFin n  -> "Ix (Fin " <> p n <> ")"
+    IxDictSpecialized _ d xs -> p d <+> p xs
 
 instance Pretty (DictType r n) where
   pretty (DictType classSourceName _ params) =
@@ -403,7 +408,7 @@ instance Pretty (TabPiType r n) where
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we
 -- want it on.
-prettyIxDict :: Atom r n -> Doc ann
+prettyIxDict :: IxDict r n -> Doc ann
 prettyIxDict dict = if False then " " <> p dict else mempty
 
 prettyBinderHelper :: HoistableE e => Binder r n l -> e l -> Doc ann

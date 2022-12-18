@@ -16,7 +16,8 @@ module QueryType (
   litType,
   numNaryPiArgs, specializedFunType,
   projectionIndices, sourceNameType, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
+  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts,
+  ixTyFromDict,
   isNewtype, instantiateHandlerType, getDestBlockType, forceDRepVal, toDRepVal,
   getNaryLamExprType
   ) where
@@ -192,15 +193,15 @@ litType v = case v of
 numNaryPiArgs :: NaryPiType r n -> Int
 numNaryPiArgs (NaryPiType bs _ _) = nestLength bs
 
-specializedFunType :: EnvReader m => SpecializationSpec n -> m n (NaryPiType r n)
+specializedFunType :: EnvReader m => SpecializationSpec n -> m n (NaryPiType CoreIR n)
 specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
   refreshAbs ab \extraArgBs (ListE staticArgs) -> do
-    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    let extraArgBs' = fmapNest (plainPiBinder . (\(b:>ty) -> b :> unsafeCoerceIRE ty)) extraArgBs
     lookupAtomName (sink f) >>= \case
       TopFunBound fTy _ -> do
         NaryPiType dynArgBs effs resultTy <- instantiateNaryPi fTy staticArgs
         let allBs = extraArgBs' >>> dynArgBs
-        return $ unsafeCoerceIRE $ NaryPiType allBs effs resultTy
+        return $ NaryPiType allBs effs resultTy
       _ -> error "should only be specializing top-level functions"
 
 userEffect :: EffectName n -> Atom r n
@@ -445,7 +446,7 @@ getTypePrimCon con = case con of
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
 
-dictExprType :: DictExpr r i -> TypeQueryM r i o (Type r o)
+dictExprType :: IsCore r => DictExpr r i -> TypeQueryM r i o (Type r o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -465,10 +466,6 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- substM n
     liftM DictTy $ ixDictType $ TC $ Fin n'
-  ExplicitMethods v params -> do
-    params' <- mapM substM params
-    SpecializedDictBinding (SpecializedDict (Abs bs dict) _) <- lookupEnv =<< substM v
-    dropSubst $ extendSubst (bs @@> map SubstVal params') $ getTypeE (unsafeCoerceIRE dict)
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -503,7 +500,7 @@ typeTabApp tabTy xs = go tabTy $ toList xs
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
 
-instance HasType r (DictExpr r) where
+instance IsCore r => HasType r (DictExpr r) where
   getTypeE e = dictExprType e
 
 instance HasType r (Expr r) where
@@ -689,7 +686,7 @@ instantiateHandlerType hndName r args = do
   HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
   applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) (unsafeCoerceIRE retTy)
 
-getSuperclassDicts :: ClassDef n -> Atom r n -> [Atom r n]
+getSuperclassDicts :: IsCore r => ClassDef n -> Atom r n -> [Atom r n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
   for [0 .. nestLength classBs - 1] \i -> DictCon $ SuperclassProj dict i
 
@@ -772,11 +769,13 @@ getClassTy (ClassDef _ _ bs _ _) = go bs
     go Empty = TyKind
     go (Nest (RolePiBinder b ty arr _) rest) = Pi $ PiType (PiBinder b ty arr) Pure $ go rest
 
-ixTyFromDict :: (EnvReader m) => Atom r n -> m n (IxType r n)
-ixTyFromDict dict = do
-  getType dict >>= \case
-    DictTy (DictType "Ix" _ [iTy]) -> return $ IxType iTy dict
+ixTyFromDict :: EnvReader m => IxDict r n -> m n (IxType r n)
+ixTyFromDict ixDict = flip IxType ixDict <$> case ixDict of
+  IxDictAtom dict -> getType dict >>= \case
+    DictTy (DictType "Ix" _ [iTy]) -> return iTy
     _ -> error $ "Not an Ix dict: " ++ pprint dict
+  IxDictFin n -> return $ TC $ Fin n
+  IxDictSpecialized n _ _ -> return n
 
 -- === querying effects implementation ===
 

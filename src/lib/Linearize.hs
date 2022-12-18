@@ -271,8 +271,6 @@ linearizeAtom atom = case atom of
       buildTabLam (getNameHint b) (sink ty) \i ->
         rematPrimal (sink subst) (sink wrt) $
           extendSubst (b@>i) $ linearizeBlock body
-  DictCon _ -> notImplemented
-  DictTy _  -> notImplemented
   DepPair _ _ _     -> notImplemented
   TypeCon _ _ _   -> emitZeroT
   LabeledRow _    -> emitZeroT
@@ -380,7 +378,6 @@ linearizeExpr expr = case expr of
     ty' <- injSubstM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitExpr $ TabCon (sink ty') xs'
-  ProjMethod _ _ -> error "shouldn't occur here"
   DAMOp _        -> error "shouldn't occur here"
   where
     la = linearizeAtom

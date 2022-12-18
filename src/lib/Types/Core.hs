@@ -61,8 +61,8 @@ data Atom (r::IR) (n::S) where
  DepPairTy  :: DepPairType r n -> Atom r n
  DepPair    :: Atom r n -> Atom r n -> DepPairType r n          -> Atom r n
  TypeCon    :: SourceName -> DataDefName n -> DataDefParams r n -> Atom r n
- DictCon    :: DictExpr r n                              -> Atom r n
- DictTy     :: DictType r n                              -> Atom r n
+ DictCon    :: IsCore r => DictExpr r n                  -> Atom r n
+ DictTy     :: IsCore r => DictType r n                  -> Atom r n
  LabeledRow :: FieldRowElems r n                         -> Atom r n
  RecordTy   :: FieldRowElems r n                         -> Atom r n
  VariantTy  :: ExtLabeledItems (Type r n) (AtomName r n) -> Atom r n
@@ -94,8 +94,7 @@ data Expr r n where
  RefOp  :: Atom r n -> RefOp r n             -> Expr r n
  PrimOp :: PrimOp (Atom r n)                 -> Expr r n
  UserEffectOp    :: IsCore r    => UserEffectOp r n           -> Expr r n
- -- TODO: `IsCore r` constraint
- ProjMethod      :: (Atom r n) -> Int          -> Expr r n
+ ProjMethod      :: IsCore r    => Atom r n -> Int            -> Expr r n
  RecordVariantOp :: IsCore r    => RecordVariantOp (Atom r n) -> Expr r n
  DAMOp           :: IsLowered r => DAMOp r n                  -> Expr r n
 
@@ -190,7 +189,15 @@ data LamBinding (r::IR) (n::S) = LamBinding Arrow (Type r n)
 data LamExpr (r::IR) (n::S) where
   LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
 
-type IxDict = Atom
+data IxDict r n where
+  IxDictAtom        :: IsCore r => Atom r n         -> IxDict r n
+  -- TODO: make these two only available in SimpIR (currently we can't do that
+  -- because we need CoreIR to be a superset of SimpIR)
+  IxDictFin         :: Atom r n                     -> IxDict r n
+  IxDictSpecialized :: Type r n -> SpecDictName n -> [Atom r n] -> IxDict r n
+
+deriving instance Show (IxDict r n)
+deriving via WrapE (IxDict r) n instance Generic (IxDict r n)
 
 data IxMethod = Size | Ordinal | UnsafeFromOrdinal
      deriving (Show, Generic, Enum, Bounded, Eq)
@@ -261,7 +268,7 @@ data NonDepNest r ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
 -- === Various ops ===
 
 data Hof r n where
- For       :: ForAnn -> Atom r n -> LamExpr r n -> Hof r n
+ For       :: ForAnn -> IxDict r n -> LamExpr r n -> Hof r n
  While     :: Block r n -> Hof r n
  RunReader :: Atom r n -> LamExpr r n -> Hof r n
  RunWriter :: Maybe (Atom r n) -> BaseMonoid r n -> LamExpr r n -> Hof r n
@@ -278,7 +285,7 @@ deriving via WrapE (Hof r) n instance Generic (Hof r n)
 
 -- Ops for "Dex Abstract Machine"
 data DAMOp r n =
-   Seq Direction (Atom r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
+   Seq Direction (IxDict r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
  | RememberDest (Atom r n) (LamExpr r n)
  | AllocDest (Atom r n)        -- type
  | Place (Atom r n) (Atom r n) -- reference, value
@@ -308,6 +315,7 @@ instance CovariantInIR Expr
 instance CovariantInIR IxType
 instance CovariantInIR LamExpr
 instance CovariantInIR BaseMonoid
+instance CovariantInIR IxDict
 
 type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
@@ -326,6 +334,7 @@ type SDecl  = Decl  SimpIR
 type SDecls = Decls SimpIR
 type SAtomSubstVal = AtomSubstVal SimpIR
 type SAtomName  = AtomName SimpIR
+type SBinder = Binder SimpIR
 
 -- === type classes ===
 
@@ -371,19 +380,12 @@ data DictType (r::IR) (n::S) = DictType SourceName (ClassName n) [Type r n]
      deriving (Show, Generic)
 
 data DictExpr (r::IR) (n::S) =
-   InstanceDict (InstanceName n) [Atom r n]
-   -- We use NonEmpty because givens without args can be represented using `Var`.
- | InstantiatedGiven (Atom r n) (NonEmpty (Atom r n))
+   InstantiatedGiven (Atom r n) (NonEmpty (Atom r n))
  | SuperclassProj (Atom r n) Int  -- (could instantiate here too, but we don't need it for now)
+   -- We use NonEmpty because givens without args can be represented using `Var`.
+ | InstanceDict (InstanceName n) [Atom r n]
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (Atom r n)
-   -- Used for dicts defined by top-level functions, which may take extra data parameters
-   -- TODO: consider bundling `(DictType n, [AtomName r n])` as a top-level
-   -- binding for some `Name DictNameC` to make the IR smaller.
-   -- TODO: the function atoms should be names. We could enforce that syntactically but then
-   -- we can't derive `SubstE AtomSubstVal`. Maybe we should have a separate name color for
-   -- top function names.
- | ExplicitMethods (SpecDictName n) [Atom r n] -- dict type, names of parameterized method functions, parameters
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -508,7 +510,7 @@ emptyImportStatus = ImportStatus mempty mempty
 
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec (AtomName CoreIR) n
-  , ixDictCache :: EMap (AbsDict CoreIR) SpecDictName n
+  , ixDictCache :: EMap (Abstracted (Dict CoreIR)) SpecDictName n
   , impCache  :: EMap (AtomName CoreIR) ImpFunName n
   , objCache  :: EMap ImpFunName FunObjCodeName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -660,20 +662,8 @@ instance SubstE (AtomSubstVal CoreIR) EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
-type AbsDict r = Abs (Nest (Binder r)) (Dict r)
-
-data SpecializedDictDef n =
-   SpecializedDict
-     -- Dict, abstracted over "data" params.
-     (AbsDict CoreIR n)
-     -- Methods (thunked if nullary), if they're available.
-     -- We create specialized dict names during simplification, but we don't
-     -- actually simplify/lower them until we return to TopLevel
-     (Maybe [LamExpr SimpIR n])
-   deriving (Show, Generic)
-
 instance GenericE SpecializedDictDef where
-  type RepE SpecializedDictDef = AbsDict CoreIR `PairE` MaybeE (ListE (LamExpr SimpIR))
+  type RepE SpecializedDictDef = Abstracted (Dict CoreIR) `PairE` MaybeE (ListE (LamExpr SimpIR))
   fromE (SpecializedDict ab methods) = ab `PairE` methods'
     where methods' = case methods of Just xs -> LeftE (ListE xs)
                                      Nothing -> RightE UnitE
@@ -712,13 +702,6 @@ data TopFunBinding (n::S) =
  | SpecializedTopFun (SpecializationSpec n)
  | LoweredTopFun     (LamExpr SimpIR n)
  | FFITopFun         (ImpFunName n)
-   deriving (Show, Generic)
-
--- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
-data SpecializationSpec (n::S) =
-   -- The additional binders are for "data" components of the specialization types, like
-   -- `n` in `Fin n`.
-   AppSpecialization (AtomName CoreIR n) (Abs (Nest (Binder CoreIR)) (ListE CType) n)
    deriving (Show, Generic)
 
 -- It would be nice to let bindings be parametric in the IR, but
@@ -828,6 +811,26 @@ naryPiTypeAsType (NaryPiType (Nest b bs) effs resultTy) = case bs of
   Empty -> Pi $ PiType b effs resultTy
   Nest _ _ -> Pi $ PiType b Pure $ naryPiTypeAsType $ NaryPiType bs effs resultTy
 naryPiTypeAsType _ = error "Effectful naryPiType should have at least one argument"
+
+-- === Specialization and generalization ===
+
+type Abstracted (e::E) = Abs (Nest SBinder) e
+type Generalized (e::E) (n::S) = (Abstracted e n, [SAtom n])
+
+data SpecializedDictDef n =
+   SpecializedDict
+     (Abstracted (Dict CoreIR) n)
+     -- Methods (thunked if nullary), if they're available.
+     -- We create specialized dict names during simplification, but we don't
+     -- actually simplify/lower them until we return to TopLevel
+     (Maybe [LamExpr SimpIR n])
+   deriving (Show, Generic)
+
+-- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
+data SpecializationSpec (n::S) =
+   AppSpecialization (AtomName CoreIR n) (Abstracted (ListE CType) n)
+   deriving (Show, Generic)
+
 
 -- === BindsOneAtomName ===
 
@@ -1235,7 +1238,7 @@ instance AlphaHashableE (UserEffectOp r)
 
 instance GenericE (DAMOp r) where
   type RepE (DAMOp r) = EitherE5
-  {- Seq -}            (LiftE Direction `PairE` Atom r `PairE` Atom r `PairE` LamExpr r)
+  {- Seq -}            (LiftE Direction `PairE` IxDict r `PairE` Atom r `PairE` LamExpr r)
   {- RememberDest -}   (Atom r `PairE` LamExpr r)
   {- AllocDest -}      (Atom r)
   {- Place -}          (Atom r `PairE` Atom r)
@@ -1266,7 +1269,7 @@ instance AlphaHashableE (DAMOp r)
 instance GenericE (Hof r) where
   type RepE (Hof r) = EitherE2
     (EitherE6
-  {- For -}       (LiftE ForAnn `PairE` Atom r `PairE` LamExpr r)
+  {- For -}       (LiftE ForAnn `PairE` IxDict r `PairE` LamExpr r)
   {- While -}     (Block r)
   {- RunReader -} (Atom r `PairE` LamExpr r)
   {- RunWriter -} (MaybeE (Atom r) `PairE` BaseMonoid r `PairE` LamExpr r)
@@ -1427,8 +1430,8 @@ instance GenericE (Atom r) where
   {- DepPairTy -}  (DepPairType r)
   {- DepPair -}    ( Atom r `PairE` Atom r `PairE` DepPairType r)
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` DataDefParams r)
-  {- DictCon  -}   (DictExpr r)
-  {- DictTy  -}    (DictType r)
+  {- DictCon  -}   (WhenE (IsCore' r) (DictExpr r))
+  {- DictTy  -}    (WhenE (IsCore' r) (DictType r))
             ) (EitherE3
   {- LabeledRow -}     ( FieldRowElems r)
   {- RecordTy -}       ( FieldRowElems r)
@@ -1452,8 +1455,8 @@ instance GenericE (Atom r) where
     DepPair l r ty -> Case2 (Case1 $ l `PairE` r `PairE` ty)
     TypeCon sourceName defName params -> Case2 $ Case2 $
       LiftE sourceName `PairE` defName `PairE` params
-    DictCon d -> Case2 $ Case3 d
-    DictTy  d -> Case2 $ Case4 d
+    DictCon d -> Case2 $ Case3 $ WhenE d
+    DictTy  d -> Case2 $ Case4 $ WhenE d
     LabeledRow elems -> Case3 $ Case0 $ elems
     RecordTy elems -> Case3 $ Case1 elems
     VariantTy extItems  -> Case3 $ Case2 $ ExtLabeledItemsE extItems
@@ -1481,8 +1484,8 @@ instance GenericE (Atom r) where
       Case1 (l `PairE` r `PairE` ty) -> DepPair l r ty
       Case2 (LiftE sourceName `PairE` defName `PairE` params) ->
         TypeCon sourceName defName params
-      Case3 d -> DictCon d
-      Case4 d -> DictTy  d
+      Case3 (WhenE d) -> DictCon d
+      Case4 (WhenE d) -> DictTy  d
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 elems -> LabeledRow elems
@@ -1569,7 +1572,7 @@ instance GenericE (Expr r) where
  {- RefOp -}           (Atom r `PairE` RefOp r)
  {- PrimOp -}          (ComposeE PrimOp (Atom r))
  {- UserEffectOp -}    (WhenE (IsCore' r) (UserEffectOp r))
- {- ProjMethod -}      (Atom r `PairE` LiftE Int)
+ {- ProjMethod -}      (WhenE (IsCore' r) (Atom r `PairE` LiftE Int))
  {- RecordVariantOp -} (WhenE (IsCore' r) (ComposeE RecordVariantOp (Atom r)))
  {- DAMOp -}           (WhenE (IsLowered' r) (DAMOp r)))
 
@@ -1584,7 +1587,7 @@ instance GenericE (Expr r) where
     RefOp ref op       -> Case1 $ Case1 (ref `PairE` op)
     PrimOp op          -> Case1 $ Case2 (ComposeE op)
     UserEffectOp op    -> Case1 $ Case3 (WhenE op)
-    ProjMethod d i     -> Case1 $ Case4 (d `PairE` LiftE i)
+    ProjMethod d i     -> Case1 $ Case4 (WhenE (d `PairE` LiftE i))
     RecordVariantOp op -> Case1 $ Case5 (WhenE (ComposeE op))
     DAMOp op           -> Case1 $ Case6 (WhenE op)
   {-# INLINE fromE #-}
@@ -1601,7 +1604,7 @@ instance GenericE (Expr r) where
       Case1 (ref `PairE` op)      -> RefOp ref op
       Case2 (ComposeE op)         -> PrimOp op
       Case3 (WhenE op)            -> UserEffectOp op
-      Case4 (d `PairE` LiftE i)   -> ProjMethod d i
+      Case4 (WhenE (d `PairE` LiftE i)) -> ProjMethod d i
       Case5 (WhenE (ComposeE op)) -> RecordVariantOp op
       Case6 (WhenE op)            -> DAMOp op
       _ -> error "impossible"
@@ -1790,24 +1793,21 @@ instance SubstE (AtomSubstVal r) (DictType r)
 
 instance GenericE (DictExpr r) where
   type RepE (DictExpr r) =
-    EitherE5
+    EitherE4
  {- InstanceDict -}      (PairE InstanceName (ListE (Atom r)))
  {- InstantiatedGiven -} (PairE (Atom r) (ListE (Atom r)))
  {- SuperclassProj -}    (PairE (Atom r) (LiftE Int))
  {- IxFin -}             (Atom r)
- {- ExplicitMethods -}   (SpecDictName `PairE` ListE (Atom r))
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
-    ExplicitMethods sd args -> Case4 (sd `PairE` ListE args)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x -> IxFin x
-    Case4 (sd `PairE` ListE args) -> ExplicitMethods sd args
     _ -> error "impossible"
 
 instance SinkableE           (DictExpr r)
@@ -1820,7 +1820,7 @@ instance SubstE (AtomSubstVal r) (DictExpr r)
 instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec (AtomName CoreIR)
-    `PairE` EMap (AbsDict CoreIR) SpecDictName
+    `PairE` EMap (Abstracted (Dict CoreIR)) SpecDictName
     `PairE` EMap (AtomName CoreIR) ImpFunName
     `PairE` EMap ImpFunName FunObjCodeName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
@@ -1984,6 +1984,31 @@ instance SubstB (AtomSubstVal r) (RolePiBinder r)
 instance AlphaEqB (RolePiBinder r)
 instance AlphaHashableB (RolePiBinder r)
 
+instance GenericE (IxDict r) where
+  type RepE (IxDict r) =
+    EitherE3
+      (WhenE (IsCore' r) (Atom r))
+      (Atom r)
+      (Type r `PairE` SpecDictName `PairE` ListE (Atom r))
+  fromE = \case
+    IxDictAtom x -> Case0 $ WhenE x
+    IxDictFin n  -> Case1 $ n
+    IxDictSpecialized t d xs -> Case2 $ t `PairE` d `PairE` ListE xs
+  {-# INLINE fromE #-}
+  toE = \case
+    Case0 (WhenE x)            -> IxDictAtom x
+    Case1 (n)                  -> IxDictFin n
+    Case2 (t `PairE` d `PairE` ListE xs) -> IxDictSpecialized t d xs
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance SinkableE   (IxDict r)
+instance HoistableE  (IxDict r)
+instance SubstE Name (IxDict r)
+instance SubstE (AtomSubstVal r) (IxDict r)
+instance AlphaEqE       (IxDict r)
+instance AlphaHashableE (IxDict r)
+
 instance GenericE (IxType r) where
   type RepE (IxType r) = PairE (Type r) (IxDict r)
   fromE (IxType ty d) = PairE ty d
@@ -2145,7 +2170,7 @@ instance AlphaHashableE TopFunBinding
 
 instance GenericE SpecializationSpec where
   type RepE SpecializationSpec =
-         PairE (AtomName CoreIR) (Abs (Nest (Binder CoreIR)) (ListE CType))
+         PairE (AtomName CoreIR) (Abs (Nest (Binder SimpIR)) (ListE CType))
   fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
   toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
@@ -2153,14 +2178,6 @@ instance GenericE SpecializationSpec where
 
 instance HasNameHint (SpecializationSpec n) where
   getNameHint (AppSpecialization f _) = getNameHint f
-
-instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
-  substE env (AppSpecialization f ab) = do
-    let f' = case snd env ! f of
-               Rename v -> v
-               SubstVal (Var v) -> v
-               _ -> error "bad substitution"
-    AppSpecialization f' (substE env ab)
 
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
@@ -2588,6 +2605,7 @@ instance Store (RefOp r n)
 instance Store (BaseMonoid r n)
 instance Store (DAMOp r n)
 instance Store (UserEffectOp r n)
+instance Store (IxDict r n)
 
 -- === Orphan instances ===
 -- TODO: Resolve this!

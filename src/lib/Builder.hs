@@ -39,7 +39,7 @@ module Builder (
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
   extendImpCache, queryImpCache, finishSpecializedDict,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
-  queryIxDictCache, extendIxDictCache,
+  queryIxDictCache, requireIxDictCache,
   extendObjCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -47,7 +47,7 @@ module Builder (
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
   telescopicCapture, unpackTelescope,
-  applyRecon, applyReconAbs, applyIxMethod,
+  applyRecon, applyReconAbs,
   emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
   addTangent, tangentBaseMonoidFor,
@@ -385,18 +385,27 @@ querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
 
-extendIxDictCache :: TopBuilder m => AbsDict r n -> Name SpecializedDictNameC n -> m n ()
-extendIxDictCache absDict name =
-  extendCache $ mempty { ixDictCache = eMapSingleton (unsafeCoerceRAbsDict absDict) name }
+requireIxDictCache
+  :: (HoistingTopBuilder TopEnvFrag m)
+  => Abstracted (Dict CoreIR) n -> m n (Name SpecializedDictNameC n)
+requireIxDictCache dictAbs = do
+  queryIxDictCache dictAbs >>= \case
+    Just name -> return name
+    Nothing -> do
+      ab <- liftTopBuilderHoisted do
+        dName <- emitBinding "d" $ sink $ SpecializedDictBinding $ SpecializedDict dictAbs Nothing
+        extendCache $ mempty { ixDictCache = eMapSingleton (sink dictAbs) dName }
+        return dName
+      maybeD <- emitHoistedEnv ab
+      case maybeD of
+        Just name -> return name
+        Nothing -> error "Couldn't hoist specialized dictionary"
+{-# INLINE requireIxDictCache #-}
 
-queryIxDictCache :: EnvReader m => AbsDict r n -> m n (Maybe (Name SpecializedDictNameC n))
+queryIxDictCache :: EnvReader m => Abstracted (Dict CoreIR) n -> m n (Maybe (Name SpecializedDictNameC n))
 queryIxDictCache d = do
   cache <- ixDictCache <$> getCache
-  return $ lookupEMap cache (unsafeCoerceRAbsDict d)
-
-unsafeCoerceRAbsDict :: AbsDict r n -> AbsDict r' n
-unsafeCoerceRAbsDict (Abs bs e) = Abs bs' (unsafeCoerceIRE e)
-  where bs' = fmapNest (\(b:>ty) -> b :> unsafeCoerceIRE ty) bs
+  return $ lookupEMap cache d
 
 finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [LamExpr SimpIR n] -> m n ()
 finishSpecializedDict name methods =
@@ -1364,12 +1373,9 @@ unsafePtrLoad x = do
 
 -- === index set type class ===
 
--- XXX: it's important that we do the reduction here, because we need the
--- property that if we call this with a simplified dict, we only produce
--- simplified decls.
-applyIxMethod :: (Builder r m, Emits n) => Atom r n -> IxMethod -> [Atom r n] -> m n (Atom r n)
+applyIxMethod :: (Builder r m, Emits n) => IxDict r n -> IxMethod -> [Atom r n] -> m n (Atom r n)
 applyIxMethod dict method args = case dict of
-  DictCon (IxFin n) -> case method of
+  IxDictFin n -> case method of
     Size -> do
       [] <- return args
       return n                       -- result : Nat
@@ -1379,15 +1385,27 @@ applyIxMethod dict method args = case dict of
     UnsafeFromOrdinal -> do
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
-  DictCon (ExplicitMethods d params) -> do
+  IxDictSpecialized _ d params -> do
     SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
     LamExpr bs body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]
           _    -> params ++ args
     emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
-  _ -> do
-    methodImpl <- emitExpr $ ProjMethod dict (fromEnum method)
+  -- TODO: remove this case. It's just a hack while we figure out how to avoid
+  -- this ending up in `IxDict SimpIR n` where it shouldn't be.
+  IxDictAtom (DictCon (IxFin n)) -> case method of
+    Size -> do
+      [] <- return args
+      return n                       -- result : Nat
+    Ordinal -> do
+      [ix] <- return args            -- ix : Fin n
+      return $ unwrapBaseNewtype ix  -- result : Nat
+    UnsafeFromOrdinal -> do
+      [ix] <- return args                     -- ix : Nat
+      return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
+  IxDictAtom d -> do
+    methodImpl <- emitExpr $ ProjMethod d (fromEnum method)
     naryApp methodImpl args
 
 -- This works with `Nat` instead of `IndexRepTy` because it's used alongside

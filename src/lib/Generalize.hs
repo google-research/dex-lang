@@ -4,24 +4,22 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Generalize (generalizeArgs, generalizeIxDict, Generalized) where
+module Generalize (generalizeArgs, generalizeIxDict) where
 
 import Control.Monad
 
 import Core
 import Err
+import Types.Core
 import Inference
 import IRVariants
 import QueryType
 import Name
 import MTL1
 import LabeledItems
-import Types.Core
 import Types.Primitives
 
-type Generalized (e::E) (n::S) = (Abs (Nest (Binder CoreIR)) e n, [CAtom n])
-
-generalizeIxDict :: EnvReader m => Dict CoreIR n -> m n (Generalized (Dict CoreIR) n)
+generalizeIxDict :: EnvReader m => CAtom n -> m n (Generalized CAtom n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
   dictTy <- getType dict'
@@ -54,7 +52,7 @@ generalizeArgs reqTys allArgs =  liftGeneralizerM $ runSubstReaderT idSubst do
 
 -- === generalizer monad plumbing ===
 
-data GeneralizationEmission n l = GeneralizationEmission (Binder CoreIR n l) (CAtom n)
+data GeneralizationEmission n l = GeneralizationEmission (Binder SimpIR n l) (SAtom n)
 type GeneralizationEmissions = RNest GeneralizationEmission
 
 newtype GeneralizerM n a = GeneralizerM {
@@ -74,7 +72,7 @@ liftGeneralizerM cont = do
   return (Abs bs e, vals)
   where
     -- OPTIMIZE: something not O(N^2)
-    hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Nest (Binder CoreIR) n l, [CAtom n])
+    hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Nest (Binder SimpIR) n l, [SAtom n])
     hoistGeneralizationVals Empty = (Empty, [])
     hoistGeneralizationVals (Nest (GeneralizationEmission b val) bs) = do
       let (bs', vals) = hoistGeneralizationVals bs
@@ -86,7 +84,7 @@ liftGeneralizerM cont = do
 {-# INLINE liftGeneralizerM #-}
 
 -- XXX: the supplied type may be more general than the type of the atom!
-emitGeneralizationParameter :: CType n -> CAtom n -> GeneralizerM n (CAtomName n)
+emitGeneralizationParameter :: SType n -> SAtom n -> GeneralizerM n (CAtomName n)
 emitGeneralizationParameter ty val = GeneralizerM do
   Abs b v <- return $ newName noHint
   let emission = Abs (RNest REmpty (GeneralizationEmission (b:>ty) val)) v
@@ -104,7 +102,9 @@ generalizeType :: CType n -> GeneralizerM n (CType n)
 generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case paramRole of
   TypeParam -> generalizeType param
   DictParam -> generalizeDict paramReqTy param
-  DataParam -> Var <$> emitGeneralizationParameter paramReqTy param
+  -- TODO: we should be able to do the `CAtom` to `SAtom` translation safely here because we have
+  -- the Data constraint.
+  DataParam -> Var <$> emitGeneralizationParameter (unsafeCoerceIRE paramReqTy) (unsafeCoerceIRE param)
 
 -- === role-aware type traversal ===
 
@@ -127,14 +127,16 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
     return $ DictTy $ DictType sn name params'
-  TabPi (TabPiType (b:>(IxType iTy d)) resultTy) -> do
+  TabPi (TabPiType (b:>(IxType iTy (IxDictAtom d))) resultTy) -> do
     iTy' <- f TypeParam TyKind iTy
     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
     d'   <- f DictParam dictTy d
     withFreshBinder (getNameHint b) (toBinding iTy') \b' -> do
       resultTy' <- applySubst (b@>binderName b') resultTy >>= f TypeParam TyKind
-      return $ TabTy (b':>IxType iTy' d') resultTy'
-  RecordTy  elems -> RecordTy  <$> traverserseFieldRowElemTypes (f TypeParam TyKind) elems
+      return $ TabTy (b':>IxType iTy' (IxDictAtom d')) resultTy'
+  -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
+  TabPi t -> return $ TabPi t
+  RecordTy elems -> RecordTy  <$> traverserseFieldRowElemTypes (f TypeParam TyKind) elems
   VariantTy (Ext elems Nothing) -> do
     elems' <- traverse (f TypeParam TyKind) elems
     return $ VariantTy $ Ext elems' Nothing
@@ -197,7 +199,7 @@ getClassRoleBinders def = do
 -- === instances ===
 
 instance GenericB GeneralizationEmission where
-  type RepB GeneralizationEmission = BinderP AtomNameC (PairE CType CAtom)
+  type RepB GeneralizationEmission = BinderP AtomNameC (PairE SType SAtom)
   fromB (GeneralizationEmission (b:>ty) x) = b :> PairE ty x
   {-# INLINE fromB #-}
   toB   (b :> PairE ty x) = GeneralizationEmission (b:>ty) x

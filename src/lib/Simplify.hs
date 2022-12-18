@@ -399,8 +399,7 @@ determineSpecializationSpec fname staticArgs = do
       (PairB staticArgBinders _) <- return $
         splitNestAt (length staticArgs) bs
       (ab, extraArgs) <- generalizeArgs staticArgBinders staticArgs
-      extraArgs' <- mapM coreToSimpAtom extraArgs -- Extra args should be "data"
-      return (AppSpecialization fname ab, extraArgs')
+      return (AppSpecialization fname ab, extraArgs)
     _ -> error "should only be specializing top functions"
 
 getSpecializedFunction :: EnvReader m => SpecializationSpec n -> m n (Abs TopEnvFrag SAtomName n)
@@ -408,24 +407,6 @@ getSpecializedFunction s = do
   querySpecializationCache s >>= \case
     Just name -> return $ Abs emptyOutFrag name
     _ -> liftTopBuilderHoisted $ emitSpecialization (sink s)
-
-emitIxDictSpecialization :: DictExpr CoreIR n -> SimplifyM i n (DictExpr CoreIR n)
-emitIxDictSpecialization d@(ExplicitMethods _ _) = return d
-emitIxDictSpecialization d@(IxFin _)             = return d -- `Ix (Fin n))` is built-in
-emitIxDictSpecialization ixDict = do
-  (dictAbs, params) <- generalizeIxDict (DictCon ixDict)
-  sdName <- queryIxDictCache dictAbs >>= \case
-    Just name -> return name
-    Nothing -> do
-      ab <- liftTopBuilderHoisted do
-        dName <- emitBinding "d" $ sink $ SpecializedDictBinding $ SpecializedDict dictAbs Nothing
-        extendIxDictCache (sink dictAbs) dName
-        return dName
-      maybeD <- emitHoistedEnv ab
-      case maybeD of
-        Just name -> return name
-        Nothing -> error "Couldn't hoist specialized dictionary"
-  return $ ExplicitMethods sdName params
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o
@@ -494,16 +475,23 @@ coreToSimpAtom x = do
         _ -> error $ "can't convert to simp: " ++
           pprint x ++ "    " ++ pprint xTy ++ "   " ++ show x
 
--- Keeping this distinct because we might want to distinguish types and atoms in
--- the simplified IR.
+-- Keeping this distinct from coreToSimpAtom because we might want to
+-- distinguish types and atoms in the simplified IR.
 coreToSimpType :: EnvReader m => CAtom n -> m n (SAtom n)
 coreToSimpType = coreToSimpAtom
 
 simplifyIxType :: IxType CoreIR o -> SimplifyM i o (IxType SimpIR o)
-simplifyIxType (IxType t d) = dropSubst do
-  t' <- coreToSimpAtom =<< simplifyAtom t
-  d' <- coreToSimpAtom =<< simplifyAtom d
-  return $ IxType t' d'
+simplifyIxType (IxType t ixDict) = do
+  t' <- coreToSimpType t
+  IxType t' <$> case ixDict of
+    IxDictAtom (DictCon (IxFin n)) -> return $ unsafeCoerceIRE $ IxDictFin n
+    IxDictAtom d -> do
+      (dictAbs, params) <- generalizeIxDict =<< cheapNormalize d
+      sdName <- requireIxDictCache dictAbs
+      return $ IxDictSpecialized t' sdName params
+    -- TODO: remove these two coercions once we disallow these cases in CoreIR
+    IxDictFin n               -> return $ unsafeCoerceIRE $ IxDictFin n
+    IxDictSpecialized ty d xs -> return $ unsafeCoerceIRE $ IxDictSpecialized ty d xs
 
 makeBlockFromDecls :: EnvReader m => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
 makeBlockFromDecls (Abs Empty result) = return $ AtomicBlock result
@@ -541,12 +529,11 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
     withFreshBinder (getNameHint b) (PiBinding arr ty') \b' -> do
       extendRenamer (b@>binderName b') $
         Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> simplifyAtom resultTy)
-  TabPi (TabPiType (b:>IxType t d) resultTy) -> do
-    t' <- simplifyAtom t
-    d' <- simplifyAtom d
-    withFreshBinder (getNameHint b) (IxType t' d') \b' -> do
+  TabPi (TabPiType (b:>ixTy) resultTy) -> do
+    ixTy' <- simplifyIxType =<< substM ixTy
+    withFreshBinder (getNameHint b) ixTy' \b' -> do
       extendRenamer (b@>binderName b') $
-        TabPi <$> (TabPiType (b':>IxType t' d') <$> simplifyAtom resultTy)
+        TabPi <$> (TabPiType (b':> injectCore ixTy') <$> simplifyAtom resultTy)
   DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
   Con con -> Con <$> (inline traversePrimCon) simplifyAtom con
@@ -558,12 +545,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
     let (arrs, params) = unzip arrParams
     params' <- mapM simplifyAtom params
     return $ TypeCon sn dataDefName' (DataDefParams $ zip arrs params')
-  DictCon d -> do
-    d' <- substM d
-    dTy <- getType d'
-    DictCon <$> case dTy of
-      DictTy (DictType "Ix" _ _) -> emitIxDictSpecialization d'
-      _ -> return d'
+  DictCon d -> (DictCon <$> substM d) >>= cheapNormalize
   DictTy  t -> DictTy  <$> substM t
   RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
     StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
@@ -813,14 +795,6 @@ projectDictMethod d i = do
       case i of
         0 -> return method
         _ -> error "ExplicitDict only supports single-method classes"
-    DictCon (ExplicitMethods sd params) -> do
-      -- We don't produce the specialized methods until after simplification. So
-      -- during simplification we can't be sure that the second field of
-      -- `SpecializedDict` will be non-Nothing. Thus, we use the explicit
-      -- definition instead.
-      SpecializedDictBinding (SpecializedDict (Abs bs dict) _) <- lookupEnv sd
-      dict' <- applySubst (bs @@> map SubstVal params) dict
-      projectDictMethod dict' i
     DictCon (IxFin n) -> projectIxFinMethod (toEnum i) n
     d' -> error $ "Not a simplified dict: " ++ pprint d'
 

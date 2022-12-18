@@ -204,12 +204,11 @@ instance CheaplyReducibleE r (Atom r) (Atom r) where
         Failure _ -> do
           reportSynthesisFail ty
           return $ Con $ DictHole ctx ty
-    TabPi (TabPiType (b:>IxType ixTy dict) resultTy) -> do
+    TabPi (TabPiType (b:>ixTy) resultTy) -> do
       ixTy' <- cheapReduceE ixTy
-      dict' <- cheapReduceE dict
-      withFreshBinder (getNameHint b) (IxType ixTy' dict') \b' -> do
+      withFreshBinder (getNameHint b) ixTy' \b' -> do
         resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType (b':>IxType ixTy' dict') resultTy'
+        return $ TabPi $ TabPiType (b':>ixTy') resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
@@ -221,7 +220,7 @@ instance CheaplyReducibleE r (Atom r) (Atom r) where
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
 
-instance CheaplyReducibleE r (DictExpr r) (Atom r) where
+instance IsCore r => CheaplyReducibleE r (DictExpr r) (Atom r) where
   cheapReduceE d = case d of
     SuperclassProj child superclassIx -> do
       cheapReduceE child >>= \case
@@ -235,7 +234,6 @@ instance CheaplyReducibleE r (DictExpr r) (Atom r) where
       cheapReduceE (App f xs) <|> justSubst
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
-    ExplicitMethods _ _ -> justSubst
     where justSubst = DictCon <$> substM d
 
 instance CheaplyReducibleE r (DataDefParams r) (DataDefParams r) where
@@ -280,6 +278,16 @@ instance CheaplyReducibleE r (Expr r) (Atom r) where
             cheapReduceE $ unsafeCoerceIRE method
         _ -> empty
     _ -> empty
+
+instance CheaplyReducibleE r (IxType r) (IxType r) where
+  cheapReduceE (IxType t d) = IxType <$> cheapReduceE t <*> cheapReduceE d
+
+instance CheaplyReducibleE r (IxDict r) (IxDict r) where
+  cheapReduceE = \case
+    IxDictAtom x -> IxDictAtom <$> cheapReduceE x
+    IxDictFin n -> IxDictFin <$> cheapReduceE n
+    IxDictSpecialized t d xs ->
+      IxDictSpecialized <$> cheapReduceE t <*> substM d <*> mapM cheapReduceE xs
 
 instance (CheaplyReducibleE r e1 e1', CheaplyReducibleE r e2 e2')
   => CheaplyReducibleE r (PairE e1 e2) (PairE e1' e2') where

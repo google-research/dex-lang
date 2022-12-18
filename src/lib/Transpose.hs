@@ -214,7 +214,6 @@ transposeExpr expr ct = case expr of
             transposeBlock body (sink ct)
           return UnitVal
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
-  ProjMethod _ _ -> error "unreachable" -- TODO: rule out statically
   TabCon ty es -> do
     TabTy b _ <- return ty
     idxTy <- substNonlin $ binderAnn b
@@ -273,8 +272,6 @@ transposeAtom atom ct = case atom of
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
       return UnitVal
   TabLam _        -> notTangent
-  DictCon _       -> notTangent
-  DictTy _        -> notTangent
   TypeCon _ _ _   -> notTangent
   LabeledRow _    -> notTangent
   RecordTy _      -> notTangent

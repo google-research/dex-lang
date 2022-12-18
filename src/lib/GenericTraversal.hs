@@ -207,7 +207,12 @@ instance GenericallyTraversableE r (DictExpr r) where
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
     IxFin n ->  IxFin <$> tge n
-    ExplicitMethods d params -> ExplicitMethods <$> substM d <*> mapM tge params
+
+instance GenericallyTraversableE r (IxDict r) where
+  traverseGenericE = \case
+    IxDictAtom x             -> IxDictAtom <$> tge x
+    IxDictFin n              -> IxDictFin <$> tge n
+    IxDictSpecialized t d xs -> IxDictSpecialized <$> tge t <*> substM d <*> mapM tge xs
 
 instance GenericallyTraversableE r (DictType r) where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params

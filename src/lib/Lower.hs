@@ -101,7 +101,7 @@ instance GenericTraverser SimpIR UnitB LFS where
 type Dest = Atom
 
 traverseFor
-  :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> SAtom i -> LamExpr SimpIR i
+  :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> IxDict SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
 traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
   ansTy <- getTypeSubst $ Hof $ For dir ixDict $ lam
@@ -342,13 +342,13 @@ vectorizeLoopsRec frag nest =
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
-        DAMOp (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) body)
+        DAMOp (Seq dir (IxDictFin (NatVal n)) dest@(ProdVal [_]) body)
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
               let vn = NatVal $ n `div` loopWidth
               body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
               dest' <- applySubst frag dest
-              emit $ DAMOp $ Seq dir (DictCon $ IxFin vn) dest' body')
+              emit $ DAMOp $ Seq dir (IxDictFin vn) dest' body')
             `catchErr` \errs -> do
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
@@ -356,7 +356,7 @@ vectorizeLoopsRec frag nest =
                 modify (<> errs')
                 dest' <- applySubst frag dest
                 body' <- applySubst frag body
-                emit $ DAMOp $ Seq dir (DictCon $ IxFin $ NatVal n) dest' body'
+                emit $ DAMOp $ Seq dir (IxDictFin $ NatVal n) dest' body'
         _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 

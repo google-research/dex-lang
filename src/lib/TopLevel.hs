@@ -638,14 +638,15 @@ evalSpecializations vs sdVs = do
         dict <- applyNaryAbs (sink absDict) extraArgs
         let actualArgs = case method of Size -> []  -- size is thunked
                                         _    -> map Var methodArgs
-        applyIxMethod dict method actualArgs
+        methodImpl <- emitExpr $ ProjMethod dict (fromEnum method)
+        naryApp methodImpl actualArgs
       simplifyTopFunction lamExpr
     finishSpecializedDict d methods
 
-ixMethodType :: IxMethod -> AbsDict CoreIR n -> EnvReaderM n (NaryPiType CoreIR n)
+ixMethodType :: IxMethod -> Abstracted (Dict CoreIR) n -> EnvReaderM n (NaryPiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
-    let extraArgBs' = fmapNest plainPiBinder extraArgBs
+    let extraArgBs' = fmapNest (plainPiBinder . (\(b:>ty) -> b :> unsafeCoerceIRE ty)) extraArgBs
     getType (ProjMethod dict (fromEnum method)) >>= \case
       Pi (PiType b _ resultTy) -> do
         let allBs = extraArgBs' >>> Nest b Empty

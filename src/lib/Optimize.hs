@@ -226,7 +226,7 @@ instance GenericTraverser SimpIR UnitB ULS where
                 inc $ fromIntegral n  -- To account for the TabCon we emit below
                 getNaryLamExprType body' >>= \case
                   NaryPiType (UnaryNest (PiBinder tb _ _)) _ valTy -> do
-                    let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy
+                    let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (IxDictFin $ NatVal n)) valTy
                     return $ Right $ TabCon tabTy vals
                   _ -> error "Expected `for` body to have a Pi type"
               _ -> error "Expected `for` body to be a lambda expression"
@@ -275,7 +275,7 @@ instance HoistableState LICMS where
 instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
     DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
-      ix' <- traverseAtom ix
+      ix' <- substM ix
       dests' <- traverse traverseAtom dests
       let numCarries = length dests
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
@@ -288,13 +288,11 @@ instance GenericTraverser SimpIR UnitB LICMS where
       -- Append the destinations of hoisted Allocs as loop carried values.
       let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
       carryTy <- getType dests''
-      lbTy <- getType ix' <&> \case
-        DictTy (DictType _ _ [ixTy]) -> PairTy ixTy carryTy
-        _ -> error "Expected a dict"
+      lbTy <- ixTyFromDict ix' <&> \case IxType ixTy _ -> PairTy ixTy carryTy
       body' <- rebuildBody b body lnb lbTy bodyAbs
       return $ DAMOp $ Seq dir ix' dests'' body'
     Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
-      ix' <- traverseAtom ix
+      ix' <- substM ix
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         Block _ decls ans <- traverseGenericE body
         liftEnvReaderM $ runSubstReaderT idSubst $
@@ -480,6 +478,7 @@ instance HasDCE (FieldRowElem  SimpIR)
 instance HasDCE (DataDefParams SimpIR)
 instance HasDCE (DeclBinding   SimpIR)
 instance HasDCE (DAMOp         SimpIR)
+instance HasDCE (IxDict        SimpIR)
 
 -- The instances for RepE types
 

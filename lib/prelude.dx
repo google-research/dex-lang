@@ -1925,9 +1925,10 @@ def with_temp_files {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
 
 '### Table operations
 
+%passes
 @noinline
 def from_ordinal_error (i:Nat) (upper:Nat) : String =
-  "Ordinal index out of range:" <> show i <> " >= " <> show upper
+  "x"
 
 def from_ordinal (n:Type) [Ix n] (i:Nat) : n =
   case (0 <= i) && (i < size n) of

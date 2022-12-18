@@ -426,6 +426,7 @@ instance Inlinable (FieldRowElems SimpIR)
 instance Inlinable (FieldRowElem SimpIR)
 instance Inlinable (DataDefParams SimpIR)
 instance Inlinable (DAMOp SimpIR)
+instance Inlinable (IxDict SimpIR)
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (PairE e1 e2) where
   inline ctx (PairE l r) =

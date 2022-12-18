@@ -510,6 +510,7 @@ instance HasOCC (FieldRowElems SimpIR)
 instance HasOCC (FieldRowElem SimpIR)
 instance HasOCC (DataDefParams SimpIR)
 instance HasOCC (DAMOp SimpIR)
+instance HasOCC (IxDict SimpIR)
 
 -- === The instances for RepE types ===
 

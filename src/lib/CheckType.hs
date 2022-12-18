@@ -197,11 +197,7 @@ instance CheckableE (AtomBinding r) where
         AwaitingSpecializationArgsTopFun n f' -> do
           f'' <- checkTypeE (naryPiTypeAsType $ unsafeCoerceIRE ty') f'
           return $ AwaitingSpecializationArgsTopFun n f''
-        SpecializedTopFun s -> do
-           specializedTy <- specializedFunType =<< substM s
-           matches <- alphaEq ty' specializedTy
-           unless matches $ throw TypeErr "Specialization args don't match function type"
-           substM f
+        SpecializedTopFun _ -> substM f
         LoweredTopFun f' -> LoweredTopFun <$> substM f'
         FFITopFun name -> do
           _ <- checkFFIFunTypeM ty'
@@ -425,7 +421,7 @@ instance HasType r (TabLamExpr r) where
 instance CheckableE (DataDefParams r) where
   checkE (DataDefParams params) = DataDefParams <$> mapM (onSndM checkE) params
 
-dictExprType :: Typer m => DictExpr r i -> m i o (Type r o)
+dictExprType :: IsCore r => Typer m => DictExpr r i -> m i o (Type r o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -447,28 +443,8 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ TC $ Fin n'
-  ExplicitMethods d args -> do
-    SpecializedDictBinding def <- lookupEnv =<< substM d
-    SpecializedDict (Abs bs dict) maybeMethodFuns <- return def
-    args' <- mapM substM args
-    dict' <- applySubst (bs @@> map (SubstVal . unsafeCoerceIRE @CoreIR) args') dict
-    dictTy@(DictTy (DictType _ className params)) <- getType dict'
-    ClassDef _ _ pbs (SuperclassBinders Empty _) methodTys <- lookupClassDef className
-    let pbs' = fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) pbs
-    case maybeMethodFuns of
-      Nothing -> return ()
-      Just methodFuns -> do
-        forMZipped_ methodTys methodFuns \(MethodType _ methodTy) methodFun -> do
-          reqTy <- checkedApplyNaryAbs (Abs pbs' methodTy) params
-          let extendedArgs = case reqTy of
-                Pi _ -> args
-                _ -> args ++ [UnitVal]
-          fTy <- dropSubst (getLamExprTypeE methodFun)
-          actualTy  <- checkApp (naryPiTypeAsType $ unsafeCoerceIRE @CoreIR fTy) (map (unsafeCoerceIRE @CoreIR) extendedArgs)
-          checkTypesEq (unsafeCoerceIRE @CoreIR reqTy) actualTy
-    return $ unsafeCoerceIRE dictTy
 
-instance HasType r (DictExpr r) where
+instance IsCore r => HasType r (DictExpr r) where
   getTypeE e = dictExprType e
 
 instance HasType r (DepPairType r) where
@@ -485,12 +461,7 @@ instance HasType r (PiType r) where
     return TyKind
 
 instance CheckableE (IxType r) where
-  checkE (IxType t d) = do
-    t' <- checkTypeE TyKind t
-    (d', dictTy) <- getTypeAndSubstE d
-    DictTy (DictType "Ix" _ [tFromDict]) <- return dictTy
-    checkTypesEq t' tFromDict
-    return $ IxType t' d'
+  checkE (IxType t d) = substM $ IxType t d
 
 instance HasType r (TabPiType r) where
   getTypeE (TabPiType b resultTy) = do

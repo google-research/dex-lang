@@ -2427,7 +2427,7 @@ asIxType :: CType o -> InfererM i o (IxType CoreIR o)
 asIxType ty = do
   dictTy <- DictTy <$> ixDictType ty
   ctx <- srcPosCtx <$> getErrCtx
-  return $ IxType ty $ Con $ DictHole (AlwaysEqual ctx) dictTy
+  return $ IxType ty $ IxDictAtom $ Con $ DictHole (AlwaysEqual ctx) dictTy
 {-# SCC asIxType #-}
 
 -- === Solver ===
@@ -2887,11 +2887,6 @@ generalizeDictRec dict = do
       args' <- generalizeInstanceArgs bs args
       return $ InstanceDict instanceName args'
     IxFin _ -> IxFin <$> Var <$> freshInferenceName NatTy
-    ExplicitMethods d params -> do
-       SpecializedDictBinding (SpecializedDict (Abs bs _) _) <- lookupEnv d
-       let bs' = fmapNest (\(b:>ty) -> RolePiBinder b ty PlainArrow DataParam) bs
-       params' <- generalizeInstanceArgs bs' params
-       return $ ExplicitMethods d params'
     InstantiatedGiven _ _ -> notSimplifiedDict
     SuperclassProj _ _    -> notSimplifiedDict
     where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
