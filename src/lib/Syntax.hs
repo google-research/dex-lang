@@ -132,40 +132,13 @@ module Syntax (
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Foreign.Ptr
 
-import GHC.Generics (Generic (..))
-
 import Name
 import Err
 import IRVariants
-import Logging
 
 import Core
 import Types.Core
 import Types.Primitives
 import Types.Source
 import Types.Imp
-
--- === outputs ===
-
-type LitProg = [(SourceBlock, Result)]
-
-data Result = Result
-                { resultOutputs :: [Output]
-                , resultErrs    :: Except () }
-              deriving (Show, Eq)
-
-type BenchStats = (Int, Double) -- number of runs, total benchmarking time
-data Output =
-    TextOut String
-  | HtmlOut String
-  | PassInfo PassName String
-  | EvalTime  Double (Maybe BenchStats)
-  | TotalTime Double
-  | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
-  | MiscLog String
-  -- Used to have | ExportedFun String Atom
-    deriving (Show, Eq, Generic)
-
-type PassLogger = FilteredLogger PassName [Output]
-
-data OptLevel = NoOptimize | Optimize
+import Types.Misc

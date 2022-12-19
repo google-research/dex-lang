@@ -22,21 +22,20 @@ import Control.Monad.State.Strict
 import Unsafe.Coerce
 import GHC.Exts (inline)
 
-import Types.Core
-import Types.Primitives
-
-import Err
-import Name
-import IRVariants
-import MTL1
-import Core
 import Builder
+import Core
+import Err
+import GenericTraversal
+import IRVariants
+import Logging
+import MTL1
+import Name
 import PPrint
 import QueryType
-import GenericTraversal
+import Types.Core
+import Types.Misc (Output)
+import Types.Primitives
 import Util (foldMapM, enumerate)
-import Logging
-import Syntax (Output)
 
 -- A binder for the destination of block result, body.
 type DestBlock = Abs (Binder SimpIR) SBlock

@@ -6,7 +6,8 @@
 
 module Inference (trySynthTerm) where
 
+import Core
 import Name
-import Syntax
+import Types.Core
 
 trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> m n (CAtom n)

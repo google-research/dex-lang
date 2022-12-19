@@ -19,11 +19,15 @@ import Data.List (intersperse)
 import Data.Tuple (swap)
 
 import Builder hiding (sub, add, mul)
-import Syntax
-import Name
+import Core
 import Err
+import IRVariants
 import MTL1
+import Name
 import QueryType
+import Types.Core
+import Types.Imp
+import Types.Primitives
 import Util (Tree (..))
 
 -- TODO: we specialized to `SimpToImpIR` because that's the only place where

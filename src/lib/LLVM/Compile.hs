@@ -30,15 +30,15 @@ import System.IO.Unsafe
 
 import Control.Monad
 
--- The only reason this module depends on Syntax is that we pass in the logger,
+import Logging
+import PPrint ()
+import Paths_dex  (getDataFileName)
+import Types.Misc
+-- The only reason this module depends on Types.Source is that we pass in the logger,
 -- in order to optionally print out the IRs. LLVM mutates its IRs in-place, so
 -- we can't just expose a functional API for each stage without taking a
 -- performance hit. But maybe the performance hit isn't so bad?
-import Syntax
- ( PassLogger, PassName (..), Output (..))
-import Logging
-import Paths_dex  (getDataFileName)
-import PPrint ()
+import Types.Source
 
 
 data LLVMOptLevel = OptALittle       -- -O1

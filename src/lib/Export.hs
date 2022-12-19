@@ -11,20 +11,25 @@ module Export (
     ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..)
   ) where
 
+import Data.List (intercalate)
 import Foreign.Storable
 import Foreign.C.String
 import Foreign.Ptr
 
-import Data.List (intercalate)
-import Name
-import Err
-import Syntax hiding (sizeOf)
-import CheckType (asFirstOrderFunction)
-import QueryType
 import Builder
-import Simplify
+import CheckType (asFirstOrderFunction)
+import Core
+import Err
+import IRVariants
 import Imp
+import Name
+import QueryType
+import Simplify
 import TopLevel
+import Types.Core
+import Types.Imp
+import Types.Primitives hiding (sizeOf)
+
 
 exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"

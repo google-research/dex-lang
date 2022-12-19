@@ -6,17 +6,18 @@
 
 module Inline (inlineBindings) where
 
+import Data.Functor
 import Data.List.NonEmpty qualified as NE
 
-import Data.Functor
-
 import Builder
+import Core
 import Err
+import IRVariants
 import LabeledItems
 import Name
 import Occurrence hiding (Var)
-import Syntax
 import Types.Core
+import Types.Primitives
 
 -- === External API ===
 
@@ -242,7 +243,7 @@ preInlineUnconditionally = \case
 -- instead of emitting the binding.
 data Context (from::E) (to::E) (o::S) where
   Stop :: Context e e o
-  TabAppCtx :: NonEmpty (SAtom i) -> Subst InlineSubstVal i o
+  TabAppCtx :: NE.NonEmpty (SAtom i) -> Subst InlineSubstVal i o
             -> Context SExpr e o -> Context SExpr e o
   EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
   EmitToNameCtx :: Context SAtomName e o -> Context SAtom e o
@@ -324,7 +325,7 @@ reconstruct ctx e = case ctx of
 {-# INLINE reconstruct #-}
 
 reconstructTabApp :: Emits o
-  => Context SExpr e o -> SExpr o -> NonEmpty (SAtom i) -> InlineM i o (e o)
+  => Context SExpr e o -> SExpr o -> NE.NonEmpty (SAtom i) -> InlineM i o (e o)
 reconstructTabApp ctx expr ixs =
   case fromNaryForExpr (NE.length ixs) expr of
     Just (bsCount, LamExpr bs (Block _ decls result)) -> do
@@ -368,7 +369,7 @@ reconstructTabApp ctx expr ixs =
         -- emitting a rename, _which will inhibit downstream inlining_ because a
         -- rename is not indexable.
         inlineDecls decls do
-          let ctx' = case nonEmpty ixsRest of
+          let ctx' = case NE.nonEmpty ixsRest of
                 Just rest' -> TabAppCtx rest' s ctx
                 Nothing -> ctx
           inlineAtom ctx' result

@@ -88,6 +88,7 @@ library
                      , Transpose
                      , Types.Core
                      , Types.Imp
+                     , Types.Misc
                      , Types.Primitives
                      , Types.Source
                      , QueryType

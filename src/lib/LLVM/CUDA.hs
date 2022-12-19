@@ -38,8 +38,9 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-import Syntax
 import LLVM.Compile
+import Types.Imp
+import Types.Misc
 
 
 data LLVMKernel = LLVMKernel L.Module

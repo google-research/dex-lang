@@ -26,10 +26,13 @@ import qualified System.Environment as E
 
 import Err
 import Logging
-import Syntax
 import Util (measureSeconds)
 import PPrint ()
 import CUDA (synchronizeCUDA)
+
+import Types.Core hiding (DexDestructor)
+import Types.Primitives
+import Types.Misc
 
 -- === One-shot evaluation ===
 

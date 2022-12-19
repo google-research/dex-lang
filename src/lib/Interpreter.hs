@@ -23,21 +23,23 @@ import Foreign.Ptr
 import Foreign.Marshal.Alloc
 import System.IO.Unsafe
 
-import CUDA
-import Runtime
-import Err
-import LabeledItems
-import Types.Core
-import Types.Primitives
-
-import Name
-import Syntax
-import QueryType
-import PPrint ()
-import Util ((...), iota, onSndM, restructure, Tree (..), zipTrees, forMZipped)
 import Builder
+import CUDA
 import CheapReduction (cheapNormalize)
+import Core
+import Err
+import IRVariants
 import Imp
+import LabeledItems
+import Name
+import PPrint ()
+import QueryType
+import Runtime
+import Types.Core
+import Types.Imp
+import Types.Primitives
+import Types.Source
+import Util ((...), iota, onSndM, restructure, Tree (..), zipTrees, forMZipped)
 
 newtype InterpM (i::S) (o::S) (a:: *) =
   InterpM { runInterpM' :: SubstReaderT (AtomSubstVal CoreIR) (EnvReaderT IO) i o a }
@@ -134,7 +136,7 @@ evalExpr expr = case expr of
       Just (bsCount, LamExpr bs body) -> do
         let (xsPref, xsRest) = NE.splitAt bsCount xs'
         ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock body
-        case nonEmpty xsRest of
+        case NE.nonEmpty xsRest of
           Nothing    -> return ans
           Just rest' -> dropSubst $ evalExpr $ App ans rest'
       Nothing -> error $ "Failed to reduce application!" ++ pprint expr
@@ -146,7 +148,7 @@ evalExpr expr = case expr of
       Just (bsCount, LamExpr bs body) -> do
         let (xsPref, xsRest) = NE.splitAt bsCount xs'
         ans <- dropSubst $ extendSubst (bs@@>(SubstVal <$> xsPref)) $ evalBlock body
-        case nonEmpty xsRest of
+        case NE.nonEmpty xsRest of
           Nothing    -> return ans
           Just rest' -> dropSubst $ evalExpr $ TabApp ans rest'
       Nothing -> error "Failed to reduce application!"
@@ -309,7 +311,7 @@ matchUPat (WithSrcB _ pat) x = do
         TabTy b _ -> do
           xs <- dropSubst do
             idxs <- indices (binderAnn b)
-            forM idxs \i -> evalExpr $ TabApp tab (i:|[])
+            forM idxs \i -> evalExpr $ TabApp tab (i NE.:| [])
           matchUPats bs xs
         _ -> error $ "not a table: " ++ pprint tab
     _ -> error "bad pattern match"

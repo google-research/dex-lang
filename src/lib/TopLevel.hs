@@ -35,41 +35,44 @@ import System.Directory
 import System.IO (stderr, hPutStrLn, Handle)
 import System.IO.Error (isDoesNotExistError)
 
-import Paths_dex  (getDataFileName)
-
 import LLVM.Link
 import LLVM.Compile
 import qualified LLVM.AST
 
-import Err
-import MTL1
-import Logging
-import PPrint (pprintCanonicalized)
-import Util (measureSeconds, File (..), readFileWithHash)
-import Serialize ( HasPtrs (..), pprintVal, getDexString
-                 , takePtrSnapshot, restorePtrSnapshot)
-import Name
 import AbstractSyntax
-import Syntax
-import Core
-import Types.Core
 import Builder
 import CheckType ( CheckableE (..), asFFIFunType, checkHasType
                  , asSpecializableFunction)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
-import SourceRename
-import Inference
-import Inline
-import Simplify
-import OccAnalysis
-import Lower
+import Core
+import Err
+import IRVariants
 import Imp
 import ImpToLLVM
+import Inference
+import Inline
+import Logging
+import Lower
+import MTL1
+import Name
+import OccAnalysis
 import Optimize
-import Runtime
+import PPrint (pprintCanonicalized)
+import Paths_dex  (getDataFileName)
 import QueryType
+import Runtime
+import Serialize ( HasPtrs (..), pprintVal, getDexString
+                 , takePtrSnapshot, restorePtrSnapshot)
+import Simplify
+import SourceRename
+import Types.Core
+import Types.Imp
+import Types.Misc
+import Types.Primitives
+import Types.Source
+import Util (measureSeconds, File (..), readFileWithHash)
 
 -- === top-level monad ===
 

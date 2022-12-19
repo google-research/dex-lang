@@ -7,7 +7,10 @@
 module Interpreter (indices, indicesLimit, applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp) where
 
 import Data.Word
-import Syntax
+
+import Core
+import IRVariants
+import Types.Core
 
 indices :: EnvReader m => IxType CoreIR n -> m n [Atom CoreIR n]
 indicesLimit :: EnvReader m => Int -> IxType r n -> m n (Either Word32 [Atom r n])
