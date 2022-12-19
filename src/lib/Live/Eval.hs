@@ -19,11 +19,12 @@ import Data.Aeson qualified as A
 import Data.Text.Prettyprint.Doc
 import System.Directory (getModificationTime)
 
-import Actor
 import AbstractSyntax
+import Actor
 import RenderHtml (ToMarkup, pprintHtml)
-import Syntax
 import TopLevel
+import Types.Misc
+import Types.Source
 import Util (onFst, onSnd)
 
 type NodeId = Int

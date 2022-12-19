@@ -7,13 +7,17 @@
 module Generalize (generalizeArgs, generalizeIxDict, Generalized) where
 
 import Control.Monad
-import Syntax
+
+import Core
+import Err
 import Inference
+import IRVariants
 import QueryType
 import Name
-import Err
 import MTL1
 import LabeledItems
+import Types.Core
+import Types.Primitives
 
 type Generalized (e::E) (n::S) = (Abs (Nest (Binder CoreIR)) e n, [CAtom n])
 

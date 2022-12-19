@@ -24,6 +24,7 @@ import Data.Foldable (toList, asum)
 import Data.Function ((&))
 import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate, partition)
+import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc (Pretty (..), (<+>))
 import Data.Word
@@ -34,21 +35,22 @@ import qualified Data.Set as S
 import qualified Unsafe.Coerce as TrulyUnsafe
 import GHC.Generics (Generic (..))
 
-import Name
 import Builder
-import Syntax hiding (State)
+import CheapReduction
+import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType, isData)
+import Core
+import Err
+import GenericTraversal
+import IRVariants
+import Interpreter
+import LabeledItems
+import MTL1
+import Name
+import PPrint (pprintCanonicalized, prettyBlock)
+import QueryType
 import Types.Core
 import Types.Primitives
-import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType, isData)
-import QueryType
-import PPrint (pprintCanonicalized, prettyBlock)
-import CheapReduction
-import GenericTraversal
-import MTL1
-import Interpreter
-
-import LabeledItems
-import Err
+import Types.Source
 import Util
 
 -- === Top-level interface ===

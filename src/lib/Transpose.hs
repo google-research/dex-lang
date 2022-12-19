@@ -10,17 +10,18 @@ import Data.Foldable
 import Data.Functor
 import Control.Monad.Reader
 import qualified Data.Set as S
+import GHC.Stack
 
-import MTL1
+import Builder
+import Core
 import Err
+import IRVariants
+import MTL1
 import Name
-import Syntax
+import QueryType
 import Types.Core
 import Types.Primitives
-import Builder
-import QueryType
 import Util (enumerate)
-import GHC.Stack
 
 transpose :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n -> m n (LamExpr SimpIR n)
 transpose lam = liftBuilder do

@@ -25,7 +25,6 @@ import qualified Data.Map.Strict as M
 import PPrint (toJSONStr, printResult)
 import TopLevel
 import Err
-import Syntax
 import Name
 import ConcreteSyntax (keyWordStrs)
 import AbstractSyntax (parseTopDeclRepl, preludeImportBlock)
@@ -34,6 +33,11 @@ import RenderHtml
 import Live.Terminal (runTerminal)
 import Live.Web (runWeb)
 #endif
+import Core
+import Types.Core
+import Types.Imp
+import Types.Misc
+import Types.Source
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly

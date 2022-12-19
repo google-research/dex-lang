@@ -18,25 +18,27 @@ import Prelude hiding (id)
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
-import LabeledItems
-
-import Err
-import Util (forMZipped_, onSndM)
-import QueryType hiding (HasType)
-
 import CheapReduction
-import {-# SOURCE #-} Interpreter
-import Types.Core
-import Types.Primitives
-import Syntax
+import Core
+import Err
+import IRVariants
+import LabeledItems
 import Name
 import PPrint ()
+import QueryType hiding (HasType)
+import Types.Core
+import Types.Imp
+import Types.Primitives
+import Types.Source
+import Util (forMZipped_, onSndM)
+import {-# SOURCE #-} Interpreter
 
 -- === top-level API ===
 

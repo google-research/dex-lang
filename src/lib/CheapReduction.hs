@@ -20,14 +20,16 @@ import qualified Data.Map.Strict as M
 import Data.Maybe
 import GHC.Exts (inline)
 
+import Core
+import Err
+import IRVariants
 import MTL1
 import Name
-import Syntax
 import PPrint ()
-import {-# SOURCE #-} Inference (trySynthTerm)
-import Err
+import Types.Core
 import Types.Primitives
 import Util (for, onSndM)
+import {-# SOURCE #-} Inference (trySynthTerm)
 
 -- Carry out the reductions we are willing to carry out during type
 -- inference.  The goal is to support type aliases like `Int = Int32`

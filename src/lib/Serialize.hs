@@ -17,6 +17,7 @@ import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Foldable
 import qualified Data.Map.Strict as M
 import Data.Int
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Foreign.Ptr
@@ -25,17 +26,18 @@ import Foreign.Marshal.Array
 import GHC.Generics (Generic)
 import Numeric (showHex)
 
-import LabeledItems
-
-import Interpreter
+import Core
 import Err
-import PPrint (PrettyPrec (..), PrecedenceLevel (..))
-
-import Syntax
-import Types.Core
-import QueryType
+import IRVariants
+import Interpreter
+import LabeledItems
 import Name
 import PPrint ()
+import PPrint (PrettyPrec (..), PrecedenceLevel (..))
+import QueryType
+import Types.Core
+import Types.Imp
+import Types.Primitives
 import Util (Tree (..), restructure)
 
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())

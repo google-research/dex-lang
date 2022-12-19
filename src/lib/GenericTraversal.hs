@@ -15,13 +15,15 @@ module GenericTraversal
 import Control.Monad
 import Control.Monad.State.Class
 
-import Name
-import Err
 import Builder
-import Syntax
-import Types.Core
-import MTL1
+import Core
+import Err
+import IRVariants
 import LabeledItems
+import MTL1
+import Name
+import Types.Core
+import Types.Primitives
 import Util (onSndM)
 
 liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)

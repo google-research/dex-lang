@@ -67,25 +67,29 @@ import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
+import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
+import Foreign.Ptr
 import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
-import qualified RawName as R
-import Name
-import Syntax
-import QueryType
-import PPrint (prettyBlock)
 import CheapReduction
-import MTL1
-import {-# SOURCE #-} Interpreter
-import LabeledItems
-import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
-import Err
-import Types.Core
-import Types.Primitives
 import Core
+import Err
+import IRVariants
+import LabeledItems
+import MTL1
+import Name
+import PPrint (prettyBlock)
+import QueryType
+import RawName qualified as R
+import Types.Core
+import Types.Imp
+import Types.Primitives
+import Types.Source
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
+import {-# SOURCE #-} Interpreter
 
 -- === Ordinary (local) builder class ===
 

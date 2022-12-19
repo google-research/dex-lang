@@ -44,16 +44,20 @@ import qualified Data.Set as S
 
 import CUDA (getCudaArchitecture)
 
+import Core
 import Err
-import Syntax
-import qualified RawName as R
-import Name
 import Imp
-import PPrint
-import Logging
-import Types.Primitives
-import Util (IsBool (..), bindM2, enumerate)
 import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
+import Logging
+import Name
+import PPrint
+import RawName qualified as R
+import Types.Core
+import Types.Imp
+import Types.Misc
+import Types.Primitives
+import Types.Source
+import Util (IsBool (..), bindM2, enumerate)
 
 -- === Compile monad ===
 

@@ -33,16 +33,18 @@ import System.IO.Unsafe
 import qualified System.Environment as E
 import Numeric
 
-import LabeledItems
-import Err
-import Name
-import Syntax
-import Types.Core
-import Types.Primitives
 import ConcreteSyntax hiding (Equal)
 import ConcreteSyntax qualified as C
+import Err
+import LabeledItems
+import Name
 import Occurrence (Count (Bounded), UsageInfo (..))
 import Occurrence qualified as Occ
+import Types.Core
+import Types.Imp
+import Types.Misc
+import Types.Primitives
+import Types.Source
 import Util (restructure, Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that

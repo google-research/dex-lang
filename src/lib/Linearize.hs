@@ -13,16 +13,17 @@ import Data.List (elemIndex)
 import qualified Data.Set as S
 import GHC.Stack
 
-import Name
 import Builder
-import Syntax
+import Core
+import IRVariants
 import MTL1
-import QueryType
-import Util (bindM2)
+import Name
 import PPrint
+import QueryType
 import Types.Core
 import Types.Primitives
-import Core
+import Types.Source
+import Util (bindM2)
 
 -- === linearization monad ===
 

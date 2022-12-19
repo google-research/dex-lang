@@ -30,20 +30,21 @@ import Control.Monad.State.Strict hiding (State)
 import qualified Control.Monad.State.Strict as MTL
 import GHC.Exts (inline)
 
+import Algebra
+import Builder
+import CheckType (CheckableE (..))
+import Core
 import Err
+import IRVariants
+import LabeledItems
+import Lower (DestBlock)
 import MTL1
 import Name
-import Builder
-import Syntax
-import CheckType (CheckableE (..))
-import Lower (DestBlock)
-import LabeledItems
 import QueryType
-import Util (forMFilter, Tree (..), zipTrees, enumerate)
-import Types.Primitives
 import Types.Core
 import Types.Imp
-import Algebra
+import Types.Primitives
+import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
 type SIAtom   = Atom  SimpToImpIR
 type SIType   = Type  SimpToImpIR

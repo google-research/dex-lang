@@ -20,23 +20,23 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 import GHC.Exts (inline)
 
-import Err
-import Name
-import Core
 import Builder
-import Generalize
-import Syntax
-import Optimize (peepholeOp)
-import CheckType (CheckableE (..), isData)
-import Util (enumerate, foldMapM, restructure, splitAtExact)
-import QueryType
 import CheapReduction
-import Linearize
-import Transpose
+import CheckType (CheckableE (..), isData)
+import Core
+import Err
+import Generalize
+import IRVariants
 import LabeledItems
-import Types.Primitives
+import Linearize
+import Name
+import Optimize (peepholeOp)
+import QueryType
+import Transpose
 import Types.Core
+import Types.Primitives
 import Util (bindM2)
+import Util (enumerate, foldMapM, restructure, splitAtExact)
 
 -- === Simplification ===
 
@@ -308,7 +308,7 @@ defuncCase scrut alts resultTy = do
         return $ PairE (Abs (b':>bTy') block) recon
 
 simplifyApp :: forall i o. Emits o
-  => NameHint -> CAtom i -> NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
+  => NameHint -> CAtom i -> NE.NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyApp hint f xs =
   simplifyFuncAtom f >>= \case
     Left  (lam, arr, eff)  -> fast lam arr eff
@@ -319,7 +319,7 @@ simplifyApp hint f xs =
       Just (bsCount, LamExpr bs (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
-            case nonEmpty xsRest of
+            case NE.nonEmpty xsRest of
               Nothing    -> simplifyAtom atom
               Just rest' -> simplifyApp hint atom rest'
       Nothing -> error "should never happen"
@@ -429,7 +429,7 @@ emitIxDictSpecialization ixDict = do
 
 -- TODO: de-dup this and simplifyApp?
 simplifyTabApp :: forall i o. Emits o
-  => NameHint -> CAtom i -> NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
+  => NameHint -> CAtom i -> NE.NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyTabApp hint f xs =
   simplifyFuncAtom f >>= \case
     Left  lam  -> fast lam
@@ -440,7 +440,7 @@ simplifyTabApp hint f xs =
       Just (bsCount, LamExpr bs (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
           extendSubst (bs@@>(SubstVal <$> xsPref)) $ simplifyDecls decls $
-            case nonEmpty xsRest of
+            case NE.nonEmpty xsRest of
               Nothing    -> simplifyAtom atom
               Just rest' -> simplifyTabApp hint atom rest'
       Nothing -> error "should never happen"
