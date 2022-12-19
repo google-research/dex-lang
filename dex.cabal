@@ -83,7 +83,6 @@ library
                      , Serialize
                      , Simplify
                      , SourceRename
-                     , Syntax
                      , TopLevel
                      , Transpose
                      , Types.Core
