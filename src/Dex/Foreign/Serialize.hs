@@ -17,9 +17,11 @@ import Foreign.C
 import Foreign.Ptr
 import Foreign.Storable
 
+import IRVariants
 import Name
-import Syntax hiding (CAtom)
 import Serialize (pprintVal)
+import Types.Core hiding (CAtom)
+import Types.Primitives
 
 import Dex.Foreign.Context
 import Dex.Foreign.Util
