@@ -28,14 +28,19 @@ import Data.Map.Strict    qualified as M
 import Data.ByteString    qualified as BS
 import Data.Text.Encoding qualified as T
 
-import Syntax  hiding (sizeOf, CAtom)
-import TopLevel
-import Name
-import PPrint
-import Err
 import AbstractSyntax
 import Builder
+import Core
+import Err
 import Export
+import IRVariants
+import Name
+import TopLevel
+import Types.Core
+import Types.Imp
+import Types.Misc
+import Types.Primitives
+import Types.Source
 
 import Dex.Foreign.Util
 

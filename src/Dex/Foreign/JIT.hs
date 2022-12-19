@@ -25,10 +25,11 @@ import Foreign.Marshal.Alloc
 import Data.Functor
 import qualified Data.Map.Strict as M
 
-import Name
 import Export
-import Syntax  hiding (sizeOf)
+import Name
 import TopLevel
+import Types.Core
+import Types.Imp
 
 import Dex.Foreign.Util
 import Dex.Foreign.Context
