@@ -82,7 +82,7 @@ prettyVal val = case val of
         _ -> pprintVal atom
     TabTy b _ <- getType val
     idxSetDoc <- return case binderType b of
-      TC (Fin _)  -> mempty               -- (Fin n) is not shown
+      NewtypeTyCon (Fin _)  -> mempty               -- (Fin n) is not shown
       idxSet -> "@" <> pretty idxSet -- Otherwise, show explicit index set
     return $ pretty elems <> idxSetDoc
   Record tys vals -> do
@@ -103,24 +103,29 @@ prettyVal val = case val of
       yStr <- pprintVal y
       return $ pretty (xStr, yStr)
     ProdCon _ -> error "Unexpected product type: only binary products available in surface language."
-    Newtype NatTy (IdxRepVal n) -> return $ pretty n
-    Newtype vty@(VariantTy (NoExt types)) (Con (SumAsProd _ (TagRepVal trep) payload)) ->
-      return $ pretty $ Newtype vty $ SumVal (toList types) t value
-      where t = fromIntegral trep; value = payload !! t
-    -- Pretty-print strings
-    Newtype (TypeCon "List" _ (DataDefParams [(PlainArrow, Word8Ty)])) payload -> do
-      DepPair _ xs _ <- return payload
-      xs' <- getTableElements xs
-      s <- forM xs' \case
-        Con (Lit (Word8Lit c)) -> return $ toEnum $ fromIntegral c
-        x -> error $ "bad" ++ pprint x
-      return $ pretty $ "\"" ++ s ++ "\""
-    Newtype (TypeCon _ dataDefName _) (Con (SumCon _ t e)) -> prettyData dataDefName t e
-    Newtype (TypeCon _ dataDefName _) (Con (SumAsProd _ (TagRepVal trep) payload)) -> prettyData dataDefName t e
-      where t = fromIntegral trep; e = payload !! t
-    Newtype (TypeCon _ dataDefName _) e -> prettyData dataDefName 0 e
     SumAsProd _ _ _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
+  NewtypeCon con x -> case (con, x) of
+    (NatCon, IdxRepVal n) -> return $ pretty n
+    (VariantCon _, Con (SumAsProd types (TagRepVal trep) payload)) ->
+      return $ pretty $ NewtypeCon con $ SumVal types t value
+      where t = fromIntegral trep; value = payload !! t
+    (UserADTData dataDefName params, _) -> do
+       DataDef sn _ _ <- lookupDataDef dataDefName
+       case (sn, params, x) of
+         ("List", DataDefParams [(PlainArrow, Word8Ty)], _) -> do
+           DepPair _ xs _ <- return x
+           xs' <- getTableElements xs
+           s <- forM xs' \case
+             Con (Lit (Word8Lit c)) -> return $ toEnum $ fromIntegral c
+             x' -> error $ "bad" ++ pprint x'
+           return $ pretty $ "\"" ++ s ++ "\""
+         (_, _, Con (SumCon _ t e)) -> prettyData dataDefName t e
+         (_, _, Con (SumAsProd _ (TagRepVal trep) payload)) ->
+           prettyData dataDefName t e
+           where t = fromIntegral trep; e = payload !! t
+         _ -> prettyData dataDefName 0 x
+    _ -> fallback
   DepPair lhs rhs ty -> do
     lhs' <- prettyVal lhs
     rhs' <- prettyVal rhs
@@ -131,8 +136,10 @@ prettyVal val = case val of
       x <- repValToCoreAtom repVal
       prettyVal $ getProjection (NE.toList projections) x
     _ -> error "Only projectable vars left should be data vars"
-  atom -> return $ prettyPrec atom LowestPrec
+  SimpInCore p1 ty p2 v -> prettyVal =<< simpInCoreToCoreAtom p1 ty p2 v
+  _ -> fallback
   where
+    fallback = return $ prettyPrec val LowestPrec
     prettyData
       :: (MonadIO1 m, EnvReader m, Fallible1 m)
       => DataDefName n -> Int -> CAtom n -> m n (Doc ann)

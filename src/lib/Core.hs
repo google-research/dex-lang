@@ -581,13 +581,13 @@ infixr 1 ?-->
 infixr 1 -->
 infixr 1 --@
 
-(?-->) :: IsCore r => ScopeReader m => Type r n -> Type r n -> m n (Type r n)
+(?-->) :: HasCore r => ScopeReader m => Type r n -> Type r n -> m n (Type r n)
 a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
 
-(-->) :: IsCore r => ScopeReader m => Type r n -> Type r n -> m n (Type r n)
+(-->) :: HasCore r => ScopeReader m => Type r n -> Type r n -> m n (Type r n)
 a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
 
-(--@) :: ScopeReader m => IsCore r => Type r n -> Type r n -> m n (Type r n)
+(--@) :: ScopeReader m => HasCore r => Type r n -> Type r n -> m n (Type r n)
 a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
 (==>) :: ScopeReader m => IxType r n -> Type r n -> m n (Type r n)
@@ -608,14 +608,14 @@ blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
   BlockAnn _ eff -> eff
 
-lamExprToAtom :: IsCore r => LamExpr r n -> Arrow -> Maybe (EffAbs n) -> Atom r n
+lamExprToAtom :: HasCore r => LamExpr r n -> Arrow -> Maybe (EffAbs n) -> Atom r n
 lamExprToAtom lam@(UnaryLamExpr (b:>_) block) arr maybeEffAbs = Lam lam arr effAbs
   where effAbs = case maybeEffAbs of
           Just e -> e
           Nothing -> Abs b $ blockEffects block
 lamExprToAtom _ _ _ = error "not a unary lambda expression"
 
-naryLamExprToAtom :: IsCore r => LamExpr r n -> [Arrow] -> Atom r n
+naryLamExprToAtom :: HasCore r => LamExpr r n -> [Arrow] -> Atom r n
 naryLamExprToAtom lam@(LamExpr (Nest b bs) body) (arr:arrs) = case bs of
   Empty -> lamExprToAtom lam arr Nothing
   _ -> do
@@ -736,7 +736,7 @@ trySelectBranch e = case e of
   SumVal _ i value -> Just (i, value)
   Con (SumAsProd _ (TagRepVal tag) vals) -> Just (i, vals !! i)
     where i = fromIntegral tag
-  Con (Newtype _ e') -> trySelectBranch e'
+  NewtypeCon con e' | isSumCon con -> trySelectBranch e'
   _ -> Nothing
 
 freeAtomVarsList :: HoistableE e => e n -> [Name AtomNameC n]

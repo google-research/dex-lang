@@ -265,23 +265,10 @@ transposeAtom atom ct = case atom of
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
-  TabVal b body   -> do
-    ty <- substNonlin $ binderAnn b
-    void $ buildFor noHint Fwd ty \i -> do
-      ct' <- tabApp (sink ct) (Var i)
-      extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
-      return UnitVal
-  TabLam _        -> notTangent
-  TypeCon _ _ _   -> notTangent
-  LabeledRow _    -> notTangent
-  RecordTy _      -> notTangent
-  VariantTy _     -> notTangent
   TabPi _         -> notTangent
   DepPairTy _     -> notTangent
   TC _            -> notTangent
-  Eff _           -> notTangent
   PtrVar _        -> notTangent
-  ACase _ _ _     -> error "Unexpected ACase"
   ProjectElt idxs v -> do
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"
@@ -334,14 +321,8 @@ transposeCon con ct = case con of
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
-  Newtype ty e      -> case ty of
-    TC (Fin _) -> notTangent
-    StaticRecordTy _ -> transposeAtom e (unwrapCompoundNewtype ct)
-    _ -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  LabelCon _     -> notTangent
-  ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 

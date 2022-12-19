@@ -37,7 +37,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util (forMZipped_, onSndM)
+import Util (forMZipped_, onSndM, restructure)
 import {-# SOURCE #-} Interpreter
 
 -- === top-level API ===
@@ -262,58 +262,37 @@ instance HasType r (Atom r) where
     Eff eff  -> checkE eff $> EffKind
     PtrVar v -> substM v >>= lookupEnv >>= \case
       PtrBinding ty _ -> return $ PtrTy ty
-    TypeCon _ defName params -> do
-      def <- lookupDataDef =<< substM defName
-      params' <- checkE params
-      void $ checkedInstantiateDataDef def params'
-      return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ className params) -> do
       ClassDef _ _ paramBs _ _ <- substM className >>= lookupClassDef
       params' <- mapM substM params
       checkArgTys (fmapNest unsafeCoerceIRB paramBs) params'
       return TyKind
-    LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
-    RecordTy elems -> checkFieldRowElems elems $> TyKind
-    VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
-    RepValAtom dRepVal -> do
-      RepVal ty _ <- forceDRepVal =<< substM dRepVal
-      return ty
-    ProjectElt (i NE.:| is) v -> do
+    RepValAtom (RepVal ty _) -> substM ty
+    NewtypeCon con x -> NewtypeTyCon <$> typeCheckNewtypeCon con x
+    NewtypeTyCon t   -> typeCheckNewtypeTyCon t
+    SimpInCore [] maybeTy ps x -> case maybeTy of
+      Just ty -> substM ty
+      Nothing -> getTypeE (getProjection ps $ Var x)
+    SimpInCore _ _ _ _ -> error "not implemented"
+    ProjectElt (projectIx NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
               Just is' -> ProjectElt is' v
-      case ty of
-        ProdTy xs -> case i of
-          ProjectProduct i' -> return $ xs !! i'
-          _ -> throw TypeErr $ "Projecting from a product with: " ++ pprint i
-        DepPairTy t -> case i of
-          ProjectProduct 0 -> return $ depPairLeftTy t
-          ProjectProduct 1 -> do
-            v' <- substM v
-            instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
-          _ -> throw TypeErr $ "Projecting from a dependent pair with " ++ pprint i
-        _ | isNewtype ty -> do
-          case (ty, i) of
-            (TC Nat    , UnwrapBaseNewtype    ) -> return ()
-            (TC (Fin _), UnwrapBaseNewtype    ) -> return ()
-            (_         , UnwrapCompoundNewtype) -> return ()
-            _ -> throw TypeErr $ "Invalid newtype projection (" ++ pprint i ++ ") from " ++ pprint ty
-          projectNewtype ty
-        Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
-        _ -> throw TypeErr $
-              "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
-
-projectNewtype :: Typer m => Type r o -> m i o (Type r o)
-projectNewtype ty = case ty of
-  TypeCon _ defName params -> do
-    def <- lookupDataDef defName
-    dataDefRep <$> checkedInstantiateDataDef def params
-  TC Nat     -> return IdxRepTy
-  TC (Fin _) -> return NatTy
-  StaticRecordTy types -> return $ ProdTy $ toList types
-  _ -> throw CompilerErr $ "Not a newtype: " ++ pprint ty
+      case projectIx of
+        UnwrapNewtype -> case ty of
+          NewtypeTyCon con -> snd <$> unwrapNewtypeType con
+          _ -> error $ "not a newtype type: " ++ pprint ty
+        ProjectProduct i -> case ty of
+          ProdTy xs -> return $ xs !! i
+          DepPairTy t -> case i of
+            0 -> return $ depPairLeftTy t
+            1 -> do
+              v' <- substM v
+              instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
+            _ -> throw TypeErr $ "Projecting from a dependent pair with " ++ pprint i
+          _ -> throw TypeErr $ "Not a product type:" ++ pprint i
 
 instance (Color c, ToBinding ann c, CheckableE ann)
          => CheckableB (BinderP c ann) where
@@ -421,7 +400,7 @@ instance HasType r (TabLamExpr r) where
 instance CheckableE (DataDefParams r) where
   checkE (DataDefParams params) = DataDefParams <$> mapM (onSndM checkE) params
 
-dictExprType :: IsCore r => Typer m => DictExpr r i -> m i o (Type r o)
+dictExprType :: HasCore r => Typer m => DictExpr r i -> m i o (Type r o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -442,9 +421,9 @@ dictExprType e = case e of
       (map unsafeCoerceIRE params)
   IxFin n -> do
     n' <- checkTypeE NatTy n
-    liftM DictTy $ ixDictType $ TC $ Fin n'
+    liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n'
 
-instance IsCore r => HasType r (DictExpr r) where
+instance HasCore r => HasType r (DictExpr r) where
   getTypeE e = dictExprType e
 
 instance HasType r (DepPairType r) where
@@ -489,15 +468,11 @@ instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
 typeCheckPrimTC :: Typer m => PrimTC r (Atom r i) -> m i o (Type r o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
-  Nat              -> return TyKind
-  Fin n -> n|:NatTy >> return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
   RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
-  EffectRowKind    -> return TyKind
-  LabeledRowKindTC -> return TyKind
-  LabelType        -> return TyKind
+  HeapType         -> return TyKind
 
 typeCheckPrimCon :: Typer m => PrimCon r (Atom r i) -> m i o (Type r o)
 typeCheckPrimCon con = case con of
@@ -514,28 +489,44 @@ typeCheckPrimCon con = case con of
     unless (length tys == length es) $ throw TypeErr "Invalid SumAsProd"
     forM_ (zip es tys') $ uncurry (|:)
     return $ SumTy tys'
-  Newtype ty e -> do
-    ty' <- substM ty
-    case ty' of
-      TC Nat -> e |: IdxRepTy
-      TC (Fin _) -> e|:NatTy
-      StaticRecordTy tys -> e|:ProdTy (toList tys)
-      VariantTy (NoExt tys) -> e |: SumTy (toList tys)
-      TypeCon _ defName params -> do
-        def <- lookupDataDef defName
-        cons <- checkedInstantiateDataDef def params
-        e |: dataDefRep cons
-      _ -> error $ "Unsupported newtype: " ++ pprint ty
-    return ty'
-  LabelCon _   -> return $ TC $ LabelType
-  ExplicitDict dictTy method  -> do
-    dictTy'@(DictTy (DictType _ className params)) <- checkTypeE TyKind dictTy
-    classDef <- lookupClassDef className
-    Abs (SuperclassBinders Empty _) (ListE [MethodType _ methodTy]) <-
-      checkedApplyClassParams classDef params
-    method |: unsafeCoerceIRE methodTy
-    return dictTy'
   DictHole _ ty -> checkTypeE TyKind ty
+  HeapVal -> return $ TC HeapType
+
+typeCheckNewtypeCon
+  :: (HasCore r, Typer m)
+  => NewtypeCon r i -> Atom r i -> m i o (NewtypeTyCon r o)
+typeCheckNewtypeCon con x = case con of
+  NatCon   -> x|:IdxRepTy          >> return Nat
+  FinCon n -> n|:NatTy >> x|:NatTy >> substM (Fin n)
+  RecordCon  labels -> do
+    TC (ProdType tys) <- getTypeE x
+    return $ StaticRecordTyCon $ restructure tys labels
+  VariantCon labels -> do
+    TC (SumType tys) <- getTypeE x
+    return $ VariantTyCon $ NoExt $ restructure tys labels
+  UserADTData d params -> do
+    d' <- substM d
+    def@(DataDef sn _ _) <- lookupDataDef d'
+    params' <- checkE params
+    void $ checkedInstantiateDataDef def params'
+    return $ UserADTType sn d' params'
+
+typeCheckNewtypeTyCon :: (HasCore r, Typer m) => NewtypeTyCon r i -> m i o (Type r o)
+typeCheckNewtypeTyCon = \case
+  Nat        -> return TyKind
+  Fin n      -> checkTypeE NatTy n >> return TyKind
+  LabelCon _ -> return $ NewtypeTyCon $ LabelType
+  LabelType  -> return TyKind
+  EffectRowKind    -> return TyKind
+  RecordTyCon   elems -> checkFieldRowElems elems $> TyKind
+  VariantTyCon  elems -> checkLabeledRow    elems $> TyKind
+  LabeledRowCon elems -> checkFieldRowElems elems $> LabeledRowKind
+  LabeledRowKindTC -> return TyKind
+  UserADTType _ d params -> do
+    def <- lookupDataDef =<< substM d
+    params' <- checkE params
+    void $ checkedInstantiateDataDef def params'
+    return TyKind
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom r i) -> m i o (Type r o)
 typeCheckPrimOp op = case op of
@@ -597,22 +588,13 @@ typeCheckMiscOp = \case
         return $ BaseTy dbt
       _ -> throw TypeErr $ "Invalid bitcast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   SumTag x -> do
-    getTypeE x >>= \case
-      TypeCon _ _ _ -> return ()
-      SumTy _ -> return ()
-      xTy -> throw TypeErr $ "SumTag expected a data-type or a sum type, got: " ++ pprint xTy
+    void $ getTypeE x >>= checkSomeSumType
     return TagRepTy
   ToEnum t x -> do
     x |: Word8Ty
     t' <- checkTypeE TyKind t
-    case t' of
-      TypeCon _ dataDefName (DataDefParams []) -> do
-        DataDef _ _ dataConDefs <- lookupDataDef dataDefName
-        forM_ dataConDefs \(DataConDef _ _ idxs) ->
-          unless (null idxs) $ throw TypeErr "Not empty"
-      VariantTy _ -> return ()  -- TODO: check empty payload
-      SumTy cases -> forM_ cases \cty -> checkTypesEq cty UnitTy
-      _ -> error $ "Not a sum type: " ++ pprint t'
+    cases <- checkSomeSumType t'
+    forM_ cases \cty -> checkTypesEq cty UnitTy
     return t'
   OutputStream ->
     return $ BaseTy $ hostPtrTy $ Scalar Word8Type
@@ -621,6 +603,14 @@ typeCheckMiscOp = \case
   ThrowException ty -> do
     declareEff ExceptionEffect
     ty|:TyKind >> substM ty
+
+checkSomeSumType :: Typer m => Type r o -> m i o [Type r o]
+checkSomeSumType = \case
+  SumTy cases -> return cases
+  NewtypeTyCon con -> do
+    (_, SumTy cases) <- unwrapNewtypeType con
+    return cases
+  t -> error $ "not some sum type: " ++ pprint t
 
 typeCheckVectorOp :: Typer m => VectorOp (Atom r i) -> m i o (Type r o)
 typeCheckVectorOp = \case
@@ -773,14 +763,17 @@ checkCase scrut alts resultTy effs = do
 
 checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m) => Type r n -> m n [Type r n]
 checkCaseAltsBinderTys ty = case ty of
-  TypeCon _ defName params -> do
-    def <- lookupDataDef defName
-    cons <- checkedInstantiateDataDef def params
-    return [unsafeCoerceIRE repTy | DataConDef _ repTy _ <- cons]
   SumTy types -> return types
-  VariantTy (NoExt types) -> return $ toList types
-  VariantTy _ -> fail "Can't pattern-match partially-known variants"
-  _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
+  NewtypeTyCon t -> case t of
+    VariantTyCon (NoExt types) -> return $ toList types
+    VariantTyCon _ -> fail "Can't pattern-match partially-known variants"
+    UserADTType _ defName params -> do
+      def <- lookupDataDef defName
+      cons <- checkedInstantiateDataDef def params
+      return [unsafeCoerceIRE repTy | DataConDef _ repTy _ <- cons]
+    _ -> fail msg
+  _ -> fail msg
+  where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
 checkAlt :: (HasType r body, Typer m)
          => Type r o -> Type r o -> AltP r body i -> m i o ()
@@ -964,7 +957,7 @@ checkUnOp op x = do
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
-typeCheckRecordVariantOp :: Typer m => RecordVariantOp (Atom r i) -> m i o (Type r o)
+typeCheckRecordVariantOp :: (HasCore r, Typer m) => RecordVariantOp (Atom r i) -> m i o (Type r o)
 typeCheckRecordVariantOp = \case
   RecordCons l r -> do
     lty <- getTypeE l
@@ -974,20 +967,20 @@ typeCheckRecordVariantOp = \case
         return $ RecordTyWithElems $ lelems ++ relems
       _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
   RecordConsDynamic lab val record -> do
-    lab' <- checkTypeE (TC LabelType) lab
+    lab' <- checkTypeE (NewtypeTyCon LabelType) lab
     vty <- getTypeE val
     rty <- getTypeE record
     case rty of
       RecordTy rest -> case lab' of
-        Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem (StaticFields (labeledSingleton l vty)) rest
+        NewtypeTyCon (LabelCon l) -> return $ RecordTy $ prependFieldRowElem (StaticFields (labeledSingleton l vty)) rest
         Var labVar       -> return $ RecordTy $ prependFieldRowElem (DynField labVar vty) rest
         _ -> error "Unexpected label atom"
       _ -> throw TypeErr $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
   RecordSplitDynamic lab record -> do
-    lab' <- cheapNormalize =<< checkTypeE (TC LabelType) lab
+    lab' <- cheapNormalize =<< checkTypeE (NewtypeTyCon LabelType) lab
     rty <- getTypeE record
     case (lab', rty) of
-      (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
+      (NewtypeTyCon (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
         -- We could cheap normalize the rest to increase the chance of this
         -- succeeding, but no need to for now.
         unless (isJust $ lookupLabelHead items l) $ throw TypeErr "Label not immediately present in record"
@@ -1120,18 +1113,19 @@ checkExtends allowed (EffectRow effs effTail) = do
 
 -- === labeled row types ===
 
-checkFieldRowElems :: Typer m => FieldRowElems r i -> m i o ()
+checkFieldRowElems :: forall m r i o. (HasCore r, Typer m) => FieldRowElems r i -> m i o ()
 checkFieldRowElems els = mapM_ checkElem elemList
   where
     elemList = fromFieldRowElems els
+    checkElem :: FieldRowElem r i -> m i o ()
     checkElem = \case
-      StaticFields items -> checkLabeledRow $ NoExt items
+      StaticFields items -> checkLabeledRow @r $ NoExt items
       DynField labVar ty -> do
-        Var labVar |: TC LabelType
+        Var labVar |: (NewtypeTyCon LabelType :: Type r o)
         ty |: TyKind
-      DynFields row -> checkLabeledRow $ Ext mempty $ Just row
+      DynFields row -> checkLabeledRow @r $ Ext mempty $ Just row
 
-checkLabeledRow :: Typer m => ExtLabeledItems (Type r i) (AtomName r i) -> m i o ()
+checkLabeledRow :: forall r m i o. (HasCore r, Typer m) => ExtLabeledItems (Type r i) (AtomName r i) -> m i o ()
 checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
   forM_ rest \name -> do
@@ -1236,10 +1230,10 @@ asSpecializableFunction ty =
       _        -> False
 
 -- TODO: consider effects
-asFirstOrderFunction :: EnvReader m => Type r n -> m n (Maybe (NaryPiType r n))
+asFirstOrderFunction :: (HasCore r, EnvReader m) => Type r n -> m n (Maybe (NaryPiType r n))
 asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
 
-asFirstOrderFunctionM :: Typer m => Type r i -> m i o (NaryPiType r o)
+asFirstOrderFunctionM :: (HasCore r, Typer m) => Type r i -> m i o (NaryPiType r o)
 asFirstOrderFunctionM ty = case asNaryPiType ty of
   Nothing -> throw TypeErr "Not a monomorphic first-order function"
   Just naryPi@(NaryPiType bs eff resultTy) -> do
@@ -1250,34 +1244,29 @@ asFirstOrderFunctionM ty = case asNaryPiType ty of
       checkDataLike resultTy
     substM naryPi
 
-isData :: EnvReader m => Type r n -> m n Bool
+isData :: (HasCore r, EnvReader m) => Type r n -> m n Bool
 isData ty = liftM isJust $ runCheck do
   checkDataLike (sink ty)
   return UnitE
 
-checkDataLike :: Typer m => Type r i -> m i o ()
+checkDataLike :: (HasCore r, Typer m) => Type r i -> m i o ()
 checkDataLike ty = case ty of
   Var _ -> throw TypeErr $ pprint ty
   TabPi (TabPiType b eltTy) -> do
     substBinders b \_ ->
       checkDataLike eltTy
-  StaticRecordTy items -> mapM_ recur items
-  VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
     substBinders b \_ -> checkDataLike r
-  TypeCon _ defName params -> do
-    params' <- substM params
-    def <- lookupDataDef =<< substM defName
-    dataCons <- instantiateDataDef def params'
-    dropSubst $ forM_ dataCons \(DataConDef _ repTy _) -> checkDataLike (unsafeCoerceIRE repTy)
+  NewtypeTyCon nt -> do
+    (_, ty') <- unwrapNewtypeType =<< substM nt
+    dropSubst $ recur ty'
   TC con -> case con of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as
     SumType  cs      -> mapM_ recur cs
-    Nat              -> return ()
-    Fin _            -> return ()
     RefType _ _      -> return ()
+    HeapType         -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty
   where recur = checkDataLike

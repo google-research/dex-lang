@@ -220,7 +220,7 @@ instance CheaplyReducibleE r (Atom r) (Atom r) where
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
 
-instance IsCore r => CheaplyReducibleE r (DictExpr r) (Atom r) where
+instance HasCore r => CheaplyReducibleE r (DictExpr r) (Atom r) where
   cheapReduceE d = case d of
     SuperclassProj child superclassIx -> do
       cheapReduceE child >>= \case
@@ -298,7 +298,7 @@ instance (CheaplyReducibleE r e1 e1', CheaplyReducibleE r e2 e2')
     cheapReduceE (LeftE e) = LeftE <$> cheapReduceE e
     cheapReduceE (RightE e) = RightE <$> cheapReduceE e
 
-instance CheaplyReducibleE r (FieldRowElems r) (FieldRowElems r) where
+instance HasCore r => CheaplyReducibleE r (FieldRowElems r) (FieldRowElems r) where
   cheapReduceE elems = cheapReduceFromSubst elems
 
 -- See Note [Confuse GHC] from Simplify.hs

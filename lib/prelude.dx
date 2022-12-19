@@ -8,6 +8,7 @@
 
 Unit = %UnitType
 Type = %TyKind
+Heap = %HeapType
 Effects = %EffKind
 Fields = %LabeledRowKind
 
@@ -54,7 +55,7 @@ Nat = %Nat
 NatRep = Word32
 
 def nat_to_rep (x : Nat)    : NatRep = %projNewtype x
-def rep_to_nat (x : NatRep) : Nat    = %newtype Nat x
+def rep_to_nat (x : NatRep) : Nat    = %NatCon x
 
 def n_to_w8  (x : Nat) : Word8   = internal_cast _ $ nat_to_rep x
 def n_to_w32 (x : Nat) : Word32  = internal_cast _ $ nat_to_rep x
@@ -639,16 +640,15 @@ named-instance MulMonoid : Monoid a given (a:Type) [Mul a]
 
 '## Effects
 
-def Ref (r:Type) (a:Type) : Type = %Ref r a
+def Ref (r:Heap) (a:Type) : Type = %Ref r a
 def get  {h s} (ref:Ref h s)       : {State h} s    = %get  ref
 def (:=) {h s} (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 
 def ask  {h r} (ref:Ref h r)       : {Read  h} r    = %ask  ref
 
-data AccumMonoidData h w =
-  UnsafeMkAccumMonoidData b:Type (Monoid b)
+data AccumMonoidData (h:Heap) w = UnsafeMkAccumMonoidData b:Type (Monoid b)
 
-interface AccumMonoid h w
+interface AccumMonoid (h:Heap) w
   getAccumMonoidData : AccumMonoidData h w
 
 instance AccumMonoid h (n=>w) given {n h w} [Ix n] [am : AccumMonoid h w]
@@ -669,31 +669,34 @@ def snd_ref {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 def run_reader
       {r a eff}
       (init:r)
-      (action: ((h:Type) ?-> Ref h r -> {Read h|eff} a))
+      (action: ((h:Heap) ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
-    def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
+    def explicitAction (h':Heap) (ref:Ref h' r) : {Read h'|eff} a = action ref
     %runReader init explicitAction
 
 def with_reader
       {r a eff}
       (init:r)
-      (action: ((h:Type) ?-> Ref h r -> {Read h|eff} a))
+      (action: ((h:Heap) ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
     run_reader init action
 
-def MonoidLifter (b:Type) (w:Type) : Type = (h:Type) ?-> AccumMonoid h b ?=> AccumMonoid h w
+def MonoidLifter (b:Type) (w:Type) : Type = (h:Heap) ?-> AccumMonoid h b ?=> AccumMonoid h w
+
+named-instance mk_accum_monoid : AccumMonoid h w given {h w} (d:AccumMonoidData h w)
+  getAccumMonoidData = d
 
 def run_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (bm:Monoid b)
-      (action: ((h:Type) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
+      (action: ((h:Heap) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} (a & w) =
   empty = %projMethod0 bm
   combine = %projMethod1 bm
-  def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a =
+  def explicitAction (h':Heap) (ref:Ref h' w) : {Accum h'|eff} a =
     accumMonoidData : (AccumMonoidData h' b) = UnsafeMkAccumMonoidData b bm
-    accumBaseMonoid = %explicitDict (AccumMonoid h' b) accumMonoidData
+    accumBaseMonoid = mk_accum_monoid accumMonoidData
     action' = %explicitApply (%explicitApply action h') accumBaseMonoid
     action' ref
   %runWriter empty (\x y. combine x y) explicitAction
@@ -702,28 +705,28 @@ def yield_accum
       {a b w eff}
       [mlift:MonoidLifter b w]
       (m:Monoid b)
-      (action: ((h:Type) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
+      (action: ((h:Heap) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} w =
   snd $ run_accum m action
 
 def run_state
       {a s eff}
       (init:s)
-      (action: (h:Type) ?-> Ref h s -> {State h |eff} a)
+      (action: (h:Heap) ?-> Ref h s -> {State h |eff} a)
       : {|eff} (a & s) =
-  def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
+  def explicitAction (h':Heap) (ref:Ref h' s) : {State h'|eff} a = action ref
   %runState init explicitAction
 
 def with_state
       {a s eff}
       (init:s)
-      (action: (h:Type) ?-> Ref h s -> {State h |eff} a)
+      (action: (h:Heap) ?-> Ref h s -> {State h |eff} a)
       : {|eff} a = fst $ run_state init action
 
 def yield_state
       {a s eff}
       (init:s)
-      (action: (h:Type) ?-> Ref h s -> {State h |eff} a)
+      (action: (h:Heap) ?-> Ref h s -> {State h |eff} a)
       : {|eff} s = snd $ run_state init action
 
 def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
@@ -1925,7 +1928,6 @@ def with_temp_files {n a} [Ix n] (action: (n=>FilePath) -> {IO} a) : {IO} a =
 
 '### Table operations
 
-%passes
 @noinline
 def from_ordinal_error (i:Nat) (upper:Nat) : String =
   "x"

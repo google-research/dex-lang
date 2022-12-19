@@ -295,8 +295,7 @@ evalSourceBlock' mname block = case sbContents block of
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
         fType <- getType fname'
-        (nimplicit, linFunTy) <- liftExcept . runFallibleM =<< liftEnvReaderT
-          (getLinearizationType fType REmpty [] fType)
+        (nimplicit, linFunTy) <- getLinearizationType fname zeros fType
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
             implTy <- getType impl
@@ -313,79 +312,6 @@ evalSourceBlock' mname block = case sbContents block of
         emitAtomRules fname' $ CustomLinearize nimplicit zeros impl
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
-    where
-      getLinearizationType :: CType n -> RNest (PiBinder CoreIR) n l
-                           -> [CType l] -> CType l
-                           -> EnvReaderT FallibleM l (Int, CType n)
-      getLinearizationType fullTy implicitArgs revArgTys = \case
-        Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
-          unless (eff == Pure) $ throw TypeErr $
-            "Custom linearization can only be defined for pure functions" ++ but
-          let implicit = do
-                unless (null revArgTys) $ throw TypeErr $
-                  "To define a custom linearization, all implicit and class " ++
-                  "arguments of a function have to precede all explicit " ++
-                  "arguments. However, the type of " ++ pprint fname ++
-                  "is:\n\n" ++ pprint fullTy
-                refreshAbs (Abs pbinder b') \pbinder' b'' ->
-                  getLinearizationType
-                    fullTy (RNest implicitArgs pbinder') [] b''
-          case arr of
-            ClassArrow -> implicit
-            ImplicitArrow -> implicit
-            PlainArrow -> do
-              b <- case hoist binder b' of
-                HoistSuccess b -> return b
-                HoistFailure _ -> throw TypeErr $
-                  "Custom linearization cannot be defined for dependent " ++
-                  "functions" ++ but
-              getLinearizationType fullTy implicitArgs (a:revArgTys) b
-            LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
-        resultTy -> do
-          when (null revArgTys) $ throw TypeErr $
-            "Custom linearization can only be defined for functions" ++ but
-          resultTyTan <- maybeTangentType resultTy >>= \case
-            Just rtt -> return rtt
-            Nothing  -> throw TypeErr $ unlines
-              [ "The type of the result of " ++ pprint fname ++ " is:"
-              , ""
-              , "  " ++ pprint resultTy
-              , ""
-              , "but it does not have a well-defined tangent space."
-              ]
-          tangentWrapper <- case zeros of
-            InstantiateZeros -> return id
-            SymbolicZeros -> do
-              lookupSourceMap "SymbolicTangent" >>= \case
-                Nothing -> throw UnboundVarErr $
-                  "Can't define a custom linearization with symbolic zeros: " ++
-                  "the SymbolicTangent type is not in scope."
-                Just (UTyConVar symTanName) -> do
-                  TyConBinding dataDefName _ <- lookupEnv symTanName
-                  return \elTy -> TypeCon "SymbolicTangent" dataDefName
-                    $ DataDefParams [(PlainArrow, elTy)]
-                Just _ -> throw TypeErr
-                  "SymbolicTangent should name a `data` type"
-          let prependTangent linTail ty =
-                maybeTangentType ty >>= \case
-                  Just tty -> tangentWrapper tty --> linTail
-                  Nothing  -> throw TypeErr $ unlines
-                    [ "The type of one of the arguments of " ++ pprint fname ++
-                      " is:"
-                    , ""
-                    , "  " ++ pprint ty
-                    , ""
-                    , "but it doesn't have a well-defined tangent space."
-                    ]
-          tanFunTy <- foldM prependTangent resultTyTan revArgTys
-          (nestLength $ unRNest implicitArgs,) . prependImplicit implicitArgs
-            <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
-        where
-          but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-          prependImplicit :: RNest (PiBinder CoreIR) n l -> CType l -> CType n
-          prependImplicit is ty = case is of
-            REmpty -> ty
-            RNest is' i -> prependImplicit is' $ Pi $ PiType i Pure ty
   UnParseable _ s -> throw ParseErr s
   BadSyntax e -> throwErrs e
   Misc m -> case m of
@@ -605,8 +531,9 @@ evalBlock typed = do
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
   opt <- whenOpt inlined $ checkPass OptPass . optimize
-  result <- case opt of
-    AtomicBlock result -> return result
+  case opt of
+    AtomicBlock result -> do
+      applyReconTop recon result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
@@ -616,8 +543,9 @@ evalBlock typed = do
         l <- getFilteredLogger
         logFiltered l VectPass $ return [TextOut $ pprint errs]
         checkPass VectPass $ return vo
-      evalLLVM vopt
-  applyRecon recon (injectIRE result)
+      result <- evalLLVM vopt
+      v <- Var <$> emitBinding "data" (AtomNameBinding $ TopDataBound result)
+      applyReconTop recon v
 {-# SCC evalBlock #-}
 
 evalSpecializations :: (Topper m, Mut n) => [CAtomName n] -> [SpecDictName n] -> m n ()
@@ -643,7 +571,7 @@ evalSpecializations vs sdVs = do
       simplifyTopFunction lamExpr
     finishSpecializedDict d methods
 
-ixMethodType :: IxMethod -> Abstracted (Dict CoreIR) n -> EnvReaderM n (NaryPiType CoreIR n)
+ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
     let extraArgBs' = fmapNest (plainPiBinder . (\(b:>ty) -> b :> unsafeCoerceIRE ty)) extraArgBs
@@ -768,7 +696,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (SAtom n)
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (RepVal SimpToImpIR n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger
@@ -788,8 +716,7 @@ evalLLVM block = do
   resultVals <-
     liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
   resultTy <- getDestBlockType block
-  result <- repValFromFlatList resultTy resultVals
-  Var <$> emitBinding "data" (AtomNameBinding $ TopDataBound result)
+  repValFromFlatList resultTy resultVals
 {-# SCC evalLLVM #-}
 
 compileToObjCode
@@ -1020,3 +947,86 @@ instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch
   --       to using names for pointers.
   traversePtrs _ s = pure s
+
+-- === helper for custom linearization rules ===
+
+getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, CType n)
+getLinearizationType = undefined
+
+-- getLinearizationType'
+--   :: (Fallible1 m, EnvReader m)
+--   => SourceName -> SymbolicZeros -> NaryPiType SimpIR n -> m n (Int, NaryPiType SimpIR n)
+-- getLinearizationType' zeros fname fType = undefined
+-- getLinearizationType' zeros fname fType = undefined
+ --  liftExcept . runFallibleM =<< liftEnvReaderT (go fType REmpty [] fType)
+ -- where
+ --  go :: NaryPiType SimpIR n -> RNest (PiBinder SimpIR) n l
+ --     -> [SType l] -> SType l
+ --     -> EnvReaderT FallibleM l (Int, NaryPiType SimpIR n)
+ --  go fullTy implicitArgs revArgTys = \case
+ --    Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
+ --      unless (eff == Pure) $ throw TypeErr $
+ --        "Custom linearization can only be defined for pure functions" ++ but
+ --      let implicit = do
+ --            unless (null revArgTys) $ throw TypeErr $
+ --              "To define a custom linearization, all implicit and class " ++
+ --              "arguments of a function have to precede all explicit " ++
+ --              "arguments. However, the type of " ++ pprint fname ++
+ --              "is:\n\n" ++ pprint fullTy
+ --            refreshAbs (Abs pbinder b') \pbinder' b'' ->
+ --              go fullTy (RNest implicitArgs pbinder') [] b''
+ --      case arr of
+ --        ClassArrow -> implicit
+ --        ImplicitArrow -> implicit
+ --        PlainArrow -> do
+ --          b <- case hoist binder b' of
+ --            HoistSuccess b -> return b
+ --            HoistFailure _ -> throw TypeErr $
+ --              "Custom linearization cannot be defined for dependent " ++
+ --              "functions" ++ but
+ --          go fullTy implicitArgs (a:revArgTys) b
+ --        LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
+ --    resultTy -> do
+ --      when (null revArgTys) $ throw TypeErr $
+ --        "Custom linearization can only be defined for functions" ++ but
+ --      resultTyTan <- maybeTangentType resultTy >>= \case
+ --        Just rtt -> return rtt
+ --        Nothing  -> throw TypeErr $ unlines
+ --          [ "The type of the result of " ++ pprint fname ++ " is:"
+ --          , ""
+ --          , "  " ++ pprint resultTy
+ --          , ""
+ --          , "but it does not have a well-defined tangent space."
+ --          ]
+ --      tangentWrapper <- case zeros of
+ --        InstantiateZeros -> return id
+ --        SymbolicZeros -> do
+ --          lookupSourceMap "SymbolicTangent" >>= \case
+ --            Nothing -> throw UnboundVarErr $
+ --              "Can't define a custom linearization with symbolic zeros: " ++
+ --              "the SymbolicTangent type is not in scope."
+ --            Just (UTyConVar symTanName) -> do
+ --              TyConBinding dataDefName _ <- lookupEnv symTanName
+ --              return \elTy -> TypeCon "SymbolicTangent" dataDefName
+ --                $ DataDefParams [(PlainArrow, elTy)]
+ --            Just _ -> throw TypeErr
+ --              "SymbolicTangent should name a `data` type"
+ --      let prependTangent linTail ty =
+ --            maybeTangentType ty >>= \case
+ --              Just tty -> tangentWrapper tty --> linTail
+ --              Nothing  -> throw TypeErr $ unlines
+ --                [ "The type of one of the arguments of " ++ pprint fname ++
+ --                  " is:"
+ --                , ""
+ --                , "  " ++ pprint ty
+ --                , ""
+ --                , "but it doesn't have a well-defined tangent space."
+ --                ]
+ --      tanFunTy <- foldM prependTangent resultTyTan revArgTys
+ --      (nestLength $ unRNest implicitArgs,) . prependImplicit implicitArgs
+ --        <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+ --    where
+ --      but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+ --      prependImplicit :: RNest (PiBinder SimpIR) n l -> NaryPiType SimpIR l -> NaryPiType SimpIR n
+ --      prependImplicit is ty@(NaryPiType bs eff resultTy) =
+ --        NaryPiType (unRNest is >>> bs) eff resultTy

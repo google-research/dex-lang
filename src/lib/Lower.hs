@@ -342,13 +342,13 @@ vectorizeLoopsRec frag nest =
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
-        DAMOp (Seq dir (IxDictFin (NatVal n)) dest@(ProdVal [_]) body)
+        DAMOp (Seq dir (IxDictFin (IdxRepVal n)) dest@(ProdVal [_]) body)
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
-              let vn = NatVal $ n `div` loopWidth
-              body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
+              let vn = n `div` loopWidth
+              body' <- vectorizeSeq loopWidth frag body
               dest' <- applySubst frag dest
-              emit $ DAMOp $ Seq dir (IxDictFin vn) dest' body')
+              emit $ DAMOp $ Seq dir (IxDictFin (IdxRepVal vn)) dest' body')
             `catchErr` \errs -> do
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
@@ -356,7 +356,7 @@ vectorizeLoopsRec frag nest =
                 modify (<> errs')
                 dest' <- applySubst frag dest
                 body' <- applySubst frag body
-                emit $ DAMOp $ Seq dir (IxDictFin $ NatVal n) dest' body'
+                emit $ DAMOp $ Seq dir (IxDictFin (IdxRepVal n)) dest' body'
         _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 
@@ -367,24 +367,23 @@ atMostOneEffect eff scrutinee = case scrutinee of
   _ -> False
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
-             => Word32 -> SType o -> SubstFrag Name i i' o -> LamExpr SimpIR i'
+             => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
              -> TopVectorizeM o (LamExpr SimpIR o)
-vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
+vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
   if atMostOneEffect InitEffect (blockEffects body)
     then do
-      (oldIxTy, ty') <- case ty of
+      (_, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
           ixTy' <- applySubst frag ixTy
           ref' <- applySubst frag ref
-          return (ixTy', ProdTy [newIxTy, ref'])
+          return (ixTy', ProdTy [IdxRepTy, ref'])
         _ -> error "Unexpected seq binder type"
       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
         buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
-          (vi, dest) <- fromPair $ Var ci
-          let viOrd = unwrapBaseNewtype $ unwrapBaseNewtype vi
+          -- XXX: we're assuming `Fin n` here
+          (viOrd, dest) <- fromPair $ Var ci
           iOrd <- imul viOrd $ IdxRepVal loopWidth
-          let i = Con $ Newtype (sink oldIxTy) $ Con $ Newtype NatTy iOrd
-          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
+          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
       case runReaderT (fromFallibleM result) mempty of
         Success s -> return s
@@ -395,7 +394,7 @@ vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
     iSubst v = case lookupSubstFragProjected frag v of
       Left v'  -> sink $ fromNameVAtom v'
       Right v' -> sink $ fromNameVAtom v'
-vectorizeSeq _ _ _ _ = error "expected a unary lambda expression"
+vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
 fromNameVAtom v = case eqColorRep @c @AtomNameC of
@@ -505,16 +504,7 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
     ProjectElt p v -> do
       VVal vv v' <- lookupSubstM v
       ov <- projStability (reverse $ NE.toList p) vv
-      let p' = case ov of
-                -- Uniform and contiguous values are always of the original type.
-                Uniform -> NE.toList p
-                Contiguous -> NE.toList p
-                -- Vectors of base newtypes are already newtype-stripped.
-                Varying -> NE.filter (/= UnwrapBaseNewtype) p
-                -- Product types cannot be projected out of base newtypes,
-                -- so no need to filter.
-                ProdStability _ -> NE.toList p
-      return $ VVal ov $ getProjection p' v'
+      return $ VVal ov $ getProjection (NE.toList p) v'
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst
@@ -526,11 +516,9 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
         -- TODO(nrink): Throw instead of `error`.
         _ -> error $ "Can't vectorize atom " ++ pprint atom
       projStability p s = case (p, s) of
-        ([]                      , _                ) -> return s
-        (ProjectProduct i:is     , ProdStability sbs) -> projStability is (sbs !! i)
-        (UnwrapCompoundNewtype:is, _                ) -> projStability is s
-        (UnwrapBaseNewtype:is    , _                ) -> projStability is s
-        (_                       , Uniform          ) -> return s
+        ([]                 , _                ) -> return s
+        (ProjectProduct i:is, ProdStability sbs) -> projStability is (sbs !! i)
+        (_                  , Uniform          ) -> return s
         _ -> throwVectErr "Invalid projection"
 
 getVectorType :: SType o -> VectorizeM i o (SAtom o)

@@ -144,9 +144,7 @@ blockAsPolyRec decls result = case decls of
     atomAsPoly :: Atom SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
     atomAsPoly = \case
       Var v       -> atomNameAsPoly v
-      RepValAtom dRepVal -> do
-        DRepVal _ _ (Leaf (IVar v' _)) <- return dRepVal
-        impNameAsPoly v'
+      RepValAtom (RepVal _ (Leaf (IVar v' _))) -> impNameAsPoly v'
       IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
       _ -> empty
 
@@ -206,7 +204,7 @@ emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> case v of
     LeftE v' -> ipow (Var v') e
     RightE v' -> do
-      let atom = RepValAtom $ DRepVal [] IdxRepTy (Leaf (IVar v' IIdxRepTy))
+      let atom = RepValAtom $ RepVal IdxRepTy (Leaf (IVar v' IIdxRepTy))
       ipow atom e
   foldM imul (IdxRepVal 1) varAtoms
 

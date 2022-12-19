@@ -36,7 +36,6 @@ import CheckType (CheckableE (..))
 import Core
 import Err
 import IRVariants
-import LabeledItems
 import Lower (DestBlock)
 import MTL1
 import Name
@@ -120,7 +119,7 @@ interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll
     Nest (PiBinder b argTy _) rest -> do
       argTy' <- substM argTy
       (argTree, xsRest) <- listToTree argTy' xs
-      let arg = RepValAtom $ toDRepVal $ RepVal argTy' argTree
+      let arg = RepValAtom $ RepVal argTy' argTree
       (args, dest) <- extendSubst (b @> SubstVal arg) $ go (NaryPiType rest effs resultTy) xsRest
       return (arg:args, dest)
     Empty -> do
@@ -299,7 +298,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   TabApp f' xs' -> do
     xs <- mapM substM xs'
     f <- atomToRepVal =<< substM f'
-    RepValAtom <$> toDRepVal <$> naryIndexRepVal f (toList xs)
+    RepValAtom <$> naryIndexRepVal f (toList xs)
   Atom x -> substM x >>= returnVal
   -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
   PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
@@ -311,21 +310,15 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         Abs b body <- return $ alts !! con
         extendSubst (b @> SubstVal arg) $ translateBlock maybeDest body
       Nothing -> case e' of
-        -- This is awful, but it'll mostly disappear once we remove newtypes
-        -- earlier so I'm not going to bother fixing it up now.
-        Con (Newtype (VariantTy _) (Con (SumAsProd _ tag xss))) -> go tag xss
-        Con (Newtype (TypeCon _ _ _) (Con (SumAsProd _ tag xss))) -> go tag xss
         Con (SumAsProd _ tag xss) -> go tag xss
-        Con (Newtype (VariantTy _  ) (RepValAtom dRepVal)) -> goDRepVal dRepVal
-        Con (Newtype (TypeCon _ _ _) (RepValAtom dRepVal)) -> goDRepVal dRepVal
         RepValAtom dRepVal                                 -> goDRepVal dRepVal
         _ -> error $ "unexpected case scrutinee: " ++ pprint e'
         where
           goDRepVal dRepVal = do
-            RepVal sumTy (Branch (tag:xss)) <- forceDRepVal dRepVal
+            RepVal sumTy (Branch (tag:xss)) <- return dRepVal
             ts <- caseAltsBinderTys sumTy
-            let tag' = RepValAtom $ toDRepVal $ RepVal TagRepTy tag
-            let xss' = zipWith (\t x -> RepValAtom $ toDRepVal $ RepVal t x) ts xss
+            let tag' = RepValAtom $ RepVal TagRepTy tag
+            let xss' = zipWith (\t x -> RepValAtom $ RepVal t x) ts xss
             go tag' xss'
           go tag xss = do
             tag' <- fromScalarAtom tag
@@ -442,7 +435,7 @@ toImpOp maybeDest op = case op of
     returnVal =<< case vty of
       BaseTy vty'@(Vector _ _) -> do
         resultVal <- cast refi' (PtrType (addrSpace, vty'))
-        return $ RepValAtom $ toDRepVal $ RepVal (RawRefTy vty) (Leaf resultVal)
+        return $ RepValAtom $ RepVal (RawRefTy vty) (Leaf resultVal)
       _ -> error "Expected a vector type"
   where
     fsa = fromScalarAtom
@@ -472,23 +465,12 @@ toImpMiscOp maybeDest op = case op of
   SumTag con -> case con of
     Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
     Con (SumAsProd _ tag _) -> returnVal tag
-    Con (Newtype _ (Con (SumCon _ tag _))) -> returnVal $ TagRepVal $ fromIntegral tag
-    Con (Newtype _ (Con (SumAsProd _ tag _))) -> returnVal tag
     RepValAtom dRepVal -> go dRepVal
-    Con (Newtype _ (RepValAtom dRepVal)) -> go dRepVal
     _ -> error $ "Not a data constructor: " ++ pprint con
     where go dRepVal = do
-            RepVal _ (Branch (tag:_)) <- forceDRepVal dRepVal
-            return $ RepValAtom $ toDRepVal $ RepVal TagRepTy tag
+            RepVal _ (Branch (tag:_)) <- return dRepVal
+            return $ RepValAtom $ RepVal TagRepTy tag
   ToEnum ty i -> returnVal =<< case ty of
-    TypeCon _ defName _ -> do
-      DataDef _ _ cons <- lookupDataDef defName
-      return $ Con $ Newtype ty $
-        Con $ SumAsProd (cons <&> const UnitTy) i (cons <&> const UnitVal)
-    VariantTy (NoExt labeledItems) -> do
-      let items = toList labeledItems
-      return $ Con $ Newtype ty $
-        Con $ SumAsProd (items <&> const UnitTy) i (items <&> const UnitVal)
     SumTy cases ->
       return $ Con $ SumAsProd cases i $ cases <&> const UnitVal
     _ -> error $ "Not an enum: " ++ pprint ty
@@ -564,7 +546,7 @@ toImpHof maybeDest hof = do
       r' <- substM r
       rDest <- allocDest =<< getType r'
       storeAtom rDest r'
-      extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom rDest)) $
+      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
         translateBlock maybeDest body
     RunWriter d (BaseMonoid e _) f -> do
       BinaryLamExpr h ref body <- return f
@@ -580,7 +562,7 @@ toImpHof maybeDest hof = do
         PairE accTy' e'' <- sinkM $ PairE accTy e'
         liftMonoidEmpty accTy' e''
       storeAtom wDest emptyVal
-      void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom wDest)) $
+      void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom wDest
     RunState d s f -> do
@@ -593,26 +575,27 @@ toImpHof maybeDest hof = do
           sDest <- atomToDest =<< substM d'
           return (aDest, sDest)
       storeAtom sDest =<< substM s
-      void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom sDest)) $
+      void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom sDest
     RunIO body-> translateBlock maybeDest body
     RunInit body -> translateBlock maybeDest body
     where
       liftMonoidEmpty :: SIType n -> SIAtom n -> SBuilderM n (SIAtom n)
-      liftMonoidEmpty accTy x = do
-        xTy <- getType x
-        alphaEq xTy accTy >>= \case
-          True -> return x
-          False -> case accTy of
-            TabTy (b:>ixTy) eltTy -> do
-              buildTabLam noHint ixTy \i -> do
-                x' <- sinkM x
-                ab <- sinkM $ Abs b eltTy
-                eltTy' <- applyAbs ab i
-                liftMonoidEmpty eltTy' x'
-            _ -> error $ "Base monoid type mismatch: can't lift " ++
-                  pprint xTy ++ " to " ++ pprint accTy
+      liftMonoidEmpty accTy x = undefined
+      -- liftMonoidEmpty accTy x = do
+      --   xTy <- getType x
+      --   alphaEq xTy accTy >>= \case
+      --     True -> return x
+      --     False -> case accTy of
+      --       TabTy (b:>ixTy) eltTy -> do
+      --         buildTabLam noHint ixTy \i -> do
+      --           x' <- sinkM x
+      --           ab <- sinkM $ Abs b eltTy
+      --           eltTy' <- applyAbs ab i
+      --           liftMonoidEmpty eltTy' x'
+      --       _ -> error $ "Base monoid type mismatch: can't lift " ++
+      --             pprint xTy ++ " to " ++ pprint accTy
 
 -- === Runtime representation of values and refs ===
 
@@ -705,7 +688,7 @@ elemTypeToBaseType = \case
   where hostPtrTy ty = PtrType (CPU, ty)
 
 typeToTree :: EnvReader m => SIType n -> m n (Tree (LeafType n))
-typeToTree tyTop = go REmpty <$> liftEnvReaderM (stripNewtypes tyTop)
+typeToTree tyTop = return $ go REmpty tyTop
  where
   go :: RNest (TypeCtxLayer SimpToImpIR) n l -> SIType l -> Tree (LeafType n)
   go ctx = \case
@@ -724,39 +707,6 @@ typeToTree tyTop = go REmpty <$> liftEnvReaderM (stripNewtypes tyTop)
     ty -> error $ "not implemented " ++ pprint ty
     where rec = go ctx
 
--- TODO: do this in simplification instead
-stripNewtypes :: SIType n -> EnvReaderM n (SIType n)
-stripNewtypes = \case
-  TabTy b bodyTy -> do
-    refreshAbs (Abs b bodyTy) \b' bodyTy' ->
-      TabTy b' <$> stripNewtypes bodyTy'
-  RawRefTy t -> RawRefTy <$> stripNewtypes t
-  TC con -> case con of
-    BaseType b    -> return $ BaseTy b
-    SumType cases -> (TC . SumType ) <$> mapM stripNewtypes cases
-    ProdType tys  -> (TC . ProdType) <$> mapM stripNewtypes tys
-    Nat           -> return IdxRepTy
-    Fin _         -> return IdxRepTy
-    _ -> error $ "not implemented: " ++ pprint con
-  TypeCon _ defName params -> do
-    def <- lookupDataDef defName
-    dcs <- instantiateDataDef def params
-    stripNewtypes (dataDefRep dcs)
-  DepPairTy (DepPairType (b:>t1) (t2)) -> do
-    t1' <- stripNewtypes t1
-    Abs b' t2' <- buildAbs (getNameHint b) t1' \v -> do
-      let x = Con (Newtype (sink t1) (Var v))
-      t2' <- applySubst (b@>SubstVal x) t2
-      stripNewtypes t2'
-    return $ DepPairTy (DepPairType b' t2')
-  VariantTy (NoExt ts) -> do
-    ts' <- mapM stripNewtypes $ toList ts
-    return $ SumTy ts'
-  StaticRecordTy ts -> do
-    ts' <- mapM stripNewtypes $ toList ts
-    return $ ProdTy ts'
-  ty -> error $ "not implemented: " ++ pprint ty
-
 traverseScalarRepTys :: EnvReader m => SIType n -> (LeafType n -> m n a) -> m n (Tree a)
 traverseScalarRepTys ty f = traverse f =<< typeToTree ty
 {-# INLINE traverseScalarRepTys #-}
@@ -772,8 +722,7 @@ storeRepVal (Dest _ destTree) repVal@(RepVal _ valTree) = do
 -- the existentially-hidden fields.
 valueToTree :: EnvReader m => SIRepVal n -> m n (Tree (LeafType n))
 valueToTree (RepVal tyTop valTop) = do
-  tyTop' <- liftEnvReaderM (stripNewtypes tyTop)
-  go REmpty tyTop' valTop
+  go REmpty tyTop valTop
  where
   go :: EnvReader m => RNest (TypeCtxLayer SimpToImpIR) n l -> SIType l -> Tree (IExpr n)
      -> m n (Tree (LeafType n))
@@ -786,7 +735,7 @@ valueToTree (RepVal tyTop valTop) = do
         case ctx of
           REmpty -> do
             tree1 <- rec t1 v1
-            t2' <- applySubst (b@>SubstVal (RepValAtom $ toDRepVal $ RepVal t1 v1)) t2
+            t2' <- applySubst (b@>SubstVal (RepValAtom $ RepVal t1 v1)) t2
             tree2 <- go (RNest ctx (DepPairCtx NothingB )) t2' v2
             return $ Branch [tree1, tree2]
           _ -> do
@@ -897,20 +846,13 @@ atomToRepVal :: Emits n => SIAtom n -> SubstImpM i n (SIRepVal n)
 atomToRepVal x = RepVal <$> getType x <*> go x where
   go :: Emits n => SIAtom n -> SubstImpM i n (Tree (IExpr n))
   go atom = case atom of
-    TabLam (TabLamExpr (b:>ixTy) body) -> do
-      ty <- getType atom
-      let lamExpr = UnaryLamExpr (b:>ixTypeType ixTy) body
-      RepValAtom dRepVal <- dropSubst $ toImpFor Nothing ty Fwd (ixTypeDict ixTy) lamExpr
-      (RepVal _ tree) <- forceDRepVal dRepVal
-      return tree
     RepValAtom dRepVal -> do
-      (RepVal _ tree) <- forceDRepVal dRepVal
+      (RepVal _ tree) <- return dRepVal
       return tree
     DepPair lhs rhs _ -> do
       lhsTree <- go lhs
       rhsTree <- go rhs
       return $ Branch [lhsTree, rhsTree]
-    Con (Newtype _ v) -> go v
     Con (Lit l) -> return $ Leaf $ ILit l
     Con (ProdCon xs) -> Branch <$> mapM go xs
     Con (SumAsProd _ tag payload) -> do
@@ -923,7 +865,7 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
       storeAtom (Dest (cases!!tag) (dests!!tag)) payload
       storeAtom (Dest TagRepTy tagDest) (TagRepVal $ fromIntegral tag)
       RepValAtom dRepVal <- loadAtom dest
-      (RepVal _ tree) <- forceDRepVal dRepVal
+      (RepVal _ tree) <- return dRepVal
       return tree
     Var v -> lookupAtomName v >>= \case
       TopDataBound (RepVal _ tree) -> return tree
@@ -941,8 +883,7 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
         applyProjection (i:is) t = do
           t' <- applyProjection is t
           case i of
-            UnwrapCompoundNewtype -> return t'
-            UnwrapBaseNewtype     -> return t'
+            UnwrapNewtype -> error "impossible"
             ProjectProduct idx    -> case t' of
               Branch ts -> return $ ts !! idx
               _ -> error "should only be projecting a branch"
@@ -952,11 +893,11 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
 -- from the dest. This version is not that. It just lifts a dest into an atom of
 -- type `Ref _`.
 destToAtom :: Dest n -> SIAtom n
-destToAtom (Dest valTy tree) = RepValAtom $ toDRepVal $ RepVal (RawRefTy valTy) tree
+destToAtom (Dest valTy tree) = RepValAtom $ RepVal (RawRefTy valTy) tree
 
 atomToDest :: EnvReader m => SIAtom n -> m n (Dest n)
 atomToDest (RepValAtom val) = do
-  (RepVal ~(RawRefTy valTy) valTree) <- forceDRepVal val
+  (RepVal ~(RawRefTy valTy) valTree) <- return val
   return $ Dest valTy valTree
 atomToDest atom = error $ "Expected a non-var atom of type `RawRef _`, got: " ++ pprint atom
 {-# INLINE atomToDest #-}
@@ -1034,7 +975,7 @@ storeAtom :: Emits n => Dest n -> SIAtom n -> SubstImpM i n ()
 storeAtom dest x = storeRepVal dest =<< atomToRepVal x
 
 loadAtom :: Emits n => Dest n -> SubstImpM i n (SIAtom n)
-loadAtom d = RepValAtom <$> toDRepVal <$> loadRepVal d
+loadAtom d = RepValAtom <$> loadRepVal d
 
 repValFromFlatList :: (TopBuilder m, Mut n) => SType n -> [LitVal] -> m n (SIRepVal n)
 repValFromFlatList ty xs = do
@@ -1404,7 +1345,7 @@ fromScalarAtom atom = atomToRepVal atom >>= \case
     _ -> error $ "Not a scalar atom:" ++ pprint ty
 
 toScalarAtom :: IExpr n -> SIAtom n
-toScalarAtom x = RepValAtom $ toDRepVal $ RepVal (BaseTy (getIType x)) (Leaf x)
+toScalarAtom x = RepValAtom $ RepVal (BaseTy (getIType x)) (Leaf x)
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
@@ -1436,21 +1377,15 @@ ordinalImp (IxType _ dict) i = fromScalarAtom =<< case dict of
   IxDictSpecialized _ d params -> do
     SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
     appSpecializedIxMethod (fs !! fromEnum Ordinal) (params ++ [i])
-  -- This should be impossible! But it happesn because of careless use of `unsafeFromOrdinalIRE`.
-  -- It'll be fixed when we strip newtypes in the simp pass.
-  IxDictAtom (DictCon (IxFin _)) -> return i
 
 unsafeFromOrdinalImp :: Emits n => IxType SimpToImpIR n -> IExpr n -> SubstImpM i n (SIAtom n)
 unsafeFromOrdinalImp (IxType _ dict) i = do
-  let i' = Con $ Newtype NatTy $ toScalarAtom i
+  let i' = toScalarAtom i
   case dict of
-    IxDictFin n -> return $ Con $ Newtype (TC $ Fin n) i'
+    IxDictFin _ -> return i'
     IxDictSpecialized _ d params -> do
       SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
-    -- This should be impossible! But it happesn because of careless use of `unsafeFromOrdinalIRE`.
-    -- It'll be fixed when we strip newtypes in the simp pass.
-    IxDictAtom (DictCon (IxFin n)) -> return $ Con $ Newtype (TC $ Fin n) i'
 
 indexSetSizeImp :: Emits n => IxType SimpToImpIR n -> SubstImpM i n (IExpr n)
 indexSetSizeImp (IxType _ dict) = do
@@ -1459,10 +1394,7 @@ indexSetSizeImp (IxType _ dict) = do
     IxDictSpecialized _ d params -> do
       SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
       appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
-    -- This should be impossible! But it happesn because of careless use of `unsafeFromOrdinalIRE`.
-    -- It'll be fixed when we strip newtypes in the simp pass.
-    IxDictAtom (DictCon (IxFin n)) -> return n
-  fromScalarAtom $ unwrapBaseNewtype ans
+  fromScalarAtom ans
 
 appSpecializedIxMethod :: Emits n => LamExpr SimpIR n -> [SIAtom n] -> SubstImpM i n (SIAtom n)
 appSpecializedIxMethod simpLam args = do
