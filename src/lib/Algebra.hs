@@ -57,7 +57,9 @@ sumUsingPolys lim (Abs i body) = do
     blockAsPoly body' >>= \case
       Just poly' -> return $ Abs i' poly'
       Nothing -> throw NotImplementedErr $
-        "Algebraic simplification failed to model index computations: " ++ pprint body'
+        "Algebraic simplification failed to model index computations:\n"
+        ++ "Trying to sum from 0 to " ++ pprint lim ++ " - 1, \\"
+        ++ pprint i' ++ "." ++ pprint body'
   limName <- emitAtomToName noHint lim
   emitPolynomial $ sum (LeftE limName) sumAbs
 
