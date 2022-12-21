@@ -230,3 +230,23 @@ instance Ix TwoPoints
 
 :p for i:TwoPoints. i
 > [FirstPoint, SecondPoint]@TwoPoints
+
+----------------- User-defined Ix referencing toplevel data -----------------
+
+-- This is a regression test for Issue #930.
+
+data TwoMorePoints =
+  APoint
+  AnotherPoint
+
+both_points = [APoint, AnotherPoint]
+
+instance Ix TwoMorePoints
+  size = 2
+  ordinal = \b. case b of
+    APoint -> 0
+    AnotherPoint -> 1
+  unsafe_from_ordinal = \i. both_points.(unsafe_from_ordinal _ i)
+
+:p for i:TwoMorePoints. ordinal i
+> [0, 1]@TwoMorePoints
