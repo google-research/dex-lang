@@ -26,7 +26,7 @@ import Data.Functor (($>), (<&>))
 import Data.List (sortOn, intercalate, partition)
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Maybe (fromJust)
-import Data.Text.Prettyprint.Doc (Pretty (..), (<+>))
+import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
 import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
@@ -362,6 +362,13 @@ zonkDefaults s (Defaults d1 d2) =
 
 data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (SolverSubst l)
 
+instance Pretty (InfOutFrag n l) where
+  pretty (InfOutFrag emissions defaults solverSubst) =
+    vcat [ "Pending emissions:" <+> pretty (unRNest emissions)
+         , "Defaults:" <+> pretty defaults
+         , "Solver substitution:" <+> pretty solverSubst
+         ]
+
 type InfEmission  = EitherE (DeclBinding CoreIR) (SolverBinding CoreIR)
 type InfEmissions = RNest (BinderP AtomNameC InfEmission)
 
@@ -568,11 +575,11 @@ instance Solver (InfererM i) where
   {-# INLINE emitSolver #-}
 
   solveLocal cont = do
-    Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
+    Abs frag@(InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
       REmpty -> return result
-      RNest _ (_:>RightE (InfVarBound _ ctx)) -> do
-        addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
+      (RNest _ (_:>RightE (InfVarBound _ ctx))) -> do
+        addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable:\n" ++ pprint frag
       _ -> error "not possible?"
 
 instance InfBuilder (InfererM i) where
@@ -598,12 +605,9 @@ instance InfBuilder (InfererM i) where
             HoistSuccess (PairB infFrag' b') ->
               return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
             HoistFailure vs -> do
-              InfOutFrag emissions defaults solverSubst <- return infFrag
               throw EscapedNameErr $ (pprint vs)
                 ++ "\nFailed to exchage binders in buildAbsInf"
-                ++ "\nPending emissions:" ++ pprint (unRNest emissions)
-                ++ "\nDefaults:" ++ pprint defaults
-                ++ "\nSolver substitution: " ++ pprint solverSubst
+                ++ "\n" ++ pprint infFrag
       Abs b (PairE result s') <- extendInplaceT ab
       return (Abs (b:>binding) result, hoistRequiredIfaces b s')
 
