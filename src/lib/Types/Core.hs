@@ -1388,13 +1388,13 @@ instance SubstE (AtomSubstVal r) (FieldRowElems r) where
           SubstVal (Con (LabelCon l)) -> [StaticFields $ labeledSingleton l ty']
           SubstVal (Var v') -> [DynField v' ty']
           Rename v'         -> [DynField v' ty']
-          _ -> error "ill-typed substitution"
+          SubstVal irritant -> error $ "Ill-typed substitution " ++ show irritant
           where ty' = substE env ty
         DynFields v -> case snd env ! v of
           SubstVal (LabeledRow items) -> fromFieldRowElems items
           SubstVal (Var v') -> [DynFields v']
           Rename v'         -> [DynFields v']
-          _ -> error "ill-typed substitution"
+          SubstVal irritant -> error $ "Ill-typed substitution " ++ show irritant
         StaticFields items -> [StaticFields items']
           where ExtLabeledItemsE (NoExt items') = substE env
                   (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE (Atom r) (AtomName r) i)
