@@ -17,6 +17,7 @@ import Data.Bits
 import Data.List.NonEmpty qualified as NE
 import Control.Monad
 import Control.Monad.State.Strict
+import GHC.Float
 
 import Types.Core
 import Types.Primitives
@@ -86,7 +87,14 @@ unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE
 peepholeOp :: PrimOp (Atom SimpIR o) -> EnvReaderM o (Either (SAtom o) (PrimOp (Atom SimpIR o)))
 peepholeOp op = case op of
   MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case sTy of
-    -- TODO: Support all casts.
+    -- TODO: Check that the casts relating to floating-point agree with the
+    -- runtime behavior.  The runtime is given by the `ICastOp` case in
+    -- ImpToLLVM.hs.  We should make sure that the Haskell functions here
+    -- produce bitwise identical results to those instructions, by adjusting
+    -- either this or that as called for.
+    -- TODO: Also implement casts that may have unrepresentable results, i.e.,
+    -- casting floating-point numbers to smaller floating-point numbers or to
+    -- fixed-point.  Both of these necessarily have a much smaller dynamic range.
     Int32Type -> case l of
       Int32Lit  _  -> lit l
       Int64Lit  i  -> lit $ Int32Lit  $ fromIntegral i
@@ -132,7 +140,24 @@ peepholeOp op = case op of
       Float32Lit _ -> noop
       Float64Lit _ -> noop
       PtrLit   _ _ -> noop
-    _ -> noop
+    Float32Type -> case l of
+      Int32Lit  i  -> lit $ Float32Lit $ fromIntegral (fromIntegral i :: Word32)
+      Int64Lit  i  -> lit $ Float32Lit $ fromIntegral i
+      Word8Lit  i  -> lit $ Float32Lit $ fromIntegral i
+      Word32Lit i  -> lit $ Float32Lit $ fromIntegral i
+      Word64Lit i  -> lit $ Float32Lit $ fromIntegral i
+      Float32Lit _ -> lit l
+      Float64Lit _ -> noop
+      PtrLit   _ _ -> noop
+    Float64Type -> case l of
+      Int32Lit  i  -> lit $ Float64Lit $ fromIntegral (fromIntegral i :: Word32)
+      Int64Lit  i  -> lit $ Float64Lit $ fromIntegral i
+      Word8Lit  i  -> lit $ Float64Lit $ fromIntegral i
+      Word32Lit i  -> lit $ Float64Lit $ fromIntegral i
+      Word64Lit i  -> lit $ Float64Lit $ fromIntegral i
+      Float32Lit f -> lit $ Float64Lit $ float2Double f
+      Float64Lit _ -> lit l
+      PtrLit   _ _ -> noop
   -- TODO: Support more unary and binary ops.
   BinOp IAdd l r -> return $ case (l, r) of
     -- TODO: Shortcut when either side is zero.
