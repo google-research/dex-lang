@@ -32,6 +32,7 @@ module Builder (
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
   buildCase, emitIf, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitExprToAtom, emitAtomToName,
+  emitAtomToNameAnn,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
   runTopBuilderT, TopBuilder2, emitBindingDefault,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
@@ -151,6 +152,11 @@ emitAtomToName :: (Builder r m, Emits n) => NameHint -> Atom r n -> m n (AtomNam
 emitAtomToName _ (Var v) = return v
 emitAtomToName hint x = emitHinted hint (Atom x)
 {-# INLINE emitAtomToName #-}
+
+emitAtomToNameAnn :: (Builder r m, Emits n) => NameHint -> LetAnn -> Atom r n -> m n (AtomName r n)
+emitAtomToNameAnn _ _ (Var v) = return v
+emitAtomToNameAnn hint ann x = emitDecl hint ann (Atom x)
+{-# INLINE emitAtomToNameAnn #-}
 
 buildScopedAssumeNoDecls :: (SinkableE e, ScopableBuilder r m)
   => (forall l. (Emits l, DExt n l) => m l (e l))

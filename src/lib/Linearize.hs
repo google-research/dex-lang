@@ -325,12 +325,12 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
       extendSubst (b@>v) $ linearizeDecls rest cont
     False -> do
       WithTangent p tf <- linearizeExpr expr
-      v <- emitDecl (getNameHint b) ann (Atom p)
+      v <- emitAtomToNameAnn (getNameHint b) ann p
       extendActiveSubst b v do
         WithTangent pRest tfRest <- linearizeDecls rest cont
         return $ WithTangent pRest do
           t <- tf
-          vt <- emitDecl (getNameHint b) ann (Atom t)
+          vt <- emitAtomToNameAnn (getNameHint b) ann t
           extendTangentArgs vt $
             tfRest
 
