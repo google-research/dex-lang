@@ -1,3 +1,8 @@
+-- The "=== inline ===" strings below are a hack around the fact that
+-- Dex currently does two passes of inlining and prints the results of
+-- both.  Surrounding the CHECK block with these commands constrains
+-- the body to occur in the output from the first inlining pass.
+
 @noinline
 def id' (x:Nat) : Nat = x
 
@@ -8,16 +13,20 @@ def id' (x:Nat) : Nat = x
 :p
   xs = for i:(Fin 10). ordinal i
   for j. xs.j + 2
+-- CHECK: === inline ===
 -- CHECK: for
 -- CHECK-NOT: for
+-- CHECK: === inline ===
 
 -- CHECK-LABEL: Inline for into sum
 "Inline for into sum"
 
 %passes inline
 sum for i:(Fin 10). ordinal i
+-- CHECK: === inline ===
 -- CHECK: for
 -- CHECK-NOT: for
+-- CHECK: === inline ===
 
 -- CHECK-LABEL: Inline nested for into for
 "Inline nested for into for"
@@ -26,8 +35,10 @@ sum for i:(Fin 10). ordinal i
 :p
   xs = for i:(Fin 10). for j:(Fin 20). ordinal i * ordinal j
   for j i. xs.i.j + 2
+-- CHECK: === inline ===
 -- CHECK: for
 -- CHECK-NOT: for
+-- CHECK: === inline ===
 
 -- CHECK-LABEL: Inlining does not reorder effects
 "Inlining does not reorder effects"
@@ -44,8 +55,10 @@ run_state 0 \ct.
   for j.
     ct := (get ct) * 2
     xs.j + 2
+-- CHECK: === inline ===
 -- CHECK: for
 -- CHECK: for
+-- CHECK: === inline ===
 
 -- CHECK-LABEL: Inlining does not duplicate the inlinee through beta reduction
 "Inlining does not duplicate the inlinee through beta reduction"
@@ -56,8 +69,10 @@ run_state 0 \ct.
 :p
   ix = (id' 20)@(Fin 100)
   (for i:(Fin 100). ordinal i + ordinal i).ix
+-- CHECK: === inline ===
 -- CHECK: runIO
 -- CHECK-NOT: runIO
+-- CHECK: === inline ===
 
 -- CHECK-LABEL: Inlining does not violate type IR through beta reduction
 "Inlining does not violate type IR through beta reduction"
