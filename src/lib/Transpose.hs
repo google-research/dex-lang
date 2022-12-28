@@ -18,6 +18,7 @@ import Err
 import IRVariants
 import MTL1
 import Name
+import Subst
 import QueryType
 import Types.Core
 import Types.Primitives
@@ -57,13 +58,12 @@ type TransposeM' a = SubstReaderT (AtomSubstVal SimpIR)
 -- with a single `trySubtNonlin :: e i -> Maybe (e o)`.
 -- But for that we need a way to traverse names, like a monadic
 -- version of `substE`.
-substNonlin :: (SinkableE e, SubstE Name e, HasCallStack)
-            => e i -> TransposeM i o (e o)
+substNonlin :: (SinkableE e, RenameE e, HasCallStack) => e i -> TransposeM i o (e o)
 substNonlin e = do
   subst <- getSubst
-  fmapNamesM (\v -> case subst ! v of
-                      RenameNonlin v' -> v'
-                      _ -> error "not a nonlinear expression") e
+  fmapRenamingM (\v -> case subst ! v of
+                         RenameNonlin v' -> v'
+                         _ -> error "not a nonlinear expression") e
 
 -- TODO: Can we generalize onNonLin to accept SubstReaderT Name instead of
 -- SubstReaderT AtomSubstVal?  For that to work, we need another combinator,

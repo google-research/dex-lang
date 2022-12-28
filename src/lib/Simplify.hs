@@ -30,6 +30,7 @@ import IRVariants
 import LabeledItems
 import Linearize
 import Name
+import Subst
 import Optimize (peepholeOp)
 import QueryType
 import Transpose
@@ -111,7 +112,7 @@ newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
            , Builder SimpIR, HoistingTopBuilder TopEnvFrag)
 
 liftSimplifyM
-  :: (SinkableE e, SubstE Name e, TopBuilder m, Mut n)
+  :: (SinkableE e, RenameE e, TopBuilder m, Mut n)
   => (forall l. DExt n l => SimplifyM n l (e l))
   -> m n (e n)
 liftSimplifyM cont = do
@@ -156,12 +157,12 @@ instance GenericE SimplifiedBlock where
   {-# INLINE toE #-}
 
 instance SinkableE SimplifiedBlock
-instance SubstE Name SimplifiedBlock
+instance RenameE SimplifiedBlock
 instance HoistableE SimplifiedBlock
 instance CheckableE SimplifiedBlock where
   checkE (SimplifiedBlock block recon) =
     -- TODO: CheckableE instance for the recon too
-    SimplifiedBlock <$> checkE block <*> substM recon
+    SimplifiedBlock <$> checkE block <*> renameM recon
 
 instance Pretty (SimplifiedBlock n) where
   pretty (SimplifiedBlock block recon) =
@@ -280,7 +281,7 @@ defuncCase scrut alts resultTy = do
     injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
     injectAltResult sumTys con (Abs b body) = liftBuilder do
       buildAlt (binderType b) \v -> do
-        originalResult <- emitBlock =<< applySubst (b@>v) body
+        originalResult <- emitBlock =<< applyRename (b@>v) body
         (dataResult, nonDataResult) <- fromPair originalResult
         return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
 
@@ -314,7 +315,7 @@ simplifyApp hint f xs =
     Left  (lam, arr, eff)  -> fast lam arr eff
     Right atom -> slow atom
   where
-    fast :: LamExpr CoreIR i' -> Arrow -> EffAbs i' -> SimplifyM i' o (CAtom o)
+    fast :: LamExpr CoreIR i' -> Arrow -> EffAbs CoreIR i' -> SimplifyM i' o (CAtom o)
     fast lam arr eff = case fromNaryLam (NE.length xs) (Lam lam arr eff) of
       Just (bsCount, LamExpr bs (Block _ decls atom)) -> do
           let (xsPref, xsRest) = NE.splitAt bsCount xs
@@ -333,7 +334,7 @@ simplifyApp hint f xs =
         resultTy <- getAppType ty $ toList xs
         alts' <- forM alts \(Abs b a) -> liftCoreBuilder do
           buildAlt (binderType b) \v -> do
-            a' <- applySubst (b@>v) a
+            a' <- applyRename (b@>v) a
             naryApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr hint caseExpr
@@ -355,7 +356,7 @@ simplifyApp hint f xs =
             injectCore <$> naryAppHinted hint (Var v) (toList xs')
       _ -> error $ "Unexpected function: " ++ pprint atom
 
-    simplifyFuncAtom :: CAtom i -> SimplifyM i o (Either (LamExpr CoreIR i, Arrow, EffAbs i) (CAtom o))
+    simplifyFuncAtom :: CAtom i -> SimplifyM i o (Either (LamExpr CoreIR i, Arrow, EffAbs CoreIR i) (CAtom o))
     simplifyFuncAtom func = case func of
       Lam lam arr eff -> return $ Left (lam, arr, eff)
       _ -> Right <$> simplifyAtomAndInline func
@@ -454,7 +455,7 @@ simplifyTabApp hint f xs =
         resultTy <- getTabAppType ty $ toList xs
         alts' <- forM alts \(Abs b a) -> liftCoreBuilder do
           buildAlt (binderType b) \v -> do
-            a' <- applySubst (b@>v) a
+            a' <- applyRename (b@>v) a
             naryTabApp a' (map sink $ toList xs)
         caseExpr <- caseComputingEffs e alts' resultTy
         dropSubst $ simplifyExpr hint $ caseExpr
@@ -838,7 +839,7 @@ simplifyHof hint hof = case hof of
           -- TODO Avoid substituting the body of `recon` twice (once
           -- for `applySubst` and once for `applyReconAbs`).  Maybe
           -- by making `applyReconAbs` run in a `SubstReader`?
-          reconAbs' <- applySubst (b @> i') reconAbs
+          reconAbs' <- applyRename (b @> i') reconAbs
           applyReconAbs reconAbs' elt
   While body -> do
     SimplifiedBlock body' IdentityRecon <- buildSimplifiedBlock $ simplifyBlock body
@@ -880,9 +881,9 @@ simplifyHof hint hof = case hof of
     (lam', IdentityReconAbs) <- local (const WillLinearize) $ simplifyLam lam
     linearize lam'
   Transpose lam -> do
-    (lam', IdentityReconAbs) <- simplifyLam lam
+    (lam'@(UnaryLamExpr (b:>ty) _), IdentityReconAbs) <- simplifyLam lam
     lamTransposed <- transpose lam'
-    return $ Lam (injectIRE lamTransposed) LinArrow (toConstAbsPure Pure)
+    return $ Lam (injectIRE lamTransposed) LinArrow (Abs (b:>injectIRE ty) Pure)
   CatchException body-> do
     SimplifiedBlock body' IdentityRecon <- buildSimplifiedBlock $ simplifyBlock body
     block <- liftBuilder $ runSubstReaderT idSubst $
@@ -980,7 +981,7 @@ hasExceptions expr = do
 
 {-# SPECIALIZE
   buildNaryAbs
-    :: (SinkableE e, SubstE Name e, SubstE (AtomSubstVal SimpIR) e, HoistableE e)
+    :: (SinkableE e, RenameE e, SubstE (AtomSubstVal SimpIR) e, HoistableE e)
     => EmptyAbs (Nest (Binder SimpIR)) n
     -> (forall l. DExt n l => [AtomName SimpIR l] -> SimplifyM i l (e l))
     -> SimplifyM i n (Abs (Nest (Binder SimpIR)) e n) #-}

@@ -22,6 +22,7 @@ import IRVariants
 import LabeledItems
 import MTL1
 import Name
+import Subst
 import Types.Core
 import Types.Primitives
 import Util (onSndM)
@@ -33,8 +34,8 @@ liftGenericTraverserM s m =
 {-# INLINE liftGenericTraverserM #-}
 
 liftGenericTraverserMTopEmissions
-  :: ( EnvReader m, SinkableE e, SubstE Name e, SinkableE s
-     , SubstE Name s, ExtOutMap Env frag, OutFrag frag)
+  :: ( EnvReader m, SinkableE e, RenameE e, SinkableE s
+     , RenameE s, ExtOutMap Env frag, OutFrag frag)
   => s n
   -> (forall l. DExt n l => GenericTraverserM r frag s l l (e l))
   -> m n (Abs frag (PairE e s) n)
@@ -56,7 +57,7 @@ deriving instance GenericTraverser r f s => ScopableBuilder r (GenericTraverserM
 deriving instance GenericTraverser r f s => Builder r         (GenericTraverserM r f s i)
 deriving instance GenericTraverser r f s => HoistingTopBuilder f (GenericTraverserM r f s i)
 
-class (SubstB Name f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
+class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
       => GenericTraverser r f s where
   traverseExpr :: Emits o => Expr r i -> GenericTraverserM r f s i o (Expr r o)
   traverseExpr = traverseExprDefault
@@ -94,15 +95,14 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
 traverseAtomDefault :: GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
-  Lam (UnaryLamExpr (b:>ty) body) arr effs -> do
+  Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
     ty' <- tge ty
-    effs' <- substM effs
     withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
-      effs'' <- applyAbs (sink effs') (binderName b')
+      effs' <- extendRenamer (bEff@>binderName b') $ substM effs
       extendRenamer (b@>binderName b') do
-        withAllowedEffects effs'' do
+        withAllowedEffects effs' do
           body' <- tge body
-          return $ Lam (UnaryLamExpr (b':>ty') body') arr effs'
+          return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
   Lam _ _ _ -> error "expected a unary lambda expression"
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty

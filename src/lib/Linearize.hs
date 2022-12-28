@@ -18,6 +18,7 @@ import Core
 import IRVariants
 import MTL1
 import Name
+import Subst
 import PPrint
 import QueryType
 import Types.Core
@@ -45,9 +46,9 @@ data WithTangent (n::S) (e1::E) (e2::E) =
 type LinM i o e1 e2 = PrimalM i o (WithTangent o e1 e2)
 
 -- TODO: maybe we shouldn't roll subst into this
-pureLin :: (SubstE Name e, SinkableE e) => e i -> LinM i o e e
+pureLin :: (RenameE e, SinkableE e) => e i -> LinM i o e e
 pureLin x = do
-  x' <- substM x
+  x' <- renameM x
   return $ WithTangent x' (sinkM x')
 
 runPrimalM :: Subst Name i o -> ActivePrimals o -> PrimalM i o a -> BuilderM CoreIR o a
@@ -158,9 +159,9 @@ isActive e = do
 
 injSubstM
   :: (SubstReader Name m, ScopeReader2 m
-      , CovariantInIR e, SinkableE (e SimpIR), SubstE Name (e SimpIR))
+      , CovariantInIR e, SinkableE (e SimpIR), RenameE (e SimpIR))
   => e SimpIR i -> m i o (e CoreIR o)
-injSubstM e = injectIRE <$> substM e
+injSubstM e = injectIRE <$> renameM e
 {-# INLINE injSubstM #-}
 
 -- === converision between monadic and reified version of functions ===
@@ -175,10 +176,10 @@ tangentFunType :: CType o -> PrimalM i o (CType o)
 tangentFunType ty = do
   ActivePrimals primalVars effs <- getActivePrimals
   tangentTys <- varsAsBinderNest primalVars
-  let effAbs = abstractFreeVarsNoAnn primalVars effs
+  Abs bs effs' <- return $ abstractFreeVarsNoAnn primalVars effs
   buildNaryPi tangentTys \tangentVars -> do
-    effs' <- applyNaryAbs (sink effAbs) tangentVars
-    buildNullaryPi effs' $
+    effs'' <- applyRename (bs @@> tangentVars) effs'
+    buildNullaryPi effs'' $
       return $ sink ty
 
 -- TODO: this sort of thing would make much more sense if we had proper n-ary
@@ -228,7 +229,7 @@ fromPureUnaryTanFunLam atom = liftSubstEnvReaderM $ go atom
           case nullaryLam of
             Lam (UnaryLamExpr unitBinder body) _ _ -> do
               body' <- extendSubst (unitBinder @> SubstVal UnitVal) $ substM body
-              return $ lamExprToAtom (UnaryLamExpr (b':>ty) body') LinArrow (Just (Abs b' Pure))
+              return $ lamExprToAtom (UnaryLamExpr (b':>ty) body') LinArrow (Just (Abs (b':>ty) Pure))
             _ -> error notValidStr
       _ -> error notValidStr
       where notValidStr = "not a pure unary tangent function: " ++ pprint atom
@@ -257,7 +258,7 @@ linearizeLambda' _ = error "not implemented"
 linearizeAtom :: Emits o => SAtom i -> LinM i o CAtom CAtom
 linearizeAtom atom = case atom of
   Var v -> do
-    v' <- substM v
+    v' <- renameM v
     activePrimalIdx v' >>= \case
       Nothing -> withZeroT $ return (Var v')
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
@@ -317,7 +318,7 @@ linearizeDecls Empty cont = cont
 -- tangent is trivial, either because its type is a singleton or because there
 -- are no active vars.
 linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
-  expr' <- substM expr
+  expr' <- renameM expr
   isTrivialForAD expr' >>= \case
     True -> do
       v <- emit $ injectCore expr'
@@ -337,7 +338,7 @@ linearizeExpr :: Emits o => SExpr i -> LinM i o CAtom CAtom
 linearizeExpr expr = case expr of
   Atom x -> linearizeAtom x
   App (Var f) xs -> do
-    f' <- substM f
+    f' <- renameM f
     lookupCustomRules f' >>= \case
       Nothing -> error "not implemented"
       Just rule -> applyCustomLinearization rule (toList xs)
@@ -362,7 +363,7 @@ linearizeExpr expr = case expr of
     ProjRef i -> la ref `bindLin` \ref' -> emitExpr $ RefOp ref' $ ProjRef i
   Hof e      -> linearizeHof e
   Case e alts resultTy _ -> do
-    e' <- injectCore <$> substM e
+    e' <- injectCore <$> renameM e
     resultTy' <- injSubstM resultTy
     isActive e' >>= \case
       True -> notImplemented
@@ -569,7 +570,7 @@ linearizeHof hof = case hof of
 applyCustomLinearization :: Emits o => AtomRules o -> [SAtom i] -> LinM i o CAtom CAtom
 applyCustomLinearization (CustomLinearize n zeros cl) xs = do
   let (polyXs, argXs) = splitAt n $ toList xs
-  polyXs' <- mapM (substM . injectCore) polyXs
+  polyXs' <- mapM (renameM . injectCore) polyXs
   (any id <$> mapM isActive polyXs') >>= \case
     True -> error $
       "Polymorphic arguments of custom linearization rules are " ++
@@ -586,7 +587,7 @@ applyCustomLinearization (CustomLinearize n zeros cl) xs = do
           return dataDefName
         _ -> error "Ill-defined SymbolicTangent?"
       forM (toList argXs) \arg -> do
-        arg' <- substM arg
+        arg' <- renameM arg
         argTy' <- getType arg'
         isActive arg' >>= \case
           False -> -- Pass in ZeroTangent as the tangent
@@ -610,7 +611,7 @@ applyCustomLinearization (CustomLinearize n zeros cl) xs = do
 -- `[tangent args] -> (a & ((h':Type) -> (ref':Ref h' (T s)) -> T a))`
 linearizeEffectFun :: RWS -> LamExpr SimpIR i -> PrimalM i o (LamExpr CoreIR o)
 linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  referentTy <- injectCore <$> (getReferentTy =<< substM (EmptyAbs $ PairB hB refB))
+  referentTy <- injectCore <$> (getReferentTy =<< renameM (EmptyAbs $ PairB hB refB))
   buildEffLam rws (getNameHint refB) referentTy \h ref -> withTangentFunAsLambda do
     extendActiveSubst hB h $ extendActiveSubst refB ref $
       extendActiveEffs (RWSEffect rws (Just h)) do
@@ -657,7 +658,7 @@ instance GenericE ActivePrimals where
 instance SinkableE   ActivePrimals
 instance HoistableE  ActivePrimals
 instance AlphaEqE    ActivePrimals
-instance SubstE Name ActivePrimals
+instance RenameE     ActivePrimals
 
 instance GenericE TangentArgs where
   type RepE TangentArgs = ListE SAtomName
@@ -669,4 +670,4 @@ instance GenericE TangentArgs where
 instance SinkableE   TangentArgs
 instance HoistableE  TangentArgs
 instance AlphaEqE    TangentArgs
-instance SubstE Name TangentArgs
+instance RenameE     TangentArgs

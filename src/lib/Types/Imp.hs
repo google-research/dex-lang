@@ -184,7 +184,7 @@ instance ProvesExt  IFunBinder
 instance BindsNames IFunBinder
 instance SinkableB IFunBinder
 instance HoistableB  IFunBinder
-instance SubstB Name IFunBinder
+instance RenameB     IFunBinder
 instance AlphaEqB IFunBinder
 instance AlphaHashableB IFunBinder
 
@@ -204,7 +204,7 @@ instance ProvesExt   PtrBinder
 instance BindsNames  PtrBinder
 instance SinkableB   PtrBinder
 instance HoistableB  PtrBinder
-instance SubstB Name PtrBinder
+instance RenameB     PtrBinder
 instance AlphaEqB    PtrBinder
 instance AlphaHashableB PtrBinder
 
@@ -318,7 +318,7 @@ instance SinkableE ImpInstr
 instance HoistableE  ImpInstr
 instance AlphaEqE ImpInstr
 instance AlphaHashableE ImpInstr
-instance SubstE Name ImpInstr
+instance RenameE     ImpInstr
 
 instance GenericE ImpBlock where
   type RepE ImpBlock = Abs (Nest ImpDecl) (ListE IExpr)
@@ -331,7 +331,7 @@ instance SinkableE ImpBlock
 instance HoistableE  ImpBlock
 instance AlphaEqE ImpBlock
 instance AlphaHashableE ImpBlock
-instance SubstE Name ImpBlock
+instance RenameE     ImpBlock
 deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 
 instance GenericE IExpr where
@@ -355,7 +355,7 @@ instance SinkableE IExpr
 instance HoistableE  IExpr
 instance AlphaEqE IExpr
 instance AlphaHashableE IExpr
-instance SubstE Name IExpr
+instance RenameE     IExpr
 
 instance GenericB IBinder where
   type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder ImpNameC)
@@ -377,7 +377,7 @@ instance BindsNames IBinder where
 instance ProvesExt  IBinder
 instance SinkableB IBinder
 instance HoistableB  IBinder
-instance SubstB Name IBinder
+instance RenameB  IBinder
 instance AlphaEqB IBinder
 instance AlphaHashableB IBinder
 
@@ -388,7 +388,7 @@ instance GenericB ImpDecl where
 
 instance SinkableB ImpDecl
 instance HoistableB  ImpDecl
-instance SubstB Name ImpDecl
+instance RenameB     ImpDecl
 instance AlphaEqB ImpDecl
 instance AlphaHashableB ImpDecl
 instance ProvesExt  ImpDecl
@@ -412,7 +412,7 @@ instance SinkableE ImpFunction
 instance HoistableE  ImpFunction
 instance AlphaEqE    ImpFunction
 instance AlphaHashableE    ImpFunction
-instance SubstE Name ImpFunction
+instance RenameE     ImpFunction
 
 
 instance GenericE LinktimeNames where
@@ -428,7 +428,7 @@ instance SinkableE      LinktimeNames
 instance HoistableE     LinktimeNames
 instance AlphaEqE       LinktimeNames
 instance AlphaHashableE LinktimeNames
-instance SubstE Name    LinktimeNames
+instance RenameE        LinktimeNames
 
 instance Store IsCUDARequired
 instance Store CallingConvention

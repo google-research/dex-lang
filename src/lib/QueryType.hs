@@ -40,6 +40,7 @@ import CheapReduction (cheapNormalize)
 import Err
 import LabeledItems
 import Name
+import Subst
 import Util
 import PPrint ()
 
@@ -254,7 +255,7 @@ typeUnOp = const id  -- All unary ops preserve the type of the input
 
 -- === computing effects ===
 
-computeAbsEffects :: (EnvExtender m, SubstE Name e)
+computeAbsEffects :: (EnvExtender m, RenameE e)
   => Abs (Nest (Decl r)) e n -> m n (Abs (Nest (Decl r)) (EffectRow `PairE` e) n)
 computeAbsEffects it = refreshAbs it \decls result -> do
   effs <- declNestEffects decls
@@ -319,14 +320,13 @@ instance HasType r (Atom r) where
   getTypeE :: forall i o. Atom r i -> TypeQueryM r i o (Type r o)
   getTypeE atom = case atom of
     Var name -> getTypeE name
-    Lam (UnaryLamExpr (b:>ty) body) arr effs -> do
+    Lam (UnaryLamExpr (b:>ty) body) arr (Abs (bEff:>_) effs) -> do
       ty' <- substM ty
-      effs' <- substM effs
       withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
-        effs'' <- applyAbs (sink effs') (binderName b')
+        effs' <- extendRenamer (bEff@>binderName b') $ substM effs
         extendRenamer (b@>binderName b') do
           bodyTy <- getTypeE body
-          return $ Pi $ PiType (PiBinder b' ty' arr) effs'' bodyTy
+          return $ Pi $ PiType (PiBinder b' ty' arr) effs' bodyTy
     Lam _ _ _ -> error "expected a unary lambda expression"
     Pi _ -> return TyKind
     TabLam lamExpr -> getTypeE lamExpr
@@ -932,16 +932,15 @@ singletonTypeValRec :: Type r i
   -> SubstReaderT Name (EnvReaderT Maybe) i o (Atom r o)
 singletonTypeValRec ty = case ty of
   Pi (PiType b Pure body) -> do
-    effs <- toConstAbs Pure
-    substBinders b \(PiBinder b' ty' arr) -> do
+    renameBinders b \(PiBinder b' ty' arr) -> do
       body' <- singletonTypeValRec body
-      return $ Lam (LamExpr (UnaryNest (b':>ty')) $ AtomicBlock body') arr effs
+      return $ Lam (LamExpr (UnaryNest (b':>ty')) $ AtomicBlock body') arr (Abs (b':>ty') Pure)
   TabPi (TabPiType b body) ->
-    substBinders b \b' -> do
+    renameBinders b \b' -> do
       body' <- singletonTypeValRec body
       return $ TabLam $ TabLamExpr b' $ AtomicBlock body'
   StaticRecordTy items -> do
-    StaticRecordTy items' <- substM ty
+    StaticRecordTy items' <- renameM ty
     Record items' <$> traverse singletonTypeValRec (toList items)
   TC con -> case con of
     ProdType tys -> ProdVal <$> traverse singletonTypeValRec tys

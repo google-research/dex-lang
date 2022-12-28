@@ -30,6 +30,7 @@ import IRVariants
 import Logging
 import MTL1
 import Name
+import Subst
 import PPrint
 import QueryType
 import Types.Core
@@ -309,7 +310,7 @@ vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
   refreshAbs abs \d (Block _ decls ans) -> do
     vblock <- liftBuilderT $ buildBlock do
                 s <- vectorizeLoopsRec emptyInFrag decls
-                applySubst s ans
+                applyRename s ans
     case (runFallibleM . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) vblock of
       -- The failure case should not occur: vectorization errors should have been
       -- caught inside `vectorizeLoopsRec` (and should have been added to the
@@ -338,7 +339,7 @@ vectorizeLoopsRec frag nest =
     Empty -> return frag
     Nest (Let b (DeclBinding ann _ expr)) rest -> do
       vectorByteWidth <- ask
-      expr' <- applySubst frag expr
+      expr' <- applyRename frag expr
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
@@ -347,17 +348,17 @@ vectorizeLoopsRec frag nest =
               Distinct <- getDistinct
               let vn = NatVal $ n `div` loopWidth
               body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
-              dest' <- applySubst frag dest
+              dest' <- applyRename frag dest
               emit $ DAMOp $ Seq dir (DictCon $ IxFin vn) dest' body')
             `catchErr` \errs -> do
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
                     errs' = prependCtxToErrs ctx errs
                 modify (<> errs')
-                dest' <- applySubst frag dest
-                body' <- applySubst frag body
+                dest' <- applyRename frag dest
+                body' <- applyRename frag body
                 emit $ DAMOp $ Seq dir (DictCon $ IxFin $ NatVal n) dest' body'
-        _ -> emitDecl (getNameHint b) ann =<< applySubst frag expr
+        _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 
 atMostOneEffect :: Effect n -> EffectRow n -> Bool
@@ -374,8 +375,8 @@ vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
     then do
       (oldIxTy, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
-          ixTy' <- applySubst frag ixTy
-          ref' <- applySubst frag ref
+          ixTy' <- applyRename frag ixTy
+          ref' <- applyRename frag ref
           return (ixTy', ProdTy [newIxTy, ref'])
         _ -> error "Unexpected seq binder type"
       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $

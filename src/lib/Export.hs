@@ -154,7 +154,7 @@ instance GenericE ExportDim where
   toE = \case
     LeftE v -> ExportDimVar v
     RightE (LiftE n) -> ExportDimLit n
-instance SubstE    Name ExportDim
+instance RenameE        ExportDim
 instance SinkableE      ExportDim
 
 instance GenericE ExportType where
@@ -168,7 +168,7 @@ instance GenericE ExportType where
     LeftE (LiftE sbt) -> ScalarType sbt
     RightE (LiftE sbt `PairE` ListE shape) -> RectContArrayPtr sbt shape
   {-# INLINE toE #-}
-instance SubstE    Name ExportType
+instance RenameE        ExportType
 instance SinkableE      ExportType
 
 instance ToBinding ExportType AtomNameC where
@@ -191,7 +191,7 @@ instance GenericB ExportArg where
 instance ProvesExt       ExportArg
 instance BindsNames      ExportArg
 instance SinkableB       ExportArg
-instance SubstB     Name ExportArg
+instance RenameB         ExportArg
 instance BindsAtMostOneName ExportArg AtomNameC where
   (ExportArg _ b) @> v = b @> v
 instance BindsOneName ExportArg AtomNameC where

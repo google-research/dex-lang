@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
@@ -16,17 +17,22 @@ import Control.Monad.Trans
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Data.Functor.Identity
+import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Set        as S
 import Data.Maybe
 import GHC.Exts (inline)
 
+import Subst
 import Core
 import Err
 import IRVariants
 import MTL1
 import Name
+import LabeledItems
 import PPrint ()
 import Types.Core
+import Types.Imp
 import Types.Primitives
 import Util (for, onSndM)
 import {-# SOURCE #-} Inference (trySynthTerm)
@@ -41,7 +47,7 @@ import {-# SOURCE #-} Inference (trySynthTerm)
 
 -- === api ===
 
-type NiceE r e = (HoistableE e, SinkableE e, SubstE (AtomSubstVal r) e, SubstE Name e)
+type NiceE r e = (HoistableE e, SinkableE e, SubstE (AtomSubstVal r) e, RenameE e)
 
 cheapReduce :: forall r e' e m n
              . (EnvReader m, CheaplyReducibleE r e e', NiceE r e, NiceE r e')
@@ -297,3 +303,140 @@ instance CheaplyReducibleE r (FieldRowElems r) (FieldRowElems r) where
 confuseGHC :: CheapReducerM r i n (DistinctEvidence n)
 confuseGHC = getDistinct
 {-# INLINE confuseGHC #-}
+
+-- === SubstE/SubstB instances ===
+-- These live here, as orphan instances, because we normalize as we substitute.
+
+instance SubstE (AtomSubstVal r) (Atom r) where
+  substE (scope, env) atom = case fromE atom of
+    Case0 specialCase -> case specialCase of
+      -- Var
+      Case0 v -> do
+        case env ! v of
+          Rename v' -> Var v'
+          SubstVal x -> x
+      -- ProjectElt
+      Case1 (PairE (LiftE idxs) v) -> do
+        let v' = case env ! v of
+                   SubstVal x -> x
+                   Rename v''  -> Var v''
+        getProjection (NE.toList idxs) v'
+      _ -> error "impossible"
+    Case1 rest -> (toE . Case1) $ substE (scope, env) rest
+    Case2 rest -> (toE . Case2) $ substE (scope, env) rest
+    Case3 rest -> (toE . Case3) $ substE (scope, env) rest
+    Case4 rest -> (toE . Case4) $ substE (scope, env) rest
+    Case5 rest -> (toE . Case5) $ substE (scope, env) rest
+    Case6 rest -> (toE . Case6) $ substE (scope, env) rest
+    Case7 rest -> (toE . Case7) $ substE (scope, env) rest
+
+instance SubstE (AtomSubstVal r) (EffectRowP Name) where
+  substE env (EffectRow effs tailVar) = do
+    let effs' = S.fromList $ map (substE env) (S.toList effs)
+    let tailEffRow = case tailVar of
+          Nothing -> EffectRow mempty Nothing
+          Just v -> case snd env ! v of
+            Rename        v'  -> EffectRow mempty (Just v')
+            SubstVal (Var v') -> EffectRow mempty (Just v')
+            SubstVal (Eff r)  -> r
+            _ -> error "Not a valid effect substitution"
+    extendEffRow effs' tailEffRow
+
+instance SubstE (AtomSubstVal r) (EffectP Name) where
+  substE (_, env) eff = case eff of
+    RWSEffect rws Nothing -> RWSEffect rws Nothing
+    RWSEffect rws (Just v) -> do
+      let v' = case env ! v of
+                 Rename        v''  -> Just v''
+                 SubstVal UnitTy    -> Nothing  -- used at runtime/imp-translation-time
+                 SubstVal (Var v'') -> Just v''
+                 SubstVal _ -> error "Heap parameter must be a name"
+      RWSEffect rws v'
+    ExceptionEffect -> ExceptionEffect
+    IOEffect        -> IOEffect
+    UserEffect v    ->
+      case env ! v of
+        Rename v' -> UserEffect v'
+        -- other cases are proven unreachable by type system
+        -- v' is an EffectNameC but other cases apply only to
+        -- AtomNameC
+    InitEffect -> InitEffect
+
+instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
+  substE env (AppSpecialization f ab) = do
+    let f' = case snd env ! f of
+               Rename v -> v
+               SubstVal (Var v) -> v
+               _ -> error "bad substitution"
+    AppSpecialization f' (substE env ab)
+
+instance SubstE (AtomSubstVal r) (ExtLabeledItemsE (Atom r) (AtomName r)) where
+  substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
+    let items' = fmap (substE (scope, env)) items
+    let ext = case maybeExt of
+                Nothing -> NoExt NoLabeledItems
+                Just v -> case env ! v of
+                  Rename        v'  -> Ext NoLabeledItems $ Just v'
+                  SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
+                  SubstVal (LabeledRow row) -> case fieldRowElemsAsExtRow row of
+                    Just row' -> row'
+                    Nothing -> error "Not implemented: unrepresentable subst of ExtLabeledItems"
+                  _ -> error "Not a valid labeled row substitution"
+    ExtLabeledItemsE $ prefixExtLabeledItems items' ext
+
+instance SubstE (AtomSubstVal r) (FieldRowElems r) where
+  substE :: forall i o. Distinct o => (Scope o, Subst (AtomSubstVal r) i o) -> FieldRowElems r i -> FieldRowElems r o
+  substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
+    where
+      substItem = \case
+        DynField v ty -> case snd env ! v of
+          SubstVal (Con (LabelCon l)) -> [StaticFields $ labeledSingleton l ty']
+          SubstVal (Var v') -> [DynField v' ty']
+          Rename v'         -> [DynField v' ty']
+          _ -> error "ill-typed substitution"
+          where ty' = substE env ty
+        DynFields v -> case snd env ! v of
+          SubstVal (LabeledRow items) -> fromFieldRowElems items
+          SubstVal (Var v') -> [DynFields v']
+          Rename v'         -> [DynFields v']
+          _ -> error "ill-typed substitution"
+        StaticFields items -> [StaticFields items']
+          where ExtLabeledItemsE (NoExt items') = substE env
+                  (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE (Atom r) (AtomName r) i)
+
+instance SubstE (AtomSubstVal CoreIR) EffectDef
+instance SubstE (AtomSubstVal CoreIR) EffectOpType
+instance SubstE (AtomSubstVal r) IExpr
+instance SubstE (AtomSubstVal r) (RepVal r)
+instance SubstE (AtomSubstVal r) (DRepVal r)
+instance SubstE (AtomSubstVal r) (DataDefParams r)
+instance SubstE (AtomSubstVal CoreIR) DataDef
+instance SubstE (AtomSubstVal CoreIR) DataConDef
+instance SubstE (AtomSubstVal r) (BaseMonoid r)
+instance SubstE (AtomSubstVal r) (UserEffectOp r)
+instance SubstE (AtomSubstVal r) (DAMOp r)
+instance SubstE (AtomSubstVal r) (Hof r)
+instance SubstE (AtomSubstVal r) (RefOp r)
+instance SubstE (AtomSubstVal r) (Expr r)
+instance SubstE (AtomSubstVal r) (Block r)
+instance SubstB (AtomSubstVal CoreIR) SuperclassBinders
+instance SubstE (AtomSubstVal CoreIR) ClassDef
+instance SubstE (AtomSubstVal CoreIR) InstanceDef
+instance SubstE (AtomSubstVal CoreIR) InstanceBody
+instance SubstE (AtomSubstVal CoreIR) MethodType
+instance SubstE (AtomSubstVal r) (DictType r)
+instance SubstE (AtomSubstVal r) (DictExpr r)
+instance SubstE (AtomSubstVal r) (LamBinding r)
+instance SubstE (AtomSubstVal r) (LamExpr r)
+instance SubstE (AtomSubstVal r) (TabLamExpr r)
+instance SubstE (AtomSubstVal r) (PiBinding r)
+instance SubstB (AtomSubstVal r) (PiBinder r)
+instance SubstE (AtomSubstVal r) (PiType r)
+instance SubstB (AtomSubstVal r) (RolePiBinder r)
+instance SubstE (AtomSubstVal r) (IxType r)
+instance SubstE (AtomSubstVal r) (TabPiType r)
+instance SubstE (AtomSubstVal r) (NaryPiType r)
+instance SubstE (AtomSubstVal r) (DepPairType r)
+instance SubstE (AtomSubstVal r) (SolverBinding r)
+instance SubstE (AtomSubstVal r) (DeclBinding r)
+instance SubstB (AtomSubstVal r) (Decl r)

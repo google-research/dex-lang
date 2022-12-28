@@ -15,6 +15,7 @@ import Err
 import IRVariants
 import LabeledItems
 import Name
+import Subst
 import Occurrence hiding (Var)
 import Types.Core
 import Types.Primitives
@@ -36,10 +37,10 @@ instance Show (InlineExpr n) where
     DoneEx e -> "finished " ++ show e
     SuspEx e _ -> "unfinished " ++ show e
 
-instance SubstE Name InlineExpr where
-  substE (scope, subst) = \case
-    DoneEx e -> DoneEx $ substE (scope, subst) e
-    SuspEx e s -> SuspEx e $ substE (scope, subst) s
+instance RenameE InlineExpr where
+  renameE (scope, subst) = \case
+    DoneEx e -> DoneEx $ renameE (scope, subst) e
+    SuspEx e s -> SuspEx e $ renameE (scope, subst) s
 
 instance SinkableE InlineExpr where
   sinkingProofE rename = \case
@@ -452,19 +453,19 @@ instance ( Inlinable e1, Inlinable e2, Inlinable e3, Inlinable e4
     Case7 x -> (Case7 <$> inline Stop x) >>= reconstruct ctx
   {-# INLINE inline #-}
 
-instance (SubstB Name b, BindsEnv b) => Inlinable (Abs b (Atom SimpIR)) where
+instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Atom SimpIR)) where
   inline ctx (Abs b body) = do
     s <- getSubst
-    babs <- runSubstReaderT (asRenameSubst s) $ substM (Abs b (idSubstFrag b))
+    babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
     abs' <- refreshAbs babs \b' frag ->
       extendSubst frag $ do
         Abs b' <$> (buildScopedAssumeNoDecls $ inline Stop body)
     reconstruct ctx abs'
 
-instance (SubstB Name b, BindsEnv b) => Inlinable (Abs b (Block SimpIR)) where
+instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Block SimpIR)) where
   inline ctx (Abs b body) = do
     s <- getSubst
-    babs <- runSubstReaderT (asRenameSubst s) $ substM (Abs b (idSubstFrag b))
+    babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
     abs' <- refreshAbs babs \b' frag ->
       extendSubst frag $ do
         Abs b' <$> (buildBlock $ (inline Stop body >>= emitBlock))
@@ -479,11 +480,11 @@ asRenameSubst s = newSubst $ assumingRenameOnly s where
     SubstVal v -> error $ "Unexpected non-rename substitution "
       ++ "maps " ++ (show n) ++ " to " ++ (show v)
 
-instance (SubstB Name b, BindsEnv b)
+instance (RenameB b, BindsEnv b)
   => Inlinable (Abs b (PairE EffectRow (Atom SimpIR))) where
   inline ctx (Abs b body) = do
     s <- getSubst
-    babs <- runSubstReaderT (asRenameSubst s) $ substM (Abs b (idSubstFrag b))
+    babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
     abs' <- refreshAbs babs \b' frag ->
       extendSubst frag $ do
         Abs b' <$> (buildScopedAssumeNoDecls $ inline Stop body)

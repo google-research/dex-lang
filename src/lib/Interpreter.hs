@@ -32,6 +32,7 @@ import IRVariants
 import Imp
 import LabeledItems
 import Name
+import Subst
 import PPrint ()
 import QueryType
 import Runtime

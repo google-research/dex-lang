@@ -19,6 +19,8 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ConstraintKinds #-}
 
+-- Core data types for CoreIR and its variations.
+
 module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
 import Control.Applicative
@@ -33,7 +35,6 @@ import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 
-import GHC.Stack
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 import Foreign.Ptr
@@ -54,7 +55,7 @@ data Atom (r::IR) (n::S) where
  Var        :: AtomName r n    -> Atom r n
  -- The binder in the `EffAbs n` is meant to be parallel to the binder in
  -- the `LamExpr`, of which there must be only one (for now).
- Lam        :: IsCore r => LamExpr r n -> Arrow -> EffAbs n -> Atom r n
+ Lam        :: IsCore r => LamExpr r n -> Arrow -> EffAbs r n -> Atom r n
  Pi         :: IsCore r => PiType  r n               -> Atom r n
  TabLam     :: TabLamExpr r n  -> Atom r n
  TabPi      :: TabPiType r n   -> Atom r n
@@ -107,7 +108,7 @@ data BaseMonoid r n =
              , baseCombine :: LamExpr r n }
   deriving (Show, Generic)
 
-type EffAbs = Abs AtomNameBinder EffectRow
+type EffAbs r = Abs (Binder r) EffectRow
 
 data DeclBinding r n = DeclBinding LetAnn (Type r n) (Expr r n)
      deriving (Show, Generic)
@@ -238,8 +239,6 @@ type Dict = Atom
 type TC  r n = PrimTC  r (Atom r n)
 type Con r n = PrimCon r (Atom r n)
 
-type AtomSubstVal r = SubstVal AtomNameC (Atom r) :: V
-
 data EffectBinder n l where
   EffectBinder :: EffectRow n -> EffectBinder n n
 
@@ -247,9 +246,6 @@ instance GenericB EffectBinder where
   type RepB EffectBinder = LiftB EffectRow
   fromB (EffectBinder effs) = LiftB effs
   toB   (LiftB effs) = EffectBinder effs
-
-data BoxPtr (r::IR) (n::S) = BoxPtr (Atom r n) (Block r n)  -- ptrptr, size
-                             deriving (Show, Generic)
 
 -- A nest where the annotation of a binder cannot depend on the binders
 -- introduced before it. You can think of it as introducing a bunch of
@@ -315,7 +311,6 @@ type CExpr  = Expr CoreIR
 type CBlock = Block CoreIR
 type CDecl  = Decl  CoreIR
 type CDecls = Decls CoreIR
-type CAtomSubstVal = AtomSubstVal CoreIR
 type CAtomName  = AtomName CoreIR
 
 type SAtom  = Atom SimpIR
@@ -324,7 +319,6 @@ type SExpr  = Expr SimpIR
 type SBlock = Block SimpIR
 type SDecl  = Decl  SimpIR
 type SDecls = Decls SimpIR
-type SAtomSubstVal = AtomSubstVal SimpIR
 type SAtomName  = AtomName SimpIR
 
 -- === type classes ===
@@ -587,7 +581,7 @@ instance GenericE EffectOpDef where
 
 instance SinkableE   EffectOpDef
 instance HoistableE  EffectOpDef
-instance SubstE Name EffectOpDef
+instance RenameE     EffectOpDef
 
 data EffectOpIdx = ReturnOp | OpIdx Int
   deriving (Show, Eq, Generic)
@@ -609,8 +603,7 @@ instance SinkableE EffectDef
 instance HoistableE  EffectDef
 instance AlphaEqE EffectDef
 instance AlphaHashableE EffectDef
-instance SubstE Name EffectDef
-instance SubstE (AtomSubstVal CoreIR) EffectDef
+instance RenameE     EffectDef
 deriving instance Show (EffectDef n)
 deriving via WrapE EffectDef n instance Generic (EffectDef n)
 
@@ -637,8 +630,7 @@ instance SinkableE HandlerDef
 instance HoistableE  HandlerDef
 instance AlphaEqE HandlerDef
 instance AlphaHashableE HandlerDef
-instance SubstE Name HandlerDef
--- instance SubstE (AtomSubstVal r) HandlerDef
+instance RenameE     HandlerDef
 deriving instance Show (HandlerDef n)
 deriving via WrapE HandlerDef n instance Generic (HandlerDef n)
 
@@ -655,8 +647,7 @@ instance SinkableE EffectOpType
 instance HoistableE  EffectOpType
 instance AlphaEqE EffectOpType
 instance AlphaHashableE EffectOpType
-instance SubstE Name EffectOpType
-instance SubstE (AtomSubstVal CoreIR) EffectOpType
+instance RenameE     EffectOpType
 deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
@@ -687,7 +678,7 @@ instance SinkableE      SpecializedDictDef
 instance HoistableE     SpecializedDictDef
 instance AlphaEqE       SpecializedDictDef
 instance AlphaHashableE SpecializedDictDef
-instance SubstE Name    SpecializedDictDef
+instance RenameE        SpecializedDictDef
 
 data AtomBinding (r::IR) (n::S) =
    LetBound    (DeclBinding r  n)
@@ -868,7 +859,7 @@ atomBindingToBinding b = AtomNameBinding $ unsafeCoerceIRE b
 bindingToAtomBinding :: Binding AtomNameC n -> AtomBinding r n
 bindingToAtomBinding (AtomNameBinding b) = unsafeCoerceIRE b
 
-class (SubstE Name e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
+class (RenameE     e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
   toBinding :: e n -> Binding c n
 
 instance Color c => ToBinding (Binding c) c where
@@ -894,11 +885,6 @@ instance ToBinding (SolverBinding r) AtomNameC where
 
 instance ToBinding (IxType r) AtomNameC where
   toBinding = toBinding . IxBound
-
--- We don't need this for now and it seems a little annoying to implement.
--- If you ever hit this, add a Type n to BoxPtr and return it here.
-instance ToBinding (BoxPtr r) AtomNameC where
-  toBinding = error "not implemented!"
 
 instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (LeftE  e) = toBinding e
@@ -1101,18 +1087,15 @@ instance GenericE AtomRules where
 instance SinkableE AtomRules
 instance HoistableE AtomRules
 instance AlphaEqE AtomRules
-instance SubstE Name AtomRules
+instance RenameE     AtomRules
 
 instance GenericE (RepVal r) where
   type RepE (RepVal r) = PairE (Type r) (ComposeE Tree IExpr)
   fromE (RepVal ty tree) = ty `PairE` ComposeE tree
   toE   (ty `PairE` ComposeE tree) = RepVal ty tree
 
-instance SubstE (AtomSubstVal r) IExpr
-
 instance SinkableE   (RepVal r)
-instance SubstE Name (RepVal r)
-instance SubstE (AtomSubstVal r) (RepVal r)
+instance RenameE     (RepVal r)
 instance HoistableE  (RepVal r)
 instance AlphaHashableE (RepVal r)
 instance AlphaEqE (RepVal r)
@@ -1123,8 +1106,7 @@ instance GenericE (DRepVal r) where
   toE   (LiftE projs `PairE` ty `PairE` ComposeE tree) = DRepVal projs ty tree
 
 instance SinkableE   (DRepVal r)
-instance SubstE Name (DRepVal r)
-instance SubstE (AtomSubstVal r) (DRepVal r)
+instance RenameE     (DRepVal r)
 instance HoistableE  (DRepVal r)
 instance AlphaHashableE (DRepVal r)
 instance AlphaEqE (DRepVal r)
@@ -1136,13 +1118,13 @@ instance GenericE CustomRules where
 instance SinkableE CustomRules
 instance HoistableE CustomRules
 instance AlphaEqE CustomRules
-instance SubstE Name CustomRules
+instance RenameE     CustomRules
 
 instance SinkableB EffectBinder
 instance HoistableB EffectBinder
 instance ProvesExt  EffectBinder
 instance BindsNames EffectBinder
-instance SubstB Name EffectBinder
+instance RenameB     EffectBinder
 
 instance GenericE (DataDefParams r) where
   type RepE (DataDefParams r) = ListE (PairE (LiftE Arrow) (Atom r))
@@ -1162,8 +1144,7 @@ instance AlphaHashableE (DataDefParams r) where
 
 instance SinkableE           (DataDefParams r)
 instance HoistableE          (DataDefParams r)
-instance SubstE Name         (DataDefParams r)
-instance SubstE (AtomSubstVal r) (DataDefParams r)
+instance RenameE             (DataDefParams r)
 
 instance GenericE DataDef where
   type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest (RolePiBinder CoreIR)) (ListE DataConDef))
@@ -1176,8 +1157,7 @@ deriving instance Show (DataDef n)
 deriving via WrapE DataDef n instance Generic (DataDef n)
 instance SinkableE DataDef
 instance HoistableE  DataDef
-instance SubstE Name DataDef
-instance SubstE (AtomSubstVal CoreIR) DataDef
+instance RenameE     DataDef
 instance AlphaEqE DataDef
 instance AlphaHashableE DataDef
 
@@ -1189,8 +1169,7 @@ instance GenericE DataConDef where
   {-# INLINE toE #-}
 instance SinkableE DataConDef
 instance HoistableE  DataConDef
-instance SubstE Name DataConDef
-instance SubstE (AtomSubstVal CoreIR) DataConDef
+instance RenameE     DataConDef
 instance AlphaEqE DataConDef
 instance AlphaHashableE DataConDef
 
@@ -1203,8 +1182,7 @@ instance GenericE (BaseMonoid r) where
 
 instance SinkableE (BaseMonoid r)
 instance HoistableE  (BaseMonoid r)
-instance SubstE Name (BaseMonoid r)
-instance SubstE (AtomSubstVal r) (BaseMonoid r)
+instance RenameE     (BaseMonoid r)
 instance AlphaEqE (BaseMonoid r)
 instance AlphaHashableE (BaseMonoid r)
 
@@ -1228,8 +1206,7 @@ instance GenericE (UserEffectOp r) where
 
 instance SinkableE (UserEffectOp r)
 instance HoistableE  (UserEffectOp r)
-instance SubstE Name (UserEffectOp r)
-instance SubstE (AtomSubstVal r) (UserEffectOp r)
+instance RenameE     (UserEffectOp r)
 instance AlphaEqE (UserEffectOp r)
 instance AlphaHashableE (UserEffectOp r)
 
@@ -1258,8 +1235,7 @@ instance GenericE (DAMOp r) where
 
 instance SinkableE (DAMOp r)
 instance HoistableE  (DAMOp r)
-instance SubstE Name (DAMOp r)
-instance SubstE (AtomSubstVal r) (DAMOp r)
+instance RenameE     (DAMOp r)
 instance AlphaEqE (DAMOp r)
 instance AlphaHashableE (DAMOp r)
 
@@ -1310,8 +1286,7 @@ instance GenericE (Hof r) where
 
 instance SinkableE (Hof r)
 instance HoistableE  (Hof r)
-instance SubstE Name (Hof r)
-instance SubstE (AtomSubstVal r) (Hof r)
+instance RenameE     (Hof r)
 instance AlphaEqE (Hof r)
 instance AlphaHashableE (Hof r)
 
@@ -1344,8 +1319,7 @@ instance GenericE (RefOp r) where
 
 instance SinkableE (RefOp r)
 instance HoistableE  (RefOp r)
-instance SubstE Name (RefOp r)
-instance SubstE (AtomSubstVal r) (RefOp r)
+instance RenameE     (RefOp r)
 instance AlphaEqE (RefOp r)
 instance AlphaHashableE (RefOp r)
 
@@ -1364,7 +1338,7 @@ instance GenericE (FieldRowElem r) where
   {-# INLINE toE #-}
 instance SinkableE      (FieldRowElem r)
 instance HoistableE     (FieldRowElem r)
-instance SubstE Name    (FieldRowElem r)
+instance RenameE        (FieldRowElem r)
 instance AlphaEqE       (FieldRowElem r)
 instance AlphaHashableE (FieldRowElem r)
 
@@ -1376,28 +1350,9 @@ instance GenericE (FieldRowElems r) where
   {-# INLINE toE #-}
 instance SinkableE   (FieldRowElems r)
 instance HoistableE  (FieldRowElems r)
-instance SubstE Name (FieldRowElems r)
+instance RenameE     (FieldRowElems r)
 instance AlphaEqE    (FieldRowElems r)
 instance AlphaHashableE (FieldRowElems r)
-instance SubstE (AtomSubstVal r) (FieldRowElems r) where
-  substE :: forall i o. Distinct o => (Scope o, Subst (AtomSubstVal r) i o) -> FieldRowElems r i -> FieldRowElems r o
-  substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
-    where
-      substItem = \case
-        DynField v ty -> case snd env ! v of
-          SubstVal (Con (LabelCon l)) -> [StaticFields $ labeledSingleton l ty']
-          SubstVal (Var v') -> [DynField v' ty']
-          Rename v'         -> [DynField v' ty']
-          SubstVal irritant -> error $ "Ill-typed substitution " ++ show irritant
-          where ty' = substE env ty
-        DynFields v -> case snd env ! v of
-          SubstVal (LabeledRow items) -> fromFieldRowElems items
-          SubstVal (Var v') -> [DynFields v']
-          Rename v'         -> [DynFields v']
-          SubstVal irritant -> error $ "Ill-typed substitution " ++ show irritant
-        StaticFields items -> [StaticFields items']
-          where ExtLabeledItemsE (NoExt items') = substE env
-                  (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE (Atom r) (AtomName r) i)
 
 newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
   ExtLabeledItemsE
@@ -1419,7 +1374,7 @@ instance GenericE (Atom r) where
   {- Var -}        (AtomName r)
   {- ProjectElt -} ( LiftE (NE.NonEmpty Projection) `PairE` AtomName r)
             ) (EitherE4
-  {- Lam -}        (WhenE (IsCore' r) (LamExpr r `PairE` LiftE Arrow `PairE` EffAbs))
+  {- Lam -}        (WhenE (IsCore' r) (LamExpr r `PairE` LiftE Arrow `PairE` EffAbs r))
   {- Pi -}         (WhenE (IsCore' r) (PiType r))
   {- TabLam -}     (TabLamExpr r)
   {- TabPi -}      (TabPiType r)
@@ -1504,56 +1459,7 @@ instance SinkableE   (Atom r)
 instance HoistableE  (Atom r)
 instance AlphaEqE    (Atom r)
 instance AlphaHashableE (Atom r)
-instance SubstE Name (Atom r)
-
--- TODO: special handling of ACase too
-instance SubstE (AtomSubstVal r) (Atom r) where
-  substE (scope, env) atom = case fromE atom of
-    Case0 specialCase -> case specialCase of
-      -- Var
-      Case0 v -> do
-        case env ! v of
-          Rename v' -> Var v'
-          SubstVal x -> x
-      -- ProjectElt
-      Case1 (PairE (LiftE idxs) v) -> do
-        let v' = case env ! v of
-                   SubstVal x -> x
-                   Rename v''  -> Var v''
-        getProjection (NE.toList idxs) v'
-      _ -> error "impossible"
-    Case1 rest -> (toE . Case1) $ substE (scope, env) rest
-    Case2 rest -> (toE . Case2) $ substE (scope, env) rest
-    Case3 rest -> (toE . Case3) $ substE (scope, env) rest
-    Case4 rest -> (toE . Case4) $ substE (scope, env) rest
-    Case5 rest -> (toE . Case5) $ substE (scope, env) rest
-    Case6 rest -> (toE . Case6) $ substE (scope, env) rest
-    Case7 rest -> (toE . Case7) $ substE (scope, env) rest
-
-getProjection :: HasCallStack => [Projection] -> Atom r n -> Atom r n
-getProjection [] a = a
-getProjection (i:is) a = case getProjection is a of
-  Var name -> ProjectElt (i NE.:| []) name
-  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  Con (ProdCon xs) -> xs !! iProd
-  Con (Newtype _ x) | (i ==  UnwrapBaseNewtype) || (i == UnwrapCompoundNewtype) -> x
-  DepPair l _ _ | iProd == 0 -> l
-  DepPair _ r _ | iProd == 1 -> r
-  ACase scrut alts resultTy -> ACase scrut alts' resultTy'
-    where
-      alts' = alts <&> \(Abs bs body) -> Abs bs $ getProjection [i] body
-      resultTy' = case resultTy of
-        ProdTy tys -> tys !! iProd
-        -- We can't handle all cases here because we'll end up needing access to
-        -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
-        -- do away with it.
-        _ -> error "oops"
-  RepValAtom (DRepVal projs ty tree) -> RepValAtom $ DRepVal (i:projs) ty tree
-  a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
-  where
-    iProd = case i of
-      ProjectProduct i' -> i'
-      _ -> error $ "Not a product projection"
+instance RenameE     (Atom r)
 
 instance GenericE (Expr r) where
   type RepE (Expr r) = EitherE2
@@ -1612,8 +1518,7 @@ instance SinkableE      (Expr r)
 instance HoistableE     (Expr r)
 instance AlphaEqE       (Expr r)
 instance AlphaHashableE (Expr r)
-instance SubstE Name    (Expr r)
-instance SubstE (AtomSubstVal r) (Expr r)
+instance RenameE        (Expr r)
 
 instance GenericE (ExtLabeledItemsE e1 e2) where
   type RepE (ExtLabeledItemsE e1 e2) = EitherE (ComposeE LabeledItems e1)
@@ -1629,21 +1534,7 @@ instance (SinkableE e1, SinkableE e2) => SinkableE (ExtLabeledItemsE e1 e2)
 instance (HoistableE  e1, HoistableE  e2) => HoistableE  (ExtLabeledItemsE e1 e2)
 instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2)
 instance (AlphaHashableE    e1, AlphaHashableE    e2) => AlphaHashableE    (ExtLabeledItemsE e1 e2)
-instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
-
-instance SubstE (AtomSubstVal r) (ExtLabeledItemsE (Atom r) (AtomName r)) where
-  substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
-    let items' = fmap (substE (scope, env)) items
-    let ext = case maybeExt of
-                Nothing -> NoExt NoLabeledItems
-                Just v -> case env ! v of
-                  Rename        v'  -> Ext NoLabeledItems $ Just v'
-                  SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
-                  SubstVal (LabeledRow row) -> case fieldRowElemsAsExtRow row of
-                    Just row' -> row'
-                    Nothing -> error "Not implemented: unrepresentable subst of ExtLabeledItems"
-                  _ -> error "Not a valid labeled row substitution"
-    ExtLabeledItemsE $ prefixExtLabeledItems items' ext
+instance (RenameE     e1, RenameE     e2) => RenameE     (ExtLabeledItemsE e1 e2)
 
 instance GenericE (Block r) where
   type RepE (Block r) = PairE (MaybeE (PairE (Type r) EffectRow)) (Abs (Nest (Decl r)) (Atom r))
@@ -1662,23 +1553,9 @@ instance SinkableE      (Block r)
 instance HoistableE     (Block r)
 instance AlphaEqE       (Block r)
 instance AlphaHashableE (Block r)
-instance SubstE Name    (Block r)
-instance SubstE (AtomSubstVal r) (Block r)
+instance RenameE        (Block r)
 deriving instance Show (Block r n)
 deriving via WrapE (Block r) n instance Generic (Block r n)
-
-instance GenericE (BoxPtr r) where
-  type RepE (BoxPtr r) = Atom r `PairE` Block r
-  fromE (BoxPtr p s) = p `PairE` s
-  {-# INLINE fromE #-}
-  toE (p `PairE` s) = BoxPtr p s
-  {-# INLINE toE #-}
-instance SinkableE  (BoxPtr r)
-instance HoistableE (BoxPtr r)
-instance AlphaEqE   (BoxPtr r)
-instance AlphaHashableE (BoxPtr r)
-instance SubstE Name (BoxPtr r)
-instance SubstE (AtomSubstVal r) (BoxPtr r)
 
 instance GenericB (NonDepNest r ann) where
   type RepB (NonDepNest r ann) = (LiftB (ListE ann)) `PairB` Nest AtomNameBinder
@@ -1690,8 +1567,7 @@ instance ProvesExt (NonDepNest r ann)
 instance BindsNames (NonDepNest r ann)
 instance SinkableE ann => SinkableB (NonDepNest r ann)
 instance HoistableE ann => HoistableB (NonDepNest r ann)
-instance (SubstE Name ann, SinkableE ann) => SubstB Name (NonDepNest r ann)
-instance (SubstE (AtomSubstVal r) ann, SinkableE ann) => SubstB (AtomSubstVal r) (NonDepNest r ann)
+instance (RenameE     ann, SinkableE ann) => RenameB     (NonDepNest r ann)
 instance AlphaEqE ann => AlphaEqB (NonDepNest r ann)
 instance AlphaHashableE ann => AlphaHashableB (NonDepNest r ann)
 deriving instance (Show (ann n)) => Show (NonDepNest r ann n l)
@@ -1708,8 +1584,7 @@ instance ProvesExt   SuperclassBinders
 instance BindsNames  SuperclassBinders
 instance SinkableB   SuperclassBinders
 instance HoistableB  SuperclassBinders
-instance SubstB Name SuperclassBinders
-instance SubstB (AtomSubstVal CoreIR) SuperclassBinders
+instance RenameB     SuperclassBinders
 instance AlphaEqB SuperclassBinders
 instance AlphaHashableB SuperclassBinders
 
@@ -1728,8 +1603,7 @@ instance SinkableE ClassDef
 instance HoistableE  ClassDef
 instance AlphaEqE ClassDef
 instance AlphaHashableE ClassDef
-instance SubstE Name ClassDef
-instance SubstE (AtomSubstVal CoreIR) ClassDef
+instance RenameE     ClassDef
 deriving instance Show (ClassDef n)
 deriving via WrapE ClassDef n instance Generic (ClassDef n)
 
@@ -1745,8 +1619,7 @@ instance SinkableE InstanceDef
 instance HoistableE  InstanceDef
 instance AlphaEqE InstanceDef
 instance AlphaHashableE InstanceDef
-instance SubstE Name InstanceDef
-instance SubstE (AtomSubstVal CoreIR) InstanceDef
+instance RenameE     InstanceDef
 deriving instance Show (InstanceDef n)
 deriving via WrapE InstanceDef n instance Generic (InstanceDef n)
 
@@ -1759,8 +1632,7 @@ instance SinkableE InstanceBody
 instance HoistableE  InstanceBody
 instance AlphaEqE InstanceBody
 instance AlphaHashableE InstanceBody
-instance SubstE Name InstanceBody
-instance SubstE (AtomSubstVal CoreIR) InstanceBody
+instance RenameE     InstanceBody
 
 instance GenericE MethodType where
   type RepE MethodType = PairE (LiftE [Bool]) CType
@@ -1771,8 +1643,7 @@ instance SinkableE      MethodType
 instance HoistableE     MethodType
 instance AlphaEqE       MethodType
 instance AlphaHashableE MethodType
-instance SubstE Name MethodType
-instance SubstE (AtomSubstVal CoreIR) MethodType
+instance RenameE     MethodType
 
 instance GenericE (DictType r) where
   type RepE (DictType r) = LiftE SourceName `PairE` ClassName `PairE` ListE (Type r)
@@ -1785,8 +1656,7 @@ instance SinkableE           (DictType r)
 instance HoistableE          (DictType r)
 instance AlphaEqE            (DictType r)
 instance AlphaHashableE      (DictType r)
-instance SubstE Name         (DictType r)
-instance SubstE (AtomSubstVal r) (DictType r)
+instance RenameE             (DictType r)
 
 instance GenericE (DictExpr r) where
   type RepE (DictExpr r) =
@@ -1814,8 +1684,7 @@ instance SinkableE           (DictExpr r)
 instance HoistableE          (DictExpr r)
 instance AlphaEqE            (DictExpr r)
 instance AlphaHashableE      (DictExpr r)
-instance SubstE Name         (DictExpr r)
-instance SubstE (AtomSubstVal r) (DictExpr r)
+instance RenameE             (DictExpr r)
 
 instance GenericE Cache where
   type RepE Cache =
@@ -1844,7 +1713,7 @@ instance GenericE Cache where
 instance SinkableE  Cache
 instance HoistableE Cache
 instance AlphaEqE   Cache
-instance SubstE Name Cache
+instance RenameE     Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
@@ -1865,8 +1734,7 @@ instance GenericE (LamBinding r) where
 
 instance SinkableE     (LamBinding r)
 instance HoistableE    (LamBinding r)
-instance SubstE Name   (LamBinding r)
-instance SubstE (AtomSubstVal r) (LamBinding r)
+instance RenameE       (LamBinding r)
 instance AlphaEqE       (LamBinding r)
 instance AlphaHashableE (LamBinding r)
 
@@ -1881,8 +1749,7 @@ instance SinkableE      (LamExpr r)
 instance HoistableE     (LamExpr r)
 instance AlphaEqE       (LamExpr r)
 instance AlphaHashableE (LamExpr r)
-instance SubstE Name    (LamExpr r)
-instance SubstE (AtomSubstVal r) (LamExpr r)
+instance RenameE        (LamExpr r)
 deriving instance Show (LamExpr r n)
 deriving via WrapE (LamExpr r) n instance Generic (LamExpr r n)
 
@@ -1897,8 +1764,7 @@ instance SinkableE      (TabLamExpr r)
 instance HoistableE     (TabLamExpr r)
 instance AlphaEqE       (TabLamExpr r)
 instance AlphaHashableE (TabLamExpr r)
-instance SubstE Name    (TabLamExpr r)
-instance SubstE (AtomSubstVal r) (TabLamExpr r)
+instance RenameE        (TabLamExpr r)
 deriving instance Show (TabLamExpr r n)
 deriving via WrapE (TabLamExpr r) n instance Generic (TabLamExpr r n)
 
@@ -1911,8 +1777,7 @@ instance GenericE (PiBinding r) where
 
 instance SinkableE   (PiBinding r)
 instance HoistableE  (PiBinding r)
-instance SubstE Name (PiBinding r)
-instance SubstE (AtomSubstVal r) (PiBinding r)
+instance RenameE     (PiBinding r)
 instance AlphaEqE (PiBinding r)
 instance AlphaHashableE (PiBinding r)
 
@@ -1937,8 +1802,7 @@ instance ProvesExt   (PiBinder r)
 instance BindsNames  (PiBinder r)
 instance SinkableB   (PiBinder r)
 instance HoistableB  (PiBinder r)
-instance SubstB Name (PiBinder r)
-instance SubstB (AtomSubstVal r) (PiBinder r)
+instance RenameB     (PiBinder r)
 instance AlphaEqB (PiBinder r)
 instance AlphaHashableB (PiBinder r)
 
@@ -1953,8 +1817,7 @@ instance SinkableE      (PiType r)
 instance HoistableE     (PiType r)
 instance AlphaEqE       (PiType r)
 instance AlphaHashableE (PiType r)
-instance SubstE Name    (PiType r)
-instance SubstE (AtomSubstVal r) (PiType r)
+instance RenameE        (PiType r)
 deriving instance Show (PiType r n)
 deriving via WrapE (PiType r) n instance Generic (PiType r n)
 
@@ -1979,8 +1842,7 @@ instance ProvesExt   (RolePiBinder r)
 instance BindsNames  (RolePiBinder r)
 instance SinkableB   (RolePiBinder r)
 instance HoistableB  (RolePiBinder r)
-instance SubstB Name (RolePiBinder r)
-instance SubstB (AtomSubstVal r) (RolePiBinder r)
+instance RenameB     (RolePiBinder r)
 instance AlphaEqB (RolePiBinder r)
 instance AlphaHashableB (RolePiBinder r)
 
@@ -1993,8 +1855,7 @@ instance GenericE (IxType r) where
 
 instance SinkableE   (IxType r)
 instance HoistableE  (IxType r)
-instance SubstE Name (IxType r)
-instance SubstE (AtomSubstVal r) (IxType r)
+instance RenameE     (IxType r)
 
 instance AlphaEqE (IxType r) where
   alphaEqE (IxType t1 _) (IxType t2 _) = alphaEqE t1 t2
@@ -2013,8 +1874,7 @@ instance SinkableE      (TabPiType r)
 instance HoistableE     (TabPiType r)
 instance AlphaEqE       (TabPiType r)
 instance AlphaHashableE (TabPiType r)
-instance SubstE Name    (TabPiType r)
-instance SubstE (AtomSubstVal r) (TabPiType r)
+instance RenameE        (TabPiType r)
 deriving instance Show (TabPiType r n)
 deriving via WrapE (TabPiType r) n instance Generic (TabPiType r n)
 
@@ -2029,8 +1889,7 @@ instance SinkableE      (NaryPiType r)
 instance HoistableE     (NaryPiType r)
 instance AlphaEqE       (NaryPiType r)
 instance AlphaHashableE (NaryPiType r)
-instance SubstE Name (NaryPiType r)
-instance SubstE (AtomSubstVal r) (NaryPiType r)
+instance RenameE     (NaryPiType r)
 deriving instance Show (NaryPiType r n)
 deriving via WrapE (NaryPiType r) n instance Generic (NaryPiType r n)
 instance Store (NaryPiType r n)
@@ -2046,8 +1905,7 @@ instance SinkableE   (DepPairType r)
 instance HoistableE  (DepPairType r)
 instance AlphaEqE    (DepPairType r)
 instance AlphaHashableE (DepPairType r)
-instance SubstE Name (DepPairType r)
-instance SubstE (AtomSubstVal r) (DepPairType r)
+instance RenameE     (DepPairType r)
 deriving instance Show (DepPairType r n)
 deriving via WrapE (DepPairType r) n instance Generic (DepPairType r n)
 
@@ -2065,7 +1923,7 @@ instance SinkableE      SynthCandidates
 instance HoistableE     SynthCandidates
 instance AlphaEqE       SynthCandidates
 instance AlphaHashableE SynthCandidates
-instance SubstE Name    SynthCandidates
+instance RenameE        SynthCandidates
 
 instance GenericE (AtomBinding r) where
   type RepE (AtomBinding r) =
@@ -2111,7 +1969,7 @@ instance GenericE (AtomBinding r) where
 
 instance SinkableE   (AtomBinding r)
 instance HoistableE  (AtomBinding r)
-instance SubstE Name (AtomBinding r)
+instance RenameE     (AtomBinding r)
 instance AlphaEqE (AtomBinding r)
 instance AlphaHashableE (AtomBinding r)
 
@@ -2139,7 +1997,7 @@ instance GenericE TopFunBinding where
 
 instance SinkableE TopFunBinding
 instance HoistableE  TopFunBinding
-instance SubstE Name TopFunBinding
+instance RenameE     TopFunBinding
 instance AlphaEqE TopFunBinding
 instance AlphaHashableE TopFunBinding
 
@@ -2154,17 +2012,9 @@ instance GenericE SpecializationSpec where
 instance HasNameHint (SpecializationSpec n) where
   getNameHint (AppSpecialization f _) = getNameHint f
 
-instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
-  substE env (AppSpecialization f ab) = do
-    let f' = case snd env ! f of
-               Rename v -> v
-               SubstVal (Var v) -> v
-               _ -> error "bad substitution"
-    AppSpecialization f' (substE env ab)
-
 instance SinkableE SpecializationSpec
 instance HoistableE  SpecializationSpec
-instance SubstE Name SpecializationSpec
+instance RenameE     SpecializationSpec
 instance AlphaEqE SpecializationSpec
 instance AlphaHashableE SpecializationSpec
 
@@ -2185,8 +2035,7 @@ instance GenericE (SolverBinding r) where
 
 instance SinkableE   (SolverBinding r)
 instance HoistableE  (SolverBinding r)
-instance SubstE Name (SolverBinding r)
-instance SubstE (AtomSubstVal r) (SolverBinding r)
+instance RenameE     (SolverBinding r)
 instance AlphaEqE       (SolverBinding r)
 instance AlphaHashableE (SolverBinding r)
 
@@ -2255,10 +2104,10 @@ instance Color c => GenericE (Binding c) where
 deriving via WrapE (Binding c) n instance Color c => Generic (Binding c n)
 instance SinkableV         Binding
 instance HoistableV        Binding
-instance SubstV Name       Binding
+instance RenameV           Binding
 instance Color c => SinkableE   (Binding c)
 instance Color c => HoistableE  (Binding c)
-instance Color c => SubstE Name (Binding c)
+instance Color c => RenameE     (Binding c)
 
 instance GenericE (DeclBinding r) where
   type RepE (DeclBinding r) = LiftE LetAnn `PairE` Type r `PairE` Expr r
@@ -2269,8 +2118,7 @@ instance GenericE (DeclBinding r) where
 
 instance SinkableE (DeclBinding r)
 instance HoistableE  (DeclBinding r)
-instance SubstE Name (DeclBinding r)
-instance SubstE (AtomSubstVal r) (DeclBinding r)
+instance RenameE     (DeclBinding r)
 instance AlphaEqE (DeclBinding r)
 instance AlphaHashableE (DeclBinding r)
 
@@ -2283,8 +2131,7 @@ instance GenericB (Decl r) where
 
 instance SinkableB (Decl r)
 instance HoistableB  (Decl r)
-instance SubstB (AtomSubstVal r) (Decl r)
-instance SubstB Name (Decl r)
+instance RenameB     (Decl r)
 instance AlphaEqB (Decl r)
 instance AlphaHashableB (Decl r)
 instance ProvesExt  (Decl r)
@@ -2318,7 +2165,7 @@ instance SinkableB   EnvFrag
 instance HoistableB  EnvFrag
 instance ProvesExt   EnvFrag
 instance BindsNames  EnvFrag
-instance SubstB Name EnvFrag
+instance RenameB     EnvFrag
 
 instance GenericE PartialTopEnvFrag where
   type RepE PartialTopEnvFrag = Cache
@@ -2338,7 +2185,7 @@ instance GenericE PartialTopEnvFrag where
 
 instance SinkableE      PartialTopEnvFrag
 instance HoistableE     PartialTopEnvFrag
-instance SubstE Name    PartialTopEnvFrag
+instance RenameE        PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
   PartialTopEnvFrag x1 x2 x3 x4 x5 x6 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 =
@@ -2353,7 +2200,7 @@ instance GenericB TopEnvFrag where
   fromB (TopEnvFrag frag1 frag2) = PairB frag1 (LiftB frag2)
   toB   (PairB frag1 (LiftB frag2)) = TopEnvFrag frag1 frag2
 
-instance SubstB Name TopEnvFrag
+instance RenameB     TopEnvFrag
 instance HoistableB  TopEnvFrag
 instance SinkableB TopEnvFrag
 instance ProvesExt   TopEnvFrag
@@ -2438,7 +2285,7 @@ instance SinkableE      Module
 instance HoistableE     Module
 instance AlphaEqE       Module
 instance AlphaHashableE Module
-instance SubstE Name    Module
+instance RenameE        Module
 
 instance GenericE ImportStatus where
   type RepE ImportStatus = ListE ModuleName `PairE` ListE ModuleName
@@ -2453,7 +2300,7 @@ instance SinkableE      ImportStatus
 instance HoistableE     ImportStatus
 instance AlphaEqE       ImportStatus
 instance AlphaHashableE ImportStatus
-instance SubstE Name    ImportStatus
+instance RenameE        ImportStatus
 
 instance Semigroup (ImportStatus n) where
   ImportStatus direct trans <> ImportStatus direct' trans' =
@@ -2476,7 +2323,7 @@ instance SinkableE      LoadedModules
 instance HoistableE     LoadedModules
 instance AlphaEqE       LoadedModules
 instance AlphaHashableE LoadedModules
-instance SubstE Name    LoadedModules
+instance RenameE        LoadedModules
 
 instance GenericE LoadedObjects where
   type RepE LoadedObjects = ListE (PairE FunObjCodeName (LiftE NativeFunction))
@@ -2489,7 +2336,7 @@ instance GenericE LoadedObjects where
 
 instance SinkableE      LoadedObjects
 instance HoistableE     LoadedObjects
-instance SubstE Name    LoadedObjects
+instance RenameE        LoadedObjects
 
 instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
@@ -2507,7 +2354,7 @@ instance SinkableE      ModuleEnv
 instance HoistableE     ModuleEnv
 instance AlphaEqE       ModuleEnv
 instance AlphaHashableE ModuleEnv
-instance SubstE Name    ModuleEnv
+instance RenameE        ModuleEnv
 
 instance Semigroup (ModuleEnv n) where
   ModuleEnv x1 x2 x3 x4 <> ModuleEnv y1 y2 y3 y4 =
@@ -2577,7 +2424,6 @@ instance Store (ImportStatus n)
 instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
-instance Store (BoxPtr r n)
 instance (Store (ann n)) => Store (NonDepNest r ann n l)
 instance Store Projection
 instance Store IxMethod
@@ -2588,38 +2434,3 @@ instance Store (RefOp r n)
 instance Store (BaseMonoid r n)
 instance Store (DAMOp r n)
 instance Store (UserEffectOp r n)
-
--- === Orphan instances ===
--- TODO: Resolve this!
-
-instance SubstE (AtomSubstVal r) (EffectRowP Name) where
-  substE env (EffectRow effs tailVar) = do
-    let effs' = S.fromList $ map (substE env) (S.toList effs)
-    let tailEffRow = case tailVar of
-          Nothing -> EffectRow mempty Nothing
-          Just v -> case snd env ! v of
-            Rename        v'  -> EffectRow mempty (Just v')
-            SubstVal (Var v') -> EffectRow mempty (Just v')
-            SubstVal (Eff r)  -> r
-            _ -> error "Not a valid effect substitution"
-    extendEffRow effs' tailEffRow
-
-instance SubstE (AtomSubstVal r) (EffectP Name) where
-  substE (_, env) eff = case eff of
-    RWSEffect rws Nothing -> RWSEffect rws Nothing
-    RWSEffect rws (Just v) -> do
-      let v' = case env ! v of
-                 Rename        v''  -> Just v''
-                 SubstVal UnitTy    -> Nothing  -- used at runtime/imp-translation-time
-                 SubstVal (Var v'') -> Just v''
-                 SubstVal _ -> error "Heap parameter must be a name"
-      RWSEffect rws v'
-    ExceptionEffect -> ExceptionEffect
-    IOEffect        -> IOEffect
-    UserEffect v    ->
-      case env ! v of
-        Rename v' -> UserEffect v'
-        -- other cases are proven unreachable by type system
-        -- v' is an EffectNameC but other cases apply only to
-        -- AtomNameC
-    InitEffect -> InitEffect

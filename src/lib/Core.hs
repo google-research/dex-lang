@@ -19,6 +19,8 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+-- Some monads (e.g. EnvReader) and syntactic helpers for operating on CoreIR.
+
 module Core where
 
 import Control.Applicative
@@ -59,7 +61,7 @@ withEnv f = f <$> unsafeGetEnv
 -- continuation (with DExt n l serving as proof thereof).
 class (EnvReader m, Monad1 m) => EnvExtender (m::MonadKind1) where
   refreshAbs
-    :: (BindsEnv b, SubstB Name b, SubstE Name e)
+    :: (BindsEnv b, RenameB b, RenameE e)
     => Abs b e n
     -> (forall l. DExt n l => b n l -> e l -> m l a)
     -> m n a
@@ -105,15 +107,6 @@ liftEnvReaderT cont = do
   return $ runReaderT (runEnvReaderT' cont) (Distinct, env)
 {-# INLINE liftEnvReaderT #-}
 
-type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
-
-liftSubstEnvReaderM
-  :: (EnvReader m, FromName v)
-  => SubstEnvReaderM v n n a
-  -> m n a
-liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
-{-# INLINE liftSubstEnvReaderM #-}
-
 instance Monad m => EnvReader (EnvReaderT m) where
   unsafeGetEnv = EnvReaderT $ asks snd
   {-# INLINE unsafeGetEnv #-}
@@ -138,80 +131,6 @@ instance MonadIO m => MonadIO (EnvReaderT m n) where
 
 deriving instance (Monad m, MonadState s m) => MonadState s (EnvReaderT m o)
 
--- === EnvReaderI monad ===
-
-newtype EnvReaderIT (m::MonadKind1) (i::S) (o::S) (a:: *) =
-  EnvReaderIT { runEnvReaderIT' :: ReaderT (DistinctEvidence i, Env i) (m o) a }
-  deriving (Functor, Applicative, Monad, MonadFail, Catchable, Fallible, CtxReader,
-            Alternative)
-
-runEnvReaderIT :: Distinct i => Env i -> EnvReaderIT m i o a -> m o a
-runEnvReaderIT env m = runReaderT (runEnvReaderIT' m) (Distinct, env)
-{-# INLINE runEnvReaderIT #-}
-
-instance Monad1 m => EnvReaderI (EnvReaderIT m) where
-  getEnvI = EnvReaderIT $ asks snd
-  {-# INLINE getEnvI #-}
-  getDistinctI = EnvReaderIT $ asks fst
-  {-# INLINE getDistinctI #-}
-  withEnvI env cont = EnvReaderIT $ withReaderT (const (Distinct, env)) $
-    runEnvReaderIT' cont
-  {-# INLINE withEnvI #-}
-
--- run a monadic EnvReaderM function over the in-space env
-liftEnvReaderI :: EnvReaderI m => EnvReaderM i a -> m i o a
-liftEnvReaderI cont = do
-  env <- getEnvI
-  Distinct <- getDistinctI
-  return $ runEnvReaderM env cont
-{-# INLINE liftEnvReaderI #-}
-
-extendI :: (BindsEnv b, EnvReaderI m, Distinct i')
-        => b i i' -> m i' o a -> m i o a
-extendI b cont = do
-  env <- getEnvI
-  Distinct <- getDistinctI
-  withEnvI (extendOutMap env $ toEnvFrag b) cont
-{-# INLINE extendI #-}
-
-refreshAbsI :: (EnvReaderI m, BindsEnv b, SubstB Name b, SubstE Name e)
-            => Abs b e i
-            -> (forall i'. DExt i i' => b i i' -> e i' -> m i' o a)
-            -> m i o a
-refreshAbsI ab cont = do
-  env <- getEnvI
-  Distinct <- getDistinctI
-  refreshAbsPure (toScope env) ab \_ b e ->
-    extendI b $ cont b e
-
-instance EnvReader m => EnvReader (EnvReaderIT m i) where
-  unsafeGetEnv = EnvReaderIT $ lift unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
-instance (ScopeReader m, EnvExtender m)
-         => EnvExtender (EnvReaderIT m i) where
-  refreshAbs ab cont = EnvReaderIT $ ReaderT \env ->
-    refreshAbs ab \b e -> do
-      let EnvReaderIT (ReaderT cont') = cont b e
-      cont' env
-
-instance ScopeReader m => ScopeReader (EnvReaderIT m i) where
-  unsafeGetScope = EnvReaderIT $ lift unsafeGetScope
-  {-# INLINE unsafeGetScope #-}
-  getDistinct = EnvReaderIT $ lift getDistinct
-  {-# INLINE getDistinct #-}
-
-instance (ScopeReader m, ScopeExtender m)
-         => ScopeExtender (EnvReaderIT m i) where
-  refreshAbsScope ab cont = EnvReaderIT $ ReaderT \env ->
-    refreshAbsScope ab \b e -> do
-      let EnvReaderIT (ReaderT cont') = cont b e
-      cont' env
-
-deriving instance MonadIO1 m => MonadIO (EnvReaderIT m i o)
-deriving instance (Monad1 m, MonadState (s o) (m o))
-                  => MonadState (s o) (EnvReaderIT m i o)
-
 -- === Instances for Name monads ===
 
 instance (SinkableE e, EnvReader m)
@@ -226,19 +145,6 @@ instance (SinkableE e, ScopeReader m, EnvExtender m)
       let OutReaderT (ReaderT cont') = cont b e
       env' <- sinkM env
       cont' env'
-  {-# INLINE refreshAbs #-}
-
-instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
-  unsafeGetEnv = SubstReaderT $ lift unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
-instance (SinkableV v, ScopeReader m, EnvExtender m)
-         => EnvExtender (SubstReaderT v m i) where
-  refreshAbs ab cont = SubstReaderT $ ReaderT \subst ->
-    refreshAbs ab \b e -> do
-      subst' <- sinkM subst
-      let SubstReaderT (ReaderT cont') = cont b e
-      cont' subst'
   {-# INLINE refreshAbs #-}
 
 instance (Monad m, ExtOutMap Env decls, OutFrag decls)
@@ -266,7 +172,7 @@ instance (Monad m, ExtOutMap Env decls, OutFrag decls)
   {-# INLINE refreshAbs #-}
 
 instance ( Monad m, ExtOutMap Env d1, ExtOutMap Env d2
-         , OutFrag d1, OutFrag d2, SubstB Name d1, HoistableB d1)
+         , OutFrag d1, OutFrag d2, RenameB d1, HoistableB d1)
          => EnvExtender (DoubleInplaceT Env d1 d2 m) where
   refreshAbs ab cont = do
     (ans, decls) <- UnsafeMakeDoubleInplaceT do
@@ -278,6 +184,7 @@ instance ( Monad m, ExtOutMap Env d1, ExtOutMap Env d2
     unsafeEmitDoubleInplaceTHoisted decls
     return ans
   {-# INLINE refreshAbs #-}
+
 
 -- === Typeclasses for syntax ===
 
@@ -457,33 +364,12 @@ lookupSourceMap sourceName = do
     _   -> return Nothing
 
 refreshBinders
-  :: (EnvExtender m, BindsEnv b, SubstB Name b)
+  :: (EnvExtender m, BindsEnv b, RenameB b)
   => b n l
   -> (forall l'. DExt n l' => b n l' -> SubstFrag Name n l l' -> m l' a)
   -> m n a
 refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
 {-# INLINE refreshBinders #-}
-
-substBinders
-  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, SubstV Name v, SubstB Name b, BindsEnv b)
-  => b i i'
-  -> (forall o'. DExt o o' => b o o' -> m i' o' a)
-  -> m i o a
-substBinders b cont = do
-  substBindersFrag b \subst b' -> extendSubst subst $ cont b'
-{-# INLINE substBinders #-}
-
-substBindersFrag
-  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, SubstV Name v, SubstB Name b, BindsEnv b)
-  => b i i'
-  -> (forall o'. DExt o o' => SubstFrag v i i' o' -> b o o' -> m i o' a)
-  -> m i o a
-substBindersFrag b cont = do
-  ab <- substM $ Abs b $ idSubstFrag b
-  refreshAbs ab \b' subst -> cont subst b'
-{-# INLINE substBindersFrag #-}
 
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
@@ -608,8 +494,8 @@ blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
   BlockAnn _ eff -> eff
 
-lamExprToAtom :: IsCore r => LamExpr r n -> Arrow -> Maybe (EffAbs n) -> Atom r n
-lamExprToAtom lam@(UnaryLamExpr (b:>_) block) arr maybeEffAbs = Lam lam arr effAbs
+lamExprToAtom :: IsCore r => LamExpr r n -> Arrow -> Maybe (EffAbs r n) -> Atom r n
+lamExprToAtom lam@(UnaryLamExpr b block) arr maybeEffAbs = Lam lam arr effAbs
   where effAbs = case maybeEffAbs of
           Just e -> e
           Nothing -> Abs b $ blockEffects block
@@ -620,7 +506,7 @@ naryLamExprToAtom lam@(LamExpr (Nest b bs) body) (arr:arrs) = case bs of
   Empty -> lamExprToAtom lam arr Nothing
   _ -> do
     let rest = naryLamExprToAtom (LamExpr bs body) arrs
-    Lam (UnaryLamExpr b (AtomicBlock rest)) arr (toConstAbsPure Pure)
+    Lam (UnaryLamExpr b (AtomicBlock rest)) arr (Abs b Pure)
 naryLamExprToAtom _ _ = error "unexpected nullary lambda expression"
 
 -- first argument is the number of args expected

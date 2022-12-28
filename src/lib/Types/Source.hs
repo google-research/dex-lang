@@ -425,7 +425,7 @@ instance SinkableE      SourceNameDef
 instance HoistableE     SourceNameDef
 instance AlphaEqE       SourceNameDef
 instance AlphaHashableE SourceNameDef
-instance SubstE Name    SourceNameDef
+instance RenameE        SourceNameDef
 
 instance GenericE SourceMap where
   type RepE SourceMap = ListE (PairE (LiftE SourceName) (ListE SourceNameDef))
@@ -440,7 +440,7 @@ instance SinkableE      SourceMap
 instance HoistableE     SourceMap
 instance AlphaEqE       SourceMap
 instance AlphaHashableE SourceMap
-instance SubstE Name    SourceMap
+instance RenameE        SourceMap
 
 instance Pretty (SourceNameDef n) where
   pretty def = case def of
@@ -500,7 +500,7 @@ instance SinkableE      UVar
 instance HoistableE     UVar
 instance AlphaEqE       UVar
 instance AlphaHashableE UVar
-instance SubstE Name    UVar
+instance RenameE        UVar
 
 instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
   getNameHint (WithSrcB _ b) = getNameHint b

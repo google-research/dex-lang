@@ -24,6 +24,7 @@ import Err
 import IRVariants
 import MTL1
 import Name
+import Subst
 import QueryType
 import Types.Core
 import Types.Imp

@@ -108,8 +108,7 @@ fromInfix t = do
 type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
 type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
 
-pprintCanonicalized :: (HoistableE e, SubstE Name e, PrettyE e)
-                    => e n -> String
+pprintCanonicalized :: (HoistableE e, RenameE e, PrettyE e) => e n -> String
 pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
 pprintList :: Pretty a => [a] -> String
@@ -323,9 +322,6 @@ instance Pretty a => Pretty (Tree a) where
   pretty = \case
     Leaf x -> pretty x
     Branch xs -> pretty xs
-
-instance Pretty (BoxPtr r n) where
-  pretty (BoxPtr ptrptr sb) = pretty (ptrptr, sb)
 
 instance Pretty Projection where
   pretty = \case

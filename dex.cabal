@@ -82,6 +82,7 @@ library
                      , Runtime
                      , Serialize
                      , Simplify
+                     , Subst
                      , SourceRename
                      , TopLevel
                      , Transpose

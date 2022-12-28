@@ -432,7 +432,7 @@ oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.
 occWithBinder
-  :: (SubstE Name e)
+  :: (RenameE e)
   => Abs (Binder SimpIR) e n
   -> (forall l. DExt n l => Binder SimpIR n l -> e l -> OCCM l a)
   -> OCCM n a
@@ -538,7 +538,7 @@ instance ( HasOCC e0, HasOCC e1, HasOCC e2, HasOCC e3
     Case6 x6 -> Case6 <$> occ a x6
     Case7 x7 -> Case7 <$> occ a x7
   {-# INLINE occ #-}
-instance (BindsEnv b, SubstB Name b, HoistableB b, SubstE Name e, HasOCC e)
+instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasOCC e)
   => HasOCC (Abs b e) where
   occ access a = do
     -- The way this and hoistState are written, the pass will crash if any of

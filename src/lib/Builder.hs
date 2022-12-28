@@ -80,6 +80,7 @@ import Err
 import IRVariants
 import LabeledItems
 import MTL1
+import Subst
 import Name
 import PPrint (prettyBlock)
 import QueryType
@@ -129,15 +130,15 @@ emitUnOp op x = emitOp $ UnOp op x
 emitBlock :: (Builder r m, Emits n) => Block r n -> m n (Atom r n)
 emitBlock (Block _ decls result) = emitDecls decls result
 
-emitDecls :: (Builder r m, Emits n, SubstE Name e, SinkableE e)
+emitDecls :: (Builder r m, Emits n, RenameE e, SinkableE e)
           => Nest (Decl r) n l -> e l -> m n (e n)
 emitDecls decls result = runSubstReaderT idSubst $ emitDecls' decls result
 
-emitDecls' :: (Builder r m, Emits o, SubstE Name e, SinkableE e)
+emitDecls' :: (Builder r m, Emits o, RenameE e, SinkableE e)
            => Nest (Decl r) i i' -> e i' -> SubstReaderT Name m i o (e o)
-emitDecls' Empty e = substM e
+emitDecls' Empty e = renameM e
 emitDecls' (Nest (Let b (DeclBinding ann _ expr)) rest) e = do
-  expr' <- substM expr
+  expr' <- renameM expr
   v <- emitDecl (getNameHint b) ann expr'
   extendSubst (b @> v) $ emitDecls' rest e
 
@@ -167,12 +168,12 @@ buildScopedAssumeNoDecls cont = do
 -- may fail, returning `Nothing`, because the emission might mention local
 -- variables that can't be hoisted the top level.
 class (EnvReader m, MonadFail1 m) => HoistingTopBuilder frag m | m -> frag where
-  emitHoistedEnv :: (SinkableE e, SubstE Name e, HoistableE e)
+  emitHoistedEnv :: (SinkableE e, RenameE e, HoistableE e)
                  => Abs frag e n -> m n (Maybe (e n))
   canHoistToTop :: HoistableE e => e n -> m n Bool
 
 liftTopBuilderHoisted
-  :: (EnvReader m, SubstE Name e, SinkableE e, HoistableE e)
+  :: (EnvReader m, RenameE e, SinkableE e, HoistableE e)
   => (forall l. (Mut l, DExt n l) => TopBuilderM l (e l))
   -> m n (Abs TopEnvFrag e n)
 liftTopBuilderHoisted cont = do
@@ -205,7 +206,7 @@ liftDoubleBuilderTNoEmissions cont = do
 
 -- TODO: do we really need to play these rank-2 games here?
 liftDoubleBuilderT
-  :: ( EnvReader m, Fallible m', SinkableE e, SubstE Name e
+  :: ( EnvReader m, Fallible m', SinkableE e, RenameE e
      , ExtOutMap Env frag, OutFrag frag)
   => (forall l. DExt n l => DoubleBuilderT r frag m' l (e l))
   -> m n (m' (Abs frag e n))
@@ -215,7 +216,7 @@ liftDoubleBuilderT cont = do
   return $ runDoubleBuilderT env cont
 
 runDoubleBuilderT
-  :: ( Distinct n, Fallible m, SinkableE e, SubstE Name e
+  :: ( Distinct n, Fallible m, SinkableE e, RenameE e
      , ExtOutMap Env frag, OutFrag frag)
   => Env n
   -> (forall l. DExt n l => DoubleBuilderT r frag m l (e l))
@@ -225,7 +226,7 @@ runDoubleBuilderT env cont = do
     runDoubleInplaceT env $ runDoubleBuilderT' cont
   return $ Abs envFrag e
 
-instance (ExtOutMap Env f, OutFrag f, SubstB Name f, HoistableB f, Fallible m)
+instance (ExtOutMap Env f, OutFrag f, RenameB f, HoistableB f, Fallible m)
   => HoistingTopBuilder f (DoubleBuilderT r f m) where
   emitHoistedEnv ab = DoubleBuilderT $ emitDoubleInplaceTHoisted ab
   {-# INLINE emitHoistedEnv #-}
@@ -235,12 +236,12 @@ instance (ExtOutMap Env f, OutFrag f, SubstB Name f, HoistableB f, Fallible m)
 instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m) => EnvReader (DoubleBuilderT r frag m) where
   unsafeGetEnv = DoubleBuilderT $ liftDoubleInplaceT $ unsafeGetEnv
 
-instance ( SubstB Name frag, HoistableB frag, OutFrag frag
+instance ( RenameB frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m)
         => Builder r (DoubleBuilderT r frag m) where
   emitDecl hint ann e = DoubleBuilderT $ liftDoubleInplaceT $ runBuilderT' $ emitDecl hint ann e
 
-instance ( SubstB Name frag, HoistableB frag, OutFrag frag
+instance ( RenameB frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m)
          => ScopableBuilder r (DoubleBuilderT r frag m) where
   -- TODO: find a safe API for DoubleInplaceT sufficient to implement this
@@ -261,7 +262,7 @@ instance ( SubstB Name frag, HoistableB frag, OutFrag frag
   {-# INLINE buildScoped #-}
 
 -- TODO: derive this instead
-instance ( SubstB Name frag, HoistableB frag, OutFrag frag
+instance ( RenameB frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m)
          => EnvExtender (DoubleBuilderT r frag m) where
   refreshAbs ab cont = DoubleBuilderT do
@@ -290,7 +291,7 @@ class (EnvReader m, MonadFail1 m)
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
   -- TODO: do we actually need `emitBinding`? Top emissions probably aren't hot.
   emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
-  emitEnv :: (Mut n, SinkableE e, SubstE Name e) => Abs TopEnvFrag e n -> m n (e n)
+  emitEnv :: (Mut n, SinkableE e, RenameE e) => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: SinkableE e
                   => (forall l. (Mut l, DExt n l) => m l (e l))
@@ -542,7 +543,7 @@ liftBuilder cont = liftM runHardFail $ liftBuilderT cont
 -- TODO: This should not fabricate Emits evidence!!
 -- XXX: this uses unsafe functions in its implementations. It should be safe to
 -- use, but be careful changing it.
-liftEmitBuilder :: (Builder r m, SinkableE e, SubstE Name e)
+liftEmitBuilder :: (Builder r m, SinkableE e, RenameE e)
                 => BuilderM r n (e n) -> m n (e n)
 liftEmitBuilder cont = do
   env <- unsafeGetEnv
@@ -754,7 +755,7 @@ buildLamGeneral hint arr ty fEff fBody = do
     let v = binderName b
     effs <- fEff v
     body <- withAllowedEffects effs $ buildBlock $ fBody $ sink v
-    return $ Lam (UnaryLamExpr (b:>ty) body) arr (Abs b effs)
+    return $ Lam (UnaryLamExpr (b:>ty) body) arr (Abs (b:>ty) effs)
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
@@ -767,8 +768,7 @@ buildPureNaryLam (EmptyAbs Empty) cont = do
   cont []
 buildPureNaryLam (EmptyAbs (Nest (PiBinder b ty arr) rest)) cont = do
   buildPureLam (getNameHint b) arr ty \x -> do
-    restAbs <- sinkM $ Abs b $ EmptyAbs rest
-    rest' <- applyAbs restAbs x
+    rest' <- applyRename (b@>x) $ EmptyAbs rest
     buildPureNaryLam rest' \xs -> do
       x' <- sinkM x
       cont (x':xs)
@@ -793,7 +793,7 @@ buildNaryPi (Abs Empty UnitE) cont = do
   cont []
 buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
   Pi <$> buildPi (getNameHint b) PlainArrow ty \v -> do
-    bs' <- applySubst (b@>v) $ EmptyAbs bs
+    bs' <- applyRename (b@>v) $ EmptyAbs bs
     piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
     return (Pure, piTy)
 
@@ -846,8 +846,8 @@ singletonBinderNest hint ann = do
   return $ EmptyAbs (Nest (b:>ann) Empty)
 
 buildNaryAbs
-  :: ( ScopableBuilder r m, SinkableE e, SubstE Name e, SubstE (AtomSubstVal r) e, HoistableE e
-     , BindsOneAtomName r b, BindsEnv b, SubstB Name b)
+  :: ( ScopableBuilder r m, SinkableE e, RenameE e, SubstE (AtomSubstVal r) e, HoistableE e
+     , BindsOneAtomName r b, BindsEnv b, RenameB b)
   => EmptyAbs (Nest b) n
   -> (forall l. DExt n l => [AtomName r l] -> m l (e l))
   -> m n (Abs (Nest b) e n)
@@ -858,7 +858,7 @@ buildNaryAbs (Abs n UnitE) body = do
 {-# INLINE buildNaryAbs #-}
 
 buildNaryAbsRec
-  :: (BindsOneAtomName r b, BindsEnv b, SubstB Name b)
+  :: (BindsOneAtomName r b, BindsEnv b, RenameB b)
   => [AtomName r n] -> Nest b n l -> BuilderM r n (Abs (Nest b) (ListE (AtomName r)) n)
 buildNaryAbsRec ns x = confuseGHC >>= \_ -> case x of
   Empty -> return $ Abs Empty $ ListE $ reverse ns
@@ -900,7 +900,7 @@ buildNaryLamExpr (Abs bs UnitE) cont = case bs of
   Empty -> LamExpr Empty <$> buildBlock (cont [])
   Nest b rest -> do
     Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
-      rest' <- applySubst (b@>v) $ EmptyAbs rest
+      rest' <- applyRename (b@>v) $ EmptyAbs rest
       buildNaryLamExpr rest' \vs -> cont $ sink v : vs
     return $ LamExpr (Nest b' bs') body'
 
@@ -1049,7 +1049,7 @@ zeroAt ty = case ty of
   StaticRecordTy tys -> Record tys <$> mapM zeroAt (toList tys)
   TabTy (b:>ixTy) bodyTy ->
     liftEmitBuilder $ buildTabLam (getNameHint b) ixTy \i ->
-      zeroAt =<< applySubst (b@>i) bodyTy
+      zeroAt =<< applyRename (b@>i) bodyTy
   _ -> unreachable
   where
     unreachable :: a
@@ -1574,9 +1574,10 @@ buildTelescopeTy :: (EnvReader m, EnvExtender m)
 buildTelescopeTy [] [] = return UnitTy
 buildTelescopeTy (v:vs) (ty:tys) = do
   withFreshBinder (getNameHint v) (MiscBound ty) \b -> do
-    ListE tys' <- applyAbs (sink $ abstractFreeVar v $ ListE tys) (binderName b)
+    Abs fv tys' <- sinkM $ abstractFreeVar v $ ListE tys
+    ListE tys'' <- applyRename (fv@>binderName b) tys'
     ListE vs' <- sinkM $ ListE vs
-    innerTelescope <- buildTelescopeTy vs' tys'
+    innerTelescope <- buildTelescopeTy vs' tys''
     return case hoist b innerTelescope of
       HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
       HoistFailure _ -> DepPairTy $ DepPairType (b:>ty) innerTelescope
@@ -1657,7 +1658,7 @@ instance GenericE (ReconstructAtom r) where
 instance SinkableE   (ReconstructAtom r)
 instance HoistableE  (ReconstructAtom r)
 instance AlphaEqE    (ReconstructAtom r)
-instance SubstE Name (ReconstructAtom r)
+instance RenameE     (ReconstructAtom r)
 instance SubstE (AtomSubstVal r) (ReconstructAtom r)
 
 instance Pretty (ReconstructAtom r n) where

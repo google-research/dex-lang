@@ -361,7 +361,7 @@ instance SinkableE      (EffectP Name)
 instance HoistableE     (EffectP Name)
 instance AlphaEqE       (EffectP Name)
 instance AlphaHashableE (EffectP Name)
-instance SubstE Name    (EffectP Name)
+instance RenameE        (EffectP Name)
 
 instance OrdV name => GenericE (EffectRowP name) where
   type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE (name AtomNameC))
@@ -377,7 +377,7 @@ instance OrdV name => GenericE (EffectRowP name) where
 
 instance SinkableE         (EffectRowP Name)
 instance HoistableE        (EffectRowP Name)
-instance SubstE Name       (EffectRowP Name)
+instance RenameE           (EffectRowP Name)
 instance AlphaEqE          (EffectRowP Name)
 instance AlphaHashableE    (EffectRowP Name)
 

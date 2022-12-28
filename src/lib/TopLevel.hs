@@ -56,6 +56,7 @@ import Inline
 import Logging
 import Lower
 import MTL1
+import Subst
 import Name
 import OccAnalysis
 import Optimize
@@ -632,15 +633,15 @@ evalSpecializations vs sdVs = do
           Just _ -> return ()
       _ -> return ()
   forM_ sdVs \d -> do
-    SpecializedDictBinding (SpecializedDict absDict@(Abs bs _) Nothing) <- lookupEnv d
+    SpecializedDictBinding (SpecializedDict absDict@(Abs bs dict) Nothing) <- lookupEnv d
     methods <- forM [minBound..maxBound] \method -> do
       ty <- liftEnvReaderM $ ixMethodType method absDict
       lamExpr <- liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
         let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
-        dict <- applyNaryAbs (sink absDict) extraArgs
+        dict' <- applyRename (bs @@> extraArgs) dict
         let actualArgs = case method of Size -> []  -- size is thunked
                                         _    -> map Var methodArgs
-        applyIxMethod dict method actualArgs
+        applyIxMethod dict' method actualArgs
       simplifyTopFunction lamExpr
     finishSpecializedDict d methods
 
@@ -739,11 +740,11 @@ specializedFunCoreDefinition
 specializedFunCoreDefinition fname = do
   TopFunBound ty (SpecializedTopFun s) <- lookupAtomName fname
   case s of
-    AppSpecialization f abStaticArgs@(Abs bs _) -> do
+    AppSpecialization f (Abs bs staticArgs) -> do
       f' <- forceDeferredInlining f
       liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
         let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-        ListE staticArgs' <- applyNaryAbs (sink abStaticArgs) extraArgs
+        ListE staticArgs' <- applyRename (bs@@>extraArgs) staticArgs
         naryApp (sink f') $ staticArgs' <> map Var originalArgs
 
 -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,

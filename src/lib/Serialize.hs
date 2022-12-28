@@ -32,6 +32,7 @@ import IRVariants
 import Interpreter
 import LabeledItems
 import Name
+import Subst
 import PPrint ()
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 import QueryType

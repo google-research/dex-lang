@@ -14,6 +14,7 @@ import Inference
 import IRVariants
 import QueryType
 import Name
+import Subst
 import MTL1
 import LabeledItems
 import Types.Core
@@ -132,7 +133,7 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
     d'   <- f DictParam dictTy d
     withFreshBinder (getNameHint b) (toBinding iTy') \b' -> do
-      resultTy' <- applySubst (b@>binderName b') resultTy >>= f TypeParam TyKind
+      resultTy' <- applyRename (b@>binderName b') resultTy >>= f TypeParam TyKind
       return $ TabTy (b':>IxType iTy' d') resultTy'
   RecordTy  elems -> RecordTy  <$> traverserseFieldRowElemTypes (f TypeParam TyKind) elems
   VariantTy (Ext elems Nothing) -> do
@@ -203,7 +204,7 @@ instance GenericB GeneralizationEmission where
   toB   (b :> PairE ty x) = GeneralizationEmission (b:>ty) x
   {-# INLINE toB #-}
 
-instance SubstB Name GeneralizationEmission
+instance RenameB GeneralizationEmission
 instance HoistableB  GeneralizationEmission
 instance ProvesExt   GeneralizationEmission
 instance BindsNames  GeneralizationEmission

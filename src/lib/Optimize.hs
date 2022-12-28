@@ -22,6 +22,7 @@ import Types.Core
 import Types.Primitives
 import MTL1
 import Name
+import Subst
 import IRVariants
 import Core
 import GenericTraversal
@@ -504,7 +505,7 @@ instance ( HasDCE e0, HasDCE e1, HasDCE e2, HasDCE e3
     Case6 x6 -> Case6 <$> dce x6
     Case7 x7 -> Case7 <$> dce x7
   {-# INLINE dce #-}
-instance (BindsEnv b, SubstB Name b, HoistableB b, SubstE Name e, HasDCE e) => HasDCE (Abs b e) where
+instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasDCE e) => HasDCE (Abs b e) where
   dce a = do
     a'@(Abs b' _) <- refreshAbs a \b e -> Abs b <$> dce e
     modify (<>FV (freeVarsB b'))

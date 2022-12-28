@@ -49,6 +49,7 @@ import Err
 import Imp
 import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
 import Logging
+import Subst
 import Name
 import PPrint
 import RawName qualified as R

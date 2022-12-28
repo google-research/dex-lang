@@ -40,6 +40,7 @@ import LabeledItems
 import Lower (DestBlock)
 import MTL1
 import Name
+import Subst
 import QueryType
 import Types.Core
 import Types.Imp
@@ -416,7 +417,7 @@ toImpRefOp maybeDest refDest' m = do
             buildFor noHint Fwd ixTy \i -> do
               xElt <- tabApp (sink x) (Var i)
               yElt <- tabApp (sink y) (Var i)
-              eltTy' <- applySubst (b@>i) eltTy
+              eltTy' <- applyRename (b@>i) eltTy
               liftMonoidCombine eltTy' (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
@@ -609,8 +610,7 @@ toImpHof maybeDest hof = do
             TabTy (b:>ixTy) eltTy -> do
               buildTabLam noHint ixTy \i -> do
                 x' <- sinkM x
-                ab <- sinkM $ Abs b eltTy
-                eltTy' <- applyAbs ab i
+                eltTy' <- applyRename (b@>i) eltTy
                 liftMonoidEmpty eltTy' x'
             _ -> error $ "Base monoid type mismatch: can't lift " ++
                   pprint xTy ++ " to " ++ pprint accTy
@@ -1188,7 +1188,7 @@ sumUsingPolysImp lim (Abs i body) = do
 
 hoistDecls
   :: ( Builder SimpToImpIR m, EnvReader m, Emits n
-     , BindsNames b, BindsEnv b, SubstB Name b, SinkableB b)
+     , BindsNames b, BindsEnv b, RenameB b, SinkableB b)
   => b n l -> SIBlock l -> m n (Abs b SIBlock n)
 hoistDecls b block = do
   Abs hoistedDecls rest <- liftEnvReaderM $
@@ -1223,7 +1223,7 @@ data ImpInstrResult (n::S) = NoResults | OneResult !(IExpr n) | MultiResult !([I
 
 class (EnvReader m, EnvExtender m, Fallible1 m) => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n (ImpInstrResult n)
-  emitDeclsImp :: (SubstE Name e, Emits n) => Abs (Nest ImpDecl) e n -> m n (e n)
+  emitDeclsImp :: (RenameE e, Emits n) => Abs (Nest ImpDecl) e n -> m n (e n)
   buildScopedImp
     :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
@@ -1267,7 +1267,7 @@ buildImpFunction cc argHintsTys body = do
   return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
 
 buildImpNaryAbs
-  :: (SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  :: (SinkableE e, HasNamesE e, RenameE e, HoistableE e)
   => [(NameHint, IType)]
   -> (forall l. (Emits l, DExt n l) => [(Name ImpNameC l, BaseType)] -> SubstImpM i l (e l))
   -> SubstImpM i n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
@@ -1418,7 +1418,7 @@ liftBuilderImp cont = do
 {-# INLINE liftBuilderImp #-}
 
 coreToImpBuilder
-  :: (Emits n, ImpBuilder m, SinkableE e, SubstE Name e, SubstE (AtomSubstVal SimpToImpIR) e )
+  :: (Emits n, ImpBuilder m, SinkableE e, RenameE e, SubstE (AtomSubstVal SimpToImpIR) e )
   => (forall l. (Emits l, DExt n l) => BuilderM SimpToImpIR l (e l))
   -> m n (e n)
 coreToImpBuilder cont = do
@@ -1534,7 +1534,7 @@ impInstrTypes instr = case instr of
   where hostPtrTy ty = PtrType (CPU, ty)
 
 instance CheckableE ImpFunction where
-  checkE = substM -- TODO!
+  checkE = renameM -- TODO!
 
 -- TODO: Don't use Core Envs for Imp!
 instance BindsEnv ImpDecl where

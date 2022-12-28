@@ -850,7 +850,7 @@ instance GenericE IxExpr where
 
 instance HoistableE IxExpr
 instance SinkableE IxExpr
-instance SubstE Name IxExpr
+instance RenameE IxExpr
 
 instance GenericE Access where
   type RepE Access = EitherE4
@@ -874,7 +874,7 @@ instance GenericE Access where
 
 instance HoistableE Access
 instance SinkableE Access
-instance SubstE Name Access
+instance RenameE Access
 
 instance GenericE AccessInfo where
   type RepE AccessInfo = PairE (LiftE Count) Access
@@ -884,8 +884,7 @@ instance GenericE AccessInfo where
   {-# INLINE toE #-}
 
 instance HoistableE AccessInfo
-instance SubstE Name AccessInfo
+instance RenameE AccessInfo
 
 instance Hashable UsageInfo
 instance Store UsageInfo
-

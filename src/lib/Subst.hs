@@ -1,0 +1,535 @@
+-- Copyright 2022 Google LLC
+--
+-- Use of this source code is governed by a BSD-style
+-- license that can be found in the LICENSE file or at
+-- https://developers.google.com/open-source/licenses/bsd
+
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+
+module Subst where
+
+import Control.Applicative
+import Control.Monad.Identity
+import Control.Monad.Reader
+import Control.Monad.State.Strict
+import Data.Functor
+import qualified Data.List.NonEmpty    as NE
+
+import Name
+import Types.Primitives
+import Types.Core
+import Core
+import qualified RawName as R
+import Err
+
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE MagicHash #-}
+
+-- === SubstReader class ===
+
+class (SinkableV v, Monad2 m) => SubstReader (v::V) (m::MonadKind2) | m -> v where
+   getSubst :: m i o (Subst v i o)
+   withSubst :: Subst v i' o -> m i' o a -> m i o a
+
+lookupSubstM :: (Color c, SubstReader v m) => Name c i -> m i o (v c o)
+lookupSubstM name = (!name) <$> getSubst
+
+dropSubst :: (SubstReader v m, FromName v) => m o o r -> m i o r
+dropSubst cont = withSubst idSubst cont
+{-# INLINE dropSubst #-}
+
+extendSubst :: SubstReader v m => SubstFrag v i i' o -> m i' o r -> m i o r
+extendSubst frag cont = do
+  env <- (<>>frag) <$> getSubst
+  withSubst env cont
+{-# INLINE extendSubst #-}
+
+-- XXX: this only (monadically) visits each name once, even if a name has
+-- multiple occurrences. So don't use it to count occurrences or anything like
+-- that! It's not deliberate. It's just an accident of the implementation, where
+-- we gather the (de-duplicated) free names and then traverse them. At some
+-- point we may add a monadic traversal to `Subst{E,B}`, which would actually
+-- visit each occurrence.
+traverseNames
+  :: forall v e m i o.
+     (SubstE v e, HoistableE e, SinkableE e, FromName v, ScopeReader m)
+  => (forall c. Color c => Name c i -> m o (v c o))
+  -> e i -> m o (e o)
+traverseNames f e = do
+  let vs = freeVarsE e
+  m <- flip R.traverseWithKey vs \rawName (SubstItem fs _) ->
+    interpretColor (substItemColor fs) \(ColorProxy :: ColorProxy c) -> do
+      v' <- f (UnsafeMakeName rawName :: Name c i)
+      return $ SubstItem fs (unsafeCoerceVC v')
+  fmapNamesM (applyTraversed m) e
+{-# INLINE traverseNames #-}
+
+applyTraversed :: (FromName v, Color c)
+               => RawNameMap (SubstItem v n) -> Name c i -> v c n
+applyTraversed m = \((UnsafeMakeName v) :: Name c i) -> case R.lookup v m of
+    Just item -> case fromSubstItem item of
+      Just val' -> val'
+      Nothing -> error "shouldn't happen"
+    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)
+
+fmapNames :: (SubstE v e, Distinct o)
+          => Scope o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
+fmapNames scope f e = substE (scope, newSubst f) e
+{-# INLINE fmapNames #-}
+
+fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
+          => (forall c. Color c => Name c i -> v c o)
+          -> e i -> m o (e o)
+fmapNamesM f e = do
+  scope <- unsafeGetScope
+  Distinct <- getDistinct
+  return $ substE (scope, newSubst f) e
+{-# INLINE fmapNamesM #-}
+
+-- === type classes for traversing names ===
+
+class FromName v => SubstE (v::V) (e::E) where
+  -- TODO: can't make an alias for these constraints because of impredicativity
+  substE :: Distinct o => (Scope o, Subst v i o) -> e i -> e o
+
+  default substE :: (GenericE e, SubstE v (RepE e), Distinct o)
+                 => (Scope o, Subst v i o) -> e i -> e o
+  substE env e = toE $ substE env (fromE e)
+
+class (FromName v, SinkableB b) => SubstB (v::V) (b::B) where
+  substB
+    :: Distinct o
+    => (Scope o, Subst v i o)
+    -> b i i'
+    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b o o' -> a)
+    -> a
+
+  default substB
+    :: (GenericB b, SubstB v (RepB b))
+    => Distinct o
+    => (Scope o, Subst v i o)
+    -> b i i'
+    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b o o' -> a)
+    -> a
+  substB env b cont =
+    substB env (fromB b) \env' b' ->
+      cont env' $ toB b'
+
+class ( FromName substVal, SinkableV v
+      , forall c. Color c => SubstE substVal (v c))
+      => SubstV (substVal::V) (v::V)
+
+instance (Color c, SinkableV v, FromName v) => SubstB v (NameBinder c) where
+  substB (scope, env) b cont = do
+    withFresh (getNameHint b) scope \b' -> do
+      let scope' = scope `extendOutMap` toScopeFrag b'
+      let UnsafeMakeName bn  = binderName b
+      let UnsafeMakeName bn' = binderName b'
+      let env' = case env of
+                   UnsafeMakeIdentitySubst | bn == bn' -> UnsafeMakeIdentitySubst
+                   _ -> sink env <>> b @> (fromName $ binderName b')
+      cont (scope', env') b'
+
+type AtomSubstVal r = SubstVal AtomNameC (Atom r)
+
+instance (SinkableE atom, RenameE atom) => RenameV (SubstVal cMatch atom) where
+
+substM :: (SubstReader v m, ScopeReader2 m, SinkableE e, SubstE v e, FromName v)
+       => e i -> m i o (e o)
+substM e = do
+  env <- getSubst
+  case tryApplyIdentitySubst env e of
+    Just e' -> return $ e'
+    Nothing -> do
+      WithScope scope env' <- addScope env
+      sinkM $ fmapNames scope (env'!) e
+{-# INLINE substM #-}
+
+fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
+fromConstAbs (Abs b e) = hoist b e
+
+-- === rename-only substitutions ===
+
+extendRenamer :: (SubstReader v m, FromName v) => SubstFrag Name i i' o -> m i' o r -> m i o r
+extendRenamer frag = extendSubst (fmapSubstFrag (const fromName) frag)
+
+applyRename
+  :: (ScopeReader m, RenameE e, SinkableE e)
+  => Ext h o => SubstFrag Name h i o -> e i -> m o (e o)
+applyRename substFrag x = do
+  Distinct <- getDistinct
+  scope <- unsafeGetScope
+  let subst = sink idSubst <>> substFrag
+  case tryApplyIdentitySubst subst x of
+    Just x' -> return x'
+    Nothing -> return $ renameE (scope, newSubst (subst!)) x
+{-# INLINE applyRename #-}
+
+renameM
+  :: (SubstReader Name m, ScopeReader2 m, SinkableE e, RenameE e)
+  => e i -> m i o (e o)
+renameM e = do
+  env <- getSubst
+  case tryApplyIdentitySubst env e of
+    Just e' -> return $ e'
+    Nothing -> do
+      WithScope scope env' <- addScope env
+      sinkM $ renameE (scope, newSubst (env'!)) e
+{-# INLINE renameM #-}
+
+renameBinders
+  :: (EnvExtender2 m, SubstReader Name m, RenameB b, BindsEnv b)
+  => b i i'
+  -> (forall o'. DExt o o' => b o o' -> m i' o' a)
+  -> m i o a
+renameBinders b cont = do
+  ab <- renameM $ Abs b $ idSubstFrag b
+  refreshAbs ab \b' subst -> extendSubst subst $ cont b'
+{-# INLINE renameBinders #-}
+
+-- === various convenience utilities ===
+
+applySubstFragPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
+                   => Scope o -> SubstFrag v h i o -> e i -> e o
+applySubstFragPure scope substFrag x = do
+  let fullSubst = sink idSubst <>> substFrag
+  applySubstPure scope fullSubst x
+
+applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Distinct o)
+               => Scope o -> Subst v i o -> e i -> e o
+applySubstPure scope subst x = do
+  case tryApplyIdentitySubst subst x of
+    Just x' -> x'
+    Nothing -> fmapNames scope (subst !) x
+
+applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
+           => Ext h o
+           => SubstFrag v h i o -> e i -> m o (e o)
+applySubst substFrag x = do
+  Distinct <- getDistinct
+  scope <- unsafeGetScope
+  return $ applySubstFragPure scope substFrag x
+{-# INLINE applySubst #-}
+
+applyAbs :: ( SinkableV v, SinkableE e
+            , FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
+         => Abs b e n -> v c n -> m n (e n)
+applyAbs (Abs b body) x = applySubst (b@>x) body
+{-# INLINE applyAbs #-}
+
+applyNaryAbs :: ( SinkableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
+                , SubstB v b, SinkableE e)
+             => Abs b e n -> [v c n] -> m n (e n)
+applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
+{-# INLINE applyNaryAbs #-}
+
+substBinders
+  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, RenameV v, RenameB b, BindsEnv b)
+  => b i i'
+  -> (forall o'. DExt o o' => b o o' -> m i' o' a)
+  -> m i o a
+substBinders b cont = do
+  substBindersFrag b \subst b' -> extendSubst subst $ cont b'
+{-# INLINE substBinders #-}
+
+substBindersFrag
+  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, RenameV v, RenameB b, BindsEnv b)
+  => b i i'
+  -> (forall o'. DExt o o' => SubstFrag v i i' o' -> b o o' -> m i o' a)
+  -> m i o a
+substBindersFrag b cont = do
+  ab <- substM $ Abs b $ idSubstFrag b
+  refreshAbs ab \b' subst -> cont subst b'
+{-# INLINE substBindersFrag #-}
+
+-- === subst monad ===
+
+-- Only alllows non-trivial substitution with names that match the parameter
+-- `cMatch`. For example, this lets us substitute ordinary variables in Core
+-- with Atoms, while ensuring that things like data def names only get renamed.
+data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
+  SubstVal :: atom n   -> SubstVal c      atom c n
+  Rename   :: Name c n -> SubstVal cMatch atom c n
+
+withFreshM :: (ScopeExtender m, Color c)
+           => NameHint
+           -> (forall o'. (DExt o o') => NameBinder c o o' -> m o' a)
+           -> m o a
+withFreshM hint cont = refreshAbsScope (newName hint) \b _ -> cont b
+
+class ColorsNotEqual a b where
+  notEqProof :: ColorsEqual a b -> r
+
+instance (Color c, ColorsNotEqual cMatch c)
+         => (SubstE (SubstVal cMatch atom) (Name c)) where
+  substE (_, env) name =
+    case env ! name of
+      Rename name' -> name'
+      SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
+
+instance FromName (SubstVal c v) where
+  fromName = Rename
+  {-# INLINE fromName #-}
+
+instance (SubstE (SubstVal cMatch atom) atom, Color c)
+         => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom c) where
+  substE (_, env) (Rename name) = env ! name
+  substE env (SubstVal val) = SubstVal $ substE env val
+
+instance (SubstE (SubstVal cMatch atom) atom, SinkableE atom)
+         => SubstV (SubstVal cMatch atom) (SubstVal cMatch atom) where
+
+instance (Color c, SinkableE atom, RenameE atom)
+         => RenameE (SubstVal cMatch atom c) where
+  renameE (_, env) (Rename name) = Rename $ env ! name
+  renameE (scope, env) (SubstVal atom) = SubstVal $ renameE (scope, env) atom
+
+-- TODO: we can fill out the full (N^2) set of instances if we need to
+instance ColorsNotEqual AtomNameC DataDefNameC  where notEqProof = \case
+instance ColorsNotEqual AtomNameC ClassNameC    where notEqProof = \case
+instance ColorsNotEqual AtomNameC EffectNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC EffectOpNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
+instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ImpFunNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
+instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ImpNameC      where notEqProof = \case
+
+instance ColorsNotEqual ImpNameC AtomNameC      where notEqProof = \case
+instance ColorsNotEqual ImpNameC EffectNameC    where notEqProof = \case
+instance ColorsNotEqual ImpNameC HandlerNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC DataDefNameC   where notEqProof = \case
+instance ColorsNotEqual ImpNameC InstanceNameC  where notEqProof = \case
+instance ColorsNotEqual ImpNameC SpecializedDictNameC  where notEqProof = \case
+instance ColorsNotEqual ImpNameC ClassNameC     where notEqProof = \case
+
+-- === SubstReaderT transformer ===
+
+newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
+  SubstReaderT { runSubstReaderT' :: ReaderT (Subst v i o) (m o) a }
+
+instance (forall n. Functor (m n)) => Functor (SubstReaderT v m i o) where
+  fmap f (SubstReaderT m) = SubstReaderT $ fmap f m
+  {-# INLINE fmap #-}
+
+instance Monad1 m => Applicative (SubstReaderT v m i o) where
+  pure   = SubstReaderT . pure
+  {-# INLINE pure #-}
+  liftA2 f (SubstReaderT x) (SubstReaderT y) = SubstReaderT $ liftA2 f x y
+  {-# INLINE liftA2 #-}
+  (SubstReaderT f) <*> (SubstReaderT x) = SubstReaderT $ f <*> x
+  {-# INLINE (<*>) #-}
+
+instance (forall n. Monad (m n)) => Monad (SubstReaderT v m i o) where
+  return = SubstReaderT . return
+  {-# INLINE return #-}
+  (SubstReaderT m) >>= f = SubstReaderT (m >>= (runSubstReaderT' . f))
+  {-# INLINE (>>=) #-}
+
+deriving instance (Monad1 m, MonadFail1   m) => MonadFail   (SubstReaderT v m i o)
+deriving instance (Monad1 m, Alternative1 m) => Alternative (SubstReaderT v m i o)
+deriving instance (Fallible1 m) => Fallible (SubstReaderT v m i o)
+deriving instance Catchable1 m => Catchable (SubstReaderT v m i o)
+deriving instance CtxReader1 m => CtxReader (SubstReaderT v m i o)
+
+type ScopedSubstReader (v::V) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
+
+liftSubstReaderT :: Monad1 m => m o a -> SubstReaderT v m i o a
+liftSubstReaderT m = SubstReaderT $ lift m
+{-# INLINE liftSubstReaderT #-}
+
+runScopedSubstReader :: Distinct o => Scope o -> Subst v i o
+                   -> ScopedSubstReader v i o a -> a
+runScopedSubstReader scope env m =
+  runIdentity $ runScopeReaderT scope $ runSubstReaderT env m
+{-# INLINE runScopedSubstReader #-}
+
+runSubstReaderT :: Subst v i o -> SubstReaderT v m i o a -> m o a
+runSubstReaderT env m = runReaderT (runSubstReaderT' m) env
+{-# INLINE runSubstReaderT #-}
+
+instance (SinkableV v, Monad1 m) => SubstReader v (SubstReaderT v m) where
+  getSubst = SubstReaderT ask
+  {-# INLINE getSubst #-}
+  withSubst env (SubstReaderT cont) = SubstReaderT $ withReaderT (const env) cont
+  {-# INLINE withSubst #-}
+
+instance (SinkableV v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
+  unsafeGetScope = SubstReaderT $ lift unsafeGetScope
+  {-# INLINE unsafeGetScope #-}
+  getDistinct = SubstReaderT $ lift getDistinct
+  {-# INLINE getDistinct #-}
+
+instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
+  unsafeGetEnv = SubstReaderT $ lift unsafeGetEnv
+  {-# INLINE unsafeGetEnv #-}
+
+instance (SinkableV v, ScopeReader m, EnvExtender m)
+         => EnvExtender (SubstReaderT v m i) where
+  refreshAbs ab cont = SubstReaderT $ ReaderT \subst ->
+    refreshAbs ab \b e -> do
+      subst' <- sinkM subst
+      let SubstReaderT (ReaderT cont') = cont b e
+      cont' subst'
+  {-# INLINE refreshAbs #-}
+
+type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
+
+liftSubstEnvReaderM
+  :: (EnvReader m, FromName v)
+  => SubstEnvReaderM v n n a
+  -> m n a
+liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
+{-# INLINE liftSubstEnvReaderM #-}
+
+instance (SinkableV v, ScopeReader m, ScopeExtender m)
+         => ScopeExtender (SubstReaderT v m i) where
+  refreshAbsScope ab cont = SubstReaderT $ ReaderT \env ->
+    refreshAbsScope ab \b e -> do
+      let SubstReaderT (ReaderT cont') = cont b e
+      env' <- sinkM env
+      cont' env'
+
+instance (SinkableV v, MonadIO1 m) => MonadIO (SubstReaderT v m i o) where
+  liftIO m = SubstReaderT $ lift $ liftIO m
+  {-# INLINE liftIO #-}
+
+instance (Monad1 m, MonadState (s o) (m o)) => MonadState (s o) (SubstReaderT v m i o) where
+  state = SubstReaderT . lift . state
+  {-# INLINE state #-}
+
+instance (Monad1 m, MonadReader (r o) (m o)) => MonadReader (r o) (SubstReaderT v m i o) where
+  ask = SubstReaderT $ ReaderT $ const ask
+  {-# INLINE ask #-}
+  local r (SubstReaderT (ReaderT f)) = SubstReaderT $ ReaderT $ \env ->
+    local r $ f env
+  {-# INLINE local #-}
+
+-- === reductions ===
+
+getProjection :: [Projection] -> Atom r n -> Atom r n
+getProjection [] a = a
+getProjection (i:is) a = case getProjection is a of
+  Var name -> ProjectElt (i NE.:| []) name
+  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
+  Con (ProdCon xs) -> xs !! iProd
+  Con (Newtype _ x) | (i ==  UnwrapBaseNewtype) || (i == UnwrapCompoundNewtype) -> x
+  DepPair l _ _ | iProd == 0 -> l
+  DepPair _ r _ | iProd == 1 -> r
+  ACase scrut alts resultTy -> ACase scrut alts' resultTy'
+    where
+      alts' = alts <&> \(Abs bs body) -> Abs bs $ getProjection [i] body
+      resultTy' = case resultTy of
+        ProdTy tys -> tys !! iProd
+        -- We can't handle all cases here because we'll end up needing access to
+        -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
+        -- do away with it.
+        _ -> error "oops"
+  RepValAtom (DRepVal projs ty tree) -> RepValAtom $ DRepVal (i:projs) ty tree
+  a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
+  where
+    iProd = case i of
+      ProjectProduct i' -> i'
+      _ -> error $ "Not a product projection"
+
+-- === instances ===
+
+instance SinkableE atom => SinkableV (SubstVal (cMatch::C) (atom::E))
+instance SinkableE atom => SinkableE (SubstVal (cMatch::C) (atom::E) (c::C)) where
+  sinkingProofE fresh substVal = case substVal of
+    Rename name  -> Rename   $ sinkingProofE fresh name
+    SubstVal val -> SubstVal $ sinkingProofE fresh val
+
+instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
+  substE env (Abs b body) = do
+    substB env b \env' b' -> Abs b' $ substE env' body
+
+instance ( BindsNames b1, SubstB v b1
+         , BindsNames b2, SubstB v b2
+         , SinkableV v, FromName v)
+         => SubstB v (PairB b1 b2) where
+  substB env (PairB b1 b2) cont =
+    substB env b1 \env' b1' ->
+      substB env' b2 \env'' b2' ->
+        cont env'' $ PairB b1' b2'
+
+instance (SinkableE e, SubstE v e) => SubstB v (LiftB e) where
+  substB env@(_, subst) (LiftB e) cont = case tryApplyIdentitySubst subst e of
+    Just e' -> cont env $ LiftB e'
+    Nothing -> cont env $ LiftB $ substE env e
+  {-# INLINE substB #-}
+
+instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
+  substB env (LeftB b) cont =
+    substB env b \env' b' ->
+      cont env' $ LeftB b'
+  substB env (RightB b) cont =
+    substB env b \env' b' ->
+      cont env' $ RightB b'
+
+instance (Color c, SinkableE ann, SubstE v ann, SinkableV v) => SubstB v (BinderP c ann)
+instance (BindsNames b, SubstB v b, SinkableV v)
+         => SubstB v (Nest b) where
+  substB env (Nest b bs) cont =
+    substB env b \env' b' ->
+      substB env' bs \env'' bs' ->
+        cont env'' $ Nest b' bs'
+  substB env Empty cont = cont env Empty
+
+instance FromName v => SubstE v UnitE where
+  substE _ UnitE = UnitE
+
+instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
+  substE env (ComposeE xs) = ComposeE $ fmap (substE env) xs
+
+instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
+  substE env (PairE x y) = PairE (substE env x) (substE env y)
+
+instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
+  substE env (LeftE  x) = LeftE  $ substE env x
+  substE env (RightE x) = RightE $ substE env x
+
+instance FromName v => SubstE v VoidE where
+  substE _ _ = error "impossible"
+
+instance FromName v => SubstE v (LiftE a) where
+  substE _ (LiftE x) = LiftE x
+
+instance SubstE v e => SubstE v (ListE e) where
+  substE env (ListE xs) = ListE $ map (substE env) xs
+
+instance SubstE v e => SubstE v (NonEmptyListE e) where
+  substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
+
+instance (p ~ True => SubstE v e, FromName v) => SubstE v (WhenE p e) where
+  substE (scope, subst) (WhenE e) = WhenE $ substE (scope, subst) e
+
+instance SubstV substVal v => SubstE substVal (SubstFrag v i i') where
+   substE env frag = fmapSubstFrag (\_ val -> substE env val) frag
+
+instance SubstV substVal v => SubstE substVal (Subst v i) where
+  substE env = \case
+    Subst f frag -> Subst (\n -> substE env (f n)) $ substE env frag
+    UnsafeMakeIdentitySubst
+      -> Subst (\n -> substE env (fromName $ unsafeCoerceE n)) emptyInFrag
+
+instance (SubstE v e0, SubstE v e1, SubstE v e2,
+          SubstE v e3, SubstE v e4, SubstE v e5,
+          SubstE v e6, SubstE v e7)
+            => SubstE v (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
+  substE env = \case
+    Case0 e -> Case0 $ substE env e
+    Case1 e -> Case1 $ substE env e
+    Case2 e -> Case2 $ substE env e
+    Case3 e -> Case3 $ substE env e
+    Case4 e -> Case4 $ substE env e
+    Case5 e -> Case5 $ substE env e
+    Case6 e -> Case6 $ substE env e
+    Case7 e -> Case7 $ substE env e
+  {-# INLINE substE #-}

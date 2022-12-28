@@ -46,6 +46,7 @@ import Interpreter
 import LabeledItems
 import MTL1
 import Name
+import Subst
 import PPrint (pprintCanonicalized, prettyBlock)
 import QueryType
 import Types.Core
@@ -68,7 +69,7 @@ data UDeclInferenceResult e n =
    UDeclResultDone (e n)  -- used for UDataDefDecl, UInterface and UInstance
  | UDeclResultWorkRemaining (CBlock n) (Abs UDecl e n) -- used for ULet
 
-inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
+inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
   PairE def' (Abs ddbs' (ListE cbs')) <- liftInfererM $ solveLocal $ inferDataDef def
@@ -77,7 +78,7 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
   dcs' <- forM (enumerate cbs') \(i, cbs'') ->
     emitDataConName defName i =<< dataConDefAsAtom (Abs ddbs' cbs'') defName i
   let subst = tc @> tc' <.> dcs @@> dcs'
-  UDeclResultDone <$> applySubst subst result
+  UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
   let classSourceName = uBinderSourceName className
   let methodSourceNames = nestToList uBinderSourceName methodNames
@@ -89,7 +90,7 @@ inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) 
       let UMethodType (Right explicits) _ = ty
       emitMethod (getNameHint prettyName) className' explicits i
   let subst = className @> className' <.> methodNames @@> methodNames'
-  UDeclResultDone <$> applySubst subst result
+  UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInstance className bs params methods maybeName) result = do
   let (InternalName _ className') = className
   -- XXX: we use `buildDeclsInf` even though we don't actually emit any decls
@@ -114,7 +115,7 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
     JustB instanceName' -> do
       lam <- instanceFun instanceName
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
-      applySubst (instanceName' @> instanceAtomName) result
+      applyRename (instanceName' @> instanceAtomName) result
     _ -> error "impossible"
 inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
   block <- liftInfererM $ solveLocal $ buildBlockInf do
@@ -138,7 +139,7 @@ inferTopUDecl (UEffectDecl opTys effName opNames) result = do
     forM (enumerate effOpSourceNames) \(i, opName) -> do
       emitEffectOpDef effName' i opName
   let subst = effName @> effName' <.> opNames @@> opNames'
-  UDeclResultDone <$> applySubst subst result
+  UDeclResultDone <$> applyRename subst result
 -- TODO(alex): handle retEff
 inferTopUDecl (UHandlerDecl effName bodyTyArg tyArgs _retEff retTy opDefs handlerName) result =
   do let (InternalName _ effName') = effName
@@ -155,7 +156,7 @@ inferTopUDecl (UHandlerDecl effName bodyTyArg tyArgs _retEff retTy opDefs handle
      let handler = HandlerDef effName' bodyTyArg' tyArgs' Pure retTy' ops' retOp'
      handlerName' <- emitHandlerDef handlerSourceName handler
      let subst = handlerName @> handlerName'
-     UDeclResultDone <$> applySubst subst result
+     UDeclResultDone <$> applyRename subst result
 {-# SCC inferTopUDecl #-}
 
 checkHandlerBody :: EmitsInf o
@@ -190,7 +191,7 @@ checkHandlerOp :: EmitsInf o
                -> UEffectOpDef i
                -> InfererM i o (Int, CBlock o)
 checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) = do
-  EffectOpDef effName' (OpIdx opIdx) <- substM opName >>= lookupEffectOpDef
+  EffectOpDef effName' (OpIdx opIdx) <- renameM opName >>= lookupEffectOpDef
   EffectDef _ ops <- lookupEffectDef effName'
   let (_, EffectOpType pol' opTy) = ops !! opIdx
   when (effName /= effName') $ throw TypeErr
@@ -226,19 +227,19 @@ inferEffOpType (UEffectOpType policy ty) = do
 
 -- We use this to finish the processing the decl after we've completely
 -- evaluated the right-hand side
-applyUDeclAbs :: (Mut n, TopBuilder m, SinkableE e, SubstE Name e, MonadIO1 m)
+applyUDeclAbs :: (Mut n, TopBuilder m, SinkableE e, RenameE e, MonadIO1 m)
               => Abs UDecl e n -> CAtom n -> m n (e n)
 applyUDeclAbs (Abs decl result) x = case decl of
   ULet letAnn (UPatAnn pat _) _ -> do
     v <- emitTopLet (getNameHint pat) letAnn (Atom x)
     case pat of
-      WithSrcB _ (UPatBinder b) -> applySubst (b@>v) result
+      WithSrcB _ (UPatBinder b) -> applyRename (b@>v) result
       _ -> do
         atomSubst <- liftInterpM do
           x' <- evalAtom (Var v)
           matchUPat pat x'
         nameSubst <- emitAtomSubstFrag atomSubst
-        applySubst nameSubst result
+        applyRename nameSubst result
   _ -> error "other top-level decls don't require any computation so we shouldn't get here"
 
 
@@ -264,20 +265,20 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m 
   -- except where it's not possible because the result isn't atom-substitutable,
   -- such as the source map at the top level.
   buildDeclsInfUnzonked
-    :: (SinkableE e, HoistableE e, SubstE Name e)
+    :: (SinkableE e, HoistableE e, RenameE e)
     => EmitsInf n
     => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
     -> m n (Abs (Nest CDecl) e n)
 
   buildAbsInf
-    :: (SinkableE e, HoistableE e, SubstE Name e, Color c, ToBinding binding c)
+    :: (SinkableE e, HoistableE e, RenameE e, Color c, ToBinding binding c)
     => EmitsInf n
     => NameHint -> binding n
     -> (forall l. (EmitsInf l, DExt n l) => Name c l -> m l (e l))
     -> m n (Abs (BinderP c binding) e n)
 
 buildDeclsInf
-  :: (SubstE (AtomSubstVal CoreIR) e, SubstE Name e, Solver m, InfBuilder m)
+  :: (SubstE (AtomSubstVal CoreIR) e, RenameE e, Solver m, InfBuilder m)
   => (SinkableE e, HoistableE e)
   => EmitsInf n
   => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
@@ -337,10 +338,10 @@ instance SinkableE Defaults where
   sinkingProofE _ _ = todoSinkableProof
 instance HoistableE Defaults where
   freeVarsE (Defaults d1 d2) = d1 <> d2
-instance SubstE Name Defaults where
-  substE env (Defaults d1 d2) = Defaults (substDefaultSet d1) (substDefaultSet d2)
+instance RenameE Defaults where
+  renameE env (Defaults d1 d2) = Defaults (substDefaultSet d1) (substDefaultSet d2)
     where
-      substDefaultSet d = freeVarsE $ substE env $ ListE $ nameSetToList @AtomNameC d
+      substDefaultSet d = freeVarsE $ renameE env $ ListE $ nameSetToList @AtomNameC d
 
 instance Pretty (Defaults n) where
   pretty (Defaults ints nats) =
@@ -380,7 +381,7 @@ instance GenericB InfOutFrag where
     InfOutFrag emissions defaults solverSubst
 
 instance ProvesExt   InfOutFrag
-instance SubstB Name InfOutFrag
+instance RenameB InfOutFrag
 instance BindsNames  InfOutFrag
 instance SinkableB InfOutFrag
 instance HoistableB  InfOutFrag
@@ -503,7 +504,7 @@ instance GenericE RequiredIfaces where
     _ -> error "unreachable"
   {-# INLINE toE #-}
 instance SinkableE RequiredIfaces
-instance SubstE Name RequiredIfaces
+instance RenameE RequiredIfaces
 instance HoistableE  RequiredIfaces
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
@@ -676,7 +677,7 @@ type InferenceNameBinders = Nest (BinderP AtomNameC (SolverBinding CoreIR))
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
 hoistThroughDecls
-  :: ( SubstE Name e, HoistableE e, Fallible1 m, ScopeReader m, EnvExtender m)
+  :: ( RenameE e, HoistableE e, Fallible1 m, ScopeReader m, EnvExtender m)
   => InfOutFrag n l
   ->   e l
   -> m n (Abs InfOutFrag (Abs (Nest CDecl) e) n)
@@ -975,7 +976,7 @@ checkOrInferRho :: forall i o. EmitsBoth o
 checkOrInferRho hint (WithSrcE pos expr) reqTy = do
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
   UVar ~(InternalName _ v) -> do
-    substM v >>= inferUVar >>= instantiateSigma >>= matchRequirement
+    renameM v >>= inferUVar >>= instantiateSigma >>= matchRequirement
   ULam (ULamExpr ImplicitArrow (UPatAnn p ann) body) -> do
     argTy <- checkAnn ann
     v <- freshInferenceName argTy
@@ -1314,7 +1315,7 @@ inferFunNoInstantiation expr@(WithSrcE pos expr') = do
  addSrcContext pos $ case expr' of
   UVar ~(InternalName _ v) -> do
     -- XXX: deliberately no instantiation!
-    substM v >>= inferUVar
+    renameM v >>= inferUVar
   _ -> inferRho noHint expr
 
 type UExprArg n = (SrcPosCtx, UExpr n)
@@ -1582,7 +1583,7 @@ dictTypeFun v = do
       Empty -> DictTy $ DictType classSourceName className $ map Var params
       Nest (RolePiBinder b ty _ _) rest -> do
         let lamExpr = UnaryLamExpr (b:>ty) $ AtomicBlock $ go classSourceName rest className params
-        lamExprToAtom lamExpr PlainArrow (Just $ toConstAbsPure Pure)
+        lamExprToAtom lamExpr PlainArrow (Just $ Abs (b:>ty) Pure)
 
 -- TODO: cache this with the instance def (requires a recursive binding)
 instanceFun :: EnvReader m => InstanceName n -> m n (CAtom n)
@@ -1599,7 +1600,7 @@ instanceFun instanceName = do
       Nest (RolePiBinder b ty arr _) rest -> do
         let restAtom = go rest name args
         let lamExpr = UnaryLamExpr (b:>ty) (AtomicBlock restAtom)
-        lamExprToAtom lamExpr arr (Just $ toConstAbsPure Pure)
+        lamExprToAtom lamExpr arr (Just $ Abs (b:>ty) Pure)
 
 buildTyConLam
   :: ScopableBuilder CoreIR m
@@ -1778,7 +1779,7 @@ withClassDefBinders bs cont = case bs of
     return $ Abs (Nest b' rest') body
 
 withSuperclassBinders
-  :: (SinkableE e, SubstE Name e, HoistableE e, EmitsInf o)
+  :: (SinkableE e, RenameE e, HoistableE e, EmitsInf o)
   => [CType o]
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (e o'))
   -> InfererM i o (Abs SuperclassBinders e o)
@@ -1787,7 +1788,7 @@ withSuperclassBinders tys cont = do
   return $ Abs (SuperclassBinders bs tys) e
 
 withSuperclassBindersRec
-  :: (SinkableE e, SubstE Name e, HoistableE e, EmitsInf o)
+  :: (SinkableE e, RenameE e, HoistableE e, EmitsInf o)
   => [CType o]
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (e o'))
   -> InfererM i o (Abs (Nest AtomNameBinder) e o)
@@ -1870,7 +1871,7 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ argTy arr) 
         checkSigma noHint body resultTy
 
 checkInstanceArgs
-  :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
+  :: (EmitsInf o, SinkableE e, RenameE e, HoistableE e)
   => Nest UPatAnnArrow i i'
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (RolePiBinder CoreIR)) e o)
@@ -1902,7 +1903,7 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
 -- Nothing about the implementation was instance-specific. This seems
 -- right. If not, at least we only need to change this definition.
 checkHandlerArgs
-  :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
+  :: (EmitsInf o, SinkableE e, RenameE e, HoistableE e)
   => Nest UPatAnnArrow i i'
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (PiBinder CoreIR)) e o)
@@ -1912,7 +1913,7 @@ checkHandlerArgs bs cont = do
   return $ Abs bs'' result
 
 checkHandlerBodyTyArg
-  :: (EmitsInf o, SinkableE e, SubstE Name e, HoistableE e)
+  :: (EmitsInf o, SinkableE e, RenameE e, HoistableE e)
   => UBinder AtomNameC i i'
   -> (forall o'. (EmitsInf o', Ext o o') => CAtomName o' -> InfererM i' o' (e o'))
   -> InfererM i o (Abs (PiBinder CoreIR) e o)
@@ -1924,7 +1925,7 @@ checkHandlerBodyTyArg b cont = do
 
 checkInstanceParams
   :: forall i o e.
-     (EmitsInf o, SinkableE e, HoistableE e, SubstE Name e)
+     (EmitsInf o, SinkableE e, HoistableE e, RenameE e)
   => [UType i]
   -> (forall o'. (EmitsInf o', Ext o o') => [CType o'] -> InfererM i o' (e o'))
   -> InfererM i o (Abs (Nest (RolePiBinder CoreIR)) e o)
@@ -1963,7 +1964,7 @@ checkInstanceBody className params methods = do
 
 introDicts
   :: forall i o e.
-     (EmitsInf o, SinkableE e, HoistableE e, SubstE Name e)
+     (EmitsInf o, SinkableE e, HoistableE e, RenameE e)
   => [CType o]
   -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (e l))
   -> InfererM i o (Abs (Nest (RolePiBinder CoreIR)) e o)
@@ -1987,7 +1988,7 @@ introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_
 checkMethodDef :: EmitsInf o
                => ClassName o -> [MethodType o] -> UMethodDef i -> InfererM i o (Int, CBlock o)
 checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs) = do
-  MethodBinding className' i _ <- substM v >>= lookupEnv
+  MethodBinding className' i _ <- renameM v >>= lookupEnv
   when (className /= className') do
     ClassBinding (ClassDef classSourceName _ _ _ _) <- lookupEnv className
     throw TypeErr $ pprint sourceName ++ " is not a method of "
@@ -2002,7 +2003,7 @@ checkUEffRow :: EmitsInf o => UEffectRow i -> InfererM i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
    t' <- forM t \(SIInternalName _ v) -> do
-            v' <- substM v
+            v' <- renameM v
             constrainVarTy v' EffKind
             return v'
    return $ EffectRow effs' t'
@@ -2010,13 +2011,13 @@ checkUEffRow (EffectRow effs t) = do
 checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect o)
 checkUEff eff = case eff of
   RWSEffect rws (Just ~(SIInternalName _ region)) -> do
-    region' <- substM region
+    region' <- renameM region
     constrainVarTy region' TyKind
     return $ RWSEffect rws $ Just region'
   RWSEffect rws Nothing -> return $ RWSEffect rws Nothing
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
-  UserEffect ~(SIInternalName _ name) -> UserEffect <$> substM name
+  UserEffect ~(SIInternalName _ name) -> UserEffect <$> renameM name
   InitEffect -> return InitEffect
 
 constrainVarTy :: EmitsInf o => CAtomName o -> CType o -> InfererM i o ()
@@ -2041,7 +2042,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
 getCaseAltIndex :: UPat i i' -> InfererM i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
   UPatCon ~(InternalName _ conName) _ -> do
-    (_, con) <- substM conName >>= getDataCon
+    (_, con) <- renameM conName >>= getDataCon
     return $ ConAlt con
   UPatVariant (LabeledItems lmap) label _ -> do
     let i = case M.lookup label lmap of
@@ -2059,7 +2060,7 @@ checkCasePat :: EmitsBoth o
              -> InfererM i o (Alt CoreIR o)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
   UPatCon ~(InternalName _ conName) ps -> do
-    (dataDefName, con) <- substM conName >>= getDataCon
+    (dataDefName, con) <- renameM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     DataConDef _ repTy idxs <- return $ cons !! con
     when (length idxs /= nestLength ps) $ throw TypeErr $
@@ -2098,7 +2099,7 @@ inferParams (Abs paramBs body) = case paramBs of
   Empty -> return (DataDefParams [], body)
   Nest (RolePiBinder b ty PlainArrow _) bs -> do
     x <- freshInferenceName ty
-    rest <- applySubst (b@>x) $ Abs bs body
+    rest <- applyRename (b@>x) $ Abs bs body
     (DataDefParams params, body') <- inferParams rest
     return (DataDefParams ((PlainArrow, (Var x)) : params), body')
   Nest (RolePiBinder b ty ClassArrow _) bs -> do
@@ -2143,7 +2144,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       bindLamPat p2 x2 do
         cont
   UPatCon ~(InternalName _ conName) ps -> do
-    (dataDefName, _) <- getDataCon =<< substM conName
+    (dataDefName, _) <- getDataCon =<< renameM conName
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     case cons of
       [DataConDef _ _ idxs] -> do
@@ -2462,9 +2463,9 @@ instance GenericB SolverOutFrag where
   toB   (PairB em (LiftB subst)) = SolverOutFrag em subst
 
 instance ProvesExt   SolverOutFrag
-instance SubstB Name SolverOutFrag
+instance RenameB     SolverOutFrag
 instance BindsNames  SolverOutFrag
-instance SinkableB SolverOutFrag
+instance SinkableB   SolverOutFrag
 
 instance OutFrag SolverOutFrag where
   emptyOutFrag = SolverOutFrag REmpty emptySolverSubst
@@ -2607,7 +2608,7 @@ instance GenericE SolverSubst where
   {-# INLINE toE #-}
 
 instance SinkableE SolverSubst where
-instance SubstE Name SolverSubst where
+instance RenameE SolverSubst where
 instance HoistableE SolverSubst
 
 constrainEq :: EmitsInf o => CType o -> CType o -> InfererM i o ()
@@ -2787,8 +2788,8 @@ unifyPiType (PiType (PiBinder b1 ann1 arr1) eff1 ty1)
   unless (arr1 == arr2) empty
   unify ann1 ann2
   v <- freshSkolemName ann1
-  PairE eff1' ty1' <- applyAbs (Abs b1 (PairE eff1 ty1)) v
-  PairE eff2' ty2' <- applyAbs (Abs b2 (PairE eff2 ty2)) v
+  PairE eff1' ty1' <- applyRename (b1@>v) (PairE eff1 ty1)
+  PairE eff2' ty2' <- applyRename (b2@>v) (PairE eff2 ty2)
   unify ty1'  ty2'
   unify eff1' eff2'
 
@@ -2798,8 +2799,8 @@ unifyTabPiType (TabPiType b1 ty1) (TabPiType b2 ty2) = do
   let ann2 = binderType b2
   unify ann1 ann2
   v <- freshSkolemName ann1
-  ty1' <- applyAbs (Abs b1 ty1) v
-  ty2' <- applyAbs (Abs b2 ty2) v
+  ty1' <- applyRename (b1@>v) ty1
+  ty2' <- applyRename (b2@>v) ty2
   unify ty1'  ty2'
 
 extendSolution :: CAtomName n -> CType n -> SolverM n ()
@@ -2836,7 +2837,7 @@ freshEff :: (EmitsInf n, Solver m) => m n (EffectRow n)
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 {-# INLINE freshEff #-}
 
-renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, SubstE Name e)
+renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, RenameE e)
                    => e n -> m n (Abs (Nest (NameBinder AtomNameC)) e n)
 renameForPrinting e = do
   infVars <- filterM isInferenceVar $ freeAtomVarsList e
@@ -2847,8 +2848,8 @@ renameForPrinting e = do
   scope <- toScope <$> unsafeGetEnv  -- TODO: figure out how to do it safely
   return $ withManyFresh hints scope \bs' ->
     runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
-      ab' <- sinkM ab
-      e' <- applyNaryAbs ab' $ nestToNames bs'
+      Abs bsAbs eAbs <- sinkM ab
+      e' <- applyRename (bsAbs@@>nestToNames bs') eAbs
       return $ Abs bs' e'
 
 -- === dictionary synthesis ===
@@ -3053,7 +3054,7 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
   SynthPiType (Abs (PiBinder b argTy arr) resultTy) ->
     withFreshBinder (getNameHint b) argTy \b' -> do
       let v = binderName b'
-      resultTy' <- applySubst (b@>v) resultTy
+      resultTy' <- applyRename (b@>v) resultTy
       newGivens <- case arr of
         ClassArrow -> return [Var v]
         _ -> return []
@@ -3197,10 +3198,10 @@ buildLamInf hint arr ty fEff fBody = do
       effs <- fEff v
       body <- withAllowedEffects effs $ buildBlockInf $ sinkM v >>= fBody
       return $ body `PairE` effs
-  return $ lamExprToAtom (UnaryLamExpr (b:>ty) body) arr (Just $ Abs b effs)
+  return $ lamExprToAtom (UnaryLamExpr (b:>ty) body) arr (Just $ Abs (b:>ty) effs)
 
 buildPiAbsInf
-  :: (EmitsInf n, SinkableE e, SubstE Name e, HoistableE e)
+  :: (EmitsInf n, SinkableE e, RenameE e, HoistableE e)
   => NameHint -> Arrow -> CType n
   -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (e l))
   -> InfererM i n (Abs (PiBinder CoreIR) e n)
@@ -3285,8 +3286,8 @@ instance PrettyE e => Pretty (UDeclInferenceResult e l) where
 instance SinkableE e => SinkableE (UDeclInferenceResult e) where
   sinkingProofE = todoSinkableProof
 
-instance (SubstE Name e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
-  checkE (UDeclResultDone e) = UDeclResultDone <$> substM e
+instance (RenameE e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
+  checkE (UDeclResultDone e) = UDeclResultDone <$> renameM e
   checkE (UDeclResultWorkRemaining block _) = do
     block' <- checkE block
     return $ UDeclResultWorkRemaining block'
@@ -3325,7 +3326,7 @@ instance AlphaEqE       SynthType
 instance AlphaHashableE SynthType
 instance SinkableE      SynthType
 instance HoistableE     SynthType
-instance SubstE Name         SynthType
+instance RenameE        SynthType
 instance SubstE (AtomSubstVal CoreIR) SynthType
 
 -- See Note [Confuse GHC] from Simplify.hs
