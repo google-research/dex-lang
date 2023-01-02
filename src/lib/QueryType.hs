@@ -17,7 +17,7 @@ module QueryType (
   numNaryPiArgs, specializedFunType,
   projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
-  isNewtype, instantiateHandlerType, getDestBlockType, forceDRepVal, toDRepVal,
+  isNewtype, instantiateHandlerType, getDestBlockType,
   getNaryLamExprType
   ) where
 
@@ -36,7 +36,7 @@ import Types.Core
 import Types.Source
 import IRVariants
 import Core
-import CheapReduction (cheapNormalize)
+import CheapReduction
 import Err
 import LabeledItems
 import Name
@@ -101,10 +101,6 @@ caseAltsBinderTys ty = case ty of
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
-depPairLeftTy :: DepPairType r n -> Type r n
-depPairLeftTy (DepPairType (_:>ty) _) = ty
-{-# INLINE depPairLeftTy #-}
-
 extendEffect :: Effect n -> EffectRow n -> EffectRow n
 extendEffect eff (EffectRow effs t) = EffectRow (S.insert eff effs) t
 
@@ -139,35 +135,11 @@ getMethodIndex className methodSourceName = do
     Just i -> return i
 {-# INLINE getMethodIndex #-}
 
-instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams r n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) (DataDefParams params) = do
-  let dataDefParams' = DataDefParams [(arr, unsafeCoerceIRE x) | (arr, x) <- params]
-  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) dataDefParams'
-{-# INLINE instantiateDataDef #-}
-
-applyDataConAbs :: (SubstE (AtomSubstVal r) e, SinkableE e, EnvReader m)
-                => Abs (Nest (RolePiBinder r)) e n -> DataDefParams r n -> m n (e n)
-applyDataConAbs (Abs bs e) (DataDefParams xs) =
-  applySubst (bs @@> (SubstVal <$> map snd xs)) e
-{-# INLINE applyDataConAbs #-}
-
--- Returns a representation type (type of an TypeCon-typed Newtype payload)
--- given a list of instantiated DataConDefs.
-dataDefRep :: [DataConDef n] -> Type r n
-dataDefRep = \case
-  [] -> error "unreachable"  -- There's no representation for a void type
-  [DataConDef _ ty _] -> unsafeCoerceIRE ty
-  tys -> SumTy $ tys <&> \(DataConDef _ ty _) -> unsafeCoerceIRE ty
-
 instantiateNaryPi :: EnvReader m => NaryPiType r n  -> [Atom r n] -> m n (NaryPiType r n)
 instantiateNaryPi (NaryPiType bs eff resultTy) args = do
   PairB bs1 bs2 <- return $ splitNestAt (length args) bs
   applySubst (bs1 @@> map SubstVal args) (NaryPiType bs2 eff resultTy)
 {-# INLINE instantiateNaryPi #-}
-
-instantiateDepPairTy :: EnvReader m => DepPairType r n -> Atom r n -> m n (Type r n)
-instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
-{-# INLINE instantiateDepPairTy #-}
 
 instantiatePi :: EnvReader m => PiType r n -> Atom r n -> m n (EffectRow n, Type r n)
 instantiatePi (PiType b eff body) x = do
@@ -347,24 +319,20 @@ instance HasType r (Atom r) where
     RecordTy _ -> return TyKind
     VariantTy _ -> return TyKind
     ACase _ _ resultTy -> substM resultTy
-    RepValAtom dRepVal -> do
-      RepVal ty _ <- substM dRepVal >>= forceDRepVal
+    RepValAtom repVal -> do
+      RepVal ty _ <- substM repVal
       return ty
-    ProjectElt (i NE.:| is) v -> do
-      ty <- getTypeE $ case NE.nonEmpty is of
-              Nothing -> Var v
-              Just is' -> ProjectElt is' v
-      case ty of
+    ProjectElt i x -> do
+      getTypeE x >>= \case
         ProdTy xs -> return $ xs !! iProj
         DepPairTy t | iProj == 0 -> return $ depPairLeftTy t
         DepPairTy t | iProj == 1 -> do
-          v' <- substM (Var v :: Atom r i) >>= \case
-            (Var v') -> return v'
-            _ -> error "!?"
-          instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
-        _ | isNewtype ty -> projectNewtype ty
-        Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
-        _ -> throw TypeErr $
+          x' <- substM x
+          xFst <- normalizeProj (ProjectProduct 0) x'
+          instantiateDepPairTy t xFst
+        ty | isNewtype ty -> projectNewtype ty
+        Var v -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint (Var v)
+        ty -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty
         where
           iProj = case i of
@@ -372,59 +340,6 @@ instance HasType r (Atom r) where
             _ -> error "Not a product projection"
 
 -- === newtype conversion ===
-
-isNewtype :: Type r n -> Bool
-isNewtype ty = case ty of
-  TC Nat        -> True
-  TC (Fin _)    -> True
-  TypeCon _ _ _ -> True
-  RecordTy _    -> True
-  VariantTy _   -> True
-  _ -> False
-
-projectNewtype :: Type r o -> TypeQueryM r i o (Type r o)
-projectNewtype ty = case ty of
-  TC Nat     -> return IdxRepTy
-  TC (Fin _) -> return NatTy
-  TypeCon _ defName params -> do
-    def <- lookupDataDef defName
-    dataDefRep <$> instantiateDataDef def params
-  StaticRecordTy types -> return $ ProdTy $ toList types
-  RecordTy _ -> throw CompilerErr "Can't project partially-known records"
-  _ -> error $ "not a newtype: " ++ pprint ty
-
-forceDRepVal
-  :: (r `Sat` Is SimpToImpIR, EnvReader m)
-  => DRepVal r n -> m n (RepVal r n)
-forceDRepVal repVal = liftTypeQueryM idSubst $ forceDRepVal' repVal
-
-forceDRepVal'
-  :: r `Sat` Is SimpToImpIR
-  => DRepVal r n -> TypeQueryM r i n (RepVal r n)
-forceDRepVal' (DRepVal [] ty tree) = return $ RepVal ty tree
-forceDRepVal' (DRepVal (p:ps) ty tree) = do
-  RepVal ty' tree' <- forceDRepVal' (DRepVal ps ty tree)
-  case p of
-    ProjectProduct i -> do
-      case ty' of
-        ProdTy tys -> do
-          Branch trees <- return tree'
-          return $ RepVal (tys!!i) (trees!!i)
-        DepPairTy t -> do
-          Branch [leftTree, rightTree] <- return tree'
-          let leftVal = RepVal (depPairLeftTy t) leftTree
-          case i of
-            0 -> return leftVal
-            1 -> do
-              rightTy <- instantiateDepPairTy t (RepValAtom $ toDRepVal leftVal)
-              return $ RepVal rightTy rightTree
-            _ -> error "bad dependent pair projection index"
-        _ -> error $ "not a product type: " ++ pprint ty'
-    UnwrapCompoundNewtype -> RepVal <$> projectNewtype ty' <*> pure tree'
-    UnwrapBaseNewtype     -> RepVal <$> projectNewtype ty' <*> pure tree'
-
-toDRepVal ::  RepVal r n -> DRepVal r n
-toDRepVal (RepVal ty tree) = DRepVal [] ty tree
 
 instance HasType r (TabLamExpr r) where
   getTypeE (TabLamExpr (b:>ann) body) = do

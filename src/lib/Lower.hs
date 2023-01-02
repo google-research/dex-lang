@@ -26,6 +26,7 @@ import Builder
 import Core
 import Err
 import GenericTraversal
+import CheapReduction
 import IRVariants
 import Logging
 import MTL1
@@ -122,11 +123,11 @@ traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
       destTy <- getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
-        let dest = getProjection [ProjectProduct 0] destProd
+        dest <- normalizeProj (ProjectProduct 0) destProd
         idest <- emitExpr $ RefOp dest $ IndexRef i
         extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body $> UnitVal
       let seqHof = DAMOp $ Seq dir ixDict' initDest body'
-      DAMOp . Freeze . ProjectElt (ProjectProduct 0 NE.:| []) <$> emit seqHof
+      DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
 traverseFor _ _ _ _ = error "expected a unary lambda expression"
 
 traverseTabCon :: Emits o => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
@@ -184,7 +185,9 @@ lookupDest = flip lookupNameMap
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
   Var v -> return $ Just $ singletonNameMap v $ FullDest dest
-  ProjectElt ps v -> return $ Just $ singletonNameMap v $ ProjDest ps dest
+  ProjectElt p x -> do
+    (ps, v) <- return $ asNaryProj p x
+    return $ Just $ singletonNameMap v $ ProjDest ps dest
   _ -> return Nothing
 
 traverseBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
@@ -275,7 +278,9 @@ traverseExprWithDest dest expr = case expr of
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
   FullDest d   -> void $ emitExpr $ DAMOp $ Place d x
-  ProjDest p d -> void $ emitExpr $ DAMOp $ Place d $ getProjection (NE.toList p) x
+  ProjDest p d -> do
+    x' <- normalizeNaryProj (NE.toList p) x
+    void $ emitExpr $ DAMOp $ Place d x'
 
 -- === Vectorization ===
 
@@ -382,7 +387,7 @@ vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
         buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
           (vi, dest) <- fromPair $ Var ci
-          let viOrd = unwrapBaseNewtype $ unwrapBaseNewtype vi
+          viOrd <- unwrapBaseNewtype =<< unwrapBaseNewtype vi
           iOrd <- imul viOrd $ IdxRepVal loopWidth
           let i = Con $ Newtype (sink oldIxTy) $ Con $ Newtype NatTy iOrd
           let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
@@ -503,19 +508,22 @@ vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
     Var v -> lookupSubstM v
-    ProjectElt p v -> do
-      VVal vv v' <- lookupSubstM v
-      ov <- projStability (reverse $ NE.toList p) vv
+    -- Vectors of base newtypes are already newtype-stripped.
+    ProjectElt p x -> do
+      VVal vv x' <- vectorizeAtom x
+      ov <- projStability p vv
       let p' = case ov of
                 -- Uniform and contiguous values are always of the original type.
-                Uniform -> NE.toList p
-                Contiguous -> NE.toList p
+                Uniform -> [p]
+                Contiguous -> [p]
                 -- Vectors of base newtypes are already newtype-stripped.
-                Varying -> NE.filter (/= UnwrapBaseNewtype) p
+                Varying -> case p of
+                  UnwrapBaseNewtype -> []
+                  _ -> [p]
                 -- Product types cannot be projected out of base newtypes,
                 -- so no need to filter.
-                ProdStability _ -> NE.toList p
-      return $ VVal ov $ getProjection p' v'
+                ProdStability _ -> [p]
+      VVal ov <$> normalizeNaryProj p' x'
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst
@@ -527,11 +535,9 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
         -- TODO(nrink): Throw instead of `error`.
         _ -> error $ "Can't vectorize atom " ++ pprint atom
       projStability p s = case (p, s) of
-        ([]                      , _                ) -> return s
-        (ProjectProduct i:is     , ProdStability sbs) -> projStability is (sbs !! i)
-        (UnwrapCompoundNewtype:is, _                ) -> projStability is s
-        (UnwrapBaseNewtype:is    , _                ) -> projStability is s
-        (_                       , Uniform          ) -> return s
+        (ProjectProduct i     , ProdStability sbs) -> return $ sbs !! i
+        (UnwrapCompoundNewtype, _                ) -> return $ s
+        (UnwrapBaseNewtype    , _                ) -> return $ s
         _ -> throwVectErr "Invalid projection"
 
 getVectorType :: SType o -> VectorizeM i o (SAtom o)

@@ -31,7 +31,6 @@ import Data.Functor
 import Data.Foldable (toList)
 import Data.Hashable
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 
@@ -73,13 +72,8 @@ data Atom (r::IR) (n::S) where
  PtrVar     :: PtrName n   -> Atom r n
  -- only used within Simplify
  ACase ::  Atom r n -> [AltP r (Atom r) n] -> Type r n -> Atom r n
- -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
- -- XXX: Variable name must not be an alias for another name or for
- -- a statically-known atom. This is because the variable name used
- -- here may also appear in the type of the atom. (We maintain this
- -- invariant during substitution and in Builder.hs.)
- ProjectElt :: NE.NonEmpty Projection -> AtomName r n -> Atom r n
- RepValAtom :: r `Sat` Is SimpToImpIR => DRepVal r n -> Atom r n
+ ProjectElt    :: Projection -> Atom r n -> Atom r n
+ RepValAtom :: r `Sat` Is SimpToImpIR => RepVal r n -> Atom r n
 
 
 deriving instance Show (Atom r n)
@@ -391,15 +385,6 @@ data AtomRules (n::S) = CustomLinearize Int SymbolicZeros (CAtom n)  -- number o
 
 data RepVal (r::IR) (n::S) = RepVal (Type r n) (Tree (IExpr n))
      deriving (Show, Generic)
-
--- "Deferred projection RepVal". We have to defer projections because
--- `getProjection` doesn't have access to EnvReader, which is needed to figure
--- out the representation type for user-defined ADTs. We can get rid of it once
--- we strip newtypes during simplification because then `RepVal` will only be
--- used to represent newtype-stripped values.
-data DRepVal (r::IR) (n::S) =
-  DRepVal [Projection] (Type r n) (Tree (IExpr n))
-  deriving (Show, Generic)
 
 -- === envs and modules ===
 
@@ -1100,17 +1085,6 @@ instance HoistableE  (RepVal r)
 instance AlphaHashableE (RepVal r)
 instance AlphaEqE (RepVal r)
 
-instance GenericE (DRepVal r) where
-  type RepE (DRepVal r) = LiftE [Projection] `PairE` Type r `PairE` ComposeE Tree IExpr
-  fromE (DRepVal projs ty tree) = LiftE projs `PairE` ty `PairE` ComposeE tree
-  toE   (LiftE projs `PairE` ty `PairE` ComposeE tree) = DRepVal projs ty tree
-
-instance SinkableE   (DRepVal r)
-instance RenameE     (DRepVal r)
-instance HoistableE  (DRepVal r)
-instance AlphaHashableE (DRepVal r)
-instance AlphaEqE (DRepVal r)
-
 instance GenericE CustomRules where
   type RepE CustomRules = ListE (PairE (AtomName CoreIR) AtomRules)
   fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
@@ -1372,7 +1346,7 @@ instance GenericE (Atom r) where
                    -- handling when you substitute with atoms. The rest just act
                    -- like containers
   {- Var -}        (AtomName r)
-  {- ProjectElt -} ( LiftE (NE.NonEmpty Projection) `PairE` AtomName r)
+  {- ProjectElt -} ( LiftE Projection `PairE` Atom r)
             ) (EitherE4
   {- Lam -}        (WhenE (IsCore' r) (LamExpr r `PairE` LiftE Arrow `PairE` EffAbs r))
   {- Pi -}         (WhenE (IsCore' r) (PiType r))
@@ -1394,7 +1368,7 @@ instance GenericE (Atom r) where
   {- Eff -}        EffectRow
   {- PtrVar -}     PtrName
   {- ACase -}      ( Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r)
-  {- RepValAtom -} ( WhenE (Sat' r (Is SimpToImpIR)) (DRepVal r))
+  {- RepValAtom -} ( WhenE (Sat' r (Is SimpToImpIR)) (RepVal r))
             )
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
@@ -2382,7 +2356,6 @@ instance Hashable IxMethod
 instance Hashable ParamRole
 
 instance Store (RepVal r n)
-instance Store (DRepVal r n)
 instance Store (Atom r n)
 instance Store (Expr r n)
 instance Store (SolverBinding r n)

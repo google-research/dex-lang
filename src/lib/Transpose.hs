@@ -14,6 +14,7 @@ import GHC.Stack
 
 import Builder
 import Core
+import CheapReduction
 import Err
 import IRVariants
 import MTL1
@@ -171,7 +172,8 @@ transposeExpr expr ct = case expr of
             refProj <- naryIndexRef ref (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
-      ProjectElt idxs v -> do
+      ProjectElt i' x' -> do
+        let (idxs, v) = asNaryProj i' x'
         lookupSubstM v >>= \case
           RenameNonlin _ -> error "an error, probably"
           LinRef ref -> do
@@ -285,7 +287,8 @@ transposeAtom atom ct = case atom of
   Eff _           -> notTangent
   PtrVar _        -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
-  ProjectElt idxs v -> do
+  ProjectElt iProj x -> do
+    let (idxs, v) = asNaryProj iProj x
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"
       LinRef ref -> do
@@ -339,7 +342,7 @@ transposeCon con ct = case con of
       getProj i ct >>= transposeAtom x
   Newtype ty e      -> case ty of
     TC (Fin _) -> notTangent
-    StaticRecordTy _ -> transposeAtom e (unwrapCompoundNewtype ct)
+    StaticRecordTy _ -> transposeAtom e =<< unwrapCompoundNewtype ct
     _ -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented

@@ -32,7 +32,7 @@ import IRVariants
 import Interpreter
 import LabeledItems
 import Name
-import Subst
+import CheapReduction
 import PPrint ()
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 import QueryType
@@ -127,11 +127,14 @@ prettyVal val = case val of
     rhs' <- prettyVal rhs
     ty' <- prettyVal $ DepPairTy ty
     return $ "(" <> lhs' <+> ",>" <+> rhs' <> ")" <+> "::" <+> ty'
-  ProjectElt projections v -> lookupAtomName v >>= \case
-    TopDataBound repVal -> do
-      x <- repValToCoreAtom repVal
-      prettyVal $ getProjection (NE.toList projections) x
-    _ -> error "Only projectable vars left should be data vars"
+  ProjectElt projection atom -> do
+    (projections, v) <- return $ asNaryProj projection atom
+    lookupAtomName v >>= \case
+      TopDataBound repVal -> do
+        x <- repValToCoreAtom repVal
+        prettyVal =<< normalizeNaryProj (NE.toList projections) x
+
+      _ -> error "Only projectable vars left should be data vars"
   atom -> return $ prettyPrec atom LowestPrec
   where
     prettyData
@@ -140,7 +143,8 @@ prettyVal val = case val of
     prettyData dataDefName t rep = do
       DataDef _ _ dataCons <- lookupDataDef dataDefName
       DataConDef conName _ idxs <- return $ dataCons !! t
-      prettyArgs <- forM idxs \ix -> prettyVal $ getProjection (init ix) rep
+      prettyArgs <- forM idxs \ix ->
+        prettyVal =<< normalizeNaryProj (init ix) rep
       return $ case prettyArgs of
         []   -> pretty conName
         args -> parens $ pretty conName <+> hsep args

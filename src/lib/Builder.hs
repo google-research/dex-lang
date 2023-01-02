@@ -1304,7 +1304,7 @@ getUnpacked atom = do
   atom' <- cheapNormalize atom
   ty <- getType atom'
   idxs <- projectionIndices ty
-  return $ idxs <&> flip getProjection atom'
+  forM idxs \is -> normalizeNaryProj is atom'
 {-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder r m, Emits n) => Atom r n -> m n [AtomName r n]
@@ -1312,12 +1312,12 @@ emitUnpacked tup = do
   xs <- getUnpacked tup
   forM xs \x -> emit $ Atom x
 
-unwrapBaseNewtype :: Atom r n -> Atom r n
-unwrapBaseNewtype = getProjection [UnwrapBaseNewtype]
+unwrapBaseNewtype :: EnvReader m => Atom r n -> m n (Atom r n)
+unwrapBaseNewtype = normalizeProj UnwrapBaseNewtype
 {-# INLINE unwrapBaseNewtype #-}
 
-unwrapCompoundNewtype :: Atom r n -> Atom r n
-unwrapCompoundNewtype = getProjection [UnwrapCompoundNewtype]
+unwrapCompoundNewtype :: EnvReader m => Atom r n -> m n (Atom r n)
+unwrapCompoundNewtype = normalizeProj UnwrapCompoundNewtype
 {-# INLINE unwrapCompoundNewtype #-}
 
 app :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
@@ -1375,7 +1375,7 @@ applyIxMethod dict method args = case dict of
       return n                       -- result : Nat
     Ordinal -> do
       [ix] <- return args            -- ix : Fin n
-      return $ unwrapBaseNewtype ix  -- result : Nat
+      unwrapBaseNewtype ix           -- result : Nat
     UnsafeFromOrdinal -> do
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
@@ -1397,7 +1397,7 @@ projectIxFinMethod method n = liftBuilder do
   case method of
     Size -> return n  -- result : Nat
     Ordinal -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
-      return $ unwrapBaseNewtype (Var ix) -- result : Nat
+      unwrapBaseNewtype (Var ix) -- result : Nat
     UnsafeFromOrdinal -> buildPureLam noHint PlainArrow NatTy \ix ->
       return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
 
@@ -1409,12 +1409,12 @@ unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [repT
 
 ordinal :: forall r m n. (Builder r m, Emits n) => IxType r n -> Atom r n -> m n (Atom r n)
 ordinal (IxType _ dict) idx = do
-  unwrapBaseNewtype <$> applyIxMethod dict Ordinal [idx]
+  unwrapBaseNewtype =<< applyIxMethod dict Ordinal [idx]
 
 indexSetSize :: (Builder r m, Emits n) => IxType r n -> m n (Atom r n)
 indexSetSize (IxType _ dict) = do
   sizeNat <- applyIxMethod dict Size []
-  return $ unwrapBaseNewtype sizeNat
+  unwrapBaseNewtype sizeNat
 
 repToNat :: Atom r n -> Atom r n
 repToNat x = Con $ Newtype NatTy x
@@ -1611,18 +1611,19 @@ toposortAnnVars annVars =
     nodeToAnnVar :: (e n, Name c n, [Name c n]) -> (Name c n, e n)
     nodeToAnnVar (ann, v, _) = (v, ann)
 
-unpackTelescope :: (Fallible1 m, EnvReader m) => Atom r n -> m n [Atom r n]
+unpackTelescope :: forall m r n . (Fallible1 m, EnvReader m) => Atom r n -> m n [Atom r n]
 unpackTelescope atom = do
   n <- telescopeLength <$> getType atom
-  return $ go n atom
+  go n atom
   where
-    go :: Int -> Atom r n -> [Atom r n]
-    go 0 _ = []
-    go n pair = left : go (n-1) right
-      where left  = getProjection [ProjectProduct 0] pair
-            right = getProjection [ProjectProduct 1] pair
+    go :: Int -> Atom r n -> m n [Atom r n]
+    go 0 _ = return []
+    go n pair = do
+      left  <- normalizeProj (ProjectProduct 0) pair
+      right <- normalizeProj (ProjectProduct 1) pair
+      (left :) <$> go (n-1) right
 
-    telescopeLength :: Type r n -> Int
+    telescopeLength :: Type r n' -> Int
     telescopeLength ty = case ty of
       UnitTy -> 0
       PairTy _ rest -> 1 + telescopeLength rest

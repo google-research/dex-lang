@@ -216,7 +216,7 @@ def catLists {a} (xs:List a) (ys:List a) : List a =
 def listToTable {a} ((AsList n xs): List a) : (Fin n)=>a = xs
 
 :t listToTable
-> ((a:Type) ?-> (v#0:(List a)) -> (Fin (ProjectElt [0, uc] v#0)) => a)
+> ((a:Type) ?-> (v#0:(List a)) -> (Fin (ProjectElt 0 (ProjectElt uc v#0))) => a)
 
 :p
   l = AsList _ [1, 2, 3]
@@ -228,7 +228,7 @@ def listToTable2 {a} (l: List a) : (Fin (list_length l))=>a =
   xs
 
 :t listToTable2
-> ((a:Type) ?-> (l:(List a)) -> (Fin (ProjectElt [0, uc] l)) => a)
+> ((a:Type) ?-> (l:(List a)) -> (Fin (ProjectElt 0 (ProjectElt uc l))) => a)
 
 :p
   l = AsList _ [1, 2, 3]

@@ -14,11 +14,8 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Data.Functor
-import qualified Data.List.NonEmpty    as NE
 
 import Name
-import Types.Primitives
 import Types.Core
 import Core
 import qualified RawName as R
@@ -400,33 +397,6 @@ instance (Monad1 m, MonadReader (r o) (m o)) => MonadReader (r o) (SubstReaderT 
   local r (SubstReaderT (ReaderT f)) = SubstReaderT $ ReaderT $ \env ->
     local r $ f env
   {-# INLINE local #-}
-
--- === reductions ===
-
-getProjection :: [Projection] -> Atom r n -> Atom r n
-getProjection [] a = a
-getProjection (i:is) a = case getProjection is a of
-  Var name -> ProjectElt (i NE.:| []) name
-  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  Con (ProdCon xs) -> xs !! iProd
-  Con (Newtype _ x) | (i ==  UnwrapBaseNewtype) || (i == UnwrapCompoundNewtype) -> x
-  DepPair l _ _ | iProd == 0 -> l
-  DepPair _ r _ | iProd == 1 -> r
-  ACase scrut alts resultTy -> ACase scrut alts' resultTy'
-    where
-      alts' = alts <&> \(Abs bs body) -> Abs bs $ getProjection [i] body
-      resultTy' = case resultTy of
-        ProdTy tys -> tys !! iProd
-        -- We can't handle all cases here because we'll end up needing access to
-        -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
-        -- do away with it.
-        _ -> error "oops"
-  RepValAtom (DRepVal projs ty tree) -> RepValAtom $ DRepVal (i:projs) ty tree
-  a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
-  where
-    iProd = case i of
-      ProjectProduct i' -> i'
-      _ -> error $ "Not a product projection"
 
 -- === instances ===
 

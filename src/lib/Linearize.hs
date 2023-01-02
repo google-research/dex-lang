@@ -15,6 +15,7 @@ import GHC.Stack
 
 import Builder
 import Core
+import CheapReduction
 import IRVariants
 import MTL1
 import Name
@@ -284,12 +285,12 @@ linearizeAtom atom = case atom of
   TC _            -> emitZeroT
   Eff _           -> emitZeroT
   PtrVar _        -> emitZeroT
-  ProjectElt idxs v -> do
-    WithTangent x tx <- linearizeAtom (Var v)
-    (x', idxs') <- linearizeProjections (toList idxs) x
+  ProjectElt i xOrig -> do
+    WithTangent x tx <- linearizeAtom xOrig
+    (x', idxs') <- linearizeProjections i x
     return $ WithTangent x' do
       t <- tx
-      return $ getProjection idxs' t
+      normalizeNaryProj idxs' t
   -- Those should be gone after simplification
   ACase _ _ _      -> error "Unexpected ACase"
   where emitZeroT = withZeroT $ injSubstM atom
@@ -298,15 +299,14 @@ linearizeAtom atom = case atom of
 -- projections that need to be applied to the tangent, which doesn't include
 -- the UnwrapCompoundNewtype corresponding to user-defined data definitions
 -- since these are already stripped off in the tangent.
-linearizeProjections :: EnvReader m => [Projection] -> Atom r n -> m n (Atom r n, [Projection])
-linearizeProjections [] x = return (x, [])
-linearizeProjections (i:is) x = do
-  (x', is') <- linearizeProjections is x
-  xTy' <- getType x'
+linearizeProjections :: EnvReader m => Projection -> Atom r n -> m n (Atom r n, [Projection])
+linearizeProjections i x = do
+  xTy' <- getType x
   let i' = case (i, xTy') of
              (UnwrapCompoundNewtype, TypeCon _ _ _) -> []
              _ -> [i]
-  return (getProjection [i] x', i' ++ is')
+  xi <- normalizeProj i x
+  return (xi, i')
 
 linearizeBlock :: Emits o => SBlock i -> LinM i o CAtom CAtom
 linearizeBlock (Block _ decls result) =

@@ -25,7 +25,7 @@ import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
-import CheapReduction
+import CheapReduction hiding (projectNewtype)
 import Core
 import Err
 import IRVariants
@@ -282,33 +282,31 @@ instance HasType r (Atom r) where
     RecordTy elems -> checkFieldRowElems elems $> TyKind
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy Pure
-    RepValAtom dRepVal -> do
-      RepVal ty _ <- forceDRepVal =<< renameM dRepVal
+    RepValAtom repVal -> do
+      RepVal ty _ <- renameM repVal
       return ty
-    ProjectElt (i NE.:| is) v -> do
-      ty <- getTypeE $ case NE.nonEmpty is of
-              Nothing -> Var v
-              Just is' -> ProjectElt is' v
-      case ty of
+    ProjectElt i x -> do
+      getTypeE x >>= \case
         ProdTy xs -> case i of
           ProjectProduct i' -> return $ xs !! i'
           _ -> throw TypeErr $ "Projecting from a product with: " ++ pprint i
         DepPairTy t -> case i of
           ProjectProduct 0 -> return $ depPairLeftTy t
           ProjectProduct 1 -> do
-            v' <- renameM v
-            instantiateDepPairTy t (ProjectElt (ProjectProduct 0 NE.:| is) v')
+            x' <- renameM x
+            xFst <- normalizeProj (ProjectProduct 0) x'
+            instantiateDepPairTy t xFst
           _ -> throw TypeErr $ "Projecting from a dependent pair with " ++ pprint i
-        _ | isNewtype ty -> do
+        ty | isNewtype ty -> do
           case (ty, i) of
             (TC Nat    , UnwrapBaseNewtype    ) -> return ()
             (TC (Fin _), UnwrapBaseNewtype    ) -> return ()
             (_         , UnwrapCompoundNewtype) -> return ()
             _ -> throw TypeErr $ "Invalid newtype projection (" ++ pprint i ++ ") from " ++ pprint ty
           projectNewtype ty
-        Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
-        _ -> throw TypeErr $
-              "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
+        Var v -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint v
+        ty -> throw TypeErr $
+              "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint x
 
 projectNewtype :: Typer m => Type r o -> m i o (Type r o)
 projectNewtype ty = case ty of

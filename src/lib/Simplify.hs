@@ -593,7 +593,9 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
             extendSubst (b @> Rename xs) $
               simplifyAtom body
         return $ ACase e' alts' rTy'
-  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyVar v
+  ProjectElt i x -> do
+    x' <- simplifyAtom x
+    liftEnvReaderM $ normalizeProj i x'
 
 simplifyVar :: CAtomName i -> SimplifyM i o (CAtom o)
 simplifyVar v = do

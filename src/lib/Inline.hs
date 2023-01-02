@@ -12,6 +12,7 @@ import Data.List.NonEmpty qualified as NE
 import Builder
 import Core
 import Err
+import CheapReduction
 import IRVariants
 import LabeledItems
 import Name
@@ -267,8 +268,10 @@ inlineExpr ctx = \case
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
-  ProjectElt idxs v ->
-    getProjection (NE.toList idxs) <$> inline Stop (Var v) >>= reconstruct ctx . Atom
+  ProjectElt i x -> do
+    let (idxs, v) = asNaryProj i x
+    ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
+    reconstruct ctx $ Atom ans
   atom -> (inline Stop (fromE atom) <&> Atom . toE) >>= reconstruct ctx
 
 inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)

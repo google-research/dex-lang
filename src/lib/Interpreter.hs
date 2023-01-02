@@ -25,7 +25,7 @@ import System.IO.Unsafe
 
 import Builder
 import CUDA
-import CheapReduction (cheapNormalize)
+import CheapReduction
 import Core
 import Err
 import IRVariants
@@ -110,7 +110,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   LabeledRow _     -> substM atom
   ACase scrut alts resultTy ->
     ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
-  ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
+  ProjectElt i x -> normalizeProj i =<< rec x
   where
     rec x = traverseSurfaceAtomNames x doWithName
 
@@ -272,7 +272,9 @@ matchUPat (WithSrcB _ pat) x = do
     (UPatCon _ ps, Con (Newtype (TypeCon _ dataDefName _) _)) -> do
       DataDef _ _ cons <- lookupDataDef dataDefName
       case cons of
-        [DataConDef _ _ idxs] -> matchUPats ps [getProjection ix x' | ix <- idxs]
+        [DataConDef _ _ idxs] -> do
+          xs <- forM idxs \ix -> normalizeNaryProj ix x'
+          matchUPats ps xs
         _ -> error "Expected a single ADt constructor"
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)

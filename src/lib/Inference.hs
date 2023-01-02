@@ -1135,7 +1135,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
     (liftM Var $ emitHinted hint $ App f' (x':|[])) >>= matchRequirement
   UPrim UProjBaseNewtype [x] -> do
     x' <- inferRho hint x >>= emitAtomToName hint
-    return $ unwrapBaseNewtype $ Var x'
+    unwrapBaseNewtype $ Var x'
   UPrim prim xs -> do
     xs' <- forM xs \x -> do
       inferPrimArg x >>= \case
@@ -1490,7 +1490,8 @@ buildSortedCase scrut alts resultTy = do
         -- Single constructor ADTs are not sum types, so elide the case.
         [_] -> do
           let [IndexedAlt _ alt] = alts
-          emitBlock =<< applyAbs alt (SubstVal $ unwrapCompoundNewtype scrut)
+          scrut' <- unwrapCompoundNewtype scrut
+          emitBlock =<< applyAbs alt (SubstVal scrut')
         _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
@@ -2087,11 +2088,10 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     (params, repTy') <- inferParams (Abs paramBs repTy)
     constrainEq scrutineeTy $ TypeCon sourceName dataDefName params
     buildAltInf repTy' \arg -> do
-      args <- forM idxs $ init |> NE.nonEmpty |> \case
-        Nothing    -> return arg
-        Just idxs' -> emit $ Atom $ ProjectElt idxs' arg
+      args <- forM idxs \projs -> do
+        ans <- normalizeNaryProj (init projs) (Var arg)
+        emit $ Atom ans
       bindLamPats ps args $ cont
-      where (|>) = flip (.)
   UPatVariant labels label p -> do
     ty <- freshType TyKind
     prevTys <- mapM (const $ freshType TyKind) labels

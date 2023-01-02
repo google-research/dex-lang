@@ -9,14 +9,18 @@
 
 module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
-  , DictTypeHoistStatus (..))
+  , DictTypeHoistStatus (..), normalizeProj, asNaryProj, normalizeNaryProj
+  , depPairLeftTy, projectNewtype, instantiateDataDef, applyDataConAbs
+  , dataDefRep, instantiateDepPairTy, projType, isNewtype )
   where
 
 import Control.Applicative
 import Control.Monad.Trans
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
+import Data.Foldable (toList)
 import Data.Functor.Identity
+import Data.Functor ((<&>))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -34,7 +38,7 @@ import PPrint ()
 import Types.Core
 import Types.Imp
 import Types.Primitives
-import Util (for, onSndM)
+import Util
 import {-# SOURCE #-} Inference (trySynthTerm)
 
 -- Carry out the reductions we are willing to carry out during type
@@ -299,36 +303,163 @@ instance (CheaplyReducibleE r e1 e1', CheaplyReducibleE r e2 e2')
 instance CheaplyReducibleE r (FieldRowElems r) (FieldRowElems r) where
   cheapReduceE elems = cheapReduceFromSubst elems
 
+-- XXX: TODO: figure out exactly what our normalization invariants are. We
+-- shouldn't have to choose `normalizeProj` or `asNaryProj` on a
+-- case-by-case basis. This is here for now because it makes it easier to switch
+-- to the new version of `ProjectElt`.
+asNaryProj :: Projection -> Atom r n -> (NE.NonEmpty Projection, AtomName r n)
+asNaryProj p (Var v) = (p NE.:| [], v)
+asNaryProj p1 (ProjectElt p2 x) = do
+  let (p2' NE.:| ps, v) = asNaryProj p2 x
+  (p1 NE.:| (p2':ps), v)
+asNaryProj p x = error $ "Can't normalize projection: " ++ pprint (ProjectElt p x)
+
+-- assumes the atom is already normalized
+normalizeNaryProj :: EnvReader m => [Projection] -> Atom r n -> m n (Atom r n)
+normalizeNaryProj [] x = return x
+normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
+
+-- assumes the atom is already normalized
+normalizeProj :: EnvReader m => Projection -> Atom r n -> m n (Atom r n)
+normalizeProj i pTop = liftEnvReaderM $ go pTop where
+  go :: Atom r n -> EnvReaderM n (Atom r n)
+  go = \case
+    Con (ProdCon xs) -> return $ xs !! iProd
+    Con (Newtype _ x) | (i ==  UnwrapBaseNewtype) || (i == UnwrapCompoundNewtype) -> return x
+    DepPair l _ _ | iProd == 0 -> return l
+    DepPair _ r _ | iProd == 1 -> return r
+    RepValAtom repVal -> normalizeProjRepVal i repVal
+    x@(ACase scrut alts resultTy) -> do
+      alts' <- forM alts \ab ->
+        refreshAbs ab \bs body ->
+          Abs bs <$> normalizeProj i body
+      resultTy' <- projType i resultTy x
+      return $ ACase scrut alts' resultTy'
+    x -> return $ ProjectElt i x
+  iProd = case i of
+    ProjectProduct i' -> i'
+    _ -> error $ "Not a product projection"
+{-# INLINE normalizeProj #-}
+
+-- assumes the atom is already normalized
+normalizeProjRepVal :: (r `Sat` Is SimpToImpIR, EnvReader m) => Projection -> RepVal r n -> m n (Atom r n)
+normalizeProjRepVal projection (RepVal ty tree) = case projection of
+  ProjectProduct i -> do
+    case ty of
+      ProdTy tys -> do
+        ~(Branch trees) <- return tree
+        return $ RepValAtom $ RepVal (tys!!i) (trees!!i)
+      DepPairTy t -> do
+        ~(Branch [leftTree, rightTree]) <- return tree
+        let leftVal = RepValAtom $ RepVal (depPairLeftTy t) leftTree
+        case i of
+          0 -> return leftVal
+          1 -> do
+            rightTy <- instantiateDepPairTy t leftVal
+            return $ RepValAtom $ RepVal rightTy rightTree
+          _ -> error "bad dependent pair projection index"
+      _ -> error $ "not a product type: " ++ pprint ty
+  UnwrapCompoundNewtype -> RepValAtom <$> (RepVal <$> projectNewtype ty <*> pure tree)
+  UnwrapBaseNewtype     -> RepValAtom <$> (RepVal <$> projectNewtype ty <*> pure tree)
+
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: CheapReducerM r i n (DistinctEvidence n)
 confuseGHC = getDistinct
 {-# INLINE confuseGHC #-}
 
+
+-- === Type-querying helpers ===
+
+-- TODO: These used to live in QueryType. Think about a better way to organize
+-- them. Maybe a common set of low-level type-querying utils that both
+-- CheapReduction and QueryType import?
+
+depPairLeftTy :: DepPairType r n -> Type r n
+depPairLeftTy (DepPairType (_:>ty) _) = ty
+{-# INLINE depPairLeftTy #-}
+
+projectNewtype :: EnvReader m => Type r n -> m n (Type r n)
+projectNewtype ty = case ty of
+  TC Nat     -> return IdxRepTy
+  TC (Fin _) -> return NatTy
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
+    dataDefRep <$> instantiateDataDef def params
+  StaticRecordTy types -> return $ ProdTy $ toList types
+  RecordTy _ -> error "Can't project partially-known records"
+  _ -> error $ "not a newtype: " ++ pprint ty
+
+instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams r n -> m n [DataConDef n]
+instantiateDataDef (DataDef _ bs cons) (DataDefParams params) = do
+  let dataDefParams' = DataDefParams [(arr, unsafeCoerceIRE x) | (arr, x) <- params]
+  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) dataDefParams'
+{-# INLINE instantiateDataDef #-}
+
+applyDataConAbs :: (SubstE (AtomSubstVal r) e, SinkableE e, EnvReader m)
+                => Abs (Nest (RolePiBinder r)) e n -> DataDefParams r n -> m n (e n)
+applyDataConAbs (Abs bs e) (DataDefParams xs) =
+  applySubst (bs @@> (SubstVal <$> map snd xs)) e
+{-# INLINE applyDataConAbs #-}
+
+-- Returns a representation type (type of an TypeCon-typed Newtype payload)
+-- given a list of instantiated DataConDefs.
+dataDefRep :: [DataConDef n] -> Type r n
+dataDefRep = \case
+  [] -> error "unreachable"  -- There's no representation for a void type
+  [DataConDef _ ty _] -> unsafeCoerceIRE ty
+  tys -> SumTy $ tys <&> \(DataConDef _ ty _) -> unsafeCoerceIRE ty
+
+instantiateDepPairTy :: EnvReader m => DepPairType r n -> Atom r n -> m n (Type r n)
+instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
+{-# INLINE instantiateDepPairTy #-}
+
+projType :: EnvReader m => Projection -> Type r n -> Atom r n -> m n (Type r n)
+projType i ty x = case ty of
+  ProdTy xs -> return $ xs !! iProj
+  DepPairTy t | iProj == 0 -> return $ depPairLeftTy t
+  DepPairTy t | iProj == 1 -> do
+    xFst <- normalizeProj (ProjectProduct 0) x
+    instantiateDepPairTy t xFst
+  _ | isNewtype ty -> projectNewtype ty
+  Var v -> error $ "Tried to project value of unreduced type " <> pprint (Var v)
+  _ -> error $ "Only single-member ADTs and record types can be projected. Got " <> pprint ty
+  where
+    iProj = case i of
+      ProjectProduct i' -> i'
+      _ -> error "Not a product projection"
+
+isNewtype :: Type r n -> Bool
+isNewtype ty = case ty of
+  TC Nat        -> True
+  TC (Fin _)    -> True
+  TypeCon _ _ _ -> True
+  RecordTy _    -> True
+  VariantTy _   -> True
+  _ -> False
+
 -- === SubstE/SubstB instances ===
 -- These live here, as orphan instances, because we normalize as we substitute.
 
 instance SubstE (AtomSubstVal r) (Atom r) where
-  substE (scope, env) atom = case fromE atom of
+  substE (env, subst) atom = case fromE atom of
     Case0 specialCase -> case specialCase of
       -- Var
       Case0 v -> do
-        case env ! v of
+        case subst ! v of
           Rename v' -> Var v'
           SubstVal x -> x
       -- ProjectElt
-      Case1 (PairE (LiftE idxs) v) -> do
-        let v' = case env ! v of
-                   SubstVal x -> x
-                   Rename v''  -> Var v''
-        getProjection (NE.toList idxs) v'
+      Case1 (PairE (LiftE i) x) -> do
+        let x' = substE (env, subst) x
+        runEnvReaderM env $ normalizeProj i x'
       _ -> error "impossible"
-    Case1 rest -> (toE . Case1) $ substE (scope, env) rest
-    Case2 rest -> (toE . Case2) $ substE (scope, env) rest
-    Case3 rest -> (toE . Case3) $ substE (scope, env) rest
-    Case4 rest -> (toE . Case4) $ substE (scope, env) rest
-    Case5 rest -> (toE . Case5) $ substE (scope, env) rest
-    Case6 rest -> (toE . Case6) $ substE (scope, env) rest
-    Case7 rest -> (toE . Case7) $ substE (scope, env) rest
+    Case1 rest -> (toE . Case1) $ substE (env, subst) rest
+    Case2 rest -> (toE . Case2) $ substE (env, subst) rest
+    Case3 rest -> (toE . Case3) $ substE (env, subst) rest
+    Case4 rest -> (toE . Case4) $ substE (env, subst) rest
+    Case5 rest -> (toE . Case5) $ substE (env, subst) rest
+    Case6 rest -> (toE . Case6) $ substE (env, subst) rest
+    Case7 rest -> (toE . Case7) $ substE (env, subst) rest
 
 instance SubstE (AtomSubstVal r) (EffectRowP Name) where
   substE env (EffectRow effs tailVar) = do
@@ -408,7 +539,6 @@ instance SubstE (AtomSubstVal CoreIR) EffectDef
 instance SubstE (AtomSubstVal CoreIR) EffectOpType
 instance SubstE (AtomSubstVal r) IExpr
 instance SubstE (AtomSubstVal r) (RepVal r)
-instance SubstE (AtomSubstVal r) (DRepVal r)
 instance SubstE (AtomSubstVal r) (DataDefParams r)
 instance SubstE (AtomSubstVal CoreIR) DataDef
 instance SubstE (AtomSubstVal CoreIR) DataConDef

@@ -311,10 +311,6 @@ instance PrettyPrec (Atom r n) where
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
-instance Pretty (DRepVal r n) where
-  pretty (DRepVal [] ty tree) = pretty $ RepVal ty tree
-  pretty (DRepVal projs ty tree) = "Projecting" <+> p projs <+> p (RepVal ty tree)
-
 instance Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
 
