@@ -55,7 +55,7 @@ extendSubst frag cont = do
 -- visit each occurrence.
 traverseNames
   :: forall v e m i o.
-     (SubstE v e, HoistableE e, SinkableE e, FromName v, ScopeReader m)
+     (SubstE v e, HoistableE e, SinkableE e, FromName v, EnvReader m)
   => (forall c. Color c => Name c i -> m o (v c o))
   -> e i -> m o (e o)
 traverseNames f e = do
@@ -76,43 +76,43 @@ applyTraversed m = \((UnsafeMakeName v) :: Name c i) -> case R.lookup v m of
     Nothing -> fromName $ (UnsafeMakeName v :: Name c o)
 
 fmapNames :: (SubstE v e, Distinct o)
-          => Scope o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
-fmapNames scope f e = substE (scope, newSubst f) e
+          => Env o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
+fmapNames env f e = substE (env, newSubst f) e
 {-# INLINE fmapNames #-}
 
-fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
+fmapNamesM :: (SubstE v e, SinkableE e, EnvReader m)
           => (forall c. Color c => Name c i -> v c o)
           -> e i -> m o (e o)
 fmapNamesM f e = do
-  scope <- unsafeGetScope
+  env <- unsafeGetEnv
   Distinct <- getDistinct
-  return $ substE (scope, newSubst f) e
+  return $ substE (env, newSubst f) e
 {-# INLINE fmapNamesM #-}
 
 -- === type classes for traversing names ===
 
 class FromName v => SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
-  substE :: Distinct o => (Scope o, Subst v i o) -> e i -> e o
+  substE :: Distinct o => (Env o, Subst v i o) -> e i -> e o
 
   default substE :: (GenericE e, SubstE v (RepE e), Distinct o)
-                 => (Scope o, Subst v i o) -> e i -> e o
+                 => (Env o, Subst v i o) -> e i -> e o
   substE env e = toE $ substE env (fromE e)
 
 class (FromName v, SinkableB b) => SubstB (v::V) (b::B) where
   substB
     :: Distinct o
-    => (Scope o, Subst v i o)
+    => (Env o, Subst v i o)
     -> b i i'
-    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b o o' -> a)
+    -> (forall o'. Distinct o' => (Env o', Subst v i' o') -> b o o' -> a)
     -> a
 
   default substB
     :: (GenericB b, SubstB v (RepB b))
     => Distinct o
-    => (Scope o, Subst v i o)
+    => (Env o, Subst v i o)
     -> b i i'
-    -> (forall o'. Distinct o' => (Scope o', Subst v i' o') -> b o o' -> a)
+    -> (forall o'. Distinct o' => (Env o', Subst v i' o') -> b o o' -> a)
     -> a
   substB env b cont =
     substB env (fromB b) \env' b' ->
@@ -122,30 +122,20 @@ class ( FromName substVal, SinkableV v
       , forall c. Color c => SubstE substVal (v c))
       => SubstV (substVal::V) (v::V)
 
-instance (Color c, SinkableV v, FromName v) => SubstB v (NameBinder c) where
-  substB (scope, env) b cont = do
-    withFresh (getNameHint b) scope \b' -> do
-      let scope' = scope `extendOutMap` toScopeFrag b'
-      let UnsafeMakeName bn  = binderName b
-      let UnsafeMakeName bn' = binderName b'
-      let env' = case env of
-                   UnsafeMakeIdentitySubst | bn == bn' -> UnsafeMakeIdentitySubst
-                   _ -> sink env <>> b @> (fromName $ binderName b')
-      cont (scope', env') b'
-
 type AtomSubstVal r = SubstVal AtomNameC (Atom r)
 
 instance (SinkableE atom, RenameE atom) => RenameV (SubstVal cMatch atom) where
 
-substM :: (SubstReader v m, ScopeReader2 m, SinkableE e, SubstE v e, FromName v)
+substM :: (SubstReader v m, EnvReader2 m, SinkableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
 substM e = do
-  env <- getSubst
-  case tryApplyIdentitySubst env e of
+  subst <- getSubst
+  case tryApplyIdentitySubst subst e of
     Just e' -> return $ e'
     Nothing -> do
-      WithScope scope env' <- addScope env
-      sinkM $ fmapNames scope (env'!) e
+      env <- unsafeGetEnv
+      Distinct <- getDistinct
+      return $ fmapNames env (subst!) e
 {-# INLINE substM #-}
 
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
@@ -193,34 +183,34 @@ renameBinders b cont = do
 -- === various convenience utilities ===
 
 applySubstFragPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
-                   => Scope o -> SubstFrag v h i o -> e i -> e o
-applySubstFragPure scope substFrag x = do
+                   => Env o -> SubstFrag v h i o -> e i -> e o
+applySubstFragPure env substFrag x = do
   let fullSubst = sink idSubst <>> substFrag
-  applySubstPure scope fullSubst x
+  applySubstPure env fullSubst x
 
 applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Distinct o)
-               => Scope o -> Subst v i o -> e i -> e o
-applySubstPure scope subst x = do
+               => Env o -> Subst v i o -> e i -> e o
+applySubstPure env subst x = do
   case tryApplyIdentitySubst subst x of
     Just x' -> x'
-    Nothing -> fmapNames scope (subst !) x
+    Nothing -> fmapNames env (subst !) x
 
-applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
+applySubst :: (EnvReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
            => Ext h o
            => SubstFrag v h i o -> e i -> m o (e o)
 applySubst substFrag x = do
   Distinct <- getDistinct
-  scope <- unsafeGetScope
-  return $ applySubstFragPure scope substFrag x
+  env <- unsafeGetEnv
+  return $ applySubstFragPure env substFrag x
 {-# INLINE applySubst #-}
 
 applyAbs :: ( SinkableV v, SinkableE e
-            , FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
+            , FromName v, EnvReader m, BindsOneName b c, SubstE v e)
          => Abs b e n -> v c n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (b@>x) body
 {-# INLINE applyAbs #-}
 
-applyNaryAbs :: ( SinkableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
+applyNaryAbs :: ( SinkableV v, FromName v, EnvReader m, BindsNameList b c, SubstE v e
                 , SubstB v b, SinkableE e)
              => Abs b e n -> [v c n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
@@ -473,7 +463,20 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
     substB env b \env' b' ->
       cont env' $ RightB b'
 
-instance (Color c, SinkableE ann, SubstE v ann, SinkableV v) => SubstB v (BinderP c ann)
+instance (Color c, SinkableE ann, SubstE v ann, SinkableV v, ToBinding ann c)
+         => SubstB v (BinderP c ann) where
+  substB (env, subst) (b:>ty) cont = do
+    let ty' = substE (env, subst) ty
+    withFresh (getNameHint b) (toScope env) \bRaw -> do
+      let b' = bRaw:>ty'
+      let env' = env `extendOutMap` toEnvFrag b'
+      let UnsafeMakeName bn  = binderName b
+      let UnsafeMakeName bn' = binderName b'
+      let subst' = case subst of
+                   UnsafeMakeIdentitySubst | bn == bn' -> UnsafeMakeIdentitySubst
+                   _ -> sink subst <>> b @> (fromName $ binderName b')
+      cont (env', subst') b'
+
 instance (BindsNames b, SubstB v b, SinkableV v)
          => SubstB v (Nest b) where
   substB env (Nest b bs) cont =

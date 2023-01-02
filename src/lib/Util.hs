@@ -17,7 +17,8 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
              whenM, unsnocNonempty, anyM,
              File (..), FileHash, FileContents, addHash, readFileWithHash,
-             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList, Tree (..), zipTrees) where
+             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList, Tree (..),
+             zipTrees, tryUnsnoc) where
 
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
@@ -330,6 +331,11 @@ unsnoc (ReversedList x) = reverse x
 toSnocList :: [a] -> SnocList a
 toSnocList xs = ReversedList $ reverse xs
 {-# INLINE toSnocList #-}
+
+tryUnsnoc :: SnocList a -> Maybe (SnocList a, a)
+tryUnsnoc (ReversedList []) = Nothing
+tryUnsnoc (ReversedList (x:xs)) = Just (ReversedList xs, x)
+{-# INLINE tryUnsnoc #-}
 
 -- === generic tree ===
 

@@ -385,7 +385,7 @@ instance SubstE (AtomSubstVal r) (ExtLabeledItemsE (Atom r) (AtomName r)) where
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
 instance SubstE (AtomSubstVal r) (FieldRowElems r) where
-  substE :: forall i o. Distinct o => (Scope o, Subst (AtomSubstVal r) i o) -> FieldRowElems r i -> FieldRowElems r o
+  substE :: forall i o. Distinct o => (Env o, Subst (AtomSubstVal r) i o) -> FieldRowElems r i -> FieldRowElems r o
   substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
     where
       substItem = \case
@@ -419,8 +419,6 @@ instance SubstE (AtomSubstVal r) (Hof r)
 instance SubstE (AtomSubstVal r) (RefOp r)
 instance SubstE (AtomSubstVal r) (Expr r)
 instance SubstE (AtomSubstVal r) (Block r)
-instance SubstB (AtomSubstVal CoreIR) SuperclassBinders
-instance SubstE (AtomSubstVal CoreIR) ClassDef
 instance SubstE (AtomSubstVal CoreIR) InstanceDef
 instance SubstE (AtomSubstVal CoreIR) InstanceBody
 instance SubstE (AtomSubstVal CoreIR) MethodType
@@ -440,3 +438,25 @@ instance SubstE (AtomSubstVal r) (DepPairType r)
 instance SubstE (AtomSubstVal r) (SolverBinding r)
 instance SubstE (AtomSubstVal r) (DeclBinding r)
 instance SubstB (AtomSubstVal r) (Decl r)
+
+-- XXX: we need a special instance here because `SuperclassBinder` have all
+-- their types at the level of the top binder, rather than interleaving them
+-- with the binders. We should make a `BindersNest` type for that pattern
+-- instead.
+instance SubstB (AtomSubstVal CoreIR) (SuperclassBinders) where
+  substB envSubst (SuperclassBinders bsTop tsTop) contTop = do
+    let tsTop' = map (substE envSubst) tsTop
+    go envSubst bsTop tsTop' \envSubst' bsTop' -> contTop envSubst' $ SuperclassBinders bsTop' tsTop'
+    where
+      go :: (Distinct o, FromName v, SinkableV v)
+         => (Env o, Subst v i o)
+         -> Nest AtomNameBinder i i' -> [Type CoreIR o]
+         -> (forall o'. Distinct o' => (Env o', Subst v i' o') -> Nest (AtomNameBinder) o o' -> a)
+         -> a
+      go (env, subst) Empty [] cont = cont (env, subst) Empty
+      go (env, subst) (Nest b bs) (t:ts) cont = do
+        withFresh (getNameHint b) (toScope env) \b' -> do
+          let env' = env `extendOutMap` toEnvFrag (b':>t)
+          let subst' = sink subst <>> b @> (fromName $ binderName b')
+          go (env', subst') bs (map sink ts) \envSubst'' bs' -> cont envSubst'' (Nest b' bs')
+      go _ _ _ _ = error "zip error"

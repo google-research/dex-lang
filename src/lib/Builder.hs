@@ -1552,9 +1552,9 @@ applyRecon (LamRecon ab) x = applyReconAbs ab x
 applyReconAbs
   :: (EnvReader m, Fallible1 m, SinkableE e, SubstE (AtomSubstVal r) e)
   => ReconAbs e n -> Atom r n -> m n (e n)
-applyReconAbs ab x = do
+applyReconAbs (Abs bs result) x = do
   xs <- unpackTelescope x
-  applyNaryAbs ab $ map SubstVal xs
+  applySubst (bs@@>map SubstVal xs) result
 
 telescopicCapture
   :: (EnvReader m, HoistableE e, HoistableB b)
@@ -1659,7 +1659,6 @@ instance SinkableE   (ReconstructAtom r)
 instance HoistableE  (ReconstructAtom r)
 instance AlphaEqE    (ReconstructAtom r)
 instance RenameE     (ReconstructAtom r)
-instance SubstE (AtomSubstVal r) (ReconstructAtom r)
 
 instance Pretty (ReconstructAtom r n) where
   pretty IdentityRecon = "Identity reconstruction"

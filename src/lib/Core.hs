@@ -168,7 +168,7 @@ instance (Monad m, ExtOutMap Env decls, OutFrag decls)
       case fabricateDistinctEvidence @UnsafeS of
         Distinct -> do
           let env' = extendOutMap (unsafeCoerceE env) d
-          return (ans, catOutFrags (toScope env') decls d, env')
+          return (ans, catOutFrags decls d, env')
   {-# INLINE refreshAbs #-}
 
 instance ( Monad m, ExtOutMap Env d1, ExtOutMap Env d2

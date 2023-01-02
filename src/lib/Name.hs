@@ -101,11 +101,10 @@ class InMap (env :: S -> S -> *) (envFrag :: S -> S -> S -> *) | env -> envFrag 
   emptyInMap :: env VoidS o
   extendInMap :: env i o -> envFrag i i' o -> env i' o
 
+-- TODO: this is now basically just `Category`. Should we get rid of it?
 class (SinkableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -> S -> *) where
   emptyOutFrag :: scopeFrag n n
-  -- The scope is here because solver subst concatenation needs it
-  -- TODO: Removing the scope argument would let us implement a faster Applicative for InplaceT!
-  catOutFrags  :: Distinct n3 => Scope n3 -> scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
+  catOutFrags  :: Distinct n3 => scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
 
 class HasScope scope => OutMap scope where
   emptyOutMap :: scope VoidS
@@ -136,7 +135,7 @@ instance SinkableB ScopeFrag where
 instance OutFrag ScopeFrag where
   emptyOutFrag = id
   {-# INLINE emptyOutFrag #-}
-  catOutFrags _ = (>>>)
+  catOutFrags = (>>>)
   {-# INLINE catOutFrags #-}
 
 instance HasScope Scope where
@@ -159,7 +158,7 @@ newtype RecSubstFrag  (v::V) o o' = RecSubstFrag { fromRecSubstFrag :: SubstFrag
 instance SinkableV v => OutFrag (RecSubstFrag v) where
   emptyOutFrag = RecSubstFrag $ emptyInFrag
   {-# INLINE emptyOutFrag #-}
-  catOutFrags _ = catRecSubstFrags
+  catOutFrags = catRecSubstFrags
   {-# INLINE catOutFrags #-}
 
 catRecSubstFrags :: (Distinct n3, SinkableV v)
@@ -185,13 +184,13 @@ lookupTerminalSubstFrag frag name =
 instance (SinkableB b, BindsNames b) => OutFrag (Nest b) where
   emptyOutFrag = id
   {-# INLINE emptyOutFrag #-}
-  catOutFrags _ = (>>>)
+  catOutFrags = (>>>)
   {-# INLINE catOutFrags #-}
 
 instance (SinkableB b, BindsNames b) => OutFrag (RNest b) where
   emptyOutFrag = id
   {-# INLINE emptyOutFrag #-}
-  catOutFrags _ = (>>>)
+  catOutFrags = (>>>)
   {-# INLINE catOutFrags #-}
 
 updateSubstFrag :: Color c => Name c i -> v c o -> SubstFrag v VoidS i o
@@ -1305,7 +1304,7 @@ extendTrivialInplaceT d =
   UnsafeMakeInplaceT \env decls -> do
     let env' = unsafeCoerceE $ extendOutMap env d
     withFabricatedDistinct @UnsafeS $
-      return ((), catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
+      return ((), catOutFrags decls $ unsafeCoerceB d, env')
 {-# INLINE extendTrivialInplaceT #-}
 
 extendTrivialSubInplaceT
@@ -1351,7 +1350,7 @@ extendInplaceT ab = do
     refreshAbsPure (toScope env) ab \_ d result -> do
       let env' = unsafeCoerceE $ extendOutMap env d
       withFabricatedDistinct @UnsafeS $
-        return (unsafeCoerceE result, catOutFrags (toScope env') decls $ unsafeCoerceB d, env')
+        return (unsafeCoerceE result, catOutFrags decls $ unsafeCoerceB d, env')
 {-# INLINE extendInplaceT #-}
 
 extendSubInplaceT
@@ -1402,7 +1401,7 @@ liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
     withFabricatedDistinct @UnsafeS do
       let dOuter = liftDecls dInner
       let envOuter' = extendOutMap (unsafeCoerceE envOuter) dOuter
-      return (result, catOutFrags (toScope envOuter') declsOuter dOuter, envOuter')
+      return (result, catOutFrags declsOuter dOuter, envOuter')
 {-# INLINE liftBetweenInplaceTs #-}
 
 -- === predicates for mutable and immutable scope parameters ===
@@ -1589,7 +1588,7 @@ unsafeEmitDoubleInplaceTHoisted d1 = do
       withFabricatedDistinct @UnsafeS do
         let topScopeNew = extendOutMap topScope (toScopeFrag $ unsafeCoerceB d1)
         let envNew = extendOutMap env (unsafeCoerceB d1)
-        let d1New = catOutFrags (toScope envNew) d1Prev d1
+        let d1New = catOutFrags d1Prev d1
         return (((), (topScopeNew, d1New)), d2, envNew)
 
 data DoubleInplaceTResult (d::B) (e::E) (n::S) =
@@ -1838,7 +1837,7 @@ instance BindsNames UnitB where
 instance OutFrag UnitB where
   emptyOutFrag = UnitB
   {-# INLINE emptyOutFrag #-}
-  catOutFrags _ UnitB UnitB = UnitB
+  catOutFrags UnitB UnitB = UnitB
   {-# INLINE catOutFrags #-}
 
 instance RenameB UnitB where

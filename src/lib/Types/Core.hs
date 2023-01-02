@@ -754,7 +754,7 @@ catEnvFrags (EnvFrag frag1 maybeEffs1)
 instance OutFrag EnvFrag where
   emptyOutFrag = EnvFrag emptyOutFrag Nothing
   {-# INLINE emptyOutFrag #-}
-  catOutFrags _ frag1 frag2 = catEnvFrags frag1 frag2
+  catOutFrags frag1 frag2 = catEnvFrags frag1 frag2
   {-# INLINE catOutFrags #-}
 
 instance OutMap Env where
@@ -1782,9 +1782,9 @@ instance AlphaEqE (PiBinding r)
 instance AlphaHashableE (PiBinding r)
 
 instance GenericB (PiBinder r) where
-  type RepB (PiBinder r) = BinderP AtomNameC (PairE (Type r) (LiftE Arrow))
-  fromB (PiBinder b ty arr) = b :> PairE ty (LiftE arr)
-  toB   (b :> PairE ty (LiftE arr)) = PiBinder b ty arr
+  type RepB (PiBinder r) = BinderP AtomNameC (PiBinding r)
+  fromB (PiBinder b ty arr) = b :> PiBinding arr ty
+  toB   (b :> PiBinding arr ty) = PiBinder b ty arr
 
 instance BindsAtMostOneName (PiBinder r) AtomNameC where
   PiBinder b _ _ @> x = b @> x
@@ -1822,10 +1822,12 @@ deriving instance Show (PiType r n)
 deriving via WrapE (PiType r) n instance Generic (PiType r n)
 
 instance GenericB (RolePiBinder r) where
-  type RepB (RolePiBinder r) = BinderP AtomNameC (PairE (Type r) (LiftE (Arrow, ParamRole)))
-  fromB (RolePiBinder b ty arr role) = b :> PairE ty (LiftE (arr, role))
+  type RepB (RolePiBinder r) =
+    PairB (LiftB (LiftE ParamRole))
+          (BinderP AtomNameC (PiBinding r))
+  fromB (RolePiBinder b ty arr role) = PairB (LiftB (LiftE role)) (b :> PiBinding arr ty)
   {-# INLINE fromB #-}
-  toB   (b :> PairE ty (LiftE (arr, role))) = RolePiBinder b ty arr role
+  toB   (PairB (LiftB (LiftE role)) (b :> PiBinding arr ty)) = RolePiBinder b ty arr role
   {-# INLINE toB #-}
 
 instance HasNameHint (RolePiBinder r n l) where
@@ -2209,11 +2211,11 @@ instance BindsNames  TopEnvFrag
 instance OutFrag TopEnvFrag where
   emptyOutFrag = TopEnvFrag emptyOutFrag mempty
   {-# INLINE emptyOutFrag #-}
-  catOutFrags scope (TopEnvFrag frag1 partial1)
-                    (TopEnvFrag frag2 partial2) =
+  catOutFrags (TopEnvFrag frag1 partial1)
+              (TopEnvFrag frag2 partial2) =
     withExtEvidence frag2 $
       TopEnvFrag
-        (catOutFrags scope frag1 frag2)
+        (catOutFrags frag1 frag2)
         (sink partial1 <> partial2)
   {-# INLINE catOutFrags #-}
 

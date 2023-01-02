@@ -361,7 +361,7 @@ zonkDefaults s (Defaults d1 d2) =
         SubstVal (Var v') -> freeVarsE v'
         _ -> mempty
 
-data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (SolverSubst l)
+data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (Defaults l) (Constraints l)
 
 instance Pretty (InfOutFrag n l) where
   pretty (InfOutFrag emissions defaults solverSubst) =
@@ -374,7 +374,7 @@ type InfEmission  = EitherE (DeclBinding CoreIR) (SolverBinding CoreIR)
 type InfEmissions = RNest (BinderP AtomNameC InfEmission)
 
 instance GenericB InfOutFrag where
-  type RepB InfOutFrag = PairB InfEmissions (LiftB (PairE Defaults SolverSubst))
+  type RepB InfOutFrag = PairB InfEmissions (LiftB (PairE Defaults Constraints))
   fromB (InfOutFrag emissions defaults solverSubst) =
     PairB emissions (LiftB (PairE defaults solverSubst))
   toB (PairB emissions (LiftB (PairE defaults solverSubst))) =
@@ -387,10 +387,10 @@ instance SinkableB InfOutFrag
 instance HoistableB  InfOutFrag
 
 instance OutFrag InfOutFrag where
-  emptyOutFrag = InfOutFrag REmpty mempty emptySolverSubst
-  catOutFrags scope (InfOutFrag em ds ss) (InfOutFrag em' ds' ss') =
+  emptyOutFrag = InfOutFrag REmpty mempty mempty
+  catOutFrags (InfOutFrag em ds ss) (InfOutFrag em' ds' ss') =
     withExtEvidence em' $
-      InfOutFrag (em >>> em') (sink ds <> ds') (catSolverSubsts scope (sink ss) ss')
+      InfOutFrag (em >>> em') (sink ds <> ds') (sink ss <> ss')
 
 instance HasScope InfOutMap where
   toScope (InfOutMap bindings _ _ _) = toScope bindings
@@ -474,21 +474,24 @@ isInferenceVar v = lookupEnv v >>= \case
   _                               -> return False
 
 instance ExtOutMap InfOutMap InfOutFrag where
-  extendOutMap m (InfOutFrag em ds' ss') =
-    -- There's no point in extending the subst or zonking unsolved when
-    -- there are no new solutions.
-    case substIsEmpty ss' of
-      True  -> InfOutMap env   ss   ds'' us
-      False -> InfOutMap env'' ss'' ds'' us''
-        where
-          (us'', env'') = zonkUnsolvedEnv ss' us env
-          ss'' = catSolverSubsts (toScope env) ss ss'
-    where
-      InfOutMap env ss ds us = m `extendOutMap` toEnvFrag em
-      ds'' = sink ds <> ds'
+  extendOutMap m (InfOutFrag em ds' cs) = do
+    let InfOutMap env ss ds us = m `extendOutMap` toEnvFrag em
+    let ds'' = sink ds <> ds'
+    let (env', us', ss') = extendOutMapWithConstraints env us ss cs
+    InfOutMap env' ss' ds'' us'
 
-substIsEmpty :: SolverSubst n -> Bool
-substIsEmpty (SolverSubst subst) = M.null subst
+extendOutMapWithConstraints
+  :: Distinct n => Env n -> UnsolvedEnv n -> SolverSubst n -> Constraints n
+  -> (Env n, UnsolvedEnv n, SolverSubst n)
+extendOutMapWithConstraints env us ss (Constraints allCs) = case tryUnsnoc allCs of
+  Nothing -> (env, us, ss)
+  Just (cs, (v, x)) -> do
+    let (env', us', SolverSubst ss') = extendOutMapWithConstraints env us ss (Constraints cs)
+    let s = M.singleton v x
+    let (us'', env'') = zonkUnsolvedEnv (SolverSubst s) us' env'
+    let ss'' = fmap (applySolverSubstE env'' (SolverSubst s)) ss'
+    let ss''' = SolverSubst $ ss'' <> s
+    (env'', us'', ss''')
 
 -- TODO: Make GatherRequired hold a set
 data RequiredIfaces (n::S) = FailIfRequired | GatherRequired (IfaceTypeSet n)
@@ -563,7 +566,7 @@ instance Solver (InfererM i) where
   extendSolverSubst v ty = do
    InfererM $ SubstReaderT $ lift $ lift11 $
     void $ extendTrivialInplaceT $
-      InfOutFrag REmpty mempty (singletonSolverSubst v ty)
+      InfOutFrag REmpty mempty (singleConstraint v ty)
   {-# INLINE extendSolverSubst #-}
 
   zonk e = InfererM $ SubstReaderT $ lift $ lift11 do
@@ -620,7 +623,7 @@ instance Inferer InfererM where
 
   addDefault v defaultType =
     InfererM $ SubstReaderT $ lift $ lift11 $
-      extendTrivialInplaceT $ InfOutFrag REmpty defaults emptySolverSubst
+      extendTrivialInplaceT $ InfOutFrag REmpty defaults mempty
     where
       defaults = case defaultType of
         IntDefault -> Defaults (freeVarsE v) mempty
@@ -682,24 +685,37 @@ hoistThroughDecls
   ->   e l
   -> m n (Abs InfOutFrag (Abs (Nest CDecl) e) n)
 hoistThroughDecls outFrag result = do
-  scope <- unsafeGetScope
+  env <- unsafeGetEnv
   refreshAbs (Abs outFrag result) \outFrag' result' -> do
-    liftExcept $ hoistThroughDecls' scope outFrag' result'
+    liftExcept $ hoistThroughDecls' env outFrag' result'
 {-# INLINE hoistThroughDecls #-}
 
 hoistThroughDecls'
   :: (HoistableE e, Distinct l)
-  => Scope n
+  => Env n
   -> InfOutFrag n l
   ->   e l
   -> Except (Abs InfOutFrag (Abs (Nest CDecl) e) n)
-hoistThroughDecls' scope (InfOutFrag emissions defaults subst) result = do
+hoistThroughDecls' env (InfOutFrag emissions defaults constraints) result = do
   withSubscopeDistinct emissions do
+    let subst = constraintsToSubst (env `extendOutMap` toEnvFrag emissions) constraints
     HoistedSolverState infVars defaults' subst' decls result' <-
-      hoistInfStateRec scope emissions emptyInferenceNameBindersFV
+      hoistInfStateRec env emissions emptyInferenceNameBindersFV
         (zonkDefaults subst defaults) (UnhoistedSolverSubst emptyOutFrag subst) Empty result
-    let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' subst'
+    let constraints' = substToConstraints subst'
+    let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' constraints'
     return $ Abs hoistedInfFrag $ Abs decls result'
+
+constraintsToSubst :: Distinct n => Env n -> Constraints n -> SolverSubst n
+constraintsToSubst env (Constraints csTop) = case tryUnsnoc csTop of
+  Nothing -> emptySolverSubst
+  Just (cs, (v, x)) -> do
+    let SolverSubst m = constraintsToSubst env (Constraints cs)
+    let s = M.singleton v x
+    SolverSubst $ fmap (applySolverSubstE env (SolverSubst s)) m <> s
+
+substToConstraints :: SolverSubst n -> Constraints n
+substToConstraints (SolverSubst m) = Constraints $ toSnocList $ M.toList m
 
 data HoistedSolverState e n where
   HoistedSolverState
@@ -717,14 +733,14 @@ data HoistedSolverState e n where
 -- which is how we use them in `hoistInfStateRec`.
 type DelayedSolveNest (b::B) (n::S) (l::S) = Nest (EitherB b (LiftB SolverSubst)) n l
 
-resolveDelayedSolve :: Distinct l => Scope n -> SolverSubst n -> DelayedSolveNest CDecl n l -> Nest CDecl n l
-resolveDelayedSolve scope subst = \case
+resolveDelayedSolve :: Distinct l => Env n -> SolverSubst n -> DelayedSolveNest CDecl n l -> Nest CDecl n l
+resolveDelayedSolve env subst = \case
   Empty -> Empty
-  Nest (RightB (LiftB sfrag)) rest -> resolveDelayedSolve scope (subst `unsafeCatSolverSubst` sfrag) rest
+  Nest (RightB (LiftB sfrag)) rest -> resolveDelayedSolve env (subst `unsafeCatSolverSubst` sfrag) rest
   Nest (LeftB  (Let b rhs)  ) rest ->
     withSubscopeDistinct rest $ withSubscopeDistinct b $
-      Nest (Let b (applySolverSubstE scope subst rhs)) $
-        resolveDelayedSolve (scope `extendOutMap` toScopeFrag b) (sink subst) rest
+      Nest (Let b (applySolverSubstE env subst rhs)) $
+        resolveDelayedSolve (env `extendOutMap` toEnvFrag (b:>rhs)) (sink subst) rest
   where
     unsafeCatSolverSubst :: SolverSubst n -> SolverSubst n -> SolverSubst n
     unsafeCatSolverSubst (SolverSubst a) (SolverSubst b) = SolverSubst $ a <> b
@@ -732,6 +748,8 @@ resolveDelayedSolve scope subst = \case
 data InferenceNameBindersFV (n::S) (l::S) = InferenceNameBindersFV (NameSet n) (InferenceNameBinders n l)
 instance BindsNames InferenceNameBindersFV where
   toScopeFrag = toScopeFrag . dropInferenceNameBindersFV
+instance BindsEnv InferenceNameBindersFV where
+  toEnvFrag = toEnvFrag . dropInferenceNameBindersFV
 instance ProvesExt InferenceNameBindersFV where
   toExtEvidence = toExtEvidence . dropInferenceNameBindersFV
 instance HoistableB InferenceNameBindersFV where
@@ -765,16 +783,16 @@ hoistSolverSubst (UnhoistedSolverSubst frag s) = hoist frag s
 -- for substitution shouldn't be a problem!
 hoistInfStateRec
   :: forall n l l1 l2 e. (Distinct n, Distinct l2, HoistableE e)
-  => Scope n -> InfEmissions n l
+  => Env n -> InfEmissions n l
   -> InferenceNameBindersFV l l1 -> Defaults l1 -> UnhoistedSolverSubst l1
   -> DelayedSolveNest CDecl l1 l2 -> e l2
   -> Except (HoistedSolverState e n)
-hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissions of
+hoistInfStateRec env emissions !infVars defaults !subst decls e = case emissions of
  REmpty -> do
   subst' <- liftHoistExcept' "Failed to hoist solver substitution in hoistInfStateRec"
     $ hoistSolverSubst subst
   let decls' = withSubscopeDistinct decls $
-                 resolveDelayedSolve (scope `extendOutMap` toScopeFrag infVars) subst' decls
+                 resolveDelayedSolve (env `extendOutMap` toEnvFrag infVars) subst' decls
   return $ HoistedSolverState (dropInferenceNameBindersFV infVars) defaults subst' decls' e
  RNest rest (b :> infEmission) -> do
   withSubscopeDistinct decls do
@@ -786,7 +804,7 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
         case M.lookup vUnhoist substMap of
           -- Unsolved inference variables are just gathered as they are.
           Nothing ->
-            hoistInfStateRec scope rest (prependNameBinder (b:>binding) infVars)
+            hoistInfStateRec env rest (prependNameBinder (b:>binding) infVars)
                              defaults subst decls e
           -- If a variable is solved, we eliminate it.
           Just bSolutionUnhoisted -> do
@@ -810,7 +828,7 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
                 -- This is quadratic, which is why we don't do this in the fast implementation!
                 let allEmissions = RNest rest (b :> infEmission)
                 let declsScope = withSubscopeDistinct infVars $
-                      (scope `extendOutMap` toScopeFrag allEmissions) `extendOutMap` toScopeFrag infVars
+                      (env `extendOutMap` toEnvFrag allEmissions) `extendOutMap` toEnvFrag infVars
                 let resolvedDecls = resolveDelayedSolve declsScope hoistedSubst bZonkedDecls
                 PairB resolvedDecls' b'' <- liftHoistExcept $ exchangeBs $ PairB b' resolvedDecls
                 let decls' = fmapNest LeftB resolvedDecls'
@@ -818,7 +836,7 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
                 -- care of by zonking the result before this function is entered.
                 e' <- liftHoistExcept $ hoist b'' e
                 withSubscopeDistinct b'' $
-                  hoistInfStateRec scope rest infVars' defaults' subst' decls' e'
+                  hoistInfStateRec env rest infVars' defaults' subst' decls' e'
 #else
                 -- SolverSubst should be recursively zonked, so any v that's a member
                 -- should never appear in an rhs. Hence, deleting the entry corresponding to
@@ -832,7 +850,7 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
                 -- that our safe implementation makes as well. Except here it's obviously unchecked.
                 let e' :: e UnsafeS = unsafeCoerceE e
                 Distinct <- return $ fabricateDistinctEvidence @UnsafeS
-                hoistInfStateRec scope rest infVars' defaults' subst' decls' e'
+                hoistInfStateRec env rest infVars' defaults' subst' decls' e'
 #endif
       RightE (SkolemBound _) -> do
 #ifdef DEX_DEBUG
@@ -841,21 +859,21 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
         let subst' = delayedHoistSolverSubst b' subst
         PairB decls' b'' <- liftHoistExcept' "Skolem leak?" $ exchangeBs $ PairB b' decls
         e' <- liftHoistExcept' "Skolem leak?" $ hoist b'' e
-        withSubscopeDistinct b'' $ hoistInfStateRec scope rest infVars' defaults' subst' decls' e'
+        withSubscopeDistinct b'' $ hoistInfStateRec env rest infVars' defaults' subst' decls' e'
 #else
         -- Skolem vars are only instantiated in unification, and we're very careful to
         -- never let them leak into the types of inference vars emitted while unifying
         -- and into the solver subst.
         Distinct <- return $ fabricateDistinctEvidence @UnsafeS
         hoistInfStateRec @n @UnsafeS @UnsafeS @UnsafeS
-          scope
+          env
           (unsafeCoerceB rest) (unsafeCoerceB infVars)
           (unsafeCoerceE defaults) (unsafeCoerceE subst)
           (unsafeCoerceB decls) (unsafeCoerceE e)
 #endif
       LeftE emission -> do
         -- Move the binder below all unsolved inference vars. Failure to do so is
-        -- an inference error --- a variable cannot be solved once we exit the scope
+        -- an inference error --- a variable cannot be solved once we exit the env
         -- of all variables it mentions in its type.
         -- TODO: Shouldn't this be an ambiguous type error?
         PairB infVars' (b':>emission') <-
@@ -866,7 +884,7 @@ hoistInfStateRec scope emissions !infVars defaults !subst decls e = case emissio
         let subst' = delayedHoistSolverSubst b' subst
         let defaults' = hoistDefaults b' defaults
         let decls' = Nest (LeftB (Let b' emission')) decls
-        hoistInfStateRec scope rest infVars' defaults' subst' decls' e
+        hoistInfStateRec env rest infVars' defaults' subst' decls' e
 
 hoistRequiredIfaces :: BindsNames b => b n l -> RequiredIfaces l -> RequiredIfaces n
 hoistRequiredIfaces bs = \case
@@ -1765,7 +1783,7 @@ inferClassDef className methodNames paramBs superclassTys methods = solveLocal d
   return $ ClassDef className methodNames bs scs mtys
 
 withClassDefBinders
-  :: (EmitsInf o, HasNamesE e, SubstE (AtomSubstVal CoreIR) e, SinkableE e)
+  :: (EmitsInf o, HasNamesE e, SinkableE e)
   => Nest (UAnnBinder AtomNameC) i i'
   -> (forall o'. (EmitsInf o', Ext o o') => [CAtomName o'] -> InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (RolePiBinder CoreIR)) e o)
@@ -1819,7 +1837,7 @@ withNestedUBinders bs asBinding cont = case bs of
     return $ Abs (Nest b' rest') body
 
 withRoleUBinder
-  :: (EmitsInf o, HasNamesE e, SubstE (AtomSubstVal CoreIR) e, SinkableE e)
+  :: (EmitsInf o, HasNamesE e, SinkableE e)
   => UAnnBinder AtomNameC i i' -> Arrow
   -> (forall o'. (EmitsInf o', Ext o o') => CAtomName o' -> InfererM i' o' (e o'))
   -> InfererM i o (Abs (RolePiBinder CoreIR) e o)
@@ -2453,12 +2471,26 @@ class (CtxReader1 m, EnvReader m) => Solver (m::MonadKind1) where
 type SolverOutMap = InfOutMap
 
 data SolverOutFrag (n::S) (l::S) =
-  SolverOutFrag (SolverEmissions n l) (SolverSubst l)
-
+  SolverOutFrag (SolverEmissions n l) (Constraints l)
+newtype Constraints n = Constraints (SnocList (CAtomName n, CType n))
+        deriving (Monoid, Semigroup)
 type SolverEmissions = RNest (BinderP AtomNameC (SolverBinding CoreIR))
 
+instance GenericE Constraints where
+  type RepE Constraints = ListE (CAtomName `PairE` CType)
+  fromE (Constraints xs) = ListE [PairE x y | (x,y) <- toList xs]
+  {-# INLINE fromE #-}
+  toE (ListE xs) = Constraints $ toSnocList $ [(x,y) | PairE x y <- xs]
+  {-# INLINE toE #-}
+
+instance SinkableE  Constraints
+instance RenameE    Constraints
+instance HoistableE Constraints
+instance Pretty (Constraints n) where
+  pretty (Constraints xs) = pretty $ unsnoc xs
+
 instance GenericB SolverOutFrag where
-  type RepB SolverOutFrag = PairB SolverEmissions (LiftB SolverSubst)
+  type RepB SolverOutFrag = PairB SolverEmissions (LiftB Constraints)
   fromB (SolverOutFrag em subst) = PairB em (LiftB subst)
   toB   (PairB em (LiftB subst)) = SolverOutFrag em subst
 
@@ -2468,10 +2500,10 @@ instance BindsNames  SolverOutFrag
 instance SinkableB   SolverOutFrag
 
 instance OutFrag SolverOutFrag where
-  emptyOutFrag = SolverOutFrag REmpty emptySolverSubst
-  catOutFrags scope (SolverOutFrag em ss) (SolverOutFrag em' ss') =
+  emptyOutFrag = SolverOutFrag REmpty mempty
+  catOutFrags (SolverOutFrag em ss) (SolverOutFrag em' ss') =
     withExtEvidence em' $
-      SolverOutFrag (em >>> em') (catSolverSubsts scope (sink ss) ss')
+      SolverOutFrag (em >>> em') (sink ss <> ss')
 
 instance ExtOutMap InfOutMap SolverOutFrag where
   extendOutMap infOutMap outFrag =
@@ -2510,7 +2542,7 @@ instance ExtOutFrag SolverOutFrag SolverEmission where
 instance Solver SolverM where
   extendSolverSubst v ty = SolverM $
     void $ extendTrivialInplaceT $
-      SolverOutFrag REmpty (singletonSolverSubst v ty)
+      SolverOutFrag REmpty (singleConstraint v ty)
   {-# INLINE extendSolverSubst #-}
 
   zonk e = SolverM do
@@ -2554,16 +2586,8 @@ type Solver2 (m::MonadKind2) = forall i. Solver (m i)
 emptySolverSubst :: SolverSubst n
 emptySolverSubst = SolverSubst mempty
 
-singletonSolverSubst :: CAtomName n -> CType n -> SolverSubst n
-singletonSolverSubst v ty = SolverSubst $ M.singleton v ty
-
--- We apply the rhs subst over the full lhs subst. We could try tracking
--- metadata about which name->type mappings contain no inference variables and
--- can be skipped.
-catSolverSubsts :: Distinct n => Scope n -> SolverSubst n -> SolverSubst n -> SolverSubst n
-catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) =
-  if M.null s2 then SolverSubst s1 else SolverSubst $ s1' <> s2
-  where s1' = fmap (applySolverSubstE scope (SolverSubst s2)) s1
+singleConstraint :: CAtomName n -> CType n -> Constraints n
+singleConstraint v ty = Constraints $ toSnocList [(v, ty)]
 
 -- TODO: put this pattern and friends in the Name library? Don't really want to
 -- have to think about `eqNameColorRep` just to implement a partial map.
@@ -2576,14 +2600,14 @@ lookupSolverSubst (SolverSubst m) name =
       Just ty -> SubstVal ty
 
 applySolverSubstE :: (SubstE (SubstVal AtomNameC CAtom) e, Distinct n)
-                  => Scope n -> SolverSubst n -> e n -> e n
-applySolverSubstE scope solverSubst@(SolverSubst m) e =
-  if M.null m then e else fmapNames scope (lookupSolverSubst solverSubst) e
+                  => Env n -> SolverSubst n -> e n -> e n
+applySolverSubstE env solverSubst@(SolverSubst m) e =
+  if M.null m then e else fmapNames env (lookupSolverSubst solverSubst) e
 
 zonkWithOutMap :: (SubstE (AtomSubstVal CoreIR) e, Distinct n)
                => InfOutMap n -> e n -> e n
 zonkWithOutMap (InfOutMap bindings solverSubst _ _) e =
-  applySolverSubstE (toScope bindings) solverSubst e
+  applySolverSubstE bindings solverSubst e
 
 liftSolverOutFrag :: Distinct l => SolverOutFrag n l -> InfOutFrag n l
 liftSolverOutFrag (SolverOutFrag emissions subst) =
@@ -3308,7 +3332,7 @@ instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)
       case fabricateDistinctEvidence @UnsafeS of
         Distinct -> do
           let env' = extendOutMap (unsafeCoerceE env) d
-          return (ans, catOutFrags (toScope env') decls d, env')
+          return (ans, catOutFrags decls d, env')
   {-# INLINE refreshAbs #-}
 
 instance BindsEnv InfOutFrag where

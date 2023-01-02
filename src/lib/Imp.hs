@@ -1543,8 +1543,6 @@ instance BindsEnv ImpDecl where
 instance BindsEnv IBinder where
   toEnvFrag (IBinder b ty) =  toEnvFrag $ b :> ImpNameBinding ty
 
-instance SubstB (AtomSubstVal SimpToImpIR) IBinder
-
 instance Pretty (LeafType n) where
   pretty (LeafType ctx base) = pretty ctx <+> pretty base
 

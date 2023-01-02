@@ -139,13 +139,13 @@ getMethodIndex className methodSourceName = do
     Just i -> return i
 {-# INLINE getMethodIndex #-}
 
-instantiateDataDef :: ScopeReader m => DataDef n -> DataDefParams r n -> m n [DataConDef n]
+instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams r n -> m n [DataConDef n]
 instantiateDataDef (DataDef _ bs cons) (DataDefParams params) = do
   let dataDefParams' = DataDefParams [(arr, unsafeCoerceIRE x) | (arr, x) <- params]
   fromListE <$> applyDataConAbs (Abs bs $ ListE cons) dataDefParams'
 {-# INLINE instantiateDataDef #-}
 
-applyDataConAbs :: (SubstE (AtomSubstVal r) e, SinkableE e, ScopeReader m)
+applyDataConAbs :: (SubstE (AtomSubstVal r) e, SinkableE e, EnvReader m)
                 => Abs (Nest (RolePiBinder r)) e n -> DataDefParams r n -> m n (e n)
 applyDataConAbs (Abs bs e) (DataDefParams xs) =
   applySubst (bs @@> (SubstVal <$> map snd xs)) e
@@ -165,17 +165,17 @@ instantiateNaryPi (NaryPiType bs eff resultTy) args = do
   applySubst (bs1 @@> map SubstVal args) (NaryPiType bs2 eff resultTy)
 {-# INLINE instantiateNaryPi #-}
 
-instantiateDepPairTy :: ScopeReader m => DepPairType r n -> Atom r n -> m n (Type r n)
+instantiateDepPairTy :: EnvReader m => DepPairType r n -> Atom r n -> m n (Type r n)
 instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
 {-# INLINE instantiateDepPairTy #-}
 
-instantiatePi :: ScopeReader m => PiType r n -> Atom r n -> m n (EffectRow n, Type r n)
+instantiatePi :: EnvReader m => PiType r n -> Atom r n -> m n (EffectRow n, Type r n)
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 {-# INLINE instantiatePi #-}
 
-instantiateTabPi :: ScopeReader m => TabPiType r n -> Atom r n -> m n (Type r n)
+instantiateTabPi :: EnvReader m => TabPiType r n -> Atom r n -> m n (Type r n)
 instantiateTabPi (TabPiType b body) x = applyAbs (Abs b body) (SubstVal x)
 {-# INLINE instantiateTabPi #-}
 
@@ -453,7 +453,7 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM substM args
     let bs' = fmapNest (\(RolePiBinder b _ _ _) -> b) bs
-    ListE params' <- applyNaryAbs (Abs bs' (ListE (map unsafeCoerceIRE params))) (map SubstVal args')
+    ListE params' <- applySubst (bs' @@> map SubstVal args') (ListE (map unsafeCoerceIRE params))
     return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
