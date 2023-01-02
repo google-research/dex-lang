@@ -975,14 +975,14 @@ buildEffLam
   -> m n (LamExpr r n)
 buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
-  withFreshBinder noHint TyKind \h -> do
+  withFreshBinder noHint (TC HeapType) \h -> do
     let ty' = RefTy (Var $ binderName h) (sink ty)
     withFreshBinder hint (LamBinding PlainArrow ty') \b -> do
       let ref = binderName b
       hVar <- sinkM $ binderName h
       let eff' = extendEffect (RWSEffect rws (Just hVar)) (sink eff)
       body' <- withAllowedEffects eff' $ buildBlock $ body (sink hVar) $ sink ref
-      return $ LamExpr (BinaryNest (h:>TyKind) (b:>ty')) body'
+      return $ LamExpr (BinaryNest (h:>TC HeapType) (b:>ty')) body'
 
 buildForAnn
   :: (Emits n, ScopableBuilder r m)

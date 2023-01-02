@@ -342,9 +342,9 @@ instance HasType r (Expr r) where
       TC (RefType h s) <- getTypeE ref
       h' <- return case h of
         Just (Var h') -> Just h'
-        Just UnitTy -> Nothing
+        Just (Con HeapVal) -> Nothing
         Nothing -> Nothing
-        _ -> error "expect heap parameter to be a var or UnitTy"
+        _ -> error "expect heap parameter to be a var or HeapVal"
       case m of
         MGet      ->         declareEff (RWSEffect State  h') $> s
         MPut  x   -> x|:s >> declareEff (RWSEffect State  h') $> UnitTy
@@ -521,11 +521,12 @@ typeCheckPrimTC tc = case tc of
   Fin n -> n|:NatTy >> return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
-  RefType r a      -> mapM_ (|:TyKind) r >> a|:TyKind >> return TyKind
+  RefType r a      -> mapM_ (|:TC HeapType) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
   LabelType        -> return TyKind
+  HeapType         -> return TyKind
 
 typeCheckPrimCon :: Typer m => PrimCon r (Atom r i) -> m i o (Type r o)
 typeCheckPrimCon con = case con of
@@ -564,6 +565,7 @@ typeCheckPrimCon con = case con of
     method |: unsafeCoerceIRE methodTy
     return dictTy'
   DictHole _ ty -> checkTypeE TyKind ty
+  HeapVal -> return $ TC HeapType
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom r i) -> m i o (Type r o)
 typeCheckPrimOp op = case op of
@@ -1111,7 +1113,7 @@ checkedApplyNaryAbs (Abs nest e) args = case (nest, args) of
 instance CheckableE EffectRow where
   checkE effRow@(EffectRow effs effTail) = do
     forM_ effs \eff -> case eff of
-      RWSEffect _ (Just v) -> Var v |: TyKind
+      RWSEffect _ (Just v) -> Var v |: TC HeapType
       RWSEffect _ Nothing -> return ()
       ExceptionEffect -> return ()
       IOEffect        -> return ()
@@ -1306,6 +1308,7 @@ checkDataLike ty = case ty of
     Nat              -> return ()
     Fin _            -> return ()
     RefType _ _      -> return ()
+    HeapType         -> return ()
     _ -> throw TypeErr $ pprint ty
   _   -> throw TypeErr $ pprint ty
   where recur = checkDataLike

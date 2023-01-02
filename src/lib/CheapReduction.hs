@@ -478,9 +478,9 @@ instance SubstE (AtomSubstVal r) (EffectP Name) where
     RWSEffect rws Nothing -> RWSEffect rws Nothing
     RWSEffect rws (Just v) -> do
       let v' = case env ! v of
-                 Rename        v''  -> Just v''
-                 SubstVal UnitTy    -> Nothing  -- used at runtime/imp-translation-time
-                 SubstVal (Var v'') -> Just v''
+                 Rename   v''           -> Just v''
+                 SubstVal (Con HeapVal) -> Nothing
+                 SubstVal (Var v'')     -> Just v''
                  SubstVal _ -> error "Heap parameter must be a name"
       RWSEffect rws v'
     ExceptionEffect -> ExceptionEffect

@@ -202,6 +202,7 @@ summary atom = case atom of
       Newtype _ e -> summary e
       ExplicitDict _ _ -> invalid "ExplicitDict"
       DictHole _ _ -> invalid "DictHole"
+      HeapVal -> invalid "HeapVal"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown _ = return IxAll

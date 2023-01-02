@@ -1,21 +1,21 @@
 
 :p
-   def m {h:Type} (ref:Ref h Int) : {State h} Int = get ref
+   def m {h:Heap} (ref:Ref h Int) : {State h} Int = get ref
    run_state 2 m
 > (2, 2)
 
 :p
-   def m {h:Type} (ref:Ref h Int) : {State h} Unit = ref := 3
+   def m {h:Heap} (ref:Ref h Int) : {State h} Unit = ref := 3
    run_state 0 m
 > ((), 3)
 
 :p
-   def m {h:Type} (ref:Ref h Int) : {Read h} Int = ask ref
+   def m {h:Heap} (ref:Ref h Int) : {Read h} Int = ask ref
    with_reader 5 m
 > 5
 
 :p
-  def stateAction {h:Type} (ref:Ref h Float) : {State h} Unit =
+  def stateAction {h:Heap} (ref:Ref h Float) : {State h} Unit =
      x = get ref
      ref := (x + 2.0)
      z = get ref
@@ -26,7 +26,7 @@
 
 :p
   def rwsAction
-        {rh:Type} {wh:Type} {sh:Type}
+        {rh:Heap} {wh:Heap} {sh:Heap}
         [AccumMonoid wh Float]
         (r:Ref rh Int) (w:Ref wh Float) (s:Ref sh Bool)
         : {Read rh, Accum wh, State sh} Int =
@@ -44,7 +44,7 @@
 > ((4, 6.), False)
 
 :p
-   def m {h:Type} (s:Ref h (Fin 3=>Int)) : {State h} Unit =
+   def m {h:Heap} (s:Ref h (Fin 3=>Int)) : {State h} Unit =
      s!(from_ordinal _ 0) := 10
      s!(from_ordinal _ 2) := 20
      x = get (s!(from_ordinal _ 0))
@@ -56,7 +56,7 @@
 > 2
 
 :p
-  def m {wh:Type} {sh:Type}
+  def m {wh:Heap} {sh:Heap}
         [AccumMonoid wh Float]
         (w:Ref wh Float) (s:Ref sh Float)
         : {Accum wh, State sh} Unit =
@@ -74,7 +74,7 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
 > ((), 3.5)
 
 :p
-  def m {h1:Type} {h2:Type}
+  def m {h1:Heap} {h2:Heap}
         [AccumMonoid h1 Float] [AccumMonoid h2 Float]
         (w1:Ref h1 Float) (w2:Ref h2 Float)
         : {Accum h1, Accum h2} Unit =
@@ -84,7 +84,7 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
   run_accum (AddMonoid Float) \w1. run_accum (AddMonoid Float) \w2. m w1 w2
 > (((), 3.), 2.)
 
-def foom {h:Type} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
+def foom {h:Heap} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
   s!(from_ordinal _ 0) := 1
   s!(from_ordinal _ 2) := 2
 

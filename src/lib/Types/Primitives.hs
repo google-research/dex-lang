@@ -50,6 +50,7 @@ data PrimTC (r::IR) (e:: *) where
   EffectRowKind    ::                   PrimTC r e
   LabeledRowKindTC ::                   PrimTC r e
   LabelType        ::                   PrimTC r e
+  HeapType         ::                   PrimTC r e
   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 traversePrimTC :: Applicative f => (e -> f e') -> PrimTC r e -> f (PrimTC r e')
@@ -68,6 +69,7 @@ data PrimCon (r::IR) (e:: *) where
   ExplicitDict :: e -> e            -> PrimCon r e
   -- Only used during type inference
   DictHole     :: AlwaysEqual SrcPosCtx -> e -> PrimCon r e
+  HeapVal      ::                      PrimCon r e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data MemOp e =

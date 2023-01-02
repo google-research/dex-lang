@@ -150,6 +150,7 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     EffectRowKind    -> return EffectRowKind
     LabeledRowKindTC -> return LabeledRowKindTC
     LabelType        -> return LabelType
+    HeapType         -> return HeapType
   _ -> error $ "Not implemented: " ++ pprint ty
 {-# INLINE traverseTyParams #-}
 

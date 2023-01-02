@@ -359,6 +359,7 @@ getTypePrimCon con = case con of
   LabelCon _   -> return $ TC $ LabelType
   ExplicitDict dictTy _ -> substM dictTy
   DictHole _ ty -> substM ty
+  HeapVal       -> return $ TC HeapType
 
 dictExprType :: DictExpr r i -> TypeQueryM r i o (Type r o)
 dictExprType e = case e of
@@ -807,9 +808,9 @@ deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
 getMaybeHeapVar :: Type r o -> Maybe (AtomName r o)
 getMaybeHeapVar (TC (RefType h _)) = case h of
   Just (Var h') -> Just h'
-  Just UnitTy   -> Nothing
-  Nothing       -> Nothing
-  _ -> error "expect heap parameter to be a var or UnitTy"
+  Just (Con HeapVal) -> Nothing
+  Nothing            -> Nothing
+  _ -> error "expect heap parameter to be a var or HeapVal"
 getMaybeHeapVar refTy = error $ "not a ref type: " ++ pprint refTy
 
 -- === singleton types ===

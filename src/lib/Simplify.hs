@@ -481,7 +481,6 @@ testIfDataAtom x = do
 -- TODO: implement this using a safe traversal rather than just coercing after
 -- performing the isData check.
 coreToSimpAtom :: EnvReader m => CAtom n -> m n (SAtom n)
-coreToSimpAtom TyKind = return TyKind -- TODO: figure out why we need this
 coreToSimpAtom x = do
   testIfDataAtom x >>= \case
     Just x' -> return x'

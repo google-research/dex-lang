@@ -99,7 +99,8 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
   -- this.
   Abs Empty ab <- liftInfererM $ solveLocal $ buildDeclsInf do
     checkInstanceArgs bs do
-      checkInstanceParams params \params' -> do
+      ClassDef _ _ paramBinders _ _ <- getClassDef (sink className')
+      checkInstanceParams paramBinders params \params' -> do
         className'' <- sinkM className'
         body <- checkInstanceBody className'' params' methods
         return (ListE params' `PairE` body)
@@ -1943,21 +1944,28 @@ checkHandlerBodyTyArg b cont = do
       cont v
 
 checkInstanceParams
-  :: forall i o e.
+  :: forall i o e any.
      (EmitsInf o, SinkableE e, HoistableE e, RenameE e)
-  => [UType i]
+  => Nest (RolePiBinder CoreIR) o any
+  -> [UType i]
   -> (forall o'. (EmitsInf o', Ext o o') => [CType o'] -> InfererM i o' (e o'))
   -> InfererM i o (Abs (Nest (RolePiBinder CoreIR)) e o)
-checkInstanceParams params cont = go params []
+checkInstanceParams bsTop params cont = go bsTop params []
   where
-    go :: forall o'. (EmitsInf o', Ext o o') => [UType i] -> [CType o']
+    go :: forall o' any'. (EmitsInf o', Ext o o')
+       => Nest (RolePiBinder CoreIR) o' any'
+       -> [UType i] -> [CType o']
        -> InfererM i o' (Abs (Nest (RolePiBinder CoreIR)) e o')
-    go []    ptys = Abs Empty <$> cont (reverse ptys)
-    go (p:t) ptys = checkUTypeWithMissingDicts p \ds getParamType -> do
-      mergeAbs <$> introDicts (eSetToList ds) do
-        pty <- getParamType
-        ListE ptys' <- sinkM $ ListE ptys
-        go t (pty:ptys')
+    go Empty []    ptys = Abs Empty <$> cont (reverse ptys)
+    go (Nest (RolePiBinder b k _ _) bs) (p:t) ptys = do
+      checkParamWithMissingDicts k p \ds getParamType -> do
+        mergeAbs <$> introDicts (eSetToList ds) do
+          pty <- getParamType
+          bsAbs <- sinkM $ Abs b (EmptyAbs bs)
+          Abs bs' UnitE <- applyAbs bsAbs (SubstVal pty)
+          ListE ptys' <- sinkM $ ListE ptys
+          go bs' t (pty:ptys')
+    go _ _ _ = error "zip error"
 
 mergeAbs :: Abs (Nest b) (Abs (Nest b) e) n -> Abs (Nest b) e n
 mergeAbs (Abs bs (Abs bs' e)) = Abs (bs >>> bs') e
@@ -1985,9 +1993,9 @@ introDicts
   :: forall i o e.
      (EmitsInf o, SinkableE e, HoistableE e, RenameE e)
   => [CType o]
-  -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (e l))
+  -> (forall l. (EmitsInf l, DExt o l) => InfererM i l (e l))
   -> InfererM i o (Abs (Nest (RolePiBinder CoreIR)) e o)
-introDicts []    m = Abs Empty <$> m
+introDicts []    m = do Distinct <- getDistinct; Abs Empty <$> m
 introDicts (h:t) m = do
   ab <- buildPiAbsInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
     ListE t' <- sinkM $ ListE t
@@ -1997,9 +2005,9 @@ introDicts (h:t) m = do
 
 introDictTys :: forall i o. EmitsInf o
              => [CType o]
-             -> (forall l. (EmitsInf l, Ext o l) => InfererM i l (PiType CoreIR l))
+             -> (forall l. (EmitsInf l, DExt o l) => InfererM i l (PiType CoreIR l))
              -> InfererM i o (PiType CoreIR o)
-introDictTys []    m = m
+introDictTys []    m = do Distinct <- getDistinct; m
 introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
   ListE t' <- sinkM $ ListE t
   (Pure,) . Pi <$> (introDictTys t' m)
@@ -2031,7 +2039,7 @@ checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect o)
 checkUEff eff = case eff of
   RWSEffect rws (Just ~(SIInternalName _ region)) -> do
     region' <- renameM region
-    constrainVarTy region' TyKind
+    constrainVarTy region' (TC HeapType)
     return $ RWSEffect rws $ Just region'
   RWSEffect rws Nothing -> return $ RWSEffect rws Nothing
   ExceptionEffect -> return ExceptionEffect
@@ -2265,7 +2273,7 @@ checkAnn ann = case ann of
 checkAnnWithMissingDicts
   :: EmitsInf o
   => Maybe (UType i)
-  -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => InfererM i o' (CType o')) -> InfererM i o a)
+  -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (CType o')) -> InfererM i o a)
   -> InfererM i o a
 checkAnnWithMissingDicts ann cont = case ann of
   Just ty -> checkUTypeWithMissingDicts ty cont
@@ -2275,16 +2283,24 @@ checkAnnWithMissingDicts ann cont = case ann of
 checkUTypeWithMissingDicts
   :: EmitsInf o
   => UType i
-  -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => InfererM i o' (CType o')) -> InfererM i o a)
+  -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (CType o')) -> InfererM i o a)
   -> InfererM i o a
-checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
+checkUTypeWithMissingDicts = checkParamWithMissingDicts TyKind
+
+checkParamWithMissingDicts
+  :: EmitsInf o
+  => Kind CoreIR o
+  -> UType i
+  -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (CType o')) -> InfererM i o a)
+  -> InfererM i o a
+checkParamWithMissingDicts kind uty@(WithSrcE _ _) cont = do
   unsolvedSubset <- do
     -- We have to be careful not to emit inference vars out of the initial solve.
     -- The resulting type will never be used in downstream inference, so we can easily
     -- end up with fake ambiguous variables if they leak out.
     Abs frag unsolvedSubset' <- liftInfererMSubst $ runLocalInfererM do
       (Abs decls result, unsolvedSubset) <- gatherUnsolvedInterfaces $
-        buildDeclsInf $ withAllowedEffects Pure $ checkRho noHint uty TyKind
+        buildDeclsInf $ withAllowedEffects Pure $ checkRho noHint uty (sink kind)
       -- Note that even if the normalization succeeds here, we can't short-circuit
       -- rechecking the UType, because unsolvedSubset is only an approximation to
       -- the set of all constraints. We have to reverify it again!
@@ -2298,11 +2314,14 @@ checkUTypeWithMissingDicts uty@(WithSrcE _ _) cont = do
     return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
       GatherRequired unsolvedSubset -> unsolvedSubset
       FailIfRequired                -> error "Unreachable"
-  cont unsolvedSubset $ checkUType uty
+  cont unsolvedSubset $ checkUParam (sink kind) uty
 
 checkUType :: EmitsInf o => UType i -> InfererM i o (CType o)
-checkUType uty@(WithSrcE pos _) = do
-  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho noHint uty TyKind
+checkUType = checkUParam TyKind
+
+checkUParam :: EmitsInf o => Kind CoreIR o -> UType i -> InfererM i o (CType o)
+checkUParam k uty@(WithSrcE pos _) = do
+  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho noHint uty (sink k)
   (ans, hoistStatus, ds) <- cheapReduceWithDecls decls result
   case hoistStatus of
     DictTypeHoistFailure -> addSrcContext pos $ throw NotImplementedErr $

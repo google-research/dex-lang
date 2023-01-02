@@ -349,6 +349,7 @@ transposeCon con ct = case con of
   LabelCon _     -> notTangent
   ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
+  HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a

@@ -517,6 +517,7 @@ linearizePrimCon con = case con of
   LabelCon _     -> error "Unexpected label"
   ExplicitDict  _ _ -> error "Unexpected ExplicitDict"
   DictHole _ _ -> error "Unexpected DictHole"
+  HeapVal -> error "Unexpected HeapVal"
   where emitZeroT = withZeroT $ injSubstM $ Con con
 
 linearizeHof :: Emits o => Hof SimpIR i -> LinM i o CAtom CAtom

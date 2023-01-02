@@ -21,10 +21,10 @@ def index_list {a} (l:List a) (i:Nat) : {Except} a =
 
 '## The Parser type
 
-def ParserHandle (h:Type) : Type = (String & Ref h Nat)
+def ParserHandle (h:Heap) : Type = (String & Ref h Nat)
 
 data Parser a:Type =
-  MkParser ((h:Type) ?-> ParserHandle h -> {Except, State h} a)
+  MkParser ((h:Heap) ?-> ParserHandle h -> {Except, State h} a)
 
 def parse {a h} (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a =
   (MkParser f) = parser

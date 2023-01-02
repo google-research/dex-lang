@@ -567,7 +567,7 @@ toImpHof maybeDest hof = do
       r' <- substM r
       rDest <- allocDest =<< getType r'
       storeAtom rDest r'
-      extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom rDest)) $
+      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
         translateBlock maybeDest body
     RunWriter d (BaseMonoid e _) f -> do
       BinaryLamExpr h ref body <- return f
@@ -583,7 +583,7 @@ toImpHof maybeDest hof = do
         PairE accTy' e'' <- sinkM $ PairE accTy e'
         liftMonoidEmpty accTy' e''
       storeAtom wDest emptyVal
-      void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom wDest)) $
+      void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom wDest
     RunState d s f -> do
@@ -596,7 +596,7 @@ toImpHof maybeDest hof = do
           sDest <- atomToDest =<< substM d'
           return (aDest, sDest)
       storeAtom sDest =<< substM s
-      void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal (destToAtom sDest)) $
+      void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom sDest
     RunIO body-> translateBlock maybeDest body

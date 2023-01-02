@@ -979,6 +979,7 @@ primNames = M.fromList
   , ("Ref"       , UPrimTC $ RefType (Just ()) ())
   , ("PairType"  , UPrimTC $ ProdType [(), ()])
   , ("UnitType"  , UPrimTC $ ProdType [])
+  , ("HeapType"  , UPrimTC $ HeapType)
   , ("EffKind"   , UPrimTC $ EffectRowKind)
   , ("LabeledRowKind", UPrimTC $ LabeledRowKindTC)
   , ("fstRef"     , UProjRef 0)
