@@ -626,6 +626,7 @@ typeCheckMiscOp = \case
       (BaseTy dbt@(Scalar _), BaseTy sbt@(Scalar _)) | sizeOf sbt == sizeOf dbt ->
         return $ BaseTy dbt
       _ -> throw TypeErr $ "Invalid bitcast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
+  UnsafeCoerce t _ -> renameM t
   SumTag x -> do
     getTypeE x >>= \case
       TypeCon _ _ _ -> return ()

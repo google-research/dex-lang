@@ -1082,3 +1082,6 @@ unsafe_project Unit (inject (Unit | Fin 2) ())
 
 unsafe_project Unit (inject (Fin 2 | Unit) ())
 > ()
+
+:p unsafe_coerce (Fin 1 => (Nat & Nat)) ([1], [2])
+> [(1, 2)]

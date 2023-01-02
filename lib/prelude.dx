@@ -34,6 +34,8 @@ Float = Float32
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
+def unsafe_coerce {a} (b:Type) (x:a) : b = %unsafeCoerce b x
+
 def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
 def f_to_f64 (x : Float)   : Float64 = internal_cast _ x

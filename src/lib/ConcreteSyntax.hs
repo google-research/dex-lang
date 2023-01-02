@@ -997,6 +997,7 @@ primNames = M.fromList
   , ("outputStream"  , miscOp $ OutputStream)
   , ("cast"          , miscOp $ CastOp () ())
   , ("bitcast"       , miscOp $ BitcastOp () ())
+  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce () ())
   , ("select"        , miscOp $ Select () () ())
   , ("projNewtype" , UProjBaseNewtype)
   , ("projMethod0" , UProjMethod 0)

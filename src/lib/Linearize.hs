@@ -421,6 +421,7 @@ linearizeMiscOp op = case op of
         y <- emitOp $ MiscOp $ CastOp t' x
         return $ WithTangent y do xt >> return (sink yt)
   BitcastOp _ _    -> notImplemented
+  UnsafeCoerce _ _ -> notImplemented
   ThrowException _ -> notImplemented
   ThrowError _     -> emitZeroT
   OutputStream     -> emitZeroT

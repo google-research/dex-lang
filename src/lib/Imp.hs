@@ -469,6 +469,15 @@ toImpMiscOp maybeDest op = case op of
   BitcastOp destTy x -> do
     BaseTy bt <- return destTy
     returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
+  UnsafeCoerce resultTy x -> do
+    -- TODO: we ought to be able to do this without forcing a copy. (But this is
+    -- easier for now.)
+    -- TODO: check here that the representations are the same. That's still not
+    -- an acceptable user-facing error but better than the alternative.
+    srcTy <- getType x
+    dest@(Dest _ destTree) <- maybeAllocDest maybeDest resultTy
+    storeAtom (Dest srcTy destTree) x
+    loadAtom dest
   Select p x y -> do
     BaseTy _ <- getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
