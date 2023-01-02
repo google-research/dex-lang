@@ -312,6 +312,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 <h3>Primitive Types</h3>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Unit</span> <span class="symbol">=</span> %<span class="type-name">UnitType</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">TyKind</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Heap</span> <span class="symbol">=</span> %<span class="type-name">HeapType</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Effects</span> <span class="symbol">=</span> %<span class="type-name">EffKind</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Fields</span> <span class="symbol">=</span> %<span class="type-name">LabeledRowKind</span>
 </div></div><div class="cell"><div class="code-block">
@@ -927,16 +928,15 @@ Monoids support <code>fold</code> operations, and similar.</li>
   mcombine <span class="symbol">=</span> mul
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Effects</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Heap</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get  {h s} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s)       <span class="symbol">:</span> {<span class="type-name">State</span> h} s    <span class="symbol">=</span> %get  ref
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">:=</span>) {h s} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s) (x<span class="command">:s</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span> %put  ref x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ask  {h r} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h r)       <span class="symbol">:</span> {<span class="type-name">Read</span>  h} r    <span class="symbol">=</span> %ask  ref
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">AccumMonoidData</span> h w <span class="symbol">=</span>
-  <span class="type-name">UnsafeMkAccumMonoidData</span> b<span class="symbol">:</span><span class="type-name">Type</span> (<span class="type-name">Monoid</span> b)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">AccumMonoidData</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) w <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoidData</span> b<span class="symbol">:</span><span class="type-name">Type</span> (<span class="type-name">Monoid</span> b)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">AccumMonoid</span> h w
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">AccumMonoid</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) w
   getAccumMonoidData <span class="symbol">:</span> <span class="type-name">AccumMonoidData</span> h w
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">AccumMonoid</span> h (n<span class="symbol">=&gt;</span>w) <span class="keyword">given</span> {n h w} [<span class="type-name">Ix</span> n] [am <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w]
@@ -957,31 +957,34 @@ Monoids support <code>fold</code> operations, and similar.</li>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> run_reader
       {r a eff}
       (init<span class="command">:r</span>)
-      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
+      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
-    <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; r) <span class="symbol">:</span> {<span class="type-name">Read</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
+    <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Heap</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; r) <span class="symbol">:</span> {<span class="type-name">Read</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
     %runReader init explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_reader
       {r a eff}
       (init<span class="command">:r</span>)
-      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
+      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
     run_reader init action
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">MonoidLifter</span> (b<span class="symbol">:</span><span class="type-name">Type</span>) (w<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">AccumMonoid</span> h w
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">MonoidLifter</span> (b<span class="symbol">:</span><span class="type-name">Type</span>) (w<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">AccumMonoid</span> h w
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> mk_accum_monoid <span class="symbol">:</span> <span class="type-name">AccumMonoid</span> h w <span class="keyword">given</span> {h w} (d<span class="symbol">:</span><span class="type-name">AccumMonoidData</span> h w)
+  getAccumMonoidData <span class="symbol">=</span> d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> run_accum
       {a b w eff}
       [mlift<span class="symbol">:</span><span class="type-name">MonoidLifter</span> b w]
       (bm<span class="symbol">:</span><span class="type-name">Monoid</span> b)
-      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
+      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> w) <span class="symbol">=</span>
   empty <span class="symbol">=</span> %projMethod0 bm
   combine <span class="symbol">=</span> %projMethod1 bm
-  <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span>
+  <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Heap</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span>
     accumMonoidData <span class="symbol">:</span> (<span class="type-name">AccumMonoidData</span> h&#39; b) <span class="symbol">=</span> <span class="type-name">UnsafeMkAccumMonoidData</span> b bm
-    accumBaseMonoid <span class="symbol">=</span> %explicitDict (<span class="type-name">AccumMonoid</span> h&#39; b) accumMonoidData
+    accumBaseMonoid <span class="symbol">=</span> mk_accum_monoid accumMonoidData
     action&#39; <span class="symbol">=</span> %explicitApply (%explicitApply action h&#39;) accumBaseMonoid
     action&#39; ref
   %runWriter empty (<span class="symbol">\</span>x y<span class="symbol">.</span> combine x y) explicitAction
@@ -990,28 +993,28 @@ Monoids support <code>fold</code> operations, and similar.</li>
       {a b w eff}
       [mlift<span class="symbol">:</span><span class="type-name">MonoidLifter</span> b w]
       (m<span class="symbol">:</span><span class="type-name">Monoid</span> b)
-      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
+      (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} w <span class="symbol">=</span>
   snd <span class="symbol">$</span> run_accum m action
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> run_state
       {a s eff}
       (init<span class="command">:s</span>)
-      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
+      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> s) <span class="symbol">=</span>
-  <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; s) <span class="symbol">:</span> {<span class="type-name">State</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
+  <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Heap</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; s) <span class="symbol">:</span> {<span class="type-name">State</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
   %runState init explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_state
       {a s eff}
       (init<span class="command">:s</span>)
-      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
+      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span> fst <span class="symbol">$</span> run_state init action
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yield_state
       {a s eff}
       (init<span class="command">:s</span>)
-      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
+      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} s <span class="symbol">=</span> snd <span class="symbol">$</span> run_state init action
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_io {a eff} (f<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span><span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
