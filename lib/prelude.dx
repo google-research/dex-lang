@@ -34,6 +34,9 @@ Float = Float32
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
+def unsafe_coerce {a} (b:Type) (x:a) : b = %unsafeCoerce b x -- TODO: `Data` constraint
+def uninitialized_value {a} : a = %garbageVal a              -- TODO: `Data` constraint
+
 def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
 def f_to_f64 (x : Float)   : Float64 = internal_cast _ x
@@ -1933,9 +1936,15 @@ def from_ordinal_error (i:Nat) (upper:Nat) : String =
   "Ordinal index out of range:" <> show i <> " >= " <> show upper
 
 def from_ordinal (n:Type) [Ix n] (i:Nat) : n =
-  case (0 <= i) && (i < size n) of
+  case i < size n of
     True  -> unsafe_from_ordinal _ i
     False -> error $ from_ordinal_error i $ size n
+
+-- TODO: should this be called `from_ordinal`?
+def to_ix (n:Type) [Ix n] (i:Nat) : Maybe n =
+  case i < size n of
+    True  -> Just $ unsafe_from_ordinal _ i
+    False -> Nothing
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
@@ -2501,3 +2510,59 @@ instance Ix (a=>b) given {a b} [Ix a, Ix b]
 
 instance NonEmpty (a=>b) given {a b} [Ix a, NonEmpty b]
   first_ix = unsafe_from_ordinal _ 0
+
+'### stack
+-- TODO: replace `DynBuffer` with this?
+
+-- TODO: `Data` constraint
+def Stack (h:Heap) (a:Type) = Ref h (Nat & List a)
+
+def stack_size {h a} (stack:Stack h a) : {State h} Nat = get $ fst_ref stack
+
+def unsafe_get_stack_buffer {h a} (stack:Stack h a) : {State h} (Ref h (Fin 0 => a)) =
+  get $ snd_ref $ unsafe_coerce (Ref h (Nat & (Ref h (Fin 0 => a)))) (snd_ref stack)
+
+def stack_buf_size {h a} (stack:Stack h a) : {State h} Nat =
+  get $ fst_ref $ unsafe_coerce (Ref h (Nat & (Ref h (Fin 0 => a)))) (snd_ref stack)
+
+def grow_stack_buffer {h a} (stack:Stack h a) : {State h} Unit =
+  buf = unsafe_get_stack_buffer stack
+  logical_size = stack_size stack
+  cur_data = get $ unsafe_coerce (Ref h (Fin logical_size => a)) buf
+  new_buf_size = stack_buf_size stack * 2
+  snd_ref stack := to_list for i:(Fin new_buf_size).
+    case to_ix (Fin logical_size) (ordinal i) of
+      Just i' -> cur_data.i'
+      Nothing -> uninitialized_value
+
+def read_stack {h a} (stack:Stack h a) : {State h} (List a) =
+  n = stack_size stack
+  buf = unsafe_coerce (Ref h (Fin n => a)) (unsafe_get_stack_buffer stack)
+  AsList n (get buf)
+
+@noinline
+def stack_push {a h} (stack:Stack h a) (x:a) : {State h} Unit =
+  n_old = stack_size stack
+  n_new = n_old + 1
+  if n_new > stack_buf_size stack then grow_stack_buffer stack
+  buf = unsafe_get_stack_buffer stack
+  buf ! (unsafe_from_ordinal _ n_old) := x
+  fst_ref stack := n_new
+
+-- TODO: we need to put the arguments in this order because the compiler
+-- currently requires the non-data args to come before the data args. We should
+-- fix that.
+@noinline
+def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
+  n_old = stack_size stack
+  n_new = n_old + size n
+  if n_new > stack_buf_size stack then grow_stack_buffer stack
+  buf = unsafe_get_stack_buffer stack
+  buf_slice = unsafe_coerce (Ref h (n=>a)) (buf ! (unsafe_from_ordinal _ n_old))
+  buf_slice := x
+  fst_ref stack := n_new
+
+stack_init_size = 16
+def with_stack {r} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h} r) : r =
+  init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
+  with_state (0, init_stack) \ref . f ref

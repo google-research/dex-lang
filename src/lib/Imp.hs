@@ -469,6 +469,20 @@ toImpMiscOp maybeDest op = case op of
   BitcastOp destTy x -> do
     BaseTy bt <- return destTy
     returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
+  UnsafeCoerce resultTy x -> do
+    srcTy <- getType x
+    srcRep  <- getRepBaseTypes srcTy
+    destRep <- getRepBaseTypes resultTy
+    assertEq srcRep destRep $
+      "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
+    -- TODO: we ought to be able to do this without forcing a copy. (But this is
+    -- easier for now.)
+    dest@(Dest _ destTree) <- maybeAllocDest maybeDest resultTy
+    storeAtom (Dest srcTy destTree) x
+    loadAtom dest
+  GarbageVal resultTy -> do
+    dest <- maybeAllocDest maybeDest resultTy
+    loadAtom dest
   Select p x y -> do
     BaseTy _ <- getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
@@ -680,9 +694,8 @@ getElemTypeAndIdxStructure (LeafType ctxs baseTy) = case ctxs of
                 LeftB _      -> Nothing
                 RightB UnitB -> Just ixs
           (BoxedBuffer eltTy, ixs')
-    RefCtx -> (,Nothing) $ UnboxedValue $
-      hostPtrTy $ iExprInterpretationToBaseType $
-        getIExprInterpretation (LeafType rest baseTy)
+    RefCtx -> (,Nothing) $ UnboxedValue $ hostPtrTy $ elemTypeToBaseType eltTy
+      where BufferType _ eltTy = getRefBufferType (LeafType rest baseTy)
     where hostPtrTy ty = PtrType (CPU, ty)
 
 tryGetBoxIdxStructure :: LeafType n -> Maybe (IndexStructure SimpToImpIR n)
@@ -739,6 +752,8 @@ stripNewtypes = \case
     ProdType tys  -> (TC . ProdType) <$> mapM stripNewtypes tys
     Nat           -> return IdxRepTy
     Fin _         -> return IdxRepTy
+    RefType _ t   -> RawRefTy <$> stripNewtypes t
+    HeapType      -> return UnitTy
     _ -> error $ "not implemented: " ++ pprint con
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
@@ -926,6 +941,7 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
       storeAtom (Dest TagRepTy tagDest) (TagRepVal $ fromIntegral tag)
       RepValAtom (RepVal _ tree) <- loadAtom dest
       return tree
+    Con HeapVal -> return $ Branch []
     Var v -> lookupAtomName v >>= \case
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
@@ -958,7 +974,7 @@ destToAtom (Dest valTy tree) = RepValAtom $ RepVal (RawRefTy valTy) tree
 
 atomToDest :: EnvReader m => SIAtom n -> m n (Dest n)
 atomToDest (RepValAtom val) = do
-  (RepVal ~(RawRefTy valTy) valTree) <- return val
+  (RepVal ~(TC (RefType _ valTy)) valTree) <- return val
   return $ Dest valTy valTree
 atomToDest atom = error $ "Expected a non-var atom of type `RawRef _`, got: " ++ pprint atom
 {-# INLINE atomToDest #-}
