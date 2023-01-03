@@ -1101,3 +1101,14 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
     stack_extend stack [(10.0, [10.0, 20.0]), (100.0, [100.0, 200.0])]
     read_stack stack
 > (AsList 3 [(1., [1., 2.]), (10., [10., 20.]), (100., [100., 200.])])
+
+-- Checks for O(N^2) behavior
+:p
+  n = 1000000
+  with_stack Float \stack.
+    for i:(Fin n).
+      stack_push stack 2.0
+      stack_extend stack [3.0, 4.0]
+    AsList _ xs = read_stack stack
+    sum xs
+> 9000000.
