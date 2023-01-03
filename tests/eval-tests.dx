@@ -1085,3 +1085,19 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
 
 :p unsafe_coerce (Fin 1 => (Nat & Nat)) ([1], [2])
 > [(1, 2)]
+
+:p
+  with_stack Float \stack.
+    stack_push stack 1.0
+    stack_push stack 2.0
+    stack_extend stack [3.0, 4.0]
+    stack_extend stack (for i:(Fin 10). n_to_f $ ordinal i)
+    read_stack stack
+> (AsList 14 [1., 2., 3., 4., 0., 1., 2., 3., 4., 5., 6., 7., 8., 9.])
+
+:p
+  with_stack (Float & (Fin 2=>Float)) \stack.
+    stack_push stack (1.0, [1.0, 2.0])
+    stack_extend stack [(10.0, [10.0, 20.0]), (100.0, [100.0, 200.0])]
+    read_stack stack
+> (AsList 3 [(1., [1., 2.]), (10., [10., 20.]), (100., [100., 200.])])
