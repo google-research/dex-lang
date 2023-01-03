@@ -34,7 +34,8 @@ Float = Float32
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
-def unsafe_coerce {a} (b:Type) (x:a) : b = %unsafeCoerce b x
+def unsafe_coerce {a} (b:Type) (x:a) : b = %unsafeCoerce b x -- TODO: `Data` constraint
+def uninitialized_value {a} : a = %garbageVal a              -- TODO: `Data` constraint
 
 def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
@@ -1935,9 +1936,15 @@ def from_ordinal_error (i:Nat) (upper:Nat) : String =
   "Ordinal index out of range:" <> show i <> " >= " <> show upper
 
 def from_ordinal (n:Type) [Ix n] (i:Nat) : n =
-  case (0 <= i) && (i < size n) of
+  case i < size n of
     True  -> unsafe_from_ordinal _ i
     False -> error $ from_ordinal_error i $ size n
+
+-- TODO: should this be called `from_ordinal`?
+def to_ix (n:Type) [Ix n] (i:Nat) : Maybe n =
+  case i < size n of
+    True  -> Just $ unsafe_from_ordinal _ i
+    False -> Nothing
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions

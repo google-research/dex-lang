@@ -422,6 +422,7 @@ linearizeMiscOp op = case op of
         return $ WithTangent y do xt >> return (sink yt)
   BitcastOp _ _    -> notImplemented
   UnsafeCoerce _ _ -> notImplemented
+  GarbageVal _     -> notImplemented
   ThrowException _ -> notImplemented
   ThrowError _     -> emitZeroT
   OutputStream     -> emitZeroT

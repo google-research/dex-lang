@@ -507,6 +507,7 @@ instance HasType r (ComposeE PrimOp (Atom r)) where
       CastOp t _ -> substM t
       BitcastOp t _ -> substM t
       UnsafeCoerce t _ -> substM t
+      GarbageVal t -> substM t
       SumTag _ -> return TagRepTy
       ToEnum t _ -> substM t
       OutputStream ->
@@ -753,6 +754,7 @@ exprEffects expr = case expr of
       ThrowError _     -> return Pure
       CastOp _ _       -> return Pure
       UnsafeCoerce _ _ -> return Pure
+      GarbageVal _     -> return Pure
       BitcastOp _ _    -> return Pure
       SumTag _         -> return Pure
       ToEnum _ _       -> return Pure

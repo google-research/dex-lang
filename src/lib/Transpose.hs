@@ -255,6 +255,7 @@ transposeMiscOp op _ = case op of
   CastOp       _ _      -> notImplemented
   BitcastOp    _ _      -> notImplemented
   UnsafeCoerce _ _      -> notImplemented
+  GarbageVal _          -> notImplemented
   where
     notLinear = error $ "Can't transpose a non-linear operation: " ++ show op
 
