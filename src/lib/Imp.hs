@@ -753,6 +753,7 @@ stripNewtypes = \case
     Nat           -> return IdxRepTy
     Fin _         -> return IdxRepTy
     RefType _ t   -> RawRefTy <$> stripNewtypes t
+    HeapType      -> return UnitTy
     _ -> error $ "not implemented: " ++ pprint con
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
@@ -940,6 +941,7 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
       storeAtom (Dest TagRepTy tagDest) (TagRepVal $ fromIntegral tag)
       RepValAtom (RepVal _ tree) <- loadAtom dest
       return tree
+    Con HeapVal -> return $ Branch []
     Var v -> lookupAtomName v >>= \case
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"

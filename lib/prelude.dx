@@ -2540,7 +2540,8 @@ def read_stack {h a} (stack:Stack h a) : {State h} (List a) =
   buf = unsafe_coerce (Ref h (Fin n => a)) (unsafe_get_stack_buffer stack)
   AsList n (get buf)
 
-def stack_push {h a} (stack:Stack h a) (x:a) : {State h} Unit =
+@noinline
+def stack_push {a h} (stack:Stack h a) (x:a) : {State h} Unit =
   n_old = stack_size stack
   n_new = n_old + 1
   if n_new > stack_buf_size stack then grow_stack_buffer stack
@@ -2548,7 +2549,11 @@ def stack_push {h a} (stack:Stack h a) (x:a) : {State h} Unit =
   buf ! (unsafe_from_ordinal _ n_old) := x
   fst_ref stack := n_new
 
-def stack_extend {h a n} (stack:Stack h a) (x:n=>a) : {State h} Unit =
+-- TODO: we need to put the arguments in this order because the compiler
+-- currently requires the non-data args to come before the data args. We should
+-- fix that.
+@noinline
+def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
   n_old = stack_size stack
   n_new = n_old + size n
   if n_new > stack_buf_size stack then grow_stack_buffer stack
