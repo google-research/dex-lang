@@ -337,6 +337,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><h3>Casting</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> internal_cast {a} (b<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span> %cast b x
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_coerce {a} (b<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span> %unsafeCoerce b x <span class="comment">-- TODO: `Data` constraint
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> uninitialized_value {a} <span class="symbol">:</span> a <span class="symbol">=</span> %garbageVal a              <span class="comment">-- TODO: `Data` constraint
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f64_to_f (x <span class="symbol">:</span> <span class="type-name">Float64</span>) <span class="symbol">:</span> <span class="type-name">Float</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f32_to_f (x <span class="symbol">:</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> <span class="type-name">Float</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_f64 (x <span class="symbol">:</span> <span class="type-name">Float</span>)   <span class="symbol">:</span> <span class="type-name">Float64</span> <span class="symbol">=</span> internal_cast _ x
@@ -2174,9 +2177,15 @@ Not to be confused with a partially applied function</p>
   &quot;<span class="type-name">Ordinal</span> index out <span class="keyword">of</span> range<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> show i <span class="symbol">&lt;&gt;</span> &quot; <span class="symbol">&gt;=</span> &quot; <span class="symbol">&lt;&gt;</span> show upper
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> from_ordinal (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
-  <span class="keyword">case</span> (0 <span class="symbol">&lt;=</span> i) <span class="symbol">&amp;&amp;</span> (i <span class="symbol">&lt;</span> size n) <span class="keyword">of</span>
+  <span class="keyword">case</span> i <span class="symbol">&lt;</span> size n <span class="keyword">of</span>
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> unsafe_from_ordinal _ i
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> error <span class="symbol">$</span> from_ordinal_error i <span class="symbol">$</span> size n
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: should this be called `from_ordinal`?
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> to_ix (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> n <span class="symbol">=</span>
+  <span class="keyword">case</span> i <span class="symbol">&lt;</span> size n <span class="keyword">of</span>
+    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> unsafe_from_ordinal _ i
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: safe (runtime-checked) and unsafe versions
@@ -2722,4 +2731,59 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (a<span class="symbol">=&gt;</span>b) <span class="keyword">given</span> {a b} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">NonEmpty</span> b]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>stack</h3>
+<p>-- TODO: replace <code>DynBuffer</code> with this?</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: `Data` constraint
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Stack</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span> <span class="type-name">Ref</span> h (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">List</span> a)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stack_size {h a} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Nat</span> <span class="symbol">=</span> get <span class="symbol">$</span> fst_ref stack
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_get_stack_buffer {h a} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} (<span class="type-name">Ref</span> h (<span class="type-name">Fin</span> 0 <span class="symbol">=&gt;</span> a)) <span class="symbol">=</span>
+  get <span class="symbol">$</span> snd_ref <span class="symbol">$</span> unsafe_coerce (<span class="type-name">Ref</span> h (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> (<span class="type-name">Ref</span> h (<span class="type-name">Fin</span> 0 <span class="symbol">=&gt;</span> a)))) (snd_ref stack)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stack_buf_size {h a} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Nat</span> <span class="symbol">=</span>
+  get <span class="symbol">$</span> fst_ref <span class="symbol">$</span> unsafe_coerce (<span class="type-name">Ref</span> h (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> (<span class="type-name">Ref</span> h (<span class="type-name">Fin</span> 0 <span class="symbol">=&gt;</span> a)))) (snd_ref stack)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> grow_stack_buffer {h a} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  buf <span class="symbol">=</span> unsafe_get_stack_buffer stack
+  logical_size <span class="symbol">=</span> stack_size stack
+  cur_<span class="keyword">data</span> <span class="symbol">=</span> get <span class="symbol">$</span> unsafe_coerce (<span class="type-name">Ref</span> h (<span class="type-name">Fin</span> logical_size <span class="symbol">=&gt;</span> a)) buf
+  new_buf_size <span class="symbol">=</span> stack_buf_size stack <span class="symbol">*</span> 2
+  snd_ref stack <span class="symbol">:=</span> to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> new_buf_size)<span class="symbol">.</span>
+    <span class="keyword">case</span> to_ix (<span class="type-name">Fin</span> logical_size) (ordinal i) <span class="keyword">of</span>
+      <span class="type-name">Just</span> i&#39; <span class="symbol">-&gt;</span> cur_<span class="keyword">data</span><span class="symbol">.</span>i&#39;
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> uninitialized_value
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> read_stack {h a} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} (<span class="type-name">List</span> a) <span class="symbol">=</span>
+  n <span class="symbol">=</span> stack_size stack
+  buf <span class="symbol">=</span> unsafe_coerce (<span class="type-name">Ref</span> h (<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a)) (unsafe_get_stack_buffer stack)
+  <span class="type-name">AsList</span> n (get buf)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> stack_push {a h} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  n_old <span class="symbol">=</span> stack_size stack
+  n_new <span class="symbol">=</span> n_old <span class="symbol">+</span> 1
+  <span class="keyword">if</span> n_new <span class="symbol">&gt;</span> stack_buf_size stack <span class="keyword">then</span> grow_stack_buffer stack
+  buf <span class="symbol">=</span> unsafe_get_stack_buffer stack
+  buf <span class="symbol">!</span> (unsafe_from_ordinal _ n_old) <span class="symbol">:=</span> x
+  fst_ref stack <span class="symbol">:=</span> n_new
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: we need to put the arguments in this order because the compiler
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- currently requires the non-data args to come before the data args. We should
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- fix that.
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> stack_extend {a n} [<span class="type-name">Ix</span> n] {h} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  n_old <span class="symbol">=</span> stack_size stack
+  n_new <span class="symbol">=</span> n_old <span class="symbol">+</span> size n
+  <span class="keyword">if</span> n_new <span class="symbol">&gt;</span> stack_buf_size stack <span class="keyword">then</span> grow_stack_buffer stack
+  buf <span class="symbol">=</span> unsafe_get_stack_buffer stack
+  buf_slice <span class="symbol">=</span> unsafe_coerce (<span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (buf <span class="symbol">!</span> (unsafe_from_ordinal _ n_old))
+  buf_slice <span class="symbol">:=</span> x
+  fst_ref stack <span class="symbol">:=</span> n_new
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">stack_init_size <span class="symbol">=</span> 16
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_stack {r} (a<span class="symbol">:</span><span class="type-name">Type</span>) (f <span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Stack</span> h a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} r) <span class="symbol">:</span> r <span class="symbol">=</span>
+  init_stack <span class="symbol">=</span> to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> stack_init_size)<span class="symbol">.</span> uninitialized_value
+  with_state (0<span class="symbol">,</span> init_stack) <span class="symbol">\</span>ref <span class="symbol">.</span> f ref
 </div></div></div></body></html>
