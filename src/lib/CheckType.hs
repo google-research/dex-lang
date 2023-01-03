@@ -87,19 +87,19 @@ instance Fallible m => Typer (TyperT m)
 
 -- === typeable things ===
 
--- Minimal complete definition: getTypeE | getTypeAndSubstE
+-- Minimal complete definition: getTypeE | getTypeAndRenameE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
 class (SinkableE e, RenameE e, PrettyE e) => HasType (r::IR) (e::E) | e -> r where
   getTypeE   :: Typer m => e i -> m i o (Type r o)
-  getTypeE e = snd <$> getTypeAndSubstE e
+  getTypeE e = snd <$> getTypeAndRenameE e
 
-  getTypeAndSubstE :: Typer m => e i -> m i o (e o, Type r o)
-  getTypeAndSubstE e = (,) <$> renameM e <*> getTypeE e
+  getTypeAndRenameE :: Typer m => e i -> m i o (e o, Type r o)
+  getTypeAndRenameE e = (,) <$> renameM e <*> getTypeE e
 
   checkTypeE :: Typer m => Type r o -> e i -> m i o (e o)
   checkTypeE reqTy e = do
-    (e', ty) <- getTypeAndSubstE e
+    (e', ty) <- getTypeAndRenameE e
     -- TODO: Write an alphaEq variant that works modulo an equivalence
     -- relation on names.
     checkTypesEq reqTy ty
@@ -120,7 +120,7 @@ class SinkableE e => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
 
 checkFromHasType :: HasType r e => Typer m => e i -> m i o (e o)
-checkFromHasType e = fst <$> getTypeAndSubstE e
+checkFromHasType e = fst <$> getTypeAndRenameE e
 
 class HasNamesB b => CheckableB (b::B) where
   checkB :: Typer m
@@ -228,10 +228,10 @@ instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
 -- === type checking core ===
 
 instance CheckableE (Atom r) where
-  checkE atom = fst <$> getTypeAndSubstE atom
+  checkE atom = fst <$> getTypeAndRenameE atom
 
 instance CheckableE (Expr r) where
-  checkE expr = fst <$> getTypeAndSubstE expr
+  checkE expr = fst <$> getTypeAndRenameE expr
 
 instance HasType r (AtomName r) where
   getTypeE name = do
@@ -486,7 +486,7 @@ instance HasType r (PiType r) where
 instance CheckableE (IxType r) where
   checkE (IxType t d) = do
     t' <- checkTypeE TyKind t
-    (d', dictTy) <- getTypeAndSubstE d
+    (d', dictTy) <- getTypeAndRenameE d
     DictTy (DictType "Ix" _ [tFromDict]) <- return dictTy
     checkTypesEq t' tFromDict
     return $ IxType t' d'
