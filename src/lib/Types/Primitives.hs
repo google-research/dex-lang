@@ -123,6 +123,7 @@ data MiscOp e =
  | BitcastOp e e                -- (2) Type, then value. See CheckType.hs for valid coercions.
  | UnsafeCoerce e e             -- type, then value. Assumes runtime representation is the same.
  | GarbageVal e                 -- type of value (assume `Data` constraint)
+ | ShowAny e
  -- Effects
  | ThrowError e                 -- (1) Hard error (parameterized by result type)
  | ThrowException e             -- (1) Catchable exceptions (unlike `ThrowError`)

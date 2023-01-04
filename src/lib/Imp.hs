@@ -511,6 +511,7 @@ toImpMiscOp maybeDest op = case op of
     _ -> error $ "Not an enum: " ++ pprint ty
   OutputStream -> returnIExprVal =<< emitInstr IOutputStream
   ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
+  ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   where
     fsa = fromScalarAtom
     returnIExprVal x = returnVal $ toScalarAtom x

@@ -1000,6 +1000,7 @@ primNames = M.fromList
   , ("unsafeCoerce"  , miscOp $ UnsafeCoerce () ())
   , ("garbageVal"    , miscOp $ GarbageVal ())
   , ("select"        , miscOp $ Select () () ())
+  , ("showAny"       , miscOp $ ShowAny ())
   , ("projNewtype" , UProjBaseNewtype)
   , ("projMethod0" , UProjMethod 0)
   , ("projMethod1" , UProjMethod 1)

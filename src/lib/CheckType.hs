@@ -649,6 +649,7 @@ typeCheckMiscOp = \case
   OutputStream ->
     return $ BaseTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (CPU, ty)
+  ShowAny x -> checkE x >> strType
   ThrowError ty -> ty|:TyKind >> renameM ty
   ThrowException ty -> do
     declareEff ExceptionEffect

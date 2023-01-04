@@ -2566,3 +2566,14 @@ stack_init_size = 16
 def with_stack {r} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h} r) : r =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
   with_state (0, init_stack) \ref . f ref
+
+def stack_extend_internal {n h} (stack:Stack h Char) (x:Fin n=>Char) : {State h} Unit =
+  stack_extend stack x
+
+def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List Char =
+  with_stack Char \stack.
+    f stack
+    read_stack stack
+
+def show_any {a} (x:a) : String =
+  unsafe_coerce String (%showAny x)
