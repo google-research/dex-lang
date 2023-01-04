@@ -475,17 +475,19 @@ linearizeBinOp op x' y' = do
     FAdd -> withT (add x y) (bindM2 add tx ty)
     FSub -> withT (sub x y) (bindM2 sub tx ty)
     FMul -> withT (mul x y)
-                  (bindM2 add (bindM2 mul (sinkM x) ty)
-                              (bindM2 mul tx (sinkM y)))
+                  (bindM2 add (bindM2 mul (referToPrimal x) ty)
+                              (bindM2 mul tx (referToPrimal y)))
     FDiv -> withT (div' x y) do
-      tx' <- bindM2 div' tx (sinkM y)
-      ty' <- bindM2 div' (bindM2 mul (sinkM x) ty)
-                      (bindM2 mul (sinkM y) (sinkM y))
+      tx' <- bindM2 div' tx (referToPrimal y)
+      ty' <- bindM2 div' (bindM2 mul (referToPrimal x) ty)
+                      (bindM2 mul (referToPrimal y) (referToPrimal y))
       sub tx' ty'
     FPow -> withT (emitOp $ BinOp FPow x y) do
-      c <- fpow (sink x) =<< bindM2 sub (sinkM y) (1.0 `fLitLike` sink y)
-      tx' <- bindM2 mul tx (sinkM y)
-      ty' <- bindM2 mul (bindM2 mul (sinkM x) ty) (flog $ sink x)
+      px <- referToPrimal x
+      py <- referToPrimal y
+      c <- (1.0 `fLitLike` py) >>= (sub py) >>= fpow px
+      tx' <- bindM2 mul tx (return py)
+      ty' <- bindM2 mul (bindM2 mul (return px) ty) (flog px)
       mul c =<< add tx' ty'
     FCmp _ -> emitZeroT
     BAnd   -> emitZeroT
@@ -493,6 +495,24 @@ linearizeBinOp op x' y' = do
     BXor   -> emitZeroT
     BShL   -> emitZeroT
     BShR   -> emitZeroT
+
+-- This has the same type as `sinkM` and falls back thereto, but recomputes
+-- indexing a primal array in the tangent to avoid materializing intermediate
+-- results thereof.  We should probably have a more cogent story for
+-- rematerialization, but this suffices to remove embarrassing intermediates in
+-- matrix multiplication.
+referToPrimal :: (Builder CoreIR m, Emits l, DExt n l) => CAtom n -> m l (CAtom l)
+referToPrimal x = do
+  case x of
+    Var v -> lookupEnv (sink v) >>= \case
+      AtomNameBinding (LetBound (DeclBinding PlainLet _ (Atom atom))) ->
+        referToPrimal atom
+      AtomNameBinding (LetBound (DeclBinding PlainLet _ (TabApp tab is))) -> do
+        tab' <- referToPrimal tab
+        is' <- mapM referToPrimal is
+        Var <$> emit (TabApp tab' is')
+      _ -> sinkM x
+    _ -> sinkM x
 
 linearizePrimCon :: Emits o => Con SimpIR i -> LinM i o CAtom CAtom
 linearizePrimCon con = case con of
