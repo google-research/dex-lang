@@ -9,11 +9,14 @@
 module Optimize
   ( earlyOptimize, optimize
   , peepholeOp, hoistLoopInvariantDest, dceDestBlock
+  , foldCast
   ) where
 
 import Data.Functor
 import Data.Word
 import Data.Bits
+import Data.Bits.Floating
+import Data.List
 import Data.List.NonEmpty qualified as NE
 import Control.Monad
 import Control.Monad.State.Strict
@@ -86,78 +89,9 @@ unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE
 
 peepholeOp :: PrimOp (Atom SimpIR o) -> EnvReaderM o (Either (SAtom o) (PrimOp (Atom SimpIR o)))
 peepholeOp op = case op of
-  MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case sTy of
-    -- TODO: Check that the casts relating to floating-point agree with the
-    -- runtime behavior.  The runtime is given by the `ICastOp` case in
-    -- ImpToLLVM.hs.  We should make sure that the Haskell functions here
-    -- produce bitwise identical results to those instructions, by adjusting
-    -- either this or that as called for.
-    -- TODO: Also implement casts that may have unrepresentable results, i.e.,
-    -- casting floating-point numbers to smaller floating-point numbers or to
-    -- fixed-point.  Both of these necessarily have a much smaller dynamic range.
-    Int32Type -> case l of
-      Int32Lit  _  -> lit l
-      Int64Lit  i  -> lit $ Int32Lit  $ fromIntegral i
-      Word8Lit  i  -> lit $ Int32Lit  $ fromIntegral i
-      Word32Lit i  -> lit $ Int32Lit  $ fromIntegral i
-      Word64Lit i  -> lit $ Int32Lit  $ fromIntegral i
-      Float32Lit _ -> noop
-      Float64Lit _ -> noop
-      PtrLit   _ _ -> noop
-    Int64Type -> case l of
-      Int32Lit  i  -> lit $ Int64Lit  $ fromIntegral i
-      Int64Lit  _  -> lit l
-      Word8Lit  i  -> lit $ Int64Lit  $ fromIntegral i
-      Word32Lit i  -> lit $ Int64Lit  $ fromIntegral i
-      Word64Lit i  -> lit $ Int64Lit  $ fromIntegral i
-      Float32Lit _ -> noop
-      Float64Lit _ -> noop
-      PtrLit   _ _ -> noop
-    Word8Type -> case l of
-      Int32Lit  i  -> lit $ Word8Lit  $ fromIntegral i
-      Int64Lit  i  -> lit $ Word8Lit  $ fromIntegral i
-      Word8Lit  _  -> lit l
-      Word32Lit i  -> lit $ Word8Lit  $ fromIntegral i
-      Word64Lit i  -> lit $ Word8Lit  $ fromIntegral i
-      Float32Lit _ -> noop
-      Float64Lit _ -> noop
-      PtrLit   _ _ -> noop
-    Word32Type -> case l of
-      Int32Lit  i  -> lit $ Word32Lit $ fromIntegral i
-      Int64Lit  i  -> lit $ Word32Lit $ fromIntegral i
-      Word8Lit  i  -> lit $ Word32Lit $ fromIntegral i
-      Word32Lit _  -> lit l
-      Word64Lit i  -> lit $ Word32Lit $ fromIntegral i
-      Float32Lit _ -> noop
-      Float64Lit _ -> noop
-      PtrLit   _ _ -> noop
-    Word64Type -> case l of
-      Int32Lit  i  -> lit $ Word64Lit $ fromIntegral (fromIntegral i :: Word32)
-      Int64Lit  i  -> lit $ Word64Lit $ fromIntegral i
-      Word8Lit  i  -> lit $ Word64Lit $ fromIntegral i
-      Word32Lit i  -> lit $ Word64Lit $ fromIntegral i
-      Word64Lit _  -> lit l
-      Float32Lit _ -> noop
-      Float64Lit _ -> noop
-      PtrLit   _ _ -> noop
-    Float32Type -> case l of
-      Int32Lit  i  -> lit $ Float32Lit $ fromIntegral (fromIntegral i :: Word32)
-      Int64Lit  i  -> lit $ Float32Lit $ fromIntegral i
-      Word8Lit  i  -> lit $ Float32Lit $ fromIntegral i
-      Word32Lit i  -> lit $ Float32Lit $ fromIntegral i
-      Word64Lit i  -> lit $ Float32Lit $ fromIntegral i
-      Float32Lit _ -> lit l
-      Float64Lit _ -> noop
-      PtrLit   _ _ -> noop
-    Float64Type -> case l of
-      Int32Lit  i  -> lit $ Float64Lit $ fromIntegral (fromIntegral i :: Word32)
-      Int64Lit  i  -> lit $ Float64Lit $ fromIntegral i
-      Word8Lit  i  -> lit $ Float64Lit $ fromIntegral i
-      Word32Lit i  -> lit $ Float64Lit $ fromIntegral i
-      Word64Lit i  -> lit $ Float64Lit $ fromIntegral i
-      Float32Lit f -> lit $ Float64Lit $ float2Double f
-      Float64Lit _ -> lit l
-      PtrLit   _ _ -> noop
+  MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case foldCast sTy l of
+    Just l' -> lit l'
+    Nothing -> noop
   -- TODO: Support more unary and binary ops.
   BinOp IAdd l r -> return $ case (l, r) of
     -- TODO: Shortcut when either side is zero.
@@ -202,6 +136,99 @@ peepholeOp op = case op of
       Equal        -> (==)
       LessEqual    -> (<=)
       GreaterEqual -> (>=)
+
+foldCast :: ScalarBaseType -> LitVal -> Maybe LitVal
+foldCast sTy l = case sTy of
+  -- TODO: Check that the casts relating to floating-point agree with the
+  -- runtime behavior.  The runtime is given by the `ICastOp` case in
+  -- ImpToLLVM.hs.  We should make sure that the Haskell functions here
+  -- produce bitwise identical results to those instructions, by adjusting
+  -- either this or that as called for.
+  -- TODO: Also implement casts that may have unrepresentable results, i.e.,
+  -- casting floating-point numbers to smaller floating-point numbers or to
+  -- fixed-point.  Both of these necessarily have a much smaller dynamic range.
+  Int32Type -> case l of
+    Int32Lit  _  -> Just l
+    Int64Lit  i  -> Just $ Int32Lit  $ fromIntegral i
+    Word8Lit  i  -> Just $ Int32Lit  $ fromIntegral i
+    Word32Lit i  -> Just $ Int32Lit  $ fromIntegral i
+    Word64Lit i  -> Just $ Int32Lit  $ fromIntegral i
+    Float32Lit _ -> Nothing
+    Float64Lit _ -> Nothing
+    PtrLit   _ _ -> Nothing
+  Int64Type -> case l of
+    Int32Lit  i  -> Just $ Int64Lit  $ fromIntegral i
+    Int64Lit  _  -> Just l
+    Word8Lit  i  -> Just $ Int64Lit  $ fromIntegral i
+    Word32Lit i  -> Just $ Int64Lit  $ fromIntegral i
+    Word64Lit i  -> Just $ Int64Lit  $ fromIntegral i
+    Float32Lit _ -> Nothing
+    Float64Lit _ -> Nothing
+    PtrLit   _ _ -> Nothing
+  Word8Type -> case l of
+    Int32Lit  i  -> Just $ Word8Lit  $ fromIntegral i
+    Int64Lit  i  -> Just $ Word8Lit  $ fromIntegral i
+    Word8Lit  _  -> Just l
+    Word32Lit i  -> Just $ Word8Lit  $ fromIntegral i
+    Word64Lit i  -> Just $ Word8Lit  $ fromIntegral i
+    Float32Lit _ -> Nothing
+    Float64Lit _ -> Nothing
+    PtrLit   _ _ -> Nothing
+  Word32Type -> case l of
+    Int32Lit  i  -> Just $ Word32Lit $ fromIntegral i
+    Int64Lit  i  -> Just $ Word32Lit $ fromIntegral i
+    Word8Lit  i  -> Just $ Word32Lit $ fromIntegral i
+    Word32Lit _  -> Just l
+    Word64Lit i  -> Just $ Word32Lit $ fromIntegral i
+    Float32Lit _ -> Nothing
+    Float64Lit _ -> Nothing
+    PtrLit   _ _ -> Nothing
+  Word64Type -> case l of
+    Int32Lit  i  -> Just $ Word64Lit $ fromIntegral (fromIntegral i :: Word32)
+    Int64Lit  i  -> Just $ Word64Lit $ fromIntegral i
+    Word8Lit  i  -> Just $ Word64Lit $ fromIntegral i
+    Word32Lit i  -> Just $ Word64Lit $ fromIntegral i
+    Word64Lit _  -> Just l
+    Float32Lit _ -> Nothing
+    Float64Lit _ -> Nothing
+    PtrLit   _ _ -> Nothing
+  Float32Type -> case l of
+    Int32Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Int64Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Word8Lit  i  -> Just $ Float32Lit $ fromIntegral i
+    Word32Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Word64Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Float32Lit _ -> Just l
+    Float64Lit _ -> Nothing
+    PtrLit   _ _ -> Nothing
+  Float64Type -> case l of
+    Int32Lit  i  -> Just $ Float64Lit $ fromIntegral i
+    Int64Lit  i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
+    Word8Lit  i  -> Just $ Float64Lit $ fromIntegral i
+    Word32Lit i  -> Just $ Float64Lit $ fromIntegral i
+    Word64Lit i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
+    Float32Lit f -> Just $ Float64Lit $ float2Double f
+    Float64Lit _ -> Just l
+    PtrLit   _ _ -> Nothing
+  where
+    -- When casting an integer type to a floating-point type of lower precision
+    -- (e.g., int32 to float32), GHC between 7.8.3 and 9.2.2 (exclusive) rounds
+    -- toward zero, instead of rounding to nearest even like everybody else.
+    -- See https://gitlab.haskell.org/ghc/ghc/-/issues/17231.
+    --
+    -- We patch this by manually checking the two adjacent floats to the
+    -- candidate answer, and using one of those if the reverse cast is closer
+    -- to the original input.
+    --
+    -- This rounds to nearest.  Empirically (see test suite), it also seems to
+    -- break ties the same way LLVM does, but I don't have a proof of that.
+    -- LLVM's tie-breaking may be system-specific?
+    fixUlp orig candidate = closest [candidate, candidatem1, candidatep1] where
+      candidatem1 = nextDown candidate
+      candidatep1 = nextUp candidate
+      closest items = minimumBy (\ca cb -> err ca `compare` err cb) items
+      err cand = absdiff orig (round cand)
+      absdiff a b = if a >= b then a - b else b - a
 
 peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
 peepholeExpr expr = case expr of

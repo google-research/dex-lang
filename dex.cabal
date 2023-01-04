@@ -129,6 +129,8 @@ library
                        -- Serialization
                      , aeson
                      , store
+                       -- Floating-point pedanticness (correcting for GHC < 9.2.2)
+                     , floating-bits
   if flag(live)
     build-depends:     binary
                      , blaze-html
@@ -305,6 +307,7 @@ test-suite spec
   main-is:             Spec.hs
   hs-source-dirs:      tests/unit
   ghc-options:         -Wall
+                       -Wno-unticked-promoted-constructors
   build-depends:       base
                      , containers
                      , hspec
@@ -312,7 +315,8 @@ test-suite spec
                      , QuickCheck
                      , text
                      , dex
-  other-modules:       OccAnalysisSpec
+  other-modules:       ConstantCastingSpec
+                     , OccAnalysisSpec
                      , OccurrenceSpec
                      , RawNameSpec
   default-language:    Haskell2010

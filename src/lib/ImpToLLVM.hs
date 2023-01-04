@@ -449,28 +449,44 @@ compileInstr instr = case instr of
     let sdt = case dt of L.VectorType _ sbt -> sbt; _ -> dt
     case (sxt, sidt) of
       -- if upcasting to unsigned int, use zext instruction
-      (L.IntegerType _,    Scalar Word64Type)             -> x `zeroExtendTo` dt
+      (L.IntegerType bits, Scalar Word64Type) | bits < 64 -> x `zeroExtendTo` dt
       (L.IntegerType bits, Scalar Word32Type) | bits < 32 -> x `zeroExtendTo` dt
-      _ -> case (sxt, sdt) of
-       (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
-       (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
-         LT -> emitInstr dt $ L.FPExt x dt []
-         EQ -> return x
-         GT -> emitInstr dt $ L.FPTrunc x dt []
-       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
-       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
+      _ -> case (getIType ix, sdt) of
+        -- if upcasting from unsigned int, use zext instruction
+        (Scalar Word32Type, L.IntegerType bits) | bits > 32 -> x `zeroExtendTo` dt
+        (Scalar Word8Type,  L.IntegerType bits) | bits > 8  -> x `zeroExtendTo` dt
+        _ -> case (sxt, sdt) of
+         (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
+         (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
+           LT -> emitInstr dt $ L.FPExt x dt []
+           EQ -> return x
+           GT -> emitInstr dt $ L.FPTrunc x dt []
+         (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ float_to_int x dt []
+         (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ int_to_float x dt []
 #if MIN_VERSION_llvm_hs(15,0,0)
-       -- Pointee casts become no-ops, because LLVM uses opaque pointers
-       (L.PointerType a , L.PointerType a') | a == a' -> return x
-       (L.IntegerType 64, ptrTy@(L.PointerType _)) -> emitInstr ptrTy $ L.IntToPtr x ptrTy []
-       (L.PointerType _ , L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
+         -- Pointee casts become no-ops, because LLVM uses opaque pointers
+         (L.PointerType a , L.PointerType a') | a == a' -> return x
+         (L.IntegerType 64, ptrTy@(L.PointerType _)) -> emitInstr ptrTy $ L.IntToPtr x ptrTy []
+         (L.PointerType _ , L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
 #else
-       (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
-       (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
-         emitInstr ptrTy $ L.IntToPtr x ptrTy []
-       (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
+         (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
+         (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
+           emitInstr ptrTy $ L.IntToPtr x ptrTy []
+         (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
 #endif
-       _ -> error $ "Unsupported cast"
+         _ -> error $ "Unsupported cast"
+         where signed ty = case ty of
+                 Scalar Int64Type -> True
+                 Scalar Int32Type -> True
+                 Scalar Word8Type -> False
+                 Scalar Word32Type -> False
+                 Scalar Word64Type -> False
+                 Scalar Float64Type -> True
+                 Scalar Float32Type -> True
+                 Vector _ ty' -> signed (Scalar ty')
+                 PtrType _ -> False
+               int_to_float = if signed (getIType ix) then L.SIToFP else L.UIToFP
+               float_to_int = if signed idt then L.FPToSI else L.FPToUI
   IBitcastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
     let dt = scalarTy idt
