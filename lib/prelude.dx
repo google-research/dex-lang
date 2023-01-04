@@ -1871,6 +1871,7 @@ Not to be confused with a partially applied function
 
 '### Error throwing
 
+@noinline
 def error {a} (s:String) : a = unsafe_io do
   print s
   %throwError a

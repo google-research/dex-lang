@@ -36,12 +36,14 @@ import Util (iota)
 
 earlyOptimize :: EnvReader m => CBlock n -> m n (CBlock n)
 earlyOptimize = unrollTrivialLoops
+{-# SCC earlyOptimize #-}
 
 optimize :: EnvReader m => SBlock n -> m n (SBlock n)
 optimize = dceBlock     -- Clean up user code
        >=> unrollLoops
        >=> dceBlock     -- Clean up peephole-optimized code after unrolling
        >=> hoistLoopInvariant
+{-# SCC optimize #-}
 
 -- === Trivial loop unrolling ===
 -- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
@@ -315,6 +317,7 @@ hoistLoopInvariantDest (Abs (db:>dTy) body) =
   liftM fst $ liftGenericTraverserM LICMS do
     dTy' <- traverseGenericE dTy
     buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+{-# SCC hoistLoopInvariantDest #-}
 
 hoistLoopInvariant :: EnvReader m => SBlock n -> m n (SBlock n)
 hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
@@ -423,9 +426,11 @@ type DCEM = StateT1 FV EnvReaderM
 dceDestBlock :: EnvReader m => DestBlock n -> m n (DestBlock n)
 dceDestBlock idb = liftEnvReaderM $
   refreshAbs idb \d b -> Abs d <$> dceBlock b
+{-# SCC dceDestBlock #-}
 
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty
+{-# SCC dceBlock #-}
 
 class HasDCE (e::E) where
   dce :: e n -> DCEM n (e n)
