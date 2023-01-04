@@ -10,9 +10,9 @@ module TopLevel (
   EvalConfig (..), Topper, TopperM, runTopperM,
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
-  evalSourceBlockIO, loadCache, storeCache, clearCache,
+  evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule,
-  loadObject, toCFunction) where
+  loadObject, toCFunction, evalLLVM) where
 
 import Data.Foldable (toList)
 import Data.Functor
