@@ -7,12 +7,15 @@
 module RuntimePrint (showAny) where
 
 import Control.Monad.Reader
+import Data.Functor
+
 import Builder
 import Core
 import Err
 import IRVariants
 import MTL1
 import Name
+import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
@@ -20,14 +23,15 @@ import QueryType
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
-                 , Fallible, ScopeReader, MonadFail, EnvExtender, Builder CoreIR)
+                 , Fallible, ScopeReader, MonadFail, EnvExtender, Builder CoreIR, ScopableBuilder CoreIR)
+type Print n = Printer n ()
 
-showAny :: EnvReader m => Type CoreIR n -> Atom CoreIR n -> m n (Block CoreIR n)
-showAny ty x = liftPrinter $ showAnyRec (sink x) (sink ty)
+showAny :: EnvReader m => Atom CoreIR n -> m n (Block CoreIR n)
+showAny x = liftPrinter $ showAnyRec (sink x)
 
 liftPrinter
   :: EnvReader m
-  => (forall l. (DExt n l, Emits l) => Printer l ())
+  => (forall l. (DExt n l, Emits l) => Print l)
   -> m n (CBlock n)
 liftPrinter cont = liftBuilder $ buildBlock $ withBuffer \buf ->
   runReaderT1 buf (runPrinter' cont)
@@ -35,17 +39,54 @@ liftPrinter cont = liftBuilder $ buildBlock $ withBuffer \buf ->
 getBuffer :: Printer n (CAtom n)
 getBuffer = ask
 
-emitCharTab :: Emits n => CAtom n -> Printer n ()
+emitCharTab :: Emits n => CAtom n -> Print n
 emitCharTab tab = do
   buf <- getBuffer
   extendBuffer buf tab
 
-emitLit :: Emits n => String -> Printer n ()
+emitLit :: Emits n => String -> Print n
 emitLit s = stringLitAsCharTab s >>= emitCharTab
 
-showAnyRec :: Emits n => CAtom n -> CType n -> Printer n ()
-showAnyRec _ = \case
-  _ -> emitLit "TESTING"
+showAnyRec :: Emits n => CAtom n -> Print n
+showAnyRec atom = getType atom >>= \case
+  TC (ProdType _) -> do
+    xs <- getUnpacked atom
+    parens $ sepBy ", " $ map rec xs
+  TabTy _ _ -> brackets $ forEachTabElt atom \x -> do
+    rec x
+    emitLit ", " -- TODO: don't emit the ", " after the final element
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
+    cons <- instantiateDataDef def params
+    void $ buildCase atom UnitTy \i arg -> do
+      let DataConDef sn _ projss = cons !! i
+      case projss of
+        [] -> emitLit sn
+        _ -> parens do
+          emitLit (sn ++ " ")
+          sepBy " " $ projss <&> \projs ->
+            -- we use `init` to strip off the `UnwrapCompoundNewtype` since
+            -- we're already under the case alternative
+            rec =<< normalizeNaryProj (init projs) arg
+      return UnitVal
+  ty -> emitLit $ "<value of type: " <> pprint ty <> ">"
+  where
+    rec :: Emits n => CAtom n -> Print n
+    rec = showAnyRec
+
+parens :: Emits n => Print n -> Print n
+parens x = emitLit "(" >> x >> emitLit ")"
+
+brackets :: Emits n => Print n -> Print n
+brackets x = emitLit "[" >> x >> emitLit "]"
+
+sepBy :: forall n. Emits n => String -> [Print n] -> Print n
+sepBy s xsTop = rec xsTop where
+  rec :: [Print n] -> Print n
+  rec = \case
+    []   -> return ()
+    [x]  -> x
+    x:xs -> x >> emitLit s >> rec xs
 
 -- === Builder helpers (consider moving these to Builder.hs) ===
 
@@ -101,3 +142,14 @@ applyPreludeFunction :: (Emits n, Builder r m) => String -> [Atom r n] -> m n (A
 applyPreludeFunction name args = do
   f <- getPreludeFunction name
   naryApp f args
+
+forEachTabElt
+  :: (Emits n, ScopableBuilder r m)
+  => Atom r n
+  -> (forall l. (Emits l, DExt n l) => Atom r l -> m l ())
+  -> m n ()
+forEachTabElt tab cont = do
+  TabTy (_:>ixTy) _ <- getType tab
+  void $ buildFor "i" Fwd ixTy \i -> do
+    cont =<< tabApp (sink tab) (Var i)
+    return $ UnitVal
