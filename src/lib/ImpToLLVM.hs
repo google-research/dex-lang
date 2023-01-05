@@ -529,7 +529,11 @@ compileInstr instr = case instr of
       getShowScalarFunStrName :: ScalarBaseType -> String
       getShowScalarFunStrName = \case
         Float32Type -> "showFloat32_internal"
+        Float64Type -> "showFloat64_internal"
+        Word32Type  -> "showInt32_internal"
+        Word64Type  -> "showInt64_internal"
         Int32Type   -> "showInt32_internal"
+        Int64Type   -> "showInt64_internal"
         b -> error $ "not implemented: " ++ pprint b
 
 -- TODO: use a careful naming discipline rather than strings

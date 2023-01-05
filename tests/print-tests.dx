@@ -1,0 +1,30 @@
+
+:pcodegen [(),(),()]
+> [(), (), ()]
+
+:pcodegen {x = 1.0, y = 2}
+> {x = 1, y = 2}
+
+:pcodegen (the Nat 1, the Int 1, the Float 1, the Int64 1, the Float64 1)
+> (1, (1, (1, (1, 1))))
+
+:pcodegen [Just (Just 1.0), Just Nothing, Nothing]
+> [(Just (Just 1)), (Just Nothing), Nothing]
+
+data MyType = MyValue Nat
+
+:pcodegen MyValue 1
+> (MyValue 1)
+
+:pcodegen "the quick brown fox jumps over the lazy dog"
+> "the quick brown fox jumps over the lazy dog"
+
+:pcodegen ['a', 'b', 'c']
+> ['a', 'b', 'c']
+
+:pcodegen {| a=3 |} :: {a:Int | b:Float}
+> {| a = 3 |}
+
+:pcodegen {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
+> {|a| a = 3 |}
+

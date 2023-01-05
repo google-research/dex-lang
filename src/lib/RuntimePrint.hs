@@ -7,19 +7,23 @@
 module RuntimePrint (showAny) where
 
 import Control.Monad.Reader
+import Data.Foldable (fold, toList)
 import Data.Functor
+import qualified Data.Map.Strict as M
 
 import Builder
 import Core
 import Err
 import IRVariants
 import MTL1
+import LabeledItems
 import Name
 import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
 import QueryType
+import Util (restructure)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
@@ -44,11 +48,24 @@ emitCharTab tab = do
   buf <- getBuffer
   extendBuffer buf tab
 
+emitChar :: Emits n => CAtom n -> Print n
+emitChar tab = do
+  buf <- getBuffer
+  pushBuffer buf tab
+
 emitLit :: Emits n => String -> Print n
 emitLit s = stringLitAsCharTab s >>= emitCharTab
 
+emitCharLit :: Emits n => Char -> Print n
+emitCharLit c = emitChar $ charRepVal c
+
 showAnyRec :: Emits n => CAtom n -> Print n
 showAnyRec atom = getType atom >>= \case
+  -- hack to print chars nicely. TODO: make `Char` a newtype
+  TC (BaseType (Scalar Word8Type)) -> do
+    emitCharLit '\''
+    emitChar atom
+    emitCharLit '\''
   TC (BaseType (Scalar _)) -> do
     (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
     let n' = Con (Newtype NatTy n)
@@ -58,33 +75,67 @@ showAnyRec atom = getType atom >>= \case
   TC (ProdType _) -> do
     xs <- getUnpacked atom
     parens $ sepBy ", " $ map rec xs
-  TabTy _ _ -> brackets $ forEachTabElt atom \x -> do
+  TC Nat     -> unwrapBaseNewtype atom >>= rec
+  TC (Fin _) -> unwrapBaseNewtype atom >>= rec
+  StaticRecordTy tys -> do
+    xs <- getUnpacked atom
+    let LabeledItems row = restructure xs tys
+    braces $ sepBy ", " $ fold $ M.toAscList row <&> \(k, vs) ->
+      toList vs <&> \v -> do
+        emitLit (pprint k <> " = ")
+        rec v
+  VariantTy (NoExt tys) -> do
+    let labels = toList $ reflectLabels tys
+    emitLit "{|"
+    void $ buildCase atom UnitTy \fieldIx arg -> do
+      let (label, numPrevReps) = labels !! fieldIx
+      emitLit $  (fold $ replicate numPrevReps $ label <> "|")
+              <> (" " <> label <> " = ")
+      rec arg
+      return UnitVal
+    emitLit " |}"
+  TabTy _ _ -> brackets $ forEachTabElt atom \iOrd x -> do
+    isFirst <- ieq iOrd (IdxRepVal 0)
+    void $ emitIf isFirst UnitTy (return UnitVal) (emitLit ", " >> return UnitVal)
     rec x
-    emitLit ", " -- TODO: don't emit the ", " after the final element
+  -- hack to print strings nicely. TODO: make `Char` a newtype
+  TypeCon "List" _ (DataDefParams [(PlainArrow, Word8Ty)]) -> do
+    charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapCompoundNewtype] atom
+    emitCharLit '"'
+    emitCharTab charTab
+    emitCharLit '"'
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     cons <- instantiateDataDef def params
-    void $ buildCase atom UnitTy \i arg -> do
-      let DataConDef sn _ projss = cons !! i
-      case projss of
-        [] -> emitLit sn
-        _ -> parens do
-          emitLit (sn ++ " ")
-          sepBy " " $ projss <&> \projs ->
-            -- we use `init` to strip off the `UnwrapCompoundNewtype` since
-            -- we're already under the case alternative
-            rec =<< normalizeNaryProj (init projs) arg
-      return UnitVal
+    case cons of
+      [con] -> unwrapCompoundNewtype atom >>= showDataCon con
+      _ -> void $ buildCase atom UnitTy \i arg -> do
+        showDataCon (sink $ cons !! i) arg
+        return UnitVal
+    where
+      showDataCon :: Emits n => DataConDef n -> CAtom n -> Print n
+      showDataCon (DataConDef sn _ projss) arg = do
+        case projss of
+          [] -> emitLit sn
+          _ -> parens do
+            emitLit (sn ++ " ")
+            sepBy " " $ projss <&> \projs ->
+              -- we use `init` to strip off the `UnwrapCompoundNewtype` since
+              -- we're already under the case alternative
+              rec =<< normalizeNaryProj (init projs) arg
   ty -> emitLit $ "<value of type: " <> pprint ty <> ">"
   where
     rec :: Emits n => CAtom n -> Print n
     rec = showAnyRec
 
 parens :: Emits n => Print n -> Print n
-parens x = emitLit "(" >> x >> emitLit ")"
+parens x = emitCharLit '(' >> x >> emitCharLit ')'
 
 brackets :: Emits n => Print n -> Print n
-brackets x = emitLit "[" >> x >> emitLit "]"
+brackets x = emitCharLit '[' >> x >> emitCharLit ']'
+
+braces :: Emits n => Print n -> Print n
+braces x = emitCharLit '{' >> x >> emitCharLit '}'
 
 sepBy :: forall n. Emits n => String -> [Print n] -> Print n
 sepBy s xsTop = rec xsTop where
@@ -123,12 +174,18 @@ bufferTy h = do
   t <- strType
   return $ RefTy h (PairTy NatTy t)
 
--- argument has type `Fin n => Char`
+-- argument has type `Fin n => Word8`
 extendBuffer :: (Emits n, Builder r m) => Atom r n -> Atom r n -> m n ()
 extendBuffer buf tab = do
   TC (RefType (Just h) _) <- getType buf
   TabTy (_:>IxType (FinTy n) _) _ <- getType tab
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
+
+-- argument has type `Word8`
+pushBuffer :: (Emits n, Builder r m) => Atom r n -> Atom r n -> m n ()
+pushBuffer buf x = do
+  TC (RefType (Just h) _) <- getType buf
+  void $ applyPreludeFunction "stack_push_internal" [h, buf, x]
 
 stringLitAsCharTab :: (Emits n, Builder r m) => String -> m n (Atom r n)
 stringLitAsCharTab s = do
@@ -152,10 +209,12 @@ applyPreludeFunction name args = do
 forEachTabElt
   :: (Emits n, ScopableBuilder r m)
   => Atom r n
-  -> (forall l. (Emits l, DExt n l) => Atom r l -> m l ())
+  -> (forall l. (Emits l, DExt n l) => Atom r l -> Atom r l -> m l ())
   -> m n ()
 forEachTabElt tab cont = do
   TabTy (_:>ixTy) _ <- getType tab
   void $ buildFor "i" Fwd ixTy \i -> do
-    cont =<< tabApp (sink tab) (Var i)
+    x <- tabApp (sink tab) (Var i)
+    i' <- ordinal (sink ixTy) (Var i)
+    cont i' x
     return $ UnitVal

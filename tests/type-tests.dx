@@ -431,7 +431,6 @@ def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
 
 -- Make sure that the local type alias is unifiable with Int
 def GetInt (n : Int) : Type = Int
-def the (t : Type) (x : t) : t = x
 def ff (n : Int) : Int =
   i = GetInt n
   the i 2

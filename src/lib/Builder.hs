@@ -30,7 +30,7 @@ module Builder (
   buildAlt, buildUnaryAtomAlt,
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
-  buildCase, emitMaybeCase, buildSplitCase,
+  buildCase, emitIf, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitExprToAtom, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
   runTopBuilderT, TopBuilder2, emitBindingDefault,

@@ -30,6 +30,8 @@ RawPtr : Type = %Word8Ptr
 Int = Int32
 Float = Float32
 
+def the (a:Type) (x:a) = x
+
 '### Casting
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
@@ -2571,6 +2573,9 @@ def with_stack {r} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h} r) : r =
 
 def stack_extend_internal {n h} (stack:Stack h Char) (x:Fin n=>Char) : {State h} Unit =
   stack_extend stack x
+
+def stack_push_internal {h} (stack:Stack h Char) (x:Char) : {State h} Unit =
+  stack_push stack x
 
 def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List Char =
   with_stack Char \stack.

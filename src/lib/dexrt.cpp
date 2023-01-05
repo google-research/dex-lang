@@ -182,6 +182,18 @@ int32_t showFloat32_internal(char *resultPtr, float x) {
   return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
 }
 
+int32_t showFloat64_internal(char *resultPtr, double x) {
+  return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
+}
+
+int32_t showInt32_internal(char *resultPtr, int32_t x) {
+  return snprintf(resultPtr, showStringBufferSize, "%" PRId32, x);
+}
+
+int64_t showInt64_internal(char *resultPtr, int64_t x) {
+  return snprintf(resultPtr, showStringBufferSize, "%" PRId64, x);
+}
+
 void showNat32(char **resultPtr, uint32_t x) {
   auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
   auto length = snprintf(buffer, showStringBufferSize, "%" PRId32, x);
