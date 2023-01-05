@@ -117,6 +117,7 @@ data ImpInstr n =
  | ISelect (IExpr n) (IExpr n) (IExpr n)
  | IOutputStream
  | DebugPrint String (IExpr n) -- just prints an int64 value
+ | IShowScalar (IExpr n) (IExpr n) -- pointer to result table, value
    deriving (Show, Generic)
 
 iBinderType :: IBinder n l -> IType
@@ -230,12 +231,13 @@ instance GenericE ImpInstr where
   {- GetAllocSize -} IExpr
   {- Free -}    (IExpr)
   {- IThrowE -} (UnitE)
-    ) (EitherE5
+    ) (EitherE6
   {- ICastOp    -} (LiftE IType `PairE` IExpr)
   {- IBitcastOp -} (LiftE IType `PairE` IExpr)
   {- IVectorBroadcast -} (IExpr `PairE` LiftE IVectorType)
   {- IVectorIota      -} (              LiftE IVectorType)
   {- DebugPrint       -} (LiftE String `PairE` IExpr)
+  {- IShowScalar      -} (IExpr `PairE` IExpr)
     ) (EitherE6
   {- IPtrLoad -}      IExpr
   {- IPtrOffset -}    (IExpr `PairE` IExpr)
@@ -269,6 +271,7 @@ instance GenericE ImpInstr where
     IVectorBroadcast v vty -> Case3 $ Case2 $ v `PairE` LiftE vty
     IVectorIota vty        -> Case3 $ Case3 $ LiftE vty
     DebugPrint s x         -> Case3 $ Case4 $ LiftE s `PairE` x
+    IShowScalar x  y       -> Case3 $ Case5 $ x `PairE` y
 
     IPtrLoad x     -> Case4 $ Case0 $ x
     IPtrOffset x y -> Case4 $ Case1 $ x `PairE` y
@@ -309,6 +312,7 @@ instance GenericE ImpInstr where
       Case2 (v `PairE` LiftE vty) -> IVectorBroadcast v vty
       Case3 (          LiftE vty) -> IVectorIota vty
       Case4 (LiftE s `PairE` x)   -> DebugPrint s x
+      Case5 (x `PairE` y)         -> IShowScalar x y
       _ -> error "impossible"
 
     _ -> error "impossible"

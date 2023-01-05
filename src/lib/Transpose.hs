@@ -257,6 +257,7 @@ transposeMiscOp op _ = case op of
   UnsafeCoerce _ _      -> notImplemented
   GarbageVal _          -> notImplemented
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
+  ShowScalar _ -> error "Shouldn't have ShowScalar in simplified IR"
   where
     notLinear = error $ "Can't transpose a non-linear operation: " ++ show op
 

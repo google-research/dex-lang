@@ -947,6 +947,7 @@ instance Pretty (ImpInstr n)  where
     IUnOp  op x   -> opDefault (UPrimOp $ UnOp  op ()   ) [x]
     ISelect x y z -> opDefault (UPrimOp $ MiscOp (Select () () ())) [x, y, z]
     IOutputStream -> "outputStream"
+    IShowScalar ptr x -> "show_scalar" <+> p ptr <+> p x
     where opDefault name xs = prettyOpDefault name xs $ AppPrec
 
 sizeStr :: IExpr n -> Doc ann

@@ -123,7 +123,6 @@ data MiscOp e =
  | BitcastOp e e                -- (2) Type, then value. See CheckType.hs for valid coercions.
  | UnsafeCoerce e e             -- type, then value. Assumes runtime representation is the same.
  | GarbageVal e                 -- type of value (assume `Data` constraint)
- | ShowAny e
  -- Effects
  | ThrowError e                 -- (1) Hard error (parameterized by result type)
  | ThrowException e             -- (1) Catchable exceptions (unlike `ThrowError`)
@@ -131,9 +130,16 @@ data MiscOp e =
  | SumTag e
  -- Create an enum (payload-free ADT) from a Word8
  | ToEnum e e
- -- stdout-like output stream
+ -- printing
  | OutputStream
+ | ShowAny e    -- implemented in Simplify
+ | ShowScalar e -- Implemented in Imp. Result is a pair of an `IdxRepValTy`
+                -- giving the logical size of the result and a fixed-size table,
+                -- `Fin showStringBufferSize => Char`, assumed to have sufficient space.
    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+showStringBufferSize :: Word32
+showStringBufferSize = 32
 
 data VectorOp e =
    VectorBroadcast e e  -- value, vector type

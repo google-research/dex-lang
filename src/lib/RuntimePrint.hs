@@ -49,6 +49,12 @@ emitLit s = stringLitAsCharTab s >>= emitCharTab
 
 showAnyRec :: Emits n => CAtom n -> Print n
 showAnyRec atom = getType atom >>= \case
+  TC (BaseType (Scalar _)) -> do
+    (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
+    let n' = Con (Newtype NatTy n)
+    logicalTabTy <- finTabType n' CharRepTy
+    tab' <- emitExpr $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
+    emitCharTab tab'
   TC (ProdType _) -> do
     xs <- getUnpacked atom
     parens $ sepBy ", " $ map rec xs

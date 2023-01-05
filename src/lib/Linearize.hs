@@ -427,6 +427,7 @@ linearizeMiscOp op = case op of
   ThrowError _     -> emitZeroT
   OutputStream     -> emitZeroT
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
+  ShowScalar _ -> error "Shouldn't have ShowScalar in simplified IR"
   where
     emitZeroT = withZeroT $ liftM Var $ emit =<< injSubstM (PrimOp $ MiscOp op)
     la = linearizeAtom

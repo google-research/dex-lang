@@ -514,6 +514,7 @@ instance HasType r (ComposeE PrimOp (Atom r)) where
         return $ BaseTy $ hostPtrTy $ Scalar Word8Type
         where hostPtrTy ty = PtrType (CPU, ty)
       ShowAny _ -> strType
+      ShowScalar _ -> PairTy IdxRepTy <$> finTabType (NatVal showStringBufferSize) CharRepTy
     VectorOp op -> case op of
       VectorBroadcast _ vty -> substM vty
       VectorIota vty -> substM vty
@@ -777,6 +778,7 @@ exprEffects expr = case expr of
       ToEnum _ _       -> return Pure
       OutputStream     -> return Pure
       ShowAny _        -> return Pure
+      ShowScalar _     -> return Pure
   DAMOp op -> case op of
     Place    _ _  -> return $ OneEffect InitEffect
     Seq _ _ _ f      -> functionEffs f

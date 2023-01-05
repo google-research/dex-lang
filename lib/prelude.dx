@@ -2577,5 +2577,4 @@ def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List
     f stack
     read_stack stack
 
-def show_any {a} (x:a) : String =
-  unsafe_coerce String (%showAny x)
+def show_any {a} (x:a) : String = %showAny x

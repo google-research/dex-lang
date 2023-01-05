@@ -1001,6 +1001,7 @@ primNames = M.fromList
   , ("garbageVal"    , miscOp $ GarbageVal ())
   , ("select"        , miscOp $ Select () () ())
   , ("showAny"       , miscOp $ ShowAny ())
+  , ("showScalar"    , miscOp $ ShowScalar ())
   , ("projNewtype" , UProjBaseNewtype)
   , ("projMethod0" , UProjMethod 0)
   , ("projMethod1" , UProjMethod 1)

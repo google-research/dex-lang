@@ -518,6 +518,19 @@ compileInstr instr = case instr of
   DebugPrint fmtStr x -> [] <$ do
     x' <- compileExpr x
     debugPrintf fmtStr x'
+  IShowScalar resultPtr x -> (:[]) <$> do
+    resultPtr' <- compileExpr resultPtr
+    x'         <- compileExpr x
+    ~(Scalar b) <- return $ getIType x
+    let fname = getShowScalarFunStrName b
+    let spec = ExternFunSpec (L.mkName fname) i32 [] [] [hostVoidp, typeOf x']
+    emitExternCall spec [resultPtr', x']
+    where
+      getShowScalarFunStrName :: ScalarBaseType -> String
+      getShowScalarFunStrName = \case
+        Float32Type -> "showFloat32_internal"
+        Int32Type   -> "showInt32_internal"
+        b -> error $ "not implemented: " ++ pprint b
 
 -- TODO: use a careful naming discipline rather than strings
 -- (this is only used on the CUDA path which is currently broken anyway)
