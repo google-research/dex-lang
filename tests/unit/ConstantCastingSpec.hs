@@ -22,6 +22,7 @@ import TopLevel
 import Types.Core
 import Types.Imp
 import Types.Primitives
+import Types.Source
 import Util
 
 castOp :: ScalarBaseType -> LitVal -> PrimOp (SAtom VoidS)
@@ -38,7 +39,7 @@ evalBlock block = lowerFullySequential block >>= evalLLVM
 
 evalClosedExpr :: SExpr VoidS -> IO LitVal
 evalClosedExpr expr = do
-  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing NoOptimize
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing NoOptimize PrintLegacy
   env <- initTopState
   fst <$> runTopperM cfg env do
     block <- exprToBlock $ unsafeCoerceE expr

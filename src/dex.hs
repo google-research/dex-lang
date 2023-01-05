@@ -198,12 +198,15 @@ optionList opts = eitherReader \s -> case lookup s opts of
   Just x  -> Right x
   Nothing -> Left $ "Bad option. Expected one of: " ++ show (map fst opts)
 
+enumOption :: String -> String -> a -> [(String, a)] -> Parser a
+enumOption optName prettyOptName defaultVal options = option
+  (optionList options)
+  (long optName <> value defaultVal <>
+     helpOption prettyOptName (intercalate " | " $ fst <$> options))
+
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
-  <$> option
-         (optionList backends)
-         (long "backend" <> value LLVM <>
-          helpOption "Backend" (intercalate " | " $ fst <$> backends))
+  <$> enumOption "backend" "Backend" LLVM backends
   <*> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
     <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
@@ -212,7 +215,11 @@ parseEvalOpts = EvalConfig
                     <> help "File to log to" <> showDefault)
   <*> pure Nothing
   <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
+  <*> enumOption "print" "Print backend" PrintLegacy printBackends
   where
+    printBackends = [ ("haskell", PrintHaskell)
+                    , ("dex"    , PrintCodegen)
+                    , ("legacy" , PrintLegacy) ]
     backends = [ ("llvm", LLVM)
                , ("llvm-mc", LLVMMC)
 #ifdef DEX_CUDA

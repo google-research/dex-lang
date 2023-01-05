@@ -41,7 +41,7 @@ import Types.Primitives
 
 data SourceNameOr (a::E) (n::S) where
   -- Only appears before renaming pass
-  SourceName :: SourceName -> SourceNameOr a VoidS
+  SourceName :: SourceName -> SourceNameOr a n
   -- Only appears after renaming pass
   -- We maintain the source name for user-facing error messages.
   InternalName :: SourceName -> a n -> SourceNameOr a n
@@ -364,7 +364,17 @@ data LogLevel = LogNothing | PrintEvalTime | PrintBench String
               | LogPasses [PassName] | LogAll
                 deriving  (Show, Generic)
 
-data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
+data PrintBackend =
+   PrintCodegen  -- Soon-to-be default path based on `PrintAny`
+ | PrintLegacy   -- Old path based on Serialize.hs, soon to be deleted
+ | PrintHaskell  -- Backup path for debugging in case the codegen path breaks.
+                 -- Uses PPrint.hs directly and doesn't make any attempt to
+                 -- hide internals: SumAsProd, TabLam, AtomRepVal, etc
+                 -- are printed as they are. Also accessible via `:pp`.
+
+ deriving (Show, Eq, Generic)
+
+data OutFormat = Printed (Maybe PrintBackend) | RenderHtml  deriving (Show, Eq, Generic)
 
 data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerOptPass | LowerPass
