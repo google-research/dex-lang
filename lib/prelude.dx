@@ -2525,15 +2525,17 @@ def unsafe_get_stack_buffer {h a} (stack:Stack h a) : {State h} (Ref h (Fin 0 =>
 def stack_buf_size {h a} (stack:Stack h a) : {State h} Nat =
   get $ fst_ref $ unsafe_coerce (Ref h (Nat & (Ref h (Fin 0 => a)))) (snd_ref stack)
 
-def grow_stack_buffer {h a} (stack:Stack h a) : {State h} Unit =
-  buf = unsafe_get_stack_buffer stack
-  logical_size = stack_size stack
-  cur_data = get $ unsafe_coerce (Ref h (Fin logical_size => a)) buf
-  new_buf_size = stack_buf_size stack * 2
-  snd_ref stack := to_list for i:(Fin new_buf_size).
-    case to_ix (Fin logical_size) (ordinal i) of
-      Just i' -> cur_data.i'
-      Nothing -> uninitialized_value
+def ensure_size_at_least {h a} (stack:Stack h a) (req_size:Nat) : {State h} Unit =
+  if req_size > stack_buf_size stack then
+    -- TODO: maybe this should use integer arithmetic?
+    new_buf_size = f_to_n $ pow 2.0 (ceil $ log2 $ n_to_f req_size)
+    buf = unsafe_get_stack_buffer stack
+    logical_size = stack_size stack
+    cur_data = get $ unsafe_coerce (Ref h (Fin logical_size => a)) buf
+    snd_ref stack := to_list for i:(Fin new_buf_size).
+      case to_ix (Fin logical_size) (ordinal i) of
+        Just i' -> cur_data.i'
+        Nothing -> uninitialized_value
 
 def read_stack {h a} (stack:Stack h a) : {State h} (List a) =
   n = stack_size stack
@@ -2544,7 +2546,7 @@ def read_stack {h a} (stack:Stack h a) : {State h} (List a) =
 def stack_push {a h} (stack:Stack h a) (x:a) : {State h} Unit =
   n_old = stack_size stack
   n_new = n_old + 1
-  if n_new > stack_buf_size stack then grow_stack_buffer stack
+  ensure_size_at_least stack n_new
   buf = unsafe_get_stack_buffer stack
   buf ! (unsafe_from_ordinal _ n_old) := x
   fst_ref stack := n_new
@@ -2556,7 +2558,7 @@ def stack_push {a h} (stack:Stack h a) (x:a) : {State h} Unit =
 def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
   n_old = stack_size stack
   n_new = n_old + size n
-  if n_new > stack_buf_size stack then grow_stack_buffer stack
+  ensure_size_at_least stack n_new
   buf = unsafe_get_stack_buffer stack
   buf_slice = unsafe_coerce (Ref h (n=>a)) (buf ! (unsafe_from_ordinal _ n_old))
   buf_slice := x
@@ -2566,3 +2568,13 @@ stack_init_size = 16
 def with_stack {r} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h} r) : r =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
   with_state (0, init_stack) \ref . f ref
+
+def stack_extend_internal {n h} (stack:Stack h Char) (x:Fin n=>Char) : {State h} Unit =
+  stack_extend stack x
+
+def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List Char =
+  with_stack Char \stack.
+    f stack
+    read_stack stack
+
+def show_any {a} (x:a) : String = %showAny x

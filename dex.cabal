@@ -80,6 +80,7 @@ library
                      , PPrint
                      , RawName
                      , Runtime
+                     , RuntimePrint
                      , Serialize
                      , Simplify
                      , Subst

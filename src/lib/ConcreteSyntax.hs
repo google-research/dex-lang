@@ -365,7 +365,9 @@ explicitCommand :: Parser CSourceBlock'
 explicitCommand = do
   cmdName <- char ':' >> nameString
   cmd <- case cmdName of
-    "p"       -> return $ EvalExpr Printed
+    "p"       -> return $ EvalExpr (Printed Nothing)
+    "pp"      -> return $ EvalExpr (Printed (Just PrintHaskell))
+    "pcodegen"-> return $ EvalExpr (Printed (Just PrintCodegen))
     "t"       -> return $ GetType
     "html"    -> return $ EvalExpr RenderHtml
     "export"  -> ExportFun <$> nameString
@@ -1000,6 +1002,8 @@ primNames = M.fromList
   , ("unsafeCoerce"  , miscOp $ UnsafeCoerce () ())
   , ("garbageVal"    , miscOp $ GarbageVal ())
   , ("select"        , miscOp $ Select () () ())
+  , ("showAny"       , miscOp $ ShowAny ())
+  , ("showScalar"    , miscOp $ ShowScalar ())
   , ("projNewtype" , UProjBaseNewtype)
   , ("projMethod0" , UProjMethod 0)
   , ("projMethod1" , UProjMethod 1)

@@ -130,9 +130,16 @@ data MiscOp e =
  | SumTag e
  -- Create an enum (payload-free ADT) from a Word8
  | ToEnum e e
- -- stdout-like output stream
+ -- printing
  | OutputStream
+ | ShowAny e    -- implemented in Simplify
+ | ShowScalar e -- Implemented in Imp. Result is a pair of an `IdxRepValTy`
+                -- giving the logical size of the result and a fixed-size table,
+                -- `Fin showStringBufferSize => Char`, assumed to have sufficient space.
    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+showStringBufferSize :: Word32
+showStringBufferSize = 32
 
 data VectorOp e =
    VectorBroadcast e e  -- value, vector type

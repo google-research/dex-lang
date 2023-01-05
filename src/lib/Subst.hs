@@ -241,12 +241,6 @@ data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
   SubstVal :: atom n   -> SubstVal c      atom c n
   Rename   :: Name c n -> SubstVal cMatch atom c n
 
-withFreshM :: (ScopeExtender m, Color c)
-           => NameHint
-           -> (forall o'. (DExt o o') => NameBinder c o o' -> m o' a)
-           -> m o a
-withFreshM hint cont = refreshAbsScope (newName hint) \b _ -> cont b
-
 class ColorsNotEqual a b where
   notEqProof :: ColorsEqual a b -> r
 

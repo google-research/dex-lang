@@ -33,6 +33,7 @@ import Name
 import Subst
 import Optimize (peepholeOp)
 import QueryType
+import RuntimePrint
 import Transpose
 import Types.Core
 import Types.Primitives
@@ -790,6 +791,7 @@ simplifyOp op = case op of
     x <- coreToSimpAtom x'
     y <- coreToSimpAtom y'
     injectCore <$> select c x y
+  MiscOp (ShowAny x) -> dropSubst $ showAny x >>= simplifyBlock
   _ -> injectCore <$> fallback
   where
     fallback = do

@@ -18,7 +18,7 @@ module QueryType (
   projectionIndices, sourceNameType, typeBinOp, typeUnOp,
   isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
   isNewtype, instantiateHandlerType, getDestBlockType,
-  getNaryLamExprType
+  getNaryLamExprType, strType, finTabType
   ) where
 
 import Control.Category ((>>>))
@@ -39,7 +39,7 @@ import Core
 import CheapReduction
 import Err
 import LabeledItems
-import Name
+import Name hiding (withFreshM)
 import Subst
 import Util
 import PPrint ()
@@ -513,6 +513,8 @@ instance HasType r (ComposeE PrimOp (Atom r)) where
       OutputStream ->
         return $ BaseTy $ hostPtrTy $ Scalar Word8Type
         where hostPtrTy ty = PtrType (CPU, ty)
+      ShowAny _ -> strType
+      ShowScalar _ -> PairTy IdxRepTy <$> finTabType (NatVal showStringBufferSize) CharRepTy
     VectorOp op -> case op of
       VectorBroadcast _ vty -> substM vty
       VectorIota vty -> substM vty
@@ -696,6 +698,22 @@ ixTyFromDict dict = do
     DictTy (DictType "Ix" _ [iTy]) -> return $ IxType iTy dict
     _ -> error $ "Not an Ix dict: " ++ pprint dict
 
+strType :: EnvReader m => m n (Type r n)
+strType = constructPreludeType "List" $ DataDefParams [(PlainArrow, CharRepTy)]
+
+finTabType :: EnvReader m => Atom r n -> Atom r n -> m n (Type r n)
+finTabType n eltTy = IxType (TC (Fin n )) (DictCon (IxFin n)) ==> eltTy
+
+constructPreludeType :: EnvReader m => String -> DataDefParams r n -> m n (Type r n)
+constructPreludeType sourceName params = do
+  lookupSourceMap sourceName >>= \case
+    Just uvar -> case uvar of
+      UTyConVar v -> lookupEnv v >>= \case
+        TyConBinding def _ -> return $ TypeCon sourceName def params
+      _ -> notfound
+    Nothing -> notfound
+ where notfound = error $ "Type constructor not defined: " ++ sourceName
+
 -- === querying effects implementation ===
 
 class HasEffectsE (e::E) (r::IR) | e -> r where
@@ -759,6 +777,8 @@ exprEffects expr = case expr of
       SumTag _         -> return Pure
       ToEnum _ _       -> return Pure
       OutputStream     -> return Pure
+      ShowAny _        -> return Pure
+      ShowScalar _     -> return Pure
   DAMOp op -> case op of
     Place    _ _  -> return $ OneEffect InitEffect
     Seq _ _ _ f      -> functionEffs f

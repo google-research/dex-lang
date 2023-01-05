@@ -121,7 +121,7 @@ runSyntaxM act = case runFallibleM act of
 sourceBlock' :: CSourceBlock' -> SyntaxM SourceBlock'
 sourceBlock' (CTopDecl (WithSrc _ (CDecl ann (ExprDecl e)))) = do
   when (ann /= PlainLet) $ fail "Cannot annotate expressions"
-  Command (EvalExpr Printed) <$> expr e
+  Command (EvalExpr (Printed Nothing)) <$> expr e
 sourceBlock' (CTopDecl d) = EvalUDecl <$> topDecl d
 sourceBlock' (CCommand typ b) = Command typ <$> block b
 sourceBlock' (CDeclareForeign foreignName dexName ty) =

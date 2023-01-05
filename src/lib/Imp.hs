@@ -475,11 +475,8 @@ toImpMiscOp maybeDest op = case op of
     destRep <- getRepBaseTypes resultTy
     assertEq srcRep destRep $
       "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
-    -- TODO: we ought to be able to do this without forcing a copy. (But this is
-    -- easier for now.)
-    dest@(Dest _ destTree) <- maybeAllocDest maybeDest resultTy
-    storeAtom (Dest srcTy destTree) x
-    loadAtom dest
+    RepVal _ tree <- atomToRepVal x
+    returnVal $ RepValAtom $ RepVal resultTy tree
   GarbageVal resultTy -> do
     dest <- maybeAllocDest maybeDest resultTy
     loadAtom dest
@@ -511,6 +508,16 @@ toImpMiscOp maybeDest op = case op of
     _ -> error $ "Not an enum: " ++ pprint ty
   OutputStream -> returnIExprVal =<< emitInstr IOutputStream
   ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
+  ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
+  ShowScalar x -> do
+    resultTy <- getType $ PrimOp $ MiscOp op
+    Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- maybeAllocDest maybeDest resultTy
+    xScalar <- fromScalarAtom x
+    size <- emitInstr $ IShowScalar tabPtr xScalar
+    let size' = toScalarAtom size
+    storeAtom (Dest sizeTy sizeTree) size'
+    tab <- loadAtom $ Dest tabTy tabTree
+    return $ PairVal size' tab
   where
     fsa = fromScalarAtom
     returnIExprVal x = returnVal $ toScalarAtom x
@@ -1548,6 +1555,7 @@ impInstrTypes instr = case instr of
   IPtrLoad ref -> return [ty]  where PtrType (_, ty) = getIType ref
   IPtrOffset ref _ -> return [PtrType (addr, ty)]  where PtrType (addr, ty) = getIType ref
   IOutputStream    -> return [hostPtrTy $ Scalar Word8Type]
+  IShowScalar _ _  -> return [Scalar Word32Type]
   where hostPtrTy ty = PtrType (CPU, ty)
 
 instance CheckableE ImpFunction where

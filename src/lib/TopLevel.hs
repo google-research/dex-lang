@@ -85,7 +85,8 @@ data EvalConfig = EvalConfig
   , preludeFile   :: Maybe FilePath
   , logFileName   :: Maybe FilePath
   , logFile       :: Maybe Handle
-  , optLevel      :: OptLevel }
+  , optLevel      :: OptLevel
+  , printBackend  :: PrintBackend }
 
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
@@ -243,18 +244,27 @@ evalSourceBlock' mname block = case sbContents block of
   Command cmd expr -> case cmd of
     -- TODO: we should filter the top-level emissions we produce in this path
     -- we want cache entries but we don't want dead names.
-    EvalExpr fmt -> when (mname == Main) do
-      annExpr <- case fmt of
-        Printed -> return expr
-        RenderHtml -> return $ addTypeAnn expr $ referTo "String"
-      val <- evalUExpr annExpr
-      case fmt of
-        Printed -> do
-          s <- pprintVal val
-          logTop $ TextOut s
-        RenderHtml -> do
-          s <- getDexString val
-          logTop $ HtmlOut s
+    EvalExpr fmt -> when (mname == Main) case fmt of
+      Printed maybeExplicitBackend -> do
+        printMode <- case maybeExplicitBackend of
+          Just backend -> return backend
+          Nothing -> printBackend <$> getConfig
+        case printMode of
+          PrintLegacy -> do
+            val <- evalUExpr expr
+            s <- pprintVal val
+            logTop $ TextOut s
+          PrintHaskell -> do
+            val <- evalUExpr expr
+            logTop $ TextOut $ pprint val
+          PrintCodegen -> do
+            stringVal <- evalUExpr $ addShowAny expr
+            s <- getDexString stringVal
+            logTop $ TextOut s
+      RenderHtml -> do
+        stringVal <- evalUExpr $ addTypeAnn expr (referTo "String")
+        s <- getDexString stringVal
+        logTop $ HtmlOut s
     ExportFun _ -> error "not implemented"
     --   f <- evalUModuleVal v m
     --   void $ traverseLiterals f \val -> case val of
@@ -401,7 +411,9 @@ evalSourceBlock' mname block = case sbContents block of
   where
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
     addTypeAnn e = WithSrcE Nothing . UTypeAnn e
-    referTo :: SourceName -> UExpr VoidS
+    addShowAny :: UExpr n -> UExpr n
+    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") e
+    referTo :: SourceName -> UExpr n
     referTo = WithSrcE Nothing . UVar . SourceName
 
 runEnvQuery :: Topper m => EnvQuery -> m n ()

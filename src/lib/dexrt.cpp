@@ -176,6 +176,12 @@ void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) 
 // The string buffer size used for converting integer and floating-point types.
 static constexpr int showStringBufferSize = 32;
 
+
+// TODO: replace `showFloat32` with `showFloat32_internal` and so on
+int32_t showFloat32_internal(char *resultPtr, float x) {
+  return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
+}
+
 void showNat32(char **resultPtr, uint32_t x) {
   auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
   auto length = snprintf(buffer, showStringBufferSize, "%" PRId32, x);

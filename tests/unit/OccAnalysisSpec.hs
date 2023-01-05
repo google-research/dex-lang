@@ -36,7 +36,7 @@ sourceTextToBlocks source = do
 sourceBlockToBlock :: (Topper m, Mut n) => SourceBlock -> m n (Maybe (SBlock n))
 sourceBlockToBlock block = case sbContents block of
   Misc (ImportModule moduleName)  -> importModule moduleName >> return Nothing
-  Command (EvalExpr Printed) expr -> Just <$> uExprToBlock expr
+  Command (EvalExpr (Printed _)) expr -> Just <$> uExprToBlock expr
   UnParseable _ s -> throw ParseErr s
   _ -> error $ "Unexpected SourceBlock " ++ pprint block ++ " in unit tests"
 
@@ -67,7 +67,7 @@ analyze cfg env code = fst <$> runTopperM cfg env do
 
 spec :: Spec
 spec = do
-  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize PrintLegacy
   -- or just initTopState, to always compile the prelude during unit tests?
   init_env <- runIO loadCache
   (_, env) <- runIO $ runTopperM cfg init_env $ ensureModuleLoaded Prelude

@@ -914,6 +914,12 @@ pattern TagRepTy = TC (BaseType (Scalar Word8Type))
 pattern TagRepVal :: Word8 -> Atom r n
 pattern TagRepVal x = Con (Lit (Word8Lit x))
 
+pattern CharRepTy :: Type r n
+pattern CharRepTy = Word8Ty
+
+charRepVal :: Char -> Atom r n
+charRepVal c = Con (Lit (Word8Lit (fromIntegral $ fromEnum c)))
+
 pattern Word8Ty :: Type r n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
