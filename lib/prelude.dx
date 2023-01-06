@@ -60,7 +60,7 @@ Nat = %Nat
 NatRep = Word32
 
 def nat_to_rep (x : Nat)    : NatRep = %projNewtype x
-def rep_to_nat (x : NatRep) : Nat    = %newtype Nat x
+def rep_to_nat (x : NatRep) : Nat    = %NatCon x
 
 def n_to_w8  (x : Nat) : Word8   = internal_cast _ $ nat_to_rep x
 def n_to_w32 (x : Nat) : Word32  = internal_cast _ $ nat_to_rep x
@@ -2582,7 +2582,7 @@ def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List
     f stack
     read_stack stack
 
-def show_any {a} (x:a) : String = %showAny x
+def show_any {a} (x:a) : String = unsafe_coerce String %showAny x
 
 -- TODO: data constraint
 def coerce_table {n a} (m:Type) [Ix m] (x:n=>a) : m => a =

@@ -43,13 +43,9 @@ data PrimTC (r::IR) (e:: *) where
   BaseType         :: BaseType       -> PrimTC r e
   ProdType         :: [e]            -> PrimTC r e
   SumType          :: [e]            -> PrimTC r e
-  Nat              ::                   PrimTC r e
-  Fin              :: e              -> PrimTC r e
   RefType          :: (Maybe e) -> e -> PrimTC r e
+  -- TODO: `HasCore r` constraint
   TypeKind         ::                   PrimTC r e
-  EffectRowKind    ::                   PrimTC r e
-  LabeledRowKindTC ::                   PrimTC r e
-  LabelType        ::                   PrimTC r e
   HeapType         ::                   PrimTC r e
   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -62,15 +58,11 @@ data PrimCon (r::IR) (e:: *) where
   ProdCon      :: [e]               -> PrimCon r e
   SumCon       :: [e] -> Int -> e   -> PrimCon r e -- type, tag, payload
   SumAsProd    :: [e] -> e   -> [e] -> PrimCon r e -- type, tag, payload
-  LabelCon     :: String            -> PrimCon r e
-  Newtype      :: e -> e            -> PrimCon r e      -- type, payload
-  -- Misc hacks
-  -- Dict type, method. Used in prelude for `run_accum`.
-  ExplicitDict :: e -> e            -> PrimCon r e
-  -- Only used during type inference
+  -- Only used during type inference. If we add `HasCore r` here we won't
+  -- be able to derive the instances. Maybe we should just move it to `Atom`.
   DictHole     :: AlwaysEqual SrcPosCtx -> e -> PrimCon r e
-  HeapVal      ::                      PrimCon r e
-        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+  HeapVal      ::                               PrimCon r e
+  deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data MemOp e =
    IOAlloc BaseType e

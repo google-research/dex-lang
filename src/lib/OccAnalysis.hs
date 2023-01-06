@@ -186,7 +186,6 @@ summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
   Var name -> ixExpr name
   Con c -> constructor c
-  ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
   _ -> unknown atom
   where
     invalid tag = error $ "Unexpected indexing by " ++ tag
@@ -198,11 +197,8 @@ summary atom = case atom of
       SumAsProd _ (TagRepVal tag) payloads ->
         Inject (fromIntegral tag) <$> (summary $ payloads !! (fromIntegral tag))
       SumAsProd _ _ _ -> unknown atom
-      LabelCon _ -> invalid "LabelCon"
-      Newtype _ e -> summary e
-      ExplicitDict _ _ -> invalid "ExplicitDict"
-      DictHole _ _ -> invalid "DictHole"
       HeapVal -> invalid "HeapVal"
+      DictHole _ _ -> error "shouldn't appear in SimpIR"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown _ = return IxAll
@@ -443,11 +439,7 @@ occWithBinder (Abs (b:>ty) body) cont = do
 {-# INLINE occWithBinder #-}
 
 instance HasOCC SAtom where
-  occ a atom = case atom of
-    ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
-    _ -> generic
-    where
-      generic = toE <$> (occ a $ fromE atom)
+  occ a atom = toE <$> (occ a $ fromE atom)
 
 -- We shouldn't need this instance, because Imp names can't appear in SimpIR,
 -- but we need to add some tricks to make GHC realize that.
@@ -511,6 +503,7 @@ instance HasOCC (FieldRowElems SimpIR)
 instance HasOCC (FieldRowElem SimpIR)
 instance HasOCC (DataDefParams SimpIR)
 instance HasOCC (DAMOp SimpIR)
+instance HasOCC (IxDict SimpIR)
 
 -- === The instances for RepE types ===
 

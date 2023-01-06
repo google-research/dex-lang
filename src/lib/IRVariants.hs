@@ -5,9 +5,10 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module IRVariants
-  ( IR (..), IRPredicate (..), Sat, Sat', IsCore, IsCore', IsLowered, IsLowered'
+  ( IR (..), IRPredicate (..), Sat, Sat', HasCore, HasCore', IsLowered, IsLowered'
   , unsafeCoerceIRE, unsafeCoerceFromAnyIR, unsafeCoerceIRB, injectIRE
-  , CovariantInIR, InferenceIR) where
+  , injectFromCore, injectFromSimp
+  , CovariantInIR, CoreToSimpIR, InferenceIR, IsSimpish, IsSimpish') where
 
 import GHC.Exts (Constraint)
 import Name
@@ -16,11 +17,14 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 data IR =
    CoreIR       -- used after inference and before simplification
  | SimpIR       -- used after simplification
- | SimpToImpIR  -- only used during the Simp-to-Imp translation
+ | SimpToImpIR  -- used during the Simp-to-Imp translation
  | AnyIR        -- used for deserialization only
 
+type CoreToSimpIR = CoreIR -- used during the Core-to-Simp translation
 data IRFeature =
-  DAMOps
+   DAMOps
+ | CoreOps
+ | SimpOps
 
 -- TODO: make this a hard distinctions
 type InferenceIR = CoreIR  -- used during type inference only
@@ -35,16 +39,28 @@ data IRPredicate =
 type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
 type family Sat' (r::IR) (p::IRPredicate) where
   Sat' r (Is r)                              = True
+  -- subsets
   Sat' SimpIR (IsSubsetOf SimpToImpIR)       = True
   Sat' SimpIR (IsSubsetOf CoreIR)            = True
+  -- DAMOps
   Sat' SimpIR      (HasFeature DAMOps)       = True
   Sat' SimpToImpIR (HasFeature DAMOps)       = True
+  -- DAMOps
+  Sat' SimpIR      (HasFeature SimpOps)      = True
+  Sat' SimpToImpIR (HasFeature SimpOps)      = True
+  -- CoreOps
+  Sat' CoreIR       (HasFeature CoreOps)     = True
+  -- otherwise
   Sat' _ _ = False
 
-type IsCore  r = r `Sat`  Is CoreIR
-type IsCore' r = r `Sat'` Is CoreIR
+type HasCore  (r::IR) = r `Sat`  HasFeature CoreOps
+type HasCore' (r::IR) = r `Sat'` HasFeature CoreOps
+
 type IsLowered  r = r `Sat`  HasFeature DAMOps
 type IsLowered' r = r `Sat'` HasFeature DAMOps
+
+type IsSimpish  (r::IR) = r `Sat`  HasFeature SimpOps
+type IsSimpish' (r::IR) = r `Sat'` HasFeature SimpOps
 
 -- XXX: the intention is that we won't have to use these much
 unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
@@ -66,3 +82,8 @@ class CovariantInIR (e::IR->E)
 injectIRE :: (CovariantInIR e, r `Sat` IsSubsetOf r') => e r n -> e r' n
 injectIRE = unsafeCoerceIRE
 
+injectFromCore :: (CovariantInIR e, HasCore r) => e CoreIR n -> e r n
+injectFromCore = unsafeCoerceIRE
+
+injectFromSimp :: (CovariantInIR e, IsSimpish r) => e SimpIR n -> e r n
+injectFromSimp = unsafeCoerceIRE

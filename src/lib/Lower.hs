@@ -103,7 +103,7 @@ instance GenericTraverser SimpIR UnitB LFS where
 type Dest = Atom
 
 traverseFor
-  :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> SAtom i -> LamExpr SimpIR i
+  :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> IxDict SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
 traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
   ansTy <- getTypeSubst $ Hof $ For dir ixDict $ lam
@@ -348,13 +348,13 @@ vectorizeLoopsRec frag nest =
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
-        DAMOp (Seq dir (DictCon (IxFin (NatVal n))) dest@(ProdVal [_]) body)
+        DAMOp (Seq dir (IxDictRawFin (IdxRepVal n)) dest@(ProdVal [_]) body)
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
-              let vn = NatVal $ n `div` loopWidth
-              body' <- vectorizeSeq loopWidth (TC $ Fin vn) frag body
+              let vn = n `div` loopWidth
+              body' <- vectorizeSeq loopWidth frag body
               dest' <- applyRename frag dest
-              emit $ DAMOp $ Seq dir (DictCon $ IxFin vn) dest' body')
+              emit $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal vn)) dest' body')
             `catchErr` \errs -> do
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
@@ -362,7 +362,7 @@ vectorizeLoopsRec frag nest =
                 modify (<> errs')
                 dest' <- applyRename frag dest
                 body' <- applyRename frag body
-                emit $ DAMOp $ Seq dir (DictCon $ IxFin $ NatVal n) dest' body'
+                emit $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal n)) dest' body'
         _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 
@@ -373,24 +373,23 @@ atMostOneEffect eff scrutinee = case scrutinee of
   _ -> False
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
-             => Word32 -> SType o -> SubstFrag Name i i' o -> LamExpr SimpIR i'
+             => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
              -> TopVectorizeM o (LamExpr SimpIR o)
-vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
+vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
   if atMostOneEffect InitEffect (blockEffects body)
     then do
-      (oldIxTy, ty') <- case ty of
+      (_, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
           ixTy' <- applyRename frag ixTy
           ref' <- applyRename frag ref
-          return (ixTy', ProdTy [newIxTy, ref'])
+          return (ixTy', ProdTy [IdxRepTy, ref'])
         _ -> error "Unexpected seq binder type"
       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
         buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
-          (vi, dest) <- fromPair $ Var ci
-          viOrd <- unwrapBaseNewtype =<< unwrapBaseNewtype vi
+          -- XXX: we're assuming `Fin n` here
+          (viOrd, dest) <- fromPair $ Var ci
           iOrd <- imul viOrd $ IdxRepVal loopWidth
-          let i = Con $ Newtype (sink oldIxTy) $ Con $ Newtype NatTy iOrd
-          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)
+          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)
           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
       case runReaderT (fromFallibleM result) mempty of
         Success s -> return s
@@ -401,7 +400,7 @@ vectorizeSeq loopWidth newIxTy frag (UnaryLamExpr (b:>ty) body) = do
     iSubst v = case lookupSubstFragProjected frag v of
       Left v'  -> sink $ fromNameVAtom v'
       Right v' -> sink $ fromNameVAtom v'
-vectorizeSeq _ _ _ _ = error "expected a unary lambda expression"
+vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
 fromNameVAtom v = case eqColorRep @c @AtomNameC of
@@ -509,21 +508,13 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
     Var v -> lookupSubstM v
     -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt p x -> do
+    ProjectElt (ProjectProduct i) x -> do
       VVal vv x' <- vectorizeAtom x
-      ov <- projStability p vv
-      let p' = case ov of
-                -- Uniform and contiguous values are always of the original type.
-                Uniform -> [p]
-                Contiguous -> [p]
-                -- Vectors of base newtypes are already newtype-stripped.
-                Varying -> case p of
-                  UnwrapBaseNewtype -> []
-                  _ -> [p]
-                -- Product types cannot be projected out of base newtypes,
-                -- so no need to filter.
-                ProdStability _ -> [p]
-      VVal ov <$> normalizeNaryProj p' x'
+      ov <- case vv of
+        ProdStability sbs -> return $ sbs !! i
+        _ -> throwVectErr "Invalid projection"
+      return $ VVal ov x'
+    ProjectElt UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst
@@ -534,11 +525,6 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
         VVal Uniform x -> SubstVal x
         -- TODO(nrink): Throw instead of `error`.
         _ -> error $ "Can't vectorize atom " ++ pprint atom
-      projStability p s = case (p, s) of
-        (ProjectProduct i     , ProdStability sbs) -> return $ sbs !! i
-        (UnwrapCompoundNewtype, _                ) -> return $ s
-        (UnwrapBaseNewtype    , _                ) -> return $ s
-        _ -> throwVectErr "Invalid projection"
 
 getVectorType :: SType o -> VectorizeM i o (SAtom o)
 getVectorType ty = addVectErrCtx "getVectorType" ("Type:\n" ++ pprint ty) do

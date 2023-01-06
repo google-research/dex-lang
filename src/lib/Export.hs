@@ -110,10 +110,11 @@ prepareFunctionForExport cc f = do
     parseTabTy :: CType n -> Maybe (ExportType n)
     parseTabTy = go []
       where
+        go :: [ExportDim n] -> CType n -> Maybe (ExportType n)
         go shape = \case
           BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
           NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-          TabTy  (b:>(IxType (TC (Fin n)) _)) a -> do
+          TabTy  (b:>(IxType (NewtypeTyCon (Fin n)) _)) a -> do
             dim <- case n of
               Var v    -> Just (ExportDimVar v)
               NatVal s -> Just (ExportDimLit $ fromIntegral s)
