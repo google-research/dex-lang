@@ -59,24 +59,39 @@ emitLit s = stringLitAsCharTab s >>= emitCharTab
 emitCharLit :: Emits n => Char -> Print n
 emitCharLit c = emitChar $ charRepVal c
 
-showAnyRec :: Emits n => CAtom n -> Print n
-showAnyRec atom = getType atom >>= \case
+showAnyRec :: forall n. Emits n => CAtom n -> Print n
+showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   -- hack to print chars nicely. TODO: make `Char` a newtype
-  TC (BaseType (Scalar Word8Type)) -> do
-    emitCharLit '\''
-    emitChar atom
-    emitCharLit '\''
-  TC (BaseType (Scalar _)) -> do
-    (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
-    let n' = Con (Newtype NatTy n)
-    logicalTabTy <- finTabType n' CharRepTy
-    tab' <- emitExpr $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
-    emitCharTab tab'
-  TC (ProdType _) -> do
-    xs <- getUnpacked atom
-    parens $ sepBy ", " $ map rec xs
-  TC Nat     -> unwrapBaseNewtype atom >>= rec
-  TC (Fin _) -> unwrapBaseNewtype atom >>= rec
+  TC t -> case t of
+    BaseType bt -> case bt of
+      Vector _ _ -> error "not implemented"
+      PtrType _  -> printTypeOnly "pointer"
+      Scalar _ -> do
+        (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
+        let n' = Con (Newtype NatTy n)
+        logicalTabTy <- finTabType n' CharRepTy
+        tab' <- emitExpr $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
+        emitCharTab tab'
+    -- TODO: we could do better than this but it's not urgent because raw sum types
+    -- aren't user-facing.
+    SumType _ -> printAsConstant
+    RefType _ _ -> printTypeOnly "reference"
+    EffectRowKind    -> printAsConstant
+    LabeledRowKindTC -> printAsConstant
+    LabelType        -> printAsConstant
+    HeapType         -> printAsConstant
+    ProdType _ -> do
+      xs <- getUnpacked atom
+      parens $ sepBy ", " $ map rec xs
+    Nat -> do
+      n <- unwrapBaseNewtype atom
+      -- Cast to Int so that it prints in decimal instead of hex
+      let intTy = TC (BaseType (Scalar Int64Type))
+      emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
+    Fin _ -> unwrapBaseNewtype atom >>= rec
+    -- TODO: traverse the type and print out data components
+    TypeKind -> printAsConstant
+  Pi _ -> printTypeOnly "function"
   StaticRecordTy tys -> do
     xs <- getUnpacked atom
     let LabeledItems row = restructure xs tys
@@ -94,7 +109,7 @@ showAnyRec atom = getType atom >>= \case
       rec arg
       return UnitVal
     emitLit " |}"
-  TabTy _ _ -> brackets $ forEachTabElt atom \iOrd x -> do
+  TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (IdxRepVal 0)
     void $ emitIf isFirst UnitTy (return UnitVal) (emitLit ", " >> return UnitVal)
     rec x
@@ -113,7 +128,7 @@ showAnyRec atom = getType atom >>= \case
         showDataCon (sink $ cons !! i) arg
         return UnitVal
     where
-      showDataCon :: Emits n => DataConDef n -> CAtom n -> Print n
+      showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
       showDataCon (DataConDef sn _ projss) arg = do
         case projss of
           [] -> emitLit sn
@@ -123,10 +138,44 @@ showAnyRec atom = getType atom >>= \case
               -- we use `init` to strip off the `UnwrapCompoundNewtype` since
               -- we're already under the case alternative
               rec =<< normalizeNaryProj (init projs) arg
-  ty -> emitLit $ "<value of type: " <> pprint ty <> ">"
+  DepPairTy _ -> parens do
+    (x, y) <- fromPair atom
+    rec x >> emitLit ",> " >> rec y
+  -- Done well, this could let you inspect the results of dictionary synthesis
+  -- and maybe even debug synthesis failures.
+  DictTy _ -> printAsConstant
+  ProjectElt _ _ -> notAType
+  ACase _ _ _  -> notAType
+  Lam _ _ _    -> notAType
+  TabLam _     -> notAType
+  DictCon _    -> notAType
+  LabeledRow _ -> notAType
+  Con _        -> notAType
+  Eff _        -> notAType
+  PtrVar _     -> notAType
+  DepPair _ _  _ -> notAType
+  RecordTy _   -> unexpectedPolymorphism
+  VariantTy _  -> unexpectedPolymorphism
+  Var _ -> error $ "unexpected type variable: " ++ pprint atomTy
   where
-    rec :: Emits n => CAtom n -> Print n
+    rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec
+
+    printTypeOnly :: String -> Print n
+    printTypeOnly thingName = do
+      ty <- getType atom
+      emitLit $ "<" <> thingName <> " of type " <> pprint ty <> ">"
+
+    printAsConstant :: Print n
+    printAsConstant = emitLit $ pprint atom
+
+    notAType :: Print n
+    notAType = error $ "Error querying type of: " ++ pprint atom
+
+    unexpectedPolymorphism :: Print n
+    unexpectedPolymorphism = do
+      emitLit ("Warning: unexpected polymorphism in evaluated term"
+              ++ pprint atom)
 
 parens :: Emits n => Print n -> Print n
 parens x = emitCharLit '(' >> x >> emitCharLit ')'

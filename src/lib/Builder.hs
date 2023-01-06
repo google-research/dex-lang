@@ -1380,15 +1380,20 @@ applyIxMethod dict method args = case dict of
       [ix] <- return args                     -- ix : Nat
       return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
   DictCon (ExplicitMethods d params) -> do
-    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
-    LamExpr bs body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
-    let args' = case method of
-          Size -> params ++ [UnitVal]
-          _    -> params ++ args
-    emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
-  _ -> do
-    methodImpl <- emitExpr $ ProjMethod dict (fromEnum method)
-    naryApp methodImpl args
+    SpecializedDictBinding (SpecializedDict _ maybeFs) <- lookupEnv d
+    case maybeFs of
+      Nothing -> fallback
+      Just fs -> do
+        LamExpr bs body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
+        let args' = case method of
+              Size -> params ++ [UnitVal]
+              _    -> params ++ args
+        emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
+  _ -> fallback
+  where
+    fallback = do
+      methodImpl <- emitExpr $ ProjMethod dict (fromEnum method)
+      naryApp methodImpl args
 
 -- This works with `Nat` instead of `IndexRepTy` because it's used alongside
 -- user-defined instances.

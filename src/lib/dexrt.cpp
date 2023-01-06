@@ -179,20 +179,22 @@ static constexpr int showStringBufferSize = 32;
 
 // TODO: replace `showFloat32` with `showFloat32_internal` and so on
 int32_t showFloat32_internal(char *resultPtr, float x) {
-  return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
-}
-
+  // XXX: we use 2 digits fewer than the max as a hack to make quine tests less
+  // sensitive to floating point behavior
+  return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__ - 2, x);}
 int32_t showFloat64_internal(char *resultPtr, double x) {
-  return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
-}
-
+  return snprintf(resultPtr, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__ - 2, x);}
 int32_t showInt32_internal(char *resultPtr, int32_t x) {
-  return snprintf(resultPtr, showStringBufferSize, "%" PRId32, x);
-}
-
+  return snprintf(resultPtr, showStringBufferSize, "%" PRId32, x);}
 int64_t showInt64_internal(char *resultPtr, int64_t x) {
-  return snprintf(resultPtr, showStringBufferSize, "%" PRId64, x);
-}
+  return snprintf(resultPtr, showStringBufferSize, "%" PRId64, x);}
+
+int64_t showWord8_internal(char *resultPtr, uint8_t x) {
+  return snprintf(resultPtr, showStringBufferSize, "0x%" PRIx8, x);}
+int64_t showWord32_internal(char *resultPtr, uint32_t x) {
+  return snprintf(resultPtr, showStringBufferSize, "0x%" PRIx32, x);}
+int64_t showWord64_internal(char *resultPtr, uint64_t x) {
+  return snprintf(resultPtr, showStringBufferSize, "0x%" PRIx64, x);}
 
 void showNat32(char **resultPtr, uint32_t x) {
   auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));

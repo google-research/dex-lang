@@ -320,8 +320,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         Con (SumAsProd _ tag xss) -> go tag xss
         Con (Newtype (VariantTy _  ) (RepValAtom dRepVal)) -> goDRepVal dRepVal
         Con (Newtype (TypeCon _ _ _) (RepValAtom dRepVal)) -> goDRepVal dRepVal
-        RepValAtom dRepVal                                 -> goDRepVal dRepVal
-        _ -> error $ "unexpected case scrutinee: " ++ pprint e'
+        _ -> goDRepVal =<< atomToRepVal e'
         where
           goDRepVal dRepVal = do
             RepVal sumTy (Branch (tag:xss)) <- return dRepVal

@@ -5,8 +5,11 @@
 :pcodegen {x = 1.0, y = 2}
 > {x = 1, y = 2}
 
-:pcodegen (the Nat 1, the Int 1, the Float 1, the Int64 1, the Float64 1)
-> (1, (1, (1, (1, 1))))
+:pcodegen (the Nat 60, the Int 60, the Float 60, the Int64 60, the Float64 60)
+> (60, (60, (60, (60, 60))))
+
+:pcodegen (the Word8 60, the Word32 60, the Word64 60)
+> (0x3c, (0x3c, 0x3c))
 
 :pcodegen [Just (Just 1.0), Just Nothing, Nothing]
 > [(Just (Just 1)), (Just Nothing), Nothing]
@@ -20,7 +23,7 @@ data MyType = MyValue Nat
 > "the quick brown fox jumps over the lazy dog"
 
 :pcodegen ['a', 'b', 'c']
-> ['a', 'b', 'c']
+> [0x61, 0x62, 0x63]
 
 :pcodegen {| a=3 |} :: {a:Int | b:Float}
 > {| a = 3 |}
@@ -28,3 +31,5 @@ data MyType = MyValue Nat
 :pcodegen {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
 > {|a| a = 3 |}
 
+:pcodegen "abcd"
+> "abcd"
