@@ -330,9 +330,7 @@ comprehension like:</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Once we have a variable, we can print it.</p>
 </div></div><div class="cell"><div class="code-block">x
-</div><div class="result-block">[ [1., 1., 1., 1., 1., 1., 1., 1.]
-, [1., 1., 1., 1., 1., 1., 1., 1.]
-, [1., 1., 1., 1., 1., 1., 1., 1.] ]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[[1., 1., 1., 1., 1., 1., 1., 1.], [1., 1., 1., 1., 1., 1., 1., 1.], [1., 1., 1., 1., 1., 1., 1., 1.]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>More interestingly, we can also see its type with <code>:t</code>. This type tells us
 that <code>x</code> is a two-dimensional table, whose first dimension has type <code>Height</code> and
 second dimension has type <code>Width</code>.</p>
@@ -452,7 +450,7 @@ into <code>y</code> requires creating a tuple value.</p>
 </div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Tuple indices also provide an ordinal value.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">for</span> pair<span class="symbol">:</span>(<span class="type-name">Fin</span> 2 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 3)<span class="symbol">.</span> ordinal pair
-</div><div class="result-block">[0, 1, 2, 3, 4, 5]@(Fin 2 &amp; Fin 3)</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0, 1, 2, 3, 4, 5]</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><p>Many algorithms in Dex come down to being able to pack and unpack these
 indices. For example, we have seen that it is easy to sum over one dimension

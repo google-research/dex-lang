@@ -323,9 +323,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> rosenbrock2 [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>000]
 </div><div class="result-block">0.</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> rosenbrock 1<span class="symbol">.</span>0 1<span class="symbol">.</span>02
-</div><div class="result-block">0.032</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.03199994</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> rosenbrock2 [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>02]
-</div><div class="result-block">0.032</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.03199994</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Helper functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minbyfst {a} <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> a) <span class="symbol">=</span> min_by fst
@@ -339,7 +339,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     <span class="keyword">for</span> i<span class="symbol">.</span> lb<span class="symbol">.</span>i <span class="symbol">+</span> ((rand <span class="symbol">$</span> ixkey key i) <span class="symbol">*</span> (ub<span class="symbol">.</span>i <span class="symbol">-</span> lb<span class="symbol">.</span>i))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> randBounded (new_key 4) [1<span class="symbol">.</span>0<span class="symbol">,</span>  <span class="symbol">-</span>2<span class="symbol">.</span>0] [<span class="symbol">-</span>1<span class="symbol">.</span>0<span class="symbol">,</span>  2<span class="symbol">.</span>0]
-</div><div class="result-block">[-0.73701, 1.433697]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[-0.7370105, 1.433697]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>The Optimizer itself.</h2>
 <p>We have <strong>arguments</strong>:</p>
 <ul>
@@ -397,10 +397,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 Run it for more iterations and the result should improve.
 Which it indeed does.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 10 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[0.191434, -0.03098]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.1914339, -0.03098011]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 20 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[0.191434, -0.03098]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.1914339, -0.03098011]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 100 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[0.994075, 0.989096]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.9940748, 0.9890963]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 1000 (new_key 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[1., 1.]</div></div></div></body></html>

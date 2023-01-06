@@ -332,14 +332,11 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">l <span class="symbol">=</span> chol psd
 </div></div><div class="cell"><div class="code-block">l_full <span class="symbol">=</span> padLowerTriMat l
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> l_full
-</div><div class="result-block">[ [1.621016, 0., 0., 0.]
-, [0.779301, 2.965358, 0., 0.]
-, [-0.644939, 1.054188, 2.194109, 0.]
-, [0.162014, -1.009056, -1.49802, 1.355752] ]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[[1.621016, 0., 0., 0.], [0.7793013, 2.965358, 0., 0.], [-0.6449394, 1.054188, 2.194109, 0.], [0.1620137, -1.009056, -1.49802, 1.355752]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">psdReconstructed <span class="symbol">=</span> l_full <span class="symbol">**</span> transpose l_full
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> sq (psd<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> psdReconstructed<span class="symbol">.</span>i<span class="symbol">.</span>j)
-</div><div class="result-block">0.</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">3.979039e-13</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">vec <span class="symbol">:</span> <span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> arb k2
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">vec <span class="symbol">~~</span> (psd <span class="symbol">**.</span> psdsolve psd vec)

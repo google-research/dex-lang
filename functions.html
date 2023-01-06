@@ -466,7 +466,7 @@ currently not possible (see <a href="https://github.com/google-research/dex-lang
 is actually why <code>from_ordinal</code> takes the type as an explicit argument,
 so that it <em>can</em> be supplied when it would not be inferrable.</p>
 </div></div><div class="cell"><div class="code-block">from_ordinal (<span class="type-name">Fin</span> 2) 0
-</div><div class="result-block">(0@(Fin 2))</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Standalone function types</h2>
 </div></div><div class="cell"><div class="prose-block"><p>The syntax for spelling bare function types is slightly different
 from the syntax for defining functions with their type signatures.  To
@@ -487,7 +487,7 @@ kinds of parameters.</p>
 spelling a type like this that refers to previous arguments generally
 requires grouping parens.</p>
 </div></div><div class="cell"><div class="code-block">(n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ix</span> n <span class="symbol">?=&gt;</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
-</div><div class="result-block">(n:Type) ?-&gt; (v#0:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">((n:Type) ?-&gt; (v#0:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The effect specifier, as usual, is written in curly braces preceding the result type.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Anonymous functions (lambda)</h2>
 </div></div><div class="cell"><div class="prose-block"><p>The syntax for anonymous functions is</p>
@@ -502,8 +502,8 @@ them in parens like <code>def</code>.</p>
 </div></div><div class="cell"><div class="code-block">map (<span class="symbol">\</span>(a<span class="symbol">:</span><span class="type-name">Float</span>)<span class="symbol">.</span> a <span class="symbol">+</span> 1) [1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 3<span class="symbol">.</span>]
 </div><div class="result-block">[2., 3., 4.]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Also like <code>def</code>, we can specify implicit parameters with curly braces:</p>
-</div></div><div class="cell"><div class="code-block"><span class="symbol">\</span>{a} (x<span class="command">:a</span>)<span class="symbol">.</span> x
-</div><div class="result-block">\{a:Type} x:a. x</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>{a} (x<span class="command">:a</span>)<span class="symbol">.</span> x
+</div><div class="result-block">((a:Type) ?-&gt; a -&gt; a)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>and class parameters with square brackets:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>{n} [<span class="type-name">Ix</span> n] (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">.</span> sum xs
 </div><div class="result-block">((n:Type) ?-&gt; (v#0:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div></div></body></html>

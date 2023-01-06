@@ -486,7 +486,7 @@ matrix type for the Butcher tableau, and so avoids zero-padding everywhere.</p>
 </div></div><div class="cell"><div class="code-block">exact_e <span class="symbol">=</span> [[exp 1<span class="symbol">.</span>0]]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (approx_e <span class="symbol">-</span> exact_e) <span class="comment">-- amount of numerical error
-</span></div><div class="result-block">[[0.000877]]</div></div><div class="cell"><div class="code-block">
+</span></div><div class="result-block">[[0.0008766651]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">times <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 100) 0<span class="symbol">.</span>00001 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">ys <span class="symbol">=</span> odeint myDyn z0 t0 times
 </div></div><div class="cell"><div class="code-block">

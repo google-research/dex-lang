@@ -725,7 +725,7 @@ comes from our choice of right-multiplication to associate the tangent spaces.</
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- A fixed quaternion with roll = 0.5.
 </span></div></div><div class="cell"><div class="code-block">quatSomeRoll <span class="symbol">=</span> <span class="type-name">Q</span>{x<span class="symbol">=</span>0<span class="symbol">.</span>247<span class="symbol">,</span> y<span class="symbol">=</span>0<span class="symbol">.,</span> z<span class="symbol">=</span>0<span class="symbol">.,</span> w<span class="symbol">=</span>0<span class="symbol">.</span>969}
 </div></div><div class="cell"><div class="code-block">quatRoll quatSomeRoll
-</div><div class="result-block">0.49916</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.4991595</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- A function to compose a given quaternion with fixed rotation.
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatAddSomeRoll (q<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> q <span class="symbol">*</span> quatSomeRoll
 </div></div><div class="cell"><div class="code-block">
@@ -747,12 +747,12 @@ between tangent spaces.</p>
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- see that the only way to modify the roll is by adding further rotation in the
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- roll direction.
 </span></div></div><div class="cell"><div class="code-block">quatGrad quatRoll quatSomeRoll
-</div><div class="result-block">[0.999973, 0., 0.]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.9999734, 0., 0.]</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- However, at other points, we can also modify the roll of the rotation by
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- moving in pitch and/or yaw directions. This demonstrates that the Euler
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- angles are not independent.
 </span></div></div><div class="cell"><div class="code-block">quatGrad quatRoll quatForTestOne
-</div><div class="result-block">[1.041025, 0.594871, 0.]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[1.041025, 0.5948712, 7.450581e-09]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">quatGrad quatRoll quatForTestTwo
-</div><div class="result-block">[-0.570283, 0.83349, -0.]</div></div></div></body></html>
+</div><div class="result-block">[-0.5702829, 0.8334905, -8.381903e-09]</div></div></div></body></html>
