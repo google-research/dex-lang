@@ -41,7 +41,7 @@
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
 :p nan
-> NaN
+> nan
 
 :p show (infinity :: Float32)
 > "inf"
@@ -49,7 +49,7 @@
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
 :p infinity
-> Infinity
+> inf
 
 -- Float64
 
@@ -65,7 +65,7 @@
 -- Note: `show nan` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
 :p (f_to_f64 nan)
-> NaN
+> nan
 
 :p show ((f_to_f64 infinity):: Float64)
 > "inf"
@@ -73,7 +73,7 @@
 -- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
 -- `:p nan` (Dex interpreter implementation).
 :p (f_to_f64 infinity)
-> Infinity
+> inf
 
 -- Tuples
 

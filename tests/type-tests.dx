@@ -255,7 +255,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > 1
 
 :p NewPair
-> \aa:Type bb:Type. NewPair aa bb
+> <function of type (Type -> Type -> Type)>
 
 -- TODO: these are broken since switching from newtype mechanism to ADTs
 
@@ -361,7 +361,7 @@ def triRefIndex {h n} (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>
 -- leading to a later unification errors.
 
 id (for i:(Fin 2). for j:(..i). 1.0)
-> [[1.]@(..(0@(Fin 2))), [1., 1.]@(..(1@(Fin 2)))]
+> [[1.], [1., 1.]]
 
 def weakerInferenceReduction {n} (l : (i:n)=>(..i)=>Float) (j:n): Unit =
   for i:(..j).
@@ -510,7 +510,7 @@ sum $ foo :: (Fin 3) => Float
 
 -- A pi type that locally binds foo to the index
 (foo : (Fin 3)) => Float
-> (Fin 3) => Float32
+> ((Fin 3) => Float32)
 
 -- The equals sign makes it a type-annotated top-level binding for foo
 foo : Fin 3 => Float = [1.0, 2.0, 3.0]
@@ -535,7 +535,7 @@ pair = (5 ,> buffer) :: tp
 if False
   then (5 ,> buffer) :: tp
   else (3 ,> for i:(Fin 3). (ordinal i) * 2) :: tp
-> (3 ,> [0, 2, 4]) :: (n:Nat &> ((Fin n) => Nat))
+> (3,> [0, 2, 4])
 
 '### Tests for dependent pair pattern match
 
@@ -556,7 +556,7 @@ dpair : ((i:Fin 3)=>(..i)=>Int) =
   [[1], [2,3], [4,5,6]]
 
 :p transpose_lower_to_upper dpair
-> [[1, 2, 4]@((0@(Fin 3))..), [3, 5]@((1@(Fin 3))..), [6]@((2@(Fin 3))..)]
+> [[1, 2, 4], [3, 5], [6]]
 
 '### Tests for function VSpace
 

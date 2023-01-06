@@ -27,15 +27,12 @@ def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
 l = chol psd
 l_full = padLowerTriMat l
 :p l_full
-> [ [1.621016, 0., 0., 0.]
-> , [0.779301, 2.965358, 0., 0.]
-> , [-0.644939, 1.054188, 2.194109, 0.]
-> , [0.162014, -1.009056, -1.49802, 1.355752] ]
+> [[1.621016, 0., 0., 0.], [0.7793013, 2.965358, 0., 0.], [-0.6449394, 1.054188, 2.194109, 0.], [0.1620137, -1.009056, -1.49802, 1.355752]]
 
 psdReconstructed = l_full ** transpose l_full
 
 :p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
-> 0.
+> 1.421085e-12
 
 vec : N=>Float = arb k2
 

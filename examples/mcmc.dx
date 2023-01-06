@@ -97,7 +97,7 @@ mhParams = 0.1
 mhSamples  = runChain randn_vec (mhStep  mhParams  myLogProb) numSamples k0
 
 :p meanAndCovariance mhSamples
-> ([0.545592, 2.522631], [[0.355259, 0.050221], [0.050221, 0.087342]])
+> ([0.5455918, 2.522631], [[0.3552593, 0.05022133], [0.05022133, 0.08734216]])
 
 :html show_plot $ y_plot $
   slice (map head mhSamples) 0 (Fin 1000)
@@ -107,7 +107,7 @@ hmcParams = (10, 0.1)
 hmcSamples = runChain randn_vec (hmcStep hmcParams myLogProb) numSamples k0
 
 :p meanAndCovariance hmcSamples
-> ([1.472011, 2.483082], [[1.054705, -0.002082], [-0.002082, 0.050588]])
+> ([1.472011, 2.483082], [[1.054705, -0.002082013], [-0.002082013, 0.05058844]])
 
 :html show_plot $ y_plot $
   slice (map head hmcSamples) 0 (Fin 1000)

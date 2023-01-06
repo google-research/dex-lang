@@ -366,7 +366,6 @@ data LogLevel = LogNothing | PrintEvalTime | PrintBench String
 
 data PrintBackend =
    PrintCodegen  -- Soon-to-be default path based on `PrintAny`
- | PrintLegacy   -- Old path based on Serialize.hs, soon to be deleted
  | PrintHaskell  -- Backup path for debugging in case the codegen path breaks.
                  -- Uses PPrint.hs directly and doesn't make any attempt to
                  -- hide internals: SumAsProd, TabLam, AtomRepVal, etc

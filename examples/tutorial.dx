@@ -30,9 +30,7 @@ x = for i:Height. for j:Width. 1.0
 ' Once we have a variable, we can print it.
 
 x
-> [ [1., 1., 1., 1., 1., 1., 1., 1.]
-> , [1., 1., 1., 1., 1., 1., 1., 1.]
-> , [1., 1., 1., 1., 1., 1., 1., 1.] ]
+> [[1., 1., 1., 1., 1., 1., 1., 1.], [1., 1., 1., 1., 1., 1., 1., 1.], [1., 1., 1., 1., 1., 1., 1., 1.]]
 
 ' More interestingly, we can also see its type with `:t`. This type tells us
   that `x` is a two-dimensional table, whose first dimension has type `Height` and
@@ -194,7 +192,7 @@ gradient = for i:Height. for j:Width. n_to_f ((ordinal i) + (ordinal j))
 ' Tuple indices also provide an ordinal value.
 
 for pair:(Fin 2 & Fin 3). ordinal pair
-> [0, 1, 2, 3, 4, 5]@(Fin 2 & Fin 3)
+> [0, 1, 2, 3, 4, 5]
 
 
 ' Many algorithms in Dex come down to being able to pack and unpack these

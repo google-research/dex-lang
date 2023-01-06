@@ -105,13 +105,13 @@ fun = \y. sum (map n_to_f arr) + y
 > 1.414214
 
 :p sin 3.14159
-> 0.000003
+> 2.535182e-06
 
 :p cos 0.0
 > 1.
 
 :p tan 1.57079
-> 159378.27
+> 159378.3
 
 :p f_to_i $ floor 3.6
 > 3
@@ -185,10 +185,10 @@ sum (sum xs) ~~ (cumsum2d xs).(3@_).(2@_)
 
 infty = 1./0.
 :p infty
-> Infinity
+> inf
 
 :p nan
-> NaN
+> nan
 
 :p [ 0. < infty, 0. < nan, infty < 0., nan < 0., nan < nan, infty < infty ]
 > [True, False, False, False, False, False]
@@ -220,7 +220,7 @@ litArr = [10, 5, 3]
 :p
    k = new_key 0
    mean for i:(Fin 100). randn (ixkey k i)
-> 0.00185
+> 0.001849644
 
 :p hash (i_to_w64 0) 0
 > 0x6b20015999ba4efe
@@ -236,10 +236,10 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p
    k = new_key 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
-> 0.744491
+> 0.7444913
 
 :p for i:(Fin 3) j:(Fin 2). rand $ ixkey (new_key 11) (i, j)
-> [[0.151324, 0.075572], [0.107597, 0.28888], [0.550955, 0.56872]]
+> [[0.1513238, 0.07557154], [0.1075971, 0.2888795], [0.5509554, 0.56872]]
 
 :p
   x = for i:(Fin 3). 0
@@ -272,39 +272,25 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 > (1, (2, 3))
 
 :p for i:(Fin 3). i
-> [(0@(Fin 3)), (1@(Fin 3)), (2@(Fin 3))]
+> [0, 1, 2]
 
 :p for i:(Fin 3). i
-> [(0@(Fin 3)), (1@(Fin 3)), (2@(Fin 3))]
+> [0, 1, 2]
 
 :p from_ordinal (Fin 1) 0
-> (0@(Fin 1))
+> 0
 
 :p 0@(Fin 1)
-> (0@(Fin 1))
+> 0
 
 :p 5@(Fin 5 & Fin 3)
-> ((1@(Fin 5)), (2@(Fin 3)))
+> (1, 2)
 
 :p ordinal (1@(Fin 5), 2@(Fin 3))
 > 5
 
 :p for i:(Fin 3 & Fin 5). i
-> [ ((0@(Fin 3)), (0@(Fin 5)))
-> , ((0@(Fin 3)), (1@(Fin 5)))
-> , ((0@(Fin 3)), (2@(Fin 5)))
-> , ((0@(Fin 3)), (3@(Fin 5)))
-> , ((0@(Fin 3)), (4@(Fin 5)))
-> , ((1@(Fin 3)), (0@(Fin 5)))
-> , ((1@(Fin 3)), (1@(Fin 5)))
-> , ((1@(Fin 3)), (2@(Fin 5)))
-> , ((1@(Fin 3)), (3@(Fin 5)))
-> , ((1@(Fin 3)), (4@(Fin 5)))
-> , ((2@(Fin 3)), (0@(Fin 5)))
-> , ((2@(Fin 3)), (1@(Fin 5)))
-> , ((2@(Fin 3)), (2@(Fin 5)))
-> , ((2@(Fin 3)), (3@(Fin 5)))
-> , ((2@(Fin 3)), (4@(Fin 5))) ]@(Fin 3 & Fin 5)
+> [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4)]
 
 :p [1, 2, 3].(0@_)
 > 1
@@ -498,10 +484,10 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 > [[1, 3], [2, 4]]
 
 :p argmin [1.0, 2.0, 0.4, 5.0]
-> (2@(Fin 4))
+> 2
 
 :p select True (from_ordinal (Fin 2) 0) (from_ordinal (Fin 2) 1)
-> (0@(Fin 2))
+> 0
 
 -- TODO: printing (also parsing) tables with alternative index sets
 -- :p
@@ -662,20 +648,16 @@ x = 2 - 4
 
 -- Make sure that we can construct and print an array using a pair index set
 for i:(Fin 2 & Fin 2). 1.0
-> [1., 1., 1., 1.]@(Fin 2 & Fin 2)
+> [1., 1., 1., 1.]
 
 1@(Fin 2 & Fin 2)
-> ((0@(Fin 2)), (1@(Fin 2)))
+> (0, 1)
 
 for i:(Fin 5). for j:(..i).
   ir = n_to_f $ ordinal i
   jr = n_to_f $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
-> [ [0.]@(..(0@(Fin 5)))
-> , [1., 2.]@(..(1@(Fin 5)))
-> , [3., 4., 5.]@(..(2@(Fin 5)))
-> , [6., 7., 8., 9.]@(..(3@(Fin 5)))
-> , [10., 11., 12., 13., 14.]@(..(4@(Fin 5))) ]
+> [[0.], [1., 2.], [3., 4., 5.], [6., 7., 8., 9.], [10., 11., 12., 13., 14.]]
 
 -- TODO: fix!
 -- -- Exercise the use of free variables in the sum solver
@@ -799,7 +781,7 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 > True
 
 :p sum for i. exp $ (logsoftmax hard).i
-> 0.999971
+> 0.9999709
 
 :p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0001
 > True
@@ -810,7 +792,7 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 str = ['x', 'y']
 
 :p str
-> ['x', 'y']
+> [0x78, 0x79]
 
 s1 = "hello world"
 
@@ -852,10 +834,7 @@ s1 = "hello world"
 
 triLit : (i:Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
 triLit
-> [ [0]@(..(0@(Fin 4)))
-> , [1, 2]@(..(1@(Fin 4)))
-> , [3, 4, 5]@(..(2@(Fin 4)))
-> , [6, 7, 8, 9]@(..(3@(Fin 4))) ]
+> [[0], [1, 2], [3, 4, 5], [6, 7, 8, 9]]
 
 -- @noinline
 def fromLeftFloat (x:(Float | Int)) : Float =
@@ -1039,7 +1018,7 @@ first_ix :: Bool
 > False
 
 first_ix :: (Unit | Fin 2)=>(Unit | Fin 3)
-> [(Left ()), (Left ()), (Left ())]@(Unit | Fin 2)
+> [(Left ()), (Left ()), (Left ())]
 
 first_ix :: ((Unit | Fin 2) & (Unit | Fin 3))
 > ((Left ()), (Left ()))

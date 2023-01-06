@@ -67,7 +67,7 @@ analyze cfg env code = fst <$> runTopperM cfg env do
 
 spec :: Spec
 spec = do
-  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize PrintLegacy
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize PrintCodegen
   -- or just initTopState, to always compile the prelude during unit tests?
   init_env <- runIO loadCache
   (_, env) <- runIO $ runTopperM cfg init_env $ ensureModuleLoaded Prelude

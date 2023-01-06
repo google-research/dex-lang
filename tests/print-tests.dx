@@ -3,16 +3,16 @@
 > [(), (), ()]
 
 :pcodegen {x = 1.0, y = 2}
-> {x = 1, y = 2}
+> {x = 1., y = 2}
 
 :pcodegen (the Nat 60, the Int 60, the Float 60, the Int64 60, the Float64 60)
-> (60, (60, (60, (60, 60))))
+> (60, (60, (60., (60, 60.))))
 
 :pcodegen (the Word8 60, the Word32 60, the Word64 60)
 > (0x3c, (0x3c, 0x3c))
 
 :pcodegen [Just (Just 1.0), Just Nothing, Nothing]
-> [(Just (Just 1)), (Just Nothing), Nothing]
+> [(Just (Just 1.)), (Just Nothing), Nothing]
 
 data MyType = MyValue Nat
 
@@ -29,7 +29,7 @@ data MyType = MyValue Nat
 > {| a = 3 |}
 
 :pcodegen {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
-> {|a| a = 3 |}
+> {|a| a = 3. |}
 
 :pcodegen "abcd"
 > "abcd"

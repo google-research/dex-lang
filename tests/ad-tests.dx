@@ -104,7 +104,7 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 > (0.841471, -0.841471)
 
 :p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
-> (0.540302, -0.540302)
+> (0.5403023, -0.5403023)
 
 :p check_deriv sin 1.0
 > True

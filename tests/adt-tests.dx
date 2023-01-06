@@ -312,10 +312,7 @@ data MySum2 =
 -- reproducer for a shadowing bug (PR #440)
 :p concat $ for i:(Fin 2). to_list [(Just [0,0,0], Just [0,0,0]),
                                     (Just [0,0,0], Just [0,0,0])]
-> (AsList 4 [ ((Just [0, 0, 0]), (Just [0, 0, 0]))
->           , ((Just [0, 0, 0]), (Just [0, 0, 0]))
->           , ((Just [0, 0, 0]), (Just [0, 0, 0]))
->           , ((Just [0, 0, 0]), (Just [0, 0, 0])) ])
+> (AsList 4 [((Just [0, 0, 0]), (Just [0, 0, 0])), ((Just [0, 0, 0]), (Just [0, 0, 0])), ((Just [0, 0, 0]), (Just [0, 0, 0])), ((Just [0, 0, 0]), (Just [0, 0, 0]))])
 
 -- bug #818.  Yes, get_at is backwards.  That was what it took to
 -- tickle the bug at the time.

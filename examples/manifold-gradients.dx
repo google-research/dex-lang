@@ -467,7 +467,7 @@ def quatRoll (Q{x, y, z, w} : Quaternion) : Float =
 -- A fixed quaternion with roll = 0.5.
 quatSomeRoll = Q{x=0.247, y=0., z=0., w=0.969}
 quatRoll quatSomeRoll
-> 0.49916
+> 0.4991595
 
 -- A function to compose a given quaternion with fixed rotation.
 def quatAddSomeRoll (q: Quaternion) : Quaternion = q * quatSomeRoll
@@ -493,14 +493,14 @@ def quatGrad (f: Quaternion -> Float) (x: Quaternion) : R3 = manifoldGrad f x
 -- see that the only way to modify the roll is by adding further rotation in the
 -- roll direction.
 quatGrad quatRoll quatSomeRoll
-> [0.999973, 0., 0.]
+> [0.9999734, 0., 0.]
 
 
 -- However, at other points, we can also modify the roll of the rotation by
 -- moving in pitch and/or yaw directions. This demonstrates that the Euler
 -- angles are not independent.
 quatGrad quatRoll quatForTestOne
-> [1.041025, 0.594871, 0.]
+> [1.041025, 0.5948712, 7.450581e-09]
 
 quatGrad quatRoll quatForTestTwo
-> [-0.570283, 0.83349, -0.]
+> [-0.5702829, 0.8334905, -8.381903e-09]

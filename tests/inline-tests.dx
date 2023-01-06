@@ -10,7 +10,7 @@ def id' (x:Nat) : Nat = x
 "Inline for into for"
 
 %passes inline
-:p
+:pp
   xs = for i:(Fin 10). ordinal i
   for j. xs.j + 2
 -- CHECK: === inline ===
@@ -22,7 +22,7 @@ def id' (x:Nat) : Nat = x
 "Inline for into sum"
 
 %passes inline
-sum for i:(Fin 10). ordinal i
+:pp sum for i:(Fin 10). ordinal i
 -- CHECK: === inline ===
 -- CHECK: for
 -- CHECK-NOT: for
@@ -32,7 +32,7 @@ sum for i:(Fin 10). ordinal i
 "Inline nested for into for"
 
 %passes inline
-:p
+:pp
   xs = for i:(Fin 10). for j:(Fin 20). ordinal i * ordinal j
   for j i. xs.i.j + 2
 -- CHECK: === inline ===
@@ -48,7 +48,7 @@ sum for i:(Fin 10). ordinal i
 -- example is not legal to reorder in any case.
 
 %passes inline
-run_state 0 \ct.
+:pp run_state 0 \ct.
   xs = for i:(Fin 10).
     ct := (get ct) + 1
     ordinal i
@@ -66,7 +66,7 @@ run_state 0 \ct.
 -- The runIO is the error message in the dynamic check that `ix` has
 -- type `Fin 100`.
 %passes inline
-:p
+:pp
   ix = (id' 20)@(Fin 100)
   (for i:(Fin 100). ordinal i + ordinal i).ix
 -- CHECK: === inline ===
@@ -81,7 +81,7 @@ run_state 0 \ct.
 -- before it produces anything a type expression can't handle, and
 -- thus execute.
 
-:p
+:pp
   ix = (1@(Fin 2))
   sum (for i:(Fin 2) j:(..i). ordinal j).ix
 -- CHECK: 1

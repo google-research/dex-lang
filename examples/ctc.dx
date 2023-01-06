@@ -95,7 +95,7 @@ all $ for i:(AllButFirst (Bool | Bool)).
 
 for i:(AllButFirst (Bool | Bool)).
   inject (Bool | Bool) i
-> [(Left True), (Right False), (Right True)]@(AllButFirst (Bool | Bool))
+> [(Left True), (Right False), (Right True)]
 
 project (AllButFirst (Bool | Bool)) (0@(Bool | Bool))
 > Nothing
@@ -207,7 +207,7 @@ labels = [(3@Vocab), (4@Vocab), (1@Vocab)]
 
 -- Evaluate probability.
 :p ls_to_f $ ctc blank logits labels
-> 0.00209
+> 0.00208998
 
 
 '### Test
@@ -219,4 +219,4 @@ or the paper.
 -- Fin N=>Vocab is the set of all combinations of N tokens.
 sum for i:(Fin 3=>Vocab).
   ls_to_f $ ctc blank logits i
-> 0.565375
+> 0.5653746

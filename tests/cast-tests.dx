@@ -69,16 +69,16 @@ internal_cast Int64 (4294967296 :: Word64) -- 2^32
 -- Casts to Word8
 
 internal_cast Word8 (1234 :: Int32)
-> '\210'
+> 0xd2
 
 internal_cast Word8 (1234 :: Int)
-> '\210'
+> 0xd2
 
 internal_cast Word8 (1234 :: Word32)
-> '\210'
+> 0xd2
 
 internal_cast Word8 (1234 :: Word64)
-> '\210'
+> 0xd2
 
 -- Casts to Word32
 

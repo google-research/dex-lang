@@ -229,7 +229,7 @@ instance Ix TwoPoints
     False -> SecondPoint
 
 :p for i:TwoPoints. i
-> [FirstPoint, SecondPoint]@TwoPoints
+> [FirstPoint, SecondPoint]
 
 ----------------- User-defined Ix referencing toplevel data -----------------
 
@@ -249,4 +249,4 @@ instance Ix TwoMorePoints
   unsafe_from_ordinal = \i. both_points.(unsafe_from_ordinal _ i)
 
 :p for i:TwoMorePoints. ordinal i
-> [0, 1]@TwoMorePoints
+> [0, 1]

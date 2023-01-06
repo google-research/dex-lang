@@ -193,7 +193,7 @@ is actually why `from_ordinal` takes the type as an explicit argument,
 so that it _can_ be supplied when it would not be inferrable.
 
 from_ordinal (Fin 2) 0
-> (0@(Fin 2))
+> 0
 
 '## Standalone function types
 
@@ -219,7 +219,7 @@ spelling a type like this that refers to previous arguments generally
 requires grouping parens.
 
 (n:Type) ?-> Ix n ?=> n => Float -> Float
-> (n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32
+> ((n:Type) ?-> (v#0:(Ix n)) ?=> (n => Float32) -> Float32)
 
 'The effect specifier, as usual, is written in curly braces preceding the result type.
 
@@ -244,8 +244,8 @@ map (\(a:Float). a + 1) [1., 2., 3.]
 
 'Also like `def`, we can specify implicit parameters with curly braces:
 
-\{a} (x:a). x
-> \{a:Type} x:a. x
+:t \{a} (x:a). x
+> ((a:Type) ?-> a -> a)
 
 'and class parameters with square brackets:
 

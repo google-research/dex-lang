@@ -19,7 +19,7 @@ import Foreign.Storable
 
 import IRVariants
 import Name
-import Serialize (pprintVal)
+import TopLevel
 import Types.Core hiding (CAtom)
 import Types.Primitives
 
@@ -32,7 +32,7 @@ dexPrint contextPtr atomPtr = do
   AtomEx atom <- fromStablePtr atomPtr
   runTopperMFromContext contextPtr do
     -- TODO: Check consistency of atom and context
-    liftIO . newCString =<< pprintVal (unsafeCoerceE atom)
+    liftIO . newCString =<< printCodegen (unsafeCoerceE atom)
 
 data CAtom = CLit LitVal | CRectArray (Ptr ()) [Int] [Int]
 

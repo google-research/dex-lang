@@ -116,17 +116,17 @@ myPair = (1, 2.3)
 :p
   x : (Fin 2 & Fin 2) => Int = [1, 2, 3, 4]
   x
-> [1, 2, 3, 4]@(Fin 2 & Fin 2)
+> [1, 2, 3, 4]
 
 :p [] :: (Fin 0 => Int)
 > []
 
 :p [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
-> [1, 2, 3, 4]@(Fin 2 & Fin 2)
+> [1, 2, 3, 4]
 
 
 :p sin 1.01
-> 0.846832
+> 0.8468319
 
 :p
   (x,y) = (1,2)
@@ -200,7 +200,7 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 > Failed to exchage binders in buildAbsInf
 > Pending emissions: 
 > Defaults:  
-> Solver substitution: [(_.4, bb)]
+> Solver substitution: [(_.5, bb)]
 >
 >   f : (aa:Type) -> aa -> aa = \bb. \x. myId x
 >                               ^^^^^^^^^^^^^^^

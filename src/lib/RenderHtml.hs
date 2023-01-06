@@ -23,7 +23,7 @@ import Text.Megaparsec.Char as C
 import Err
 import Lexing (Parser, symChar, keyWordStrs, symbol, parseit, withSource)
 import Paths_dex  (getDataFileName)
-import Serialize ()
+import PPrint ()
 import Types.Misc
 import Types.Source
 

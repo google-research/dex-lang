@@ -62,7 +62,7 @@ def rmsErr {n} (truth:n=>Float) (pred:n=>Float) : Float =
   sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)
-> 0.245523
+> 0.2455227
 
 def lrToEither {a b} : Iso {left:a | right:b} (a|b) =
   fwd = \v.  case v of

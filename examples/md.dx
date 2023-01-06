@@ -187,7 +187,7 @@ L_small = box_size_at_number_density (n_to_i N_small) 1.2 (n_to_i d)
 
 -- We will simulate in a box of this side length
 L_small
-> 20.412415
+> 20.41241
 
 R_init_small = rand_mat N_small d (\k. L_small * rand k) (new_key 0)
 
@@ -212,7 +212,7 @@ def energy {n d} (pos: n=>d=>Float) : Float
 > Float32
 
 energy R_init_small
-> 74.690056
+> 74.69006
 
 'Initialize a simulation
 
@@ -381,7 +381,7 @@ tbl = cell_table grid_size bucket_size cell_size $ get_position state_small'
 'And here are the atoms in the 0th cell.
 
 as_list tbl.(unsafe_from_ordinal _ 0)
-> (AsList 2 [(33@(Fin 500)), (237@(Fin 500))])
+> (AsList 2 [33, 237])
 
 '### Now let's compute pairs of neighbors from our cell list
 We'll specialize to two dimensions for now, but broadening to
@@ -524,7 +524,7 @@ state_nl =
   fire_descent_init 0.1 0.1 energy_func R_init_small
 
 energy R_init_small
-> 74.690056
+> 74.69006
 energy $ get_position $ fire_descent_step free_shift energy state_small
 > 71.78407
 
@@ -623,7 +623,7 @@ larger systems because it avoids the quadratic energy computation.
 N_large = if not (dex_test_mode ()) then 50000 else 500
 L_large = box_size_at_number_density (n_to_i N_large) 1.2 (n_to_i d)
 L_large
-> 20.412415
+> 20.41241
 
 R_init_large = rand_mat N_large d (\k. L_large * rand k) (new_key 0)
 

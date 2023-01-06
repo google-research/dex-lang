@@ -215,11 +215,10 @@ parseEvalOpts = EvalConfig
                     <> help "File to log to" <> showDefault)
   <*> pure Nothing
   <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
-  <*> enumOption "print" "Print backend" PrintLegacy printBackends
+  <*> enumOption "print" "Print backend" PrintCodegen printBackends
   where
     printBackends = [ ("haskell", PrintHaskell)
-                    , ("dex"    , PrintCodegen)
-                    , ("legacy" , PrintLegacy) ]
+                    , ("dex"    , PrintCodegen) ]
     backends = [ ("llvm", LLVM)
                , ("llvm-mc", LLVMMC)
 #ifdef DEX_CUDA

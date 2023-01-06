@@ -59,7 +59,7 @@ data AtomEx where
 
 dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do
-  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize PrintLegacy
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize PrintCodegen
   cachedEnv <- loadCache
   envMVar      <- newMVar cachedEnv
   ptrTableMVar <- newMVar mempty

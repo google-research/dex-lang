@@ -39,7 +39,7 @@ evalBlock block = lowerFullySequential block >>= evalLLVM
 
 evalClosedExpr :: SExpr VoidS -> IO LitVal
 evalClosedExpr expr = do
-  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing NoOptimize PrintLegacy
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing NoOptimize PrintCodegen
   env <- initTopState
   fst <$> runTopperM cfg env do
     block <- exprToBlock $ unsafeCoerceE expr

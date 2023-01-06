@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
-  ensureModuleLoaded, importModule,
+  ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, evalLLVM) where
 
 import Data.Foldable (toList)
@@ -29,6 +29,7 @@ import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
+import Foreign.C.String
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
@@ -64,8 +65,7 @@ import PPrint (pprintCanonicalized)
 import Paths_dex  (getDataFileName)
 import QueryType
 import Runtime
-import Serialize ( HasPtrs (..), pprintVal, getDexString
-                 , takePtrSnapshot, restorePtrSnapshot)
+import Serialize (takePtrSnapshot, restorePtrSnapshot)
 import Simplify
 import SourceRename
 import Types.Core
@@ -73,7 +73,7 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
-import Util (measureSeconds, File (..), readFileWithHash)
+import Util (Tree (..), measureSeconds, File (..), readFileWithHash)
 
 -- === top-level monad ===
 
@@ -250,10 +250,6 @@ evalSourceBlock' mname block = case sbContents block of
           Just backend -> return backend
           Nothing -> printBackend <$> getConfig
         case printMode of
-          PrintLegacy -> do
-            val <- evalUExpr expr
-            s <- pprintVal val
-            logTop $ TextOut s
           PrintHaskell -> do
             val <- evalUExpr expr
             logTop $ TextOut $ pprint val
@@ -716,6 +712,12 @@ compileTopLevelFun fname = do
   void $ loadObject fObj
 {-# SCC compileTopLevelFun #-}
 
+printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
+printCodegen x = do
+  block <- liftBuilder $ buildBlock do
+    emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
+  getDexString =<< evalBlock block
+
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction
 loadObject fname =
   lookupLoadedObject fname >>= \case
@@ -903,6 +905,15 @@ getBenchRequirement block = case sbLogLevel block of
     return $ DoBench needsSync
   _ -> return NoBench
 
+getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
+getDexString val = do
+  -- TODO: use a `ByteString` instead of `String`
+  Var v <- return val
+  TopDataBound (RepVal _ tree) <- lookupAtomName v
+  Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
+  PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
+  liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
+
 -- === saving cache to disk ===
 
 -- None of this is safe in the presence of multiple processes trying to interact
@@ -1029,8 +1040,3 @@ instance Generic TopStateEx where
   to rep = do
     case fabricateDistinctEvidence :: DistinctEvidence UnsafeS of
       Distinct -> uncurry TopStateEx (to rep :: (Env UnsafeS, RuntimeEnv))
-
-instance HasPtrs TopStateEx where
-  -- TODO: rather than implementing HasPtrs for safer names, let's just switch
-  --       to using names for pointers.
-  traversePtrs _ s = pure s

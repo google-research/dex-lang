@@ -17,8 +17,9 @@
 
 unsafe_io \().
   print "testing log"
+  1.0 -- prevent DCE
 > testing log
-> ()
+> 1.
 
 unsafe_io \().
   for i':(Fin 10).
@@ -26,6 +27,7 @@ unsafe_io \().
     if rem i 2 == 0
       then print $ show i <> " is even"
       else print $ show i <> " is odd"
+  1.0 -- prevent DCE
 > 0 is even
 > 1 is odd
 > 2 is even
@@ -36,7 +38,7 @@ unsafe_io \().
 > 7 is odd
 > 8 is even
 > 9 is odd
-> [(), (), (), (), (), (), (), (), (), ()]
+> 1.
 
 :p storage_size Int
 > 4

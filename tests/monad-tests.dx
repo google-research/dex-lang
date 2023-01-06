@@ -182,7 +182,7 @@ def effectsAtZero {eff:Effects} (f: Int ->{|eff} Unit) : {|eff} Unit =
 > (AsList 2 [7, 6])
 
 :p arg_filter (\x. x > 5) [0, 7, -1, 6]
-> (AsList 2 [(1@(Fin 4)), (3@(Fin 4))])
+> (AsList 2 [1, 3])
 
 -- Test list equality
 (AsList _ [1, 2]) == (AsList _ [1, 2])

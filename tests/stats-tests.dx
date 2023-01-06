@@ -40,25 +40,25 @@ ls_to_f (divide (f_to_ls 0.4) (f_to_ls 0.5)) ~~ 0.8
 -- Log-sum-exp
 
 Exp (-infinity) + Exp (-infinity)
-> (Exp -Infinity)
+> (Exp -inf)
 
 Exp infinity + Exp infinity
-> (Exp Infinity)
+> (Exp inf)
 
 ls_sum [Exp (-infinity), Exp (-infinity)]
-> (Exp -Infinity)
+> (Exp -inf)
 
 ls_sum [Exp (infinity), Exp (infinity)]
-> (Exp Infinity)
+> (Exp inf)
 
 Exp infinity + Exp (nan)
-> (Exp NaN)
+> (Exp nan)
 
 ls_sum [Exp (-infinity), Exp nan]
-> (Exp NaN)
+> (Exp nan)
 
 ln $ Exp nan
-> NaN
+> nan
 
 is_infinite infinity
 > True
@@ -148,7 +148,7 @@ quantile (Exponential 2.0) 0.5 ~~ 0.3465736
 > True
 
 rand_vec 5 (draw $ Exponential 2.0) (new_key 0) :: Fin 5=>Float
-> [1.021143, 0.14182, 0.093212, 0.213017, 0.430549]
+> [1.021143, 0.1418202, 0.09321166, 0.2130168, 0.4305491]
 
 -- geometric
 
@@ -197,7 +197,7 @@ ln (density (Normal 1.0 2.0) 3.0) ~~ -2.112086
 > True
 
 rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
-> [-1.93355, 4.198111, 0.529252, 0.018863, 2.921813]
+> [-1.93355, 4.198111, 0.5292515, 0.01886255, 2.921813]
 
 ln (cumulative (Normal 1.0 2.0) 0.5) ~~ -0.9130617
 > True

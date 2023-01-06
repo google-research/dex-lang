@@ -5,7 +5,7 @@ def id' (x:Int) : Int = x
 "dce-dead-app"
 
 %passes opt
-:p
+:pp
   x = id' 1
   5 + 1
 -- CHECK: === Result ===
@@ -34,7 +34,7 @@ _ = for i:(Fin 50). [ordinal i, 2, 3]
 -- CHECK-LABEL: no destinations for singleton values
 
 %passes lower
-yield_state 0 \ref.
+:pp yield_state 0 \ref.
   for i:(Fin 10). ref := get ref + 1
 -- CHECK-NOT: alloc
 
@@ -44,7 +44,7 @@ yield_state 0 \ref.
 "unroll-eliminate-table"
 
 %passes opt
-:p
+:pp
   [x0, x1, x2] = arange_f 2
   (x0, x2)
 -- CHECK: === Result ===
@@ -113,13 +113,13 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 -- CHECK-LABEL: constant fold boolean expressions
 
 %passes opt
-(2 > 1 || 4 < 5) && 6 == 6
+:pp (2 > 1 || 4 < 5) && 6 == 6
 -- CHECK: (1| () |)@(Bool)
 
 -- Testing user name preservation
 
 %passes simp
-:p
+:pp
   unmistakable_name = for i:(Fin 10). 2 * ordinal i
   for j. unmistakable_name.j
 -- CHECK: unmista
