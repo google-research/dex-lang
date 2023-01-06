@@ -2565,7 +2565,7 @@ def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
   fst_ref stack := n_new
 
 stack_init_size = 16
-def with_stack {r} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h} r) : r =
+def with_stack {r eff} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h|eff} r) : {|eff} r =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
   with_state (0, init_stack) \ref . f ref
 
