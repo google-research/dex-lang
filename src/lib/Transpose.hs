@@ -216,7 +216,6 @@ transposeExpr expr ct = case expr of
             transposeBlock body (sink ct)
           return UnitVal
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
-  ProjMethod _ _ -> error "unreachable" -- TODO: rule out statically
   TabCon ty es -> do
     TabTy b _ <- return ty
     idxTy <- substNonlin $ binderAnn b
@@ -272,34 +271,20 @@ transposeAtom atom ct = case atom of
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
-  TabVal b body   -> do
-    ty <- substNonlin $ binderAnn b
-    void $ buildFor noHint Fwd ty \i -> do
-      ct' <- tabApp (sink ct) (Var i)
-      extendSubst (b@>RenameNonlin i) $ transposeBlock body ct'
-      return UnitVal
-  TabLam _        -> notTangent
-  DictCon _       -> notTangent
-  DictTy _        -> notTangent
-  TypeCon _ _ _   -> notTangent
-  LabeledRow _    -> notTangent
-  RecordTy _      -> notTangent
-  VariantTy _     -> notTangent
   TabPi _         -> notTangent
   DepPairTy _     -> notTangent
   TC _            -> notTangent
-  Eff _           -> notTangent
   PtrVar _        -> notTangent
-  ACase _ _ _     -> error "Unexpected ACase"
-  ProjectElt iProj x -> do
-    let (idxs, v) = asNaryProj iProj x
-    lookupSubstM v >>= \case
-      RenameNonlin _ -> error "an error, probably"
-      LinRef ref -> do
-        let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
-        ref' <- getNaryProjRef idxs' ref
-        emitCTToRef ref' ct
-      LinTrivial -> return ()
+  ProjectElt (ProjectProduct i) v -> undefined
+  -- TODO: need to handle table/tuple projection together
+--     lookupSubstM v >>= \case
+--       RenameNonlin _ -> error "an error, probably"
+--       LinRef ref -> do
+--         let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
+--         ref' <- getNaryProjRef idxs' ref
+--         emitCTToRef ref' ct
+--       LinTrivial -> return ()
+  ProjectElt UnwrapNewtype _ -> error "Not a simplified atom" -- TODO: enforce statically
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()
@@ -344,14 +329,8 @@ transposeCon con ct = case con of
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
-  Newtype ty e      -> case ty of
-    TC (Fin _) -> notTangent
-    StaticRecordTy _ -> transposeAtom e =<< unwrapCompoundNewtype ct
-    _ -> notImplemented
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  LabelCon _     -> notTangent
-  ExplicitDict _ _ -> notTangent
   DictHole _ _ -> notTangent
   HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

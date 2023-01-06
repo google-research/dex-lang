@@ -17,8 +17,8 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
              whenM, unsnocNonempty, anyM,
              File (..), FileHash, FileContents, addHash, readFileWithHash,
-             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList, Tree (..),
-             zipTrees, tryUnsnoc) where
+             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList, Tree (..), zipTrees,
+             liftMaybe, tryUnsnoc) where
 
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
@@ -271,6 +271,11 @@ anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
 anyM f xs = do
   conds <- mapM f xs
   return $ any id conds
+
+liftMaybe :: Alternative m => Maybe a -> m a
+liftMaybe Nothing = empty
+liftMaybe (Just x) = pure x
+{-# INLINE liftMaybe #-}
 
 -- === zippable class ===
 

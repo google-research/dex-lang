@@ -92,7 +92,9 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
     Place x y            -> Place <$> tge x <*> tge y
     Freeze x             -> Freeze <$> tge x
 
-traverseAtomDefault :: GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
+traverseAtomDefault
+  :: forall r f s i o.
+  GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
@@ -125,22 +127,22 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
   PtrVar _ -> substM atom
-  TypeCon sn dataDefName params ->
-    TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr
   DictTy dictTy -> DictTy <$> tge dictTy
-  LabeledRow elems -> LabeledRow <$> traverseGenericE elems
-  RecordTy elems -> RecordTy <$> traverseGenericE elems
-  VariantTy ext -> VariantTy <$> traverseExtLabeledItems ext
   ProjectElt _ _ -> substM atom
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
   RepValAtom _ -> substM atom
+  NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
+  NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
   -- TODO(dougalm): We don't need these because we don't use generic traversals
   -- on anything except SimpIR and CoreIR. We should add that as a constraint on
   -- `r` and then we can delete these cases.
-  ACase _ _ _ -> nyi
-  where nyi = error $ "not implemented: " ++ pprint atom
+  ACase _ _ _ -> error $ "not implemented: " ++ pprint atom
+  SimpInCore ty x -> do
+    -- TODO: fix this hack. Maybe payload should be a differently-colored name
+    x' <- (unsafeCoerceIRE @SimpIR ) <$> substM (unsafeCoerceIRE @r x)
+    SimpInCore <$> mapM tge ty <*> pure x'
 
 traverseExtLabeledItems
   :: forall r f s i o.
@@ -168,7 +170,7 @@ instance GenericallyTraversableE r (Block r) where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
 
-instance GenericallyTraversableE r (FieldRowElems r) where
+instance HasCore r => GenericallyTraversableE r (FieldRowElems r) where
   traverseGenericE elems = do
     els' <- fromFieldRowElems <$> substM elems
     dropSubst $ fieldRowElemsFromList <$> forM els' \case
@@ -207,7 +209,12 @@ instance GenericallyTraversableE r (DictExpr r) where
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
     IxFin n ->  IxFin <$> tge n
-    ExplicitMethods d params -> ExplicitMethods <$> substM d <*> mapM tge params
+
+instance GenericallyTraversableE r (IxDict r) where
+  traverseGenericE = \case
+    IxDictAtom x             -> IxDictAtom <$> tge x
+    IxDictFin n              -> IxDictFin <$> tge n
+    IxDictSpecialized t d xs -> IxDictSpecialized <$> tge t <*> substM d <*> mapM tge xs
 
 instance GenericallyTraversableE r (DictType r) where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params
@@ -228,6 +235,27 @@ instance GenericallyTraversableE r (Hof r) where
     RunIO body           -> RunIO <$> tge body
     RunInit body         -> RunInit <$> tge body
     CatchException body  -> CatchException <$> tge body
+
+instance HasCore r => GenericallyTraversableE r (NewtypeTyCon r) where
+  traverseGenericE = \case
+    UserADTType s d p -> UserADTType s <$> substM d <*> tge p
+    LabeledRowCon tys -> LabeledRowCon <$> tge tys
+    RecordTyCon tys   -> RecordTyCon <$> tge tys
+    VariantTyCon ext  -> VariantTyCon <$> traverseExtLabeledItems ext
+    LabelCon s        -> return $ LabelCon s
+    LabelType         -> return LabelType
+    LabeledRowKindTC  -> return LabeledRowKindTC
+    Nat               -> return Nat
+    Fin x             -> Fin <$> tge x
+    EffectRowKind     -> return EffectRowKind
+
+instance HasCore r => GenericallyTraversableE r (NewtypeCon r) where
+  traverseGenericE = \case
+    RecordCon  items     -> return $ RecordCon items
+    VariantCon items     -> return $ VariantCon items
+    UserADTData d params -> UserADTData <$> substM d <*> tge params
+    NatCon               -> return NatCon
+    FinCon n             -> FinCon <$> tge n
 
 traverseBinderNest
   :: GenericTraverser r f s

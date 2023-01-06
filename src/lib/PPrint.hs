@@ -256,7 +256,12 @@ instance Pretty (DictExpr r n) where
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
-    ExplicitMethods v args -> "ExplicitMethods" <+> p v <+> p args
+
+instance Pretty (IxDict r n) where
+  pretty = \case
+    IxDictAtom x -> p x
+    IxDictRawFin n  -> "Ix (RawFin " <> p n <> ")"
+    IxDictSpecialized _ d xs -> p d <+> p xs
 
 instance Pretty (DictType r n) where
   pretty (DictType classSourceName _ params) =
@@ -282,34 +287,19 @@ instance PrettyPrec (Atom r n) where
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <+> ",>" <+> p y
     TC  e -> prettyPrec e
-    NatVal n -> atPrec ArgPrec $ pretty n
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
     PtrVar v -> atPrec ArgPrec $ p v
-    TypeCon "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
-      -> atPrec LowestPrec $ ".."  <> pApp i
-    TypeCon "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
-      -> atPrec LowestPrec $ "..<" <> pApp i
-    TypeCon "RangeFrom"    _ (DataDefParams [_, (PlainArrow, i)])
-      -> atPrec LowestPrec $ pApp i <>  ".."
-    TypeCon "RangeFromExc" _ (DataDefParams [_, (PlainArrow, i)])
-      -> atPrec LowestPrec $ pApp i <> "<.."
-    TypeCon name _ (DataDefParams params) -> case params of
-      [] -> atPrec ArgPrec $ p name
-      [(PlainArrow, l), (PlainArrow, r)]
-        | Just sym <- fromInfix (fromString name) ->
-        atPrec ArgPrec $ align $ group $
-          parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
-      _  -> atPrec LowestPrec $ pAppArg (p name) $ plainArrows params
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
-    LabeledRow elems -> prettyRecordTyRow elems "?"
-    RecordTy elems -> prettyRecordTyRow elems "&"
-    VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts Pure
     RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+    NewtypeCon con x -> prettyPrecNewtype con x
+    NewtypeTyCon con -> prettyPrec con
+    SimpInCore ty x ->
+      atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
 
 instance Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
@@ -321,8 +311,7 @@ instance Pretty a => Pretty (Tree a) where
 
 instance Pretty Projection where
   pretty = \case
-    UnwrapCompoundNewtype -> "uc"
-    UnwrapBaseNewtype -> "ub"
+    UnwrapNewtype -> "u"
     ProjectProduct i -> p i
 
 prettyRecordTyRow :: FieldRowElems r n -> Doc ann -> DocPrec ann
@@ -395,8 +384,8 @@ instance Pretty (TabPiType r n) where
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we
 -- want it on.
-prettyIxDict :: Atom r n -> Doc ann
-prettyIxDict dict = if False then " " <> p dict else mempty
+prettyIxDict :: IxDict r n -> Doc ann
+prettyIxDict dict = if True then " " <> p dict else mempty
 
 prettyBinderHelper :: HoistableE e => Binder r n l -> e l -> Doc ann
 prettyBinderHelper (b:>ty) body =
@@ -985,15 +974,52 @@ instance PrettyPrec e => PrettyPrec (PrimTC r e) where
       encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
-    Nat   -> atPrec ArgPrec $ "Nat"
-    Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
     HeapType -> atPrec ArgPrec "Heap"
+
+prettyPrecNewtype :: NewtypeCon r n -> Atom r n -> DocPrec ann
+prettyPrecNewtype con x = case (con, x) of
+  (NatCon, (IdxRepVal n)) -> atPrec ArgPrec $ pretty n
+  (RecordCon labels, ProdVal itemList) ->
+    prettyLabeledItems (restructure itemList labels) (line' <> ",") " ="
+  (VariantCon labels, SumVal _ fieldIx value) -> do
+      let (label, i) = toList (reflectLabels labels) !! fieldIx
+      let ls = LabeledItems $ case i of
+                 0 -> M.empty
+                 _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
+      prettyVariant ls label value
+  (_, x') -> prettyPrec x'
+
+instance Pretty (NewtypeTyCon r n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (NewtypeTyCon r n) where
+  prettyPrec = \case
+    Nat   -> atPrec ArgPrec $ "Nat"
+    Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
+    RecordTyCon elems -> prettyRecordTyRow elems "&"
+    VariantTyCon items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     EffectRowKind -> atPrec ArgPrec "EffKind"
     LabeledRowKindTC -> atPrec ArgPrec "Fields"
     LabelType -> atPrec ArgPrec "Label"
+    LabelCon name -> atPrec ArgPrec $ "##" <> p name
+    LabeledRowCon elems -> prettyRecordTyRow elems "?"
+    UserADTType "RangeTo"      _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ ".."  <> pApp i
+    UserADTType "RangeToExc"   _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ "..<" <> pApp i
+    UserADTType "RangeFrom"    _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ pApp i <>  ".."
+    UserADTType "RangeFromExc" _ (DataDefParams [_, (PlainArrow, i)])
+      -> atPrec LowestPrec $ pApp i <> "<.."
+    UserADTType name _ (DataDefParams params) -> case params of
+      [] -> atPrec ArgPrec $ p name
+      [(PlainArrow, l), (PlainArrow, r)]
+        | Just sym <- fromInfix (fromString name) ->
+        atPrec ArgPrec $ align $ group $
+          parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
+      _  -> atPrec LowestPrec $ pAppArg (p name) $ plainArrows params
+
 
 instance PrettyPrec e => Pretty (PrimCon r e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimCon r e) where
@@ -1001,16 +1027,7 @@ instance PrettyPrec e => PrettyPrec (PrimCon r e) where
 -- TODO: Define Show instances in user-space and avoid those overlapping instances!
 instance Pretty (PrimCon r (Atom r n)) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (PrimCon r (Atom r n)) where
-  prettyPrec = \case
-    Newtype (StaticRecordTy ty) (ProdVal itemList) ->
-      prettyLabeledItems (restructure itemList ty) (line' <> ",") " ="
-    Newtype (VariantTy (Ext tys _)) (SumVal _ fieldIx value) -> do
-      let (label, i) = toList (reflectLabels tys) !! fieldIx
-      let ls = LabeledItems $ case i of
-                 0 -> M.empty
-                 _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
-      prettyVariant ls label value
-    con -> prettyPrecPrimCon con
+  prettyPrec con = prettyPrecPrimCon con
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon r e -> DocPrec ann
 prettyPrecPrimCon con = case con of
@@ -1022,9 +1039,6 @@ prettyPrecPrimCon con = case con of
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  Newtype ty e -> atPrec LowestPrec $ pArg e <> "@" <> (parens $ pLowest ty)
-  LabelCon name -> atPrec ArgPrec $ "##" <> p name
-  ExplicitDict _ _ -> atPrec ArgPrec $ "ExplicitDict"
   DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
   HeapVal -> atPrec ArgPrec "HeapValue"
 

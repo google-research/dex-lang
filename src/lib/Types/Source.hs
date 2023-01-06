@@ -409,8 +409,10 @@ data PrimName =
   | UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
-  | UProjBaseNewtype | UExplicitApply | UMonoLiteral
+  | UProjNewtype | UExplicitApply | UMonoLiteral
   | UIndexRef | UProjRef Int | UProjMethod Int
+  | UNat | UNatCon | UFin | ULabelType
+  | UEffectRowKind | ULabeledRowKind
     deriving (Show, Eq)
 
 -- === instances ===

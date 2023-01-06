@@ -16,7 +16,7 @@ module Builder (
   liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
-  select, getUnpacked, emitUnpacked, unwrapBaseNewtype, unwrapCompoundNewtype,
+  select, getUnpacked, emitUnpacked, unwrapNewtype,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef,
   naryApp, naryAppHinted,
   tabApp, naryTabApp, naryTabAppHinted,
@@ -39,23 +39,24 @@ module Builder (
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
   extendImpCache, queryImpCache, finishSpecializedDict,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
-  queryIxDictCache, extendIxDictCache,
+  queryIxDictCache,
   extendObjCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
   ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
-  telescopicCapture, unpackTelescope,
-  applyRecon, applyReconAbs, applyIxMethod,
+  unpackTelescope,
   emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
   addTangent, tangentBaseMonoidFor,
   buildEffLam, catMaybesE, runMaybeWhile,
-  ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi,
+  buildNullaryPi, buildNaryPi,
   HoistingTopBuilder (..), liftTopBuilderHoisted,
   DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT,
-  liftDoubleBuilderTNoEmissions, runDoubleBuilderT, toposortAnnVars
+  liftDoubleBuilderTNoEmissions, runDoubleBuilderT, toposortAnnVars,
+  buildTelescopeVal, localVarsAndTypeVars, buildTelescopeTy,
+  isSingletonType, singletonTypeVal,
   ) where
 
 import Control.Applicative
@@ -64,13 +65,13 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
 import qualified Data.Map.Strict as M
+import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import Foreign.Ptr
-import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -106,6 +107,7 @@ class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
 
 type Builder2         (r::IR) (m :: MonadKind2) = forall i. Builder         r (m i)
 type ScopableBuilder2 (r::IR) (m :: MonadKind2) = forall i. ScopableBuilder r (m i)
+type SBuilder = Builder SimpIR
 
 emit :: (Builder r m, Emits n) => Expr r n -> m n (AtomName r n)
 emit expr = emitDecl noHint PlainLet expr
@@ -386,18 +388,10 @@ querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
 
-extendIxDictCache :: TopBuilder m => AbsDict r n -> Name SpecializedDictNameC n -> m n ()
-extendIxDictCache absDict name =
-  extendCache $ mempty { ixDictCache = eMapSingleton (unsafeCoerceRAbsDict absDict) name }
-
-queryIxDictCache :: EnvReader m => AbsDict r n -> m n (Maybe (Name SpecializedDictNameC n))
+queryIxDictCache :: EnvReader m => AbsDict n -> m n (Maybe (Name SpecializedDictNameC n))
 queryIxDictCache d = do
   cache <- ixDictCache <$> getCache
-  return $ lookupEMap cache (unsafeCoerceRAbsDict d)
-
-unsafeCoerceRAbsDict :: AbsDict r n -> AbsDict r' n
-unsafeCoerceRAbsDict (Abs bs e) = Abs bs' (unsafeCoerceIRE e)
-  where bs' = fmapNest (\(b:>ty) -> b :> unsafeCoerceIRE ty) bs
+  return $ lookupEMap cache d
 
 finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [LamExpr SimpIR n] -> m n ()
 finishSpecializedDict name methods =
@@ -708,7 +702,7 @@ absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
   return $ Block (BlockAnn ty' effs') decls result
 {-# INLINE absToBlock #-}
 
-buildPureLam :: (IsCore r, ScopableBuilder r m)
+buildPureLam :: (HasCore r, ScopableBuilder r m)
              => NameHint -> Arrow -> Type r n
              -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
              -> m n (Atom r n)
@@ -718,7 +712,7 @@ buildPureLam hint arr ty body = do
     body v
 
 buildTabLam
-  :: ScopableBuilder r m
+  :: (HasCore r, ScopableBuilder r m)
   => NameHint -> IxType r n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
@@ -729,13 +723,13 @@ buildTabLam hint ty fBody = do
     return $ TabLam $ TabLamExpr (b:>ty) body
 
 buildLam
-  :: (IsCore r, ScopableBuilder r m)
+  :: (HasCore r, ScopableBuilder r m)
   => NameHint -> Arrow -> Type r n -> EffectRow n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
 buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
 
-buildNullaryPi :: (IsCore r, Builder r m)
+buildNullaryPi :: (HasCore r, Builder r m)
                => EffectRow n
                -> (forall l. DExt n l => m l (Type r l))
                -> m n (Type r n)
@@ -745,7 +739,7 @@ buildNullaryPi effs cont =
     return (sink effs, resultTy)
 
 buildLamGeneral
-  :: (IsCore r, ScopableBuilder r m)
+  :: (HasCore r, ScopableBuilder r m)
   => NameHint -> Arrow -> Type r n
   -> (forall l.           DExt n l  => AtomName r l -> m l (EffectRow l))
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
@@ -759,7 +753,7 @@ buildLamGeneral hint arr ty fEff fBody = do
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
-buildPureNaryLam :: (IsCore r, ScopableBuilder r m)
+buildPureNaryLam :: (HasCore r, ScopableBuilder r m)
                  => EmptyAbs (Nest (PiBinder r)) n
                  -> (forall l. DExt n l => [AtomName r l] -> m l (Atom r l))
                  -> m n (Atom r n)
@@ -784,7 +778,7 @@ buildPi hint arr ty body =
     return $ PiType (PiBinder b ty arr) effs resultTy
 
 buildNaryPi
-  :: (IsCore r, Builder r m)
+  :: (HasCore r, Builder r m)
   => EmptyAbs (Nest (Binder r)) n
   -> (forall l. (Distinct l, DExt n l) => [AtomName r l] -> m l (Type r l))
   -> m n (Type r n)
@@ -955,7 +949,7 @@ buildCase scrut resultTy indexedAltBody = do
         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
       emitExpr $ Case scrut alts resultTy $ mconcat effs
 
-buildSplitCase :: (Emits n, ScopableBuilder r m, IsCore r)
+buildSplitCase :: (Emits n, ScopableBuilder r m, HasCore r)
                => LabeledItems (Type r n) -> Atom r n -> Type r n
                -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
                -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
@@ -976,7 +970,7 @@ buildEffLam
 buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
   withFreshBinder noHint (TC HeapType) \h -> do
-    let ty' = RefTy (Var $ binderName h) (sink ty)
+    let ty' = RefTy (Just $ Var $ binderName h) (sink ty)
     withFreshBinder hint (LamBinding PlainArrow ty') \b -> do
       let ref = binderName b
       hVar <- sinkM $ binderName h
@@ -1002,7 +996,7 @@ buildFor :: (Emits n, ScopableBuilder r m)
          -> m n (Atom r n)
 buildFor hint dir ty body = buildForAnn hint dir ty body
 
-unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
+unzipTab :: (HasCore r, Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
 unzipTab tab = do
   TabTy (_:>ixTy) _ <- getType tab
   fsts <- liftEmitBuilder $ buildTabLam noHint ixTy \i ->
@@ -1042,39 +1036,35 @@ emitRunReader hint r body = do
 
 -- === vector space (ish) type class ===
 
-zeroAt :: HasCallStack => Builder r m => Type r n -> m n (Atom r n)
-zeroAt ty = case ty of
-  BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
-  ProdTy tys -> ProdVal <$> mapM zeroAt tys
-  StaticRecordTy tys -> Record tys <$> mapM zeroAt (toList tys)
-  TabTy (b:>ixTy) bodyTy ->
-    liftEmitBuilder $ buildTabLam (getNameHint b) ixTy \i ->
-      zeroAt =<< applyRename (b@>i) bodyTy
-  _ -> unreachable
-  where
-    unreachable :: a
-    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
-    zeroLit bt = case bt of
-      Scalar Float64Type -> Float64Lit 0.0
-      Scalar Float32Type -> Float32Lit 0.0
-      _                  -> unreachable
+zeroAt :: (Emits n, SBuilder m) => SType n -> m n (SAtom n)
+zeroAt ty = liftEmitBuilder $ go ty where
+  go :: Emits n => SType n -> BuilderM SimpIR n (SAtom n)
+  go = \case
+   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
+   ProdTy tys -> ProdVal <$> mapM go tys
+   TabTy (b:>ixTy) bodyTy -> buildFor (getNameHint b) Fwd ixTy \i ->
+     go =<< applyRename (b@>i) bodyTy
+   _ -> unreachable
+  zeroLit bt = case bt of
+    Scalar Float64Type -> Float64Lit 0.0
+    Scalar Float32Type -> Float32Lit 0.0
+    _                  -> unreachable
+  unreachable :: a
+  unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
 
-zeroLike :: (HasCallStack, HasType r e, Builder r m) => e n -> m n (Atom r n )
+zeroLike :: (HasType SimpIR e, SBuilder m, Emits n) => e n -> m n (SAtom n )
 zeroLike x = zeroAt =<< getType x
 
-tangentType :: EnvReader m => Type r n -> m n (Type r n)
+tangentType :: EnvReader m => SType n -> m n (SType n)
 tangentType ty = maybeTangentType ty >>= \case
   Just tanTy -> return tanTy
   Nothing -> error $ "can't differentiate wrt type: " ++ pprint ty
 
-maybeTangentType :: EnvReader m => Type r n -> m n (Maybe (Type r n))
+maybeTangentType :: EnvReader m => SType n -> m n (Maybe (SType n))
 maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
 
-maybeTangentType' :: Type r n -> EnvReaderT Maybe n (Type r n)
+maybeTangentType' :: SType n -> EnvReaderT Maybe n (SType n)
 maybeTangentType' ty = case ty of
-  StaticRecordTy items -> StaticRecordTy <$> mapM rec items
-  -- TODO: Delete this case! This is a hack!
-  TypeCon _ _ _ -> rec =<< fromNewtypeWrapper ty
   TabTy b bodyTy -> do
     refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
       bodyTanTy <- rec bodyTy'
@@ -1083,34 +1073,20 @@ maybeTangentType' ty = case ty of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
     BaseType   _                  -> return $ UnitTy
-    Nat                           -> return $ UnitTy
-    Fin _                         -> return $ UnitTy
     ProdType   tys                -> ProdTy <$> traverse rec tys
     _ -> empty
   _ -> empty
   where rec = maybeTangentType'
 
-fromNewtypeWrapper :: (EnvReader m, Fallible1 m) => Type r n -> m n (Type r n)
-fromNewtypeWrapper ty = do
-  TypeCon _ defName params <- return ty
-  def <- lookupDataDef defName
-  [con] <- instantiateDataDef def params
-  -- Single field constructors are represented by their field
-  DataConDef _ wrappedTy [_] <- return con
-  return $ unsafeCoerceIRE wrappedTy
-
-tangentBaseMonoidFor :: Builder r m => Type r n -> m n (BaseMonoid r n)
+tangentBaseMonoidFor :: (Emits n, SBuilder m) => SType n -> m n (BaseMonoid SimpIR n)
 tangentBaseMonoidFor ty = do
   zero <- zeroAt ty
   adder <- liftBuilder $ buildBinaryLamExpr (noHint, ty) (noHint, ty) \x y -> addTangent (Var x) (Var y)
   return $ BaseMonoid zero adder
 
-addTangent :: (Emits n, Builder r m) => Atom r n -> Atom r n -> m n (Atom r n)
+addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   getType x >>= \case
-    StaticRecordTy tys -> do
-      elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
-      return $ Record tys elems
     TabTy (b:>ixTy) _  ->
       liftEmitBuilder $ buildFor (getNameHint b) Fwd ixTy \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
@@ -1303,8 +1279,12 @@ getUnpacked :: (Fallible1 m, EnvReader m) => Atom r n -> m n [Atom r n]
 getUnpacked atom = do
   atom' <- cheapNormalize atom
   ty <- getType atom'
-  idxs <- projectionIndices ty
-  forM idxs \is -> normalizeNaryProj is atom'
+  positions <- case ty of
+    ProdTy tys  -> return $ void tys
+    DepPairTy _ -> return [(), ()]
+    _ -> error $ "not a product type: " ++ pprint ty
+  forM (enumerate positions) \(i, _) ->
+    normalizeProj (ProjectProduct i) atom'
 {-# SCC getUnpacked #-}
 
 emitUnpacked :: (Builder r m, Emits n) => Atom r n -> m n [AtomName r n]
@@ -1312,13 +1292,10 @@ emitUnpacked tup = do
   xs <- getUnpacked tup
   forM xs \x -> emit $ Atom x
 
-unwrapBaseNewtype :: EnvReader m => Atom r n -> m n (Atom r n)
-unwrapBaseNewtype = normalizeProj UnwrapBaseNewtype
-{-# INLINE unwrapBaseNewtype #-}
-
-unwrapCompoundNewtype :: EnvReader m => Atom r n -> m n (Atom r n)
-unwrapCompoundNewtype = normalizeProj UnwrapCompoundNewtype
-{-# INLINE unwrapCompoundNewtype #-}
+unwrapNewtype :: HasCore r => Atom r n -> Atom r n
+unwrapNewtype (NewtypeCon _ x) = x
+unwrapNewtype x = ProjectElt UnwrapNewtype x
+{-# INLINE unwrapNewtype #-}
 
 app :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 app x i = Var <$> emit (App x (i:|[]))
@@ -1364,66 +1341,57 @@ unsafePtrLoad x = do
 
 -- === index set type class ===
 
--- XXX: it's important that we do the reduction here, because we need the
--- property that if we call this with a simplified dict, we only produce
--- simplified decls.
-applyIxMethod :: (Builder r m, Emits n) => Atom r n -> IxMethod -> [Atom r n] -> m n (Atom r n)
+-- XXX: this function is mostly used with `r = SimpIR` with raw IdxRepVal
+-- ordinals, but the interpreter uses it with `r = CoreIR`, which uses the
+-- Nat/Fin newtype wrappers.
+applyIxMethod :: (Builder r m, Emits n) => IxDict r n -> IxMethod -> [Atom r n] -> m n (Atom r n)
 applyIxMethod dict method args = case dict of
-  DictCon (IxFin n) -> case method of
-    Size -> do
-      [] <- return args
-      return n                       -- result : Nat
-    Ordinal -> do
-      [ix] <- return args            -- ix : Fin n
-      unwrapBaseNewtype ix           -- result : Nat
-    UnsafeFromOrdinal -> do
-      [ix] <- return args                     -- ix : Nat
-      return $ Con $ Newtype (TC $ Fin n) ix  -- result : Fin n
-  DictCon (ExplicitMethods d params) -> do
-    SpecializedDictBinding (SpecializedDict _ maybeFs) <- lookupEnv d
-    case maybeFs of
-      Nothing -> fallback
-      Just fs -> do
-        LamExpr bs body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
-        let args' = case method of
-              Size -> params ++ [UnitVal]
-              _    -> params ++ args
-        emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
-  _ -> fallback
-  where
-    fallback = do
-      methodImpl <- emitExpr $ ProjMethod dict (fromEnum method)
-      naryApp methodImpl args
+  -- These cases are use in SimpIR and they work with IdxRepVal
+  IxDictFin n -> case method of
+    Size              -> do []  <- return args; return n
+    Ordinal           -> do [i] <- return args; return i
+    UnsafeFromOrdinal -> do [i] <- return args; return i
+  IxDictSpecialized _ d params -> do
+    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+    LamExpr bs body <- return $ unsafeCoerceIRE $ fs !! fromEnum method
+    let args' = case method of
+          Size -> params ++ [UnitVal]
+          _    -> params ++ args
+    emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
+  -- These cases are use in CoreIR and they work with Nat/Fin
+  -- IxDictAtom (DictCon (IxFin n)) -> case method of
+  --   Size -> do
+  --     [] <- return args
+  --     return n                        -- result : Nat
+  --   Ordinal -> do
+  --     [ix] <- return args             -- ix : Fin n
+  --     return $ unwrapNewtype ix       -- result : Nat
+  --   UnsafeFromOrdinal -> do
+  --     [ix] <- return args             -- ix : Nat
+  --     return $ NewtypeCon (FinCon n) ix  -- result : Fin n
+  IxDictAtom d -> do
+    methodImpl <- emitExpr $ ProjMethod d (fromEnum method)
+    naryApp methodImpl args
+
+unsafeFromOrdinal :: (Builder r m, Emits n) => IxType r n -> Atom r n -> m n (Atom r n)
+unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [i]
+
+ordinal :: (Builder r m, Emits n) => IxType r n -> Atom r n -> m n (Atom r n)
+ordinal (IxType _ dict) idx = applyIxMethod dict Ordinal [idx]
+
+indexSetSize :: (Builder r m, Emits n) => IxType r n -> m n (Atom r n)
+indexSetSize (IxType _ dict) = applyIxMethod dict Size []
 
 -- This works with `Nat` instead of `IndexRepTy` because it's used alongside
 -- user-defined instances.
-projectIxFinMethod :: (IsCore r, EnvReader m) => IxMethod -> Atom r n -> m n (Atom r n)
+projectIxFinMethod :: (HasCore r, EnvReader m) => IxMethod -> Atom r n -> m n (Atom r n)
 projectIxFinMethod method n = liftBuilder do
   case method of
     Size -> return n  -- result : Nat
-    Ordinal -> buildPureLam noHint PlainArrow (TC $ Fin n) \ix ->
-      unwrapBaseNewtype (Var ix) -- result : Nat
+    Ordinal -> buildPureLam noHint PlainArrow (NewtypeTyCon $ Fin n) \ix ->
+      return $ unwrapNewtype (Var ix) -- result : Nat
     UnsafeFromOrdinal -> buildPureLam noHint PlainArrow NatTy \ix ->
-      return $ Con $ Newtype (TC $ Fin $ sink n) $ Var ix
-
--- XXX: these internal versions of `ordinal`, `unsafeFromOrdinal` and
--- `indexSetSize`. work with `IdxRepTy` (whereas the user-facing versions work
--- with `Nat`)
-unsafeFromOrdinal :: forall r m n. (Builder r m, Emits n) => IxType r n -> Atom r n -> m n (Atom r n)
-unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [repToNat i]
-
-ordinal :: forall r m n. (Builder r m, Emits n) => IxType r n -> Atom r n -> m n (Atom r n)
-ordinal (IxType _ dict) idx = do
-  unwrapBaseNewtype =<< applyIxMethod dict Ordinal [idx]
-
-indexSetSize :: (Builder r m, Emits n) => IxType r n -> m n (Atom r n)
-indexSetSize (IxType _ dict) = do
-  sizeNat <- applyIxMethod dict Size []
-  unwrapBaseNewtype sizeNat
-
-repToNat :: Atom r n -> Atom r n
-repToNat x = Con $ Newtype NatTy x
-{-# INLINE repToNat #-}
+      return $ NewtypeCon (FinCon $ sink n) (Var ix)
 
 -- === pseudo-prelude ===
 
@@ -1545,34 +1513,6 @@ runMaybeWhile body = do
 
 -- === capturing closures with telescopes ===
 
-type ReconAbs e n = NaryAbs AtomNameC e n
-data ReconstructAtom (r::IR) (n::S) =
-   IdentityRecon
- | LamRecon (ReconAbs (Atom r) n)
-
-applyRecon :: (EnvReader m, Fallible1 m) => ReconstructAtom r n -> Atom r n -> m n (Atom r n)
-applyRecon IdentityRecon x = return x
-applyRecon (LamRecon ab) x = applyReconAbs ab x
-
-applyReconAbs
-  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE (AtomSubstVal r) e)
-  => ReconAbs e n -> Atom r n -> m n (e n)
-applyReconAbs (Abs bs result) x = do
-  xs <- unpackTelescope x
-  applySubst (bs@@>map SubstVal xs) result
-
-telescopicCapture
-  :: (EnvReader m, HoistableE e, HoistableB b)
-  => b n l -> e l -> m l (Atom r l, ReconAbs e n)
-telescopicCapture bs e = do
-  vs <- localVarsAndTypeVars bs e
-  vTys <- mapM (getType . Var) vs
-  let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
-  ty <- liftEnvReaderM $ buildTelescopeTy vs tys
-  result <- buildTelescopeVal (map Var vsSorted) ty
-  let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
-  return (result, ab)
-
 -- XXX: assumes arguments are toposorted
 buildTelescopeTy :: (EnvReader m, EnvExtender m)
                  => [AtomName r n] -> [Type r n] -> m n (Type r n)
@@ -1654,23 +1594,51 @@ localVars :: (Color c, BindsNames b, HoistableE e)
 localVars b e = nameSetToList $
   R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
-instance GenericE (ReconstructAtom r) where
-  type RepE (ReconstructAtom r) = EitherE UnitE (NaryAbs AtomNameC (Atom r))
-  fromE IdentityRecon = LeftE UnitE
-  fromE (LamRecon recon) = RightE recon
-  toE (LeftE _) = IdentityRecon
-  toE (RightE recon) = LamRecon recon
-
-instance SinkableE   (ReconstructAtom r)
-instance HoistableE  (ReconstructAtom r)
-instance AlphaEqE    (ReconstructAtom r)
-instance RenameE     (ReconstructAtom r)
-
-instance Pretty (ReconstructAtom r n) where
-  pretty IdentityRecon = "Identity reconstruction"
-  pretty (LamRecon ab) = "Reconstruction abs: " <> pretty ab
-
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: BuilderM r n (DistinctEvidence n)
 confuseGHC = getDistinct
 {-# INLINE confuseGHC #-}
+
+-- === singleton types ===
+
+-- The following implementation should be valid:
+--   isSingletonType :: EnvReader m => Type n -> m n Bool
+--   isSingletonType ty =
+--     singletonTypeVal ty >>= \case
+--       Nothing -> return False
+--       Just _  -> return True
+-- But a separate implementation doesn't have to go under binders,
+-- because it doesn't have to reconstruct the singleton value (which
+-- may be type annotated and whose type may refer to names).
+
+isSingletonType :: Type SimpIR n -> Bool
+isSingletonType topTy = isJust $ checkIsSingleton topTy
+  where
+    checkIsSingleton :: Type r n -> Maybe ()
+    checkIsSingleton ty = case ty of
+      TabPi (TabPiType _ body) -> checkIsSingleton body
+      TC (ProdType tys) -> mapM_ checkIsSingleton tys
+      _ -> Nothing
+
+singletonTypeVal :: (Builder SimpIR m, Emits n) => Type SimpIR n -> m n (Maybe (Atom SimpIR n))
+singletonTypeVal ty = do
+  maybeBlock <- liftBuilderT $ buildBlock do
+    ty' <- sinkM ty
+    runSubstReaderT idSubst $ singletonTypeValRec ty'
+  mapM emitBlock maybeBlock
+{-# INLINE singletonTypeVal #-}
+
+-- TODO: TypeCon with a single case?
+singletonTypeValRec
+  :: Emits o => Type SimpIR i
+  -> SubstReaderT Name (BuilderT SimpIR Maybe) i o (Atom SimpIR o)
+singletonTypeValRec ty = case ty of
+  TabPi (TabPiType (b:>ixTy) body) -> do
+    ixTy' <- renameM ixTy
+    buildFor (getNameHint b) Fwd ixTy' \i ->
+      extendSubst (b@>i) (singletonTypeValRec body)
+  TC con -> case con of
+    ProdType tys -> ProdVal <$> traverse singletonTypeValRec tys
+    _            -> notASingleton
+  _ -> notASingleton
+  where notASingleton = fail "not a singleton type"

@@ -61,9 +61,9 @@ data IndexSetKind n
 
 isTrivialIndex :: Type CoreIR i -> UTLM i o (IndexSetKind o)
 isTrivialIndex = \case
-  TC (Fin (NatVal n)) | n <= 0 -> return EmptyIxSet
-  TC (Fin (NatVal n)) | n == 1 ->
-    return $ SingletonIxSet $ Con $ Newtype (FinConst n) (NatVal 0)
+  NewtypeTyCon (Fin (NatVal n)) | n <= 0 -> return EmptyIxSet
+  NewtypeTyCon (Fin (NatVal n)) | n == 1 ->
+    return $ SingletonIxSet $ NewtypeCon (FinCon (NatVal n)) (NatVal 0)
   _ -> return UnknownIxSet
 
 instance GenericTraverser CoreIR UnitB UTLS where
@@ -117,12 +117,8 @@ peepholeOp op = case op of
   BinOp BAnd (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
     return $ lit $ Word8Lit $ lv .&. rv
   MiscOp (ToEnum ty (Con (Lit (Word8Lit tag)))) -> Left <$> case ty of
-    TypeCon _ defName _ -> do
-      DataDef _ _ cons <- lookupDataDef defName
-      return $ Con $ Newtype ty $ SumVal (cons <&> const UnitTy) (fromIntegral tag) UnitVal
     SumTy cases -> return $ SumVal cases (fromIntegral tag) UnitVal
     _ -> error "Ill typed ToEnum?"
-  MiscOp (SumTag (Con (Newtype _ (SumVal _ tag _)))) -> return $ lit $ Word8Lit $ fromIntegral tag
   MiscOp (SumTag (SumVal _ tag _))                   -> return $ lit $ Word8Lit $ fromIntegral tag
   _ -> return noop
   where
@@ -233,10 +229,10 @@ foldCast sTy l = case sTy of
 peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
 peepholeExpr expr = case expr of
   PrimOp op -> fmap PrimOp <$> peepholeOp op
-  TabApp (Var t) ((Con (Newtype (TC (Fin _)) (NatVal ord))) NE.:| []) ->
+  TabApp (Var t) (IdxRepVal ord NE.:| []) ->
     lookupAtomName t <&> \case
-      LetBound (DeclBinding ann _ (TabCon _ elems))
-        | ann /= NoInlineLet ->
+      LetBound (DeclBinding ann _ (TabCon tabTy elems))
+        | ann /= NoInlineLet && isFinTabTy tabTy->
         -- It is not safe to assume that this index can always be simplified!
         -- For example, it might be coming from an unsafe_from_ordinal that is
         -- under a case branch that would be dead for all invalid indices.
@@ -247,6 +243,9 @@ peepholeExpr expr = case expr of
   -- TODO: Apply a function to literals when it has a cheap body?
   -- Think, partial evaluation of threefry.
   _ -> return $ Right expr
+  where isFinTabTy = \case
+          TabPi (TabPiType (_:>(IxType _ (IxDictFin _))) _) -> True
+          _ -> False
 
 -- === Loop unrolling ===
 
@@ -265,21 +264,21 @@ instance HoistableState ULS where
 -- constant-foldable after inlining don't count towards it.
 instance GenericTraverser SimpIR UnitB ULS where
   traverseInlineExpr expr = case expr of
-    Hof (For Fwd ixDict body@(UnaryLamExpr b _)) -> do
-      case binderType b of
-        FinConst n -> do
+    Hof (For Fwd ixDict body) ->
+      case ixDict of
+        IxDictFin (IdxRepVal n) -> do
           (body', bodyCost) <- withLocalAccounting $ traverseGenericE body
           -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
           case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
             True -> case body' of
               UnaryLamExpr b' block' -> do
-                vals <- dropSubst $ forM (iota n) \ord -> do
-                  let i = Con $ Newtype (FinConst n) (NatVal ord)
-                  extendSubst (b' @> SubstVal i) $ emitSubstBlock block'
+                vals <- dropSubst $ forM (iota n) \i -> do
+                  extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
                 inc $ fromIntegral n  -- To account for the TabCon we emit below
                 getNaryLamExprType body' >>= \case
                   NaryPiType (UnaryNest (PiBinder tb _ _)) _ valTy -> do
-                    let tabTy = TabPi $ TabPiType (tb:>IxType (FinConst n) (DictCon (IxFin $ NatVal n))) valTy
+                    let ixTy = IxType IdxRepTy (IxDictFin (IdxRepVal n))
+                    let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
                     return $ Right $ TabCon tabTy vals
                   _ -> error "Expected `for` body to have a Pi type"
               _ -> error "Expected `for` body to be a lambda expression"
@@ -328,7 +327,7 @@ instance HoistableState LICMS where
 instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
     DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
-      ix' <- traverseAtom ix
+      ix' <- substM ix
       dests' <- traverse traverseAtom dests
       let numCarries = length dests
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
@@ -341,13 +340,11 @@ instance GenericTraverser SimpIR UnitB LICMS where
       -- Append the destinations of hoisted Allocs as loop carried values.
       let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
       carryTy <- getType dests''
-      lbTy <- getType ix' <&> \case
-        DictTy (DictType _ _ [ixTy]) -> PairTy ixTy carryTy
-        _ -> error "Expected a dict"
+      lbTy <- ixTyFromDict ix' <&> \case IxType ixTy _ -> PairTy ixTy carryTy
       body' <- rebuildBody b body lnb lbTy bodyAbs
       return $ DAMOp $ Seq dir ix' dests'' body'
     Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
-      ix' <- traverseAtom ix
+      ix' <- substM ix
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         Block _ decls ans <- traverseGenericE body
         liftEnvReaderM $ runSubstReaderT idSubst $
@@ -533,6 +530,7 @@ instance HasDCE (FieldRowElem  SimpIR)
 instance HasDCE (DataDefParams SimpIR)
 instance HasDCE (DeclBinding   SimpIR)
 instance HasDCE (DAMOp         SimpIR)
+instance HasDCE (IxDict        SimpIR)
 
 -- The instances for RepE types
 
