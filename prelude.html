@@ -2092,7 +2092,8 @@ Nor does it promise a particular level of precision for numeric values.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_output_stream (_<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Stream</span> <span class="type-name">WriteMode</span> <span class="symbol">=</span>
   <span class="type-name">MkStream</span> <span class="symbol">$</span> %outputStream
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> print (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> print (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   stream <span class="symbol">=</span> get_output_stream ()
   fwrite stream s
   fwrite stream &quot;<span class="symbol">\</span>n&quot;
@@ -2115,7 +2116,8 @@ Nor does it promise a particular level of precision for numeric values.</p>
 i.e. a function that is not actually defined for all of its supposed domain.
 Not to be confused with a partially applied function</p>
 </div></div><div class="cell"><div class="prose-block"><h3>Error throwing</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> error {a} (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
+<span class="keyword">def</span> error {a} (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
   print s
   %throwError a
 </div></div><div class="cell"><div class="code-block">

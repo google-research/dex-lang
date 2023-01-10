@@ -338,8 +338,8 @@ bounds checks.</p>
 </div></div><div class="cell"><div class="code-block">%time
 levenshtein_table [&#39;k&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;e&#39;<span class="symbol">,</span> &#39;n&#39;] [&#39;s&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;n&#39;<span class="symbol">,</span> &#39;g&#39;]
 </div><div class="result-block">[[0, 1, 2, 3, 4, 5, 6, 7], [1, 1, 2, 3, 4, 5, 6, 7], [2, 2, 1, 2, 3, 4, 5, 6], [3, 3, 2, 1, 2, 3, 4, 5], [4, 4, 3, 2, 1, 2, 3, 4], [5, 5, 4, 3, 2, 2, 3, 4], [6, 6, 5, 4, 3, 3, 2, 3]]</div><div class="result-block">
-Compile time: 138.690 ms
-Run time:     184.700 us </div></div><div class="cell"><div class="code-block">
+Compile time: 144.668 ms
+Run time:     260.700 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The actual distance is of course just the last element of the table.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein {n m a} [<span class="type-name">Eq</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   (levenshtein_table xs ys)<span class="symbol">.</span>last_ix<span class="symbol">.</span>last_ix
@@ -347,8 +347,8 @@ Run time:     184.700 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">%time
 levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100)
 </div><div class="result-block">0</div><div class="result-block">
-Compile time: 102.138 ms
-Run time:     114.500 us </div></div><div class="cell"><div class="code-block">
+Compile time: 105.497 ms
+Run time:     149.300 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Speed</h2>
 </div></div><div class="cell"><div class="prose-block"><p>To check that we don't embarrass ourselves on performance, let's run
 the Sountsov benchmark: Compute Levenshtein distances for all pairs of
@@ -361,8 +361,8 @@ answer <span class="symbol">=</span> <span class="keyword">for</span> i<span cla
     levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> iint) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> jint)
 </div><div class="result-block">
 Sountsov Benchmark
-Compile time: 120.325 ms
-Run time:     41.044 ms 	(based on 49 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
+Compile time: 121.477 ms
+Run time:     41.001 ms 	(based on 49 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
 </div><div class="result-block">333300</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The straightforward C++ program for this takes about 35ms on my
 workstation, so Dex performance is in the right ballpark.  (And we
@@ -383,8 +383,8 @@ distance function on words:</p>
 </div></div><div class="cell"><div class="code-block">%time
 closest_word &quot;hello&quot;
 </div><div class="result-block">&quot;hello&quot;</div><div class="result-block">
-Compile time: 152.732 ms
-Run time:     141.609 ms </div></div><div class="cell"><div class="code-block">
+Compile time: 154.082 ms
+Run time:     158.218 ms </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">closest_word &quot;kitttens&quot;
 </div><div class="result-block">&quot;kittens&quot;</div></div><div class="cell"><div class="code-block">closest_word &quot;functor&quot;
 </div><div class="result-block">&quot;function&quot;</div></div><div class="cell"><div class="code-block">closest_word &quot;applicative&quot;
