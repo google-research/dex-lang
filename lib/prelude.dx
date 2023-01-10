@@ -2045,7 +2045,7 @@ def randn (k:Key) : Float =
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
 -- TODO: Make this better...
-def rand_int (k:Key) : Nat = (internal_cast Nat k) `mod` 2147483647
+def rand_int (k:Key) : Nat = w64_to_n k `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 

@@ -34,7 +34,9 @@
    sum (for i. sum z.i)
 > 18.
 
--- :p randint (hash 0 0) 10
+:p rand_int (new_key 0)
+> 431640317
+
 -- :p let x = unpack range 10000
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
