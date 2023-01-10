@@ -313,7 +313,6 @@ def bug (n : Type) : Unit =
 > Leaked local variables:[v#0]
 > Block:
 >  v#0:n = todo n
->  w:n = v#0
 >  v#1:((v#0..) => Unit) = for i:(v#0..). ()
 >  v#1
 > Of type: ((v#0..) => Unit)
