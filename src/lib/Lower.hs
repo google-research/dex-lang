@@ -323,7 +323,6 @@ vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
       -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
       Failure errs -> error $ pprint errs
       Success (block', errs) -> return $ (Abs d block', errs)
-{-# INLINE vectorizeLoops #-}
 {-# SCC vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
