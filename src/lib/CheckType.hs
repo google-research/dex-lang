@@ -39,7 +39,6 @@ import Types.Imp
 import Types.Primitives
 import Types.Source
 import Util (forMZipped_, onSndM)
-import {-# SOURCE #-} Interpreter
 
 -- === top-level API ===
 
@@ -367,17 +366,10 @@ instance HasType r (Expr r) where
                    <.> classBs @@> map SubstVal (map (unsafeCoerceIRE @CoreIR) superclassDicts))
       unsafeCoerceIRE <$> applySubst subst methodTy
     TabCon ty xs -> do
-      ty'@(TabPi tabPi@(TabPiType b restTy)) <- checkTypeE TyKind ty
+      ty'@(TabPi (TabPiType b restTy)) <- checkTypeE TyKind ty
       case fromConstAbs (Abs b restTy) of
         HoistSuccess elTy -> forM_ xs (|: elTy)
-        HoistFailure _    -> do
-          maybeIdxs <- indicesLimit (length xs) $ binderAnn b
-          case maybeIdxs of
-            (Right idxs) ->
-              forMZipped_ xs idxs \x i -> do
-                eltTy <- instantiateTabPi tabPi i
-                x |: eltTy
-            (Left _) -> fail "zip error"
+        HoistFailure _    -> error $ "Tab con shouldn't be constructing a dependent table type"
       return ty'
     RecordVariantOp x -> typeCheckRecordVariantOp x
     DAMOp op -> typeCheckDAMOp op

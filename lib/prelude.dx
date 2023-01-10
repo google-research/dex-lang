@@ -2583,3 +2583,9 @@ def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List
     read_stack stack
 
 def show_any {a} (x:a) : String = %showAny x
+
+-- TODO: data constraint
+def coerce_table {n a} (m:Type) [Ix m] (x:n=>a) : m => a =
+  if size m == size n
+    then unsafe_coerce (m=>a) x
+    else error "mismatched sizes in table coercion"

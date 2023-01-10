@@ -676,14 +676,14 @@ execUDecl mname decl = do
     logPass RenamePass $ renameSourceNamesTopUDecl mname decl
   inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
   case inferenceResult of
-    UDeclResultWorkRemaining block declAbs -> do
+    UDeclResultBindName ann block (Abs b sm) -> do
       result <- evalBlock block
-      result' <- case declAbs of
-        Abs (ULet NoInlineLet (UPatAnn p _) _) _ -> do
+      result' <- case ann of
+        NoInlineLet -> do
           ty <- getType result
           asSpecializableFunction ty >>= \case
             Just (n, fty) -> do
-              f <- emitBinding (getNameHint p) $
+              f <- emitBinding (getNameHint b) $
                 AtomNameBinding $ TopFunBound fty $ AwaitingSpecializationArgsTopFun n result
               -- warm up cache if it's already sufficiently specialized
               -- (this is actually here as a workaround for some sort of
@@ -696,7 +696,13 @@ execUDecl mname decl = do
             Nothing -> throw TypeErr $
               "Not a valid @noinline function type: " ++ pprint ty
         _ -> return result
-      emitSourceMap =<< applyUDeclAbs declAbs result'
+      v <- emitTopLet (getNameHint b) ann (Atom result')
+      applyRename (b@>v) sm >>= emitSourceMap
+    UDeclResultBindPattern hint block (Abs bs sm) -> do
+      result <- evalBlock block
+      xs <- unpackTelescope result
+      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
+      applyRename (bs@@>vs) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 

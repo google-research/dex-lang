@@ -13,7 +13,8 @@ module Builder (
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   buildScopedAssumeNoDecls,
   Builder2, BuilderM, ScopableBuilder2,
-  liftBuilderT, buildBlock, withType, absToBlock, app, add, mul, sub, neg, div',
+  liftBuilderT, buildBlock, withType, absToBlock,
+  makeBlockFromDecls, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
   select, getUnpacked, emitUnpacked, unwrapBaseNewtype, unwrapCompoundNewtype,
@@ -89,8 +90,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
-import {-# SOURCE #-} Interpreter
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList, (...))
 
 -- === Ordinary (local) builder class ===
 
@@ -707,6 +707,15 @@ absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
   effs' <- liftHoistExcept' (docAsStr msg) $ hoist decls effs
   return $ Block (BlockAnn ty' effs') decls result
 {-# INLINE absToBlock #-}
+
+makeBlockFromDecls :: EnvReader m => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
+makeBlockFromDecls (Abs Empty result) = return $ AtomicBlock result
+makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
+  ty <- getType result
+  effs <- declNestEffects decls
+  PairE ty' effs' <- return $ ignoreHoistFailure $ hoist decls $ PairE ty effs
+  return $ Block (BlockAnn ty' effs') decls result
+{-# INLINE makeBlockFromDecls #-}
 
 buildPureLam :: (IsCore r, ScopableBuilder r m)
              => NameHint -> Arrow -> Type r n
@@ -1545,7 +1554,7 @@ runMaybeWhile body = do
 
 -- === capturing closures with telescopes ===
 
-type ReconAbs e n = NaryAbs AtomNameC e n
+type ReconAbs e = NaryAbs AtomNameC e
 data ReconstructAtom (r::IR) (n::S) =
    IdentityRecon
  | LamRecon (ReconAbs (Atom r) n)
@@ -1674,3 +1683,30 @@ instance Pretty (ReconstructAtom r n) where
 confuseGHC :: BuilderM r n (DistinctEvidence n)
 confuseGHC = getDistinct
 {-# INLINE confuseGHC #-}
+
+-- === Helpers for function evaluation over fixed-width types ===
+
+applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
+               => (a -> Atom r n) -> a -> a -> Atom r n) -> Atom r n -> Atom r n -> Atom r n
+applyIntBinOp' f x y = case (x, y) of
+  (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
+  (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
+  (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
+  (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
+  (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
+  _ -> error "Expected integer atoms"
+
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
+applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
+
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom r n -> Atom r n -> Atom r n
+applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
+
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
+applyFloatBinOp f x y = case (x, y) of
+  (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
+  (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
+  _ -> error "Expected float atoms"
+
+_applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n
+_applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x

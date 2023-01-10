@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Inference
-  ( inferTopUDecl, checkTopUType, inferTopUExpr, applyUDeclAbs
+  ( inferTopUDecl, checkTopUType, inferTopUExpr
   , trySynthTerm, generalizeDict
   , synthTopBlock, UDeclInferenceResult (..)) where
 
@@ -27,7 +27,6 @@ import Data.List (sortOn, intercalate, partition)
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
-import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -42,7 +41,6 @@ import Core
 import Err
 import GenericTraversal
 import IRVariants
-import Interpreter
 import LabeledItems
 import MTL1
 import Name
@@ -67,9 +65,10 @@ inferTopUExpr e = liftInfererM do
 
 data UDeclInferenceResult e n =
    UDeclResultDone (e n)  -- used for UDataDefDecl, UInterface and UInstance
- | UDeclResultWorkRemaining (CBlock n) (Abs UDecl e n) -- used for ULet
+ | UDeclResultBindName LetAnn (CBlock n) (Abs (UBinder AtomNameC) e n)
+ | UDeclResultBindPattern NameHint (CBlock n) (ReconAbs e n)
 
-inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, RenameE e)
+inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
   PairE def' (Abs ddbs' (ListE cbs')) <- liftInfererM $ solveLocal $ inferDataDef def
@@ -118,18 +117,19 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
       applyRename (instanceName' @> instanceAtomName) result
     _ -> error "impossible"
-inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
-  block <- liftInfererM $ solveLocal $ buildBlockInf do
-    val <- checkMaybeAnnExpr (getNameHint p) ann rhs
-    -- This is just for type checking. We don't actually generate
-    -- pattern-matching code at the top level
-    _ <- buildBlockInf do
-      val' <- sinkM val
-      v <- emitDecl (getNameHint p) PlainLet $ Atom val'
-      bindLamPat p v $ return UnitVal
-    applyDefaults
-    return val
-  return $ UDeclResultWorkRemaining block $ Abs decl result
+inferTopUDecl (ULet letAnn (UPatAnn p tyAnn) rhs) result = case p of
+  WithSrcB _ (UPatBinder b) -> do
+    block <- liftInfererM $ solveLocal $ buildBlockInf do
+      checkMaybeAnnExpr (getNameHint b) tyAnn rhs <* applyDefaults
+    return $ UDeclResultBindName letAnn block (Abs b result)
+  _ -> do
+    PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
+      val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
+      v <- emitAtomToName (getNameHint p) val
+      bindLamPat p v do
+        applyDefaults
+        renameM result
+    return $ UDeclResultBindPattern (getNameHint p) block recon
 inferTopUDecl (UEffectDecl opTys effName opNames) result = do
   opTys' <- forM opTys $ \opTy -> liftInfererM $ solveLocal $ inferEffOpType opTy
   let effSourceName = uBinderSourceName effName
@@ -225,37 +225,6 @@ inferEffOpType
   -> InfererM i o (EffectOpType o)
 inferEffOpType (UEffectOpType policy ty) = do
   EffectOpType policy <$> checkUType ty
-
--- We use this to finish the processing the decl after we've completely
--- evaluated the right-hand side
-applyUDeclAbs :: (Mut n, TopBuilder m, SinkableE e, RenameE e, MonadIO1 m)
-              => Abs UDecl e n -> CAtom n -> m n (e n)
-applyUDeclAbs (Abs decl result) x = case decl of
-  ULet letAnn (UPatAnn pat _) _ -> do
-    v <- emitTopLet (getNameHint pat) letAnn (Atom x)
-    case pat of
-      WithSrcB _ (UPatBinder b) -> applyRename (b@>v) result
-      _ -> do
-        atomSubst <- liftInterpM do
-          x' <- evalAtom (Var v)
-          matchUPat pat x'
-        nameSubst <- emitAtomSubstFrag atomSubst
-        applyRename nameSubst result
-  _ -> error "other top-level decls don't require any computation so we shouldn't get here"
-
-
-emitAtomSubstFrag :: (Mut o, TopBuilder m)
-                  => SubstFrag (AtomSubstVal CoreIR) i i' o -> m o (SubstFrag Name i i' o)
-emitAtomSubstFrag frag = go $ toSubstPairs frag
-  where
-    go :: (Mut o, TopBuilder m)
-       => Nest (SubstPair (AtomSubstVal CoreIR) o) i i' -> m o (SubstFrag Name i i' o)
-    go Empty = return emptyInFrag
-    go (Nest (SubstPair b val) rest) = do
-      v <- case val of
-        SubstVal x -> emitTopLet (getNameHint b) PlainLet (Atom x)
-        Rename v -> return v
-      (b@>v <.>) <$> go rest
 
 -- === Inferer interface ===
 
@@ -2154,9 +2123,9 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     ty <- getType x
     _  <- fromPairType ty
     x' <- zonk x  -- ensure it has a pair type before unpacking
-    x1 <- getFst x' >>= zonk >>= emitAtomToName noHint
+    x1 <- getFst x' >>= zonk >>= emitAtomToName (getNameHint p1)
     bindLamPat p1 x1 do
-      x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
+      x2  <- getSnd x' >>= zonk >>= emitAtomToName (getNameHint p2)
       bindLamPat p2 x2 do
         cont
   UPatDepPair (PairB p1 p2) -> do
@@ -2251,19 +2220,14 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
     elemTy <- freshType TyKind
-    idxTy <- asIxType $ FinConst $ fromIntegral $ nestLength ps
+    let iTy = FinConst $ fromIntegral $ nestLength ps
+    idxTy <- asIxType iTy
     ty <- getType $ Var v
     tabTy <- idxTy ==> elemTy
     constrainEq ty tabTy
-    maybeIdxs <- indicesLimit (nestLength ps) idxTy
-    case maybeIdxs of
-      (Right idxs) -> do
-        xs <- forM idxs \i -> emit $ TabApp (Var v) (i:|[])
-        bindLamPats ps xs cont
-      (Left trueSize) ->
-        throw TypeErr $ "Incorrect length of table pattern: table index set has "
-                        <> pprint trueSize <> " elements but there are "
-                        <> pprint (nestLength ps) <> " patterns."
+    xs <- forM [0 .. nestLength ps - 1] \i -> do
+      emit $ TabApp (Var v) (Con (Newtype iTy (NatVal $ fromIntegral i)) :|[])
+    bindLamPats ps xs cont
 
 checkAnn :: EmitsInf o => Maybe (UType i) -> InfererM i o (CType o)
 checkAnn ann = case ann of
@@ -2351,63 +2315,24 @@ checkExtLabeledRow (Ext types (Just ext)) = do
 inferTabCon :: EmitsBoth o
   => NameHint -> [UExpr i] -> RequiredTy RhoType o -> InfererM i o (CAtom o)
 inferTabCon hint xs reqTy = do
-  (tabTy, xs') <- case reqTy of
-    Check tabTy@(TabPi piTy) -> do
-      (TabPiType b restTy) <- return piTy
-      liftBuilderT (buildScoped $ indexSetSize $ sink $ binderAnn b) >>= \case
-        (Just szMethod) ->
-          staticallyKnownIdx szMethod >>= \case
-            (Just size) | size == fromIntegral (length xs) -> do
-              -- Size matches.  Try to hoist the result type past the
-              -- type binder to avoid synthesizing the indices, if
-              -- possible.
-              case hoist b restTy of
-                HoistSuccess elTy -> do
-                  xs' <- mapM (\x -> checkRho noHint x elTy) xs
-                  return (tabTy, xs')
-                HoistFailure _    -> do
-                  idx <- indices $ binderAnn b
-                  xs' <- forM (zip xs idx) \(x, i) -> do
-                    xTy <- instantiateTabPi piTy i
-                    checkOrInferRho noHint x $ Check xTy
-                  return (tabTy, xs')
-            (Just size) -> throw TypeErr $ "Literal has " ++ count (length xs) "element"
-                             ++ ", but required type has " ++ show size ++ "."
-              where count :: Int -> String -> String
-                    count 1 singular = "1 " ++ singular
-                    count n singular = show n ++ " " ++ singular ++ "s"
-            -- Size of index set not statically known
-            Nothing -> inferFin
-        -- Couldn't synthesize the Ix dictionary; inference variable
-        -- present in (argType piTy)?
-        Nothing -> inferFin
-    -- Requested type is not a `Check (TabPi _)`
-    _ -> inferFin
-  liftM Var $ emitHinted hint $ TabCon tabTy xs'
-    where
-      inferFin = do
-        elemTy <- case xs of
-          []    -> freshType TyKind
-          (x:_) -> getType =<< inferRho noHint x
-        ixTy <- asIxType $ FinConst (fromIntegral $ length xs)
-        tabTy <- ixTy ==> elemTy
-        case reqTy of
-          Check sTy -> addContext context $ constrainEq sTy tabTy
-          Infer     -> return ()
-        xs' <- mapM (\x -> checkRho noHint x elemTy) xs
-        return (tabTy, xs')
-
-      staticallyKnownIdx :: (EnvReader m) => Abs (Nest CDecl) CAtom n -> m n (Maybe Word32)
-      staticallyKnownIdx (Abs decls res) = unsafeLiftInterpMCatch (evalDecls decls $ evalExpr $ Atom res) >>= \case
-        (Success (IdxRepVal ix)) -> return $ Just ix
-        _ -> return Nothing
-      {-# INLINE staticallyKnownIdx #-}
-
-      context = "If attempting to construct a fixed-size table not\n" <>
-                "indexed by 'Fin n' for some static n, this error may\n" <>
-                "indicate there was not enough information to infer\n" <>
-                "a concrete index set; try adding an explicit\n" <>
-                "annotation."
+  let finTy = FinConst (fromIntegral $ length xs)
+  case reqTy of
+    Infer -> do
+      elemTy <- case xs of
+        []    -> freshType TyKind
+        (x:_) -> getType =<< inferRho noHint x
+      ixTy <- asIxType finTy
+      tabTy <- ixTy ==> elemTy
+      xs' <- forM xs \x -> checkRho noHint x elemTy
+      liftM Var $ emitHinted hint $ TabCon tabTy xs'
+    Check tabTy -> do
+      TabPiType b elemTy <- fromTabPiType True tabTy
+      constrainEq (binderType b) finTy
+      xs' <- forM (enumerate xs) \(i, x) -> do
+        let i' = Con $ Newtype finTy (NatVal $ fromIntegral i)
+        elemTy' <- applySubst (b@>SubstVal i') elemTy
+        checkRho noHint x elemTy'
+      liftM Var $ emitHinted hint $ TabCon tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
 fromTabPiType :: EmitsBoth o => Bool -> CType o -> InfererM i o (TabPiType CoreIR o)
@@ -3229,6 +3154,19 @@ buildBlockInf
 buildBlockInf cont = buildDeclsInf (cont >>= withType) >>= computeAbsEffects >>= absToBlock
 {-# INLINE buildBlockInf #-}
 
+buildBlockInfWithRecon
+  :: (EmitsInf n, RenameE e, HoistableE e, SinkableE e)
+  => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (e l))
+  -> InfererM i n (PairE CBlock (ReconAbs e) n)
+buildBlockInfWithRecon cont = do
+  ab <- buildDeclsInfUnzonked cont
+  (declsResult, recon) <- refreshAbs ab \decls result -> do
+    (newResult, recon) <- telescopicCapture decls result
+    return (Abs decls newResult, recon)
+  block <- makeBlockFromDecls declsResult
+  return $ PairE block recon
+{-# INLINE buildBlockInfWithRecon #-}
+
 buildLamInf
   :: EmitsInf n
   => NameHint -> Arrow -> CType n
@@ -3323,18 +3261,22 @@ newtype WrapWithEmitsInf n r =
 -- === instances ===
 
 instance PrettyE e => Pretty (UDeclInferenceResult e l) where
-  pretty (UDeclResultDone e) = pretty e
-  pretty (UDeclResultWorkRemaining block _) = pretty block
+  pretty = \case
+    UDeclResultDone e -> pretty e
+    UDeclResultBindName _ block _ -> pretty block
+    UDeclResultBindPattern _ block _ -> pretty block
 
 instance SinkableE e => SinkableE (UDeclInferenceResult e) where
   sinkingProofE = todoSinkableProof
 
 instance (RenameE e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
-  checkE (UDeclResultDone e) = UDeclResultDone <$> renameM e
-  checkE (UDeclResultWorkRemaining block _) = do
-    block' <- checkE block
-    return $ UDeclResultWorkRemaining block'
-                (error "TODO: implement substitution for UDecl")
+  checkE = \case
+    UDeclResultDone e -> UDeclResultDone <$> renameM e
+    UDeclResultBindName ann block _ -> do
+      UDeclResultBindName ann <$> checkE block <*> pure (error s)
+    UDeclResultBindPattern hint block _ -> do
+      UDeclResultBindPattern hint <$> checkE block <*> pure (error s)
+    where s = "TODO: implement substitution for UDecl"
 
 instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)
         => EnvReader (InplaceT InfOutMap decls m) where

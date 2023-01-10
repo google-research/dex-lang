@@ -506,14 +506,6 @@ simplifyIxType (IxType t d) = dropSubst do
   d' <- coreToSimpAtom =<< simplifyAtom d
   return $ IxType t' d'
 
-makeBlockFromDecls :: EnvReader m => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
-makeBlockFromDecls (Abs Empty result) = return $ AtomicBlock result
-makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
-  ty <- getType result
-  effs <- declNestEffects decls
-  PairE ty' effs' <- return $ ignoreHoistFailure $ hoist decls $ PairE ty effs
-  return $ Block (BlockAnn ty' effs') decls result
-
 injectCore :: CovariantInIR e => e SimpIR n -> e CoreIR n
 injectCore = injectIRE
 

@@ -61,7 +61,6 @@ library
                      , ImpToLLVM
                      , Inference
                      , Inline
-                     , Interpreter
                      , IRVariants
                      , LLVM.Link
                      , LLVM.Compile
