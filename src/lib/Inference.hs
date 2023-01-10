@@ -9,7 +9,7 @@
 
 module Inference
   ( inferTopUDecl, checkTopUType, inferTopUExpr
-  , trySynthTerm, generalizeDict
+  , trySynthTerm, generalizeDict, bindTopPat
   , synthTopBlock, UDeclInferenceResult (..)) where
 
 import Prelude hiding ((.), id)
@@ -66,7 +66,7 @@ inferTopUExpr e = liftInfererM do
 data UDeclInferenceResult e n =
    UDeclResultDone (e n)  -- used for UDataDefDecl, UInterface and UInstance
  | UDeclResultBindName LetAnn (CBlock n) (Abs (UBinder AtomNameC) e n)
- | UDeclResultBindPattern NameHint (CBlock n) (ReconAbs e n)
+ | UDeclResultBindPattern (CBlock n) (Abs SimplePat e n)
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
@@ -123,13 +123,13 @@ inferTopUDecl (ULet letAnn (UPatAnn p tyAnn) rhs) result = case p of
       checkMaybeAnnExpr (getNameHint b) tyAnn rhs <* applyDefaults
     return $ UDeclResultBindName letAnn block (Abs b result)
   _ -> do
-    PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
+    PairE block (LiftE spat) <- liftInfererM $ solveLocal $ buildBlockInfAux do
       val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
       v <- emitAtomToName (getNameHint p) val
-      bindLamPat p v do
+      bindLamPat' p v \patVarsAsAtom spat-> do
         applyDefaults
-        renameM result
-    return $ UDeclResultBindPattern (getNameHint p) block recon
+        return (patVarsAsAtom, spat)
+    return $ UDeclResultBindPattern block (Abs spat result)
 inferTopUDecl (UEffectDecl opTys effName opNames) result = do
   opTys' <- forM opTys $ \opTy -> liftInfererM $ solveLocal $ inferEffOpType opTy
   let effSourceName = uBinderSourceName effName
@@ -159,6 +159,36 @@ inferTopUDecl (UHandlerDecl effName bodyTyArg tyArgs _retEff retTy opDefs handle
      let subst = handlerName @> handlerName'
      UDeclResultDone <$> applyRename subst result
 {-# SCC inferTopUDecl #-}
+
+data SimplePat (n::S) (l::S) =
+   SPatBinder (AtomNameBinder n l)
+ | SPatIgnore (UnitB n l)
+ | SPatProd   (Nest SimplePat n l)
+
+bindTopPat
+  :: forall m e o.
+     (TopBuilder m, Mut o, SinkableE e, RenameE e)
+  => Abs SimplePat e o -> CAtom o
+  -> m o (e o)
+bindTopPat (Abs patTop result) valTop =
+ runSubstReaderT idSubst $ go patTop valTop $ renameM result
+ where
+  go :: SimplePat i i' -> CAtom o
+     -> SubstReaderT Name m i' o a -> SubstReaderT Name m i  o a
+  go p x cont = case p of
+    SPatIgnore UnitB -> cont
+    SPatBinder b -> do
+      v <- emitTopLet (getNameHint b) PlainLet (Atom x)
+      extendSubst (b@>v) cont
+    SPatProd ps -> do
+      xs <- forM [0..(nestLength ps - 1)] \i -> return $ ProjectElt (ProjectProduct i) x
+      goMany ps xs cont
+
+  goMany :: Nest SimplePat i i' -> [CAtom o]
+         -> SubstReaderT Name m i' o a -> SubstReaderT Name m i  o a
+  goMany Empty [] cont = cont
+  goMany (Nest p ps) (x:xs) cont = go p x $ goMany ps xs $ cont
+  goMany _ _ _ = error "zip error"
 
 checkHandlerBody :: EmitsInf o
                  => EffectName o
@@ -2106,41 +2136,61 @@ inferParams (Abs paramBs body) = case paramBs of
   Nest (RolePiBinder _ _ _ _) _ -> do
     error "TODO Handle implicit or linear parameters for data constructors"
 
-bindLamPats :: EmitsBoth o
-            => Nest UPat i i' -> [CAtomName o] -> InfererM i' o a -> InfererM i o a
-bindLamPats Empty [] cont = cont
-bindLamPats (Nest p ps) (x:xs) cont = bindLamPat p x $ bindLamPats ps xs cont
-bindLamPats _ _ _ = error "mismatched number of args"
+toSimplePattern
+  :: CType o -> [CAtom o] -> Nest SimplePat i i'
+  -> InfererM any o (CAtom o, SimplePat i i')
+toSimplePattern = undefined
 
-bindLamPat :: EmitsBoth o => UPat i i' -> CAtomName o -> InfererM i' o a -> InfererM i o a
-bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
-  UPatBinder b -> extendSubst (b @> v) cont
+bindLamPats'
+  :: EmitsBoth o
+  => Nest UPat i i' -> [CAtomName o]
+  -> ([CAtom o] -> Nest SimplePat i i' -> InfererM i' o a)
+  -> InfererM i o a
+bindLamPats' Empty [] cont = cont [] Empty
+bindLamPats' (Nest p ps) (x:xs) cont = bindLamPat' p x \sVal sPat ->
+  bindLamPats' ps xs \sVals sPats -> cont (sVal : sVals) (Nest sPat sPats)
+bindLamPats' _ _ _ = error "mismatched number of args"
+
+-- The `CAtom o` passed to the continuation contains the same information as the
+-- value bound to the pattern, but with table literals replaced by tuples (and
+-- records similarly). At the top level it can be matched against the
+-- `SimplePattern` without any code generation. It's not used for non-top-level
+-- pattern matching.
+bindLamPat'
+  :: EmitsBoth o => UPat i i' -> CAtomName o
+  -> (CAtom o -> SimplePat i i' -> InfererM i' o a)
+  -> InfererM i o a
+bindLamPat' (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
+  UPatBinder b -> case b of
+    UBindSource _ -> error "shouldn't have source binders left"
+    UIgnore -> cont UnitVal (SPatIgnore UnitB)
+    UBind _ b' -> extendSubst (b' @> v) $ cont (Var v) (SPatBinder b')
   UPatUnit UnitB -> do
     constrainVarTy v UnitTy
-    cont
+    cont UnitVal (SPatIgnore UnitB)
   UPatPair (PairB p1 p2) -> do
     let x = Var v
     ty <- getType x
     _  <- fromPairType ty
     x' <- zonk x  -- ensure it has a pair type before unpacking
     x1 <- getFst x' >>= zonk >>= emitAtomToName (getNameHint p1)
-    bindLamPat p1 x1 do
+    bindLamPat' p1 x1 \sVal1 sPat1-> do
       x2  <- getSnd x' >>= zonk >>= emitAtomToName (getNameHint p2)
-      bindLamPat p2 x2 do
-        cont
+      bindLamPat' p2 x2 \sVal2 sPat2 -> do
+        cont (PairVal sVal1 sVal2) (SPatProd (BinaryNest sPat1 sPat2))
   UPatDepPair (PairB p1 p2) -> do
     let x = Var v
     ty <- getType x
-    _  <- fromDepPairType ty
+    depPairTy  <- fromDepPairType ty
     x' <- zonk x  -- ensure it has a dependent pair type before unpacking
     x1 <- getFst x' >>= zonk >>= emitAtomToName noHint
-    bindLamPat p1 x1 do
+    bindLamPat' p1 x1 \sVal1 sPat1 -> do
       x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
-      bindLamPat p2 x2 do
-        cont
+      bindLamPat' p2 x2 \sVal2 sPat2 -> do
+        cont (DepPair sVal1 sVal2 depPairTy) (SPatProd (BinaryNest sPat1 sPat2))
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< renameM conName
-    DataDef sourceName paramBs cons <- lookupDataDef dataDefName
+    def@(DataDef sourceName paramBs cons) <- lookupDataDef dataDefName
     case cons of
       [DataConDef _ _ idxs] -> do
         when (length idxs /= nestLength ps) $ throw TypeErr $
@@ -2149,47 +2199,58 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         (params, UnitE) <- inferParams (Abs paramBs UnitE)
         constrainVarTy v $ TypeCon sourceName dataDefName params
         xs <- mapM (emitAtomToName noHint) =<< getUnpacked =<< zonk (Var v)
-        bindLamPats ps xs cont
+        [DataConDef _ repTy _] <- instantiateDataDef def params
+        bindLamPats' ps xs \sVals sPats -> do
+          (sVal, sPat) <- toSimplePattern repTy sVals sPats
+          cont sVal sPat
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
   UPatRecord rowPat -> do
-    bindPats cont ([], Empty, v) rowPat
+    bindPats' (\xs ps -> cont (ProdVal xs) (SPatProd ps)) ([], Empty, v) rowPat
     where
-      bindPats :: EmitsBoth o
-               => InfererM i' o a -> ([Label], Nest UPat i l, CAtomName o) -> UFieldRowPat l i' -> InfererM i o a
-      bindPats c rv = \case
+      bindPats' :: EmitsBoth o
+               => ([CAtom o] -> Nest SimplePat i i' -> InfererM i' o a)
+               -> ([Label], Nest UPat i l, CAtomName o) -> UFieldRowPat l i' -> InfererM i o a
+      bindPats' c rv = \case
         UEmptyRowPat -> case rv of
-          (_ , Empty, _) -> c
+          (_ , Empty, _) -> c [] Empty
           (ls, ps   , r) -> do
             labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
             constrainVarTy r $ StaticRecordTy labelTypeVars
             itemsNestOrdered <- unpackInLabelOrder (Var r) ls
-            bindLamPats ps itemsNestOrdered c
+            bindLamPats' ps itemsNestOrdered c
         URemFieldsPat b ->
-          resolveDelay rv \rv' -> do
+          resolveDelay rv \sVals sPats rv' -> do
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields tailVar]
-            bindLamPat (WithSrcB Nothing $ UPatBinder b) rv' c
+            bindLamPat' (WithSrcB Nothing $ UPatBinder b) rv' \sVal sPat ->
+              c (sVals ++ [sVal]) (sPats >>> UnaryNest sPat)
         UStaticFieldPat l p rest -> do
           -- Note that the type constraint will be added when the delay is resolved
           let (ls, ps, rvn) = rv
-          bindPats c (ls ++ [l], joinNest ps (Nest p Empty), rvn) rest
+          bindPats' c (ls ++ [l], ps >>> UnaryNest p, rvn) rest
         UDynFieldsPat fv p rest -> do
-          resolveDelay rv \rv' -> do
+          resolveDelay rv \sVals sPats rv' -> do
             fv' <- emitAtomToName noHint =<< checkRho noHint
               (WithSrcE Nothing $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
             [subr, rv''] <- emitUnpacked =<< emitExpr (RecordVariantOp $ RecordSplit (Var fv') (Var rv'))
-            bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
+            bindLamPat' p subr \sVal sPat ->
+              bindPats'
+                (\sVals' sPats' -> c (sVals ++ (sVal:sVals')) (sPats >>> Nest sPat sPats'))
+                (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
-          resolveDelay rv \rv' -> do
+          resolveDelay rv \sVals sPats rv' -> do
             lv' <- emitAtomToName noHint =<< checkRho noHint
               (WithSrcE Nothing $ UVar lv) (TC LabelType)
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
             [val, rv''] <- emitUnpacked =<< emitExpr (RecordVariantOp $ RecordSplitDynamic (Var lv') (Var rv'))
-            bindLamPat p val $ bindPats c (mempty, Empty, rv'') rest
+            bindLamPat' p val \sVal sPat ->
+              bindPats'
+                (\sVals' sPats' -> c (sVals ++ (sVal:sVals')) (sPats >>> (Nest sPat sPats')))
+                (mempty, Empty, rv'') rest
 
       -- Unpacks the record and returns the components in order, as if they
       -- were looked up by consecutive labels. Note that the number of labels
@@ -2202,9 +2263,11 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         let itemsMap = M.fromList $ zip labelOrder itemsNatural
         return $ (itemsMap M.!) <$> [0..M.size itemsMap - 1]
 
-      resolveDelay :: EmitsBoth o => ([Label], Nest UPat i l, CAtomName o) -> (CAtomName o -> InfererM l o a) -> InfererM i o a
+      resolveDelay
+        :: EmitsBoth o => ([Label], Nest UPat i l, CAtomName o)
+        -> ([CAtom o] -> Nest SimplePat i l -> CAtomName o -> InfererM l o a) -> InfererM i o a
       resolveDelay (ls, ps, r) f = case ps of
-        Empty -> f r
+        Empty -> f [] Empty r
         _     -> do
           labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
           tailVar <- freshInferenceName LabeledRowKind
@@ -2215,7 +2278,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
               (Var r)))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
           restRecordName <- emitAtomToName noHint restRecord
-          bindLamPats ps itemsNestOrdered $ f restRecordName
+          bindLamPats' ps itemsNestOrdered \sVals sPats -> f sVals sPats restRecordName
   UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
@@ -2227,7 +2290,16 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     constrainEq ty tabTy
     xs <- forM [0 .. nestLength ps - 1] \i -> do
       emit $ TabApp (Var v) (Con (Newtype iTy (NatVal $ fromIntegral i)) :|[])
-    bindLamPats ps xs cont
+    bindLamPats' ps xs \sVals sPats -> cont (ProdVal sVals) (SPatProd sPats)
+
+bindLamPat :: EmitsBoth o => UPat i i' -> CAtomName o -> InfererM i' o a -> InfererM i o a
+bindLamPat pat v cont = bindLamPat' pat v \_ _ -> cont
+
+bindLamPats :: EmitsBoth o
+            => Nest UPat i i' -> [CAtomName o] -> InfererM i' o a -> InfererM i o a
+bindLamPats Empty [] cont = cont
+bindLamPats (Nest p ps) (x:xs) cont = bindLamPat p x $ bindLamPats ps xs cont
+bindLamPats _ _ _ = error "mismatched number of args"
 
 checkAnn :: EmitsInf o => Maybe (UType i) -> InfererM i o (CType o)
 checkAnn ann = case ann of
@@ -3154,18 +3226,18 @@ buildBlockInf
 buildBlockInf cont = buildDeclsInf (cont >>= withType) >>= computeAbsEffects >>= absToBlock
 {-# INLINE buildBlockInf #-}
 
-buildBlockInfWithRecon
-  :: (EmitsInf n, RenameE e, HoistableE e, SinkableE e)
-  => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (e l))
-  -> InfererM i n (PairE CBlock (ReconAbs e) n)
-buildBlockInfWithRecon cont = do
-  ab <- buildDeclsInfUnzonked cont
-  (declsResult, recon) <- refreshAbs ab \decls result -> do
-    (newResult, recon) <- telescopicCapture decls result
-    return (Abs decls newResult, recon)
-  block <- makeBlockFromDecls declsResult
-  return $ PairE block recon
-{-# INLINE buildBlockInfWithRecon #-}
+buildBlockInfAux
+  :: EmitsInf n
+  => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (CAtom l, a))
+  -> InfererM i n (PairE CBlock (LiftE a) n)
+buildBlockInfAux cont = do
+  Abs decls (resultWithTy `PairE` LiftE aux) <- buildDeclsInf do
+    (result, aux) <- cont
+    resultWithTy <- withType result
+    return (resultWithTy `PairE` LiftE aux)
+  block <- computeAbsEffects (Abs decls resultWithTy) >>= absToBlock
+  return $ PairE block (LiftE aux)
+{-# INLINE buildBlockInfAux #-}
 
 buildLamInf
   :: EmitsInf n
@@ -3264,7 +3336,7 @@ instance PrettyE e => Pretty (UDeclInferenceResult e l) where
   pretty = \case
     UDeclResultDone e -> pretty e
     UDeclResultBindName _ block _ -> pretty block
-    UDeclResultBindPattern _ block _ -> pretty block
+    UDeclResultBindPattern block _ -> pretty block
 
 instance SinkableE e => SinkableE (UDeclInferenceResult e) where
   sinkingProofE = todoSinkableProof
@@ -3274,8 +3346,8 @@ instance (RenameE e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
     UDeclResultDone e -> UDeclResultDone <$> renameM e
     UDeclResultBindName ann block _ -> do
       UDeclResultBindName ann <$> checkE block <*> pure (error s)
-    UDeclResultBindPattern hint block _ -> do
-      UDeclResultBindPattern hint <$> checkE block <*> pure (error s)
+    UDeclResultBindPattern block _ -> do
+      UDeclResultBindPattern <$> checkE block <*> pure (error s)
     where s = "TODO: implement substitution for UDecl"
 
 instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)

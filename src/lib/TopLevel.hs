@@ -698,11 +698,9 @@ execUDecl mname decl = do
         _ -> return result
       v <- emitTopLet (getNameHint b) ann (Atom result')
       applyRename (b@>v) sm >>= emitSourceMap
-    UDeclResultBindPattern hint block (Abs bs sm) -> do
+    UDeclResultBindPattern block ab -> do
       result <- evalBlock block
-      xs <- unpackTelescope result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
-      applyRename (bs@@>vs) sm >>= emitSourceMap
+      bindTopPat ab result >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
