@@ -31,8 +31,7 @@ module Builder (
   emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
   emitEffectDef, emitHandlerDef, emitEffectOpDef,
   buildCase, emitIf, emitMaybeCase, buildSplitCase,
-  emitBlock, emitDecls, BuilderEmissions, emitExprToAtom, emitAtomToName,
-  emitAtomToNameAnn,
+  emitBlock, emitDecl, emitDecls, BuilderEmissions, emitExprToAtom,
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
   runTopBuilderT, TopBuilder2, emitBindingDefault,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
@@ -97,7 +96,7 @@ import {-# SOURCE #-} Interpreter
 
 class (EnvReader m, EnvExtender m, Fallible1 m)
       => Builder (r::IR) (m::MonadKind1) | m -> r where
-  emitDecl :: Emits n => NameHint -> LetAnn -> Expr r n -> m n (AtomName r n)
+  rawEmitDecl :: Emits n => NameHint -> LetAnn -> Expr r n -> m n (AtomName r n)
 
 class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
   buildScoped
@@ -107,6 +106,11 @@ class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
 
 type Builder2         (r::IR) (m :: MonadKind2) = forall i. Builder         r (m i)
 type ScopableBuilder2 (r::IR) (m :: MonadKind2) = forall i. ScopableBuilder r (m i)
+
+emitDecl :: (Builder r m, Emits n) => NameHint -> LetAnn -> Expr r n -> m n (AtomName r n)
+emitDecl _ _ (Atom (Var n)) = return n
+emitDecl hint ann expr = rawEmitDecl hint ann expr
+{-# INLINE emitDecl #-}
 
 emit :: (Builder r m, Emits n) => Expr r n -> m n (AtomName r n)
 emit expr = emitDecl noHint PlainLet expr
@@ -147,16 +151,6 @@ emitExprToAtom :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
 emitExprToAtom (Atom atom) = return atom
 emitExprToAtom expr = Var <$> emit expr
 {-# INLINE emitExprToAtom #-}
-
-emitAtomToName :: (Builder r m, Emits n) => NameHint -> Atom r n -> m n (AtomName r n)
-emitAtomToName _ (Var v) = return v
-emitAtomToName hint x = emitHinted hint (Atom x)
-{-# INLINE emitAtomToName #-}
-
-emitAtomToNameAnn :: (Builder r m, Emits n) => NameHint -> LetAnn -> Atom r n -> m n (AtomName r n)
-emitAtomToNameAnn _ _ (Var v) = return v
-emitAtomToNameAnn hint ann x = emitDecl hint ann (Atom x)
-{-# INLINE emitAtomToNameAnn #-}
 
 buildScopedAssumeNoDecls :: (SinkableE e, ScopableBuilder r m)
   => (forall l. (Emits l, DExt n l) => m l (e l))
@@ -245,7 +239,7 @@ instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m) => EnvR
 instance ( RenameB frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m)
         => Builder r (DoubleBuilderT r frag m) where
-  emitDecl hint ann e = DoubleBuilderT $ liftDoubleInplaceT $ runBuilderT' $ emitDecl hint ann e
+  rawEmitDecl hint ann e = DoubleBuilderT $ liftDoubleInplaceT $ runBuilderT' $ emitDecl hint ann e
 
 instance ( RenameB frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m)
@@ -577,11 +571,11 @@ instance ExtOutFrag (BuilderEmissions r) (BuilderDeclEmission r) where
   {-# INLINE extendOutFrag #-}
 
 instance Fallible m => Builder r (BuilderT r m) where
-  emitDecl hint ann expr = do
+  rawEmitDecl hint ann expr = do
     ty <- getType expr
     BuilderT $ freshExtendSubInplaceT hint \b ->
       (BuilderDeclEmission $ Let b $ DeclBinding ann ty expr, binderName b)
-  {-# INLINE emitDecl #-}
+  {-# INLINE rawEmitDecl #-}
 
 instance Fallible m => EnvReader (BuilderT r m) where
   unsafeGetEnv = BuilderT $ getOutMapInplaceT
@@ -598,8 +592,8 @@ instance (SinkableV v, ScopableBuilder r m) => ScopableBuilder r (SubstReaderT v
   {-# INLINE buildScoped #-}
 
 instance (SinkableV v, Builder r m) => Builder r (SubstReaderT v m i) where
-  emitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
-  {-# INLINE emitDecl #-}
+  rawEmitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
+  {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (OutReaderT e m) where
   buildScoped cont = OutReaderT $ ReaderT \env ->
@@ -609,9 +603,9 @@ instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (OutReaderT e m
   {-# INLINE buildScoped #-}
 
 instance (SinkableE e, Builder r m) => Builder r (OutReaderT e m) where
-  emitDecl hint ann expr =
+  rawEmitDecl hint ann expr =
     OutReaderT $ lift $ emitDecl hint ann expr
-  {-# INLINE emitDecl #-}
+  {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (ReaderT1 e m) where
   buildScoped cont = ReaderT1 $ ReaderT \env ->
@@ -621,13 +615,13 @@ instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (ReaderT1 e m) 
   {-# INLINE buildScoped #-}
 
 instance (SinkableE e, Builder r m) => Builder r (ReaderT1 e m) where
-  emitDecl hint ann expr =
+  rawEmitDecl hint ann expr =
     ReaderT1 $ lift $ emitDecl hint ann expr
-  {-# INLINE emitDecl #-}
+  {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, HoistableState e, Builder r m) => Builder r (StateT1 e m) where
-  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
-  {-# INLINE emitDecl #-}
+  rawEmitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+  {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, HoistableState e, ScopableBuilder r m) => ScopableBuilder r (StateT1 e m) where
   buildScoped cont = StateT1 \s -> do
@@ -644,8 +638,8 @@ instance (SinkableE e, HoistableState e, HoistingTopBuilder frag m)
   {-# INLINE canHoistToTop #-}
 
 instance Builder r m => Builder r (MaybeT1 m) where
-  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
-  {-# INLINE emitDecl #-}
+  rawEmitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+  {-# INLINE rawEmitDecl #-}
 
 -- === Emits predicate ===
 

@@ -325,12 +325,12 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
       extendSubst (b@>v) $ linearizeDecls rest cont
     False -> do
       WithTangent p tf <- linearizeExpr expr
-      v <- emitAtomToNameAnn (getNameHint b) ann p
+      v <- emitDecl (getNameHint b) ann (Atom p)
       extendActiveSubst b v do
         WithTangent pRest tfRest <- linearizeDecls rest cont
         return $ WithTangent pRest do
           t <- tf
-          vt <- emitAtomToNameAnn (getNameHint b) ann t
+          vt <- emitDecl (getNameHint b) ann (Atom t)
           extendTangentArgs vt $
             tfRest
 
@@ -372,7 +372,7 @@ linearizeExpr expr = case expr of
         resultTyWithTangent <- PairTy <$> injSubstM resultTy
                                       <*> tangentFunType resultTangentType
         (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i x -> do
-          x' <- emitAtomToName noHint x
+          x' <- emit (Atom x)
           Abs b body <- return $ alts !! i
           extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do
