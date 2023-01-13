@@ -65,7 +65,7 @@ import Util (IsBool (..), bindM2, enumerate)
 data OperandSubstVal (c::C) (n::S) where
   OperandSubstVal  :: L.Operand -> OperandSubstVal ImpNameC n
   PtrSubstVal      :: L.Operand -> OperandSubstVal PtrNameC n
-  FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal ImpFunNameC   n
+  FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal TopFunNameC   n
   RenameOperandSubstVal :: Name c n -> OperandSubstVal c n -- only used for top-level FFI names
 
 type OperandEnv     = Subst     OperandSubstVal
@@ -152,7 +152,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
       [prefix <> fromString (show h) <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
 
     makeFunDefns :: EnvReader m => Nest IFunBinder any1 any2
-                 -> m n ([L.Definition], [CName], [OperandSubstVal ImpFunNameC n])
+                 -> m n ([L.Definition], [CName], [OperandSubstVal TopFunNameC n])
     makeFunDefns bs = do
       let cnames = makeNames "dex_called_fun_" $ nestToList getNameHint bs
       let tys = nestToList (\(IFunBinder _ ty) -> ty) bs
@@ -188,8 +188,6 @@ compileFunction
   => FilteredLogger PassName [Output] -> L.Name
   -> OperandEnv i o -> ImpFunction i
   -> m o ([L.Definition], S.Set ExternFunSpec, [L.Name])
-compileFunction _ _ _ (FFIFunction ty f) =
-  return ([], S.singleton (makeFunSpec f ty), [])
 compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
                 (Abs bs body)) = case cc of
   FFICC            -> error "shouldn't be trying to compile an FFI function"
@@ -502,9 +500,9 @@ compileInstr instr = case instr of
         compileIf exitCode throwRuntimeError (return ())
         return []
       RenameOperandSubstVal v -> do
-        lookupImpFun v >>= \case
-          ImpFunction _ _ -> error "Imp functions should be abstracted at this point"
-          FFIFunction ty@(IFunType cc _ impResultTys) fname -> do
+        lookupTopFun v >>= \case
+          DexTopFun _ _ _ -> error "Imp functions should be abstracted at this point"
+          FFITopFun fname ty@(IFunType cc _ impResultTys) -> do
             let resultTys = map scalarTy impResultTys
             case cc of
               FFICC -> do
@@ -703,7 +701,6 @@ impKernelToLLVMGPU env (ImpFunction _ (Abs args body)) = do
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     kernelMetaId = L.MetadataNodeID 0
     nvvmAnnotations = L.NamedMetadataDefinition "nvvm.annotations" [kernelMetaId]
-impKernelToLLVMGPU _ _ = error "not implemented"
 
 threadIdxX :: LLVMBuilder m => m Operand
 threadIdxX = emitExternCall spec []

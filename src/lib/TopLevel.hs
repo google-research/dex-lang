@@ -280,16 +280,16 @@ evalSourceBlock' mname block = case sbContents block of
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
-        vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
-        vCore <- emitBinding hint
-          $ AtomNameBinding $ TopFunBound naryPiTy $ FFITopFun vImp
+        fTop  <- emitTopFunBinding hint $ FFITopFun fname impFunTy
+        vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
   DeclareCustomLinearization fname zeros expr -> do
     lookupSourceMap fname >>= \case
       Nothing -> throw UnboundVarErr $ pprint fname
-      Just (UAtomVar fname') -> do
+      Just (UAtomVar fname'_wrong_color) -> do
+        let fname' = undefined
         lookupCustomRules fname' >>= \case
           Nothing -> return ()
           Just _  -> throw TypeErr
@@ -301,7 +301,7 @@ evalSourceBlock' mname block = case sbContents block of
               WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> return $ Var v
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
-        fType <- getType fname'
+        fType <- getType fname'_wrong_color
         (nimplicit, linFunTy) <- getLinearizationType fname zeros fType
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
@@ -558,15 +558,17 @@ evalBlock typed = do
       applyReconTop recon v
 {-# SCC evalBlock #-}
 
-evalSpecializations :: (Topper m, Mut n) => [CAtomName n] -> [SpecDictName n] -> m n ()
-evalSpecializations vs sdVs = do
-  forM_ vs \v -> do
-    lookupAtomName v >>= \case
-      TopFunBound _ (SpecializedTopFun (AppSpecialization _ _)) ->
-        queryImpCache v >>= \case
-          Nothing -> compileTopLevelFun v
-          Just _ -> return ()
-      _ -> return ()
+evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> [SpecDictName n] -> m n ()
+evalSpecializations fs sdVs = do
+  forM_ fs \f -> lookupTopFun f >>= \case
+    DexTopFun _ def Waiting -> do
+      -- Prevents infinite loop in case compiling `v` ends up requiring `v`
+      -- (even without recursion in Dex itself this is possible via the
+      -- specialization cache)
+      updateTopFunStatus f Running
+      impl <- compileTopLevelFun (getNameHint f) def
+      updateTopFunStatus f (Finished impl)
+    _ -> return ()
   forM_ sdVs \d -> do
     SpecializedDictBinding (SpecializedDict absDict@(Abs bs dict) Nothing) <- lookupEnv d
     methods <- forM [minBound..maxBound] \method -> do
@@ -606,26 +608,17 @@ execUDecl mname decl = do
   case inferenceResult of
     UDeclResultBindName ann block (Abs b sm) -> do
       result <- evalBlock block
-      result' <- case ann of
+      case ann of
         NoInlineLet -> do
           ty <- getType result
           asSpecializableFunction ty >>= \case
-            Just (n, fty) -> do
-              f <- emitBinding (getNameHint b) $
-                AtomNameBinding $ TopFunBound fty $ AwaitingSpecializationArgsTopFun n result
-              -- warm up cache if it's already sufficiently specialized
-              -- (this is actually here as a workaround for some sort of
-              -- caching/linking bug that occurs when we deserialize compilation
-              -- artifacts).
-              when (n == 0) do
-                let s = AppSpecialization f (Abs Empty (ListE []))
-                void $ emitSpecialization s
-              return $ Var f
-            Nothing -> throw TypeErr $
-              "Not a valid @noinline function type: " ++ pprint ty
-        _ -> return result
-      v <- emitTopLet (getNameHint b) ann (Atom result')
-      applyRename (b@>v) sm >>= emitSourceMap
+            Nothing -> throw TypeErr $ "Not a valid @noinline function type: " ++ pprint ty
+            Just (numReqArgs, piTy) -> do
+              f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun numReqArgs piTy result
+              applyRename (b@>f) sm >>= emitSourceMap
+        _ -> do
+          v <- emitTopLet (getNameHint b) ann (Atom result)
+          applyRename (b@>v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
       xs <- unpackTelescope result
@@ -634,16 +627,14 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => CAtomName n -> m n ()
-compileTopLevelFun fname = do
-  fCore <- specializedFunCoreDefinition fname
+compileTopLevelFun :: (Topper m, Mut n) => NameHint -> TopFunDef n -> m n (TopFunLowerings n)
+compileTopLevelFun hint fDef = do
+  fCore <- specializedFunCoreDefinition fDef
   fSimp <- simplifyTopFunction fCore
   fImp <- toImpFunction StandardCC fSimp
-  fImpName <- emitImpFunBinding (getNameHint fname) fImp
-  extendImpCache fname fImpName
-  fObj <- toCFunction (getNameHint fImpName) fImp
-  extendObjCache fImpName fObj
+  fObj <- toCFunction hint fImp
   void $ loadObject fObj
+  return $ TopFunLowerings fObj
 {-# SCC compileTopLevelFun #-}
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
@@ -683,26 +674,17 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
         destroyLinker l
   return $ NativeFunction ptr destructor
 
-specializedFunCoreDefinition :: (Topper m, Mut n) => CAtomName n -> m n (LamExpr CoreIR n)
-specializedFunCoreDefinition fname = do
-  TopFunBound _ (SpecializedTopFun s) <- lookupAtomName fname
-  case s of
-    AppSpecialization f (Abs bs staticArgs) -> do
-      f' <- forceDeferredInlining f
-      ty <- specializedFunCoreTypeTop s
-      liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
-        let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-        ListE staticArgs' <- applyRename (bs@@>extraArgs) staticArgs
-        naryApp (sink f') $ staticArgs' <> map Var originalArgs
-
--- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
--- where we eta-expand and try to simplify `App f args`, we would see `f` as a
--- "noinline" function and defer its simplification.
-forceDeferredInlining :: EnvReader m => CAtomName n -> m n (CAtom n)
-forceDeferredInlining v =
-  lookupAtomName v >>= \case
-    TopFunBound _ (AwaitingSpecializationArgsTopFun _ f) -> return f
-    _ -> return $ Var v
+specializedFunCoreDefinition :: (Topper m, Mut n) => TopFunDef n -> m n (LamExpr CoreIR n)
+specializedFunCoreDefinition s@(AppSpecialization f (Abs bs staticArgs)) = do
+  ty <- specializedFunCoreTypeTop s
+  liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
+    -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
+    -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
+    -- "noinline" function and defer its simplification.
+    NoinlineFun _ _ f' <- lookupAtomName (sink f)
+    let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
+    ListE staticArgs' <- applyRename (bs@@>extraArgs) staticArgs
+    naryApp (sink f') $ staticArgs' <> map Var originalArgs
 
 toCFunction
   :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
@@ -710,7 +692,7 @@ toCFunction nameHint impFun = do
   logger  <- getFilteredLogger
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
-  reqObjNames <- mapM impNameToObj reqFuns
+  reqObjNames <- mapM funNameToObj reqFuns
   emitObjFile nameHint obj (LinktimeNames reqObjNames reqPtrNames)
 
 getLLVMOptLevel :: EvalConfig -> LLVMOptLevel
@@ -729,7 +711,7 @@ evalLLVM block = do
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
-  reqFunPtrs  <- forM reqFuns impNameToPtr
+  reqFunPtrs  <- forM reqFuns funNameToPtr
   reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
   dyvarStores <- getRuntimeEnv
   benchRequired <- requiresBench <$> getPassCtx
@@ -741,23 +723,25 @@ evalLLVM block = do
   repValFromFlatList resultTy resultVals
 {-# SCC evalLLVM #-}
 
-compileToObjCode
-  :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
+compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
 compileToObjCode astWithNames = forM astWithNames \ast -> do
   logger  <- getFilteredLogger
   opt <- getLLVMOptLevel <$> getConfig
   liftIO $ compileLLVM logger opt ast (cniMainFunName astWithNames)
 
-impNameToPtr :: (Topper m, Mut n) => ImpFunName n -> m n (FunPtr ())
-impNameToPtr v = nativeFunPtr <$> (loadObject =<< impNameToObj v)
+funNameToPtr :: (Topper m, Mut n) => ImpFunName n -> m n (FunPtr ())
+funNameToPtr v = nativeFunPtr <$> (loadObject =<< funNameToObj v)
 
-impNameToObj
+funNameToObj
   :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
-impNameToObj v = do
-  queryObjCache v >>= \case
-    Just v' -> return v'
-    Nothing -> throw CompilerErr
-      $ "Expected to find an object cache entry for: " ++ pprint v
+funNameToObj v = do
+  lookupEnv v >>= \case
+    TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ topFunObjCode impl
+    b -> error $ "couldn't find object cache entry: " ++ pprint b
+  -- queryObjCache v >>= \case
+  --   Just v' -> return v'
+  --   Nothing -> throw CompilerErr
+  --     $ "Expected to find an object cache entry for: " ++ pprint v
 
 withCompileTime :: MonadIO m => m Result -> m Result
 withCompileTime m = do

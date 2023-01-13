@@ -367,6 +367,10 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
   App f xs -> do
     xs' <- mapM simplifyAtom xs
     simplifyApp hint f xs'
+  TopApp f xs -> do
+    f' <- substM f
+    xs' <- forM xs \x -> toDataAtomIgnoreRecon =<< simplifyAtom x
+    liftSimpAtom Nothing =<< naryTopApp f' xs'
   TabApp f xs -> do
     xs' <- mapM simplifyAtom xs
     simplifyTabApp hint f xs'
@@ -524,19 +528,20 @@ simplifyApp hint f xs =
         fTy <- getType atom
         resultTy <- getAppType fTy $ toList xs
         lookupAtomName v >>= \case
-          TopFunBound _ (AwaitingSpecializationArgsTopFun numSpecializationArgs _) ->
+          NoinlineFun numSpecializationArgs _ _ ->
             case splitAtExact numSpecializationArgs (toList xs) of
               Just (specializationArgs, runtimeArgs) -> do
                 (spec, extraArgs) <- determineSpecializationSpec v specializationArgs
                 ab <- getSpecializedFunction spec
                 Just specializedFunction <- emitHoistedEnv ab
                 allArgs <- mapM toDataAtomIgnoreRecon (extraArgs ++ runtimeArgs)
-                liftSimpAtom (Just resultTy) =<< naryAppHinted hint (Var specializedFunction) allArgs
+                liftSimpAtom (Just resultTy) =<< naryTopApp specializedFunction allArgs
               Nothing -> error $ "Specialization of " ++ pprint atom ++
                 " requires saturated application of specialization args."
-          _ -> do
-            xs' <- mapM toDataAtomIgnoreRecon xs
-            liftSimpAtom (Just resultTy) =<< naryAppHinted hint (Var v) (toList xs')
+          FFIFunBound _ f' -> do
+            xs' <- mapM toDataAtomIgnoreRecon $ toList xs
+            liftSimpAtom Nothing =<< naryTopApp f' xs'
+          b -> error $ "Should only have noinline functions left " ++ pprint b
       _ -> error $ "Unexpected function: " ++ pprint atom
 
     simplifyFuncAtom :: Atom CS i -> SimplifyM i o (Either (LamExpr CS i, Arrow, EffAbs CS i) (Atom CS o))
@@ -565,9 +570,10 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
       -- and are inside a linearization operation.
       ask >>= \case
         WillLinearize -> do
-          lookupCustomRules v >>= \case
-            Just (CustomLinearize _ _ _) -> return $ Var v
-            Nothing -> doInline
+          doInline
+          -- lookupCustomRules v >>= \case
+          --   Just (CustomLinearize _ _ _) -> return $ Var v
+          --   Nothing -> doInline
         NoLinearize -> doInline
       where
         doInline = do
@@ -579,27 +585,25 @@ determineSpecializationSpec
   :: EnvReader m => AtomName CS n -> [Atom CS n] -> m n (SpecializationSpec n, [Atom CS n])
 determineSpecializationSpec fname staticArgs = do
   lookupAtomName fname >>= \case
-    TopFunBound (NaryPiType bs _ _) _ -> do
+    NoinlineFun _ (NaryPiType bs _ _) _ -> do
       (PairB staticArgBinders _) <- return $
         splitNestAt (length staticArgs) bs
       (ab, extraArgs) <- generalizeArgs staticArgBinders staticArgs
       return (AppSpecialization fname ab, extraArgs)
     _ -> error "should only be specializing top functions"
 
-getSpecializedFunction :: EnvReader m => SpecializationSpec n -> m n (Abs TopEnvFrag SAtomName n)
+getSpecializedFunction :: EnvReader m => SpecializationSpec n -> m n (Abs TopEnvFrag TopFunName n)
 getSpecializedFunction s = do
   querySpecializationCache s >>= \case
     Just name -> return $ Abs emptyOutFrag name
     _ -> liftTopBuilderHoisted $ emitSpecialization (sink s)
 
-emitSpecialization
-  :: (Mut n, TopBuilder m)
-  => SpecializationSpec n -> m n (AtomName r n)
+emitSpecialization :: (Mut n, TopBuilder m) => SpecializationSpec n -> m n (TopFunName n)
 emitSpecialization s = do
   let hint = getNameHint s
   specializedTy <- liftSimplifyM $ specializedFunSimpType (sink s)
-  let binding = TopFunBound specializedTy $ SpecializedTopFun s
-  name <- emitBinding hint $ toBinding binding
+  let binding = TopFunBinding $ DexTopFun specializedTy s Waiting
+  name <- emitBinding hint binding
   extendSpecializationCache s name
   return name
 
@@ -612,7 +616,7 @@ specializedFunCoreType :: SpecializationSpec n -> SimplifyM i n (NaryPiType Core
 specializedFunCoreType (AppSpecialization f ab) = do
   refreshAbs ab \extraArgBs (ListE staticArgs) -> do
     lookupAtomName (sink f) >>= \case
-      TopFunBound fTy _ -> do
+      NoinlineFun _ fTy _ -> do
         NaryPiType dynArgBs effs resultTy <- instantiateNaryPi fTy staticArgs
         let allBs = fmapNest plainPiBinder extraArgBs >>> dynArgBs
         return $ NaryPiType allBs effs resultTy

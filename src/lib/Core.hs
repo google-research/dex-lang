@@ -315,9 +315,9 @@ lookupCustomRules name = liftM fromMaybeE $ withEnv $
   toMaybeE . M.lookup name . customRulesMap . envCustomRules . topEnv
 {-# INLINE lookupCustomRules #-}
 
-lookupImpFun :: EnvReader m => ImpFunName n -> m n (ImpFunction n)
-lookupImpFun name = lookupEnv name >>= \case ImpFunBinding f -> return f
-{-# INLINE lookupImpFun #-}
+lookupTopFun :: EnvReader m => TopFunName n -> m n (TopFun n)
+lookupTopFun name = lookupEnv name >>= \case TopFunBinding f -> return f
+{-# INLINE lookupTopFun #-}
 
 lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = lookupEnv name >>= \case ModuleBinding m -> return m

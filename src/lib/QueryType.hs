@@ -19,7 +19,7 @@ module QueryType (
   ixDictType, getSuperclassDicts,
   ixTyFromDict, instantiateHandlerType, getDestBlockType,
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
-  rawStrType, rawFinTabType
+  rawStrType, rawFinTabType, getTypeTopFun,
   ) where
 
 import Control.Monad
@@ -33,6 +33,7 @@ import qualified Data.Set        as S
 import Types.Primitives
 import Types.Core
 import Types.Source
+import Types.Imp
 import IRVariants
 import Core
 import CheapReduction
@@ -426,6 +427,10 @@ instance HasType r (Expr r) where
     App f xs -> do
       fTy <- getTypeE f
       typeApp fTy $ toList xs
+    TopApp f xs -> do
+      NaryPiType bs _ resultTy <- getTypeTopFun =<< substM f
+      xs' <- mapM substM xs
+      applySubst (bs @@> map SubstVal xs') resultTy
     TabApp f xs -> do
       fTy <- getTypeE f
       typeTabApp fTy xs
@@ -635,6 +640,26 @@ labeledRowDifference' (Ext (LabeledItems items) rest)
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
 
+getTypeTopFun :: EnvReader m => TopFunName n -> m n (NaryPiType r n)
+getTypeTopFun f = lookupTopFun f >>= \case
+  -- TODO: figure out the story with IR variants
+  DexTopFun piTy _ _ -> return $ unsafeCoerceIRE piTy
+  FFITopFun _ iTy -> liftIFunType iTy
+
+liftIFunType :: EnvReader m => IFunType -> m n (NaryPiType r n)
+liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
+  go :: [BaseType] -> EnvReaderM n (NaryPiType r n)
+  go = \case
+    [] -> return $ NaryPiType Empty (OneEffect IOEffect) resultTy
+      where resultTy = case resultTys of
+              [] -> UnitTy
+              [t] -> BaseTy t
+              [t1, t2] -> PairTy (BaseTy t1) (BaseTy t2)
+              _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
+    t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
+      NaryPiType bs effs resultTy <- go ts
+      return $ NaryPiType (Nest (PiBinder b (BaseTy t) PlainArrow) bs) effs resultTy
+
 getTypeHof :: Hof r i -> TypeQueryM r i o (Type r o)
 getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ dict f -> do
@@ -734,6 +759,10 @@ exprEffects expr = case expr of
         applySubst subst effs
       Nothing -> error $
         "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint expr
+  TopApp f xs -> do
+    NaryPiType bs effs _ <- getTypeTopFun =<< substM f
+    xs' <- mapM substM xs
+    applySubst (bs @@> fmap SubstVal xs') effs
   TabApp _ _ -> return Pure
   RefOp ref m -> do
     h <- getMaybeHeapVar <$> getTypeSubst ref

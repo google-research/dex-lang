@@ -225,6 +225,7 @@ instance HasOCC (Name DataDefNameC ) where occ _ n = return n
 instance HasOCC (Name EffectNameC  ) where occ _ n = return n
 instance HasOCC (Name InstanceNameC) where occ _ n = return n
 instance HasOCC (Name ClassNameC   ) where occ _ n = return n
+instance HasOCC (Name TopFunNameC  ) where occ _ n = return n
 instance HasOCC (Name SpecializedDictNameC) where occ _ n = return n
 
 instance HasOCC SBlock where

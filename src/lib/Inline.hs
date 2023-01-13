@@ -400,6 +400,8 @@ instance Inlinable (Name HandlerNameC) where
   inline ctx n = substM n >>= reconstruct ctx
 instance Inlinable (Name SpecializedDictNameC) where
   inline ctx n = substM n >>= reconstruct ctx
+instance Inlinable (Name TopFunNameC) where
+  inline ctx n = substM n >>= reconstruct ctx
 
 instance Inlinable e => Inlinable (ComposeE PrimOp e) where
   inline ctx (ComposeE op) =

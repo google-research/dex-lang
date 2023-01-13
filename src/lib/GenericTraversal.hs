@@ -71,6 +71,7 @@ class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, Hoistab
 traverseExprDefault :: Emits o => GenericTraverser r f s => Expr r i -> GenericTraverserM r f s i o (Expr r o)
 traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   App g xs -> App <$> tge g <*> mapM tge xs
+  TopApp f xs -> TopApp <$> substM f <*> mapM tge xs
   TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
   PrimOp  op -> PrimOp <$> mapM tge op

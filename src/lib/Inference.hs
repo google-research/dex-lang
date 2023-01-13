@@ -424,8 +424,9 @@ zonkAtomBindingWithOutMap outMap = \case
  IxBound     e -> IxBound     $ zonkWithOutMap outMap e
  MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
  SolverBound e -> SolverBound $ zonkWithOutMap outMap e
- TopFunBound t e -> TopFunBound t e
  TopDataBound e  -> TopDataBound e
+ NoinlineFun n x y -> NoinlineFun n (zonkWithOutMap outMap x) (zonkWithOutMap outMap y)
+ FFIFunBound x y -> FFIFunBound (zonkWithOutMap outMap x) (zonkWithOutMap outMap y)
 
 -- TODO: Wouldn't it be faster to carry the set of inference-emitted names in the out map?
 hasInferenceVars :: (EnvReader m, HoistableE e) => e n -> m n Bool

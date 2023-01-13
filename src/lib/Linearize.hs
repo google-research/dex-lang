@@ -23,7 +23,6 @@ import Subst
 import PPrint
 import QueryType
 import Types.Core
-import Types.Source
 import Types.Primitives
 import Util (bindM2)
 
@@ -308,12 +307,12 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
 linearizeExpr :: Emits o => SExpr i -> LinM i o (Atom CS) (Atom CS)
 linearizeExpr expr = case expr of
   Atom x -> linearizeAtom x
-  App (Var f) xs -> do
-    f' <- renameM f
-    lookupCustomRules f' >>= \case
-      Nothing -> error "not implemented"
-      Just rule -> applyCustomLinearization rule (toList xs)
-  App _ _ -> error "not implemented"
+  TopApp _ _ -> undefined
+  -- TopApp f xs -> do
+  --   f' <- renameM f
+  --   lookupCustomRules f' >>= \case
+  --     Nothing -> error "not implemented"
+  --     Just rule -> applyCustomLinearization rule (toList xs)
   TabApp x idxs -> do
     zipLin (linearizeAtom x) (pureLin $ ListE $ map injectCS $ toList idxs) `bindLin`
       \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
@@ -552,8 +551,8 @@ linearizeHof hof = case hof of
     return $ WithTangent ans $ applyLinToTangents (sink linLam)
   _ -> error $ "not implemented: " ++ pprint hof
 
-applyCustomLinearization :: Emits o => AtomRules o -> [SAtom i] -> LinM i o CAtom CAtom
-applyCustomLinearization = undefined
+_applyCustomLinearization :: Emits o => AtomRules o -> [SAtom i] -> LinM i o CAtom CAtom
+_applyCustomLinearization = undefined
 -- applyCustomLinearization (CustomLinearize n zeros cl) xs = do
 --   let (polyXs, argXs) = splitAt n $ toList xs
 --   polyXs' <- mapM (renameM . injectCore) polyXs

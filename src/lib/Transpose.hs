@@ -159,9 +159,9 @@ isLinEff _ = error "Can't transpose polymorphic effects"
 transposeExpr :: Emits o => SExpr i -> SAtom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
   Atom atom     -> transposeAtom atom ct
+  TopApp _ _ -> error "transposition for standalone functions not implemented"
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
-  App _ _ -> error "shouldn't have App left"
   TabApp x is -> do
     is' <- mapM substNonlin is
     case x of
@@ -275,7 +275,7 @@ transposeAtom atom ct = case atom of
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   PtrVar _        -> notTangent
-  ProjectElt (ProjectProduct i) v -> undefined
+  ProjectElt (ProjectProduct _) _ -> undefined
   -- TODO: need to handle table/tuple projection together
 --     lookupSubstM v >>= \case
 --       RenameNonlin _ -> error "an error, probably"

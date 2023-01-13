@@ -80,6 +80,12 @@ getNaryLamImpArgTypesWithCC _ t = do
   (argTyss, destTys) <- getNaryLamImpArgTypes t
   return $ concat argTyss ++ destTys
 
+getImpFunType :: EnvReader m => CallingConvention -> NaryPiType SimpToImpIR n -> m n IFunType
+getImpFunType StandardCC piTy = do
+  argTys <- getNaryLamImpArgTypesWithCC StandardCC piTy
+  return $ IFunType StandardCC argTys []
+getImpFunType cc _ = error $ "unsupported calling convention: " ++ pprint cc
+
 interpretImpArgsWithCC
   :: Emits n => CallingConvention -> NaryPiType SimpToImpIR n
   -> [IExpr n] -> SubstImpM i n ([SIAtom n], Dest n)
@@ -278,25 +284,17 @@ translateDeclNest decls cont = do
 translateExpr :: forall i o. Emits o => MaybeDest o -> SIExpr i -> SubstImpM i o (SIAtom o)
 translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   Hof hof -> toImpHof maybeDest hof
-  App f' xs' -> do
+  TopApp f' xs' -> do
     f <- substM f'
     xs <- mapM substM xs'
-    case f of
-      Var v -> lookupAtomName v >>= \case
-        TopFunBound _ (FFITopFun v') -> do
-          resultTy <- getType $ App f xs
-          scalarArgs <- liftM toList $ mapM fromScalarAtom xs
-          results <- impCall v' scalarArgs
-          restructureScalarOrPairType resultTy results
-        TopFunBound piTy (SpecializedTopFun specializationSpec) -> do
-          if length (toList xs') /= numNaryPiArgs piTy
-            then notASimpExpr
-            else case specializationSpec of
-              AppSpecialization _ _ -> do
-                Just fImp <- queryImpCache v
-                emitCall maybeDest piTy fImp $ toList xs
-        _ -> notASimpExpr
-      _ -> notASimpExpr
+    lookupTopFun f >>= \case
+      DexTopFun piTy _ _ ->
+        emitCall maybeDest (injectIRE piTy) f $ toList xs
+      FFITopFun _ _ -> do
+        resultTy <- getType $ TopApp f xs
+        scalarArgs <- liftM toList $ mapM fromScalarAtom xs
+        results <- impCall f scalarArgs
+        restructureScalarOrPairType resultTy results
   TabApp f' xs' -> do
     xs <- mapM substM xs'
     f <- atomToRepVal =<< substM f'
@@ -364,7 +362,6 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
       storeAtom ithDest row'
     loadAtom dest
   where
-    notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> storeAtom dest atom >> return atom
@@ -1426,13 +1423,15 @@ appSpecializedIxMethod simpLam args = do
 
 abstractLinktimeObjects
   :: forall m n. EnvReader m
-  => ImpFunction n -> m n (ClosedImpFunction n, [ImpFunName n], [PtrName n])
+  => ImpFunction n -> m n (ClosedImpFunction n, [TopFunName n], [PtrName n])
 abstractLinktimeObjects f = do
   let allVars = freeVarsE f
-  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @ImpFunNameC allVars) \v ->
-    lookupImpFun v <&> \case
-      ImpFunction ty _ -> Just (v, ty)
-      FFIFunction _ _ -> Nothing
+  (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @TopFunNameC allVars) \v ->
+    lookupTopFun v >>= \case
+      DexTopFun ty _ _ -> do
+        ty' <- getImpFunType StandardCC (injectIRE ty)
+        return $ Just (v, ty')
+      FFITopFun _ _ -> return Nothing
   (ptrVars, ptrTys) <- unzip <$> forMFilter (nameSetToList @PtrNameC allVars) \v -> do
     (ty, _) <- lookupPtrName v
     return $ Just (v, ty)
@@ -1451,7 +1450,6 @@ toIVectorType = \case
 
 impFunType :: ImpFunction n -> IFunType
 impFunType (ImpFunction ty _) = ty
-impFunType (FFIFunction ty _) = ty
 
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
@@ -1481,9 +1479,11 @@ impInstrTypes instr = case instr of
   IVectorIota vty        -> return [vty]
   DebugPrint _ _  -> return []
   IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
-  ICall f _ -> do
-    IFunType _ _ resultTys <- impFunType <$> lookupImpFun f
-    return resultTys
+  ICall f _ -> lookupTopFun f >>= \case
+    DexTopFun piTy _ _ -> do
+      IFunType _ _ resultTys <- getImpFunType StandardCC (injectIRE piTy)
+      return resultTys
+    FFITopFun _ (IFunType _ _ resultTys) -> return resultTys
   ISelect  _ x  _  -> return [getIType x]
   IPtrLoad ref -> return [ty]  where PtrType (_, ty) = getIType ref
   IPtrOffset ref _ -> return [PtrType (addr, ty)]  where PtrType (addr, ty) = getIType ref
@@ -1523,7 +1523,6 @@ confuseGHC = getDistinct
 -- To use: put something like this in an appropriate place in `TopLevel.hs`
 --    let fImp = addImpTracing (pprint fname ++ " %x\n") impFun' fImp'
 addImpTracing :: String -> ImpFunction n -> ImpFunction n
-addImpTracing _ f@(FFIFunction _ _) = f
 addImpTracing fmt (ImpFunction ty (Abs bs body)) =
   ImpFunction ty (Abs bs (evalState (go REmpty body) 0))
  where

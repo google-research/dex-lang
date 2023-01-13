@@ -35,7 +35,7 @@ import Types.Primitives
 
 type ImpName = Name ImpNameC
 
-type ImpFunName = Name ImpFunNameC
+type ImpFunName = Name TopFunNameC
 data IExpr n = ILit LitVal
              | IVar (ImpName n) BaseType
              | IPtrVar (Name PtrNameC n) PtrType
@@ -50,7 +50,6 @@ type Size = IExpr
 type IVectorType = BaseType -- has to be a vector type
 
 type IFunName = String
-
 type IFunVar = (IFunName, IFunType)
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
                 deriving (Show, Eq, Generic)
@@ -78,10 +77,8 @@ data CallingConvention =
  | MCThreadLaunch
    deriving (Show, Eq, Generic)
 
-data ImpFunction n =
-   ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
- | FFIFunction IFunType IFunName
-   deriving (Show, Generic)
+data ImpFunction n = ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
+     deriving (Show, Generic)
 
 data ImpBlock n where
   ImpBlock :: Nest ImpDecl n l -> [IExpr l] -> ImpBlock n
@@ -150,7 +147,7 @@ data WithCNameInterface a = WithCNameInterface
 type RawObjCode = BS.ByteString
 type FunObjCode = WithCNameInterface RawObjCode
 
-data IFunBinder n l = IFunBinder (NameBinder ImpFunNameC n l) IFunType
+data IFunBinder n l = IFunBinder (NameBinder TopFunNameC n l) IFunType
 
 -- Imp function with link-time objects abstracted out, suitable for standalone
 -- compilation. TODO: enforce actual `VoidS` as the scope parameter.
@@ -165,11 +162,11 @@ data PtrBinder n l = PtrBinder (NameBinder PtrNameC n l) PtrType
 data LinktimeNames n = LinktimeNames [Name FunObjCodeNameC n] [Name PtrNameC n]  deriving (Show, Generic)
 data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]                        deriving (Show, Generic)
 
-instance BindsAtMostOneName IFunBinder ImpFunNameC where
+instance BindsAtMostOneName IFunBinder TopFunNameC where
   IFunBinder b _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName IFunBinder ImpFunNameC where
+instance BindsOneName IFunBinder TopFunNameC where
   binderName (IFunBinder b _) = binderName b
   {-# INLINE binderName #-}
 
@@ -177,7 +174,7 @@ instance HasNameHint (IFunBinder n l) where
   getNameHint (IFunBinder b _) = getNameHint b
 
 instance GenericB IFunBinder where
-  type RepB IFunBinder = BinderP ImpFunNameC (LiftE IFunType)
+  type RepB IFunBinder = BinderP TopFunNameC (LiftE IFunType)
   fromB (IFunBinder b ty) = b :> LiftE ty
   toB   (b :> LiftE ty) = IFunBinder b ty
 
@@ -399,17 +396,11 @@ instance ProvesExt  ImpDecl
 instance BindsNames ImpDecl
 
 instance GenericE ImpFunction where
-  type RepE ImpFunction = EitherE2 (LiftE IFunType `PairE` Abs (Nest IBinder) ImpBlock)
-                                   (LiftE (IFunType, IFunName))
-  fromE f = case f of
-    ImpFunction ty ab   -> Case0 $ LiftE ty `PairE` ab
-    FFIFunction ty name -> Case1 $ LiftE (ty, name)
+  type RepE ImpFunction = LiftE IFunType `PairE` Abs (Nest IBinder) ImpBlock
+  fromE (ImpFunction ty ab) =LiftE ty `PairE` ab
   {-# INLINE fromE #-}
 
-  toE f = case f of
-    Case0 (LiftE ty `PairE` ab) -> ImpFunction ty ab
-    Case1 (LiftE (ty, name))    -> FFIFunction ty name
-    _ -> error "impossible"
+  toE (LiftE ty `PairE` ab) = ImpFunction ty ab
   {-# INLINE toE #-}
 
 instance SinkableE ImpFunction

@@ -20,7 +20,7 @@ module Builder (
   select, getUnpacked, emitUnpacked, unwrapNewtype,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef,
   naryApp, naryAppHinted,
-  tabApp, naryTabApp, naryTabAppHinted,
+  tabApp, naryTopApp, naryTabApp, naryTabAppHinted,
   indexRef, naryIndexRef,
   ptrOffset, unsafePtrLoad,
   getClassDef, getDataCon,
@@ -36,12 +36,11 @@ module Builder (
   TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
   runTopBuilderT, TopBuilder2, emitBindingDefault,
   emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
-  emitTopLet, emitImpFunBinding, emitAtomRules,
+  emitTopLet, emitTopFunBinding, updateTopFunStatus, lookupTopFun, emitAtomRules,
   lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
-  extendImpCache, queryImpCache, finishSpecializedDict,
+  finishSpecializedDict,
   extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
-  queryIxDictCache,
-  extendObjCache, queryObjCache,
+  queryIxDictCache, queryObjCache,
   TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
   fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
@@ -325,7 +324,7 @@ addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m 
 addInstanceSynthCandidate className instanceName =
   emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
 
-emitAtomRules :: TopBuilder m => AtomName r n -> AtomRules n -> m n ()
+emitAtomRules :: TopBuilder m => AtomName CoreIR n -> AtomRules n -> m n ()
 emitAtomRules v rules = emitNamelessEnv $
   TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v rules }
 
@@ -334,8 +333,12 @@ emitTopLet hint letAnn expr = do
   ty <- getType expr
   emitBinding hint $ AtomNameBinding $ LetBound (DeclBinding letAnn ty expr)
 
-emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
-emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
+emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFun n -> m n (TopFunName n)
+emitTopFunBinding hint f = emitBinding hint $ TopFunBinding f
+
+updateTopFunStatus :: (Mut n, TopBuilder m) => TopFunName n -> EvalStatus (TopFunLowerings n) -> m n ()
+updateTopFunStatus f status =
+  emitPartialTopEnvFrag $ mempty {fragTopFunUpdates = toSnocList [(f, status)]}
 
 bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
 bindModule sourceName internalName = do
@@ -360,20 +363,11 @@ extendLoadedObjects name ptr = do
 extendCache :: TopBuilder m => Cache n -> m n ()
 extendCache cache = emitPartialTopEnvFrag $ mempty {fragCache = cache}
 
-extendImpCache :: TopBuilder m => AtomName r n -> ImpFunName n -> m n ()
-extendImpCache fSimp fImp =
-  extendCache $ mempty { impCache = eMapSingleton fSimp fImp }
-
-queryImpCache :: EnvReader m => AtomName r n -> m n (Maybe (ImpFunName n))
-queryImpCache v = do
-  cache <- impCache <$> getCache
-  return $ lookupEMap cache v
-
-extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> AtomName r n -> m n ()
+extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> TopFunName n -> m n ()
 extendSpecializationCache specialization f =
   extendCache $ mempty { specializationCache = eMapSingleton specialization f }
 
-querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (AtomName r n))
+querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (TopFunName n))
 querySpecializationCache specialization = do
   cache <- specializationCache <$> getCache
   return $ lookupEMap cache specialization
@@ -387,14 +381,10 @@ finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [LamExpr Sim
 finishSpecializedDict name methods =
   emitPartialTopEnvFrag $ mempty {fragFinishSpecializedDict = toSnocList [(name, methods)]}
 
-extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> FunObjCodeName n -> m n ()
-extendObjCache fImp fObj =
-  extendCache $ mempty { objCache = eMapSingleton fImp fObj }
-
-queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (FunObjCodeName n))
-queryObjCache v = do
-  cache <- objCache <$> getCache
-  return $ lookupEMap cache v
+queryObjCache :: EnvReader m => TopFunName n -> m n (Maybe (FunObjCodeName n))
+queryObjCache v = lookupEnv v >>= \case
+  TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
+  _ -> return Nothing
 
 emitObjFile
   :: (Mut n, TopBuilder m)
@@ -879,7 +869,7 @@ buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
     return $ EmptyAbs $ BinaryNest (b1:>t1) (b2:>sink t2)
   buildNaryLamExpr bs \[v1, v2] -> cont v1 v2
 
-asNaryLam :: EnvReader m => NaryPiType r n -> Atom r n -> m n (LamExpr r n)
+asNaryLam :: (HasCore r, EnvReader m) => NaryPiType r n -> Atom r n -> m n (LamExpr r n)
 asNaryLam ty f = liftBuilder do
   buildNaryLamExprFromPi ty \xs ->
     naryApp (sink f) (map Var $ toList xs)
@@ -1295,14 +1285,18 @@ unwrapNewtype (NewtypeCon _ x) = x
 unwrapNewtype x = ProjectElt UnwrapNewtype x
 {-# INLINE unwrapNewtype #-}
 
-app :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+app :: (HasCore r, Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 app x i = Var <$> emit (App x (i:|[]))
 
-naryApp :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
+naryApp :: (HasCore r, Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
 naryApp = naryAppHinted noHint
 {-# INLINE naryApp #-}
 
-naryAppHinted :: (Builder r m, Emits n)
+naryTopApp :: (Builder r m, Emits n) => TopFunName n -> [Atom r n] -> m n (Atom r n)
+naryTopApp f xs = emitExpr $ TopApp f xs
+{-# INLINE naryTopApp #-}
+
+naryAppHinted :: (HasCore r, Builder r m, Emits n)
   => NameHint -> Atom r n -> [Atom r n] -> m n (Atom r n)
 naryAppHinted hint f xs = case nonEmpty xs of
   Nothing -> return f
@@ -1639,7 +1633,7 @@ applyFloatBinOp f x y = case (x, y) of
   _ -> error "Expected float atoms"
 
 _applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n
-_applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
+_applyFloatUnOp f x = applyFloatBinOp (\_ -> f) (error "shouldn't be needed") x
 
 -- === singleton types ===
 

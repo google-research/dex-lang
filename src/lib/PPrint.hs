@@ -160,6 +160,7 @@ instance Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr r n) where
   prettyPrec (Atom x) = prettyPrec x
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
+  prettyPrec (TopApp f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
@@ -470,15 +471,9 @@ instance Pretty (AtomBinding r n) where
     IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    TopFunBound _ f -> p f
+    FFIFunBound s _ -> p s
+    NoinlineFun _ ty _ -> "Top function with type: " <+> p ty
     TopDataBound (RepVal ty _) -> "Top data with type: " <+> p ty
-
-instance Pretty (TopFunBinding n) where
-  pretty = \case
-    AwaitingSpecializationArgsTopFun _ f -> p f
-    SpecializedTopFun f -> p f
-    LoweredTopFun     f -> p f
-    FFITopFun  f -> p f
 
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
@@ -508,7 +503,7 @@ instance Pretty (Binding s n) where
     ClassBinding    classDef -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
     MethodBinding className idx _ -> "Method" <+> pretty idx <+> "of" <+> pretty className
-    ImpFunBinding f -> pretty f
+    TopFunBinding f -> pretty f
     FunObjCodeBinding _ _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding   _ _ -> "<ptr>"
@@ -857,7 +852,7 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _ _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
@@ -888,11 +883,24 @@ instance Pretty IFunType where
   pretty (IFunType cc argTys retTys) =
     "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
 
+instance Pretty (TopFun n) where
+  pretty = \case
+    DexTopFun ty def lowering ->
+      "Top-level Function"
+         <> hardline <+> "definition:" <+> pretty def
+         <> hardline <+> "lowering:" <+> pretty lowering
+    FFITopFun f _ -> p f
+
+instance Pretty a => Pretty (EvalStatus a) where
+  pretty = \case
+    Waiting    -> "<waiting>"
+    Running    -> "<running>"
+    Finished a -> pretty a
+
 instance Pretty (ImpFunction n) where
   pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
     "impfun" <+> p cc <+> prettyBinderNest bs
     <> nest 2 (hardline <> p body) <> hardline
-  pretty (FFIFunction _ f) = p f
 
 instance Pretty (ImpBlock n)  where
   pretty (ImpBlock Empty []) = mempty

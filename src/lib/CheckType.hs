@@ -171,8 +171,7 @@ instance Color c => CheckableE (Binding c) where
     ClassBinding      classDef          -> ClassBinding      <$> renameM classDef
     InstanceBinding   instanceDef       -> InstanceBinding   <$> renameM instanceDef
     MethodBinding     className idx f   -> MethodBinding     <$> renameM className   <*> pure idx <*> renameM f
-    ImpFunBinding     f                 -> ImpFunBinding     <$> renameM f
-    FunObjCodeBinding objfile m         -> FunObjCodeBinding <$> pure objfile <*> renameM m
+    TopFunBinding     f                 -> TopFunBinding     <$> renameM f
     ModuleBinding     md                -> ModuleBinding     <$> renameM md
     PtrBinding        ty ptr            -> PtrBinding        <$> return ty <*> return ptr
     -- TODO(alex): consider checkE below?
@@ -190,18 +189,7 @@ instance CheckableE (AtomBinding r) where
     IxBound  ixTy       -> IxBound     <$> checkE ixTy
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
-    TopDataBound val -> TopDataBound <$> renameM val
-    TopFunBound ty f -> do
-      ty' <- renameM ty
-      TopFunBound ty' <$> case f of
-        AwaitingSpecializationArgsTopFun n f' -> do
-          f'' <- checkTypeE (naryPiTypeAsType $ unsafeCoerceIRE ty') f'
-          return $ AwaitingSpecializationArgsTopFun n f''
-        SpecializedTopFun _ -> renameM f
-        LoweredTopFun f' -> LoweredTopFun <$> renameM f'
-        FFITopFun name -> do
-          _ <- checkFFIFunTypeM ty'
-          FFITopFun <$> renameM name
+    TopDataBound val    -> TopDataBound <$> renameM val
 
 instance CheckableE (SolverBinding r) where
   checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
