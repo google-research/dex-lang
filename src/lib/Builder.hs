@@ -6,59 +6,8 @@
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
-module Builder (
-  emit, emitHinted, emitOp, emitExpr, emitUnOp,
-  buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
-  buildScopedAssumeNoDecls,
-  Builder2, BuilderM, ScopableBuilder2,
-  liftBuilderT, buildBlock, withType, absToBlock,
-  makeBlockFromDecls, app, add, mul, sub, neg, div',
-  iadd, imul, isub, idiv, ilt, ieq, irem,
-  fpow, flog, fLitLike, buildPureNaryLam, emitMethod,
-  select, getUnpacked, emitUnpacked, unwrapNewtype,
-  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef,
-  naryApp, naryAppHinted,
-  tabApp, naryTopApp, naryTabApp, naryTabAppHinted,
-  indexRef, naryIndexRef,
-  ptrOffset, unsafePtrLoad,
-  getClassDef, getDataCon,
-  Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
-  buildLam, buildTabLam,
-  buildAbs, buildNaryAbs, buildUnaryLamExpr,
-  buildNaryLamExpr, buildNaryLamExprFromPi, asNaryLam,
-  buildAlt, buildUnaryAtomAlt,
-  emitDataDef, emitClassDef, emitInstanceDef, emitDataConName, emitTyConName,
-  emitEffectDef, emitHandlerDef, emitEffectOpDef,
-  buildCase, emitIf, emitMaybeCase, buildSplitCase,
-  emitBlock, emitDecls, BuilderEmissions, emitExprToAtom, emitAtomToName,
-  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith,
-  runTopBuilderT, TopBuilder2, emitBindingDefault,
-  emitSourceMap, emitSynthCandidates, addInstanceSynthCandidate,
-  emitTopLet, emitTopFunBinding, updateTopFunStatus, lookupTopFun, emitAtomRules,
-  lookupLoadedModule, bindModule, extendCache, lookupLoadedObject, extendLoadedObjects,
-  finishSpecializedDict,
-  extendSpecializationCache, querySpecializationCache, getCache, emitObjFile, lookupPtrName,
-  queryIxDictCache, queryObjCache,
-  TopEnvFrag (..), emitPartialTopEnvFrag, emitLocalModuleEnv,
-  fabricateEmitsEvidence, fabricateEmitsEvidenceM,
-  singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  liftBuilder, liftEmitBuilder, makeBlock, absToBlockInferringTypes,
-  ordinal, indexSetSize, unsafeFromOrdinal, projectIxFinMethod,
-  unpackTelescope,
-  emitRunWriter, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
-  zeroAt, zeroLike, maybeTangentType, tangentType,
-  addTangent, tangentBaseMonoidFor,
-  buildEffLam, catMaybesE, runMaybeWhile,
-  buildNullaryPi, buildNaryPi,
-  HoistingTopBuilder (..), liftTopBuilderHoisted,
-  DoubleBuilderT (..), DoubleBuilder, liftDoubleBuilderT,
-  liftDoubleBuilderTNoEmissions, runDoubleBuilderT, toposortAnnVars,
-  buildTelescopeVal, localVarsAndTypeVars, buildTelescopeTy,
-  isSingletonType, singletonTypeVal, telescopicCapture, ReconAbs,
-  unsafeFromOrdinalCore, ordinalCore, indexSetSizeCore
-  ) where
+module Builder where
 
 import Control.Applicative
 import Control.Monad
@@ -843,7 +792,7 @@ buildNaryAbs (Abs n UnitE) body = do
 buildNaryAbsRec
   :: (BindsOneAtomName r b, BindsEnv b, RenameB b)
   => [AtomName r n] -> Nest b n l -> BuilderM r n (Abs (Nest b) (ListE (AtomName r)) n)
-buildNaryAbsRec ns x = confuseGHC >>= \_ -> case x of
+buildNaryAbsRec ns x = confuseGHCBuilder >>= \_ -> case x of
   Empty -> return $ Abs Empty $ ListE $ reverse ns
   Nest b bs -> do
     refreshAbs (Abs b (EmptyAbs bs)) \b' (EmptyAbs bs') -> do
@@ -1604,9 +1553,10 @@ localVars b e = nameSetToList $
   R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 -- See Note [Confuse GHC] from Simplify.hs
-confuseGHC :: BuilderM r n (DistinctEvidence n)
-confuseGHC = getDistinct
-{-# INLINE confuseGHC #-}
+-- (we use a Builder-specific name to avoid collisions, since we export everything from Builder)
+confuseGHCBuilder :: BuilderM r n (DistinctEvidence n)
+confuseGHCBuilder = getDistinct
+{-# INLINE confuseGHCBuilder #-}
 
 -- === Helpers for function evaluation over fixed-width types ===
 
