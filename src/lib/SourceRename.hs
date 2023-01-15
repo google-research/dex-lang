@@ -22,7 +22,6 @@ import Name
 import Core (EnvReader (..), withEnv, lookupSourceMapPure)
 import PPrint ()
 import Types.Source
-import Types.Primitives
 import Types.Core (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
@@ -251,18 +250,17 @@ instance SourceRenamableE UAlt where
     sourceRenameB pat \pat' ->
       UAlt pat' <$> sourceRenameE body
 
-instance ((forall c n. Ord (a c n)), SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => SourceRenamableE (EffectRowP a) where
-  sourceRenameE (EffectRow row tailVar) =
-    EffectRow <$> row' <*> mapM sourceRenameE tailVar
+instance SourceRenamableE UEffectRow where
+  sourceRenameE (UEffectRow row tailVar) =
+    UEffectRow <$> row' <*> mapM sourceRenameE tailVar
     where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
 
-instance (SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => SourceRenamableE (EffectP a) where
-  sourceRenameE (RWSEffect rws (Just name)) = RWSEffect rws <$> Just <$> sourceRenameE name
-  sourceRenameE (RWSEffect rws Nothing) = return $ RWSEffect rws Nothing
-  sourceRenameE ExceptionEffect = return ExceptionEffect
-  sourceRenameE IOEffect = return IOEffect
-  sourceRenameE (UserEffect name) = UserEffect <$> sourceRenameE name
-  sourceRenameE InitEffect = return InitEffect
+instance SourceRenamableE UEffect where
+  sourceRenameE (URWSEffect rws name) = URWSEffect rws <$> sourceRenameE name
+  sourceRenameE UExceptionEffect = return UExceptionEffect
+  sourceRenameE UIOEffect = return UIOEffect
+  sourceRenameE (UUserEffect name) = UUserEffect <$> sourceRenameE name
+  sourceRenameE UInitEffect = return UInitEffect
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $

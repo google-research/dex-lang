@@ -606,7 +606,7 @@ withType e = do
   return $ e `PairE` ty
 {-# INLINE withType #-}
 
-makeBlock :: Nest (Decl r) n l -> EffectRow l -> Atom r l -> Type r l -> Block r n
+makeBlock :: Nest (Decl r) n l -> EffectRow r l -> Atom r l -> Type r l -> Block r n
 makeBlock decls effs atom ty = Block (BlockAnn ty' effs') decls atom where
   ty' = ignoreHoistFailure $ hoist decls ty
   effs' = ignoreHoistFailure $ hoist decls effs
@@ -621,7 +621,7 @@ absToBlockInferringTypes ab = liftEnvReaderM do
       absToBlock $ Abs decls (effs `PairE` (result `PairE` ty))
 {-# INLINE absToBlockInferringTypes #-}
 
-absToBlock :: (Fallible m) => Abs (Nest (Decl r)) (EffectRow `PairE` (Atom r `PairE` Type r)) n -> m (Block r n)
+absToBlock :: (Fallible m) => Abs (Nest (Decl r)) (EffectRow r `PairE` (Atom r `PairE` Type r)) n -> m (Block r n)
 absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
   let msg = "Block:" <> nest 1 (prettyBlock decls result) <> line
             <> group ("Of type:" <> nest 2 (line <> pretty ty)) <> line
@@ -662,13 +662,13 @@ buildTabLam hint ty fBody = do
 
 buildLam
   :: (HasCore r, ScopableBuilder r m)
-  => NameHint -> Arrow -> Type r n -> EffectRow n
+  => NameHint -> Arrow -> Type r n -> EffectRow r n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
 buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
 
 buildNullaryPi :: (HasCore r, Builder r m)
-               => EffectRow n
+               => EffectRow r n
                -> (forall l. DExt n l => m l (Type r l))
                -> m n (Type r n)
 buildNullaryPi effs cont =
@@ -679,7 +679,7 @@ buildNullaryPi effs cont =
 buildLamGeneral
   :: (HasCore r, ScopableBuilder r m)
   => NameHint -> Arrow -> Type r n
-  -> (forall l.           DExt n l  => AtomName r l -> m l (EffectRow l))
+  -> (forall l.           DExt n l  => AtomName r l -> m l (EffectRow r l))
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
 buildLamGeneral hint arr ty fEff fBody = do
@@ -708,7 +708,7 @@ buildPureNaryLam _ _ = error "impossible"
 
 buildPi :: (Fallible1 m, Builder r m)
         => NameHint -> Arrow -> Type r n
-        -> (forall l. DExt n l => AtomName r l -> m l (EffectRow l, Type r l))
+        -> (forall l. DExt n l => AtomName r l -> m l (EffectRow r l, Type r l))
         -> m n (PiType r n)
 buildPi hint arr ty body =
   withFreshBinder hint (PiBinding arr ty) \b -> do
@@ -730,7 +730,7 @@ buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
     return (Pure, piTy)
 
 buildNonDepPi :: EnvReader m
-              => NameHint -> Arrow -> Type r n -> EffectRow n -> Type r n
+              => NameHint -> Arrow -> Type r n -> EffectRow r n -> Type r n
               -> m n (PiType r n)
 buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
   argTy' <- sinkM argTy
@@ -908,11 +908,11 @@ buildEffLam
 buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
   withFreshBinder noHint (TC HeapType) \h -> do
-    let ty' = RefTy (Just $ Var $ binderName h) (sink ty)
+    let ty' = RefTy (Var $ binderName h) (sink ty)
     withFreshBinder hint (LamBinding PlainArrow ty') \b -> do
       let ref = binderName b
       hVar <- sinkM $ binderName h
-      let eff' = extendEffect (RWSEffect rws (Just hVar)) (sink eff)
+      let eff' = extendEffect (RWSEffect rws (Var hVar)) (sink eff)
       body' <- withAllowedEffects eff' $ buildBlock $ body (sink hVar) $ sink ref
       return $ LamExpr (BinaryNest (h:>TC HeapType) (b:>ty')) body'
 

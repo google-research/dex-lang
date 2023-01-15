@@ -198,13 +198,13 @@ instance PrettyPrec (UserEffectOp r n) where
   prettyPrec (Handle v args body) = atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." body
   prettyPrec _ = error "not implemented"
 
-prettyPrecCase :: PrettyE e => Doc ann -> Atom r n -> [AltP r e n] -> EffectRow n -> DocPrec ann
+prettyPrecCase :: PrettyE e => Doc ann -> Atom r n -> [AltP r e n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
   name <+> pApp e <+> "of" <>
   nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
           <> effectLine effs)
   where
-    effectLine :: EffectRowP Name n -> Doc ann
+    effectLine :: EffectRow r n -> Doc ann
     effectLine Pure = ""
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
@@ -437,15 +437,16 @@ inlineLastDecl (Nest decl rest) result =
    Abs decls' result' ->
      Abs (Nest decl decls') result'
 
-instance Pretty (EffectRow n) where
-  pretty (EffectRow effs tailVar) =
-    braces $ hsep (punctuate "," (map p (toList effs))) <> tailStr
-    where
-      tailStr = case tailVar of
-        Nothing -> mempty
-        Just v  -> "|" <> p v
+instance Pretty (EffectRow r n) where
+  pretty (EffectRow effs t) =
+    braces $ hsep (punctuate "," (map p (eSetToList effs))) <> p t
 
-instance Pretty (Effect n) where
+instance Pretty (EffectRowTail r n) where
+  pretty = \case
+    NoTail -> mempty
+    EffectRowTail v  -> "|" <> p v
+
+instance Pretty (Effect r n) where
   pretty eff = case eff of
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
@@ -455,11 +456,11 @@ instance Pretty (Effect n) where
 
 instance Pretty (UEffect n) where
   pretty eff = case eff of
-    RWSEffect rws h -> p rws <+> p h
-    ExceptionEffect -> "Except"
-    IOEffect        -> "IO"
-    UserEffect name -> p name
-    InitEffect      -> "Init"
+    URWSEffect rws h -> p rws <+> p h
+    UExceptionEffect -> "Except"
+    UIOEffect        -> "IO"
+    UUserEffect name -> p name
+    UInitEffect      -> "Init"
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
@@ -672,7 +673,7 @@ instance PrettyPrec (UTabLamExpr n) where
 
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
-  prettyPrec (UPiExpr arr pat Pure ty) = atPrec LowestPrec $ align $
+  prettyPrec (UPiExpr arr pat UPure ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> pLowest ty
   prettyPrec (UPiExpr arr pat eff ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> p eff <+> pLowest ty
@@ -784,8 +785,8 @@ instance Pretty UResumePolicy where
   pretty UAnyResume = "ctl"
 
 instance Pretty (UEffectRow n) where
-  pretty (EffectRow x Nothing) = encloseSep "<" ">" "," $ (p <$> toList x)
-  pretty (EffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (p <$> toList x)) <+> "|" <+> p y <> "}"
+  pretty (UEffectRow x Nothing) = encloseSep "<" ">" "," $ (p <$> toList x)
+  pretty (UEffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (p <$> toList x)) <+> "|" <+> p y <> "}"
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
@@ -887,6 +888,7 @@ instance Pretty (TopFun n) where
   pretty = \case
     DexTopFun ty def lowering ->
       "Top-level Function"
+         <> hardline <+> "type:" <+> pretty ty
          <> hardline <+> "definition:" <+> pretty def
          <> hardline <+> "lowering:" <+> pretty lowering
     FFITopFun f _ -> p f
@@ -982,8 +984,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC r e) where
       encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
-    RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
-    RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
+    RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     TypeKind -> atPrec ArgPrec "Type"
     HeapType -> atPrec ArgPrec "Heap"
 

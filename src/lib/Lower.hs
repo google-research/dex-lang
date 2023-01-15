@@ -366,17 +366,17 @@ vectorizeLoopsRec frag nest =
         _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 
-atMostOneEffect :: Effect n -> EffectRow n -> Bool
-atMostOneEffect eff scrutinee = case scrutinee of
+atMostInitEffect :: EffectRow r n -> Bool
+atMostInitEffect scrutinee = case scrutinee of
   Pure -> True
-  OneEffect eff' -> eff' == eff
+  OneEffect InitEffect -> True
   _ -> False
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
              -> TopVectorizeM o (LamExpr SimpIR o)
 vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
-  if atMostOneEffect InitEffect (blockEffects body)
+  if atMostInitEffect (blockEffects body)
     then do
       (_, ty') <- case ty of
         ProdTy [ixTy, ref] -> do

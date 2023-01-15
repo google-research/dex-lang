@@ -426,8 +426,9 @@ instance Inlinable (PiType SimpIR)
 instance Inlinable (TabLamExpr SimpIR)
 instance Inlinable (TabPiType SimpIR)
 instance Inlinable (DepPairType SimpIR)
-instance Inlinable EffectRow
-instance Inlinable Effect
+instance Inlinable (EffectRowTail SimpIR)
+instance Inlinable (EffectRow SimpIR)
+instance Inlinable (Effect   SimpIR)
 instance Inlinable (DictExpr SimpIR)
 instance Inlinable (DictType SimpIR)
 instance Inlinable (FieldRowElems SimpIR)
@@ -487,7 +488,7 @@ asRenameSubst s = newSubst $ assumingRenameOnly s where
       ++ "maps " ++ (show n) ++ " to " ++ (show v)
 
 instance (RenameB b, BindsEnv b)
-  => Inlinable (Abs b (PairE EffectRow (Atom SimpIR))) where
+  => Inlinable (Abs b (PairE (EffectRow SimpIR) (Atom SimpIR))) where
   inline ctx (Abs b body) = do
     s <- getSubst
     babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))

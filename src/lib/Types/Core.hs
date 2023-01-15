@@ -64,7 +64,7 @@ data Atom (r::IR) (n::S) where
  -- the `LamExpr`, of which there must be only one (for now).
  Lam        :: HasCore r => LamExpr r n -> Arrow -> EffAbs r n -> Atom r n
  Pi         :: HasCore r => PiType  r n               -> Atom r n
- Eff        :: HasCore r => EffectRow n -> Atom r n
+ Eff        :: HasCore r => EffectRow r n -> Atom r n
  DictCon    :: HasCore r => DictExpr r n                  -> Atom r n
  DictTy     :: HasCore r => DictType r n                  -> Atom r n
  ProjectElt   :: Projection -> Atom r n                    -> Atom r n
@@ -83,7 +83,7 @@ deriving via WrapE (Atom r) n instance Generic (Atom r n)
 data Expr r n where
  TopApp :: TopFunName n -> [Atom r n]        -> Expr r n
  TabApp :: Atom r n -> NonEmpty (Atom r n)   -> Expr r n
- Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow n -> Expr r n
+ Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow r n -> Expr r n
  Atom   :: Atom r n                          -> Expr r n
  Hof    :: Hof r n                           -> Expr r n
  TabCon :: Type r n -> [Atom r n]            -> Expr r n
@@ -103,7 +103,7 @@ data BaseMonoid r n =
              , baseCombine :: LamExpr r n }
   deriving (Show, Generic)
 
-type EffAbs r = Abs (Binder r) EffectRow
+type EffAbs r = Abs (Binder r) (EffectRow r)
 
 data DeclBinding r n = DeclBinding LetAnn (Type r n) (Expr r n)
      deriving (Show, Generic)
@@ -130,9 +130,6 @@ type PtrName      = Name PtrNameC
 type SpecDictName = Name SpecializedDictNameC
 type TopFunName   = Name TopFunNameC
 type FunObjCodeName = Name FunObjCodeNameC
-
-type Effect    = EffectP    Name
-type EffectRow = EffectRowP Name
 
 type AtomBinderP = BinderP AtomNameC
 type Binder r = AtomBinderP (Type r) :: B
@@ -178,7 +175,7 @@ data Block (r::IR) (n::S) where
   Block :: BlockAnn r n l -> Nest (Decl r) n l -> Atom r l -> Block r n
 
 data BlockAnn r n l where
-  BlockAnn :: Type r n -> EffectRow n -> BlockAnn r n l
+  BlockAnn :: Type r n -> EffectRow r n -> BlockAnn r n l
   NoBlockAnn :: BlockAnn r n n
 
 data LamBinding (r::IR) (n::S) = LamBinding Arrow (Type r n)
@@ -217,7 +214,7 @@ data TabPiType (r::IR) (n::S) where
   TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
 
 data NaryPiType (r::IR) (n::S) where
-  NaryPiType :: Nest (PiBinder r) n l -> EffectRow l -> Type r l -> NaryPiType r n
+  NaryPiType :: Nest (PiBinder r) n l -> EffectRow r l -> Type r l -> NaryPiType r n
 
 data PiBinding (r::IR) (n::S) = PiBinding Arrow (Type r n)
   deriving (Show, Generic)
@@ -227,7 +224,7 @@ data PiBinder (r::IR) (n::S) (l::S) =
   deriving (Show, Generic)
 
 data PiType (r::IR) (n::S) where
-  PiType :: PiBinder r n l -> EffectRow l -> Type r l -> PiType r n
+  PiType :: PiBinder r n l -> EffectRow r l -> Type r l -> PiType r n
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: Binder r n l -> Type r l -> DepPairType r n
@@ -244,14 +241,6 @@ type Dict = Atom
 
 type TC  r n = PrimTC  r (Atom r n)
 type Con r n = PrimCon r (Atom r n)
-
-data EffectBinder n l where
-  EffectBinder :: EffectRow n -> EffectBinder n n
-
-instance GenericB EffectBinder where
-  type RepB EffectBinder = LiftB EffectRow
-  fromB (EffectBinder effs) = LiftB effs
-  toB   (LiftB effs) = EffectBinder effs
 
 -- A nest where the annotation of a binder cannot depend on the binders
 -- introduced before it. You can think of it as introducing a bunch of
@@ -472,8 +461,11 @@ data ModuleEnv (n::S) = ModuleEnv
   { envImportStatus    :: ImportStatus n
   , envSourceMap       :: SourceMap n
   , envSynthCandidates :: SynthCandidates n
-  -- TODO: should these live elsewhere?
-  , allowedEffects       :: EffectRow n }
+  -- TODO : `CoreIR` isn't right, but we don't have `ModuleEnv` to take an IR
+  -- parameter. The right thing to do is to remove `allowedEffects` from `ModuleEnv`
+  -- and instead add an explicit effects reader for Inference/CheckType, where the IR
+  -- parameter is known. But that's a bigger change.
+  , allowedEffects     :: EffectRow CoreIR n }
   deriving (Generic)
 
 data Module (n::S) = Module
@@ -646,7 +638,7 @@ data HandlerDef (n::S) where
   HandlerDef :: EffectName n
              -> PiBinder CoreIR n r -- body type arg
              -> Nest (PiBinder CoreIR) r l
-               -> EffectRow l
+               -> EffectRow CoreIR l
                -> CType l          -- return type
                -> [Block CoreIR l] -- effect operations
                -> Block CoreIR l   -- return body
@@ -655,7 +647,7 @@ data HandlerDef (n::S) where
 instance GenericE HandlerDef where
   type RepE HandlerDef =
     EffectName `PairE` Abs (PiBinder CoreIR `PairB` Nest (PiBinder CoreIR))
-      (EffectRow `PairE` CType `PairE` ListE (Block CoreIR) `PairE` Block CoreIR)
+      (EffectRow CoreIR `PairE` CType `PairE` ListE (Block CoreIR) `PairE` Block CoreIR)
   fromE (HandlerDef name bodyTyArg bs effs ty ops ret) =
     name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)
   toE (name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)) =
@@ -757,7 +749,7 @@ data SolverBinding (r::IR) (n::S) =
    deriving (Show, Generic)
 
 data EnvFrag (n::S) (l::S) =
-  EnvFrag (RecSubstFrag Binding n l) (Maybe (EffectRow l))
+  EnvFrag (RecSubstFrag Binding n l) (Maybe (EffectRow CoreIR l))
 
 instance HasScope Env where
   toScope = toScope . envDefs . topEnv
@@ -841,6 +833,72 @@ naryPiTypeAsType (NaryPiType (Nest b bs) effs resultTy) = case bs of
   Empty -> Pi $ PiType b effs resultTy
   Nest _ _ -> Pi $ PiType b Pure $ naryPiTypeAsType $ NaryPiType bs effs resultTy
 naryPiTypeAsType _ = error "Effectful naryPiType should have at least one argument"
+
+-- === effects ===
+
+data Effect (r::IR) (n::S) =
+   RWSEffect RWS (Atom r n)
+ | ExceptionEffect
+ | IOEffect
+ | UserEffect (Name EffectNameC n)
+ | InitEffect
+ deriving (Generic, Show)
+
+data EffectRow (r::IR) (n::S) =
+  EffectRow (ESet (Effect r) n) (EffectRowTail r n)
+  deriving (Generic)
+
+data EffectRowTail (r::IR) (n::S) where
+  EffectRowTail :: HasCore r => AtomName r n -> EffectRowTail r n
+  NoTail        ::                              EffectRowTail r n
+deriving instance Show (EffectRowTail r n)
+deriving instance Eq   (EffectRowTail r n)
+deriving via WrapE (EffectRowTail r) n instance Generic (EffectRowTail r n)
+
+deriving instance Show (EffectRow r n)
+
+pattern Pure :: EffectRow r n
+pattern Pure <- ((\(EffectRow effs t) -> (eSetToList effs, t)) -> ([], NoTail))
+  where Pure = EffectRow mempty NoTail
+
+pattern OneEffect :: Effect r n -> EffectRow r n
+pattern OneEffect eff <- ((\(EffectRow effs t) -> (eSetToList effs, t)) -> ([eff], NoTail))
+  where OneEffect eff = EffectRow (eSetSingleton eff) NoTail
+
+instance Semigroup (EffectRow r n) where
+  EffectRow effs t <> EffectRow effs' t' =
+    EffectRow (effs <> effs') newTail
+    where
+      newTail = case (t, t') of
+        (NoTail, effTail) -> effTail
+        (effTail, NoTail) -> effTail
+        _ | t == t' -> t
+          | otherwise -> error "Can't combine effect rows with mismatched tails"
+
+instance Monoid (EffectRow r n) where
+  mempty = EffectRow mempty NoTail
+
+extendEffRow :: ESet (Effect r) n -> EffectRow r n -> EffectRow r n
+extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
+{-# INLINE extendEffRow #-}
+
+instance Store (EffectRowTail r n)
+instance Store (EffectRow     r n)
+instance Store (Effect        r n)
+
+data EffectBinder n l where
+  EffectBinder :: EffectRow CoreIR n -> EffectBinder n n
+
+instance GenericB EffectBinder where
+  type RepB EffectBinder = LiftB (EffectRow CoreIR)
+  fromB (EffectBinder effs) = LiftB effs
+  toB   (LiftB effs) = EffectBinder effs
+
+instance SinkableB EffectBinder
+instance HoistableB EffectBinder
+instance ProvesExt  EffectBinder
+instance BindsNames EffectBinder
+instance RenameB     EffectBinder
 
 -- === Specialization and generalization ===
 
@@ -1014,11 +1072,11 @@ pattern BaseTy b = TC (BaseType b)
 pattern PtrTy :: PtrType -> Type r n
 pattern PtrTy ty = BaseTy (PtrType ty)
 
-pattern RefTy :: Maybe (Atom r n) -> Type r n -> Type r n
+pattern RefTy :: Atom r n -> Type r n -> Type r n
 pattern RefTy r a = TC (RefType r a)
 
 pattern RawRefTy :: Type r n -> Type r n
-pattern RawRefTy a = TC (RefType Nothing a)
+pattern RawRefTy a = TC (RefType (Con HeapVal) a)
 
 pattern TabTy :: IxBinder r n l -> Type r l -> Type r n
 pattern TabTy b body = TabPi (TabPiType b body)
@@ -1053,7 +1111,7 @@ pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Block r l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
 
-pattern BinaryFunTy :: PiBinder r n l1 -> PiBinder r l1 l2 -> EffectRow l2 -> Type r l2 -> Type r n
+pattern BinaryFunTy :: PiBinder r n l1 -> PiBinder r l1 l2 -> EffectRow r l2 -> Type r l2 -> Type r n
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
 pattern AtomicBlock :: Atom r n -> Block r n
@@ -1160,12 +1218,6 @@ instance SinkableE CustomRules
 instance HoistableE CustomRules
 instance AlphaEqE CustomRules
 instance RenameE     CustomRules
-
-instance SinkableB EffectBinder
-instance HoistableB EffectBinder
-instance ProvesExt  EffectBinder
-instance BindsNames EffectBinder
-instance RenameB     EffectBinder
 
 instance GenericE (DataDefParams r) where
   type RepE (DataDefParams r) = ListE (PairE (LiftE Arrow) (Atom r))
@@ -1511,7 +1563,7 @@ instance GenericE (Atom r) where
             ) (EitherE6
   {- Con -}        (ComposeE (PrimCon r) (Atom r))
   {- TC -}         (ComposeE (PrimTC  r) (Atom r))
-  {- Eff -}        ( WhenE (HasCore' r) EffectRow)
+  {- Eff -}        ( WhenE (HasCore' r) (EffectRow r))
   {- PtrVar -}     PtrName
   {- ACase -}      ( WhenE (HasCore' r) (Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r))
   {- RepValAtom -} ( WhenE (Sat' r (Is SimpToImpIR)) (RepVal r))
@@ -1584,7 +1636,7 @@ instance GenericE (Expr r) where
     ( EitherE6
  {- App -}    (WhenE (HasCore' r) (Atom r `PairE` Atom r `PairE` ListE (Atom r)))
  {- TabApp -} (Atom r `PairE` Atom r `PairE` ListE (Atom r))
- {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow)
+ {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow r)
  {- Atom -}   (Atom r)
  {- Hof -}    (Hof r)
  {- TopApp -} (TopFunName `PairE` ListE (Atom r))
@@ -1657,7 +1709,7 @@ instance (AlphaHashableE    e1, AlphaHashableE    e2) => AlphaHashableE    (ExtL
 instance (RenameE     e1, RenameE     e2) => RenameE     (ExtLabeledItemsE e1 e2)
 
 instance GenericE (Block r) where
-  type RepE (Block r) = PairE (MaybeE (PairE (Type r) EffectRow)) (Abs (Nest (Decl r)) (Atom r))
+  type RepE (Block r) = PairE (MaybeE (PairE (Type r) (EffectRow r))) (Abs (Nest (Decl r)) (Atom r))
   fromE (Block (BlockAnn ty effs) decls result) = PairE (JustE (PairE ty effs)) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
   fromE _ = error "impossible"
@@ -1922,7 +1974,7 @@ instance AlphaEqB (PiBinder r)
 instance AlphaHashableB (PiBinder r)
 
 instance GenericE (PiType r) where
-  type RepE (PiType r) = Abs (PiBinder r) (PairE EffectRow (Type r))
+  type RepE (PiType r) = Abs (PiBinder r) (PairE (EffectRow r) (Type r))
   fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
   {-# INLINE fromE #-}
   toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
@@ -2020,7 +2072,7 @@ deriving instance Show (TabPiType r n)
 deriving via WrapE (TabPiType r) n instance Generic (TabPiType r n)
 
 instance GenericE (NaryPiType r) where
-  type RepE (NaryPiType r) = Abs (Nest (PiBinder r)) (PairE EffectRow (Type r))
+  type RepE (NaryPiType r) = Abs (Nest (PiBinder r)) (PairE (EffectRow r) (Type r))
   fromE (NaryPiType bs eff resultTy) = Abs bs (PairE eff resultTy)
   {-# INLINE fromE #-}
   toE   (Abs bs (PairE eff resultTy)) = NaryPiType bs eff resultTy
@@ -2273,6 +2325,65 @@ instance AlphaHashableB (Decl r)
 instance ProvesExt  (Decl r)
 instance BindsNames (Decl r)
 
+instance GenericE (Effect r) where
+  type RepE (Effect r) =
+    EitherE4 (PairE (LiftE RWS) (Atom r))
+             (LiftE (Either () ()))
+             (Name EffectNameC)
+             UnitE
+  fromE = \case
+    RWSEffect rws h    -> Case0 (PairE (LiftE rws) h)
+    ExceptionEffect    -> Case1 (LiftE (Left  ()))
+    IOEffect           -> Case1 (LiftE (Right ()))
+    UserEffect name    -> Case2 name
+    InitEffect         -> Case3 UnitE
+  {-# INLINE fromE #-}
+  toE = \case
+    Case0 (PairE (LiftE rws) h) -> RWSEffect rws h
+    Case1 (LiftE (Left  ())) -> ExceptionEffect
+    Case1 (LiftE (Right ())) -> IOEffect
+    Case2 name -> UserEffect name
+    Case3 UnitE -> InitEffect
+    _ -> error "unreachable"
+  {-# INLINE toE #-}
+
+instance SinkableE      (Effect r)
+instance HoistableE     (Effect r)
+instance AlphaEqE       (Effect r)
+instance AlphaHashableE (Effect r)
+instance RenameE        (Effect r)
+
+instance GenericE (EffectRow r) where
+  type RepE (EffectRow r) = PairE (ListE (Effect r)) (EffectRowTail r)
+  fromE (EffectRow effs ext) = ListE (eSetToList effs) `PairE` ext
+  {-# INLINE fromE #-}
+  toE (ListE effs `PairE` ext) = EffectRow (eSetFromList effs) ext
+  {-# INLINE toE #-}
+
+instance SinkableE      (EffectRow r)
+instance HoistableE     (EffectRow r)
+instance RenameE        (EffectRow r)
+instance AlphaEqE       (EffectRow r)
+instance AlphaHashableE (EffectRow r)
+
+instance GenericE (EffectRowTail r) where
+  type RepE (EffectRowTail r) = EitherE (WhenE (HasCore' r)  (AtomName r)) UnitE
+  fromE = \case
+    EffectRowTail v -> LeftE (WhenE v)
+    NoTail          -> RightE UnitE
+  {-# INLINE fromE #-}
+  toE = \case
+    LeftE (WhenE v) -> EffectRowTail v
+    RightE UnitE    -> NoTail
+  {-# INLINE toE #-}
+
+
+instance SinkableE      (EffectRowTail r)
+instance HoistableE     (EffectRowTail r)
+instance RenameE        (EffectRowTail r)
+instance AlphaEqE       (EffectRowTail r)
+instance AlphaHashableE (EffectRowTail r)
+
 instance BindsAtMostOneName (Decl r) AtomNameC where
   Let b _ @> x = b @> x
   {-# INLINE (@>) #-}
@@ -2290,7 +2401,7 @@ instance Monoid (SynthCandidates n) where
 
 
 instance GenericB EnvFrag where
-  type RepB EnvFrag = PairB (RecSubstFrag Binding) (LiftB (MaybeE EffectRow))
+  type RepB EnvFrag = PairB (RecSubstFrag Binding) (LiftB (MaybeE (EffectRow CoreIR)))
   fromB (EnvFrag frag (Just effs)) = PairB frag (LiftB (JustE effs))
   fromB (EnvFrag frag Nothing    ) = PairB frag (LiftB NothingE)
   toB   (PairB frag (LiftB (JustE effs))) = EnvFrag frag (Just effs)
@@ -2489,7 +2600,7 @@ instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
                 `PairE` SourceMap
                 `PairE` SynthCandidates
-                `PairE` EffectRow
+                `PairE` EffectRow CoreIR
   fromE (ModuleEnv imports sm sc eff) =
     imports `PairE` sm `PairE` sc `PairE` eff
   {-# INLINE fromE #-}

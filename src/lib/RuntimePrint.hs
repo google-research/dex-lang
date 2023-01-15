@@ -207,7 +207,7 @@ withBuffer cont = do
   lam <- withFreshBinder "h" (TC HeapType) \h -> do
     bufTy <- bufferTy (Var $ binderName h)
     withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (Just $ sink $ binderName h))
+      let eff = OneEffect (RWSEffect State (Var $ sink $ binderName h))
       body <- withAllowedEffects eff $ buildBlock do
         cont $ sink $ Var $ binderName b
         return UnitVal
@@ -224,12 +224,12 @@ withBuffer cont = do
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
 bufferTy h = do
   t <- strType
-  return $ RefTy (Just h) (PairTy NatTy t)
+  return $ RefTy h (PairTy NatTy t)
 
 -- argument has type `Fin n => Word8`
 extendBuffer :: (Emits n, Builder CoreIR m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
-  RefTy (Just h) _ <- getType buf
+  RefTy h _ <- getType buf
   TabTy (_:>ixTy) _ <- getType tab
   n <- indexSetSizeCore ixTy
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
@@ -237,7 +237,7 @@ extendBuffer buf tab = do
 -- argument has type `Word8`
 pushBuffer :: (Emits n, Builder CoreIR m) => CAtom n -> CAtom n -> m n ()
 pushBuffer buf x = do
-  RefTy (Just h) _ <- getType buf
+  RefTy h _ <- getType buf
   void $ applyPreludeFunction "stack_push_internal" [h, buf, x]
 
 stringLitAsCharTab :: (Emits n, Builder CoreIR m) => String -> m n (CAtom n)

@@ -228,7 +228,7 @@ decl ann = dropSrc decl' where
     case maybeTy of
       Just ty -> do
         (effs, returnTy) <- optEffects $ effectsToTop ty
-        when (null params' && effs /= Pure) $ throw SyntaxErr "Nullary def can't have effects"
+        when (null params' && effs /= UPure) $ throw SyntaxErr "Nullary def can't have effects"
         let funTy = buildPiType params' effs returnTy
         let lamBinders = params' <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
         body' <- block body
@@ -383,13 +383,13 @@ optEffects :: Group -> SyntaxM (UEffectRow VoidS, UExpr VoidS)
 optEffects g = case g of
   (Binary Juxtapose (Bracketed Curly effs) ty) ->
     (,) <$> effects effs <*> expr ty
-  _ -> (Pure,) <$> expr g
+  _ -> (UPure,) <$> expr g
 
 effects :: Group -> SyntaxM (UEffectRow VoidS)
 effects g = do
   rhs' <- mapM (identifier "effect row remainder variable") rhs
   lhs' <- mapM effect $ nary Comma lhs
-  return $ EffectRow (S.fromList lhs') $ fmap fromString rhs'
+  return $ UEffectRow (S.fromList lhs') $ fmap fromString rhs'
   where
     (lhs, rhs) = case g of
       (Binary Pipe l r) -> (l, Just r)
@@ -398,14 +398,14 @@ effects g = do
 effect :: Group -> SyntaxM (UEffect VoidS)
 effect (WithSrc _ (CParens (ExprBlock g))) = effect g
 effect (Binary Juxtapose (Identifier "Read") (Identifier h)) =
-  return $ RWSEffect Reader $ (Just $ fromString h)
+  return $ URWSEffect Reader $ fromString h
 effect (Binary Juxtapose (Identifier "Accum") (Identifier h)) =
-  return $ RWSEffect Writer $ (Just $ fromString h)
+  return $ URWSEffect Writer $ fromString h
 effect (Binary Juxtapose (Identifier "State") (Identifier h)) =
-  return $ RWSEffect State $ (Just $ fromString h)
-effect (Identifier "Except") = return ExceptionEffect
-effect (Identifier "IO") = return IOEffect
-effect (Identifier effName) = return $ UserEffect (fromString effName)
+  return $ URWSEffect State $ fromString h
+effect (Identifier "Except") = return UExceptionEffect
+effect (Identifier "IO") = return UIOEffect
+effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
 method :: (SourceName, CBlock) -> SyntaxM (UMethodDef VoidS)
@@ -721,11 +721,11 @@ variant (g:gs) = do
 -- === Builders ===
 
 buildPiType :: [UPatAnnArrow VoidS VoidS] -> UEffectRow VoidS -> UType VoidS -> UType VoidS
-buildPiType [] Pure ty = ty
+buildPiType [] UPure ty = ty
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType (UPatAnnArrow p arr : bs) eff resTy = ns case bs of
   [] -> UPi $ UPiExpr arr p eff resTy
-  _  -> UPi $ UPiExpr arr p Pure $ buildPiType bs eff resTy
+  _  -> UPi $ UPiExpr arr p UPure $ buildPiType bs eff resTy
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildLam :: [UPatAnnArrow VoidS VoidS] -> UExpr VoidS -> UExpr VoidS

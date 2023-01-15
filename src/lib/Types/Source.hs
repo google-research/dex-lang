@@ -23,6 +23,7 @@ module Types.Source where
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
+import qualified Data.Set              as S
 import Data.String (IsString, fromString)
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
@@ -61,8 +62,20 @@ pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
-type UEffect = EffectP SourceOrInternalName
-type UEffectRow = EffectRowP SourceOrInternalName
+data UEffect (n::S) =
+   URWSEffect RWS (SourceOrInternalName AtomNameC n)
+ | UExceptionEffect
+ | UIOEffect
+ | UUserEffect (SourceOrInternalName EffectNameC n)
+ | UInitEffect
+
+data UEffectRow (n::S) =
+  UEffectRow (S.Set (UEffect n)) (Maybe (SourceOrInternalName AtomNameC n))
+  deriving (Generic)
+
+pattern UPure :: UEffectRow n
+pattern UPure <- ((\(UEffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
+  where UPure = UEffectRow mempty Nothing
 
 data UVar (n::S) =
    UAtomVar     (Name AtomNameC     n)
@@ -622,3 +635,10 @@ deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 
+deriving instance Show (UEffect n)
+deriving instance Eq   (UEffect n)
+deriving instance Ord  (UEffect n)
+
+deriving instance Show (UEffectRow n)
+deriving instance Eq   (UEffectRow n)
+deriving instance Ord  (UEffectRow n)

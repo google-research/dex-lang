@@ -432,7 +432,7 @@ toImpOp maybeDest op = case op of
     returnVal =<< case vty of
       BaseTy vty'@(Vector _ _) -> do
         resultVal <- cast refi' (PtrType (addrSpace, vty'))
-        return $ RepValAtom $ RepVal (RefTy (Just $ Con HeapVal) vty) (Leaf resultVal)
+        return $ RepValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
       _ -> error "Expected a vector type"
   where
     fsa = fromScalarAtom
@@ -911,7 +911,7 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
 -- from the dest. This version is not that. It just lifts a dest into an atom of
 -- type `Ref _`.
 destToAtom :: Dest n -> SIAtom n
-destToAtom (Dest valTy tree) = RepValAtom $ RepVal (RefTy (Just $ Con HeapVal) valTy) tree
+destToAtom (Dest valTy tree) = RepValAtom $ RepVal (RefTy (Con HeapVal) valTy) tree
 
 atomToDest :: EnvReader m => SIAtom n -> m n (Dest n)
 atomToDest (RepValAtom val) = do

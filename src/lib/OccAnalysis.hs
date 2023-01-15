@@ -285,9 +285,9 @@ occNest a decls ans = case decls of
         -- query the effects of an expression before it is substituted, and the
         -- type querying subsystem is not set up to do that.
         effs <- getEffects expr
-        let ann = if effs == Pure
-              then OccInfoPure usage
-              else OccInfoImpure usage
+        let ann = case effs of
+              Pure -> OccInfoPure usage
+              _    -> OccInfoImpure usage
         let binding'' = DeclBinding ann ty expr
         return $ Abs (Nest (Let b' binding'') ds'') ans''
 
@@ -496,8 +496,9 @@ instance HasOCC (LamExpr SimpIR) where
 instance HasOCC (PiType SimpIR)
 instance HasOCC (TabPiType SimpIR)
 instance HasOCC (DepPairType SimpIR)
-instance HasOCC EffectRow
-instance HasOCC Effect
+instance HasOCC (EffectRow SimpIR)
+instance HasOCC (EffectRowTail SimpIR)
+instance HasOCC (Effect SimpIR)
 instance HasOCC (DictExpr SimpIR)
 instance HasOCC (DictType SimpIR)
 instance HasOCC (FieldRowElems SimpIR)

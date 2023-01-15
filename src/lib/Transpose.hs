@@ -149,12 +149,11 @@ substExprIfNonlin expr =
         True -> return Nothing
         False -> Just <$> substNonlin expr
 
-isLinEff :: EffectRow o -> TransposeM i o Bool
-isLinEff effs@(EffectRow _ Nothing) = do
+isLinEff :: EffectRow SimpIR o -> TransposeM i o Bool
+isLinEff effs@(EffectRow _ NoTail) = do
   regions <- getLinRegions
   let effRegions = freeAtomVarsList effs
   return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
-isLinEff _ = error "Can't transpose polymorphic effects"
 
 transposeExpr :: Emits o => SExpr i -> SAtom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of

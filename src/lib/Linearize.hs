@@ -32,7 +32,7 @@ type CS = CoreToSimpIR
 
 data ActivePrimals (n::S) = ActivePrimals
   { activeVars    :: [AtomName CS n]  -- includes refs and regions
-  , activeEffs    :: EffectRow n }
+  , activeEffs    :: EffectRow CS n }
 
 emptyActivePrimals :: ActivePrimals n
 emptyActivePrimals = ActivePrimals [] Pure
@@ -68,9 +68,9 @@ extendActiveSubst
 extendActiveSubst b v cont = do
   extendSubst (b@>v) $ extendActivePrimals v cont
 
-extendActiveEffs :: Effect o -> PrimalM i o a -> PrimalM i o a
+extendActiveEffs :: Effect CS o -> PrimalM i o a -> PrimalM i o a
 extendActiveEffs eff = local \primals ->
-  primals { activeEffs = extendEffRow (S.singleton eff) (activeEffs primals)}
+  primals { activeEffs = extendEffRow (eSetSingleton eff) (activeEffs primals)}
 
 extendActivePrimals :: AtomName CS o -> PrimalM i o a -> PrimalM i o a
 extendActivePrimals v =
@@ -599,7 +599,7 @@ linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
   RefTy _ referentTy <- injSubstM =<< getReferentTy (EmptyAbs $ PairB hB refB)
   buildEffLam rws (getNameHint refB) referentTy \h ref -> withTangentFunAsLambda do
     extendActiveSubst hB h $ extendActiveSubst refB ref $
-      extendActiveEffs (RWSEffect rws (Just h)) do
+      extendActiveEffs (RWSEffect rws (Var h)) do
         WithTangent p tangentFun <- linearizeBlock body
         return $ WithTangent p do
           tt <- tangentTypeCS $ sink referentTy
@@ -640,7 +640,7 @@ injectCS = injectIRE
 -- === instances ===
 
 instance GenericE ActivePrimals where
-  type RepE ActivePrimals = PairE (ListE (AtomName CS)) EffectRow
+  type RepE ActivePrimals = PairE (ListE (AtomName CS)) (EffectRow CS)
   fromE (ActivePrimals vs effs) = ListE vs `PairE` effs
   {-# INLINE fromE #-}
   toE   (ListE vs `PairE` effs) = ActivePrimals vs effs

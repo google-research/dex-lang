@@ -1112,6 +1112,15 @@ eMapFromList xs = EMap $ HM.fromList [(EKey k, v) | (k, v) <- xs]
 eSetSingleton :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => k n -> ESet k n
 eSetSingleton k = eMapSingleton k UnitE
 
+eSetMember :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => k n -> ESet k n -> Bool
+eSetMember k (EMap m) = EKey k `HM.member` m
+
+eSetDifference :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => ESet k n -> ESet k n -> ESet k n
+eSetDifference (EMap m1) (EMap m2) = EMap $ HM.difference m1 m2
+
+eSetNull :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => ESet k n -> Bool
+eSetNull (EMap m) = HM.null m
+
 eSetToList :: ESet k n -> [k n]
 eSetToList xs = map fst $ eMapToList xs
 

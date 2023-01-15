@@ -28,7 +28,6 @@ import Data.Functor ((<&>))
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import qualified Data.Set        as S
 
 import Types.Primitives
 import Types.Core
@@ -76,12 +75,12 @@ isPure e = getEffects e <&> \case
   Pure -> True
   _    -> False
 
-getEffects :: (EnvReader m, HasEffectsE e r) => e n -> m n (EffectRow n)
+getEffects :: (EnvReader m, HasEffectsE e r) => e n -> m n (EffectRow r n)
 getEffects e = liftTypeQueryM idSubst $ getEffectsImpl e
 {-# INLINE getEffects #-}
 
 getEffectsSubst :: (EnvReader2 m, SubstReader (AtomSubstVal r) m, HasEffectsE e r)
-              => e i -> m i o (EffectRow o)
+              => e i -> m i o (EffectRow r o)
 getEffectsSubst e = do
   subst <- getSubst
   liftTypeQueryM subst $ getEffectsImpl e
@@ -104,8 +103,8 @@ caseAltsBinderTys ty = case ty of
   _ -> fail msg
   where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
-extendEffect :: Effect n -> EffectRow n -> EffectRow n
-extendEffect eff (EffectRow effs t) = EffectRow (S.insert eff effs) t
+extendEffect :: Effect r n -> EffectRow r n -> EffectRow r n
+extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
 getAppType :: EnvReader m => Type r n -> [Atom r n] -> m n (Type r n)
 getAppType f xs = liftTypeQueryM idSubst $ typeApp f xs
@@ -144,7 +143,7 @@ instantiateNaryPi (NaryPiType bs eff resultTy) args = do
   applySubst (bs1 @@> map SubstVal args) (NaryPiType bs2 eff resultTy)
 {-# INLINE instantiateNaryPi #-}
 
-instantiatePi :: EnvReader m => PiType r n -> Atom r n -> m n (EffectRow n, Type r n)
+instantiatePi :: EnvReader m => PiType r n -> Atom r n -> m n (EffectRow r n, Type r n)
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
@@ -205,17 +204,17 @@ typeUnOp = const id  -- All unary ops preserve the type of the input
 -- === computing effects ===
 
 computeAbsEffects :: (EnvExtender m, RenameE e)
-  => Abs (Nest (Decl r)) e n -> m n (Abs (Nest (Decl r)) (EffectRow `PairE` e) n)
+  => Abs (Nest (Decl r)) e n -> m n (Abs (Nest (Decl r)) (EffectRow r `PairE` e) n)
 computeAbsEffects it = refreshAbs it \decls result -> do
   effs <- declNestEffects decls
   return $ Abs decls (effs `PairE` result)
 {-# INLINE computeAbsEffects #-}
 
-declNestEffects :: (EnvReader m) => Nest (Decl r) n l -> m l (EffectRow l)
+declNestEffects :: (EnvReader m) => Nest (Decl r) n l -> m l (EffectRow r l)
 declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
 {-# INLINE declNestEffects #-}
 
-declNestEffectsRec :: Nest (Decl r) n l -> EffectRow l -> EnvReaderM l (EffectRow l)
+declNestEffectsRec :: Nest (Decl r) n l -> EffectRow r l -> EnvReaderM l (EffectRow r l)
 declNestEffectsRec Empty !acc = return acc
 declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
   expr <- sinkM $ declExpr decl
@@ -737,7 +736,7 @@ rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 -- === querying effects implementation ===
 
 class HasEffectsE (e::E) (r::IR) | e -> r where
-  getEffectsImpl :: e i -> TypeQueryM r i o (EffectRow o)
+  getEffectsImpl :: e i -> TypeQueryM r i o (EffectRow r o)
 
 instance HasEffectsE (Expr r) r where
   getEffectsImpl = exprEffects
@@ -747,7 +746,7 @@ instance HasEffectsE (DeclBinding r) r where
   getEffectsImpl (DeclBinding _ _ expr) = getEffectsImpl expr
   {-# INLINE getEffectsImpl #-}
 
-exprEffects :: Expr r i -> TypeQueryM r i o (EffectRow o)
+exprEffects :: Expr r i -> TypeQueryM r i o (EffectRow r o)
 exprEffects expr = case expr of
   Atom _  -> return Pure
   App f xs -> do
@@ -765,7 +764,7 @@ exprEffects expr = case expr of
     applySubst (bs @@> fmap SubstVal xs') effs
   TabApp _ _ -> return Pure
   RefOp ref m -> do
-    h <- getMaybeHeapVar <$> getTypeSubst ref
+    TC (RefType h _) <- getTypeSubst ref
     return case m of
       MGet      -> OneEffect (RWSEffect State  h)
       MPut    _ -> OneEffect (RWSEffect State  h)
@@ -822,7 +821,7 @@ exprEffects expr = case expr of
     RunIO          f -> deleteEff IOEffect        <$> getEffectsImpl f
     RunInit        f -> deleteEff InitEffect      <$> getEffectsImpl f
     CatchException f -> deleteEff ExceptionEffect <$> getEffectsImpl f
-    where maybeInit :: Maybe (Atom r i) -> (EffectRow o -> EffectRow o)
+    where maybeInit :: Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
           maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
   TabCon _ _        -> return Pure
@@ -840,25 +839,17 @@ instance HasEffectsE (Alt r) r where
       ignoreHoistFailure . hoist bs' <$> getEffectsImpl body
   {-# INLINE getEffectsImpl #-}
 
-functionEffs :: LamExpr r i -> TypeQueryM r i o (EffectRow o)
+functionEffs :: LamExpr r i -> TypeQueryM r i o (EffectRow r o)
 functionEffs f = getLamExprType f >>= \case
   NaryPiType b effs _ -> return $ ignoreHoistFailure $ hoist b effs
 
-rwsFunEffects :: RWS -> LamExpr r i -> TypeQueryM r i o (EffectRow o)
+rwsFunEffects :: RWS -> LamExpr r i -> TypeQueryM r i o (EffectRow r o)
 rwsFunEffects rws f = getLamExprType f >>= \case
    NaryPiType (BinaryNest h ref) effs _ -> do
      let effs' = ignoreHoistFailure $ hoist ref effs
-     let effs'' = deleteEff (RWSEffect rws (Just (binderName h))) effs'
+     let effs'' = deleteEff (RWSEffect rws (Var $ binderName h)) effs'
      return $ ignoreHoistFailure $ hoist h effs''
    _ -> error "Expected a binary function type"
 
-deleteEff :: Effect n -> EffectRow n -> EffectRow n
-deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
-
-getMaybeHeapVar :: Type r o -> Maybe (AtomName r o)
-getMaybeHeapVar (TC (RefType h _)) = case h of
-  Just (Var h') -> Just h'
-  Just (Con HeapVal) -> Nothing
-  Nothing            -> Nothing
-  _ -> error "expect heap parameter to be a var or HeapVal"
-getMaybeHeapVar refTy = error $ "not a ref type: " ++ pprint refTy
+deleteEff :: Effect r n -> EffectRow r n -> EffectRow r n
+deleteEff eff (EffectRow effs t) = EffectRow (effs `eSetDifference` eSetSingleton eff) t

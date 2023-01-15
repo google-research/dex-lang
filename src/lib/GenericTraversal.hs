@@ -24,7 +24,6 @@ import MTL1
 import Name
 import Subst
 import Types.Core
-import Types.Primitives
 import Util (onSndM)
 
 liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)

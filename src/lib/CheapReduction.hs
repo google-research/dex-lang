@@ -23,7 +23,6 @@ import Data.Functor.Identity
 import Data.Functor ((<&>))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict as M
-import qualified Data.Set        as S
 import Data.Maybe
 import GHC.Exts (inline)
 
@@ -441,40 +440,19 @@ instance SubstE (AtomSubstVal r) (Atom r) where
     Case6 rest -> (toE . Case6) $ substE (env, subst) rest
     Case7 rest -> (toE . Case7) $ substE (env, subst) rest
 
-instance SubstE (AtomSubstVal r) (EffectRowP Name) where
+instance SubstE (AtomSubstVal r) (EffectRow r) where
   substE env (EffectRow effs tailVar) = do
-    let effs' = S.fromList $ map (substE env) (S.toList effs)
+    let effs' = eSetFromList $ map (substE env) (eSetToList effs)
     let tailEffRow = case tailVar of
-          Nothing -> EffectRow mempty Nothing
-          Just v -> case snd env ! v of
-            Rename        v'  -> EffectRow mempty (Just v')
-            SubstVal (Var v') -> EffectRow mempty (Just v')
+          NoTail -> EffectRow mempty NoTail
+          EffectRowTail v -> case snd env ! v of
+            Rename        v'  -> EffectRow mempty (EffectRowTail v')
+            SubstVal (Var v') -> EffectRow mempty (EffectRowTail v')
             SubstVal (Eff r)  -> r
             _ -> error "Not a valid effect substitution"
     extendEffRow effs' tailEffRow
 
-instance SubstE (AtomSubstVal r) (EffectP Name) where
-  substE (_, env) eff = case eff of
-    RWSEffect rws Nothing -> RWSEffect rws Nothing
-    RWSEffect rws (Just v) -> do
-      let v' = case env ! v of
-                 Rename   v''           -> Just v''
-                 SubstVal (Con HeapVal) -> Nothing
-                 SubstVal (Var v'')     -> Just v''
-                 -- TODO: this is ill-typed if names carry IR variants.
-                 -- We should just make RWSEffect take an atom instead of a name
-                 SubstVal (SimpInCore _ (Var v'')) -> Just v''
-                 SubstVal x -> error $ "Heap parameter must be a name or `HeapVal`, got: " ++ pprint x
-      RWSEffect rws v'
-    ExceptionEffect -> ExceptionEffect
-    IOEffect        -> IOEffect
-    UserEffect v    ->
-      case env ! v of
-        Rename v' -> UserEffect v'
-        -- other cases are proven unreachable by type system
-        -- v' is an EffectNameC but other cases apply only to
-        -- AtomNameC
-    InitEffect -> InitEffect
+instance SubstE (AtomSubstVal r) (Effect r)
 
 instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
   substE env (AppSpecialization f ab) = do

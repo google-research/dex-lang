@@ -300,16 +300,11 @@ instance HasType r (Expr r) where
     Case e alts resultTy effs -> checkCase e alts resultTy effs
     RefOp ref m -> do
       TC (RefType h s) <- getTypeE ref
-      h' <- return case h of
-        Just (Var h') -> Just h'
-        Just (Con HeapVal) -> Nothing
-        Nothing -> Nothing
-        _ -> error "expect heap parameter to be a var or HeapVal"
       case m of
-        MGet      ->         declareEff (RWSEffect State  h') $> s
-        MPut  x   -> x|:s >> declareEff (RWSEffect State  h') $> UnitTy
-        MAsk      ->         declareEff (RWSEffect Reader h') $> s
-        MExtend _ x -> x|:s >> declareEff (RWSEffect Writer h') $> UnitTy
+        MGet      ->         declareEff (RWSEffect State  h) $> s
+        MPut  x   -> x|:s >> declareEff (RWSEffect State  h) $> UnitTy
+        MAsk      ->         declareEff (RWSEffect Reader h) $> s
+        MExtend _ x -> x|:s >> declareEff (RWSEffect Writer h) $> UnitTy
         IndexRef i -> do
           TabTy (b:>IxType iTy _) eltTy <- return s
           i' <- checkTypeE iTy i
@@ -447,7 +442,7 @@ typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
   SumType  cs      -> mapM_ (|:TyKind) cs  >> return TyKind
-  RefType r a      -> mapM_ (|:TC HeapType) r >> a|:TyKind >> return TyKind
+  RefType r a      ->  r|:TC HeapType >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   HeapType         -> return TyKind
 
@@ -730,13 +725,13 @@ checkRWSAction rws f = do
   BinaryLamExpr bH bR body <- return f
   renameBinders bH \bH' -> renameBinders bR \bR' -> do
     h <- sinkM $ binderName bH'
-    extendAllowedEffect (RWSEffect rws $ Just h) do
+    extendAllowedEffect (RWSEffect rws $ Var h) do
       RefTy _ referentTy <- sinkM $ binderType bR'
       resultTy <- getTypeE body
       liftM fromPairE $ liftHoistExcept $ hoist (PairB bH' bR') $ PairE resultTy referentTy
 
 checkCase :: Typer m => HasType r body
-          => Atom r i -> [AltP r body i] -> Type r i -> EffectRow i -> m i o (Type r o)
+          => Atom r i -> [AltP r body i] -> Type r i -> EffectRow r i -> m i o (Type r o)
 checkCase scrut alts resultTy effs = do
   declareEffs =<< renameM effs
   resultTy' <- renameM resultTy
@@ -817,7 +812,7 @@ checkArgTys (Nest b bs) (x:xs) = do
 checkArgTys _ _ = throw TypeErr $ "wrong number of args"
 {-# INLINE checkArgTys #-}
 
-checkArrowAndEffects :: Fallible m => Arrow -> EffectRow n -> m ()
+checkArrowAndEffects :: Fallible m => Arrow -> EffectRow r n -> m ()
 checkArrowAndEffects PlainArrow _ = return ()
 checkArrowAndEffects _ Pure = return ()
 checkArrowAndEffects _ _ = throw TypeErr $ "Only plain arrows may have effects"
@@ -1058,41 +1053,42 @@ checkedApplyNaryAbs (Abs nest e) args = case (nest, args) of
 
 -- === effects ===
 
-instance CheckableE EffectRow where
+instance CheckableE (EffectRow r) where
   checkE effRow@(EffectRow effs effTail) = do
-    forM_ effs \eff -> case eff of
-      RWSEffect _ (Just v) -> Var v |: TC HeapType
-      RWSEffect _ Nothing -> return ()
+    forM_ (eSetToList effs) \eff -> case eff of
+      RWSEffect _ v -> v |: TC HeapType
       ExceptionEffect -> return ()
       IOEffect        -> return ()
       UserEffect _    -> return ()
       InitEffect      -> return ()
-    forM_ effTail \v -> do
-      v' <- renameM v
-      ty <- atomBindingType <$> lookupAtomName v'
-      checkTypesEq EffKind ty
+    case effTail of
+      NoTail -> return ()
+      EffectRowTail v -> do
+        v' <- renameM v
+        ty <- atomBindingType <$> lookupAtomName v'
+        checkTypesEq EffKind ty
     renameM effRow
 
-declareEff :: Typer m => Effect o -> m i o ()
+declareEff :: Typer m => Effect r o -> m i o ()
 declareEff eff = declareEffs $ OneEffect eff
 
-declareEffs :: Typer m => EffectRow o -> m i o ()
+declareEffs :: Typer m => EffectRow r o -> m i o ()
 declareEffs effs = do
   allowed <- getAllowedEffects
   checkExtends allowed effs
 
-extendAllowedEffect :: EnvExtender m => Effect n -> m n a -> m n a
+extendAllowedEffect :: EnvExtender m => Effect r n -> m n a -> m n a
 extendAllowedEffect newEff cont = do
   effs <- getAllowedEffects
   withAllowedEffects (extendEffect newEff effs) cont
 
-checkExtends :: Fallible m => EffectRow n -> EffectRow n -> m ()
+checkExtends :: Fallible m => EffectRow r n -> EffectRow r n -> m ()
 checkExtends allowed (EffectRow effs effTail) = do
   let (EffectRow allowedEffs allowedEffTail) = allowed
   case effTail of
-    Just _ -> assertEq allowedEffTail effTail ""
-    Nothing -> return ()
-  forM_ effs \eff -> unless (eff `elem` allowedEffs) $
+    EffectRowTail _ -> assertEq allowedEffTail effTail ""
+    NoTail -> return ()
+  forM_ (eSetToList effs) \eff -> unless (eff `eSetMember` allowedEffs) $
     throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
                       "\nAllowed: " ++ pprint allowed
 
@@ -1165,7 +1161,6 @@ checkFFIFunTypeM (NaryPiType (Nest b bs) eff resultTy) = do
   argTy <- checkScalar $ binderType b
   case bs of
     Empty -> do
-      assertEq eff (OneEffect IOEffect) ""
       resultTys <- checkScalarOrPairType resultTy
       let cc = case length resultTys of
                  0 -> error "Not implemented"

@@ -1544,15 +1544,15 @@ buildHandlerLam v = do
   HandlerBinding (HandlerDef effName _r _ns _hndEff _retTy _ _) <- lookupEnv v
   buildLam "r" ImplicitArrow TyKind Pure $ \r ->
     buildLam "eff" ImplicitArrow (NewtypeTyCon EffectRowKind) Pure $ \eff -> do
-      let bodyEff = EffectRow (S.singleton (UserEffect (sink effName))) (Just eff)
+      let bodyEff = EffectRow (eSetSingleton (UserEffect (sink effName))) (EffectRowTail eff)
       bodyTy <- buildNonDepPi noHint PlainArrow UnitTy bodyEff (Var (sink r))
-      let effRow = EffectRow (S.empty) (Just eff)
+      let effRow = EffectRow mempty (EffectRowTail eff)
       buildLam "body" PlainArrow (Pi bodyTy) effRow $ \body -> do
         -- TODO(alex): deal with handler args below
         block <- buildBlock $ app (Var (sink body)) UnitVal
         emitExpr $ UserEffectOp $ Handle (sink v) [] block
 
-buildForTypeFromTabType :: EffectRow n -> TabPiType CoreIR n -> InfererM i n (PiType CoreIR n)
+buildForTypeFromTabType :: EffectRow CoreIR n -> TabPiType CoreIR n -> InfererM i n (PiType CoreIR n)
 buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
   let IxType ty _ = ixTy
   buildPi (getNameHint b) PlainArrow ty \i -> do
@@ -1844,7 +1844,7 @@ checkUBinders :: EmitsInf o
 checkUBinders (EmptyAbs bs) = withNestedUBinders bs id \_ -> return UnitE
 checkUBinders _ = error "impossible"
 
-inferULam :: EmitsBoth o => EffectRow o -> ULamExpr i -> InfererM i o (CAtom o)
+inferULam :: EmitsBoth o => EffectRow CoreIR o -> ULamExpr i -> InfererM i o (CAtom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
   argTy <- checkAnn ann
   buildLamInf (getNameHint p) arrow argTy (\_ -> sinkM effs) \v ->
@@ -2002,26 +2002,27 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs)
     checkSigma noHint rhs methodTy'
   return (i, rhs')
 
-checkUEffRow :: EmitsInf o => UEffectRow i -> InfererM i o (EffectRow o)
-checkUEffRow (EffectRow effs t) = do
-   effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
-   t' <- forM t \(SIInternalName _ v) -> do
-            v' <- renameM v
-            constrainVarTy v' EffKind
-            return v'
+checkUEffRow :: EmitsInf o => UEffectRow i -> InfererM i o (EffectRow CoreIR o)
+checkUEffRow (UEffectRow effs t) = do
+   effs' <- liftM eSetFromList $ mapM checkUEff $ toList effs
+   t' <- case t of
+     Nothing -> return NoTail
+     Just (~(SIInternalName _ v)) -> do
+       v' <- renameM v
+       constrainVarTy v' EffKind
+       return $ EffectRowTail v'
    return $ EffectRow effs' t'
 
-checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect o)
+checkUEff :: EmitsInf o => UEffect i -> InfererM i o (Effect CoreIR o)
 checkUEff eff = case eff of
-  RWSEffect rws (Just ~(SIInternalName _ region)) -> do
+  URWSEffect rws (~(SIInternalName _ region)) -> do
     region' <- renameM region
     constrainVarTy region' (TC HeapType)
-    return $ RWSEffect rws $ Just region'
-  RWSEffect rws Nothing -> return $ RWSEffect rws Nothing
-  ExceptionEffect -> return ExceptionEffect
-  IOEffect        -> return IOEffect
-  UserEffect ~(SIInternalName _ name) -> UserEffect <$> renameM name
-  InitEffect -> return InitEffect
+    return $ RWSEffect rws (Var region')
+  UExceptionEffect -> return ExceptionEffect
+  UIOEffect        -> return IOEffect
+  UUserEffect ~(SIInternalName _ name) -> UserEffect <$> renameM name
+  UInitEffect -> return InitEffect
 
 constrainVarTy :: EmitsInf o => CAtomName o -> CType o -> InfererM i o ()
 constrainVarTy v tyReq = do
@@ -2381,7 +2382,7 @@ fromDepPairType :: EmitsBoth o => CType o -> InfererM i o (DepPairType CoreIR o)
 fromDepPairType (DepPairTy t) = return t
 fromDepPairType ty = throw TypeErr $ "Expected a dependent pair, but got: " ++ pprint ty
 
-addEffects :: EmitsBoth o => EffectRow o -> InfererM i o ()
+addEffects :: EmitsBoth o => EffectRow CoreIR o -> InfererM i o ()
 addEffects eff = do
   allowed <- checkAllowedUnconditionally eff
   unless allowed $ do
@@ -2389,7 +2390,7 @@ addEffects eff = do
     eff' <- openEffectRow eff
     constrainEq (Eff effsAllowed) (Eff eff')
 
-checkAllowedUnconditionally :: EffectRow o -> InfererM i o Bool
+checkAllowedUnconditionally :: EffectRow CoreIR o -> InfererM i o Bool
 checkAllowedUnconditionally Pure = return True
 checkAllowedUnconditionally eff = do
   eff' <- zonk eff
@@ -2398,8 +2399,8 @@ checkAllowedUnconditionally eff = do
     Failure _  -> False
     Success () -> True
 
-openEffectRow :: EmitsBoth o => EffectRow o -> InfererM i o (EffectRow o)
-openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
+openEffectRow :: EmitsBoth o => EffectRow CoreIR o -> InfererM i o (EffectRow CoreIR o)
+openEffectRow (EffectRow effs NoTail) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
 asIxType :: CType o -> InfererM i o (IxType CoreIR o)
@@ -2672,30 +2673,30 @@ instance Unifiable (DataDefParams CoreIR) where
   unifyZonked (DataDefParams xs) (DataDefParams xs')
     = zipWithM_ unify (plainArrows xs) (plainArrows xs')
 
-instance Unifiable (EffectRowP Name) where
+instance Unifiable (EffectRow CoreIR) where
   unifyZonked x1 x2 =
         unifyDirect x1 x2
     <|> unifyDirect x2 x1
     <|> unifyZip x1 x2
 
    where
-     unifyDirect :: EmitsInf n => EffectRow n -> EffectRow n -> SolverM n ()
-     unifyDirect r@(EffectRow effs' mv') (EffectRow effs (Just v)) | S.null effs =
+     unifyDirect :: EmitsInf n => EffectRow CoreIR n -> EffectRow CoreIR n -> SolverM n ()
+     unifyDirect r@(EffectRow effs' mv') (EffectRow effs (EffectRowTail v)) | null (eSetToList effs) =
        case mv' of
-         Just v' | v == v' -> guard $ S.null effs'
+         EffectRowTail v' | v == v' -> guard $ null $ eSetToList effs'
          _ -> extendSolution v (Eff r)
      unifyDirect _ _ = empty
      {-# INLINE unifyDirect #-}
 
-     unifyZip :: EmitsInf n => EffectRow n -> EffectRow n -> SolverM n ()
+     unifyZip :: EmitsInf n => EffectRow CoreIR n -> EffectRow CoreIR n -> SolverM n ()
      unifyZip r1 r2 = case (r1, r2) of
-      (EffectRow effs1 t1, EffectRow effs2 t2) | not (S.null effs1 || S.null effs2) -> do
-        let extras1 = effs1 `S.difference` effs2
-        let extras2 = effs2 `S.difference` effs1
-        newRow <- freshEff
-        unify (EffectRow mempty t1) (extendEffRow extras2 newRow)
-        unify (extendEffRow extras1 newRow) (EffectRow mempty t2)
-      _ -> unifyEq r1 r2
+       (EffectRow effs1 t1, EffectRow effs2 t2) | not (eSetNull effs1 || eSetNull effs2) -> do
+         let extras1 = effs1 `eSetDifference` effs2
+         let extras2 = effs2 `eSetDifference` effs1
+         newRow <- freshEff
+         unify (EffectRow mempty t1) (extendEffRow extras2 newRow)
+         unify (extendEffRow extras1 newRow) (EffectRow mempty t2)
+       _ -> unifyEq r1 r2
 
 -- TODO: This unification procedure is incomplete! There are types that we might
 -- want to treat as equivalent, but for now they would be rejected conservatively!
@@ -2825,8 +2826,8 @@ freshType :: (EmitsInf n, Solver m) => Kind CoreIR n -> m n (CType n)
 freshType k = Var <$> freshInferenceName k
 {-# INLINE freshType #-}
 
-freshEff :: (EmitsInf n, Solver m) => m n (EffectRow n)
-freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
+freshEff :: (EmitsInf n, Solver m) => m n (EffectRow CoreIR n)
+freshEff = EffectRow mempty . EffectRowTail <$> freshInferenceName EffKind
 {-# INLINE freshEff #-}
 
 renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, RenameE e)
@@ -3189,7 +3190,7 @@ buildBlockInfWithRecon cont = do
 buildLamInf
   :: EmitsInf n
   => NameHint -> Arrow -> CType n
-  -> (forall l. (EmitsInf  l, Ext n l) => CAtomName l -> InfererM i l (EffectRow l))
+  -> (forall l. (EmitsInf  l, Ext n l) => CAtomName l -> InfererM i l (EffectRow CoreIR l))
   -> (forall l. (EmitsBoth l, Ext n l) => CAtomName l -> InfererM i l (CAtom l))
   -> InfererM i n (CAtom n)
 buildLamInf hint arr ty fEff fBody = do
@@ -3214,7 +3215,7 @@ buildPiAbsInf hint arr ty body = do
 buildPiInf
   :: EmitsInf n
   => NameHint -> Arrow -> CType n
-  -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (EffectRow l, CType l))
+  -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (EffectRow CoreIR l, CType l))
   -> InfererM i n (PiType CoreIR n)
 buildPiInf hint arr ty body = do
   Abs (b:>_) (PairE effs resultTy) <-

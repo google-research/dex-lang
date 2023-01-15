@@ -18,7 +18,6 @@ import Data.List (elemIndex)
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.List.NonEmpty as NE
-import qualified Data.Set as S
 import GHC.Exts (inline)
 
 import Builder
@@ -173,7 +172,7 @@ getRepType ty = go ty where
       BaseType b  -> return $ BaseType b
       ProdType ts -> ProdType <$> mapM go ts
       SumType  ts -> SumType  <$> mapM go ts
-      RefType h a -> RefType  <$> mapM toDataAtomIgnoreReconAssumeNoDecls h <*> go a
+      RefType h a -> RefType  <$> toDataAtomIgnoreReconAssumeNoDecls h <*> go a
       TypeKind    -> error $ notDataType
       HeapType    -> return $ HeapType
     DepPairTy (DepPairType b@(_:>l) r) -> do
@@ -232,7 +231,7 @@ toDataOrRepType x = getType x >>= \case
 simplifiedPiType :: NaryPiType CoreIR n -> SimplifyM i n (NaryPiType SimpIR n)
 simplifiedPiType (NaryPiType bsTop eff resultTy) =
  dropSubst $ go bsTop \bsTop' ->
-  NaryPiType bsTop' <$> substM eff <*> (substM resultTy >>= getRepType)
+  NaryPiType bsTop' <$> simplifyEffectRow eff <*> (substM resultTy >>= getRepType)
  where
    go :: Nest (PiBinder CoreIR) i i'
       -> (forall o'. DExt o o' => Nest (PiBinder SimpIR) o o' ->SimplifyM i' o' a)
@@ -245,6 +244,23 @@ simplifiedPiType (NaryPiType bsTop eff resultTy) =
        x <- liftSimpAtom (Just $ sink ty') (Var $ binderName b')
        extendSubst (b@>SubstVal x) $
          go bs \bs' -> cont (Nest (PiBinder b' simpTy arr) bs')
+
+simplifyEffectRow :: EffectRow CS i -> SimplifyM i o (EffectRow SimpIR o)
+simplifyEffectRow effRow = do
+  EffectRow effs maybeTail <- substM effRow
+  case maybeTail of
+    EffectRowTail _ -> error "shouldn't have a polymorphic tail left"
+    NoTail -> do
+      effs' <- eSetFromList <$> mapM simplifyEffect (eSetToList effs)
+      return $ EffectRow effs' NoTail
+
+simplifyEffect :: Effect CS o -> SimplifyM i o (Effect SimpIR o)
+simplifyEffect = \case
+   RWSEffect rws h -> RWSEffect rws <$> toDataAtomIgnoreReconAssumeNoDecls h
+   ExceptionEffect -> return ExceptionEffect
+   IOEffect        -> return IOEffect
+   UserEffect v    -> return $ UserEffect v
+   InitEffect      -> return InitEffect
 
 -- === Reconstructions ===
 
@@ -404,7 +420,7 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
         tryGetRepType resultTy' >>= \case
           Nothing -> defuncCase scrutSimp alts resultTy'
           Just resultTyData -> do
-            eff' <- substM eff
+            eff' <- simplifyEffectRow eff
             alts' <- forM alts \(Abs b body) -> do
               bTy <- substM $ binderType b
               bTy' <- getRepType bTy
@@ -1113,12 +1129,9 @@ exceptToMaybeExpr expr = case expr of
         ty <- getType v
         return $ JustAtom ty (Var v)
 
-hasExceptions :: (EnvReader m, MonadFail1 m) => SExpr n -> m n Bool
-hasExceptions expr = do
-  (EffectRow effs t) <- getEffects expr
-  case t of
-    Nothing -> return $ ExceptionEffect `S.member` effs
-    Just _  -> error "Shouldn't have tail left"
+hasExceptions :: EnvReader m => SExpr n -> m n Bool
+hasExceptions expr = getEffects expr >>= \case
+  EffectRow effs NoTail -> return $ ExceptionEffect `eSetMember` effs
 
 -- === instances ===
 

@@ -521,8 +521,9 @@ instance HasDCE (TabLamExpr  SimpIR)
 instance HasDCE (PiType      SimpIR)
 instance HasDCE (TabPiType   SimpIR)
 instance HasDCE (DepPairType SimpIR)
-instance HasDCE EffectRow
-instance HasDCE Effect
+instance HasDCE (EffectRowTail SimpIR)
+instance HasDCE (EffectRow     SimpIR)
+instance HasDCE (Effect        SimpIR)
 instance HasDCE (DictExpr      SimpIR)
 instance HasDCE (DictType      SimpIR)
 instance HasDCE (FieldRowElems SimpIR)

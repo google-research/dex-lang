@@ -405,9 +405,9 @@ plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
 classPiBinder :: Binder r n l -> PiBinder r n l
 classPiBinder (b:>ty) = PiBinder b ty ClassArrow
 
-withAllowedEffects :: EnvExtender m => EffectRow n -> m n a -> m n a
+withAllowedEffects :: EnvExtender m => EffectRow r n -> m n a -> m n a
 withAllowedEffects effs cont =
-  refreshAbs (Abs (EffectBinder effs) UnitE) \(EffectBinder _) UnitE ->
+  refreshAbs (Abs (EffectBinder $ unsafeCoerceIRE effs) UnitE) \(EffectBinder _) UnitE ->
     cont
 
 getLambdaDicts :: EnvReader m => m n [AtomName CoreIR n]
@@ -422,12 +422,12 @@ getInstanceDicts name = do
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
 
-getAllowedEffects :: EnvReader m => m n (EffectRow n)
-getAllowedEffects = withEnv $ allowedEffects . moduleEnv
+getAllowedEffects :: EnvReader m => m n (EffectRow r n)
+getAllowedEffects = withEnv $ unsafeCoerceIRE . allowedEffects . moduleEnv
 {-# INLINE getAllowedEffects #-}
 
 nonDepPiType :: ScopeReader m
-             => Arrow -> Type r n -> EffectRow n -> Type r n -> m n (PiType r n)
+             => Arrow -> Type r n -> EffectRow r n -> Type r n -> m n (PiType r n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
@@ -438,13 +438,13 @@ nonDepTabPiType argTy resultTy =
   toConstAbs resultTy >>= \case
     Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
 
-considerNonDepPiType :: PiType r n -> Maybe (Arrow, Type r n, EffectRow n, Type r n)
+considerNonDepPiType :: PiType r n -> Maybe (Arrow, Type r n, EffectRow r n, Type r n)
 considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
   HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
-                 => Arrow -> Type r n -> m n (Type r n, EffectRow n, Type r n)
+                 => Arrow -> Type r n -> m n (Type r n, EffectRow r n, Type r n)
 fromNonDepPiType arr ty = do
   Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
@@ -489,7 +489,7 @@ a ==> b = TabPi <$> nonDepTabPiType a b
 -- - The `exact` versions only succeed if at least maxDepth binders were
 --   present, in which case exactly maxDepth binders are packed into the nary
 --   structure.  Excess binders, if any, are still left in the unary structures.
-blockEffects :: Block r n -> EffectRow n
+blockEffects :: Block r n -> EffectRow r n
 blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
   BlockAnn _ eff -> eff
