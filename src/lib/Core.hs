@@ -201,10 +201,10 @@ instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) w
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann')) Nothing
     where ann' = withExtEvidence b $ sink ann
 
-instance (SinkableE ann, ToBinding ann AtomNameC) => BindsEnv (NonDepNest r ann) where
+instance (SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonDepNest r ann) where
   toEnvFrag (NonDepNest topBs topAnns) = toEnvFrag $ zipNest topBs topAnns
     where
-      zipNest :: Distinct l => Nest AtomNameBinder n l -> [ann n] -> Nest (BinderP AtomNameC ann) n l
+      zipNest :: Distinct l => Nest (AtomNameBinder r) n l -> [ann n] -> Nest (BinderP (AtomNameC r) ann) n l
       zipNest Empty [] = Empty
       zipNest (Nest b bs) (a:anns) = withExtEvidence b $ withSubscopeDistinct bs $
         Nest (b:>a) $ zipNest bs $ sinkList anns
@@ -213,7 +213,7 @@ instance (SinkableE ann, ToBinding ann AtomNameC) => BindsEnv (NonDepNest r ann)
 instance BindsEnv EffectBinder where
   toEnvFrag (EffectBinder effs) = EnvFrag emptyOutFrag $ Just effs
 
-instance BindsEnv (PiBinder r) where
+instance HasCore r => BindsEnv (PiBinder r) where
   toEnvFrag :: Distinct l => PiBinder r n l -> EnvFrag n l
   toEnvFrag (PiBinder b ty arr) =
     withExtEvidence b do
@@ -231,7 +231,7 @@ instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
 
-instance BindsEnv (RolePiBinder r) where
+instance HasCore r => BindsEnv (RolePiBinder r) where
   toEnvFrag (RolePiBinder b ty arr _) = toEnvFrag (PiBinder b ty arr)
   {-# INLINE toEnvFrag #-}
 
@@ -568,11 +568,11 @@ fromNaryForExpr maxDepth = \case
 fromNaryPiType :: Int -> Type r n -> Maybe (NaryPiType r n)
 fromNaryPiType n _ | n <= 0 = error "expected positive number of args"
 fromNaryPiType 1 ty = case ty of
-  Pi (PiType b effs resultTy) -> Just $ NaryPiType (Nest b Empty) effs resultTy
+  Pi (PiType (PiBinder b argTy _) effs resultTy) -> Just $ NaryPiType (Nest (b:>argTy) Empty) effs resultTy
   _ -> Nothing
-fromNaryPiType n (Pi (PiType b1 Pure piTy)) = do
+fromNaryPiType n (Pi (PiType (PiBinder b1 argTy1 _) Pure piTy)) = do
   NaryPiType (Nest b2 bs) effs resultTy <- fromNaryPiType (n-1) piTy
-  Just $ NaryPiType (Nest b1 (Nest b2 bs)) effs resultTy
+  Just $ NaryPiType (Nest (b1:>argTy1) (Nest b2 bs)) effs resultTy
 fromNaryPiType _ _ = Nothing
 
 mkConsListTy :: [Type r n] -> Type r n
@@ -625,7 +625,7 @@ trySelectBranch e = case e of
   NewtypeCon con e' | isSumCon con -> trySelectBranch e'
   _ -> Nothing
 
-freeAtomVarsList :: HoistableE e => e n -> [Name AtomNameC n]
+freeAtomVarsList :: HoistableE e => e n -> [Name (AtomNameC r) n]
 freeAtomVarsList = freeVarsList
 
 freshNameM :: (Color c, EnvReader m)
@@ -636,4 +636,4 @@ freshNameM hint = do
   return $ withFresh hint scope \b -> Abs b (binderName b)
 {-# INLINE freshNameM #-}
 
-type AtomNameMap = NameMap AtomNameC
+type AtomNameMap r = NameMap (AtomNameC r)

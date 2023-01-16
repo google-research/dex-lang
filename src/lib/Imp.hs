@@ -122,9 +122,9 @@ getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
 interpretImpArgs :: EnvReader m => NaryPiType SimpToImpIR n -> [IExpr n] -> m n ([SIAtom n], Dest n)
 interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll where
   go :: NaryPiType SimpToImpIR i -> [IExpr o]
-     -> SubstReaderT (AtomSubstVal SimpToImpIR) EnvReaderM i o ([SIAtom o], Dest o)
+     -> SubstReaderT AtomSubstVal EnvReaderM i o ([SIAtom o], Dest o)
   go (NaryPiType bs effs resultTy) xs = case bs of
-    Nest (PiBinder b argTy _) rest -> do
+    Nest (b:>argTy) rest -> do
       argTy' <- substM argTy
       (argTree, xsRest) <- listToTree argTy' xs
       let arg = RepValAtom $ RepVal argTy' argTree
@@ -155,13 +155,13 @@ newtype ImpM (n::S) (a:: *) =
                        (InplaceT Env ImpBuilderEmissions HardFailM) n a }
   deriving ( Functor, Applicative, Monad, ScopeReader, Fallible, MonadFail)
 
-type SubstImpM = SubstReaderT (AtomSubstVal SimpToImpIR) ImpM :: S -> S -> * -> *
+type SubstImpM = SubstReaderT AtomSubstVal ImpM :: S -> S -> * -> *
 
 instance ExtOutMap Env ImpBuilderEmissions where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toEnvFrag emissions
 
-class (ImpBuilder2 m, SubstReader (AtomSubstVal SimpToImpIR) m, EnvReader2 m, EnvExtender2 m)
+class (ImpBuilder2 m, SubstReader AtomSubstVal m, EnvReader2 m, EnvExtender2 m)
       => Imper (m::MonadKind2) where
 
 instance EnvReader ImpM where
@@ -220,7 +220,7 @@ instance ImpBuilder ImpM where
   extendAllocsToFree ptr = ImpM $ tell $ ListE [ptr]
   {-# INLINE extendAllocsToFree #-}
 
-instance ImpBuilder m => ImpBuilder (SubstReaderT (AtomSubstVal SimpToImpIR) m i) where
+instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
   emitMultiReturnInstr instr = SubstReaderT $ lift $ emitMultiReturnInstr instr
   {-# INLINE emitMultiReturnInstr #-}
   emitDeclsImp ab = SubstReaderT $ lift $ emitDeclsImp ab
@@ -231,7 +231,7 @@ instance ImpBuilder m => ImpBuilder (SubstReaderT (AtomSubstVal SimpToImpIR) m i
   extendAllocsToFree ptr = SubstReaderT $ lift $ extendAllocsToFree ptr
   {-# INLINE extendAllocsToFree #-}
 
-instance ImpBuilder m => Imper (SubstReaderT (AtomSubstVal SimpToImpIR) m)
+instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)
 
 liftImpM :: EnvReader m => SubstImpM n n a -> m n a
 liftImpM cont = do
@@ -247,27 +247,28 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention -> DestBlock i -> SubstImpM i o (ImpFunction o)
-translateTopLevel cc (Abs (destb:>destTy') body') = do
-  destTy <- return $ injectIRE destTy'
-  body   <- return $ injectIRE body'
-  Abs decls (ListE results)  <- buildScopedImp do
-    dest <- case destTy of
-      RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
-      _ -> error "Expected a reference type for body destination"
-    extendSubst (destb @> SubstVal (destToAtom dest)) $ void $ translateBlock Nothing body
-    resultAtom <- loadAtom dest
-    ListE <$> repValToList <$> atomToRepVal resultAtom
-  let funImpl = Abs Empty $ ImpBlock decls results
-  let funTy   = IFunType cc [] (map getIType results)
-  return $ ImpFunction funTy funImpl
+translateTopLevel cc (Abs (destb:>destTy') body') = undefined
+-- translateTopLevel cc (Abs (destb:>destTy') body') = do
+--   destTy <- return $ injectIRE destTy'
+--   body   <- return $ injectIRE body'
+--   Abs decls (ListE results)  <- buildScopedImp do
+--     dest <- case destTy of
+--       RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
+--       _ -> error "Expected a reference type for body destination"
+--     extendSubst (destb @> SubstVal (destToAtom dest)) $ void $ translateBlock Nothing body
+--     resultAtom <- loadAtom dest
+--     ListE <$> repValToList <$> atomToRepVal resultAtom
+--   let funImpl = Abs Empty $ ImpBlock decls results
+--   let funTy   = IFunType cc [] (map getIType results)
+--   return $ ImpFunction funTy funImpl
 
 translateBlock :: forall i o. Emits o
                => MaybeDest o -> SIBlock i -> SubstImpM i o (SIAtom o)
 translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest $ Atom result
 
 translateDeclNestSubst
-  :: Emits o => Subst (AtomSubstVal SimpToImpIR) l o
-  -> Nest SIDecl l i' -> SubstImpM i o (Subst (AtomSubstVal SimpToImpIR) i' o)
+  :: Emits o => Subst AtomSubstVal l o
+  -> Nest SIDecl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
 translateDeclNestSubst !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding _ _ expr)) rest -> do
@@ -1367,7 +1368,7 @@ toScalarAtom x = RepValAtom $ RepVal (BaseTy (getIType x)) (Leaf x)
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
-liftBuilderImp :: (Emits n, SubstE (AtomSubstVal SimpToImpIR) e, SinkableE e)
+liftBuilderImp :: (Emits n, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, DExt n l) => BuilderM SimpToImpIR l (e l))
                -> SubstImpM i n (e n)
 liftBuilderImp cont = do
@@ -1376,7 +1377,7 @@ liftBuilderImp cont = do
 {-# INLINE liftBuilderImp #-}
 
 coreToImpBuilder
-  :: (Emits n, ImpBuilder m, SinkableE e, RenameE e, SubstE (AtomSubstVal SimpToImpIR) e )
+  :: (Emits n, ImpBuilder m, SinkableE e, RenameE e, SubstE AtomSubstVal e )
   => (forall l. (Emits l, DExt n l) => BuilderM SimpToImpIR l (e l))
   -> m n (e n)
 coreToImpBuilder cont = do

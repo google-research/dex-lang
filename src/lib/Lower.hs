@@ -166,7 +166,7 @@ traverseTabCon maybeDest tabTy elems = do
 -- so that it never allocates scratch space for its result, but will put it directly in
 -- the corresponding slice of the full 2D buffer.
 
-type DestAssignment (i'::S) (o::S) = AtomNameMap (ProjDest o) i'
+type DestAssignment (i'::S) (o::S) = AtomNameMap SimpIR (ProjDest o) i'
 
 data ProjDest o
   = FullDest (Dest SimpIR o)
@@ -211,8 +211,8 @@ traverseBlockWithDest dest (Block _ decls ans) = do
 
 traverseDeclNestWithDestS
   :: forall i i' l o. (Emits o, DistinctBetween l i')
-  => DestAssignment i' o -> Subst (AtomSubstVal SimpIR) l o -> Nest (Decl SimpIR) l i'
-  -> LowerM i o (Subst (AtomSubstVal SimpIR) i' o)
+  => DestAssignment i' o -> Subst AtomSubstVal l o -> Nest (Decl SimpIR) l i'
+  -> LowerM i o (Subst AtomSubstVal i' o)
 traverseDeclNestWithDestS destMap s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -297,8 +297,8 @@ data Stability
   deriving (Eq, Show)
 
 data VSubstValC (c::C) (n::S) where
-  VVal :: Stability -> SAtom n -> VSubstValC AtomNameC n
-type VAtom = VSubstValC AtomNameC
+  VVal :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
+type VAtom = VSubstValC (AtomNameC SimpIR)
 instance SinkableV VSubstValC
 instance SinkableE (VSubstValC c) where
   sinkingProofE fresh (VVal s x) = VVal s $ sinkingProofE fresh x
@@ -403,7 +403,7 @@ vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
 vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
-fromNameVAtom v = case eqColorRep @c @AtomNameC of
+fromNameVAtom v = case eqColorRep @c @(AtomNameC SimpIR) of
   Just ColorsEqual -> VVal Uniform $ Var v
   _ -> error "Unexpected non-atom name"
 
@@ -520,7 +520,7 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
       subst <- getSubst
       VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
     where
-      uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal SimpIR c o
+      uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
       uniformSubst subst n = case subst ! n of
         VVal Uniform x -> SubstVal x
         -- TODO(nrink): Throw instead of `error`.

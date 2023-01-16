@@ -50,7 +50,7 @@ import {-# SOURCE #-} Inference (trySynthTerm)
 
 -- === api ===
 
-type NiceE r e = (HoistableE e, SinkableE e, SubstE (AtomSubstVal r) e, RenameE e)
+type NiceE r e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, RenameE e)
 
 cheapReduce :: forall r e' e m n
              . (EnvReader m, CheaplyReducibleE r e e', NiceE r e, NiceE r e')
@@ -83,14 +83,14 @@ cheapNormalize a = cheapReduce a >>= \case
 
 newtype CheapReducerM (r::IR) (i :: S) (o :: S) (a :: *) =
   CheapReducerM
-    (SubstReaderT (AtomSubstVal r)
+    (SubstReaderT AtomSubstVal
       (MaybeT1
         (WriterT1 (FailedDictTypes r)
           (ScopedT1 (MapE (AtomName r) (MaybeE (Atom r)))
             (EnvReaderT Identity)))) i o a)
   deriving ( Functor, Applicative, Monad, Alternative
            , EnvReader, ScopeReader, EnvExtender
-           , SubstReader (AtomSubstVal r))
+           , SubstReader AtomSubstVal)
 
 -- The `NothingE` case indicates dictionaries couldn't be hoisted
 newtype FailedDictTypes (r::IR) (n::S) = FailedDictTypes (ESet (MaybeE (Type r)) n)
@@ -104,7 +104,7 @@ instance HoistableState (FailedDictTypes r) where
         HoistSuccess d' -> d'
         HoistFailure _  -> NothingE
 
-class ( Alternative2 m, SubstReader (AtomSubstVal r) m
+class ( Alternative2 m, SubstReader AtomSubstVal m
       , EnvReader2 m, EnvExtender2 m) => CheapReducer m r | m -> r where
   reportSynthesisFail :: Type r o -> m i o ()
   updateCache :: AtomName r o -> Maybe (Atom r o) -> m i o ()
@@ -119,7 +119,7 @@ instance CheapReducer (CheapReducerM r) r where
     fmap fromMaybeE <$> gets (M.lookup v . fromMapE)
 
 liftCheapReducerM :: EnvReader m
-                  => Subst (AtomSubstVal r) i o -> CheapReducerM r i o a
+                  => Subst AtomSubstVal i o -> CheapReducerM r i o a
                   -> m o (Maybe a, DictTypeHoistStatus, [Type r o])
 liftCheapReducerM subst (CheapReducerM m) = do
   (result, FailedDictTypes tySet) <-
@@ -138,10 +138,10 @@ cheapReduceFromSubst
   => e i -> CheapReducerM r i o (e o)
 cheapReduceFromSubst e = traverseNames cheapSubstName =<< substM e
   where
-    cheapSubstName :: Color c => Name c o -> CheapReducerM r i o (AtomSubstVal r c o)
+    cheapSubstName :: Color c => Name c o -> CheapReducerM r i o (AtomSubstVal c o)
     cheapSubstName v = lookupEnv v >>= \case
       AtomNameBinding (LetBound (DeclBinding _ _ (Atom x))) ->
-        liftM SubstVal $ dropSubst $ cheapReduceFromSubst $ injectFromCore x
+        liftM SubstVal $ dropSubst $ cheapReduceFromSubst x
       _ -> return $ Rename v
 
 cheapReduceWithDeclsB
@@ -175,22 +175,23 @@ cheapReduceWithDeclsRec decls cont = case decls of
         extendSubst (b@>SubstVal x) $
           cheapReduceWithDeclsRec rest cont
 
-cheapReduceName :: Color c => Name c o -> CheapReducerM r i o (AtomSubstVal r c o)
+cheapReduceName :: forall r c i o. Color c => Name c o -> CheapReducerM r i o (AtomSubstVal c o)
 cheapReduceName v =
   lookupEnv v >>= \case
-    AtomNameBinding (LetBound (DeclBinding _ _ e)) -> case e of
-      -- We avoid synthesizing the dictionaries during the traversal
-      -- and only do that when cheap reduction is performed on the expr directly.
-      _ -> do
-        cachedVal <- lookupCache v >>= \case
-          Nothing -> do
-            result <- optional (dropSubst $ cheapReduceE $ unsafeCoerceIRE e)
-            updateCache v result
-            return result
-          Just result -> return result
-        case cachedVal of
-          Nothing  -> stuck
-          Just ans -> return $ SubstVal ans
+    AtomNameBinding (LetBound (DeclBinding _ _ e)) -> do
+      -- TODO: figure out how to handle this safely. We have a perfectly good
+      -- fallback in the r=/r' case, but we don't have a way to test for that
+      -- case. OTOH, the name traversal fallback to Atom CheapReduceE is a hack
+      -- anyway and maybe this is a sign we should just fix that.
+      cachedVal <- lookupCache (unsafeCoerceIRName @r v) >>= \case
+        Nothing -> do
+          result <- optional (dropSubst $ cheapReduceE $ unsafeCoerceIRE @r e)
+          updateCache (unsafeCoerceIRName v) result
+          return result
+        Just result -> return result
+      case cachedVal of
+        Nothing  -> stuck
+        Just ans -> return $ SubstVal $ unsafeCoerceIRE ans
     _ -> stuck
   where stuck = return $ Rename v
 
@@ -207,6 +208,8 @@ instance CheaplyReducibleE r (Atom r) (Atom r) where
     -- dropping them if they turn out to be phantom.
     Lam _ _ _ -> substM a
     Con (DictHole ctx ty') -> do
+      -- TODO: figure out how to do this safely. `HasCore r` guarding `DictHole`
+      -- might be enough.
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthTerm $ unsafeCoerceIRE ty) >>= \case
         Success d -> return $ unsafeCoerceIRE d
@@ -237,7 +240,7 @@ instance HasCore r => CheaplyReducibleE r (DictExpr r) (Atom r) where
           args' <- mapM cheapReduceE args
           InstanceDef _ bs _ body <- lookupInstanceDef instanceName
           let InstanceBody superclasses _ = body
-          applySubst (bs@@>(SubstVal <$> args')) (injectFromCore $ superclasses !! superclassIx)
+          injectFromCore <$> applySubst (bs@@>((SubstVal . injectToCore) <$> args')) (superclasses !! superclassIx)
         child' -> return $ DictCon $ SuperclassProj child' superclassIx
     InstantiatedGiven f xs -> do
       cheapReduceE (App f xs) <|> justSubst
@@ -283,7 +286,7 @@ instance CheaplyReducibleE r (Expr r) (Atom r) where
           args' <- mapM cheapReduceE args
           InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
           let method = methods !! i
-          extendSubst (bs@@>(SubstVal <$> args')) $
+          extendSubst (bs@@>((SubstVal . injectToCore) <$> args')) $
             cheapReduceE $ injectFromCore method
         _ -> empty
     _ -> empty
@@ -372,19 +375,19 @@ unwrapNewtypeType = \case
   VariantTyCon (NoExt tys) -> return (VariantCon (void tys), SumTy  (toList tys))
   UserADTType _ defName params -> do
     def <- lookupDataDef defName
-    ty' <- dataDefRep <$> instantiateDataDef def params
+    ty' <- injectFromCore <$> dataDefRep <$> instantiateDataDef def (injectToCore params)
     return (UserADTData defName params, ty')
   ty -> error $ "Shouldn't be projecting: " ++ pprint ty
 {-# INLINE unwrapNewtypeType #-}
 
 instantiateDataDef :: (HasCore r, EnvReader m) => DataDef n -> DataDefParams r n -> m n [DataConDef r n]
 instantiateDataDef (DataDef _ bs cons) (DataDefParams params) = do
-  let dataDefParams' = DataDefParams [(arr, x) | (arr, x) <- params]
-  fromListE <$> applyDataConAbs (Abs bs $ ListE $ map injectFromCore cons) dataDefParams'
+  let dataDefParams' = injectToCore $ DataDefParams [(arr, x) | (arr, x) <- params]
+  (map injectFromCore . fromListE) <$> applyDataConAbs (Abs bs $ ListE cons) dataDefParams'
 {-# INLINE instantiateDataDef #-}
 
-applyDataConAbs :: (SubstE (AtomSubstVal r) e, SinkableE e, EnvReader m)
-                => Abs (Nest (RolePiBinder CoreIR)) e n -> DataDefParams r n -> m n (e n)
+applyDataConAbs :: (HasCore r, SubstE AtomSubstVal e, SinkableE e, EnvReader m)
+                => Abs (Nest (RolePiBinder r)) e n -> DataDefParams r n -> m n (e n)
 applyDataConAbs (Abs bs e) (DataDefParams xs) =
   applySubst (bs @@> (SubstVal <$> map snd xs)) e
 {-# INLINE applyDataConAbs #-}
@@ -413,7 +416,13 @@ projType i ty x = case ty of
 -- === SubstE/SubstB instances ===
 -- These live here, as orphan instances, because we normalize as we substitute.
 
-instance SubstE (AtomSubstVal r) (Atom r) where
+instance Color c => SubstE AtomSubstVal (AtomSubstVal c) where
+  substE (_, env) (Rename name) = env ! name
+  substE env (SubstVal val) = SubstVal $ substE env val
+
+instance SubstV (SubstVal Atom) (SubstVal Atom) where
+
+instance SubstE AtomSubstVal (Atom r) where
   substE (env, subst) atom = case fromE atom of
     Case0 specialCase -> case specialCase of
       -- Var
@@ -433,14 +442,11 @@ instance SubstE (AtomSubstVal r) (Atom r) where
     -- SimpInCore
     Case5 (WhenE (t `PairE` x)) ->
       toE $ Case5 $ WhenE $ substE (env, subst) t `PairE` x'
-      -- The reason this is safe is that the substitution should only contain renames
-      -- for the SimpIR vars.
-      -- TODO: this shouldn't be necessary once we put IR tags on local names.
-      where x' = unsafeCoerceIRE @SimpIR $ substE (env, subst) (unsafeCoerceIRE @r x)
+      where x' = substE (env, subst) x
     Case6 rest -> (toE . Case6) $ substE (env, subst) rest
     Case7 rest -> (toE . Case7) $ substE (env, subst) rest
 
-instance SubstE (AtomSubstVal r) (EffectRow r) where
+instance SubstE AtomSubstVal (EffectRow r) where
   substE env (EffectRow effs tailVar) = do
     let effs' = eSetFromList $ map (substE env) (eSetToList effs)
     let tailEffRow = case tailVar of
@@ -452,9 +458,9 @@ instance SubstE (AtomSubstVal r) (EffectRow r) where
             _ -> error "Not a valid effect substitution"
     extendEffRow effs' tailEffRow
 
-instance SubstE (AtomSubstVal r) (Effect r)
+instance SubstE AtomSubstVal (Effect r)
 
-instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
+instance SubstE AtomSubstVal SpecializationSpec where
   substE env (AppSpecialization f ab) = do
     let f' = case snd env ! f of
                Rename v -> v
@@ -462,7 +468,7 @@ instance SubstE (AtomSubstVal CoreIR) SpecializationSpec where
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
 
-instance SubstE (AtomSubstVal r) (ExtLabeledItemsE (Atom r) (AtomName r)) where
+instance SubstE AtomSubstVal (ExtLabeledItemsE (Atom r) (AtomName r)) where
   substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
     let items' = fmap (substE (scope, env)) items
     let ext = case maybeExt of
@@ -476,8 +482,8 @@ instance SubstE (AtomSubstVal r) (ExtLabeledItemsE (Atom r) (AtomName r)) where
                   _ -> error "Not a valid labeled row substitution"
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
-instance SubstE (AtomSubstVal r) (FieldRowElems r) where
-  substE :: forall i o. Distinct o => (Env o, Subst (AtomSubstVal r) i o) -> FieldRowElems r i -> FieldRowElems r o
+instance SubstE AtomSubstVal (FieldRowElems r) where
+  substE :: forall i o. Distinct o => (Env o, Subst AtomSubstVal i o) -> FieldRowElems r i -> FieldRowElems r o
   substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
     where
       substItem = \case
@@ -496,56 +502,57 @@ instance SubstE (AtomSubstVal r) (FieldRowElems r) where
           where ExtLabeledItemsE (NoExt items') = substE env
                   (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE (Atom r) (AtomName r) i)
 
-instance SubstE (AtomSubstVal CoreIR) EffectDef
-instance SubstE (AtomSubstVal CoreIR) EffectOpType
-instance SubstE (AtomSubstVal r) IExpr
-instance SubstE (AtomSubstVal r) (RepVal r)
-instance SubstE (AtomSubstVal r) (DataDefParams r)
-instance SubstE (AtomSubstVal CoreIR) DataDef
-instance SubstE (AtomSubstVal r) (DataConDef r)
-instance SubstE (AtomSubstVal r) (BaseMonoid r)
-instance SubstE (AtomSubstVal r) (UserEffectOp r)
-instance SubstE (AtomSubstVal r) (DAMOp r)
-instance SubstE (AtomSubstVal r) (Hof r)
-instance SubstE (AtomSubstVal r) (RefOp r)
-instance SubstE (AtomSubstVal r) (Expr r)
-instance SubstE (AtomSubstVal r) (Block r)
-instance SubstE (AtomSubstVal CoreIR) InstanceDef
-instance SubstE (AtomSubstVal CoreIR) InstanceBody
-instance SubstE (AtomSubstVal CoreIR) MethodType
-instance SubstE (AtomSubstVal r) (DictType r)
-instance SubstE (AtomSubstVal r) (DictExpr r)
-instance SubstE (AtomSubstVal r) (LamBinding r)
-instance SubstE (AtomSubstVal r) (LamExpr r)
-instance SubstE (AtomSubstVal r) (TabLamExpr r)
-instance SubstE (AtomSubstVal r) (PiBinding r)
-instance SubstB (AtomSubstVal r) (PiBinder r)
-instance SubstE (AtomSubstVal r) (PiType r)
-instance SubstB (AtomSubstVal r) (RolePiBinder r)
-instance SubstE (AtomSubstVal r) (IxType r)
-instance SubstE (AtomSubstVal r) (TabPiType r)
-instance SubstE (AtomSubstVal r) (NaryPiType r)
-instance SubstE (AtomSubstVal r) (DepPairType r)
-instance SubstE (AtomSubstVal r) (SolverBinding r)
-instance SubstE (AtomSubstVal r) (DeclBinding r)
-instance SubstB (AtomSubstVal r) (Decl r)
-instance SubstE (AtomSubstVal r) (NewtypeTyCon r)
-instance SubstE (AtomSubstVal r) (NewtypeCon r)
-instance SubstE (AtomSubstVal r) (IxDict r)
+instance SubstE AtomSubstVal EffectDef
+instance SubstE AtomSubstVal EffectOpType
+instance SubstE AtomSubstVal IExpr
+instance SubstE AtomSubstVal (RepVal r)
+instance SubstE AtomSubstVal (DataDefParams r)
+instance SubstE AtomSubstVal DataDef
+instance SubstE AtomSubstVal (DataConDef r)
+instance SubstE AtomSubstVal (BaseMonoid r)
+instance SubstE AtomSubstVal (UserEffectOp r)
+instance SubstE AtomSubstVal (DAMOp r)
+instance SubstE AtomSubstVal (Hof r)
+instance SubstE AtomSubstVal (RefOp r)
+instance SubstE AtomSubstVal (Expr r)
+instance SubstE AtomSubstVal (Block r)
+instance SubstE AtomSubstVal InstanceDef
+instance SubstE AtomSubstVal InstanceBody
+instance SubstE AtomSubstVal MethodType
+instance SubstE AtomSubstVal (DictType r)
+instance SubstE AtomSubstVal (DictExpr r)
+instance SubstE AtomSubstVal (LamBinding r)
+instance SubstE AtomSubstVal (LamExpr r)
+instance SubstE AtomSubstVal (TabLamExpr r)
+instance SubstE AtomSubstVal (PiBinding r)
+instance HasCore r => SubstB AtomSubstVal (PiBinder r)
+instance HasCore r => SubstE AtomSubstVal (PiType r)
+instance HasCore r => SubstB AtomSubstVal (RolePiBinder r)
+instance SubstE AtomSubstVal (IxType r)
+instance SubstE AtomSubstVal (TabPiType r)
+instance SubstE AtomSubstVal (NaryPiType r)
+instance SubstE AtomSubstVal (DepPairType r)
+instance SubstE AtomSubstVal (NoInlineDef r)
+instance SubstE AtomSubstVal (SolverBinding r)
+instance SubstE AtomSubstVal (DeclBinding r)
+instance SubstB AtomSubstVal (Decl r)
+instance SubstE AtomSubstVal (NewtypeTyCon r)
+instance SubstE AtomSubstVal (NewtypeCon r)
+instance SubstE AtomSubstVal (IxDict r)
 
 -- XXX: we need a special instance here because `SuperclassBinder` have all
 -- their types at the level of the top binder, rather than interleaving them
 -- with the binders. We should make a `BindersNest` type for that pattern
 -- instead.
-instance SubstB (AtomSubstVal CoreIR) (SuperclassBinders) where
+instance SubstB AtomSubstVal SuperclassBinders where
   substB envSubst (SuperclassBinders bsTop tsTop) contTop = do
     let tsTop' = map (substE envSubst) tsTop
     go envSubst bsTop tsTop' \envSubst' bsTop' -> contTop envSubst' $ SuperclassBinders bsTop' tsTop'
     where
       go :: (Distinct o, FromName v, SinkableV v)
          => (Env o, Subst v i o)
-         -> Nest AtomNameBinder i i' -> [Type CoreIR o]
-         -> (forall o'. Distinct o' => (Env o', Subst v i' o') -> Nest (AtomNameBinder) o o' -> a)
+         -> Nest (AtomNameBinder CoreIR) i i' -> [Type CoreIR o]
+         -> (forall o'. Distinct o' => (Env o', Subst v i' o') -> Nest (AtomNameBinder CoreIR) o o' -> a)
          -> a
       go (env, subst) Empty [] cont = cont (env, subst) Empty
       go (env, subst) (Nest b bs) (t:ts) cont = do

@@ -31,27 +31,28 @@ generalizeIxDict dict = liftGeneralizerM do
   return dictGeneralized
 {-# INLINE generalizeIxDict #-}
 
-generalizeArgs ::EnvReader m => Nest (PiBinder CS) n l -> [Atom CS n] -> m n (Generalized CS (ListE (Atom CS)) n)
-generalizeArgs reqTys allArgs = liftGeneralizerM $ runSubstReaderT idSubst do
-  PairE (Abs reqTys' UnitE) (ListE allArgs') <- sinkM $ PairE (Abs reqTys UnitE) (ListE allArgs)
-  ListE <$> go reqTys' allArgs'
-  where
-    go :: Nest (PiBinder CS) i i' -> [Atom CS n]
-       -> SubstReaderT (AtomSubstVal CS) GeneralizerM i n [Atom CS n]
-    go Empty [] = return []
-    go (Nest (PiBinder b ty arr) bs) (arg:args) = do
-      ty' <- substM ty
-      arg' <- case ty' of
-        TyKind   -> liftSubstReaderT $ generalizeType arg
-        DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
-        -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
-        -- non-type, non-dict arguments (e.g. a function). We just don't
-        -- generalize in that case.
-        _ -> return arg
-      args'' <- extendSubst (b@>SubstVal arg') $ go bs args
-      return $ arg' : args''
-    go _ _ = error "zip error"
-{-# INLINE generalizeArgs #-}
+generalizeArgs ::EnvReader m => [Arrow] -> Nest (Binder CS) n l -> [Atom CS n] -> m n (Generalized CS (ListE (Atom CS)) n)
+generalizeArgs reqTys allArgs = undefined
+-- generalizeArgs reqTys allArgs = liftGeneralizerM $ runSubstReaderT idSubst do
+--   PairE (Abs reqTys' UnitE) (ListE allArgs') <- sinkM $ PairE (Abs reqTys UnitE) (ListE allArgs)
+--   ListE <$> go reqTys' allArgs'
+--   where
+--     go :: Nest (PiBinder CS) i i' -> [Atom CS n]
+--        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CS n]
+--     go Empty [] = return []
+--     go (Nest (PiBinder b ty arr) bs) (arg:args) = do
+--       ty' <- substM ty
+--       arg' <- case ty' of
+--         TyKind   -> liftSubstReaderT $ generalizeType arg
+--         DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
+--         -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+--         -- non-type, non-dict arguments (e.g. a function). We just don't
+--         -- generalize in that case.
+--         _ -> return arg
+--       args'' <- extendSubst (b@>SubstVal arg') $ go bs args
+--       return $ arg' : args''
+--     go _ _ = error "zip error"
+-- {-# INLINE generalizeArgs #-}
 
 -- === generalizer monad plumbing ===
 
@@ -167,7 +168,7 @@ traverseRoleBinders f allBinders allParams =
   runSubstReaderT idSubst $ go allBinders allParams
   where
     go :: forall i i'. Nest (RolePiBinder CS) i i' -> [Atom CS n]
-       -> SubstReaderT (AtomSubstVal CS) m i n [Atom CS n]
+       -> SubstReaderT AtomSubstVal m i n [Atom CS n]
     go Empty [] = return []
     go (Nest (RolePiBinder b ty _ role) bs) (param:params) = do
       ty' <- substM ty
@@ -204,7 +205,7 @@ getClassRoleBinders def = do
 -- === instances ===
 
 instance GenericB GeneralizationEmission where
-  type RepB GeneralizationEmission = BinderP AtomNameC (PairE (Type CS) (Atom CS))
+  type RepB GeneralizationEmission = BinderP (AtomNameC CS) (PairE (Type CS) (Atom CS))
   fromB (GeneralizationEmission (b:>ty) x) = b :> PairE ty x
   {-# INLINE fromB #-}
   toB   (b :> PairE ty x) = GeneralizationEmission (b:>ty) x

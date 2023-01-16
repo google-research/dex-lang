@@ -63,7 +63,7 @@ analyzeOccurrences = liftOCCM . occ accessOnce
 -- Our primary operating structure is a map (potentially partial) from names to
 -- their current Occ.AccessInfo information.
 
-newtype FV (n::S) = FV { freeVars :: (NameMapE 'AtomNameC AccessInfo n) }
+newtype FV (n::S) = FV { freeVars :: (NameMapE (AtomNameC SimpIR) AccessInfo n) }
 
 instance Monoid (FV n) where
   mempty = FV mempty
@@ -123,7 +123,7 @@ useManyTimesStatic (FV fvs) = FV $ mapNameMapE update fvs where
 --   environment), and
 -- - Binders introduced by `for`
 
-type OCCM = ReaderT1 (NameMapE 'AtomNameC IxExpr) (StateT1 FV EnvReaderM)
+type OCCM = ReaderT1 (NameMapE (AtomNameC SimpIR) IxExpr) (StateT1 FV EnvReaderM)
 
 liftOCCM :: (EnvReader m) => OCCM n a -> m n a
 liftOCCM action = liftEnvReaderM $ fst
@@ -152,7 +152,7 @@ isolated action = do
   lift11 $ lift11 $ runStateT1 (runReaderT1 r action) mempty
 
 -- Extend the IxExpr environment
-extend :: (BindsOneName b 'AtomNameC)
+extend :: (BindsOneName b (AtomNameC SimpIR))
   => b any n -> IxExpr n -> OCCM n a -> OCCM n a
 extend b ix = local (<> singletonNameMapE (binderName b) ix)
 
@@ -217,7 +217,7 @@ class HasOCC (e::E) where
   default occ :: (GenericE e, HasOCC (RepE e)) => Access n -> e n -> OCCM n (e n)
   occ a e = confuseGHC >>= \_ -> toE <$> occ a (fromE e)
 
-instance HasOCC (Name AtomNameC) where
+instance HasOCC (AtomName SimpIR) where
   occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo One a)) $> n
   {-# INLINE occ #-}
 instance HasOCC (Name HandlerNameC ) where occ _ n = return n
@@ -493,7 +493,6 @@ instance (HasOCC e1, HasOCC e2) => HasOCC (ExtLabeledItemsE e1 e2)
 instance HasOCC (LamExpr SimpIR) where
   occ _ _ = error "Impossible"
   {-# INLINE occ #-}
-instance HasOCC (PiType SimpIR)
 instance HasOCC (TabPiType SimpIR)
 instance HasOCC (DepPairType SimpIR)
 instance HasOCC (EffectRow SimpIR)

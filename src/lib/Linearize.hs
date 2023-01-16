@@ -63,10 +63,10 @@ getActivePrimals :: PrimalM i o (ActivePrimals o)
 getActivePrimals = ask
 
 extendActiveSubst
-  :: BindsAtMostOneName b AtomNameC
+  :: BindsAtMostOneName b (AtomNameC SimpIR)
   => b i i' -> AtomName CS o -> PrimalM i' o a -> PrimalM i o a
 extendActiveSubst b v cont = do
-  extendSubst (b@>v) $ extendActivePrimals v cont
+  extendSubst (b@>unsafeCoerceIRName v) $ extendActivePrimals v cont
 
 extendActiveEffs :: Effect CS o -> PrimalM i o a -> PrimalM i o a
 extendActiveEffs eff = local \primals ->
@@ -163,7 +163,9 @@ injSubstM
   :: (SubstReader Name m, ScopeReader2 m
      , CovariantInIR e, SinkableE (e SimpIR), RenameE (e SimpIR))
   => e SimpIR i -> m i o (e CS o)
-injSubstM e = injectIRE <$> renameM e
+injSubstM _ = undefined -- this is tricky. we shouldn't actually do this via
+                        -- coercion. Because free SimpIR names should remain free SimpIR names.
+                        -- They just need to be lifted to CoreIR.
 {-# INLINE injSubstM #-}
 
 -- === converision between monadic and reified version of functions ===
@@ -224,7 +226,7 @@ _rematPrimal subst wrt m = do
 fromPureUnaryTanFunLam :: EnvReader m => Atom r n -> m n (Atom r n)
 fromPureUnaryTanFunLam atom = liftSubstEnvReaderM $ go atom
   where
-    go :: Atom r i -> SubstEnvReaderM (AtomSubstVal r) i o (Atom r o)
+    go :: Atom r i -> SubstEnvReaderM AtomSubstVal i o (Atom r o)
     go = \case
       Lam (UnaryLamExpr b (AtomicBlock nullaryLam)) _ _ ->
         substBinders b \(b':>ty) -> do
@@ -261,9 +263,9 @@ linearizeAtom :: Emits o => Atom SimpIR i -> LinM i o (Atom CS) (Atom CS)
 linearizeAtom atom = case atom of
   Var v -> do
     v' <- renameM v
-    activePrimalIdx v' >>= \case
-      Nothing -> withZeroT $ return (Var v')
-      Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
+    activePrimalIdx (unsafeCoerceIRName v') >>= \case
+      Nothing -> withZeroT $ return (Var $ unsafeCoerceIRName v')
+      Just idx -> return $ WithTangent (Var $ unsafeCoerceIRName v') $ getTangentArg idx
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
   TabPi _         -> emitZeroT
@@ -292,7 +294,7 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   isTrivialForAD expr' >>= \case
     True -> do
       v <- emit $ injectCS expr'
-      extendSubst (b@>v) $ linearizeDecls rest cont
+      extendSubst (b@>unsafeCoerceIRName v) $ linearizeDecls rest cont
     False -> do
       WithTangent p tf <- linearizeExpr expr
       v <- emitDecl (getNameHint b) ann (Atom p)
@@ -307,12 +309,7 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
 linearizeExpr :: Emits o => SExpr i -> LinM i o (Atom CS) (Atom CS)
 linearizeExpr expr = case expr of
   Atom x -> linearizeAtom x
-  TopApp _ _ -> undefined
-  -- TopApp f xs -> do
-  --   f' <- renameM f
-  --   lookupCustomRules f' >>= \case
-  --     Nothing -> error "not implemented"
-  --     Just rule -> applyCustomLinearization rule (toList xs)
+  TopApp _ _ -> error "not implemented"
   TabApp x idxs -> do
     zipLin (linearizeAtom x) (pureLin $ ListE $ map injectCS $ toList idxs) `bindLin`
       \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
@@ -344,7 +341,7 @@ linearizeExpr expr = case expr of
         (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i x -> do
           x' <- emitAtomToName noHint x
           Abs b body <- return $ alts !! i
-          extendSubst (b @> x') $ withTangentFunAsLambda $ linearizeBlock body
+          extendSubst (b @> unsafeCoerceIRName x') $ withTangentFunAsLambda $ linearizeBlock body
         return $ WithTangent ans do
           applyLinToTangents $ sink linLam
   TabCon ty xs -> do
@@ -508,7 +505,7 @@ linearizeHof hof = case hof of
   For d ixDict (UnaryLamExpr i body) -> do
     ixTy <- ixTyFromDict =<< injSubstM ixDict
     ansWithLinTab <- buildFor (getNameHint i) d ixTy \i' ->
-      extendSubst (i@>i') $ withTangentFunAsLambda $ linearizeBlock body
+      extendSubst (i@>unsafeCoerceIRName i') $ withTangentFunAsLambda $ linearizeBlock body
     (ans, linTab) <- unzipTab ansWithLinTab
     return $ WithTangent ans do
       buildFor (getNameHint i) d (sink ixTy) \i' ->

@@ -107,7 +107,7 @@ type EffAbs r = Abs (Binder r) (EffectRow r)
 
 data DeclBinding r n = DeclBinding LetAnn (Type r n) (Expr r n)
      deriving (Show, Generic)
-data Decl (r::IR) (n::S) (l::S) = Let (AtomNameBinder n l) (DeclBinding r n)
+data Decl (r::IR) (n::S) (l::S) = Let (AtomNameBinder r n l) (DeclBinding r n)
      deriving (Show, Generic)
 type Decls r = Nest (Decl r)
 
@@ -115,8 +115,8 @@ type Decls r = Nest (Decl r)
 -- parameter will play a role a bit like the `c` parameter in names: if you have
 -- an `AtomName r n` and you look up its definition in the `Env`, you're sure to
 -- get an `AtomBinding r n`.
-type AtomName (r::IR) = Name AtomNameC
-type AtomNameBinder   = NameBinder AtomNameC
+type AtomName       (r::IR) = Name (AtomNameC r)
+type AtomNameBinder (r::IR) = NameBinder (AtomNameC r)
 
 type ClassName    = Name ClassNameC
 type DataDefName  = Name DataDefNameC
@@ -131,8 +131,8 @@ type SpecDictName = Name SpecializedDictNameC
 type TopFunName   = Name TopFunNameC
 type FunObjCodeName = Name FunObjCodeNameC
 
-type AtomBinderP = BinderP AtomNameC
-type Binder r = AtomBinderP (Type r) :: B
+type AtomBinderP (r::IR) = BinderP (AtomNameC r)
+type Binder r = AtomBinderP r (Type r) :: B
 type AltP (r::IR) (e::E) = Abs (Binder r) e :: E
 type Alt r = AltP r (Block r) :: E
 
@@ -205,7 +205,7 @@ data IxType (r::IR) (n::S) =
          , ixTypeDict :: IxDict r n }
   deriving (Show, Generic)
 
-type IxBinder r = BinderP AtomNameC (IxType r)
+type IxBinder r = BinderP (AtomNameC r) (IxType r)
 
 data TabLamExpr (r::IR) (n::S) where
   TabLamExpr :: IxBinder r n l -> Block r l -> TabLamExpr r n
@@ -214,13 +214,13 @@ data TabPiType (r::IR) (n::S) where
   TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
 
 data NaryPiType (r::IR) (n::S) where
-  NaryPiType :: Nest (PiBinder r) n l -> EffectRow r l -> Type r l -> NaryPiType r n
+  NaryPiType :: Nest (Binder r) n l -> EffectRow r l -> Type r l -> NaryPiType r n
 
 data PiBinding (r::IR) (n::S) = PiBinding Arrow (Type r n)
   deriving (Show, Generic)
 
 data PiBinder (r::IR) (n::S) (l::S) =
-  PiBinder (AtomNameBinder n l) (Type r n) Arrow
+  PiBinder (AtomNameBinder r n l) (Type r n) Arrow
   deriving (Show, Generic)
 
 data PiType (r::IR) (n::S) where
@@ -246,7 +246,7 @@ type Con r n = PrimCon r (Atom r n)
 -- introduced before it. You can think of it as introducing a bunch of
 -- names into the scope in parallel, but since safer names only reasons
 -- about sequential scope extensions, we encode it differently.
-data NonDepNest r ann n l = NonDepNest (Nest AtomNameBinder n l) [ann n]
+data NonDepNest r ann n l = NonDepNest (Nest (AtomNameBinder r) n l) [ann n]
                             deriving (Generic)
 
 -- === Various ops ===
@@ -302,6 +302,7 @@ instance CovariantInIR BaseMonoid
 instance CovariantInIR IxDict
 instance CovariantInIR DataConDef
 instance CovariantInIR NaryPiType
+instance CovariantInIR DataDefParams
 
 type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
@@ -366,7 +367,7 @@ isSumCon = \case
 
 data SuperclassBinders n l =
   SuperclassBinders
-    { superclassBinders :: Nest AtomNameBinder n l
+    { superclassBinders :: Nest (AtomNameBinder CoreIR) n l
     , superclassTypes   :: [CType n] }
   deriving (Show, Generic)
 
@@ -379,7 +380,7 @@ data ClassDef (n::S) where
     ->   [MethodType n3]                  -- method types
     -> ClassDef n1
 
-data RolePiBinder r n l = RolePiBinder (AtomNameBinder n l) (Type r n) Arrow ParamRole
+data RolePiBinder r n l = RolePiBinder (AtomNameBinder r n l) (Type r n) Arrow ParamRole
      deriving (Show, Generic)
 
 data InstanceDef (n::S) where
@@ -575,7 +576,7 @@ dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 
 -- TODO: consider making this an open union via a typeable-like class
 data Binding (c::C) (n::S) where
-  AtomNameBinding   :: AtomBinding CoreIR n            -> Binding AtomNameC       n
+  AtomNameBinding   :: AtomBinding r n                 -> Binding (AtomNameC r)   n
   DataDefBinding    :: DataDef n                       -> Binding DataDefNameC    n
   TyConBinding      :: DataDefName n        -> CAtom n -> Binding TyConNameC      n
   DataConBinding    :: DataDefName n -> Int -> CAtom n -> Binding DataConNameC    n
@@ -713,23 +714,21 @@ newtype TopFunLowerings (n::S) = TopFunLowerings
   { topFunObjCode :: FunObjCodeName n } -- TODO: add simp, imp etc. as needed
   deriving (Show, Generic, SinkableE, HoistableE, RenameE, AlphaEqE, AlphaHashableE, Pretty)
 
-data AtomBinding (r::IR) (n::S) =
-   LetBound    (DeclBinding r  n)
- | LamBound    (LamBinding  r  n)
- | PiBound     (PiBinding   r  n)
- | IxBound     (IxType      r  n)
- | MiscBound   (Type        r  n)
- | SolverBound (SolverBinding r n)
- | NoinlineFun Int (NaryPiType r n) (Atom r n)
- | TopDataBound (RepVal SimpToImpIR n)
- | FFIFunBound (NaryPiType r n) (TopFunName n)
-   deriving (Show, Generic)
+data AtomBinding (r::IR) (n::S) where
+ LetBound     ::              DeclBinding r  n                   -> AtomBinding r n
+ MiscBound    ::              Type        r  n                   -> AtomBinding r n
+ IxBound      ::              IxType      r  n                   -> AtomBinding r n
+ LamBound     :: HasCore r => LamBinding  r  n                   -> AtomBinding r n
+ PiBound      :: HasCore r => PiBinding   r  n                   -> AtomBinding r n
+ TopDataBound ::              RepVal SimpToImpIR n               -> AtomBinding r n
+ SolverBound  :: HasCore r => SolverBinding r n                  -> AtomBinding r n
+ NoinlineFun  :: HasCore r => NoInlineDef r n                    -> AtomBinding r n
+ FFIFunBound  :: HasCore r => NaryPiType r n -> TopFunName n     -> AtomBinding r n
 
--- It would be nice to let bindings be parametric in the IR, but
--- there will be CoreIR top-level bindings.  We shouldn't refer
--- to those from SimpIR, but we're not checking that invariant
--- statically.
-atomBindingType :: AtomBinding CoreIR n -> Type CoreIR n
+deriving instance Show (AtomBinding r n)
+deriving via WrapE (AtomBinding r) n instance Generic (AtomBinding r n)
+
+atomBindingType :: AtomBinding r n -> Type r n
 atomBindingType b = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
@@ -738,9 +737,12 @@ atomBindingType b = case b of
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
-  NoinlineFun _ piTy _ -> naryPiTypeAsType piTy
+  NoinlineFun (NoInlineDef _ _ _ ty _) -> ty
   TopDataBound (RepVal ty _) -> unsafeCoerceIRE ty
   FFIFunBound piTy _ -> naryPiTypeAsType piTy
+
+data NoInlineDef r n = NoInlineDef Int [Arrow] (NaryPiType r n) (Type r n) (Atom r n)
+     deriving (Show, Generic)
 
 -- TODO: Move this to Inference!
 data SolverBinding (r::IR) (n::S) =
@@ -821,18 +823,19 @@ bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
       Nest (SubstPair b binding) rest -> withExtEvidence rest do
         case binding of
            AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [binderName b] mempty)
+             tell $ sink (SynthCandidates [injectAtomNameToCore $ binderName b] mempty)
            AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [binderName b] mempty)
+             tell $ sink (SynthCandidates [injectAtomNameToCore $ binderName b] mempty)
            _ -> return ()
         go rest
 
 naryPiTypeAsType :: HasCore r => NaryPiType r n -> Type r n
-naryPiTypeAsType (NaryPiType Empty Pure resultTy) = resultTy
-naryPiTypeAsType (NaryPiType (Nest b bs) effs resultTy) = case bs of
-  Empty -> Pi $ PiType b effs resultTy
-  Nest _ _ -> Pi $ PiType b Pure $ naryPiTypeAsType $ NaryPiType bs effs resultTy
-naryPiTypeAsType _ = error "Effectful naryPiType should have at least one argument"
+naryPiTypeAsType = undefined
+-- naryPiTypeAsType (NaryPiType Empty Pure resultTy) = resultTy
+-- naryPiTypeAsType (NaryPiType (Nest b bs) effs resultTy) = case bs of
+--   Empty -> Pi $ PiType b effs resultTy
+--   Nest _ _ -> Pi $ PiType b Pure $ naryPiTypeAsType $ NaryPiType bs effs resultTy
+-- naryPiTypeAsType _ = error "Effectful naryPiType should have at least one argument"
 
 -- === effects ===
 
@@ -926,7 +929,7 @@ data SpecializationSpec (n::S) =
 -- We're really just defining this so we can have a polymorphic `binderType`.
 -- But maybe we don't need one. Or maybe we can make one using just
 -- `BindsOneName b AtomNameC` and `BindsEnv b`.
-class BindsOneName b AtomNameC => BindsOneAtomName (r::IR) (b::B) | b -> r where
+class BindsOneName b (AtomNameC r) => BindsOneAtomName (r::IR) (b::B) | b -> r where
   binderType :: b n l -> Type r n
   -- binderAtomName :: b n l -> AtomName r l
 
@@ -936,7 +939,7 @@ bindersTypes Empty = []
 bindersTypes n@(Nest b bs) = ty : bindersTypes bs
   where ty = withExtEvidence n $ sink (binderType b)
 
-instance BindsOneAtomName r (BinderP AtomNameC (Type r)) where
+instance BindsOneAtomName r (BinderP (AtomNameC r) (Type r)) where
   binderType (_ :> ty) = ty
 
 instance BindsOneAtomName r (PiBinder r) where
@@ -954,10 +957,10 @@ toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest b
 
 -- === ToBinding ===
 
-atomBindingToBinding :: AtomBinding r n -> Binding AtomNameC n
+atomBindingToBinding :: AtomBinding r n -> Binding (AtomNameC r) n
 atomBindingToBinding b = AtomNameBinding $ unsafeCoerceIRE b
 
-bindingToAtomBinding :: Binding AtomNameC n -> AtomBinding r n
+bindingToAtomBinding :: Binding (AtomNameC r) n -> AtomBinding r n
 bindingToAtomBinding (AtomNameBinding b) = unsafeCoerceIRE b
 
 class (RenameE     e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
@@ -966,25 +969,25 @@ class (RenameE     e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
 instance Color c => ToBinding (Binding c) c where
   toBinding = id
 
-instance ToBinding (AtomBinding r) AtomNameC where
+instance ToBinding (AtomBinding r) (AtomNameC r) where
   toBinding = atomBindingToBinding
 
-instance ToBinding (DeclBinding r) AtomNameC where
+instance ToBinding (DeclBinding r) (AtomNameC r) where
   toBinding = toBinding . LetBound
 
-instance ToBinding (LamBinding r) AtomNameC where
+instance HasCore r => ToBinding (LamBinding r) (AtomNameC r) where
   toBinding = toBinding . LamBound
 
-instance ToBinding (PiBinding r) AtomNameC where
+instance HasCore r => ToBinding (PiBinding r) (AtomNameC r) where
   toBinding = toBinding . PiBound
 
-instance ToBinding (Atom r) AtomNameC where
+instance ToBinding (Atom r) (AtomNameC r) where
   toBinding = toBinding . MiscBound
 
-instance ToBinding (SolverBinding r) AtomNameC where
+instance HasCore r => ToBinding (SolverBinding r) (AtomNameC r) where
   toBinding = toBinding . SolverBound @ r
 
-instance ToBinding (IxType r) AtomNameC where
+instance ToBinding (IxType r) (AtomNameC r) where
   toBinding = toBinding . IxBound
 
 instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
@@ -1730,7 +1733,7 @@ deriving instance Show (Block r n)
 deriving via WrapE (Block r) n instance Generic (Block r n)
 
 instance GenericB (NonDepNest r ann) where
-  type RepB (NonDepNest r ann) = (LiftB (ListE ann)) `PairB` Nest AtomNameBinder
+  type RepB (NonDepNest r ann) = (LiftB (ListE ann)) `PairB` Nest (AtomNameBinder r)
   fromB (NonDepNest bs anns) = LiftB (ListE anns) `PairB` bs
   {-# INLINE fromB #-}
   toB (LiftB (ListE anns) `PairB` bs) = NonDepNest bs anns
@@ -1745,11 +1748,11 @@ instance AlphaHashableE ann => AlphaHashableB (NonDepNest r ann)
 deriving instance (Show (ann n)) => Show (NonDepNest r ann n l)
 
 instance GenericB SuperclassBinders where
-  type RepB SuperclassBinders = PairB (LiftB (ListE CType)) (Nest AtomNameBinder)
+  type RepB SuperclassBinders = PairB (LiftB (ListE CType)) (Nest (AtomNameBinder CoreIR))
   fromB (SuperclassBinders bs tys) = PairB (LiftB (ListE tys)) bs
   toB   (PairB (LiftB (ListE tys)) bs) = SuperclassBinders bs tys
 
-instance BindsNameList SuperclassBinders AtomNameC where
+instance BindsNameList SuperclassBinders (AtomNameC CoreIR) where
   bindNameList (SuperclassBinders bs _) xs = bindNameList bs xs
 
 instance ProvesExt   SuperclassBinders
@@ -1949,15 +1952,15 @@ instance AlphaEqE (PiBinding r)
 instance AlphaHashableE (PiBinding r)
 
 instance GenericB (PiBinder r) where
-  type RepB (PiBinder r) = BinderP AtomNameC (PiBinding r)
+  type RepB (PiBinder r) = BinderP (AtomNameC r) (PiBinding r)
   fromB (PiBinder b ty arr) = b :> PiBinding arr ty
   toB   (b :> PiBinding arr ty) = PiBinder b ty arr
 
-instance BindsAtMostOneName (PiBinder r) AtomNameC where
+instance BindsAtMostOneName (PiBinder r) (AtomNameC r) where
   PiBinder b _ _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName (PiBinder r) AtomNameC where
+instance BindsOneName (PiBinder r) (AtomNameC r) where
   binderName (PiBinder b _ _) = binderName b
   {-# INLINE binderName #-}
 
@@ -1991,7 +1994,7 @@ deriving via WrapE (PiType r) n instance Generic (PiType r n)
 instance GenericB (RolePiBinder r) where
   type RepB (RolePiBinder r) =
     PairB (LiftB (LiftE ParamRole))
-          (BinderP AtomNameC (PiBinding r))
+          (BinderP (AtomNameC r) (PiBinding r))
   fromB (RolePiBinder b ty arr role) = PairB (LiftB (LiftE role)) (b :> PiBinding arr ty)
   {-# INLINE fromB #-}
   toB   (PairB (LiftB (LiftE role)) (b :> PiBinding arr ty)) = RolePiBinder b ty arr role
@@ -2001,10 +2004,10 @@ instance HasNameHint (RolePiBinder r n l) where
   getNameHint (RolePiBinder b _ _ _) = getNameHint b
   {-# INLINE getNameHint #-}
 
-instance BindsAtMostOneName (RolePiBinder r) AtomNameC where
+instance BindsAtMostOneName (RolePiBinder r) (AtomNameC r) where
   RolePiBinder b _ _ _ @> x = b @> x
 
-instance BindsOneName (RolePiBinder r) AtomNameC where
+instance BindsOneName (RolePiBinder r) (AtomNameC r) where
   binderName (RolePiBinder b _ _ _) = binderName b
 
 instance ProvesExt   (RolePiBinder r)
@@ -2072,7 +2075,7 @@ deriving instance Show (TabPiType r n)
 deriving via WrapE (TabPiType r) n instance Generic (TabPiType r n)
 
 instance GenericE (NaryPiType r) where
-  type RepE (NaryPiType r) = Abs (Nest (PiBinder r)) (PairE (EffectRow r) (Type r))
+  type RepE (NaryPiType r) = Abs (Nest (Binder r)) (PairE (EffectRow r) (Type r))
   fromE (NaryPiType bs eff resultTy) = Abs bs (PairE eff resultTy)
   {-# INLINE fromE #-}
   toE   (Abs bs (PairE eff resultTy)) = NaryPiType bs eff resultTy
@@ -2120,48 +2123,47 @@ instance RenameE        SynthCandidates
 
 instance GenericE (AtomBinding r) where
   type RepE (AtomBinding r) =
-     EitherE2
-       (EitherE6
-          (DeclBinding   r)   -- LetBound
-          (LamBinding    r)   -- LamBound
-          (PiBinding     r)   -- PiBound
-          (IxType        r)   -- IxBound
-          (Type          r)   -- MiscBound
-          (SolverBinding r)  -- SolverBound
+     EitherE2 (EitherE6
+      (DeclBinding   r)   -- LetBound
+      (WhenE (HasCore' r) (LamBinding    r)) -- LamBound
+      (WhenE (HasCore' r) (PiBinding     r)) -- PiBound
+                          (IxType        r)  -- IxBound
+                          (Type          r)  -- MiscBound
+      (WhenE (HasCore' r) (SolverBinding r)) -- SolverBound
      ) (EitherE3
-          (LiftE Int `PairE` NaryPiType r `PairE` Atom r) -- NoinlineFun
-          (RepVal SimpToImpIR)                            -- TopDataBound
-          (NaryPiType r `PairE` TopFunName)               -- FFIFunBound
+      (WhenE (HasCore' r) (NoInlineDef r))                   -- NoinlineFun
+                          (RepVal SimpToImpIR)               -- TopDataBound
+      (WhenE (HasCore' r) (NaryPiType r `PairE` TopFunName)) -- FFIFunBound
      )
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
-    LamBound    x -> Case0 $ Case1 x
-    PiBound     x -> Case0 $ Case2 x
+    LamBound    x -> Case0 $ Case1 $ WhenE x
+    PiBound     x -> Case0 $ Case2 $ WhenE x
     IxBound     x -> Case0 $ Case3 x
     MiscBound   x -> Case0 $ Case4 x
-    SolverBound x -> Case0 $ Case5 x
-    NoinlineFun n t x   -> Case1 $ Case0 $ LiftE n `PairE` t `PairE` x
+    SolverBound x -> Case0 $ Case5 $ WhenE x
+    NoinlineFun x -> Case1 $ Case0 $ WhenE x
     TopDataBound repVal -> Case1 $ Case1 repVal
-    FFIFunBound ty v    -> Case1 $ Case2 $ ty `PairE` v
+    FFIFunBound ty v    -> Case1 $ Case2 $ WhenE $ ty `PairE` v
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 x' -> case x' of
-      Case0 x -> LetBound x
-      Case1 x -> LamBound x
-      Case2 x -> PiBound  x
-      Case3 x -> IxBound  x
-      Case4 x -> MiscBound x
-      Case5 x -> SolverBound x
+      Case0 x         -> LetBound x
+      Case1 (WhenE x) -> LamBound x
+      Case2 (WhenE x) -> PiBound  x
+      Case3 x         -> IxBound  x
+      Case4 x         -> MiscBound x
+      Case5 (WhenE x) -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
-      Case0 (LiftE n `PairE` ty `PairE` f) -> NoinlineFun n ty f
-      Case1 repVal                         -> TopDataBound repVal
-      Case2 (ty `PairE` v)                 -> FFIFunBound ty v
+      Case0 (WhenE x) -> NoinlineFun x
+      Case1 repVal                                 -> TopDataBound repVal
+      Case2 (WhenE (ty `PairE` v))                 -> FFIFunBound ty v
       _ -> error "impossible"
     _ -> error "impossible"
-  -- {-# INLINE toE #-}
+  {-# INLINE toE #-}
 
 
 instance SinkableE   (AtomBinding r)
@@ -2169,6 +2171,19 @@ instance HoistableE  (AtomBinding r)
 instance RenameE     (AtomBinding r)
 instance AlphaEqE (AtomBinding r)
 instance AlphaHashableE (AtomBinding r)
+
+instance GenericE (NoInlineDef r) where
+  type RepE (NoInlineDef r) = LiftE (Int, [Arrow]) `PairE` NaryPiType r `PairE` Type r `PairE` Atom r
+  fromE (NoInlineDef n arr ty ty' x) = LiftE (n,arr) `PairE` ty `PairE` ty' `PairE` x
+  {-# INLINE fromE #-}
+  toE   (LiftE (n,arr) `PairE` ty `PairE` ty' `PairE` x) = NoInlineDef n arr ty ty' x
+  {-# INLINE toE #-}
+
+instance SinkableE   (NoInlineDef r)
+instance HoistableE  (NoInlineDef r)
+instance RenameE     (NoInlineDef r)
+instance AlphaEqE (NoInlineDef r)
+instance AlphaHashableE (NoInlineDef r)
 
 instance GenericE TopFun where
   type RepE TopFun = EitherE
@@ -2227,11 +2242,28 @@ instance RenameE     (SolverBinding r)
 instance AlphaEqE       (SolverBinding r)
 instance AlphaHashableE (SolverBinding r)
 
+data AtomBindingHidingR (c::C) (n::S) where
+  AtomBindingHidingR :: AtomBinding r n -> AtomBindingHidingR (AtomNameC r) n
+
+instance Color c => GenericE (AtomBindingHidingR c) where
+  type RepE (AtomBindingHidingR c) = UnitE
+  toE = undefined
+  fromE = undefined
+
+deriving instance Color c => Show (AtomBindingHidingR c n)
+deriving via WrapE (AtomBindingHidingR c) n instance Color c => Generic (AtomBindingHidingR c n)
+
+instance Color c => SinkableE   (AtomBindingHidingR c)
+instance Color c => HoistableE  (AtomBindingHidingR c)
+instance Color c => RenameE     (AtomBindingHidingR c)
+instance Color c => AlphaEqE       (AtomBindingHidingR c)
+instance Color c => AlphaHashableE (AtomBindingHidingR c)
+
 instance Color c => GenericE (Binding c) where
   type RepE (Binding c) =
     EitherE3
       (EitherE7
-          (AtomBinding CoreIR)
+          (AtomBindingHidingR c)
           DataDef
           (DataDefName `PairE` CAtom)
           (DataDefName `PairE` LiftE Int `PairE` CAtom)
@@ -2251,7 +2283,7 @@ instance Color c => GenericE (Binding c) where
           (LiftE BaseType))
 
   fromE binding = case binding of
-    AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
+    AtomNameBinding   tyinfo            -> Case0 $ Case0 $ AtomBindingHidingR tyinfo
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
     TyConBinding      dataDefName     e -> Case0 $ Case2 $ dataDefName `PairE` e
     DataConBinding    dataDefName idx e -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx `PairE` e
@@ -2270,7 +2302,7 @@ instance Color c => GenericE (Binding c) where
   {-# INLINE fromE #-}
 
   toE rep = case rep of
-    Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
+    Case0 (Case0 (AtomBindingHidingR tyinfo))               -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
     Case0 (Case1 dataDef)                                   -> fromJust $ tryAsColor $ DataDefBinding    dataDef
     Case0 (Case2 (dataDefName `PairE` e))                   -> fromJust $ tryAsColor $ TyConBinding      dataDefName e
     Case0 (Case3 (dataDefName `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx e
@@ -2311,7 +2343,7 @@ instance AlphaEqE (DeclBinding r)
 instance AlphaHashableE (DeclBinding r)
 
 instance GenericB (Decl r) where
-  type RepB (Decl r) = AtomBinderP (DeclBinding r)
+  type RepB (Decl r) = AtomBinderP r (DeclBinding r)
   fromB (Let b binding) = b :> binding
   {-# INLINE fromB #-}
   toB   (b :> binding) = Let b binding
@@ -2384,11 +2416,11 @@ instance RenameE        (EffectRowTail r)
 instance AlphaEqE       (EffectRowTail r)
 instance AlphaHashableE (EffectRowTail r)
 
-instance BindsAtMostOneName (Decl r) AtomNameC where
+instance BindsAtMostOneName (Decl r) (AtomNameC r) where
   Let b _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName (Decl r) AtomNameC where
+instance BindsOneName (Decl r) (AtomNameC r) where
   binderName (Let b _) = binderName b
   {-# INLINE binderName #-}
 
@@ -2681,7 +2713,9 @@ instance Store (ImportStatus n)
 instance Store (TopFunLowerings n)
 instance Store a => Store (EvalStatus a)
 instance Store (TopFun n)
+instance Color c => Store (AtomBindingHidingR c n)
 instance Color c => Store (Binding c n)
+instance Store (NoInlineDef r n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance (Store (ann n)) => Store (NonDepNest r ann n l)

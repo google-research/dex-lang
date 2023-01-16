@@ -65,6 +65,7 @@ import Err
 import LabeledItems
 import Name
 import PPrint ()
+import IRVariants
 import Types.Primitives hiding (Equal)
 import Types.Source
 import Util
@@ -165,7 +166,7 @@ topDecl = dropSrc topDecl' where
     return $ UHandlerDecl (fromString effName) bodyTyArg' (toNest args')
       effs returnTy methods' (fromString hName)
 
-dataArg :: Group -> SyntaxM [(UAnnBinderArrow AtomNameC) 'VoidS 'VoidS]
+dataArg :: Group -> SyntaxM [(UAnnBinderArrow (AtomNameC CoreIR)) 'VoidS 'VoidS]
 dataArg = \case
   g@(WithSrc _ (CBracket Square _)) -> map classUAnnBinder <$> multiIfaceBinder g
   arg -> do
@@ -197,7 +198,7 @@ generalCon binOpt (name, args) = do
 -- binder is missing, assume UIgnore; if the anntation is missing,
 -- assume TypeKind.
 optAnnotatedBinder :: (Maybe Group, Maybe Group)
-                   -> SyntaxM (UAnnBinder AtomNameC VoidS VoidS)
+                   -> SyntaxM (UAnnBinder (AtomNameC CoreIR) VoidS VoidS)
 optAnnotatedBinder (lhs, rhs) = do
   lhs' <- mapM (identifier "type-annotated binder") lhs
   rhs' <- mapM expr rhs
@@ -205,7 +206,7 @@ optAnnotatedBinder (lhs, rhs) = do
     $ fromMaybe tyKind rhs'
   where tyKind = ns $ UPrim (UPrimTC TypeKind) []
 
-multiIfaceBinder :: Group -> SyntaxM [UAnnBinder AtomNameC VoidS VoidS]
+multiIfaceBinder :: Group -> SyntaxM [UAnnBinder (AtomNameC CoreIR) VoidS VoidS]
 multiIfaceBinder = dropSrc \case
   (CBracket Square g) -> do tys <- mapM expr $ nary Comma g
                             return $ map (UAnnBinder UIgnore) tys

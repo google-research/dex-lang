@@ -43,16 +43,16 @@ transpose lam = liftBuilder do
 data TransposeSubstVal c n where
   RenameNonlin :: Name c n -> TransposeSubstVal c n
   -- accumulator references corresponding to non-ref linear variables
-  LinRef :: SAtom n -> TransposeSubstVal AtomNameC n
+  LinRef :: SAtom n -> TransposeSubstVal (AtomNameC SimpIR) n
   -- as an optimization, we don't make references for trivial vector spaces
-  LinTrivial :: TransposeSubstVal AtomNameC n
+  LinTrivial :: TransposeSubstVal (AtomNameC SimpIR) n
 
 type LinRegions = ListE SAtomName
 
 type TransposeM a = SubstReaderT TransposeSubstVal
                       (ReaderT1 LinRegions (BuilderM SimpIR)) a
 
-type TransposeM' a = SubstReaderT (AtomSubstVal SimpIR)
+type TransposeM' a = SubstReaderT AtomSubstVal
                        (ReaderT1 LinRegions (BuilderM SimpIR)) a
 
 -- TODO: it might make sense to replace substNonlin/isLin
@@ -93,7 +93,7 @@ isLin e = do
 withAccumulator
   :: Emits o
   => SType o
-  -> (forall o'. (Emits o', DExt o o') => TransposeSubstVal AtomNameC o' -> TransposeM i o' ())
+  -> (forall o'. (Emits o', DExt o o') => TransposeSubstVal (AtomNameC SimpIR) o' -> TransposeM i o' ())
   -> TransposeM i o (SAtom o)
 withAccumulator ty cont = do
   singletonTypeVal ty >>= \case

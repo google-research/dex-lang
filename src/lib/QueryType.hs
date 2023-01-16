@@ -45,8 +45,7 @@ import PPrint ()
 
 -- === Main API for querying types ===
 
-getTypeSubst :: (SubstReader (AtomSubstVal r) m
-                , EnvReader2 m, HasType r e)
+getTypeSubst :: (SubstReader AtomSubstVal m, EnvReader2 m, HasType r e)
              => e i -> m i o (Type r o)
 getTypeSubst e = do
   subst <- getSubst
@@ -79,8 +78,8 @@ getEffects :: (EnvReader m, HasEffectsE e r) => e n -> m n (EffectRow r n)
 getEffects e = liftTypeQueryM idSubst $ getEffectsImpl e
 {-# INLINE getEffects #-}
 
-getEffectsSubst :: (EnvReader2 m, SubstReader (AtomSubstVal r) m, HasEffectsE e r)
-              => e i -> m i o (EffectRow r o)
+getEffectsSubst :: (EnvReader2 m, SubstReader AtomSubstVal m, HasEffectsE e r)
+                => e i -> m i o (EffectRow r o)
 getEffectsSubst e = do
   subst <- getSubst
   liftTypeQueryM subst $ getEffectsImpl e
@@ -227,45 +226,42 @@ declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
 
 -- === implementation of querying types ===
 
-newtype TypeQueryM (r::IR) (i::S) (o::S) (a :: *) = TypeQueryM {
-  runTypeQueryM :: SubstReaderT (AtomSubstVal r) EnvReaderM i o a }
+newtype TypeQueryM (i::S) (o::S) (a :: *) = TypeQueryM {
+  runTypeQueryM :: SubstReaderT AtomSubstVal EnvReaderM i o a }
   deriving ( Functor, Applicative, Monad
            , EnvReader, EnvExtender, ScopeReader
-           , SubstReader (AtomSubstVal r))
+           , SubstReader AtomSubstVal)
 
-liftTypeQueryM :: (EnvReader m) => Subst (AtomSubstVal r) i o
-               -> TypeQueryM r i o a -> m o a
+liftTypeQueryM :: (EnvReader m) => Subst AtomSubstVal i o
+               -> TypeQueryM i o a -> m o a
 liftTypeQueryM subst act =
   liftEnvReaderM $
     runSubstReaderT subst $
       runTypeQueryM act
 {-# INLINE liftTypeQueryM #-}
 
-instance MonadFail (TypeQueryM r i o) where
+instance MonadFail (TypeQueryM i o) where
   fail = error
   {-# INLINE fail #-}
 
-instance Fallible (TypeQueryM r i o) where
+instance Fallible (TypeQueryM i o) where
   throwErrs err = error $ pprint err
   {-# INLINE throwErrs #-}
   addErrCtx = const id
   {-# INLINE addErrCtx #-}
 
 class HasType (r::IR) (e::E) | e -> r where
-  getTypeE :: e i -> TypeQueryM r i o (Type r o)
+  getTypeE :: e i -> TypeQueryM i o (Type r o)
 
 instance HasType r (AtomName r) where
   getTypeE name = do
     substM (Var name) >>= \case
-      --- XXX: unsafe. fix!  The issue is that we have no way to statically check that
-      --- a name occurring in SimpIR is not referring to a CoreIR binding, or anything
-      --- like that.
-      Var name' -> (unsafeCoerceIRE . atomBindingType) <$> lookupAtomName name'
+      Var name' -> atomBindingType <$> lookupAtomName name'
       atom -> getType atom
   {-# INLINE getTypeE #-}
 
 instance HasType r (Atom r) where
-  getTypeE :: forall i o. Atom r i -> TypeQueryM r i o (Type r o)
+  getTypeE :: forall i o. Atom r i -> TypeQueryM i o (Type r o)
   getTypeE atom = case atom of
     Var name -> getTypeE name
     Lam (UnaryLamExpr (b:>ty) body) arr (Abs (bEff:>_) effs) -> do
@@ -319,7 +315,7 @@ instance HasCore r => HasType r (NewtypeTyCon r) where
     LabelCon _        -> return $ NewtypeTyCon LabelType
     LabeledRowCon _   -> return LabeledRowKind
 
-getNewtypeType :: HasCore r => NewtypeCon r i -> Atom r i -> TypeQueryM r i o (Type r o)
+getNewtypeType :: HasCore r => NewtypeCon r i -> Atom r i -> TypeQueryM i o (Type r o)
 getNewtypeType con x = case con of
   NatCon          -> return $ NewtypeTyCon Nat
   FinCon n        -> NewtypeTyCon . Fin <$> substM n
@@ -355,7 +351,7 @@ instance HasType r (TabLamExpr r) where
         bodyTy <- getTypeE body
         return $ TabTy (b':>ann') bodyTy
 
-getTypePrimCon :: PrimCon r (Atom r i) -> TypeQueryM r i o (Type r o)
+getTypePrimCon :: PrimCon r (Atom r i) -> TypeQueryM i o (Type r o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
@@ -364,7 +360,7 @@ getTypePrimCon con = case con of
   DictHole _ ty -> substM ty
   HeapVal       -> return $ TC HeapType
 
-dictExprType :: HasCore r => DictExpr r i -> TypeQueryM r i o (Type r o)
+dictExprType :: HasCore r => DictExpr r i -> TypeQueryM i o (Type r o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -372,7 +368,8 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM substM args
     let bs' = fmapNest (\(RolePiBinder b _ _ _) -> b) bs
-    ListE params' <- applySubst (bs' @@> map SubstVal args') (ListE (map injectFromCore params))
+    ListE params' <- applySubst (bs' @@> map (SubstVal . injectToCore) args') $
+      ListE (map injectFromCore params)
     return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
@@ -380,7 +377,8 @@ dictExprType e = case e of
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    applySubst (bs @@> map SubstVal params) $ injectFromCore (superclassTypes superclasses !! i)
+    applySubst (bs @@> map (SubstVal . injectToCore) params) $
+      injectFromCore $ superclassTypes superclasses !! i
   IxFin n -> do
     n' <- substM n
     liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n'
@@ -396,7 +394,7 @@ ixDictType ty = do
   ixClassName <- getIxClassName
   return $ DictType "Ix" ixClassName [ty]
 
-typeApp  :: Type r o -> [Atom r i] -> TypeQueryM r i o (Type r o)
+typeApp  :: Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
 typeApp fTy [] = return fTy
 typeApp fTy xs = case fromNaryPiType (length xs) fTy of
   Just (NaryPiType bs _ resultTy) -> do
@@ -407,10 +405,10 @@ typeApp fTy xs = case fromNaryPiType (length xs) fTy of
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
-typeTabApp :: Type r o -> NE.NonEmpty (Atom r i) -> TypeQueryM r i o (Type r o)
+typeTabApp :: Type r o -> NE.NonEmpty (Atom r i) -> TypeQueryM i o (Type r o)
 typeTabApp tabTy xs = go tabTy $ toList xs
   where
-    go :: Type r o -> [Atom r i] -> TypeQueryM r i o (Type r o)
+    go :: Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
     go ty [] = return ty
     go ty (i:rest) = do
       TabTy (b:>_) resultTy <- return ty
@@ -446,8 +444,8 @@ instance HasType r (Expr r) where
       def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
       let MethodType _ methodTy = methodTys !! i
       superclassDicts <- getSuperclassDicts def <$> substM dict
-      let subst = (    paramBs @@> map SubstVal params
-                   <.> classBs @@> map SubstVal superclassDicts)
+      let subst = (    paramBs @@> map (SubstVal . injectToCore) params
+                   <.> classBs @@> map (SubstVal . injectToCore) superclassDicts)
       applySubst subst (injectFromCore methodTy)
     RefOp ref m -> do
       TC (RefType h s) <- getTypeE ref
@@ -609,14 +607,16 @@ instance HasCore r => HasType r (ComposeE RecordVariantOp (Atom r)) where
 
 instantiateHandlerType :: (HasCore r, EnvReader m) => HandlerName n -> Atom r n -> [Atom r n] -> m n (Type r n)
 instantiateHandlerType hndName r args = do
+  let r' = injectToCore r
+  let args' = injectToCore <$> args
   HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
-  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) (injectFromCore retTy)
+  injectFromCore <$> applySubst (rb @> (SubstVal r') <.> bs @@> (map SubstVal args')) retTy
 
 getSuperclassDicts :: HasCore r => ClassDef n -> Atom r n -> [Atom r n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
   for [0 .. nestLength classBs - 1] \i -> DictCon $ SuperclassProj dict i
 
-getTypeBaseType :: HasType r e => e i -> TypeQueryM r i o BaseType
+getTypeBaseType :: HasType r e => e i -> TypeQueryM i o BaseType
 getTypeBaseType e =
   getTypeE e >>= \case
     TC (BaseType b) -> return b
@@ -624,7 +624,7 @@ getTypeBaseType e =
 
 labeledRowDifference' :: ExtLabeledItems (Type r o) (AtomName r o)
                       -> ExtLabeledItems (Type r o) (AtomName r o)
-                      -> TypeQueryM r i o (ExtLabeledItems (Type r o) (AtomName r o))
+                      -> TypeQueryM i o (ExtLabeledItems (Type r o) (AtomName r o))
 labeledRowDifference' (Ext (LabeledItems items) rest)
                       (Ext (LabeledItems subitems) subrest) = do
   -- Extract remaining types from the left.
@@ -657,22 +657,22 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
               _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
       NaryPiType bs effs resultTy <- go ts
-      return $ NaryPiType (Nest (PiBinder b (BaseTy t) PlainArrow) bs) effs resultTy
+      return $ NaryPiType (Nest (b:>BaseTy t) bs) effs resultTy
 
-getTypeHof :: Hof r i -> TypeQueryM r i o (Type r o)
+getTypeHof :: Hof r i -> TypeQueryM i o (Type r o)
 getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ dict f -> do
-    NaryPiType (UnaryNest (PiBinder b _ _)) _ eltTy <- getLamExprType f
+    NaryPiType (UnaryNest (b:>_)) _ eltTy <- getLamExprType f
     ixTy <- ixTyFromDict =<< substM dict
     return $ TabTy (b:>ixTy) eltTy
   While _ -> return UnitTy
   Linearize f -> do
-    NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprType f
+    NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprType f
     let b' = ignoreHoistFailure $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
   Transpose f -> do
-    NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprType f
+    NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprType f
     let b' = ignoreHoistFailure $ hoist binder b
     b' --@ a
   RunReader _ f -> do
@@ -687,18 +687,17 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunInit f -> getTypeE f
   CatchException f -> MaybeTy <$> getTypeE f
 
-getLamExprType :: LamExpr r i -> TypeQueryM r i o (NaryPiType r o)
+getLamExprType :: LamExpr r i -> TypeQueryM i o (NaryPiType r o)
 getLamExprType (LamExpr bs body) =
   substBinders bs \bs' -> do
     effs <- substM $ blockEffects body
     resultTy <- getTypeE body
-    let piBinders = fmapNest (\(b:>ty) -> PiBinder b ty PlainArrow) bs'
-    return $ NaryPiType piBinders effs resultTy
+    return $ NaryPiType bs' effs resultTy
 
-getTypeRWSAction :: LamExpr r i -> TypeQueryM r i o (Type r o, Type r o)
+getTypeRWSAction :: LamExpr r i -> TypeQueryM i o (Type r o, Type r o)
 getTypeRWSAction f = do
   NaryPiType (BinaryNest regionBinder refBinder) _ resultTy <- getLamExprType f
-  PiBinder _ (RefTy _ referentTy) _ <- return refBinder
+  RefTy _ referentTy <- return $ binderType refBinder
   let referentTy' = ignoreHoistFailure $ hoist regionBinder referentTy
   let resultTy' = ignoreHoistFailure $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
@@ -736,7 +735,7 @@ rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 -- === querying effects implementation ===
 
 class HasEffectsE (e::E) (r::IR) | e -> r where
-  getEffectsImpl :: e i -> TypeQueryM r i o (EffectRow r o)
+  getEffectsImpl :: e i -> TypeQueryM i o (EffectRow r o)
 
 instance HasEffectsE (Expr r) r where
   getEffectsImpl = exprEffects
@@ -746,7 +745,7 @@ instance HasEffectsE (DeclBinding r) r where
   getEffectsImpl (DeclBinding _ _ expr) = getEffectsImpl expr
   {-# INLINE getEffectsImpl #-}
 
-exprEffects :: Expr r i -> TypeQueryM r i o (EffectRow r o)
+exprEffects :: Expr r i -> TypeQueryM i o (EffectRow r o)
 exprEffects expr = case expr of
   Atom _  -> return Pure
   App f xs -> do
@@ -839,11 +838,11 @@ instance HasEffectsE (Alt r) r where
       ignoreHoistFailure . hoist bs' <$> getEffectsImpl body
   {-# INLINE getEffectsImpl #-}
 
-functionEffs :: LamExpr r i -> TypeQueryM r i o (EffectRow r o)
+functionEffs :: LamExpr r i -> TypeQueryM i o (EffectRow r o)
 functionEffs f = getLamExprType f >>= \case
   NaryPiType b effs _ -> return $ ignoreHoistFailure $ hoist b effs
 
-rwsFunEffects :: RWS -> LamExpr r i -> TypeQueryM r i o (EffectRow r o)
+rwsFunEffects :: RWS -> LamExpr r i -> TypeQueryM i o (EffectRow r o)
 rwsFunEffects rws f = getLamExprType f >>= \case
    NaryPiType (BinaryNest h ref) effs _ -> do
      let effs' = ignoreHoistFailure $ hoist ref effs

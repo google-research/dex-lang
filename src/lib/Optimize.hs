@@ -276,7 +276,7 @@ instance GenericTraverser SimpIR UnitB ULS where
                   extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
                 inc $ fromIntegral n  -- To account for the TabCon we emit below
                 getNaryLamExprType body' >>= \case
-                  NaryPiType (UnaryNest (PiBinder tb _ _)) _ valTy -> do
+                  NaryPiType (UnaryNest (tb:>_)) _ valTy -> do
                     let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                     let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
                     return $ Right $ TabCon tabTy vals
@@ -356,7 +356,7 @@ instance GenericTraverser SimpIR UnitB LICMS where
     expr -> traverseExprDefault expr
     where
       rebuildBody :: Binder SimpIR i i' -> SBlock i'
-                  -> AtomNameBinder n l -> SType n -> Abs (Nest SDecl) SAtom l
+                  -> AtomNameBinder SimpIR n l -> SType n -> Abs (Nest SDecl) SAtom l
                   -> GenericTraverserM SimpIR UnitB LICMS i n (LamExpr SimpIR n)
       rebuildBody b body@(Block ann _ _) lnb lbTy bodyAbs = do
         Distinct <- getDistinct
@@ -370,14 +370,14 @@ instance GenericTraverser SimpIR UnitB LICMS where
 seqLICM :: Int
         -> RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]         -- hoisted dests
-        -> AtomNameBinder n2 n3   -- loop binder
+        -> AtomNameBinder SimpIR n2 n3   -- loop binder
         -> RNest SDecl n3 n4      -- loop-dependent decls
         -> Nest SDecl m1 m2       -- decls remaining to process
         -> SAtom m2               -- loop result
-        -> SubstReaderT (AtomSubstVal SimpIR) EnvReaderM m1 n4
+        -> SubstReaderT AtomSubstVal EnvReaderM m1 n4
              (Abs (Nest SDecl)
                 (PairE (ListE SAtomName)
-                       (Abs AtomNameBinder (Abs (Nest SDecl) SAtom))) n1)
+                       (Abs (AtomNameBinder SimpIR) (Abs (Nest SDecl) SAtom))) n1)
 seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
   Empty -> do
     ans' <- substM ans
@@ -518,7 +518,6 @@ instance HasDCE (Hof SimpIR)
 instance HasDCE SAtom
 instance HasDCE (LamExpr     SimpIR)
 instance HasDCE (TabLamExpr  SimpIR)
-instance HasDCE (PiType      SimpIR)
 instance HasDCE (TabPiType   SimpIR)
 instance HasDCE (DepPairType SimpIR)
 instance HasDCE (EffectRowTail SimpIR)

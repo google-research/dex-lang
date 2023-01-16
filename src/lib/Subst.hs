@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 
 import Name
+import IRVariants
 import Types.Core
 import Core
 import qualified RawName as R
@@ -117,9 +118,11 @@ class ( FromName substVal, SinkableV v
       , forall c. Color c => SubstE substVal (v c))
       => SubstV (substVal::V) (v::V)
 
-type AtomSubstVal r = SubstVal AtomNameC (Atom r)
+instance (forall r. SinkableE (atom r), forall r. RenameE (atom r)) => RenameV (SubstVal atom) where
 
-instance (SinkableE atom, RenameE atom) => RenameV (SubstVal cMatch atom) where
+instance (forall r. RenameE (atom r), Color c) => RenameE (SubstVal atom c) where
+  renameE (_, env) (Rename name) = Rename $ env ! name
+  renameE (scope, env) (SubstVal atom) = SubstVal $ renameE (scope, env) atom
 
 substM :: (SubstReader v m, EnvReader2 m, SinkableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
@@ -232,61 +235,23 @@ substBindersFrag b cont = do
   refreshAbs ab \b' subst -> cont subst b'
 {-# INLINE substBindersFrag #-}
 
--- === subst monad ===
+-- === atom subst vals ===
 
--- Only alllows non-trivial substitution with names that match the parameter
--- `cMatch`. For example, this lets us substitute ordinary variables in Core
--- with Atoms, while ensuring that things like data def names only get renamed.
-data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
-  SubstVal :: atom n   -> SubstVal c      atom c n
-  Rename   :: Name c n -> SubstVal cMatch atom c n
+data SubstVal (atom::IR->E) (c::C) (n::S) where
+  SubstVal :: atom r n -> SubstVal atom (AtomNameC r) n
+  Rename   :: Name c n -> SubstVal atom c n
+type AtomSubstVal = SubstVal Atom
 
-class ColorsNotEqual a b where
-  notEqProof :: ColorsEqual a b -> r
+type family IsAtomName (c::C) where
+  IsAtomName (AtomNameC r) = True
+  IsAtomName _             = False
 
-instance (Color c, ColorsNotEqual cMatch c)
-         => (SubstE (SubstVal cMatch atom) (Name c)) where
-  substE (_, env) name =
-    case env ! name of
-      Rename name' -> name'
-      SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
+instance (Color c, IsAtomName c ~ False) => SubstE (SubstVal atom) (Name c) where
+  substE (_, env) v = case env ! v of Rename v' -> v'
 
-instance FromName (SubstVal c v) where
+instance FromName (SubstVal atom) where
   fromName = Rename
   {-# INLINE fromName #-}
-
-instance (SubstE (SubstVal cMatch atom) atom, Color c)
-         => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom c) where
-  substE (_, env) (Rename name) = env ! name
-  substE env (SubstVal val) = SubstVal $ substE env val
-
-instance (SubstE (SubstVal cMatch atom) atom, SinkableE atom)
-         => SubstV (SubstVal cMatch atom) (SubstVal cMatch atom) where
-
-instance (Color c, SinkableE atom, RenameE atom)
-         => RenameE (SubstVal cMatch atom c) where
-  renameE (_, env) (Rename name) = Rename $ env ! name
-  renameE (scope, env) (SubstVal atom) = SubstVal $ renameE (scope, env) atom
-
--- TODO: we can fill out the full (N^2) set of instances if we need to
-instance ColorsNotEqual AtomNameC DataDefNameC  where notEqProof = \case
-instance ColorsNotEqual AtomNameC ClassNameC    where notEqProof = \case
-instance ColorsNotEqual AtomNameC EffectNameC   where notEqProof = \case
-instance ColorsNotEqual AtomNameC EffectOpNameC where notEqProof = \case
-instance ColorsNotEqual AtomNameC HandlerNameC  where notEqProof = \case
-instance ColorsNotEqual AtomNameC InstanceNameC where notEqProof = \case
-instance ColorsNotEqual AtomNameC TopFunNameC   where notEqProof = \case
-instance ColorsNotEqual AtomNameC PtrNameC      where notEqProof = \case
-instance ColorsNotEqual AtomNameC SpecializedDictNameC where notEqProof = \case
-instance ColorsNotEqual AtomNameC ImpNameC      where notEqProof = \case
-
-instance ColorsNotEqual ImpNameC AtomNameC      where notEqProof = \case
-instance ColorsNotEqual ImpNameC EffectNameC    where notEqProof = \case
-instance ColorsNotEqual ImpNameC HandlerNameC   where notEqProof = \case
-instance ColorsNotEqual ImpNameC DataDefNameC   where notEqProof = \case
-instance ColorsNotEqual ImpNameC InstanceNameC  where notEqProof = \case
-instance ColorsNotEqual ImpNameC SpecializedDictNameC  where notEqProof = \case
-instance ColorsNotEqual ImpNameC ClassNameC     where notEqProof = \case
 
 -- === SubstReaderT transformer ===
 
@@ -392,8 +357,8 @@ instance (Monad1 m, MonadReader (r o) (m o)) => MonadReader (r o) (SubstReaderT 
 
 -- === instances ===
 
-instance SinkableE atom => SinkableV (SubstVal (cMatch::C) (atom::E))
-instance SinkableE atom => SinkableE (SubstVal (cMatch::C) (atom::E) (c::C)) where
+instance (forall r. SinkableE (atom r)) => SinkableV (SubstVal atom)
+instance (forall r. SinkableE (atom r)) => SinkableE (SubstVal atom c) where
   sinkingProofE fresh substVal = case substVal of
     Rename name  -> Rename   $ sinkingProofE fresh name
     SubstVal val -> SubstVal $ sinkingProofE fresh val

@@ -33,7 +33,7 @@ import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
-import GHC.Exts (Constraint, dataToTag#, tagToEnum#, Int(..))
+import GHC.Exts (Constraint)
 import qualified GHC.Exts as GHC.Exts
 import GHC.Generics (Generic (..), Rep)
 import Data.Store.Internal
@@ -45,6 +45,7 @@ import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
 import qualified RawName as R
 import Util (zipErr, onFst, onSnd, transitiveClosure)
 import Err
+import IRVariants
 
 -- === category-like classes for envs, scopes etc ===
 
@@ -1653,7 +1654,11 @@ tryAsColor x = case eqColorRep of
 class Color (c::C) where
   getColorRep :: C
 
-instance Color AtomNameC       where getColorRep = AtomNameC
+-- Can we somehow avoid having to implement this? It add a *lot* of `IrRep r`
+-- noise to all the IR-polymorphic instances. And I don't think we actually do
+-- very much reflection on name colors. And the places where we do, I bet we can
+-- just use the Env bindings instead.
+instance Color (AtomNameC r)   where getColorRep = undefined -- AtomNameC (getIRRep @r)
 instance Color DataDefNameC    where getColorRep = DataDefNameC
 instance Color TyConNameC      where getColorRep = TyConNameC
 instance Color DataConNameC    where getColorRep = DataConNameC
@@ -1675,7 +1680,10 @@ instance Color ImpNameC        where getColorRep = ImpNameC
 
 interpretColor :: C -> (forall c. Color c => ColorProxy c -> a) -> a
 interpretColor c cont = case c of
-  AtomNameC       -> cont $ ColorProxy @AtomNameC
+  AtomNameC r -> interpretIR r \irProxy -> cont $ atomNameProxy irProxy
+    where
+      atomNameProxy :: IRProxy r -> ColorProxy (AtomNameC r)
+      atomNameProxy IRProxy = ColorProxy
   DataDefNameC    -> cont $ ColorProxy @DataDefNameC
   TyConNameC      -> cont $ ColorProxy @TyConNameC
   DataConNameC    -> cont $ ColorProxy @DataConNameC
@@ -2232,7 +2240,7 @@ data S = (:=>:) S S
 
 -- Name "color" ("type", "kind", etc. already taken)
 data C =
-    AtomNameC
+    AtomNameC {-# UNPACK #-} !IR
   | DataDefNameC
   | TyConNameC
   | DataConNameC
@@ -2250,6 +2258,54 @@ data C =
   | UnsafeC
   | ImpNameC
     deriving (Eq, Ord, Generic, Show)
+
+-- TODO: is there a better way to do this?
+max_irs :: Int
+max_irs = 16
+instance Enum C where
+  toEnum i =
+    if i < max_irs
+      then AtomNameC (toEnum i)
+      else case i - max_irs of
+        0  -> DataDefNameC
+        1  -> TyConNameC
+        2  -> DataConNameC
+        3  -> ClassNameC
+        4  -> InstanceNameC
+        5  -> MethodNameC
+        6  -> TopFunNameC
+        7  -> FunObjCodeNameC
+        8  -> ModuleNameC
+        9  -> PtrNameC
+        10 -> EffectNameC
+        11 -> EffectOpNameC
+        12 -> HandlerNameC
+        13 -> SpecializedDictNameC
+        14 -> UnsafeC
+        15 -> ImpNameC
+        _  -> error "impossible"
+  {-# INLINE toEnum #-}
+  fromEnum = \case
+    AtomNameC r -> fromEnum r
+    c -> max_irs + case c of
+      DataDefNameC         -> 0
+      TyConNameC           -> 1
+      DataConNameC         -> 2
+      ClassNameC           -> 3
+      InstanceNameC        -> 4
+      MethodNameC          -> 5
+      TopFunNameC          -> 6
+      FunObjCodeNameC      -> 7
+      ModuleNameC          -> 8
+      PtrNameC             -> 9
+      EffectNameC          -> 10
+      EffectOpNameC        -> 11
+      HandlerNameC         -> 12
+      SpecializedDictNameC -> 13
+      UnsafeC              -> 14
+      ImpNameC             -> 15
+      _ -> error "impossible"
+  {-# INLINE fromEnum #-}
 
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
@@ -2714,13 +2770,12 @@ shadowBit = finiteBitSize @Int undefined - 1
 {-# INLINE shadowBit #-}
 
 substItemColor :: SubstItemFlags -> C
-substItemColor (SubstItemFlags f) = tagToEnum# tag
-  where !(I# tag) = f `clearBit` shadowBit
+substItemColor (SubstItemFlags f) = toEnum $ f `clearBit` shadowBit
 {-# INLINE substItemColor #-}
 
 packSubstItemFlags :: FragNameDistinctness -> C -> SubstItemFlags
 packSubstItemFlags d c = SubstItemFlags $ case d of DistinctName -> f'; ShadowingName -> f' `setBit` shadowBit
-  where f' = I# (dataToTag# c)
+  where f' = fromEnum c
 {-# INLINE packSubstItemFlags #-}
 
 undistinctItem :: SubstItemFlags -> SubstItemFlags
@@ -2742,6 +2797,8 @@ lookupSubstFrag :: Color c => SubstFrag v i i' o -> Name c (i:=>:i') -> v c o
 lookupSubstFrag (UnsafeMakeSubst m) (UnsafeMakeName rawName) =
   case R.lookup rawName m of
     Just d -> case fromSubstItem d of
+      -- TODO: since this function is so hot, we should probably skip the color
+      -- check completely, at least in optimized mode.
       Nothing -> error "Wrong name color (should never happen)"
       Just x -> x
     _ -> error "Subst lookup failed (this should never happen)"
@@ -3097,6 +3154,48 @@ mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
 
 instance (Color c, SinkableE e) => SinkableE (NameMapE c e) where
   sinkingProofE = undefined
+
+-- === E-kinded IR coercions ===
+
+-- XXX: the intention is that we won't have to use these much
+unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
+unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
+
+-- XXX: the intention is that we won't have to use these much
+unsafeCoerceIRName :: forall (r'::IR) (r::IR) (n::S). Name (AtomNameC r) n -> Name (AtomNameC r') n
+unsafeCoerceIRName = TrulyUnsafe.unsafeCoerce
+
+-- XXX: the intention is that we won't have to use these much
+unsafeCoerceFromAnyIR :: forall (r::IR) (e::IR->E) (n::S). e AnyIR n -> e r n
+unsafeCoerceFromAnyIR = unsafeCoerceIRE
+
+unsafeCoerceIRB :: forall (r'::IR) (r::IR) (b::IR->B) (n::S) (l::S) . b r n l -> b r' n l
+unsafeCoerceIRB = TrulyUnsafe.unsafeCoerce
+
+class CovariantInIR (e::IR->E)
+-- For now we're "implementing" this instances manually as needed because we
+-- don't actually need very many of them, but we should figure out a more
+-- uniform way to do it.
+
+-- This is safe, assuming the constraints have been implemented correctly.
+injectIRE :: (CovariantInIR e, r `Sat` IsSubsetOf r') => e r n -> e r' n
+injectIRE = unsafeCoerceIRE
+
+-- For now `HasCore r` is equivalent to `r ~ CoreIR` and we can take advantage
+-- of that using `injectFromCore` and `injectToCore`. That might change in the
+-- future, which is why we've written most things in terms of `HasCore r`
+-- constraints.
+injectFromCore :: (CovariantInIR e, HasCore r) => e CoreIR n -> e r n
+injectFromCore = unsafeCoerceIRE
+
+injectToCore :: (CovariantInIR e, HasCore r) => e r n -> e CoreIR n
+injectToCore = unsafeCoerceIRE
+
+injectAtomNameToCore :: HasCore r => Name (AtomNameC r) n -> Name (AtomNameC CoreIR) n
+injectAtomNameToCore = TrulyUnsafe.unsafeCoerce
+
+injectFromSimp :: (CovariantInIR e, IsSimpish r) => e SimpIR n -> e r n
+injectFromSimp = unsafeCoerceIRE
 
 -- === notes ===
 

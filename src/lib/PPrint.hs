@@ -473,7 +473,7 @@ instance Pretty (AtomBinding r n) where
     MiscBound   t -> p t
     SolverBound b -> p b
     FFIFunBound s _ -> p s
-    NoinlineFun _ ty _ -> "Top function with type: " <+> p ty
+    NoinlineFun (NoInlineDef _ _ _ ty _) -> "Top function with type: " <+> p ty
     TopDataBound (RepVal ty _) -> "Top data with type: " <+> p ty
 
 instance Pretty (SpecializationSpec n) where

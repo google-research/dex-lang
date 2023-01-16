@@ -46,8 +46,8 @@ liftGenericTraverserMTopEmissions s m =
 
 newtype GenericTraverserM r f s i o a =
   GenericTraverserM
-    { runGenericTraverserM' :: SubstReaderT (AtomSubstVal r) (StateT1 s (DoubleBuilderT r f HardFailM)) i o a }
-    deriving (Functor, Applicative, Monad, SubstReader (AtomSubstVal r), MonadFail, Fallible, MonadState (s o))
+    { runGenericTraverserM' :: SubstReaderT AtomSubstVal (StateT1 s (DoubleBuilderT r f HardFailM)) i o a }
+    deriving (Functor, Applicative, Monad, SubstReader AtomSubstVal, MonadFail, Fallible, MonadState (s o))
 
 deriving instance GenericTraverser r f s => EnvExtender     (GenericTraverserM r f s i)
 deriving instance GenericTraverser r f s => ScopeReader     (GenericTraverserM r f s i)
@@ -292,8 +292,8 @@ traverseDeclNest decls cont = do
 {-# INLINE traverseDeclNest #-}
 
 traverseDeclNestS :: (GenericTraverser r f s, Emits o)
-                  => Subst (AtomSubstVal r) l o -> Nest (Decl r) l i'
-                  -> GenericTraverserM r f s i o (Subst (AtomSubstVal r) i' o)
+                  => Subst AtomSubstVal l o -> Nest (Decl r) l i'
+                  -> GenericTraverserM r f s i o (Subst AtomSubstVal i' o)
 traverseDeclNestS !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do

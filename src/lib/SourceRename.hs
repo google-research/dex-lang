@@ -21,6 +21,7 @@ import LabeledItems
 import Name
 import Core (EnvReader (..), withEnv, lookupSourceMapPure)
 import PPrint ()
+import IRVariants
 import Types.Source
 import Types.Core (Env (..), ModuleEnv (..))
 
@@ -126,7 +127,7 @@ ambiguousVarErrMsg v defs =
     defsPretty (LocalVar _) =
       error "shouldn't be possible because module vars can't shadow local ones"
 
-instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
+instance SourceRenamableE (SourceNameOr (Name (AtomNameC CoreIR))) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
       UAtomVar v -> return $ InternalName sourceName v
@@ -167,7 +168,7 @@ instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceOrI
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
-instance SourceRenamableB (UBinder AtomNameC) where
+instance SourceRenamableB (UBinder (AtomNameC CoreIR)) where
   sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
 
 instance SourceRenamableB UPatAnn where
@@ -176,13 +177,13 @@ instance SourceRenamableB UPatAnn where
     sourceRenameB b \b' ->
       cont $ UPatAnn b' ann'
 
-instance SourceRenamableB (UAnnBinder AtomNameC) where
+instance SourceRenamableB (UAnnBinder (AtomNameC CoreIR)) where
   sourceRenameB (UAnnBinder b ann) cont = do
     ann' <- sourceRenameE ann
     sourceRenameB b \b' ->
       cont $ UAnnBinder b' ann'
 
-instance SourceRenamableB (UAnnBinderArrow AtomNameC) where
+instance SourceRenamableB (UAnnBinderArrow (AtomNameC CoreIR)) where
   sourceRenameB (UAnnBinderArrow b ann arr) cont = do
     ann' <- sourceRenameE ann
     sourceRenameB b \b' ->
@@ -310,7 +311,7 @@ instance SourceRenamableB UDecl where
         cont $ UHandlerDecl effName' bodyTyArg' tyArgs' retEff' retTy' ops' handlerName'
 
 renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
-                 => Nest (UAnnBinder AtomNameC) i' i
+                 => Nest (UAnnBinder (AtomNameC CoreIR)) i' i
                  -> UMethodType i
                  -> SourceName
                  -> m o (UMethodType o)
@@ -432,7 +433,7 @@ class SourceRenamablePat (pat::B) where
                   -> (forall o'. DExt o o' => SiblingSet -> pat o o' -> m o' a)
                   -> m o a
 
-instance SourceRenamablePat (UBinder AtomNameC) where
+instance SourceRenamablePat (UBinder (AtomNameC CoreIR)) where
   sourceRenamePat sibs ubinder cont = do
     newSibs <- case ubinder of
       UBindSource b -> do

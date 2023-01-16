@@ -34,8 +34,8 @@ import Util (Tree (..))
 -- TODO: we specialized to `SimpToImpIR` because that's the only place where
 -- it's currently used. But we should probably make it polymorphic in `r`.
 
-type PolyName = EitherE SAtomName ImpName
-type PolyBinder = NameBinder AtomNameC
+type PolyName = EitherE (AtomName SimpToImpIR) ImpName
+type PolyBinder = AtomNameBinder SimpToImpIR
 
 type Constant = Rational
 
@@ -127,7 +127,14 @@ _showPoly (Polynomial p) =
 
 -- === core expressions as polynomials ===
 
-type PolySubstVal = SubstVal AtomNameC (MaybeE Polynomial)
+data PolySubstVal (c::C) (n::S) where
+  PolySubstVal :: Maybe (Polynomial n) -> PolySubstVal (AtomNameC SimpToImpIR) n
+  PolyRename   :: Name c n             -> PolySubstVal c n
+
+instance SinkableV PolySubstVal
+instance Color c => SinkableE (PolySubstVal c)  where sinkingProofE = undefined
+instance FromName PolySubstVal where fromName = PolyRename
+
 type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpToImpIR)) i o a
 
 blockAsPoly
@@ -140,8 +147,8 @@ blockAsPolyRec :: Nest (Decl SimpToImpIR) i i' -> Atom SimpToImpIR i' -> BlockTr
 blockAsPolyRec decls result = case decls of
   Empty -> atomAsPoly result
   Nest (Let b (DeclBinding _ _ expr)) restDecls -> do
-    p <- toMaybeE <$> optional (exprAsPoly expr)
-    extendSubst (b@>SubstVal p) $ blockAsPolyRec restDecls result
+    p <- optional (exprAsPoly expr)
+    extendSubst (b@>PolySubstVal p) $ blockAsPolyRec restDecls result
 
   where
     atomAsPoly :: Atom SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
@@ -153,14 +160,14 @@ blockAsPolyRec decls result = case decls of
 
     impNameAsPoly :: ImpName i -> BlockTraverserM i o (Polynomial o)
     impNameAsPoly v = getSubst <&> (!v) >>= \case
-      Rename v' -> return $ poly [(1, mono [(RightE v', 1)])]
+      PolyRename v' -> return $ poly [(1, mono [(RightE v', 1)])]
 
     atomNameAsPoly :: AtomName SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
     atomNameAsPoly v = getSubst <&> (!v) >>= \case
-      SubstVal NothingE   -> empty
-      SubstVal (JustE cp) -> return cp
-      SubstVal _          -> error "impossible"
-      Rename   v'         ->
+      PolySubstVal Nothing   -> empty
+      PolySubstVal (Just cp) -> return cp
+      PolySubstVal _         -> error "impossible"
+      PolyRename   v'        ->
         getType v' >>= \case
           IdxRepTy -> return $ poly [(1, mono [(LeftE v', 1)])]
           _ -> empty

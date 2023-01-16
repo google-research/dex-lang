@@ -29,26 +29,26 @@ inlineBindings blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop blk
 
 -- === Data Structure ===
 
-data InlineExpr (o::S) where
-  DoneEx :: SExpr o -> InlineExpr o
-  SuspEx :: SExpr i -> Subst InlineSubstVal i o -> InlineExpr o
+data InlineExpr (r::IR) (o::S) where
+  DoneEx :: SExpr o -> InlineExpr SimpIR o
+  SuspEx :: SExpr i -> Subst InlineSubstVal i o -> InlineExpr SimpIR o
 
-instance Show (InlineExpr n) where
+instance Show (InlineExpr r n) where
   show = \case
     DoneEx e -> "finished " ++ show e
     SuspEx e _ -> "unfinished " ++ show e
 
-instance RenameE InlineExpr where
+instance RenameE (InlineExpr r) where
   renameE (scope, subst) = \case
     DoneEx e -> DoneEx $ renameE (scope, subst) e
     SuspEx e s -> SuspEx e $ renameE (scope, subst) s
 
-instance SinkableE InlineExpr where
+instance SinkableE (InlineExpr r) where
   sinkingProofE rename = \case
     DoneEx e   -> DoneEx $ sinkingProofE rename e
     SuspEx e s -> SuspEx e $ sinkingProofE rename s
 
-type InlineSubstVal = SubstVal AtomNameC InlineExpr
+type InlineSubstVal = SubstVal InlineExpr
 
 newtype InlineM (i::S) (o::S) (a:: *) = InlineM
   { runInlineM :: SubstReaderT InlineSubstVal (BuilderM SimpIR) i o a }
@@ -422,7 +422,6 @@ instance Inlinable e => Inlinable (ComposeE LabeledItems e) where
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (ExtLabeledItemsE e1 e2)
 instance Inlinable (LamExpr SimpIR)
-instance Inlinable (PiType SimpIR)
 instance Inlinable (TabLamExpr SimpIR)
 instance Inlinable (TabPiType SimpIR)
 instance Inlinable (DepPairType SimpIR)
@@ -478,10 +477,9 @@ instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Block SimpIR)) where
         Abs b' <$> (buildBlock $ (inline Stop body >>= emitBlock))
     reconstruct ctx abs'
 
-asRenameSubst :: (Color c, ShowE e) => Subst (SubstVal c e) i o -> Subst Name i o
+asRenameSubst :: Subst InlineSubstVal i o -> Subst Name i o
 asRenameSubst s = newSubst $ assumingRenameOnly s where
-  assumingRenameOnly :: (Color c, Color c1, ShowE e)
-    => Subst (SubstVal c1 e) i o -> Name c i -> Name c o
+  assumingRenameOnly :: Color c => Subst InlineSubstVal i o -> Name c i -> Name c o
   assumingRenameOnly subst n = case subst ! n of
     Rename n' -> n'
     SubstVal v -> error $ "Unexpected non-rename substitution "

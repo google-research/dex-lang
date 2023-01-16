@@ -30,6 +30,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives hiding (sizeOf)
 
+type ExportAtomNameC = AtomNameC CoreIR
 
 exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
@@ -56,46 +57,47 @@ prepareFunctionForExport cc f = do
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
                       => NaryPiType CoreIR n -> m n (ExportedSignature n)
-    naryPiToExportSig (NaryPiType tbs effs resultTy) = do
-        case effs of
-          Pure -> return ()
-          _    -> throw TypeErr "Only pure functions can be exported"
-        goArgs Empty [] tbs resultTy
-      where
-        goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-               => Nest ExportArg n l' -> [CAtomName l'] -> Nest (PiBinder CoreIR) l' l
-               -> CType l -> m l' (ExportedSignature n)
-        goArgs argSig argVs piBs piRes = case piBs of
-          Empty -> goResult piRes \resSig ->
-            return $ ExportedSignature argSig resSig $ case cc of
-              StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
-              XLACC      -> []
-              _ -> error $ "calling convention not supported: " ++ show cc
-          Nest b bs -> do
-            refreshAbs (Abs b (Abs bs piRes)) \(PiBinder v ty arrow) (Abs bs' piRes') -> do
-              let invalidArrow = throw TypeErr
-                                   "Exported functions can only have regular and implicit arrow types"
-              vis <- case arrow of
-                PlainArrow    -> return ExplicitArg
-                ImplicitArrow -> return ImplicitArg
-                ClassArrow    -> invalidArrow
-                LinArrow      -> invalidArrow
-              ety <- toExportType ty
-              goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
-                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
+    naryPiToExportSig (NaryPiType tbs effs resultTy) = undefined
+    -- naryPiToExportSig (NaryPiType tbs effs resultTy) = do
+    --     case effs of
+    --       Pure -> return ()
+    --       _    -> throw TypeErr "Only pure functions can be exported"
+    --     goArgs Empty [] tbs resultTy
+    --   where
+    --     goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
+    --            => Nest ExportArg n l' -> [CAtomName l'] -> Nest (PiBinder CoreIR) l' l
+    --            -> CType l -> m l' (ExportedSignature n)
+    --     goArgs argSig argVs piBs piRes = case piBs of
+    --       Empty -> goResult piRes \resSig ->
+    --         return $ ExportedSignature argSig resSig $ case cc of
+    --           StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+    --           XLACC      -> []
+    --           _ -> error $ "calling convention not supported: " ++ show cc
+    --       Nest b bs -> do
+    --         refreshAbs (Abs b (Abs bs piRes)) \(PiBinder v ty arrow) (Abs bs' piRes') -> do
+    --           let invalidArrow = throw TypeErr
+    --                                "Exported functions can only have regular and implicit arrow types"
+    --           vis <- case arrow of
+    --             PlainArrow    -> return ExplicitArg
+    --             ImplicitArrow -> return ImplicitArg
+    --             ClassArrow    -> invalidArrow
+    --             LinArrow      -> invalidArrow
+    --           ety <- toExportType ty
+    --           goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
+    --                  ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
 
-        goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
-                 => CType l
-                 -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
-                 -> m l a
-        goResult ty cont = case ty of
-          ProdTy [lty, rty] ->
-            goResult lty \lres ->
-              goResult (sink rty) \rres ->
-                cont $ joinNest lres rres
-          _ -> withFreshBinder noHint ty \b -> do
-            ety <- toExportType ty
-            cont $ Nest (ExportResult (b:>ety)) Empty
+    --     goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
+    --              => CType l
+    --              -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
+    --              -> m l a
+    --     goResult ty cont = case ty of
+    --       ProdTy [lty, rty] ->
+    --         goResult lty \lres ->
+    --           goResult (sink rty) \rres ->
+    --             cont $ joinNest lres rres
+    --       _ -> withFreshBinder noHint ty \b -> do
+    --         ety <- toExportType ty
+    --         cont $ Nest (ExportResult (b:>ety)) Empty
 
     toExportType :: Fallible m => CType n -> m (ExportType n)
     toExportType ty = case ty of
@@ -138,8 +140,8 @@ data ExportDim n =
 data ExportType n = RectContArrayPtr ScalarBaseType [ExportDim n]
                   | ScalarType ScalarBaseType
 
-data    ExportArg    n l = ExportArg    ArgVisibility (BinderP AtomNameC ExportType n l)
-newtype ExportResult n l = ExportResult               (BinderP AtomNameC ExportType n l)
+data    ExportArg    n l = ExportArg    ArgVisibility (BinderP ExportAtomNameC ExportType n l)
+newtype ExportResult n l = ExportResult               (BinderP ExportAtomNameC ExportType n l)
 data ExportedSignature n = forall l l'.
   ExportedSignature { exportedArgSig   :: Nest ExportArg n l
                     , exportedResSig   :: Nest ExportResult l l'
@@ -172,30 +174,30 @@ instance GenericE ExportType where
 instance RenameE        ExportType
 instance SinkableE      ExportType
 
-instance ToBinding ExportType AtomNameC where
+instance ToBinding ExportType ExportAtomNameC where
   toBinding = \case
     ScalarType       sbt   -> toBinding $ BaseTy $ Scalar sbt
     RectContArrayPtr sbt _ -> toBinding $ BaseTy $ PtrType (CPU, Scalar sbt)
 
-deriving via (BinderP AtomNameC ExportType) instance GenericB   ExportResult
-deriving via (BinderP AtomNameC ExportType) instance ProvesExt  ExportResult
-deriving via (BinderP AtomNameC ExportType) instance BindsNames ExportResult
-instance BindsAtMostOneName ExportResult AtomNameC where
+deriving via (BinderP ExportAtomNameC ExportType) instance GenericB   ExportResult
+deriving via (BinderP ExportAtomNameC ExportType) instance ProvesExt  ExportResult
+deriving via (BinderP ExportAtomNameC ExportType) instance BindsNames ExportResult
+instance BindsAtMostOneName ExportResult ExportAtomNameC where
   (ExportResult b) @> v = b @> v
-instance BindsOneName ExportResult AtomNameC where
+instance BindsOneName ExportResult ExportAtomNameC where
   binderName (ExportResult b) = binderName b
 
 instance GenericB ExportArg where
-  type RepB ExportArg = PairB (LiftB (LiftE ArgVisibility)) (BinderP AtomNameC ExportType)
+  type RepB ExportArg = PairB (LiftB (LiftE ArgVisibility)) (BinderP ExportAtomNameC ExportType)
   fromB (ExportArg vis b) = PairB (LiftB (LiftE vis)) b
   toB (PairB (LiftB (LiftE vis)) b) = ExportArg vis b
 instance ProvesExt       ExportArg
 instance BindsNames      ExportArg
 instance SinkableB       ExportArg
 instance RenameB         ExportArg
-instance BindsAtMostOneName ExportArg AtomNameC where
+instance BindsAtMostOneName ExportArg ExportAtomNameC where
   (ExportArg _ b) @> v = b @> v
-instance BindsOneName ExportArg AtomNameC where
+instance BindsOneName ExportArg ExportAtomNameC where
   binderName (ExportArg _ b) = binderName b
 
 -- Serialization

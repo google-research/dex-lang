@@ -706,7 +706,7 @@ buildPureNaryLam (EmptyAbs (Nest (PiBinder b ty arr) rest)) cont = do
       cont (x':xs)
 buildPureNaryLam _ _ = error "impossible"
 
-buildPi :: (Fallible1 m, Builder r m)
+buildPi :: (HasCore r, Fallible1 m, Builder r m)
         => NameHint -> Arrow -> Type r n
         -> (forall l. DExt n l => AtomName r l -> m l (EffectRow r l, Type r l))
         -> m n (PiType r n)
@@ -729,7 +729,7 @@ buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
     piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
     return (Pure, piTy)
 
-buildNonDepPi :: EnvReader m
+buildNonDepPi :: (HasCore r, EnvReader m)
               => NameHint -> Arrow -> Type r n -> EffectRow r n -> Type r n
               -> m n (PiType r n)
 buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
@@ -772,13 +772,13 @@ typesAsBinderNest types = liftEnvReaderM $ go types
 singletonBinderNest
   :: EnvReader m
   => NameHint -> ann n
-  -> m n (EmptyAbs (Nest (BinderP AtomNameC ann)) n)
+  -> m n (EmptyAbs (Nest (BinderP (AtomNameC r) ann)) n)
 singletonBinderNest hint ann = do
   Abs b _ <- return $ newName hint
   return $ EmptyAbs (Nest (b:>ann) Empty)
 
 buildNaryAbs
-  :: ( ScopableBuilder r m, SinkableE e, RenameE e, SubstE (AtomSubstVal r) e, HoistableE e
+  :: ( ScopableBuilder r m, SinkableE e, RenameE e, SubstE AtomSubstVal e, HoistableE e
      , BindsOneAtomName r b, BindsEnv b, RenameB b)
   => EmptyAbs (Nest b) n
   -> (forall l. DExt n l => [AtomName r l] -> m l (e l))
@@ -841,8 +841,7 @@ buildNaryLamExprFromPi
   => NaryPiType r n
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildNaryLamExprFromPi (NaryPiType bs _ _) cont = buildNaryLamExpr ab cont
-  where ab = EmptyAbs (fmapNest (\(PiBinder b ty _) -> b:>ty) bs)
+buildNaryLamExprFromPi (NaryPiType bs _ _) cont = buildNaryLamExpr (EmptyAbs bs) cont
 
 buildAlt
   :: ScopableBuilder r m
@@ -909,7 +908,7 @@ buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
   withFreshBinder noHint (TC HeapType) \h -> do
     let ty' = RefTy (Var $ binderName h) (sink ty)
-    withFreshBinder hint (LamBinding PlainArrow ty') \b -> do
+    withFreshBinder hint ty' \b -> do
       let ref = binderName b
       hVar <- sinkM $ binderName h
       let eff' = extendEffect (RWSEffect rws (Var hVar)) (sink eff)
@@ -1457,11 +1456,11 @@ runMaybeWhile body = do
 
 -- === capturing closures with telescopes ===
 
-type ReconAbs e = NaryAbs AtomNameC e
+type ReconAbs r e = NaryAbs (AtomNameC r) e
 
 telescopicCapture
   :: (EnvReader m, HoistableE e, HoistableB b)
-  => b n l -> e l -> m l (Atom r l, ReconAbs e n)
+  => b n l -> e l -> m l (Atom r l, ReconAbs r e n)
 telescopicCapture bs e = do
   vs <- localVarsAndTypeVars bs e
   vTys <- mapM (getType . Var) vs
@@ -1536,13 +1535,13 @@ unpackTelescope atom = do
 -- gives a list of atom names that are free in `e`, including names mentioned in
 -- the types of those names, recursively.
 localVarsAndTypeVars
-  :: forall m b e n l.
+  :: forall m b e n l r.
      (EnvReader m, BindsNames b, HoistableE e)
-  => b n l -> e l -> m l [Name AtomNameC l]
+  => b n l -> e l -> m l [AtomName r l]
 localVarsAndTypeVars b e =
   transitiveClosureM varsViaType (localVars b e)
   where
-    varsViaType :: Name AtomNameC l -> m l [Name AtomNameC l]
+    varsViaType :: AtomName r l -> m l [AtomName r l]
     varsViaType v = do
       ty <- getType $ Var v
       return $ localVars b ty

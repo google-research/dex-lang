@@ -586,16 +586,15 @@ evalSpecializations fs sdVs = do
 ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
-    let extraArgBs' = fmapNest (plainPiBinder . (\(b:>ty) -> b :> unsafeCoerceIRE ty)) extraArgBs
     getType (ProjMethod dict (fromEnum method)) >>= \case
-      Pi (PiType b _ resultTy) -> do
-        let allBs = extraArgBs' >>> Nest b Empty
+      Pi (PiType (PiBinder b t _) _ resultTy) -> do
+        let allBs = extraArgBs >>> Nest (b:>t) Empty
         return $ NaryPiType allBs Pure resultTy
       -- non-function methods are thunked
       ty -> do
         Abs unitBinder ty' <- toConstAbs ty
-        let unitPiBinder = PiBinder unitBinder UnitTy PlainArrow
-        let allBs = extraArgBs' >>> Nest unitPiBinder Empty
+        let unitPiBinder = unitBinder:>UnitTy
+        let allBs = extraArgBs >>> Nest unitPiBinder Empty
         return $ NaryPiType allBs Pure ty'
 
 execUDecl
@@ -613,8 +612,9 @@ execUDecl mname decl = do
           ty <- getType result
           asSpecializableFunction ty >>= \case
             Nothing -> throw TypeErr $ "Not a valid @noinline function type: " ++ pprint ty
-            Just (numReqArgs, piTy) -> do
-              f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun numReqArgs piTy result
+            Just (numReqArgs, arrs, naryTy) -> do
+              f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun $
+                     NoInlineDef numReqArgs arrs naryTy ty result
               applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
           v <- emitTopLet (getNameHint b) ann (Atom result)
@@ -681,7 +681,7 @@ specializedFunCoreDefinition s@(AppSpecialization f (Abs bs staticArgs)) = do
     -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
     -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
     -- "noinline" function and defer its simplification.
-    NoinlineFun _ _ f' <- lookupAtomName (sink f)
+    NoinlineFun (NoInlineDef _ _ _ _ f') <- lookupAtomName (sink f)
     let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
     ListE staticArgs' <- applyRename (bs@@>extraArgs) staticArgs
     naryApp (sink f') $ staticArgs' <> map Var originalArgs
