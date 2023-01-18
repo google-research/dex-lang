@@ -343,7 +343,7 @@ instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b
         cont $ PairB b1' b2'
 
 sourceRenameUBinderNest
-  :: (Renamer m, Color c, Distinct o)
+  :: (Color c, Renamer m, Distinct o)
   => (forall l. Name c l -> UVar l)
   -> Nest (UBinder c) i i'
   -> (forall o'. DExt o o' => Nest (UBinder c) o o' ->  m o' a)
@@ -354,7 +354,7 @@ sourceRenameUBinderNest asUVar (Nest b bs) cont =
     sourceRenameUBinderNest asUVar bs \bs' ->
       cont $ Nest b' bs'
 
-sourceRenameUBinder :: (Distinct o, Renamer m, Color c)
+sourceRenameUBinder :: (Color c, Distinct o, Renamer m)
                     => (forall l. Name c l -> UVar l)
                     -> UBinder c i i'
                     -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)

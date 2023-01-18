@@ -27,7 +27,7 @@ import Util (restructure)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
-                 , Fallible, ScopeReader, MonadFail, EnvExtender, Builder CoreIR, ScopableBuilder CoreIR)
+                 , Fallible, ScopeReader, MonadFail, EnvExtender, CBuilder, ScopableBuilder CoreIR)
 type Print n = Printer n ()
 
 showAny :: EnvReader m => Atom CoreIR n -> m n (Block CoreIR n)
@@ -132,7 +132,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
           showDataCon (sink $ cons !! i) arg
           return UnitVal
       where
-        showDataCon :: Emits n' => DataConDef CoreIR n' -> CAtom n' -> Print n'
+        showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
         showDataCon (DataConDef sn _ projss) arg = do
           case projss of
             [] -> emitLit sn
@@ -227,7 +227,7 @@ bufferTy h = do
   return $ RefTy h (PairTy NatTy t)
 
 -- argument has type `Fin n => Word8`
-extendBuffer :: (Emits n, Builder CoreIR m) => CAtom n -> CAtom n -> m n ()
+extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
   RefTy h _ <- getType buf
   TabTy (_:>ixTy) _ <- getType tab
@@ -235,12 +235,12 @@ extendBuffer buf tab = do
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
-pushBuffer :: (Emits n, Builder CoreIR m) => CAtom n -> CAtom n -> m n ()
+pushBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 pushBuffer buf x = do
   RefTy h _ <- getType buf
   void $ applyPreludeFunction "stack_push_internal" [h, buf, x]
 
-stringLitAsCharTab :: (Emits n, Builder CoreIR m) => String -> m n (CAtom n)
+stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
   t <- finTabTy (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon t (map charRepVal s)
@@ -254,7 +254,7 @@ getPreludeFunction sourceName = do
     Nothing -> notfound
  where notfound = error $ "Function not defined: " ++ sourceName
 
-applyPreludeFunction :: (Emits n, Builder CoreIR m) => String -> [CAtom n] -> m n (CAtom n)
+applyPreludeFunction :: (Emits n, CBuilder m) => String -> [CAtom n] -> m n (CAtom n)
 applyPreludeFunction name args = do
   f <- getPreludeFunction name
   naryApp f args
@@ -265,7 +265,7 @@ strType = constructPreludeType "List" $ DataDefParams [(PlainArrow, CharRepTy)]
 finTabTy :: EnvReader m => CAtom n -> CType n -> m n (CType n)
 finTabTy n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
 
-constructPreludeType :: EnvReader m => String -> DataDefParams CoreIR n -> m n (CType n)
+constructPreludeType :: EnvReader m => String -> DataDefParams n -> m n (CType n)
 constructPreludeType sourceName params = do
   lookupSourceMap sourceName >>= \case
     Just uvar -> case uvar of

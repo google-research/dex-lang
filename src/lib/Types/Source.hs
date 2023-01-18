@@ -538,7 +538,7 @@ instance HasNameHint ModuleSourceName where
   getNameHint Prelude = getNameHint @String "prelude"
   getNameHint Main = getNameHint @String "main"
 
-instance Color c => HasNameHint (UBinder c n l) where
+instance HasNameHint (UBinder c n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
     UIgnore       -> noHint

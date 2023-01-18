@@ -31,11 +31,8 @@ import Types.Imp
 import Types.Primitives
 import Util (Tree (..))
 
--- TODO: we specialized to `SimpToImpIR` because that's the only place where
--- it's currently used. But we should probably make it polymorphic in `r`.
-
-type PolyName = EitherE (AtomName SimpToImpIR) ImpName
-type PolyBinder = AtomNameBinder SimpToImpIR
+type PolyName = EitherE (AtomName SimpIR) ImpName
+type PolyBinder = AtomNameBinder SimpIR
 
 type Constant = Rational
 
@@ -51,8 +48,8 @@ newtype Polynomial (n::S) =
 -- This is the main entrypoint. Doing polynomial math sometimes lets
 -- us compute sums in closed form. This tries to compute
 -- `\sum_{i=0}^(lim-1) body`. `i`, `lim`, and `body` should all have type `Nat`.
-sumUsingPolys :: (Builder SimpToImpIR m, Fallible1 m, Emits n)
-              => Atom SimpToImpIR n -> Abs (Binder SimpToImpIR) (Block SimpToImpIR) n -> m n (Atom SimpToImpIR n)
+sumUsingPolys :: (Builder SimpIR m, Fallible1 m, Emits n)
+              => Atom SimpIR n -> Abs (Binder SimpIR) (Block SimpIR) n -> m n (Atom SimpIR n)
 sumUsingPolys lim (Abs i body) = do
   sumAbs <- refreshAbs (Abs i body) \(i':>_) body' -> do
     blockAsPoly body' >>= \case
@@ -128,22 +125,22 @@ _showPoly (Polynomial p) =
 -- === core expressions as polynomials ===
 
 data PolySubstVal (c::C) (n::S) where
-  PolySubstVal :: Maybe (Polynomial n) -> PolySubstVal (AtomNameC SimpToImpIR) n
+  PolySubstVal :: Maybe (Polynomial n) -> PolySubstVal (AtomNameC SimpIR) n
   PolyRename   :: Name c n             -> PolySubstVal c n
 
 instance SinkableV PolySubstVal
-instance Color c => SinkableE (PolySubstVal c)  where sinkingProofE = undefined
+instance SinkableE (PolySubstVal c)  where sinkingProofE = undefined
 instance FromName PolySubstVal where fromName = PolyRename
 
-type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpToImpIR)) i o a
+type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpIR)) i o a
 
 blockAsPoly
   :: (EnvExtender m, EnvReader m)
-  => Block SimpToImpIR n -> m n (Maybe (Polynomial n))
+  => Block SimpIR n -> m n (Maybe (Polynomial n))
 blockAsPoly (Block _ decls result) =
   liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ blockAsPolyRec decls result
 
-blockAsPolyRec :: Nest (Decl SimpToImpIR) i i' -> Atom SimpToImpIR i' -> BlockTraverserM i o (Polynomial o)
+blockAsPolyRec :: Nest (Decl SimpIR) i i' -> Atom SimpIR i' -> BlockTraverserM i o (Polynomial o)
 blockAsPolyRec decls result = case decls of
   Empty -> atomAsPoly result
   Nest (Let b (DeclBinding _ _ expr)) restDecls -> do
@@ -151,7 +148,7 @@ blockAsPolyRec decls result = case decls of
     extendSubst (b@>PolySubstVal p) $ blockAsPolyRec restDecls result
 
   where
-    atomAsPoly :: Atom SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
+    atomAsPoly :: Atom SimpIR i -> BlockTraverserM i o (Polynomial o)
     atomAsPoly = \case
       Var v       -> atomNameAsPoly v
       RepValAtom (RepVal _ (Leaf (IVar v' _))) -> impNameAsPoly v'
@@ -162,7 +159,7 @@ blockAsPolyRec decls result = case decls of
     impNameAsPoly v = getSubst <&> (!v) >>= \case
       PolyRename v' -> return $ poly [(1, mono [(RightE v', 1)])]
 
-    atomNameAsPoly :: AtomName SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
+    atomNameAsPoly :: AtomName SimpIR i -> BlockTraverserM i o (Polynomial o)
     atomNameAsPoly v = getSubst <&> (!v) >>= \case
       PolySubstVal Nothing   -> empty
       PolySubstVal (Just cp) -> return cp
@@ -172,7 +169,7 @@ blockAsPolyRec decls result = case decls of
           IdxRepTy -> return $ poly [(1, mono [(LeftE v', 1)])]
           _ -> empty
 
-    exprAsPoly :: Expr SimpToImpIR i -> BlockTraverserM i o (Polynomial o)
+    exprAsPoly :: Expr SimpIR i -> BlockTraverserM i o (Polynomial o)
     exprAsPoly e = case e of
       Atom a -> atomAsPoly a
       PrimOp (BinOp op x y) -> case op of
@@ -195,7 +192,7 @@ blockAsPolyRec decls result = case decls of
 -- coefficients. This is why we have to find the least common multiples and do the
 -- accumulation over numbers multiplied by that LCM. We essentially do fixed point
 -- fractional math here.
-emitPolynomial :: (Emits n, Builder SimpToImpIR m) => Polynomial n -> m n (Atom SimpToImpIR n)
+emitPolynomial :: (Emits n, Builder SimpIR m) => Polynomial n -> m n (Atom SimpIR n)
 emitPolynomial (Polynomial p) = do
   let constLCM = asAtom $ foldl lcm 1 $ fmap (denominator . snd) $ toList p
   monoAtoms <- flip traverse (toList p) $ \(m, c) -> do
@@ -209,7 +206,7 @@ emitPolynomial (Polynomial p) = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-emitMonomial :: (Emits n, Builder SimpToImpIR m) => Monomial n -> m n (Atom SimpToImpIR n)
+emitMonomial :: (Emits n, Builder SimpIR m) => Monomial n -> m n (Atom SimpIR n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> case v of
     LeftE v' -> ipow (Var v') e
@@ -218,7 +215,7 @@ emitMonomial (Monomial m) = do
       ipow atom e
   foldM imul (IdxRepVal 1) varAtoms
 
-ipow :: (Emits n, Builder SimpToImpIR m) => Atom SimpToImpIR n -> Int -> m n (Atom SimpToImpIR n)
+ipow :: (Emits n, Builder SimpIR m) => Atom SimpIR n -> Int -> m n (Atom SimpIR n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 
 -- === instances ===

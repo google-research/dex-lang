@@ -448,10 +448,6 @@ instance HasOCC (Name ImpNameC) where occ _ = error "Unexpected ImpName"
 
 instance HasOCC (Name PtrNameC) where occ _ x = return x
 
-instance HasOCC (TabLamExpr SimpIR) where
-  occ _ view = inlinedLater view
-  {-# INLINE occ #-}
-
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case
     MExtend (BaseMonoid empty combine) val -> do
@@ -498,13 +494,11 @@ instance HasOCC (DepPairType SimpIR)
 instance HasOCC (EffectRow SimpIR)
 instance HasOCC (EffectRowTail SimpIR)
 instance HasOCC (Effect SimpIR)
-instance HasOCC (DictExpr SimpIR)
-instance HasOCC (DictType SimpIR)
-instance HasOCC (FieldRowElems SimpIR)
-instance HasOCC (FieldRowElem SimpIR)
-instance HasOCC (DataDefParams SimpIR)
 instance HasOCC (DAMOp SimpIR)
 instance HasOCC (IxDict SimpIR)
+
+instance HasOCC (RepVal SimpIR) where
+  occ _ (RepVal ty rep) = RepVal <$> occTy ty <*> pure rep
 
 -- === The instances for RepE types ===
 
@@ -560,6 +554,14 @@ instance HasOCC e => HasOCC (WhenE True e) where
   occ a (WhenE e) = WhenE <$> occ a e
 instance HasOCC (WhenE False e) where
   occ _ _ = undefined
+
+instance HasOCC (WhenCore SimpIR e) where occ _ = \case
+instance HasOCC e => HasOCC (WhenCore CoreIR e) where
+  occ a (WhenIRE e) = WhenIRE <$> occ a e
+
+instance HasOCC (WhenSimp CoreIR e) where occ _ = \case
+instance HasOCC e => HasOCC (WhenSimp SimpIR e) where
+  occ a (WhenIRE e) = WhenIRE <$> occ a e
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

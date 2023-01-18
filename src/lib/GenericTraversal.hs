@@ -26,7 +26,7 @@ import Subst
 import Types.Core
 import Util (onSndM)
 
-liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
+liftGenericTraverserM :: (EnvReader m, IRRep r) => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
   liftM runHardFail $ liftDoubleBuilderTNoEmissions $
     runStateT1 (runSubstReaderT idSubst $ runGenericTraverserM' m) s
@@ -34,7 +34,7 @@ liftGenericTraverserM s m =
 
 liftGenericTraverserMTopEmissions
   :: ( EnvReader m, SinkableE e, RenameE e, SinkableE s
-     , RenameE s, ExtOutMap Env frag, OutFrag frag)
+     , RenameE s, ExtOutMap Env frag, OutFrag frag, IRRep r)
   => s n
   -> (forall l. DExt n l => GenericTraverserM r frag s l l (e l))
   -> m n (Abs frag (PairE e s) n)
@@ -56,7 +56,7 @@ deriving instance GenericTraverser r f s => ScopableBuilder r (GenericTraverserM
 deriving instance GenericTraverser r f s => Builder r         (GenericTraverserM r f s i)
 deriving instance GenericTraverser r f s => HoistingTopBuilder f (GenericTraverserM r f s i)
 
-class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
+class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s, IRRep r)
       => GenericTraverser r f s where
   traverseExpr :: Emits o => Expr r i -> GenericTraverserM r f s i o (Expr r o)
   traverseExpr = traverseExprDefault
@@ -163,14 +163,14 @@ tge = traverseGenericE
 class GenericallyTraversableE (r::IR) (e::E) | e -> r where
   traverseGenericE :: GenericTraverser r f s => e i -> GenericTraverserM r f s i o (e o)
 
-instance GenericallyTraversableE r (Atom r) where
+instance IRRep r => GenericallyTraversableE r (Atom r) where
   traverseGenericE = traverseAtom
 
-instance GenericallyTraversableE r (Block r) where
+instance IRRep r => GenericallyTraversableE r (Block r) where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
 
-instance HasCore r => GenericallyTraversableE r (FieldRowElems r) where
+instance GenericallyTraversableE CoreIR FieldRowElems where
   traverseGenericE elems = do
     els' <- fromFieldRowElems <$> substM elems
     dropSubst $ fieldRowElemsFromList <$> forM els' \case
@@ -178,18 +178,18 @@ instance HasCore r => GenericallyTraversableE r (FieldRowElems r) where
       DynField  labVar ty -> DynField labVar <$> tge ty
       DynFields rowVar    -> return $ DynFields rowVar
 
-instance GenericallyTraversableE r (DataDefParams r) where
+instance GenericallyTraversableE CoreIR DataDefParams where
   traverseGenericE (DataDefParams params) =
     DataDefParams <$> mapM (onSndM tge) params
 
-instance GenericallyTraversableE r (DepPairType r) where
+instance IRRep r => GenericallyTraversableE r (DepPairType r) where
   traverseGenericE (DepPairType (b:>lty) rty) = do
     lty' <- tge lty
     withFreshBinder (getNameHint b) lty' \b' -> do
       extendRenamer (b@>binderName b') $ DepPairType (b':>lty') <$> tge rty
 
-instance GenericallyTraversableE r (BaseMonoid r) where
-  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withAllowedEffects Pure (tge f)
+instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
+  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withoutEffects (tge f)
 
 instance GenericallyTraversableE r (RefOp r) where
   traverseGenericE = \case
@@ -203,7 +203,7 @@ instance GenericallyTraversableE r (RefOp r) where
 instance GenericallyTraversableE r (IxType r) where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
 
-instance GenericallyTraversableE r (DictExpr r) where
+instance GenericallyTraversableE CoreIR DictExpr where
   traverseGenericE e = confuseGHC >>= \_ -> case e of
     InstanceDict v args -> InstanceDict <$> substM v <*> mapM tge args
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
@@ -216,14 +216,14 @@ instance GenericallyTraversableE r (IxDict r) where
     IxDictRawFin n           -> IxDictRawFin <$> tge n
     IxDictSpecialized t d xs -> IxDictSpecialized <$> tge t <*> substM d <*> mapM tge xs
 
-instance GenericallyTraversableE r (DictType r) where
+instance GenericallyTraversableE CoreIR DictType where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params
 
-instance GenericallyTraversableE r (LamExpr r) where
+instance IRRep r => GenericallyTraversableE r (LamExpr r) where
   traverseGenericE (LamExpr bs body) = do
     traverseBinderNest bs \bs' -> LamExpr bs' <$> tge body
 
-instance GenericallyTraversableE r (Hof r) where
+instance IRRep r => GenericallyTraversableE r (Hof r) where
   traverseGenericE = \case
     For d ixDict f       -> For d <$> tge ixDict <*> tge f
     While body           -> While <$> tge body
@@ -236,7 +236,7 @@ instance GenericallyTraversableE r (Hof r) where
     RunInit body         -> RunInit <$> tge body
     CatchException body  -> CatchException <$> tge body
 
-instance HasCore r => GenericallyTraversableE r (NewtypeTyCon r) where
+instance GenericallyTraversableE CoreIR NewtypeTyCon where
   traverseGenericE = \case
     UserADTType s d p -> UserADTType s <$> substM d <*> tge p
     LabeledRowCon tys -> LabeledRowCon <$> tge tys
@@ -249,7 +249,7 @@ instance HasCore r => GenericallyTraversableE r (NewtypeTyCon r) where
     Fin x             -> Fin <$> tge x
     EffectRowKind     -> return EffectRowKind
 
-instance HasCore r => GenericallyTraversableE r (NewtypeCon r) where
+instance GenericallyTraversableE CoreIR NewtypeCon where
   traverseGenericE = \case
     RecordCon  items     -> return $ RecordCon items
     VariantCon items     -> return $ VariantCon items

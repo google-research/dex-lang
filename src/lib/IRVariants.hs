@@ -7,19 +7,19 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
 module IRVariants
-  ( IR (..), IRPredicate (..), Sat, Sat', HasCore, HasCore', IsLowered, IsLowered'
-  , CoreToSimpIR, InferenceIR, IsSimpish, IsSimpish'
-  , IRRep (..), IRProxy (..), interpretIR) where
+  ( IR (..), IRPredicate (..), Sat, Sat'
+  , CoreToSimpIR, InferenceIR, IRRep (..), IRProxy (..), interpretIR
+  , IRsEqual (..), eqIRRep) where
 
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..))
 import Data.Store
 
+import qualified Unsafe.Coerce as TrulyUnsafe
+
 data IR =
-   CoreIR       -- used after inference and before simplification
- | SimpIR       -- used after simplification
- | SimpToImpIR  -- used during the Simp-to-Imp translation
- | AnyIR        -- used for deserialization only
+   CoreIR -- used after inference and before simplification
+ | SimpIR -- used after simplification
  deriving (Eq, Ord, Generic, Show, Enum)
 instance Store IR
 
@@ -43,34 +43,18 @@ type Sat (r::IR) (p::IRPredicate) = (Sat' r p ~ True) :: Constraint
 type family Sat' (r::IR) (p::IRPredicate) where
   Sat' r (Is r)                              = True
   -- subsets
-  Sat' SimpIR (IsSubsetOf SimpToImpIR)       = True
   Sat' SimpIR (IsSubsetOf CoreIR)            = True
   -- DAMOps
   Sat' SimpIR      (HasFeature DAMOps)       = True
-  Sat' SimpToImpIR (HasFeature DAMOps)       = True
   -- DAMOps
   Sat' SimpIR      (HasFeature SimpOps)      = True
-  Sat' SimpToImpIR (HasFeature SimpOps)      = True
   -- CoreOps
   Sat' CoreIR       (HasFeature CoreOps)     = True
   -- otherwise
   Sat' _ _ = False
 
-type HasCore  (r::IR) = r `Sat`  HasFeature CoreOps
-type HasCore' (r::IR) = r `Sat'` HasFeature CoreOps
-
-type IsLowered  r = r `Sat`  HasFeature DAMOps
-type IsLowered' r = r `Sat'` HasFeature DAMOps
-
-type IsSimpish  (r::IR) = r `Sat`  HasFeature SimpOps
-type IsSimpish' (r::IR) = r `Sat'` HasFeature SimpOps
-
 class IRRep (r::IR) where
   getIRRep :: IR
-
-instance IRRep CoreIR      where getIRRep = CoreIR
-instance IRRep SimpIR      where getIRRep = SimpIR
-instance IRRep SimpToImpIR where getIRRep = SimpToImpIR
 
 data IRProxy (r::IR) = IRProxy
 
@@ -78,5 +62,16 @@ interpretIR :: IR -> (forall r. IRRep r => IRProxy r -> a) -> a
 interpretIR ir cont = case ir of
   CoreIR      -> cont $ IRProxy @CoreIR
   SimpIR      -> cont $ IRProxy @SimpIR
-  SimpToImpIR -> cont $ IRProxy @SimpToImpIR
-  AnyIR -> error "shouldn't reflect over AnyIR"
+
+instance IRRep CoreIR where getIRRep = CoreIR
+instance IRRep SimpIR where getIRRep = SimpIR
+
+data IRsEqual (r1::IR) (r2::IR) where
+  IRsEqual :: IRsEqual r r
+
+eqIRRep :: forall r1 r2. (IRRep r1, IRRep r2) => Maybe (IRsEqual r1 r2)
+eqIRRep = if r1Rep == r2Rep
+ then Just (TrulyUnsafe.unsafeCoerce (IRsEqual :: IRsEqual r1 r1) :: IRsEqual r1 r2)
+ else Nothing
+ where r1Rep = getIRRep @r1; r2Rep = getIRRep @r2
+{-# INLINE eqIRRep #-}

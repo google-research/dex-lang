@@ -517,17 +517,11 @@ instance HasDCE (BaseMonoid SimpIR)
 instance HasDCE (Hof SimpIR)
 instance HasDCE SAtom
 instance HasDCE (LamExpr     SimpIR)
-instance HasDCE (TabLamExpr  SimpIR)
 instance HasDCE (TabPiType   SimpIR)
 instance HasDCE (DepPairType SimpIR)
 instance HasDCE (EffectRowTail SimpIR)
 instance HasDCE (EffectRow     SimpIR)
 instance HasDCE (Effect        SimpIR)
-instance HasDCE (DictExpr      SimpIR)
-instance HasDCE (DictType      SimpIR)
-instance HasDCE (FieldRowElems SimpIR)
-instance HasDCE (FieldRowElem  SimpIR)
-instance HasDCE (DataDefParams SimpIR)
 instance HasDCE (DeclBinding   SimpIR)
 instance HasDCE (DAMOp         SimpIR)
 instance HasDCE (IxDict        SimpIR)
@@ -580,6 +574,17 @@ instance HasDCE e => HasDCE (WhenE True e) where
   dce (WhenE e) = WhenE <$> dce e
 instance HasDCE (WhenE False e) where
   dce _ = undefined
+
+instance HasDCE (RepVal SimpIR) where
+  dce e = modify (<> FV (freeVarsE e)) $> e
+
+instance HasDCE (WhenCore SimpIR e) where dce = \case
+instance HasDCE e => HasDCE (WhenCore CoreIR e) where
+  dce (WhenIRE e) = WhenIRE <$> dce e
+
+instance HasDCE (WhenSimp CoreIR e) where dce = \case
+instance HasDCE e => HasDCE (WhenSimp SimpIR e) where
+  dce (WhenIRE e) = WhenIRE <$> dce e
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

@@ -35,7 +35,7 @@ import qualified Data.Map.Strict as M
 import Control.Applicative
 import Control.Monad.State.Strict
 import System.CPUTime
-import Data.Store (Store)
+import Data.Store (Store (..))
 import GHC.Generics (Generic)
 import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)

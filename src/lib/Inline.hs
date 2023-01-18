@@ -212,11 +212,10 @@ inlineDeclsSubst = \case
     -- the solution is to just not have view atoms in the IR by this point,
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
-    ixDepthExpr :: Expr r n -> Int
+    ixDepthExpr :: Expr SimpIR n -> Int
     ixDepthExpr (Hof (For _ _ (UnaryLamExpr _ body))) = 1 + ixDepthBlock body
-    ixDepthExpr (Atom (TabLam (TabLamExpr _ body))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
-    ixDepthBlock :: Block r n -> Int
+    ixDepthBlock :: Block SimpIR n -> Int
     ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr
     ixDepthBlock (AtomicBlock result) = ixDepthExpr $ Atom result
     ixDepthBlock _ = 0
@@ -422,19 +421,17 @@ instance Inlinable e => Inlinable (ComposeE LabeledItems e) where
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (ExtLabeledItemsE e1 e2)
 instance Inlinable (LamExpr SimpIR)
-instance Inlinable (TabLamExpr SimpIR)
 instance Inlinable (TabPiType SimpIR)
 instance Inlinable (DepPairType SimpIR)
 instance Inlinable (EffectRowTail SimpIR)
 instance Inlinable (EffectRow SimpIR)
 instance Inlinable (Effect   SimpIR)
-instance Inlinable (DictExpr SimpIR)
-instance Inlinable (DictType SimpIR)
-instance Inlinable (FieldRowElems SimpIR)
-instance Inlinable (FieldRowElem SimpIR)
-instance Inlinable (DataDefParams SimpIR)
 instance Inlinable (DAMOp SimpIR)
 instance Inlinable (IxDict SimpIR)
+
+instance Inlinable (RepVal SimpIR) where
+  inline ctx (RepVal ty rep) =
+    (RepVal <$> inline Stop ty <*> mapM substMAssumingRenameOnly rep) >>= reconstruct ctx
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (PairE e1 e2) where
   inline ctx (PairE l r) =
@@ -485,6 +482,11 @@ asRenameSubst s = newSubst $ assumingRenameOnly s where
     SubstVal v -> error $ "Unexpected non-rename substitution "
       ++ "maps " ++ (show n) ++ " to " ++ (show v)
 
+substMAssumingRenameOnly :: (SinkableE e, RenameE e) => e i -> InlineM i o (e o)
+substMAssumingRenameOnly e = do
+  s <- getSubst
+  runSubstReaderT (asRenameSubst s) $ renameM e
+
 instance (RenameB b, BindsEnv b)
   => Inlinable (Abs b (PairE (EffectRow SimpIR) (Atom SimpIR))) where
   inline ctx (Abs b body) = do
@@ -513,6 +515,16 @@ instance Inlinable e => Inlinable (WhenE True e) where
   {-# INLINE inline #-}
 instance Inlinable (WhenE False e) where
   inline _ _ = error "Unreachable"
+  {-# INLINE inline #-}
+
+instance Inlinable (WhenCore SimpIR e) where inline _ = \case
+instance Inlinable e => Inlinable (WhenCore CoreIR e) where
+  inline ctx (WhenIRE e) = (WhenIRE <$> inline Stop e) >>= reconstruct ctx
+  {-# INLINE inline #-}
+
+instance Inlinable (WhenSimp CoreIR e) where inline _ = \case
+instance Inlinable e => Inlinable (WhenSimp SimpIR e) where
+  inline ctx (WhenIRE e) = (WhenIRE <$> inline Stop e) >>= reconstruct ctx
   {-# INLINE inline #-}
 
 -- See Note [Confuse GHC] from Simplify.hs

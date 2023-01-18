@@ -700,7 +700,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (RepVal SimpToImpIR n)
+evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (SRepVal n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   logger  <- getFilteredLogger

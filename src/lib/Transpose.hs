@@ -83,12 +83,13 @@ onNonLin cont = do
   liftSubstReaderT $ runSubstReaderT subst' cont
 
 isLin :: HoistableE e => e i -> TransposeM i o Bool
-isLin e = do
-  substVals <- mapM lookupSubstM $ freeAtomVarsList e
-  return $ flip any substVals \case
-    LinTrivial     -> True
-    LinRef _       -> True
-    RenameNonlin _ -> False
+isLin e = undefined
+-- isLin e = do
+--   substVals <- mapM lookupSubstM $ nameSetToList $ freeAtomVarsList e
+--   return $ flip any substVals \case
+--     LinTrivial     -> True
+--     LinRef _       -> True
+--     RenameNonlin _ -> False
 
 withAccumulator
   :: Emits o
@@ -150,10 +151,11 @@ substExprIfNonlin expr =
         False -> Just <$> substNonlin expr
 
 isLinEff :: EffectRow SimpIR o -> TransposeM i o Bool
-isLinEff effs@(EffectRow _ NoTail) = do
-  regions <- getLinRegions
-  let effRegions = freeAtomVarsList effs
-  return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
+isLinEff effs@(EffectRow _ NoTail) = undefined
+-- isLinEff effs@(EffectRow _ NoTail) = do
+--   regions <- getLinRegions
+--   let effRegions = freeAtomVarsList effs
+--   return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
 
 transposeExpr :: Emits o => SExpr i -> SAtom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
