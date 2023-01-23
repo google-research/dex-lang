@@ -1034,14 +1034,12 @@ simplifyHof _hint hof = case hof of
     -- dealing with functions on simple types.
     (lam', CoerceReconAbs) <- local (const WillLinearize) $ simplifyLam lam
     linearize lam'
-  Transpose _ -> undefined
-  -- Transpose lam -> do
-  --   -- XXX: we're ignoring the result type here, which only makes sense if we're
-  --   -- dealing with functions on simple types.
-  --   (lam'@(UnaryLamExpr (b:>ty) _), CoerceReconAbs) <- simplifyLam lam
-  --   lamTransposed <- transpose lam'
-  --   -- XXX: this injection might be sketchy wrt free variables
-  --   return $ Lam lamTransposed LinArrow (Abs (b:>ty) Pure)
+  Transpose lam x -> do
+    (lam', CoerceReconAbs) <- simplifyLam lam
+    x' <- toDataAtomIgnoreRecon =<< simplifyAtom x
+    result <- transpose lam' x'
+    resultTy <- getTypeSubst $ Hof hof
+    liftSimpAtom (Just resultTy) result
   CatchException body-> do
     SimplifiedBlock body' (CoerceRecon ty) <- buildSimplifiedBlock $ simplifyBlock body
     block <- liftBuilder $ runSubstReaderT idSubst $

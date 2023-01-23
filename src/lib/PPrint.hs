@@ -1095,7 +1095,7 @@ instance IRRep r => PrettyPrec (Hof r n) where
     RunInit body        -> "runInit" <+> pArg body
     CatchException body -> "catchException" <+> pArg body
     Linearize body      -> "linearize" <+> pArg body
-    Transpose body      -> "transpose" <+> pArg body
+    Transpose body x    -> "transpose" <+> pArg body <+> pArg x
 
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where

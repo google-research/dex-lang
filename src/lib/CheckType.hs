@@ -645,10 +645,11 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     b' <- liftHoistExcept $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
-  Transpose f -> do
+  Transpose f x -> do
     NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprTypeE f
     b' <- liftHoistExcept $ hoist binder b
-    b' --@ a
+    x |: b'
+    return a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f
     r |: readTy
@@ -1110,7 +1111,7 @@ checkFieldRowElems els = mapM_ checkElem elemList
         ty |: TyKind
       DynFields row -> checkLabeledRow $ Ext mempty $ Just row
 
-checkLabeledRow :: forall r m i o. Typer m => ExtLabeledItems (CType i) (CAtomName i) -> m i o ()
+checkLabeledRow :: forall m i o. Typer m => ExtLabeledItems (CType i) (CAtomName i) -> m i o ()
 checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
   forM_ rest \name -> do

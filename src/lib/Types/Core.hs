@@ -259,7 +259,7 @@ data Hof r n where
  RunInit   :: Block r n -> Hof r n
  CatchException :: Block   CoreIR n -> Hof CoreIR n
  Linearize      :: LamExpr CoreIR n -> Hof CoreIR n
- Transpose      :: LamExpr CoreIR n -> Hof CoreIR n
+ Transpose      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
 
 deriving instance IRRep r => Show (Hof r n)
 deriving via WrapE (Hof r) n instance IRRep r => Generic (Hof r n)
@@ -1415,7 +1415,7 @@ instance IRRep r => GenericE (Hof r) where
   {- RunInit -}        (Block r)
   {- CatchException -} (WhenCore r (Block r))
   {- Linearize -}      (WhenCore r (LamExpr r))
-  {- Transpose -}      (WhenCore r (LamExpr r)))
+  {- Transpose -}      (WhenCore r (LamExpr r `PairE` Atom r)))
 
   fromE = \case
     For ann d body      -> Case0 (Case0 (LiftE ann `PairE` d `PairE` body))
@@ -1427,7 +1427,7 @@ instance IRRep r => GenericE (Hof r) where
     RunInit body        -> Case1 (Case0 body)
     CatchException body -> Case1 (Case1 (WhenIRE body))
     Linearize body      -> Case1 (Case2 (WhenIRE body))
-    Transpose body      -> Case1 (Case3 (WhenIRE body))
+    Transpose body x    -> Case1 (Case3 (WhenIRE (PairE body x)))
   {-# INLINE fromE #-}
   toE = \case
     Case0 hof -> case hof of
@@ -1442,7 +1442,7 @@ instance IRRep r => GenericE (Hof r) where
       Case0 body -> RunInit body
       Case1 (WhenIRE body) -> CatchException body
       Case2 (WhenIRE body) -> Linearize body
-      Case3 (WhenIRE body) -> Transpose body
+      Case3 (WhenIRE (PairE body x)) -> Transpose body x
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}

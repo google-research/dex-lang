@@ -25,17 +25,18 @@ import Types.Core
 import Types.Primitives
 import Util (enumerate)
 
-transpose :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n -> m n (LamExpr SimpIR n)
-transpose lam = liftBuilder do
+transpose
+  :: (MonadFail1 m, Builder SimpIR m, Emits n)
+  => LamExpr SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
+transpose lam ct = liftEmitBuilder do
   lam'@(UnaryLamExpr b body) <- sinkM lam
   NaryPiType (UnaryNest piBinder) _ resultTy <- getNaryLamExprType lam'
   let argTy = binderType b
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   runReaderT1 (ListE []) $ runSubstReaderT idSubst $
-    buildUnaryLamExpr noHint resultTy' \ct ->
-      withAccumulator (sink argTy) \refSubstVal ->
-        extendSubst (b @> refSubstVal) $
-          transposeBlock body (sink $ Var ct)
+    withAccumulator argTy \refSubstVal ->
+      extendSubst (b @> refSubstVal) $
+        transposeBlock body (sink ct)
 {-# SCC transpose #-}
 
 -- === transposition monad ===

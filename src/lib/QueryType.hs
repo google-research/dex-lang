@@ -670,10 +670,9 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     let b' = ignoreHoistFailure $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
-  Transpose f -> do
-    NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprType f
-    let b' = ignoreHoistFailure $ hoist binder b
-    b' --@ a
+  Transpose f x -> do
+    NaryPiType (UnaryNest (_:>a)) _ _ <- getLamExprType f
+    return a
   RunReader _ f -> do
     (resultTy, _) <- getTypeRWSAction f
     return resultTy
@@ -812,7 +811,7 @@ exprEffects expr = case expr of
     For _ _ f     -> functionEffs f
     While body    -> getEffectsImpl body
     Linearize _   -> return Pure  -- Body has to be a pure function
-    Transpose _   -> return Pure  -- Body has to be a pure function
+    Transpose _ _ -> return Pure  -- Body has to be a pure function
     RunReader _ f -> rwsFunEffects Reader f
     RunWriter d _ f -> rwsFunEffects Writer f <&> maybeInit d
     RunState  d _ f -> rwsFunEffects State  f <&> maybeInit d
