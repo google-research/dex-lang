@@ -153,10 +153,9 @@ isTrivialForAD expr = do
           presentAnd = any
 
 isActive :: HoistableE e => e o -> PrimalM i o Bool
-isActive e = undefined
--- isActive e = do
---   vs <- (S.fromList . activeVars) <$> getActivePrimals
---   return $ any (`S.member` vs) (freeAtomVarsList e)
+isActive e = do
+  vs <- (S.fromList . activeVars) <$> getActivePrimals
+  return $ any (`S.member` vs) (freeAtomVarsList e)
 
 injSubstM
   :: (SubstReader Name m, ScopeReader2 m

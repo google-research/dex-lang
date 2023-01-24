@@ -163,7 +163,6 @@ blockAsPolyRec decls result = case decls of
     atomNameAsPoly v = getSubst <&> (!v) >>= \case
       PolySubstVal Nothing   -> empty
       PolySubstVal (Just cp) -> return cp
-      PolySubstVal _         -> error "impossible"
       PolyRename   v'        ->
         getType v' >>= \case
           IdxRepTy -> return $ poly [(1, mono [(LeftE v', 1)])]

@@ -630,7 +630,7 @@ trySelectBranch e = case e of
   NewtypeCon con e' | isSumCon con -> trySelectBranch e'
   _ -> Nothing
 
-freeAtomVarsList :: (IRRep r, HoistableE e) => e n -> [Name (AtomNameC r) n]
+freeAtomVarsList :: forall r e n. (IRRep r, HoistableE e) => e n -> [Name (AtomNameC r) n]
 freeAtomVarsList = freeVarsList
 
 freshNameM :: (Color c, EnvReader m) => NameHint -> m n (Abs (NameBinder c) (Name c) n)

@@ -670,7 +670,7 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     let b' = ignoreHoistFailure $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
-  Transpose f x -> do
+  Transpose f _ -> do
     NaryPiType (UnaryNest (_:>a)) _ _ <- getLamExprType f
     return a
   RunReader _ f -> do

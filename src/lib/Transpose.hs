@@ -29,10 +29,8 @@ transpose
   :: (MonadFail1 m, Builder SimpIR m, Emits n)
   => LamExpr SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
 transpose lam ct = liftEmitBuilder do
-  lam'@(UnaryLamExpr b body) <- sinkM lam
-  NaryPiType (UnaryNest piBinder) _ resultTy <- getNaryLamExprType lam'
+  UnaryLamExpr b body <- sinkM lam
   let argTy = binderType b
-  let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   runReaderT1 (ListE []) $ runSubstReaderT idSubst $
     withAccumulator argTy \refSubstVal ->
       extendSubst (b @> refSubstVal) $
@@ -84,13 +82,12 @@ onNonLin cont = do
   liftSubstReaderT $ runSubstReaderT subst' cont
 
 isLin :: HoistableE e => e i -> TransposeM i o Bool
-isLin e = undefined
--- isLin e = do
---   substVals <- mapM lookupSubstM $ nameSetToList $ freeAtomVarsList e
---   return $ flip any substVals \case
---     LinTrivial     -> True
---     LinRef _       -> True
---     RenameNonlin _ -> False
+isLin e = do
+  substVals <- mapM lookupSubstM $ freeAtomVarsList @SimpIR e
+  return $ flip any substVals \case
+    LinTrivial     -> True
+    LinRef _       -> True
+    RenameNonlin _ -> False
 
 withAccumulator
   :: Emits o
@@ -152,11 +149,10 @@ substExprIfNonlin expr =
         False -> Just <$> substNonlin expr
 
 isLinEff :: EffectRow SimpIR o -> TransposeM i o Bool
-isLinEff effs@(EffectRow _ NoTail) = undefined
--- isLinEff effs@(EffectRow _ NoTail) = do
---   regions <- getLinRegions
---   let effRegions = freeAtomVarsList effs
---   return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
+isLinEff effs@(EffectRow _ NoTail) = do
+  regions <- getLinRegions
+  let effRegions = freeAtomVarsList effs
+  return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
 
 transposeExpr :: Emits o => SExpr i -> SAtom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
@@ -287,6 +283,7 @@ transposeAtom atom ct = case atom of
 --         emitCTToRef ref' ct
 --       LinTrivial -> return ()
   ProjectElt UnwrapNewtype _ -> error "Not a simplified atom" -- TODO: enforce statically
+  RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()

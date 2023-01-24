@@ -396,17 +396,16 @@ vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
         Failure errs -> throwErrs errs  -- re-raise inside `TopVectorizeM`
     else throwVectErr "Effectful loop vectorization not implemented!"
   where
-    iSubst :: DExt o o' => Name c i' -> VSubstValC c o'
+    iSubst :: (Color c, DExt o o') => Name c i' -> VSubstValC c o'
     iSubst v = case lookupSubstFragProjected frag v of
       Left v'  -> sink $ fromNameVAtom v'
       Right v' -> sink $ fromNameVAtom v'
 vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
-fromNameVAtom :: forall c n. Name c n -> VSubstValC c n
-fromNameVAtom v = undefined
--- fromNameVAtom v = case eqColorRep @c @(AtomNameC SimpIR) of
---   Just ColorsEqual -> VVal Uniform $ Var v
---   _ -> error "Unexpected non-atom name"
+fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
+fromNameVAtom v = case eqColorRep @c @(AtomNameC SimpIR) of
+  Just ColorsEqual -> VVal Uniform $ Var v
+  _ -> error "Unexpected non-atom name"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
