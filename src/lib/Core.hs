@@ -535,21 +535,23 @@ fromNaryLam maxDepth = \case
         _ -> Nothing
   _ -> Nothing
 
-fromNaryTabLam :: Int -> Atom r n -> Maybe (Int, LamExpr r n)
+type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
+
+fromNaryTabLam :: Int -> CAtom n -> Maybe (Int, NaryTabLamExpr n)
 fromNaryTabLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
 fromNaryTabLam maxDepth = \case
-  (TabLam (TabLamExpr (b:>IxType ty _) body)) ->
-    extend <|> (Just $ (1, LamExpr (Nest (b:>ty) Empty) body))
+  SimpInCore (TabLam _ (Abs (b:>IxType ty _) body)) ->
+    extend <|> (Just $ (1, Abs (Nest (b:>ty) Empty) body))
     where
       extend = case body of
-        AtomicBlock lam | maxDepth > 1 -> do
-          (d, LamExpr (Nest b2 bs2) body2) <- fromNaryTabLam (maxDepth - 1) lam
-          return $ (d + 1, LamExpr (Nest (b:>ty) (Nest b2 bs2)) body2)
+        Abs Empty lam | maxDepth > 1 -> do
+          (d, Abs (Nest b2 bs2) body2) <- fromNaryTabLam (maxDepth - 1) lam
+          return $ (d + 1, Abs (Nest (b:>ty) (Nest b2 bs2)) body2)
         _ -> Nothing
   _ -> Nothing
 
 -- first argument is the number of args expected
-fromNaryTabLamExact :: Int -> Atom r n -> Maybe (LamExpr r n)
+fromNaryTabLamExact :: Int -> CAtom n -> Maybe (NaryTabLamExpr n)
 fromNaryTabLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
 fromNaryTabLamExact exactDepth lam = do
   (realDepth, naryLam) <- fromNaryTabLam exactDepth lam

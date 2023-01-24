@@ -273,7 +273,6 @@ instance IRRep r => HasType r (Atom r) where
           return $ Pi $ PiType (PiBinder b' ty' arr) effs' bodyTy
     Lam _ _ _ -> error "expected a unary lambda expression"
     Pi _ -> return TyKind
-    TabLam lamExpr -> getTypeE lamExpr
     TabPi _ -> return TyKind
     DepPair _ _ ty -> do
       ty' <- substM ty
@@ -288,7 +287,6 @@ instance IRRep r => HasType r (Atom r) where
     DictTy (DictType _ _ _) -> return TyKind
     NewtypeTyCon con -> getTypeE con
     NewtypeCon con x -> getNewtypeType con x
-    ACase _ _ resultTy -> substM resultTy
     RepValAtom repVal -> do RepVal ty _ <- substM repVal; return ty
     ProjectElt (ProjectProduct i) x -> do
       ty <- getTypeE x
@@ -298,9 +296,14 @@ instance IRRep r => HasType r (Atom r) where
       getTypeE x >>= \case
         NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
         ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
-    SimpInCore maybeTy x -> case maybeTy of
-      Just ty -> substM ty
-      Nothing -> getTypeE $ unsafeCoerceIRE x
+    SimpInCore x -> getTypeE x
+
+instance HasType CoreIR SimpInCore where
+  getTypeE = \case
+    LiftSimp Nothing x -> getTypeE $ unsafeCoerceIRE x
+    LiftSimp (Just t) _ -> substM t
+    TabLam t _ -> TabPi <$> substM t
+    ACase _ _ t -> substM t
 
 instance HasType CoreIR NewtypeTyCon where
   getTypeE = \case
@@ -342,14 +345,6 @@ unwrapLeadingNewtypesType = \case
 wrapNewtypesData :: [NewtypeCon n] -> CAtom n-> CAtom n
 wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
-
-instance HasType CoreIR TabLamExpr where
-  getTypeE (TabLamExpr (b:>ann) body) = do
-    ann' <- substM ann
-    withFreshBinder (getNameHint b) (toBinding ann') \b' ->
-      extendRenamer (b@>binderName b') $ do
-        bodyTy <- getTypeE body
-        return $ TabTy (b':>ann') bodyTy
 
 getTypePrimCon :: IRRep r => PrimCon r (Atom r i) -> TypeQueryM i o (Type r o)
 getTypePrimCon con = case con of

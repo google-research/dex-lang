@@ -380,7 +380,7 @@ instance Ix Unit
   ordinal = \_. 0
   unsafe_from_ordinal = \_. ()
 
-def iota (n:Type) [Ix n] : n=>Nat = view i. ordinal i
+def iota (n:Type) [Ix n] : n=>Nat = for i. ordinal i
 
 '## Arithmetic instances for table types
 
@@ -1202,9 +1202,9 @@ pi : Float = 3.141592653589793
 def id {a} (x:a) : a = x
 def dup {a} (x:a) : (a & a) = (x, x)
 def map {a b n eff} (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
-def zip {a b n} (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = view i. (xs.i, ys.i)
+def zip {a b n} (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip {a b n} (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
-def fanout {a} (n:Type) [Ix n] (x:a) : n=>a = view i. x
+def fanout {a} (n:Type) [Ix n] (x:a) : n=>a = for i. x
 def sq  {a} [Mul a] (x:a) : a = x * x
 def abs {a} [Sub a, Ord a] (x:a) : a = select (x > zero) x (zero - x)
 def mod {a} [Add a, Integral a] (x:a) (y:a) : a = rem (y + rem x y) y
@@ -1270,20 +1270,20 @@ def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
   dx = (high - low) / n_to_f (size n)
   for i:n. low + n_to_f (ordinal i) * dx
 
-def transpose {n m a} (x:n=>m=>a) : m=>n=>a = view i j. x.j.i
-def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
+def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
+def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
 def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
 -- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
 def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
-  for i k. fsum view j. x.i.j * y.j.k
+  for i k. fsum for j. x.i.j * y.j.k
 
 def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
 def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
 
 def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
-  fsum view (i,j). x.i * mat.i.j * y.j
+  fsum for (i,j). x.i * mat.i.j * y.j
 
 def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
   for i j. select (ordinal i == ordinal j) one zero

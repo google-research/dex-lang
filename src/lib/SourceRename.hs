@@ -203,9 +203,6 @@ instance SourceRenamableE UExpr' where
       sourceRenameB pat \pat' ->
         UPi <$> (UPiExpr arr pat' <$> sourceRenameE eff <*> sourceRenameE body)
     UApp f x -> UApp <$> sourceRenameE f <*> sourceRenameE x
-    UTabLam (UTabLamExpr pat body) ->
-      sourceRenameB pat \pat' ->
-        UTabLam <$> UTabLamExpr pat' <$> sourceRenameE body
     UTabPi (UTabPiExpr pat body) ->
       sourceRenameB pat \pat' ->
         UTabPi <$> (UTabPiExpr pat' <$> sourceRenameE body)

@@ -241,7 +241,6 @@ instance IRRep r => HasType r (Atom r) where
             resultTy <- getTypeE body
             return $ Pi $ PiType (PiBinder b' ty' arr) effs' resultTy
     Pi piType -> getTypeE piType
-    TabLam lamExpr -> getTypeE lamExpr
     TabPi piType -> getTypeE piType
     DepPair l r ty -> do
       ty' <- checkTypeE TyKind ty
@@ -261,15 +260,10 @@ instance IRRep r => HasType r (Atom r) where
       params' <- mapM renameM params
       checkArgTys paramBs params'
       return TyKind
-    ACase e alts resultTy -> checkCase e alts resultTy Pure
     RepValAtom (RepVal ty _) -> renameM ty
     NewtypeCon con x -> NewtypeTyCon <$> typeCheckNewtypeCon con x
     NewtypeTyCon t   -> typeCheckNewtypeTyCon t
-    SimpInCore maybeTy x -> case maybeTy of
-      Just ty -> renameM ty
-      -- TODO: figure out a way to guard `SimpInCore` by a constructor that
-      -- includes "r is a superset of SimpIR".
-      Nothing -> unsafeCoerceIRE @r <$> getTypeE x
+    SimpInCore x -> getTypeE x
     ProjectElt UnwrapNewtype x -> do
       NewtypeTyCon con <- getTypeE x
       snd <$> unwrapNewtypeType con
@@ -282,6 +276,14 @@ instance IRRep r => HasType r (Atom r) where
           xFst <- normalizeProj (ProjectProduct 0) x'
           instantiateDepPairTy t xFst
         _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
+
+instance HasType CoreIR SimpInCore where
+  getTypeE = \case
+    LiftSimp (Just ty) _ -> renameM ty  -- TODO: check
+    -- TODO: fix!
+    LiftSimp Nothing x -> unsafeCoerceIRE @CoreIR <$> getTypeE x
+    ACase _ _ ty -> renameM ty -- TODO: check
+    TabLam t _ -> TabPi <$> renameM t -- TODO: check
 
 instance (ToBinding ann c, Color c, CheckableE ann) => CheckableB (BinderP c ann) where
   checkB (b:>ann) cont = do
@@ -366,12 +368,6 @@ instance CheckableE PiBinding where
   checkE (PiBinding arr ty) = do
     ty' <- checkTypeE TyKind ty
     return $ PiBinding arr ty'
-
-instance HasType CoreIR TabLamExpr where
-  getTypeE (TabLamExpr b body) = do
-    checkB b \b' -> do
-      bodyTy <- getTypeE body
-      return $ TabTy b' bodyTy
 
 instance CheckableE DataDefParams where
   checkE (DataDefParams params) = DataDefParams <$> mapM (onSndM checkE) params
@@ -734,8 +730,7 @@ checkRWSAction rws f = do
       resultTy <- getTypeE body
       liftM fromPairE $ liftHoistExcept $ hoist (PairB bH' bR') $ PairE resultTy referentTy
 
-checkCase :: Typer m => HasType r body
-          => Atom r i -> [AltP r body i] -> Type r i -> EffectRow r i -> m i o (Type r o)
+checkCase :: (Typer m, IRRep r) => Atom r i -> [Alt r i] -> Type r i -> EffectRow r i -> m i o (Type r o)
 checkCase scrut alts resultTy effs = do
   declareEffs =<< renameM effs
   resultTy' <- renameM resultTy
@@ -759,8 +754,7 @@ checkCaseAltsBinderTys ty = case ty of
   _ -> fail msg
   where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
-checkAlt :: (HasType r body, Typer m)
-         => Type r o -> Type r o -> AltP r body i -> m i o ()
+checkAlt :: (Typer m, IRRep r) => Type r o -> Type r o -> Alt r i -> m i o ()
 checkAlt resultTyReq bTyReq (Abs b body) = do
   bTy <- renameM $ binderType b
   checkTypesEq bTyReq bTy

@@ -276,6 +276,7 @@ linearizeAtom atom = case atom of
     return $ WithTangent xi do
       t <- tx
       normalizeProj i t
+  RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ injSubstM atom
 
 linearizeBlock :: Emits o => SBlock i -> LinM i o CAtom CAtom

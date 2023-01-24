@@ -111,13 +111,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
     withFreshBinder (getNameHint b) (PiBinding arr ty') \b' -> do
       extendRenamer (b@>binderName b') $
         Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> tge resultTy)
-  TabLam (TabLamExpr (b:>ty) body) -> do
-    ty' <- tge ty
-    let hint = getNameHint b
-    withFreshBinder hint ty' \b' -> do
-      extendRenamer (b@>binderName b') do
-        body' <- tge body
-        return $ TabLam $ TabLamExpr (b':>ty') body'
   TabPi (TabPiType (b:>ty) resultTy) -> do
     ty' <- tge ty
     withFreshBinder (getNameHint b) ty' \b' -> do
@@ -135,14 +128,7 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   RepValAtom _ -> substM atom
   NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
   NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
-  -- TODO(dougalm): We don't need these because we don't use generic traversals
-  -- on anything except SimpIR and CoreIR. We should add that as a constraint on
-  -- `r` and then we can delete these cases.
-  ACase _ _ _ -> error $ "not implemented: " ++ pprint atom
-  SimpInCore ty x -> do
-    -- TODO: fix this hack. Maybe payload should be a differently-colored name
-    x' <- (unsafeCoerceIRE @SimpIR ) <$> substM (unsafeCoerceIRE @r x)
-    SimpInCore <$> mapM tge ty <*> pure x'
+  SimpInCore _ -> error "not implemented"
 
 traverseExtLabeledItems
   :: forall r f s i o.

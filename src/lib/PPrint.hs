@@ -199,7 +199,7 @@ instance PrettyPrec (UserEffectOp n) where
   prettyPrec (Handle v args body) = atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." body
   prettyPrec _ = error "not implemented"
 
-prettyPrecCase :: (IRRep r, PrettyE e) => Doc ann -> Atom r n -> [AltP r e n] -> EffectRow r n -> DocPrec ann
+prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
   name <+> pApp e <+> "of" <>
   nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
@@ -209,7 +209,7 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
     effectLine Pure = ""
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
-prettyAlt :: PrettyE e => AltP r e n -> Doc ann
+prettyAlt :: IRRep r => Alt r n -> Doc ann
 prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
 
 prettyBinderNoAnn :: Binder r n l -> Doc ann
@@ -247,11 +247,6 @@ instance IRRep r => PrettyPrec (LamExpr r n) where
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
-instance Pretty (TabLamExpr n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (TabLamExpr n) where
-  prettyPrec (TabLamExpr b body) =
-    atPrec LowestPrec $ "view" <+> p b <+> "." <+> p body
-
 instance Pretty (DictExpr n) where
   pretty d = case d of
     InstanceDict name args -> "Instance" <+> p name <+> p args
@@ -283,7 +278,6 @@ instance IRRep r => PrettyPrec (Atom r n) where
     Var v -> atPrec ArgPrec $ p v
     Lam lam arr _ -> atPrec LowestPrec $ "\\" <> prettyLamHelper arr lam PrettyLam
     Pi piType -> atPrec LowestPrec $ align $ p piType
-    TabLam lamExpr -> prettyPrec lamExpr
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
@@ -294,14 +288,19 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar v -> atPrec ArgPrec $ p v
     DictCon d -> atPrec LowestPrec $ p d
     DictTy  t -> atPrec LowestPrec $ p t
-    ACase e alts _ -> prettyPrecCase "acase" e alts Pure
     RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     NewtypeTyCon con -> prettyPrec con
-    SimpInCore ty x ->
-      atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
+    SimpInCore x -> prettyPrec x
+
+instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (SimpInCore n) where
+  prettyPrec = \case
+    LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
+    ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
+    TabLam _ lamExpr -> atPrec AppPrec $ p lamExpr
 
 instance IRRep r => Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
@@ -666,12 +665,6 @@ instance PrettyPrec (ULamExpr n) where
     where punctuation = case arr of
                           PlainArrow -> "."
                           _          -> " " <> p arr
-
-instance Pretty (UTabLamExpr n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UTabLamExpr n) where
-  prettyPrec (UTabLamExpr pat body) = atPrec LowestPrec $ align $
-    "view" <> p pat <> "." <+> nest 2 (pLowest body)
-
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
   prettyPrec (UPiExpr arr pat UPure ty) = atPrec LowestPrec $ align $
@@ -699,7 +692,6 @@ instance PrettyPrec (UExpr' n) where
   prettyPrec expr = case expr of
     UVar v -> atPrec ArgPrec $ p v
     ULam lam -> prettyPrec lam
-    UTabLam lam -> prettyPrec lam
     UApp    f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UTabApp f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UFor dir (UForExpr binder body) ->

@@ -976,16 +976,6 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
       Check (Pi piTy) -> checkULam lamExpr piTy
       Check _ -> inferULam Pure lamExpr >>= matchRequirement
       Infer   -> inferULam Pure lamExpr
-  UTabLam (UTabLamExpr b body) -> do
-    let uLamExpr = ULamExpr PlainArrow b body
-    Lam (UnaryLamExpr (b':>ty') body') _ _ <- case reqTy of
-      Check (TabPi tabPiTy) -> do
-        lamPiTy <- buildForTypeFromTabType Pure tabPiTy
-        checkULam uLamExpr lamPiTy
-      Check _ -> inferULam Pure uLamExpr
-      Infer   -> inferULam Pure uLamExpr
-    ixTy <- asIxType ty'
-    matchRequirement $ TabLam $ TabLamExpr (b':>ixTy) body'
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body

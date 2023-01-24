@@ -70,10 +70,15 @@ data Atom (r::IR) (n::S) where
  NewtypeCon   :: NewtypeCon n -> Atom CoreIR n -> Atom CoreIR n
  NewtypeTyCon :: NewtypeTyCon n                -> Atom CoreIR n
  -- === Shims between IRs ===
- ACase        :: Atom CoreIR n -> [AltP CoreIR (Atom CoreIR) n] -> Type CoreIR n -> Atom CoreIR n
- TabLam       :: TabLamExpr n  -> Atom CoreIR n
- SimpInCore   :: Maybe (Type CoreIR n) -> Atom SimpIR n -> Atom CoreIR n
+ SimpInCore   :: SimpInCore n    -> Atom CoreIR n
  RepValAtom   :: RepVal SimpIR n -> Atom SimpIR n
+
+type TabLamExpr = Abs (IxBinder SimpIR) (Abs (Nest SDecl) CAtom)
+data SimpInCore (n::S) =
+   LiftSimp (Maybe (CType n)) (SAtom n)
+ | TabLam (TabPiType CoreIR n) (TabLamExpr n)
+ | ACase (SAtom n) [Abs SBinder CAtom n] (CType n)
+ deriving (Show, Generic)
 
 deriving instance IRRep r => Show (Atom r n)
 deriving via WrapE (Atom r) n instance IRRep r => Generic (Atom r n)
@@ -131,8 +136,7 @@ type FunObjCodeName = Name FunObjCodeNameC
 
 type AtomBinderP (r::IR) = BinderP (AtomNameC r)
 type Binder r = AtomBinderP r (Type r) :: B
-type AltP (r::IR) (e::E) = Abs (Binder r) e :: E
-type Alt r = AltP r (Block r) :: E
+type Alt r = Abs (Binder r) (Block r) :: E
 
 -- The additional invariant enforced by this newtype is that the list should
 -- never contain empty StaticFields members, nor StaticFields in two consecutive
@@ -204,9 +208,6 @@ data IxType (r::IR) (n::S) =
   deriving (Show, Generic)
 
 type IxBinder r = BinderP (AtomNameC r) (IxType r)
-
-data TabLamExpr (n::S) where
-  TabLamExpr :: IxBinder CoreIR n l -> CBlock l -> TabLamExpr n
 
 data TabPiType (r::IR) (n::S) where
   TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
@@ -991,9 +992,6 @@ instance HasArgType PiType CoreIR where
 instance HasArgType (TabPiType r) r where
   argType (TabPiType (_:>IxType ty _) _) = ty
 
-instance HasArgType TabLamExpr CoreIR where
-  argType (TabLamExpr (_:>IxType ty _) _) = ty
-
 -- === Pattern synonyms ===
 
 pattern IdxRepScalarBaseTy :: ScalarBaseType
@@ -1078,9 +1076,6 @@ pattern NatTy = NewtypeTyCon Nat
 
 pattern NatVal :: Word32 -> Atom CoreIR n
 pattern NatVal n = NewtypeCon NatCon (IdxRepVal n)
-
-pattern TabVal :: IxBinder CoreIR n l -> Block CoreIR l -> Atom CoreIR n
-pattern TabVal b body = TabLam (TabLamExpr b body)
 
 pattern TyKind :: Kind r n
 pattern TyKind = TC TypeKind
@@ -1524,12 +1519,36 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
    deriving (Show, Generic)
 instance (Store (e1 n), Store (e2 n)) => Store (ExtLabeledItemsE e1 e2 n)
 
+instance GenericE SimpInCore where
+  type RepE SimpInCore = EitherE3
+   {- LiftSimp -} (MaybeE CType `PairE` SAtom)
+   {- TabLam -}   (TabPiType CoreIR `PairE` TabLamExpr)
+   {- ACase -}    (SAtom `PairE` ListE (Abs SBinder CAtom) `PairE` CType)
+  fromE = \case
+    LiftSimp ty x             -> Case0 $ toMaybeE ty `PairE` x
+    TabLam ty lam             -> Case1 $ ty `PairE` lam
+    ACase scrut alts resultTy -> Case2 $ scrut `PairE` ListE alts `PairE` resultTy
+  {-# INLINE fromE #-}
+
+  toE = \case
+    Case0 (ty `PairE` x)                    -> LiftSimp (fromMaybeE ty) x
+    Case1 (ty `PairE` lam)                  -> TabLam ty lam
+    Case2 (x `PairE` ListE alts `PairE` ty) -> ACase x alts ty
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance SinkableE      SimpInCore
+instance HoistableE     SimpInCore
+instance RenameE        SimpInCore
+instance AlphaEqE       SimpInCore
+instance AlphaHashableE SimpInCore
+
 instance IRRep r => GenericE (Atom r) where
   -- As tempting as it might be to reorder cases here, the current permutation
   -- was chosen as to make GHC inliner confident enough to simplify through
   -- toE/fromE entirely. If you wish to modify the order, please consult the
   -- GHC Core dump to make sure you haven't regressed this optimization.
-  type RepE (Atom r) = EitherE6
+  type RepE (Atom r) = EitherE5
               (EitherE2
                    -- We isolate those few cases (and reorder them
                    -- compared to the data definition) because they need special
@@ -1537,10 +1556,9 @@ instance IRRep r => GenericE (Atom r) where
                    -- like containers
   {- Var -}        (AtomName r)
   {- ProjectElt -} ( LiftE Projection `PairE` Atom r)
-            ) (EitherE4
+            ) (EitherE3
   {- Lam -}        (WhenCore r (LamExpr r `PairE` LiftE Arrow `PairE` EffAbs))
   {- Pi -}         (WhenCore r PiType)
-  {- TabLam -}     (WhenCore r TabLamExpr)
   {- TabPi -}      (TabPiType r)
             ) (EitherE4
   {- DepPairTy -}  (DepPairType r)
@@ -1555,18 +1573,15 @@ instance IRRep r => GenericE (Atom r) where
   {- TC -}         (ComposeE (PrimTC  r) (Atom r))
   {- Eff -}        ( WhenCore r (EffectRow r))
   {- PtrVar -}     PtrName
-  {- ACase -}      ( WhenCore r (Atom r `PairE` ListE (AltP r (Atom r)) `PairE` Type r))
   {- RepValAtom -} ( WhenSimp r (RepVal r))
-            ) (
-  {- SimpInCore -} ( WhenCore r (MaybeE (Type r) `PairE` Atom SimpIR))
+  {- SimpInCore -} ( WhenCore r SimpInCore)
               )
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
     ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
     Lam lamExpr arr eff -> Case1 (Case0 (WhenIRE (lamExpr `PairE` LiftE arr `PairE` eff)))
     Pi  piExpr  -> Case1 (Case1 (WhenIRE piExpr))
-    TabLam lamExpr -> Case1 (Case2 (WhenIRE lamExpr))
-    TabPi  piExpr  -> Case1 (Case3 piExpr)
+    TabPi  piExpr  -> Case1 (Case2 piExpr)
     DepPairTy ty -> Case2 (Case0 ty)
     DepPair l r ty -> Case2 (Case1 $ l `PairE` r `PairE` ty)
     DictCon d      -> Case2 $ Case2 $ WhenIRE d
@@ -1577,9 +1592,8 @@ instance IRRep r => GenericE (Atom r) where
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ WhenIRE effs
     PtrVar v -> Case4 $ Case3 $ v
-    ACase scrut alts ty -> Case4 $ Case4 $ WhenIRE $ scrut `PairE` ListE alts `PairE` ty
-    RepValAtom rv  -> Case4 $ Case5 $ WhenIRE $ rv
-    SimpInCore t x -> Case5 $ WhenIRE $ toMaybeE t `PairE` x
+    RepValAtom rv -> Case4 $ Case4 $ WhenIRE $ rv
+    SimpInCore x  -> Case4 $ Case5 $ WhenIRE x
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1590,8 +1604,7 @@ instance IRRep r => GenericE (Atom r) where
     Case1 val -> case val of
       Case0 (WhenIRE (lamExpr `PairE` LiftE arr `PairE` effs)) -> Lam lamExpr arr effs
       Case1 (WhenIRE piExpr)  -> Pi  piExpr
-      Case2 (WhenIRE lamExpr) -> TabLam lamExpr
-      Case3 piExpr  -> TabPi  piExpr
+      Case2 piExpr  -> TabPi  piExpr
       _ -> error "impossible"
     Case2 val -> case val of
       Case0 ty      -> DepPairTy ty
@@ -1608,10 +1621,9 @@ instance IRRep r => GenericE (Atom r) where
       Case1 (ComposeE con) -> TC con
       Case2 (WhenIRE effs) -> Eff effs
       Case3 v -> PtrVar v
-      Case4 (WhenIRE (scrut `PairE` ListE alts `PairE` ty)) -> ACase scrut alts ty
-      Case5 (WhenIRE rv) -> RepValAtom rv
+      Case4 (WhenIRE rv) -> RepValAtom rv
+      Case5 (WhenIRE x)  -> SimpInCore x
       _ -> error "impossible"
-    Case5 (WhenIRE (t `PairE` x)) -> SimpInCore(fromMaybeE t) x
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1909,21 +1921,6 @@ instance IRRep r => AlphaHashableE (LamExpr r)
 instance IRRep r => RenameE        (LamExpr r)
 deriving instance IRRep r => Show (LamExpr r n)
 deriving via WrapE (LamExpr r) n instance IRRep r => Generic (LamExpr r n)
-
-instance GenericE TabLamExpr where
-  type RepE TabLamExpr = Abs (IxBinder CoreIR) (Block CoreIR)
-  fromE (TabLamExpr b block) = Abs b block
-  {-# INLINE fromE #-}
-  toE   (Abs b block) = TabLamExpr b block
-  {-# INLINE toE #-}
-
-instance SinkableE      TabLamExpr
-instance HoistableE     TabLamExpr
-instance AlphaEqE       TabLamExpr
-instance AlphaHashableE TabLamExpr
-instance RenameE        TabLamExpr
-deriving instance Show (TabLamExpr n)
-deriving via WrapE TabLamExpr n instance Generic (TabLamExpr n)
 
 instance GenericE PiBinding where
   type RepE PiBinding = PairE (LiftE Arrow) CType
@@ -2642,6 +2639,7 @@ instance Hashable a => Hashable (EvalStatus a)
 instance IRRep r => Store (RepVal r n)
 instance IRRep r => Store (Atom r n)
 instance IRRep r => Store (Expr r n)
+instance Store (SimpInCore n)
 instance Store (SolverBinding n)
 instance IRRep r => Store (AtomBinding r n)
 instance Store (SpecializationSpec n)
@@ -2657,7 +2655,6 @@ instance Store (DataConDef n)
 instance IRRep r => Store (Block r n)
 instance IRRep r => Store (LamExpr r n)
 instance IRRep r => Store (IxType r n)
-instance Store (TabLamExpr n)
 instance Store (PiBinding n)
 instance Store (PiBinder n l)
 instance Store (PiType n)

@@ -513,15 +513,12 @@ expr = propagateSrcE expr' where
         UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
   expr' (CLambda args body) =
     dropSrcE <$> liftM2 buildLam (concat <$> mapM argument args) (block body)
-  expr' (CFor KView indices body) =
-    dropSrcE <$> (buildTabLam <$> mapM patOptAnn indices <*> block body)
   expr' (CFor kind indices body) = do
     let (dir, trailingUnit) = case kind of
           KFor  -> (Fwd, False)
           KFor_ -> (Fwd, True)
           KRof  -> (Rev, False)
           KRof_ -> (Rev, True)
-          KView -> error "Impossible"
     -- TODO: Can we fetch the source position from the error context, to feed into `buildFor`?
     e <- buildFor (0, 0) dir <$> mapM patOptAnn indices <*> block body
     if trailingUnit
@@ -736,14 +733,6 @@ buildLam binders body@(WithSrcE pos _) = case binders of
   (UPatAnnArrow b arr):bs -> WithSrcE (joinPos pos' pos) $ ULam lamb
      where UPatAnn (WithSrcB pos' _) _ = b
            lamb = ULamExpr arr b $ buildLam bs body
-
-buildTabLam :: [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
-buildTabLam binders body@(WithSrcE pos _) = case binders of
-  [] -> body
-  -- TODO: join with source position of binders too
-  b:bs -> WithSrcE (joinPos pos' pos) $ UTabLam lamb
-   where UPatAnn (WithSrcB pos' _) _ = b
-         lamb = UTabLamExpr b $ buildTabLam bs body
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildFor :: SrcPos -> Direction -> [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS

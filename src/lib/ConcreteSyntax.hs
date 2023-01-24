@@ -117,7 +117,7 @@ data Group'
   | CPrefix SourceName Group -- covers unary - and unary + among others
   | CPostfix SourceName Group
   | CLambda [Group] CBlock  -- The arguments do not have Juxtapose at the top level
-  | CFor ForKind [Group] CBlock -- also for_, rof, rof_, view
+  | CFor ForKind [Group] CBlock -- also for_, rof, rof_
   | CCase Group [(Group, CBlock)] -- scrutinee, alternatives
   | CIf Group CBlock (Maybe CBlock)
   | CDo CBlock
@@ -180,7 +180,6 @@ data ForKind
   | KFor_
   | KRof
   | KRof_
-  | KView
   deriving (Show, Generic)
 
 data CBlock = CBlock [CDecl] -- last decl should be a CExpr
@@ -589,7 +588,6 @@ cFor = do
                 <|> keyWord For_KW $> KFor_
                 <|> keyWord RofKW  $> KRof
                 <|> keyWord Rof_KW $> KRof_
-                <|> keyWord ViewKW $> KView
 
 cCase :: Parser Group'
 cCase = do
@@ -723,8 +721,7 @@ leafGroupNoBrackets = do
     _ | isDigit next -> (    CNat   <$> natLit
                          <|> CFloat <$> doubleLit)
     '\\' -> cLam
-    -- For exprs include view, for, rof, for_, rof_
-    'v'  -> cFor  <|> CIdentifier <$> anyName
+    -- For exprs include for, rof, for_, rof_
     'f'  -> cFor  <|> CIdentifier <$> anyName
     'r'  -> cFor  <|> CIdentifier <$> (anyName <|> (keyWord ResumeKW >> return "resume"))
     'c'  -> cCase <|> CIdentifier <$> anyName

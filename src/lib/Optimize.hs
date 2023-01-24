@@ -7,10 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( earlyOptimize, optimize
-  , peepholeOp, hoistLoopInvariantDest, dceDestBlock
-  , foldCast
-  ) where
+  ( optimize, peepholeOp, hoistLoopInvariantDest, dceDestBlock, foldCast ) where
 
 import Data.Functor
 import Data.Word
@@ -34,56 +31,11 @@ import Builder
 import QueryType
 import Util (iota)
 
-earlyOptimize :: EnvReader m => CBlock n -> m n (CBlock n)
-earlyOptimize = unrollTrivialLoops
-
 optimize :: EnvReader m => SBlock n -> m n (SBlock n)
 optimize = dceBlock     -- Clean up user code
        >=> unrollLoops
        >=> dceBlock     -- Clean up peephole-optimized code after unrolling
        >=> hoistLoopInvariant
-
--- === Trivial loop unrolling ===
--- This pass unrolls loops that use Fin 0 or Fin 1 as an index set.
-
-data UTLS n = UTLS
-type UTLM = GenericTraverserM CoreIR UnitB UTLS
-instance SinkableE UTLS where
-  sinkingProofE _ UTLS = UTLS
-instance HoistableState UTLS where
-  hoistState _ _ _ = UTLS
-  {-# INLINE hoistState #-}
-
-data IndexSetKind n
-  = EmptyIxSet
-  | SingletonIxSet (CAtom n)
-  | UnknownIxSet
-
-isTrivialIndex :: Type CoreIR i -> UTLM i o (IndexSetKind o)
-isTrivialIndex = \case
-  NewtypeTyCon (Fin (NatVal n)) | n <= 0 -> return EmptyIxSet
-  NewtypeTyCon (Fin (NatVal n)) | n == 1 ->
-    return $ SingletonIxSet $ NewtypeCon (FinCon (NatVal n)) (NatVal 0)
-  _ -> return UnknownIxSet
-
-instance GenericTraverser CoreIR UnitB UTLS where
-  traverseExpr expr = case expr of
-    Hof (For _ ixDict (LamExpr (UnaryNest b) body@(Block _ decls a))) -> do
-      isTrivialIndex (binderType b) >>= \case
-        UnknownIxSet     -> traverseExprDefault expr
-        SingletonIxSet i -> do
-          ixTy <- ixTyFromDict =<< substM ixDict
-          ans <- extendSubst (b @> SubstVal i) $ traverseDeclNest decls $ traverseAtom a
-          liftM Atom $ buildTabLam noHint ixTy $ const $ return $ sink ans
-        EmptyIxSet -> do
-          ixTy <- ixTyFromDict =<< substM ixDict
-          liftM Atom $ buildTabLam noHint ixTy \i -> do
-            resTy' <- extendSubst (b @> Rename i) $ getTypeSubst body
-            emitOp $ MiscOp $ ThrowError (sink resTy')
-    _ -> traverseExprDefault expr
-
-unrollTrivialLoops :: EnvReader m => CBlock n -> m n (CBlock n)
-unrollTrivialLoops b = liftM fst $ liftGenericTraverserM UTLS $ traverseGenericE b
 
 -- === Peephole optimizations ===
 

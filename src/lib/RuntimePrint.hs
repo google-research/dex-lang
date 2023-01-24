@@ -149,9 +149,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
   ProjectElt _ _ -> notAType
-  ACase _ _ _  -> notAType
   Lam _ _ _    -> notAType
-  TabLam _     -> notAType
   DictCon _    -> notAType
   Con _        -> notAType
   Eff _        -> notAType
@@ -159,7 +157,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   DepPair _ _  _ -> notAType
   NewtypeCon _ _ -> notAType
   Var _ -> error $ "unexpected type variable: " ++ pprint atomTy
-  SimpInCore _ _ -> error "Don't expect to print SimpInCore"
+  SimpInCore _ -> error "Don't expect to print SimpInCore"
   where
     rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec

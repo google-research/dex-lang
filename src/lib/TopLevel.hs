@@ -533,8 +533,7 @@ whenOpt x act = getConfig <&> optLevel >>= \case
 
 evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
 evalBlock typed = do
-  eopt <- checkPass EarlyOptPass $ earlyOptimize typed
-  synthed <- checkPass SynthPass $ synthTopBlock eopt
+  synthed <- checkPass SynthPass $ synthTopBlock typed
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
@@ -825,7 +824,7 @@ getBenchRequirement block = case sbLogLevel block of
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 getDexString val = do
   -- TODO: use a `ByteString` instead of `String`
-  SimpInCore _ (Var v) <- return val
+  SimpInCore (LiftSimp _ (Var v)) <- return val
   TopDataBound (RepVal _ tree) <- lookupAtomName v
   Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
   PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName

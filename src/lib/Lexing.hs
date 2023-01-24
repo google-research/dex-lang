@@ -73,7 +73,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | DataKW | InterfaceKW
              | InstanceKW | GivenKW
              | IfKW | ThenKW | ElseKW | DoKW
-             | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
+             | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
              | CustomLinearizationKW | CustomLinearizationSymbolicKW
   deriving (Enum)
@@ -96,7 +96,6 @@ keyWordToken = \case
   NamedInstanceKW -> "named-instance"
   GivenKW         -> "given"
   DoKW            -> "do"
-  ViewKW          -> "view"
   ImportKW        -> "import"
   ForeignKW       -> "foreign"
   EffectKW        -> "effect"

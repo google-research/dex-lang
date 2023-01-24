@@ -651,17 +651,6 @@ buildPureLam hint arr ty body = do
     Distinct <- getDistinct
     body v
 
-buildTabLam
-  :: ScopableBuilder CoreIR m
-  => NameHint -> IxType CoreIR n
-  -> (forall l. (Emits l, DExt n l) => AtomName CoreIR l -> m l (CAtom l))
-  -> m n (CAtom n)
-buildTabLam hint ty fBody = do
-  withFreshBinder hint ty \b -> do
-    let v = binderName b
-    body <- withoutEffects $ buildBlock $ fBody $ sink v
-    return $ TabLam $ TabLamExpr (b:>ty) body
-
 buildLam
   :: ScopableBuilder CoreIR m
   => NameHint -> Arrow -> CType n -> EffectRow CoreIR n
@@ -852,16 +841,6 @@ buildAlt ty body = do
       Distinct <- getDistinct
       body $ sink x
 
-buildUnaryAtomAlt
-  :: ScopableBuilder r m
-  => Type r n
-  -> (forall l. (Distinct l, DExt n l) => AtomName r l -> m l (Atom r l))
-  -> m n (AltP r (Atom r) n)
-buildUnaryAtomAlt ty body = do
-  buildAbs noHint ty \v -> do
-    Distinct <- getDistinct
-    body v
-
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, ScopableBuilder r m)
@@ -934,9 +913,9 @@ buildFor hint dir ty body = buildForAnn hint dir ty body
 unzipTab :: (Emits n, CBuilder m) => CAtom n -> m n (CAtom n, CAtom n)
 unzipTab tab = do
   TabTy (_:>ixTy) _ <- getType tab
-  fsts <- liftEmitBuilder $ buildTabLam noHint ixTy \i ->
+  fsts <- liftEmitBuilder $ buildFor noHint Fwd ixTy \i ->
             liftM fst $ tabApp (sink tab) (Var i) >>= fromPair
-  snds <- liftEmitBuilder $ buildTabLam noHint ixTy \i ->
+  snds <- liftEmitBuilder $ buildFor noHint Fwd ixTy \i ->
             liftM snd $ tabApp (sink tab) (Var i) >>= fromPair
   return (fsts, snds)
 

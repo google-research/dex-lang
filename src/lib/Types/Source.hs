@@ -103,7 +103,6 @@ data UExpr' (n::S) =
  | ULam (ULamExpr n)
  | UPi  (UPiExpr n)
  | UApp (UExpr n) (UExpr n)
- | UTabLam (UTabLamExpr n)
  | UTabPi  (UTabPiExpr n)
  | UDepPairTy (UDepPairType n)
  | UDepPair (UExpr n) (UExpr n)
@@ -139,9 +138,6 @@ data ULamExpr (n::S) where
 
 data UPiExpr (n::S) where
   UPiExpr :: Arrow -> UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
-
-data UTabLamExpr (n::S) where
-  UTabLamExpr :: UPatAnn n l -> UType l -> UTabLamExpr n
 
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UPatAnn n l -> UType l -> UTabPiExpr n
@@ -626,7 +622,6 @@ deriving instance Show (UBinder s n l)
 deriving instance Show (UDataDefTrail n)
 deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
-deriving instance Show (UTabLamExpr n)
 deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDepPairType n)
 deriving instance Show (UDeclExpr n)

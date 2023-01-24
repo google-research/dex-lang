@@ -342,9 +342,6 @@ normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
 normalizeProj :: EnvReader m => Projection -> Atom r n -> m n (Atom r n)
 normalizeProj UnwrapNewtype = \case
    NewtypeCon  _ x -> return x
-   SimpInCore (Just (NewtypeTyCon t)) x -> do
-     t' <- snd <$> unwrapNewtypeType t
-     return $ SimpInCore (Just t') x
    x -> return $ ProjectElt UnwrapNewtype x
 normalizeProj (ProjectProduct i) = \case
   Con (ProdCon xs) -> return $ xs !! i
@@ -445,12 +442,9 @@ instance IRRep r => SubstE AtomSubstVal (Atom r) where
     Case2 rest -> (toE . Case2) $ substE (env, subst) rest
     Case3 rest -> (toE . Case3) $ substE (env, subst) rest
     Case4 rest -> (toE . Case4) $ substE (env, subst) rest
-    -- SimpInCore
-    Case5 (WhenIRE (t `PairE` x)) ->
-      toE $ Case5 $ WhenIRE $ substE (env, subst) t `PairE` x'
-      where x' = substE (env, subst) x
-    Case6 rest -> (toE . Case6) $ substE (env, subst) rest
-    Case7 rest -> (toE . Case7) $ substE (env, subst) rest
+    _ -> error "impossible"
+
+instance SubstE AtomSubstVal SimpInCore
 
 instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
   substE env (EffectRow effs tailVar) = do
@@ -529,7 +523,6 @@ instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
 instance SubstE AtomSubstVal LamBinding
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
-instance SubstE AtomSubstVal TabLamExpr
 instance SubstE AtomSubstVal PiBinding
 instance SubstB AtomSubstVal PiBinder
 instance SubstE AtomSubstVal PiType
