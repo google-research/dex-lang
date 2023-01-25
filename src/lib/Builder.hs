@@ -1251,7 +1251,7 @@ naryApp :: (CBuilder m, Emits n) => CAtom n -> [CAtom n] -> m n (CAtom n)
 naryApp = naryAppHinted noHint
 {-# INLINE naryApp #-}
 
-naryTopApp :: (Builder r m, Emits n) => TopFunName n -> [Atom r n] -> m n (Atom r n)
+naryTopApp :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
 naryTopApp f xs = emitExpr $ TopApp f xs
 {-# INLINE naryTopApp #-}
 

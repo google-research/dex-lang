@@ -498,6 +498,9 @@ instance Pretty (SolverBinding n) where
 
 instance Pretty (Binding c n) where
   pretty b = case b of
+    -- using `unsafeCoerceIRE` here because otherwise we don't have `IRRep`
+    -- TODO: can we avoid printing needing IRRep? Presumably it's related to
+    -- manipulating sets or something, which relies on Eq/Ord, which relies on renaming.
     AtomNameBinding   info -> "Atom name:" <+> pretty (unsafeCoerceIRE @CoreIR info)
     DataDefBinding    dataDef -> pretty dataDef
     TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)

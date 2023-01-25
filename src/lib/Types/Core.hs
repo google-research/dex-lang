@@ -85,7 +85,7 @@ deriving instance IRRep r => Show (Atom r n)
 deriving via WrapE (Atom r) n instance IRRep r => Generic (Atom r n)
 
 data Expr r n where
- TopApp :: TopFunName n -> [Atom r n]        -> Expr r n
+ TopApp :: TopFunName n -> [SAtom n]         -> Expr SimpIR n
  TabApp :: Atom r n -> NonEmpty (Atom r n)   -> Expr r n
  Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow r n -> Expr r n
  Atom   :: Atom r n                          -> Expr r n
@@ -453,7 +453,7 @@ data ModuleEnv (n::S) = ModuleEnv
   { envImportStatus    :: ImportStatus n
   , envSourceMap       :: SourceMap n
   , envSynthCandidates :: SynthCandidates n
-  -- TODO : `CoreIR` isn't right, but we don't have `ModuleEnv` to take an IR
+  -- TODO : `CoreIR` isn't right, but we don't want `ModuleEnv` to take an IR
   -- parameter. The right thing to do is to remove `allowedEffects` from `ModuleEnv`
   -- and instead add an explicit effects reader for Inference/CheckType, where the IR
   -- parameter is known. But that's a bigger change.
@@ -708,7 +708,7 @@ data AtomBinding (r::IR) (n::S) where
  LetBound     :: DeclBinding r  n  -> AtomBinding r n
  MiscBound    :: Type        r  n  -> AtomBinding r n
  IxBound      :: IxType      r  n  -> AtomBinding r n
- TopDataBound :: RepVal SimpIR n   -> AtomBinding r n
+ TopDataBound :: RepVal SimpIR n   -> AtomBinding SimpIR n
  LamBound     :: LamBinding  n     -> AtomBinding CoreIR n
  PiBound      :: PiBinding   n     -> AtomBinding CoreIR n
  SolverBound  :: SolverBinding n   -> AtomBinding CoreIR n
@@ -728,7 +728,7 @@ atomBindingType b = case b of
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
   NoinlineFun (NoInlineDef _ _ _ ty _) -> ty
-  TopDataBound (RepVal ty _) -> unsafeCoerceIRE ty
+  TopDataBound (RepVal ty _) -> ty
   FFIFunBound piTy _ -> naryPiTypeAsType piTy
 
 data NoInlineDef n = NoInlineDef Int [Arrow] (NaryPiType CoreIR n) (CType n) (CAtom n)
@@ -947,10 +947,10 @@ toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest b
 -- === ToBinding ===
 
 atomBindingToBinding :: AtomBinding r n -> Binding (AtomNameC r) n
-atomBindingToBinding b = AtomNameBinding $ unsafeCoerceIRE b
+atomBindingToBinding b = AtomNameBinding b
 
 bindingToAtomBinding :: Binding (AtomNameC r) n -> AtomBinding r n
-bindingToAtomBinding (AtomNameBinding b) = unsafeCoerceIRE b
+bindingToAtomBinding (AtomNameBinding b) = b
 
 class (RenameE     e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
   toBinding :: e n -> Binding c n
@@ -1646,7 +1646,7 @@ instance IRRep r => GenericE (Expr r) where
  {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow r)
  {- Atom -}   (Atom r)
  {- Hof -}    (Hof r)
- {- TopApp -} (TopFunName `PairE` ListE (Atom r))
+ {- TopApp -} (WhenSimp r (TopFunName `PairE` ListE (Atom r)))
     )
     ( EitherE7
  {- TabCon -}          (Type r `PairE` ListE (Atom r))
@@ -1663,7 +1663,7 @@ instance IRRep r => GenericE (Expr r) where
     Case e alts ty eff -> Case0 $ Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff)
     Atom x             -> Case0 $ Case3 (x)
     Hof hof            -> Case0 $ Case4 hof
-    TopApp f xs        -> Case0 $ Case5 (f `PairE` ListE xs)
+    TopApp f xs        -> Case0 $ Case5 (WhenIRE (f `PairE` ListE xs))
     TabCon ty xs       -> Case1 $ Case0 (ty `PairE` ListE xs)
     RefOp ref op       -> Case1 $ Case1 (ref `PairE` op)
     PrimOp op          -> Case1 $ Case2 (ComposeE op)
@@ -1679,7 +1679,7 @@ instance IRRep r => GenericE (Expr r) where
       Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
       Case3 (x)                                           -> Atom x
       Case4 hof                                           -> Hof hof
-      Case5 (f `PairE` ListE xs)                          -> TopApp f xs
+      Case5 (WhenIRE (f `PairE` ListE xs))                -> TopApp f xs
       _ -> error "impossible"
     Case1 case1 -> case case1 of
       Case0 (ty `PairE` ListE xs) -> TabCon ty xs
@@ -2121,7 +2121,7 @@ instance IRRep r => GenericE (AtomBinding r) where
       (WhenCore r SolverBinding)             -- SolverBound
      ) (EitherE3
       (WhenCore r NoInlineDef)                       -- NoinlineFun
-      (RepVal SimpIR)                                -- TopDataBound
+      (WhenSimp r (RepVal SimpIR))                   -- TopDataBound
       (WhenCore r (NaryPiType r `PairE` TopFunName)) -- FFIFunBound
      )
 
@@ -2133,7 +2133,7 @@ instance IRRep r => GenericE (AtomBinding r) where
     MiscBound   x -> Case0 $ Case4 x
     SolverBound x -> Case0 $ Case5 $ WhenIRE x
     NoinlineFun x -> Case1 $ Case0 $ WhenIRE x
-    TopDataBound repVal -> Case1 $ Case1 repVal
+    TopDataBound repVal -> Case1 $ Case1 $ WhenIRE repVal
     FFIFunBound ty v    -> Case1 $ Case2 $ WhenIRE $ ty `PairE` v
   {-# INLINE fromE #-}
 
@@ -2148,7 +2148,7 @@ instance IRRep r => GenericE (AtomBinding r) where
       _ -> error "impossible"
     Case1 x' -> case x' of
       Case0 (WhenIRE x) -> NoinlineFun x
-      Case1 repVal                                 -> TopDataBound repVal
+      Case1 (WhenIRE repVal)                         -> TopDataBound repVal
       Case2 (WhenIRE (ty `PairE` v))                 -> FFIFunBound ty v
       _ -> error "impossible"
     _ -> error "impossible"

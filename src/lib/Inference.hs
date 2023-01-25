@@ -424,7 +424,6 @@ zonkAtomBindingWithOutMap outMap = \case
  IxBound     e -> IxBound     $ zonkWithOutMap outMap e
  MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
  SolverBound e -> SolverBound $ zonkWithOutMap outMap e
- TopDataBound e  -> TopDataBound e
  NoinlineFun e   -> NoinlineFun (zonkWithOutMap outMap e)
  FFIFunBound x y -> FFIFunBound (zonkWithOutMap outMap x) (zonkWithOutMap outMap y)
 

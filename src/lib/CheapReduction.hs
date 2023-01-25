@@ -193,15 +193,15 @@ cheapReduceAtomBinding
   => AtomName r o -> AtomBinding r o -> CheapReducerM r i o (AtomSubstVal (AtomNameC r) o)
 cheapReduceAtomBinding v = \case
   LetBound (DeclBinding _ _ e) -> do
-    cachedVal <- lookupCache (unsafeCoerceIRName @r v) >>= \case
+    cachedVal <- lookupCache v >>= \case
       Nothing -> do
-        result <- optional (dropSubst $ cheapReduceE $ unsafeCoerceIRE @r e)
-        updateCache (unsafeCoerceIRName v) result
+        result <- optional (dropSubst $ cheapReduceE e)
+        updateCache v result
         return result
       Just result -> return result
     case cachedVal of
       Nothing  -> stuck
-      Just ans -> return $ SubstVal $ unsafeCoerceIRE ans
+      Just ans -> return $ SubstVal ans
   _ -> stuck
   where stuck = return $ Rename v
 

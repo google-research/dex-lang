@@ -388,10 +388,6 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
   App f xs -> do
     xs' <- mapM simplifyAtom xs
     simplifyApp hint f xs'
-  TopApp f xs -> do
-    f' <- substM f
-    xs' <- forM xs \x -> toDataAtomIgnoreRecon =<< simplifyAtom x
-    liftSimpAtom Nothing =<< naryTopApp f' xs'
   TabApp f xs -> do
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f

@@ -224,8 +224,7 @@ instance IRRep r => CheckableE (Expr r) where
 instance IRRep r => HasType r (AtomName r) where
   getTypeE name = do
     name' <- renameM name
-    -- See reason in QueryType.hs
-    (unsafeCoerceIRE . atomBindingType) <$> lookupAtomName name'
+    atomBindingType <$> lookupAtomName name'
   {-# INLINE getTypeE #-}
 
 instance IRRep r => HasType r (Atom r) where
@@ -280,7 +279,7 @@ instance IRRep r => HasType r (Atom r) where
 instance HasType CoreIR SimpInCore where
   getTypeE = \case
     LiftSimp (Just ty) _ -> renameM ty  -- TODO: check
-    -- TODO: fix!
+    -- TODO: let's just get rid of the `Maybe` from `LiftSimp` and avoid this case altogether.
     LiftSimp Nothing x -> unsafeCoerceIRE @CoreIR <$> getTypeE x
     ACase _ _ ty -> renameM ty -- TODO: check
     TabLam t _ -> TabPi <$> renameM t -- TODO: check
@@ -380,7 +379,7 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM renameM args
     checkArgTys bs args'
-    ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map (SubstVal . unsafeCoerceIRE @CoreIR) args')
+    ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map SubstVal args')
     return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
@@ -390,7 +389,7 @@ dictExprType e = case e of
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
     checkedApplyNaryAbs
       (Abs (toBinderNest bs) (superclassTypes superclasses !! i))
-      (map unsafeCoerceIRE params)
+      params
   IxFin n -> do
     n' <- checkTypeE NatTy n
     liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n'
@@ -750,7 +749,7 @@ checkCaseAltsBinderTys ty = case ty of
     UserADTType _ defName params -> do
       def <- lookupDataDef defName
       cons <- checkedInstantiateDataDef def params
-      return [unsafeCoerceIRE repTy | DataConDef _ repTy _ <- cons]
+      return [repTy | DataConDef _ repTy _ <- cons]
     _ -> fail msg
   _ -> fail msg
   where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
@@ -1037,7 +1036,7 @@ checkedApplyClassParams
   -> m n (Abs SuperclassBinders (ListE MethodType) n)
 checkedApplyClassParams (ClassDef _ _ bs superclassBs methodTys) params = do
   let body = Abs superclassBs (ListE methodTys)
-  checkedApplyNaryAbs (Abs (toBinderNest bs) body) (map unsafeCoerceIRE params)
+  checkedApplyNaryAbs (Abs (toBinderNest bs) body) params
 
 -- TODO: Subst all at once, not one at a time!
 checkedApplyNaryAbs :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
