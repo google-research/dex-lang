@@ -107,6 +107,12 @@ liftSimpAtomWithType ty simpAtom = case simpAtom of
     rec = liftSimpAtomWithType
     justLift = return $ SimpInCore $ LiftSimp (Just ty) simpAtom
 
+liftSimpFun
+  :: (MonadFail1 m, EnvReader m)
+  => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
+liftSimpFun (Pi piTy) f = return $ SimpInCore $ LiftSimpFun piTy f
+liftSimpFun _ _ = error "not a pi type"
+
 -- `Nothing` (the `Maybe (Type CoreIR)` one) means that there's no newtype coercion
 -- needed to get back to the original atom.
 tryAsDataAtom :: Emits n => CAtom n -> SimplifyM i n (Maybe (SAtom n, Maybe (Type CoreIR n)))
@@ -140,6 +146,7 @@ tryAsDataAtom atom = do
     NewtypeCon _ x  -> go x
     SimpInCore x    -> case x of
       LiftSimp _ x' -> return x'
+      LiftSimpFun _ _ -> notData
       TabLam _ tabLam -> forceTabLam tabLam
       ACase scrut alts resultTy -> forceACase scrut alts resultTy
     Lam _ _   _     -> notData
@@ -278,13 +285,6 @@ data ReconstructAtom (n::S) =
 applyRecon :: (EnvReader m, Fallible1 m) => ReconstructAtom n -> SAtom n -> m n (CAtom n)
 applyRecon (CoerceRecon ty) x = liftSimpAtom (Just ty) x
 applyRecon (LamRecon ab) x = applyReconAbs ab x
-
-applyReconAbs
-  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
-  => ReconAbs r e n -> Atom r n -> m n (e n)
-applyReconAbs (Abs bs result) x = do
-  xs <- unpackTelescope x
-  applySubst (bs @@> map SubstVal xs) result
 
 -- === Simplification monad ===
 
@@ -507,13 +507,6 @@ getAltNonDataTy (Abs bs body) = liftSubstEnvReaderM do
     -- Result types of simplified abs should be hoistable past binder
     return $ ignoreHoistFailure $ hoist bs' ty
 
-injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
-injectAltResult sumTys con (Abs b body) = liftBuilder do
-  buildAlt (binderType b) \v -> do
-    originalResult <- emitBlock =<< applyRename (b@>v) body
-    (dataResult, nonDataResult) <- fromPair originalResult
-    return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
-
 simplifyApp :: forall i o. Emits o
   => NameHint -> CAtom i -> NE.NonEmpty (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyApp hint f xs =
@@ -538,6 +531,14 @@ simplifyApp hint f xs =
         defuncCase e ty \i x -> do
           Abs b body <- return $ alts !! i
           applySubst (b@>SubstVal x) body
+      SimpInCore (LiftSimpFun (PiType b _ resultTy) (LamExpr bs body)) -> do
+        if nestLength bs /= length xs
+          then error "Expect saturated application, right?"
+          else do
+            let resultTy' = ignoreHoistFailure $ hoist b resultTy
+            xs' <- mapM toDataAtomIgnoreRecon $ toList xs
+            body' <- applySubst (bs@@>map SubstVal xs') body
+            liftSimpAtom (Just resultTy') =<< emitBlock body'
       Var v -> do
         fTy <- getType atom
         resultTy <- getAppType fTy $ toList xs
@@ -983,11 +984,16 @@ simplifyHof _hint hof = case hof of
     SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
     ans <- emitExpr $ Hof $ RunInit body'
     applyRecon recon ans
-  Linearize lam -> do
+  Linearize lam x -> do
+    x' <- toDataAtomIgnoreRecon =<< simplifyAtom x
     -- XXX: we're ignoring the result type here, which only makes sense if we're
     -- dealing with functions on simple types.
     (lam', CoerceReconAbs) <- local (const WillLinearize) $ simplifyLam lam
-    linearize lam'
+    (result, linFun) <- linearize lam' x'
+    PairTy resultTy linFunTy <- getTypeSubst $ Hof hof
+    result' <- liftSimpAtom (Just resultTy) result
+    linFun' <- liftSimpFun linFunTy linFun
+    return $ PairVal result' linFun'
   Transpose lam x -> do
     (lam', CoerceReconAbs) <- simplifyLam lam
     x' <- toDataAtomIgnoreRecon =<< simplifyAtom x

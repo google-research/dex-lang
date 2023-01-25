@@ -1245,7 +1245,7 @@ matchPrimApp = \case
  UIndexRef  -> \case ~[r, i] -> ee $ RefOp r $ IndexRef i
  UProjRef i -> \case ~[r]    -> ee $ RefOp r $ ProjRef i
  UProjMethod i -> \case ~[d] -> ee $ ProjMethod d i
- ULinearize -> \case ~[f]     -> do f' <- lam1 f; ee $ Hof $ Linearize f'
+ ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; ee $ Hof $ Linearize f' x
  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; ee $ Hof $ Transpose f' x
  URunReader -> \case ~[x, f]  -> do f' <- lam2 f; ee $ Hof $ RunReader x f'
  URunState  -> \case ~[x, f]  -> do f' <- lam2 f; ee $ Hof $ RunState  Nothing x f'

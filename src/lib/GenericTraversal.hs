@@ -213,7 +213,7 @@ instance IRRep r => GenericallyTraversableE r (Hof r) where
   traverseGenericE = \case
     For d ixDict f       -> For d <$> tge ixDict <*> tge f
     While body           -> While <$> tge body
-    Linearize f          -> Linearize <$> tge f
+    Linearize f x        -> Linearize <$> tge f <*> tge x
     Transpose f x        -> Transpose <$> tge f <*> tge x
     RunReader r f        -> RunReader <$> tge r <*> tge f
     RunWriter d bm f     -> RunWriter <$> mapM tge d <*> tge bm <*> tge f

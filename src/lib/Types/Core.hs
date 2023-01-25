@@ -76,6 +76,7 @@ data Atom (r::IR) (n::S) where
 type TabLamExpr = Abs (IxBinder SimpIR) (Abs (Nest SDecl) CAtom)
 data SimpInCore (n::S) =
    LiftSimp (Maybe (CType n)) (SAtom n)
+ | LiftSimpFun (PiType n) (LamExpr SimpIR n)
  | TabLam (TabPiType CoreIR n) (TabLamExpr n)
  | ACase (SAtom n) [Abs SBinder CAtom n] (CType n)
  deriving (Show, Generic)
@@ -259,7 +260,7 @@ data Hof r n where
  RunIO     :: Block r n -> Hof r n
  RunInit   :: Block r n -> Hof r n
  CatchException :: Block   CoreIR n -> Hof CoreIR n
- Linearize      :: LamExpr CoreIR n -> Hof CoreIR n
+ Linearize      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
  Transpose      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
 
 deriving instance IRRep r => Show (Hof r n)
@@ -309,6 +310,7 @@ type SDecls = Decls SimpIR
 type SAtomName  = AtomName SimpIR
 type SBinder = Binder SimpIR
 type SRepVal = RepVal SimpIR
+type SLam    = LamExpr SimpIR
 
 -- === newtypes ===
 
@@ -1409,7 +1411,7 @@ instance IRRep r => GenericE (Hof r) where
     ) (EitherE4
   {- RunInit -}        (Block r)
   {- CatchException -} (WhenCore r (Block r))
-  {- Linearize -}      (WhenCore r (LamExpr r))
+  {- Linearize -}      (WhenCore r (LamExpr r `PairE` Atom r))
   {- Transpose -}      (WhenCore r (LamExpr r `PairE` Atom r)))
 
   fromE = \case
@@ -1421,7 +1423,7 @@ instance IRRep r => GenericE (Hof r) where
     RunIO body          -> Case0 (Case5 body)
     RunInit body        -> Case1 (Case0 body)
     CatchException body -> Case1 (Case1 (WhenIRE body))
-    Linearize body      -> Case1 (Case2 (WhenIRE body))
+    Linearize body x    -> Case1 (Case2 (WhenIRE (PairE body x)))
     Transpose body x    -> Case1 (Case3 (WhenIRE (PairE body x)))
   {-# INLINE fromE #-}
   toE = \case
@@ -1436,7 +1438,7 @@ instance IRRep r => GenericE (Hof r) where
     Case1 hof -> case hof of
       Case0 body -> RunInit body
       Case1 (WhenIRE body) -> CatchException body
-      Case2 (WhenIRE body) -> Linearize body
+      Case2 (WhenIRE (PairE body x)) -> Linearize body x
       Case3 (WhenIRE (PairE body x)) -> Transpose body x
       _ -> error "impossible"
     _ -> error "impossible"
@@ -1520,20 +1522,23 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
 instance (Store (e1 n), Store (e2 n)) => Store (ExtLabeledItemsE e1 e2 n)
 
 instance GenericE SimpInCore where
-  type RepE SimpInCore = EitherE3
+  type RepE SimpInCore = EitherE4
    {- LiftSimp -} (MaybeE CType `PairE` SAtom)
+   {- LiftSimpFun -} (PiType `PairE` LamExpr SimpIR)
    {- TabLam -}   (TabPiType CoreIR `PairE` TabLamExpr)
    {- ACase -}    (SAtom `PairE` ListE (Abs SBinder CAtom) `PairE` CType)
   fromE = \case
     LiftSimp ty x             -> Case0 $ toMaybeE ty `PairE` x
-    TabLam ty lam             -> Case1 $ ty `PairE` lam
-    ACase scrut alts resultTy -> Case2 $ scrut `PairE` ListE alts `PairE` resultTy
+    LiftSimpFun ty x          -> Case1 $ ty `PairE` x
+    TabLam ty lam             -> Case2 $ ty `PairE` lam
+    ACase scrut alts resultTy -> Case3 $ scrut `PairE` ListE alts `PairE` resultTy
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 (ty `PairE` x)                    -> LiftSimp (fromMaybeE ty) x
-    Case1 (ty `PairE` lam)                  -> TabLam ty lam
-    Case2 (x `PairE` ListE alts `PairE` ty) -> ACase x alts ty
+    Case1 (ty `PairE` x)                    -> LiftSimpFun ty x
+    Case2 (ty `PairE` lam)                  -> TabLam ty lam
+    Case3 (x `PairE` ListE alts `PairE` ty) -> ACase x alts ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 

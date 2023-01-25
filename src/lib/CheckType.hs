@@ -636,11 +636,12 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     condTy <- getTypeE body
     checkTypesEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
-  Linearize f -> do
+  Linearize f x -> do
     NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprTypeE f
     b' <- liftHoistExcept $ hoist binder b
     fLinTy <- a --@ b'
-    a --> PairTy b' fLinTy
+    x |: a
+    return $ PairTy b' fLinTy
   Transpose f x -> do
     NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprTypeE f
     b' <- liftHoistExcept $ hoist binder b

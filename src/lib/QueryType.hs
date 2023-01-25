@@ -19,7 +19,7 @@ module QueryType (
   ixDictType, getSuperclassDicts,
   ixTyFromDict, instantiateHandlerType, getDestBlockType,
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
-  rawStrType, rawFinTabType, getTypeTopFun,
+  rawStrType, rawFinTabType, getTypeTopFun, getReferentTypeRWSAction
   ) where
 
 import Control.Monad
@@ -66,6 +66,9 @@ getDestBlockType :: (IRRep r, EnvReader m) => DestBlock r n -> m n (Type r n)
 getDestBlockType (Abs (_:>RawRefTy ansTy) _) = return ansTy
 getDestBlockType _ = error "Expected a reference type for body destination"
 {-# INLINE getDestBlockType #-}
+
+getReferentTypeRWSAction :: (EnvReader m, IRRep r) => LamExpr r o -> m o (Type r o)
+getReferentTypeRWSAction f = liftTypeQueryM idSubst $ liftM snd $ getTypeRWSAction f
 
 -- === Querying effects ===
 
@@ -660,11 +663,11 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     ixTy <- ixTyFromDict =<< substM dict
     return $ TabTy (b:>ixTy) eltTy
   While _ -> return UnitTy
-  Linearize f -> do
+  Linearize f _ -> do
     NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprType f
     let b' = ignoreHoistFailure $ hoist binder b
     fLinTy <- a --@ b'
-    a --> PairTy b' fLinTy
+    return $ PairTy b' fLinTy
   Transpose f _ -> do
     NaryPiType (UnaryNest (_:>a)) _ _ <- getLamExprType f
     return a
@@ -805,7 +808,7 @@ exprEffects expr = case expr of
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
     While body    -> getEffectsImpl body
-    Linearize _   -> return Pure  -- Body has to be a pure function
+    Linearize _ _ -> return Pure  -- Body has to be a pure function
     Transpose _ _ -> return Pure  -- Body has to be a pure function
     RunReader _ f -> rwsFunEffects Reader f
     RunWriter d _ f -> rwsFunEffects Writer f <&> maybeInit d

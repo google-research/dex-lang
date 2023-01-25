@@ -1311,7 +1311,7 @@ def cumsum_low {n a} [Add a] (xs: n=>a) : n=>a =
 '### AD operations
 
 -- TODO: add vector space constraints
-def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = (%linearize (\x. f x)) x
+def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = (%linearize (\x. f x) x)
 def jvp {a b} (f:a->b) (x:a) : a --o b = snd (linearize f x)
 def transpose_linear {a b} (f:a --o b) : b --o a = \ct.
   f' : a --o b = \x. f x

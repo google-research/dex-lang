@@ -299,6 +299,7 @@ instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
   prettyPrec = \case
     LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
+    LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
     ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
     TabLam _ lamExpr -> atPrec AppPrec $ p lamExpr
 
@@ -1086,7 +1087,7 @@ instance IRRep r => PrettyPrec (Hof r n) where
     RunIO body          -> "runIO" <+> pArg body
     RunInit body        -> "runInit" <+> pArg body
     CatchException body -> "catchException" <+> pArg body
-    Linearize body      -> "linearize" <+> pArg body
+    Linearize body x    -> "linearize" <+> pArg body <+> pArg x
     Transpose body x    -> "transpose" <+> pArg body <+> pArg x
 
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec

@@ -841,6 +841,24 @@ buildAlt ty body = do
       Distinct <- getDistinct
       body $ sink x
 
+buildCaseAlts :: (Emits n, ScopableBuilder r m)
+  => Atom r n
+  -> (forall l. DExt n l => Int -> Binder r n l -> m l a)
+  -> m n [a]
+buildCaseAlts scrut indexedAltBody = do
+  scrutTy <- getType scrut
+  altBinderTys <- caseAltsBinderTys scrutTy
+  forM (enumerate altBinderTys) \(i, bTy) -> do
+    withFreshBinder noHint bTy \b ->
+      indexedAltBody i (b:>bTy)
+
+injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
+injectAltResult sumTys con (Abs b body) = liftBuilder do
+  buildAlt (binderType b) \v -> do
+    originalResult <- emitBlock =<< applyRename (b@>v) body
+    (dataResult, nonDataResult) <- fromPair originalResult
+    return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
+
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, ScopableBuilder r m)
@@ -876,6 +894,22 @@ buildSplitCase tys scrut resultTy match fallback = do
       1 -> fallback v
       _ -> error "should only have two cases"
 
+buildLamExprWithRecon
+  :: ScopableBuilder r m
+  => EmptyAbs (Nest (Binder r)) n
+  -> (forall l. (Emits l, DExt n l) => [AtomName r l] -> m l (e l))
+  -> (forall l1 l2. Nest (Binder r) n l1 -> Nest (Decl r) l1 l2 ->  e l2 -> m l2 (Atom r l2, recon))
+  -> m n (LamExpr r n, recon)
+buildLamExprWithRecon _ _ _ = undefined
+
+buildForWithRecon
+  :: (Emits n, ScopableBuilder r m)
+  => NameHint -> Direction -> IxType r n
+  -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (e l))
+  -> (forall l1 l2. Binder r n l1 -> Nest (Decl r) l1 l2 ->  e l2 -> m l2 (Atom r l2, recon))
+  -> m n (Atom r n, recon)
+buildForWithRecon _ _ _ _ _ = undefined
+
 buildEffLam
   :: ScopableBuilder r m
   => RWS -> NameHint -> Type r n
@@ -910,7 +944,7 @@ buildFor :: (Emits n, ScopableBuilder r m)
          -> m n (Atom r n)
 buildFor hint dir ty body = buildForAnn hint dir ty body
 
-unzipTab :: (Emits n, CBuilder m) => CAtom n -> m n (CAtom n, CAtom n)
+unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
 unzipTab tab = do
   TabTy (_:>ixTy) _ <- getType tab
   fsts <- liftEmitBuilder $ buildFor noHint Fwd ixTy \i ->
@@ -1443,6 +1477,13 @@ telescopicCapture bs e = do
   result <- buildTelescopeVal (map Var vsSorted) ty
   let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
   return (result, ab)
+
+applyReconAbs
+  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
+  => ReconAbs r e n -> Atom r n -> m n (e n)
+applyReconAbs (Abs bs result) x = do
+  xs <- unpackTelescope x
+  applySubst (bs @@> map SubstVal xs) result
 
 -- XXX: assumes arguments are toposorted
 buildTelescopeTy :: (EnvReader m, EnvExtender m, IRRep r)
