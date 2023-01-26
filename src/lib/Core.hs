@@ -405,7 +405,7 @@ plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
 classPiBinder :: Binder CoreIR n l -> PiBinder n l
 classPiBinder (b:>ty) = PiBinder b ty ClassArrow
 
-withAllowedEffects :: EnvExtender m => EffectRow r n -> m n a -> m n a
+withAllowedEffects :: forall r n a m. EnvExtender m => EffectRow r n -> m n a -> m n a
 withAllowedEffects effs cont =
   refreshAbs (Abs (EffectBinder $ unsafeCoerceIRE effs) UnitE) \(EffectBinder _) UnitE ->
     cont

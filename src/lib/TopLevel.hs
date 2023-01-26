@@ -761,7 +761,7 @@ checkPass name cont = do
                       VectPass     -> OneEffect InitEffect
                       _            -> mempty
   {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
-    withAllowedEffects allowedEffs $ checkTypesM result
+    withAllowedEffects @CoreIR allowedEffs $ checkTypesM result
   logTop $ MiscLog $ "Checks passed"
 #else
   logTop $ MiscLog $ "Checks skipped (not a debug build)"

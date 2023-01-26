@@ -281,6 +281,7 @@ instance HasType CoreIR SimpInCore where
     LiftSimp (Just ty) _ -> renameM ty  -- TODO: check
     -- TODO: let's just get rid of the `Maybe` from `LiftSimp` and avoid this case altogether.
     LiftSimp Nothing x -> unsafeCoerceIRE @CoreIR <$> getTypeE x
+    LiftSimpFun piTy _ -> Pi <$> renameM piTy -- TODO: check
     ACase _ _ ty -> renameM ty -- TODO: check
     TabLam t _ -> TabPi <$> renameM t -- TODO: check
 
@@ -299,7 +300,11 @@ instance IRRep r => HasType r (Expr r) where
     TabApp f xs -> do
       fTy <- getTypeE f
       checkTabApp fTy xs
-    TopApp _ _ -> error "not implemented"
+    -- TODO: check!
+    TopApp f xs -> do
+      NaryPiType bs _ resultTy <- getTypeTopFun =<< renameM f
+      xs' <- mapM renameM xs
+      applySubst (bs @@> map SubstVal xs') resultTy
     Atom x   -> getTypeE x
     PrimOp op -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof
@@ -321,10 +326,11 @@ instance IRRep r => HasType r (Expr r) where
           return $ TC $ RefType h $ tys !! i
     ProjMethod dict i -> do
       DictTy (DictType _ className params) <- getTypeE dict
-      ClassDef _ _ paramBs classBs methodTys <- lookupClassDef className
+      def@(ClassDef _ _ paramBs classBs methodTys) <- lookupClassDef className
       let MethodType _ methodTy = methodTys !! i
+      superclassDicts <- getSuperclassDicts def <$> renameM dict
       let subst = (    paramBs @@> map SubstVal params
-                   <.> classBs @@> map SubstVal params)
+                   <.> classBs @@> map SubstVal superclassDicts)
       applySubst subst methodTy
     TabCon ty xs -> do
       ty'@(TabPi (TabPiType b restTy)) <- checkTypeE TyKind ty

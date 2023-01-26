@@ -273,16 +273,15 @@ transposeAtom atom ct = case atom of
   DepPairTy _     -> notTangent
   TC _            -> notTangent
   PtrVar _        -> notTangent
-  ProjectElt (ProjectProduct _) _ -> undefined
-  -- TODO: need to handle table/tuple projection together
---     lookupSubstM v >>= \case
---       RenameNonlin _ -> error "an error, probably"
---       LinRef ref -> do
---         let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
---         ref' <- getNaryProjRef idxs' ref
---         emitCTToRef ref' ct
---       LinTrivial -> return ()
-  ProjectElt UnwrapNewtype _ -> error "Not a simplified atom" -- TODO: enforce statically
+  ProjectElt i' x' -> do
+    let (idxs, v) = asNaryProj i' x'
+    lookupSubstM v >>= \case
+      RenameNonlin _ -> error "an error, probably"
+      LinRef ref -> do
+        let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
+        ref' <- getNaryProjRef idxs' ref
+        emitCTToRef ref' ct
+      LinTrivial -> return ()
   RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 

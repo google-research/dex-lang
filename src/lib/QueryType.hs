@@ -305,6 +305,7 @@ instance HasType CoreIR SimpInCore where
   getTypeE = \case
     LiftSimp Nothing x -> getTypeE $ unsafeCoerceIRE x
     LiftSimp (Just t) _ -> substM t
+    LiftSimpFun piTy _ -> Pi <$> substM piTy
     TabLam t _ -> TabPi <$> substM t
     ACase _ _ t -> substM t
 

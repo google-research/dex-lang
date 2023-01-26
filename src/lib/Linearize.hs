@@ -64,8 +64,7 @@ getActivePrimals = ask
 extendActiveSubst
   :: BindsAtMostOneName b (AtomNameC SimpIR)
   => b i i' -> AtomName SimpIR o -> PrimalM i' o a -> PrimalM i o a
-extendActiveSubst b v cont = do
-  extendSubst (b@>v) $ extendActivePrimals v cont
+extendActiveSubst b v cont = extendSubst (b@>v) $ extendActivePrimals v cont
 
 extendActiveEffs :: Effect SimpIR o -> PrimalM i o a -> PrimalM i o a
 extendActiveEffs eff = local \primals ->
@@ -169,9 +168,35 @@ tangentFunAsLambda
   -> PrimalM i o (SLam o)
 tangentFunAsLambda cont = do
   ActivePrimals primalVars _ <- getActivePrimals
-  Abs tangentTys UnitE <- varsAsBinderNest primalVars
-  buildNaryLamExpr (EmptyAbs tangentTys) \tangentVars -> do
+  tangentTys <- getTangentArgTys primalVars
+  buildNaryLamExpr tangentTys \tangentVars -> do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
+
+getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomName n] -> m n (EmptyAbs (Nest SBinder) n)
+getTangentArgTys [] = return $ EmptyAbs Empty
+getTangentArgTys (v:vs) = getType v >>= \case
+  -- This is a hack to handle heaps/references. They normally come in pairs
+  -- like this, but there's nothing to prevent users writing programs that
+  -- sling around heap variables by themselves. We should try to do something
+  -- better...
+  TC HeapType -> do
+    ref:vs' <- return vs
+    let h = v
+    RefTy (Var h') referentTy <- getType ref
+    tt <- tangentType referentTy
+    if h == h'
+      then do
+        withFreshBinder (getNameHint h) (TC HeapType) \hb -> do
+          let refTy' = RefTy (Var (binderName hb)) (sink tt)
+          withFreshBinder (getNameHint ref) refTy' \refb -> do
+            Abs bs UnitE <- getTangentArgTys $ sinkList vs'
+            return $ EmptyAbs $ Nest (hb:>TC HeapType) $ Nest (refb:>refTy') bs
+      else error "unexpected heap/ref pair"
+  ty -> do
+    tt <- tangentType ty
+    withFreshBinder (getNameHint v) tt \b -> do
+      Abs bs UnitE <- getTangentArgTys $ sinkList vs
+      return $ EmptyAbs $ Nest (b:>tt) bs
 
 -- tangent lambda
 type LinLam = SLam
