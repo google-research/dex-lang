@@ -1195,7 +1195,7 @@ ieq :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ BinOp (ICmp Equal) x y
 
-fromPair :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n, Atom r n)
+fromPair :: Builder r m => Atom r n -> m n (Atom r n, Atom r n)
 fromPair pair = do
   ~[x, y] <- getUnpacked pair
   return (x, y)
@@ -1205,10 +1205,10 @@ getProj i x = do
   xs <- getUnpacked x
   return $ xs !! i
 
-getFst :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
+getFst :: Builder r m => Atom r n -> m n (Atom r n)
 getFst p = fst <$> fromPair p
 
-getSnd :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
+getSnd :: Builder r m => Atom r n -> m n (Atom r n)
 getSnd p = snd <$> fromPair p
 
 -- the rightmost index is applied first

@@ -281,56 +281,55 @@ instance GenericTraverser SimpIR UnitB LICMS where
     DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
       ix' <- substM ix
       dests' <- traverse traverseAtom dests
-      let numCarries = length dests
+      let numCarriesOriginal = length dests'
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
         Block _ decls ans <- traverseGenericE body
         -- Now, we process the decls and decide which ones to hoist.
         liftEnvReaderM $ runSubstReaderT idSubst $
-            seqLICM numCarries REmpty mempty (asNameBinder b') REmpty decls ans
-      PairE (ListE extraDests) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
+            seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+      PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
       -- Append the destinations of hoisted Allocs as loop carried values.
       let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
       carryTy <- getType dests''
       lbTy <- ixTyFromDict ix' <&> \case IxType ixTy _ -> PairTy ixTy carryTy
-      body' <- rebuildBody b body lnb lbTy bodyAbs
+      extraDestsTyped <- forM extraDests \d -> (d,) <$> getType d
+      Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
+      body' <- withFreshBinder noHint lbTy \lb' -> do
+        (oldIx, allCarries) <- fromPair $ Var $ binderName lb'
+        (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
+        let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
+        let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
+        block <- applySubst s bodyAbs >>= makeBlockFromDecls
+        return $ UnaryLamExpr (lb':>lbTy) block
       return $ DAMOp $ Seq dir ix' dests'' body'
     Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
       ix' <- substM ix
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         Block _ decls ans <- traverseGenericE body
         liftEnvReaderM $ runSubstReaderT idSubst $
-            seqLICM 0 REmpty mempty (asNameBinder b') REmpty decls ans
+            seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
       PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
       ixTy <- substM $ binderType b
-      body' <- rebuildBody b body lnb ixTy bodyAbs
+      body' <- withFreshBinder noHint ixTy \i -> do
+        block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
+        return $ UnaryLamExpr (i:>ixTy) block
       return $ Hof $ For dir ix' body'
     expr -> traverseExprDefault expr
-    where
-      rebuildBody :: Binder SimpIR i i' -> SBlock i'
-                  -> AtomNameBinder SimpIR n l -> SType n -> Abs (Nest SDecl) SAtom l
-                  -> GenericTraverserM SimpIR UnitB LICMS i n (LamExpr SimpIR n)
-      rebuildBody b body@(Block ann _ _) lnb lbTy bodyAbs = do
-        Distinct <- getDistinct
-        refreshAbs (Abs (lnb:>lbTy) bodyAbs) \lb (Abs decls ans) -> do
-          extendRenamer (b@>binderName lb) do
-            ann' <- case ann of
-              BlockAnn ty eff -> BlockAnn <$> substM ty <*> substM eff
-              NoBlockAnn -> BlockAnn <$> getTypeSubst body <*> pure Pure
-            return $ LamExpr (UnaryNest lb) $ Block ann' decls ans
 
-seqLICM :: Int
-        -> RNest SDecl n1 n2      -- hoisted decls
+seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]         -- hoisted dests
         -> AtomNameBinder SimpIR n2 n3   -- loop binder
         -> RNest SDecl n3 n4      -- loop-dependent decls
         -> Nest SDecl m1 m2       -- decls remaining to process
         -> SAtom m2               -- loop result
         -> SubstReaderT AtomSubstVal EnvReaderM m1 n4
-             (Abs (Nest SDecl)
-                (PairE (ListE SAtomName)
-                       (Abs (AtomNameBinder SimpIR) (Abs (Nest SDecl) SAtom))) n1)
-seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
+             (Abs (Nest SDecl)            -- hoisted decls
+                (PairE (ListE SAtomName)  -- hoisted allocs (these should go in the loop carry)
+                       (Abs (AtomNameBinder SimpIR) -- loop binder
+                            (Abs (Nest SDecl)       -- non-hoisted decls
+                             SAtom))) n1)           -- final result
+seqLICM !top !topDestNames !lb !reg decls ans = case decls of
   Empty -> do
     ans' <- substM ans
     return $ Abs (unRNest top) $ PairE (ListE $ reverse topDestNames) $ Abs lb $ Abs (unRNest reg) ans'
@@ -340,21 +339,18 @@ seqLICM !nextProj !top !topDestNames !lb !reg decls ans = case decls of
     withFreshBinder (getNameHint bb) binding' \bb' -> do
       let b = Let bb' binding'
       let moveOn = extendRenamer (bb@>binderName bb') $
-                     seqLICM nextProj top topDestNames lb (RNest reg b) bs ans
+                     seqLICM top topDestNames lb (RNest reg b) bs ans
       case effs of
         -- OPTIMIZE: We keep querying the ScopeFrag of lb and reg here, leading to quadratic runtime
         Pure -> case exchangeBs $ PairB (PairB lb reg) b of
-          HoistSuccess (PairB b' lbreg@(PairB lb' reg')) -> extendSubst (bb@>bsv') $
-              seqLICM nextProj' (RNest top b') topDestNames' lb' reg' bs ans
+          HoistSuccess (PairB b' lbreg@(PairB lb' reg')) -> do
+            withSubscopeDistinct lbreg $ withExtEvidence b' $
+              extendRenamer (bb@>sink (binderName b')) do
+                extraTopDestNames <- return case b' of
+                  Let bn (DeclBinding _ _ (DAMOp (AllocDest _))) -> [binderName bn]
+                  _ -> []
+                seqLICM (RNest top b') (extraTopDestNames ++ sinkList topDestNames) lb' reg' bs ans
               where
-                (nextProj', topDestNames', bsv') =
-                  withSubscopeDistinct lbreg $ withExtEvidence b' $ case b' of
-                    Let bn (DeclBinding _ _ (DAMOp (AllocDest _))) ->
-                      ( nextProj + 1
-                      , binderName bn : sinkList topDestNames
-                      , SubstVal $ ProjectElt (ProjectProduct nextProj) $ ProjectElt (ProjectProduct 1) $
-                          Var $ withExtEvidence reg' $ sink $ binderName lb')
-                    _ -> (nextProj, sinkList topDestNames, Rename $ sink $ binderName b')
           HoistFailure _ -> moveOn
         _ -> moveOn
 

@@ -2747,8 +2747,7 @@ abstractFreeVar v e =
     Abs (Nest b Empty) e' -> Abs b e'
     _ -> error "impossible"
 
-abstractFreeVars :: [(Name c n, ann n)]
-                 -> e n -> Abs (Nest (BinderP c ann)) e n
+abstractFreeVars :: [(Name c n, ann n)] -> e n -> Abs (Nest (BinderP c ann)) e n
 abstractFreeVars vs e = Abs bs e
   where bs = unsafeCoerceB $ unsafeListToNest bsFlat
         bsFlat = vs <&> \(UnsafeMakeName v, ann) ->
