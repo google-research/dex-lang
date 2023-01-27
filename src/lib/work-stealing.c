@@ -4,9 +4,6 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
-int EMPTY = -1;
-int ABORT = -2;
-
 // A work-stealing scheduler is described in
 // Robert D. Blumofe, Christopher F. Joerg, Bradley C. Kuszmaul, Charles E. Leiserson, Keith H.
 // Randall, and Yuli Zhou. Cilk: An efficient multithreaded runtime system. In Proceedings
@@ -19,16 +16,27 @@ int ABORT = -2;
 // Programming Parallel Applications in Cilk
 
 typedef struct {
+  // Question: Do we also want to tell the task the thread id of the worker
+  // that's running it?  Maybe to support thread-local accumulators for
+  // commutative reductions?
+  // Oh yeah, also to know which worker's queue to put more stuff onto.
   void (*code)(void*);  // Always passed a pointer to the containing Work struct
   atomic_int join_count;
   void* args[];
 } Work;
 
-// Deque code adapted from https://fzn.fr/readings/ppopp13.pdf
+Work* EMPTY = -1;
+Work* ABORT = -2;
+
+/////////////////////////
+// Work-stealing deque //
+/////////////////////////
+
+// Code adapted from https://fzn.fr/readings/ppopp13.pdf
 
 typedef struct {
   atomic_size_t size;
-  atomic_int buffer[];
+  Work* buffer[];
 } Array;
 
 typedef struct {
@@ -39,7 +47,7 @@ typedef struct {
 void init(Deque* q, int size_hint) {
   atomic_init(&q->top, 0);
   atomic_init(&q->bottom, 0);
-  Array* a = (Array*) malloc(sizeof(Array) + sizeof(atomic_int) * size_hint);
+  Array* a = (Array*) malloc(sizeof(Array) + sizeof(Work*) * size_hint);
   atomic_init(&a->size, size_hint);
   atomic_init(&q->array, a);
 }
@@ -47,13 +55,13 @@ void init(Deque* q, int size_hint) {
 void resize(Deque* q) {
 }
 
-int take(Deque *q) {
+Work* take(Deque *q) {
   size_t b = atomic_load_explicit(&q->bottom, memory_order_relaxed) - 1;
   Array *a = atomic_load_explicit(&q->array, memory_order_relaxed);
   atomic_store_explicit(&q->bottom, b, memory_order_relaxed);
   atomic_thread_fence(memory_order_seq_cst);
   size_t t = atomic_load_explicit(&q->top, memory_order_relaxed);
-  int x;
+  Work* x;
   if (t <= b) {
     /* Non-empty queue. */
     x = atomic_load_explicit(&a->buffer[b % a->size], memory_order_relaxed);
@@ -72,7 +80,7 @@ int take(Deque *q) {
   return x;
 }
 
-void push(Deque *q, int x) {
+void push(Deque *q, Work* w) {
   size_t b = atomic_load_explicit(&q->bottom, memory_order_relaxed);
   size_t t = atomic_load_explicit(&q->top, memory_order_acquire);
   Array *a = atomic_load_explicit(&q->array, memory_order_relaxed);
@@ -80,16 +88,16 @@ void push(Deque *q, int x) {
     resize(q);
     a = atomic_load_explicit(&q->array, memory_order_relaxed);
   }
-  atomic_store_explicit(&a->buffer[b % a->size], x, memory_order_relaxed);
+  atomic_store_explicit(&a->buffer[b % a->size], w, memory_order_relaxed);
   atomic_thread_fence(memory_order_release);
   atomic_store_explicit(&q->bottom, b + 1, memory_order_relaxed);
 }
 
-int steal(Deque *q) {
+Work* steal(Deque *q) {
   size_t t = atomic_load_explicit(&q->top, memory_order_acquire);
   atomic_thread_fence(memory_order_seq_cst);
   size_t b = atomic_load_explicit(&q->bottom, memory_order_acquire);
-  int x = EMPTY;
+  Work* x = EMPTY;
   if (t < b) {
     /* Non-empty queue. */
     Array *a = atomic_load_explicit(&q->array, memory_order_consume);
@@ -102,12 +110,17 @@ int steal(Deque *q) {
   return x;
 }
 
+/////////////////
+// Worker loop //
+/////////////////
+
 #define nthreads 24
 
 Deque* thread_queues;
 
-void do_work(int id, int work) {
-  printf("Worker %d did item %d\n", id, work);
+void do_work(int id, Work* work) {
+  printf("Worker %d running item %p\n", id, work);
+  (*(work->code))(work);
 }
 
 void* thread(void* payload) {
@@ -115,12 +128,12 @@ void* thread(void* payload) {
   Deque* my_queue = &thread_queues[id];
   bool done = false;
   while (!done) {
-    int work = take(my_queue);
+    Work* work = take(my_queue);
     if (work != EMPTY) {
       do_work(id, work);
     } else {
       // No work in my own queue
-      int stolen = EMPTY;
+      Work* stolen = EMPTY;
       for (int i = 0; i < nthreads; ++i) {
         if (i == id) continue;
         stolen = steal(&thread_queues[i]);
@@ -142,8 +155,20 @@ void* thread(void* payload) {
       }
     }
   }
-  printf("Finished %d\n", id);
+  printf("Worker %d finished\n", id);
   return NULL;
+}
+
+////////////////////
+// Client program //
+////////////////////
+
+void print_task(Work* w) {
+  int* payload = (int*)w->args[0];
+  int item = *payload;
+  printf("Did item %p with payload %d\n", w, item);
+  free(payload);
+  free(w);
 }
 
 int main(int argc, char **argv) {
@@ -154,7 +179,13 @@ int main(int argc, char **argv) {
     tids[i] = i;
     init(&thread_queues[i], 128);
     for (int j = 0; j < 100; ++j) {
-      push(&thread_queues[i], 1000 * i + j);
+      Work* work = (Work*) malloc(sizeof(Work) + sizeof(int*));
+      work->code = (void (*) (void*))&print_task;
+      work->join_count = 0;
+      int* payload = malloc(sizeof(int));
+      *payload = 1000 * i + j;
+      work->args[0] = payload;
+      push(&thread_queues[i], work);
     }
   }
   for (int i = 0; i < nthreads; ++i) {
