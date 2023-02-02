@@ -15,12 +15,19 @@
 // Essential idea of work stealing mentioned in Leiserson and Platt,
 // Programming Parallel Applications in Cilk
 
-typedef struct {
-  // Question: Do we also want to tell the task the thread id of the worker
-  // that's running it?  Maybe to support thread-local accumulators for
-  // commutative reductions?
-  // Oh yeah, also to know which worker's queue to put more stuff onto.
-  void (*code)(void*);  // Always passed a pointer to the containing Work struct
+struct Work;
+
+// A Task is a function pointer that consumes a Work* and returns a Work*
+// The input is the `Work` Always passed a pointer to the containing Work struct
+// Question: Do we also want to tell the task the thread id of the worker
+// that's running it?  Maybe to support thread-local accumulators for
+// commutative reductions?
+// Oh yeah, also to know which worker's queue to put more stuff onto.
+// Trampoline: returns the next work to do, if ready, or NULL if not.
+typedef struct Work* (*Task)(struct Work*);
+
+typedef struct Work {
+  Task code;
   atomic_int join_count;
   void* args[];
 } Work;
@@ -118,9 +125,26 @@ Work* steal(Deque *q) {
 
 Deque* thread_queues;
 
-void do_work(int id, Work* work) {
+// Trampoline: Returns the next item to work on, or NULL if there aren't any.
+Work* do_one_work(int id, Work* work) {
   printf("Worker %d running item %p\n", id, work);
-  (*(work->code))(work);
+  return (*(work->code))(work);
+}
+
+void do_work(int id, Work* work) {
+  while (work != NULL) {
+    work = do_one_work(id, work);
+  }
+}
+
+// Trampoline: Returns the next item to work on, or NULL if there aren't any.
+Work* join_work(Work* work) {
+  int old_join_count = atomic_fetch_sub(&work->join_count, 1);
+  if (old_join_count == 1) {
+    return work;
+  } else {
+    return NULL;
+  }
 }
 
 void* thread(void* payload) {
@@ -163,12 +187,13 @@ void* thread(void* payload) {
 // Client program //
 ////////////////////
 
-void print_task(Work* w) {
+Work* print_task(Work* w) {
   int* payload = (int*)w->args[0];
   int item = *payload;
   printf("Did item %p with payload %d\n", w, item);
   free(payload);
   free(w);
+  return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -180,7 +205,7 @@ int main(int argc, char **argv) {
     init(&thread_queues[i], 128);
     for (int j = 0; j < 100; ++j) {
       Work* work = (Work*) malloc(sizeof(Work) + sizeof(int*));
-      work->code = (void (*) (void*))&print_task;
+      work->code = &print_task;
       work->join_count = 0;
       int* payload = malloc(sizeof(int));
       *payload = 1000 * i + j;
