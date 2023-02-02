@@ -12,13 +12,11 @@ import Data.Text
 import Test.Hspec
 
 import AbstractSyntax (parseUModule)
-import Builder (ReconstructAtom(IdentityRecon))
 import Err
 import Inference (inferTopUExpr, synthTopBlock)
 import Name
 import OccAnalysis
 import Occurrence
-import Optimize (earlyOptimize)
 import Simplify
 import SourceRename (renameSourceNamesUExpr)
 import Types.Core
@@ -44,9 +42,8 @@ uExprToBlock :: (Topper m, Mut n) => UExpr 'VoidS -> m n (SBlock n)
 uExprToBlock expr = do
   renamed <- renameSourceNamesUExpr expr
   typed <- inferTopUExpr renamed
-  eopt <- earlyOptimize typed
-  synthed <- synthTopBlock eopt
-  (SimplifiedBlock block IdentityRecon) <- simplifyTopBlock synthed
+  synthed <- synthTopBlock typed
+  (SimplifiedBlock block (CoerceRecon _)) <- simplifyTopBlock synthed
   return block
 
 findRunIOAnnotation :: SBlock n -> LetAnn
@@ -316,7 +313,7 @@ spec = do
         [ ":p"
         , "  xs : (Fin 10 | Fin 3) => Float = unreachable ()"
         , "  for i:(Fin 10)."
-        , "    j = Left (unsafe_from_ordinal _ $ ordinal i)"
+        , "    j = Left (unsafe_from_ordinal _ $ 1 + ordinal i)"
         , "    xs.j"
         ]
       ann `shouldBe` OccInfoPure (UsageInfo One (1, Unbounded))

@@ -467,11 +467,15 @@ vectorizeRefOp ref' op =
     IndexRef i' -> do
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
-      TC (RefType _ (TabTy tb a)) <- getType ref
-      vty <- getVectorType =<< case hoist tb a of
-        HoistSuccess a' -> return a'
-        HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
-      VVal Contiguous <$> emitOp (VectorOp $ VectorSubref ref i vty)
+      getType ref >>= \case
+        TC (RefType _ (TabTy tb a)) -> do
+          vty <- getVectorType =<< case hoist tb a of
+            HoistSuccess a' -> return a'
+            HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
+          VVal Contiguous <$> emitOp (VectorOp $ VectorSubref ref i vty)
+        refTy -> do
+          throwVectErr do
+            "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint (RefOp ref' op)
 
 vectorizePrimOp :: Emits o => PrimOp (Atom SimpIR i) -> VectorizeM i o (VAtom o)
@@ -513,7 +517,8 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
       ov <- case vv of
         ProdStability sbs -> return $ sbs !! i
         _ -> throwVectErr "Invalid projection"
-      return $ VVal ov x'
+      x'' <- normalizeProj (ProjectProduct i) x'
+      return $ VVal ov x''
     ProjectElt UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do

@@ -377,10 +377,15 @@ instance Pretty (PiType n) where
 
 instance IRRep r => Pretty (TabPiType r n) where
   pretty (TabPiType (b :> IxType ty dict) body) = let
-    prettyBinder = prettyBinderHelper (b:>ty) body
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
+    prettyBinder = case dict of
+      IxDictRawFin n -> if binderName b `isFreeIn` body
+        then parens $ p b <> ":" <> prettyTy
+        else prettyTy
+        where prettyTy = "RawFin" <+> p n
+      _ -> prettyBinderHelper (b:>ty) body
     in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
@@ -1103,8 +1108,12 @@ instance IRRep r => PrettyPrec (Hof r n) where
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where
   prettyPrec op = atPrec LowestPrec case op of
-    Seq ann _ c lamExpr -> case lamExpr of
-      UnaryLamExpr b body -> "seq" <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
+    Seq ann d c lamExpr -> case lamExpr of
+      UnaryLamExpr b body -> do
+        let rawFinPretty = case d of
+              IxDictRawFin n -> parens $ "RawFin" <+> p n
+              _ -> mempty
+        "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
       _ -> p (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
     RememberDest x y    -> "rememberDest" <+> pArg x <+> pArg y
     Place r v -> pApp r <+> "r:=" <+> pApp v

@@ -28,13 +28,13 @@ import Util
 castOp :: ScalarBaseType -> LitVal -> PrimOp (SAtom VoidS)
 castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) (Con (Lit x))
 
-exprToBlock :: EnvReader m => Expr r n -> m n (Block r n)
+exprToBlock :: EnvReader m => SExpr n -> m n (SBlock n)
 exprToBlock expr = do
   liftBuilder $ buildBlock $ do
     v <- emit $ sink expr
     return $ Var v
 
-evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SAtom n)
+evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
 evalBlock block = lowerFullySequential block >>= evalLLVM
 
 evalClosedExpr :: SExpr VoidS -> IO LitVal
@@ -43,8 +43,7 @@ evalClosedExpr expr = do
   env <- initTopState
   fst <$> runTopperM cfg env do
     block <- exprToBlock $ unsafeCoerceE expr
-    (Var name) <- evalBlock block
-    (AtomNameBinding (TopDataBound (RepVal _ (Leaf (ILit ans))))) <- lookupEnv name
+    RepVal _ (Leaf (ILit ans)) <- evalBlock block
     return ans
 
 instance Arbitrary LitVal where
