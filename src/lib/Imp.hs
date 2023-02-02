@@ -278,8 +278,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
-      DexTopFun piTy _ _ ->
-        emitCall maybeDest piTy f $ toList xs
+      DexTopFun _ piTy _ _ -> emitCall maybeDest piTy f $ toList xs
       FFITopFun _ _ -> do
         resultTy <- getType $ TopApp f xs
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
@@ -1418,8 +1417,8 @@ abstractLinktimeObjects f = do
   let allVars = freeVarsE f
   (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @TopFunNameC allVars) \v ->
     lookupTopFun v >>= \case
-      DexTopFun ty _ _ -> do
-        ty' <- getImpFunType StandardCC ty
+      DexTopFun _ piTy _ _ -> do
+        ty' <- getImpFunType StandardCC piTy
         return $ Just (v, ty')
       FFITopFun _ _ -> return Nothing
   (ptrVars, ptrTys) <- unzip <$> forMFilter (nameSetToList @PtrNameC allVars) \v -> do
@@ -1470,7 +1469,7 @@ impInstrTypes instr = case instr of
   DebugPrint _ _  -> return []
   IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
   ICall f _ -> lookupTopFun f >>= \case
-    DexTopFun piTy _ _ -> do
+    DexTopFun _ piTy _ _ -> do
       IFunType _ _ resultTys <- getImpFunType StandardCC piTy
       return resultTys
     FFITopFun _ (IFunType _ _ resultTys) -> return resultTys

@@ -301,7 +301,7 @@ instance PrettyPrec (SimpInCore n) where
     LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
     LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
     ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
-    TabLam _ lamExpr -> atPrec AppPrec $ p lamExpr
+    TabLam _ lamExpr -> atPrec AppPrec $ "tablam" <+> p lamExpr
 
 instance IRRep r => Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
@@ -850,7 +850,7 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
@@ -881,12 +881,19 @@ instance Pretty IFunType where
   pretty (IFunType cc argTys retTys) =
     "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
 
+instance Pretty (TopFunDef n) where
+  pretty = \case
+    Specialization       s -> p s
+    LinearizationPrimal  _ -> "<linearization primal>"
+    LinearizationTangent _ -> "<linearization tangent>"
+
 instance Pretty (TopFun n) where
   pretty = \case
-    DexTopFun ty def lowering ->
+    DexTopFun def ty simp lowering ->
       "Top-level Function"
-         <> hardline <+> "type:" <+> pretty ty
          <> hardline <+> "definition:" <+> pretty def
+         <> hardline <+> "type:"       <+> pretty ty
+         <> hardline <+> "simplified:" <+> pretty simp
          <> hardline <+> "lowering:" <+> pretty lowering
     FFITopFun f _ -> p f
 

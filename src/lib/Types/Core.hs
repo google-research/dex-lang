@@ -295,6 +295,7 @@ data UserEffectOp n =
 
 type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
+type CBinder = Binder CoreIR
 type CExpr  = Expr CoreIR
 type CBlock = Block CoreIR
 type CDecl  = Decl  CoreIR
@@ -410,8 +411,10 @@ data DictExpr (n::S) =
 newtype CustomRules (n::S) =
   CustomRules { customRulesMap :: M.Map (AtomName CoreIR n) (AtomRules n) }
   deriving (Semigroup, Monoid, Store)
-data AtomRules (n::S) = CustomLinearize Int SymbolicZeros (CAtom n)  -- number of implicit args, linearization function
-                        deriving (Generic)
+data AtomRules (n::S) =
+  -- number of implicit args, number of explicit args, linearization function
+  CustomLinearize Int Int SymbolicZeros (CAtom n)
+  deriving (Generic)
 
 -- === Runtime representations ===
 
@@ -524,6 +527,7 @@ emptyImportStatus = ImportStatus mempty mempty
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec TopFunName n
   , ixDictCache :: EMap AbsDict SpecDictName n
+  , linearizationCache :: EMap LinearizationSpec (PairE TopFunName TopFunName) n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
     -- only want to store one entry per module name as a simple cache eviction
     -- policy, so we store it keyed on the module name, with the text hash for
@@ -691,17 +695,18 @@ data EvalStatus a = Waiting | Running | Finished a
 type TopFunEvalStatus n = EvalStatus (TopFunLowerings n)
 
 data TopFun (n::S) =
-   DexTopFun
-     (NaryPiType SimpIR n)
-     (TopFunDef n)
-     (TopFunEvalStatus n)
+   DexTopFun (TopFunDef n) (NaryPiType SimpIR n) (LamExpr SimpIR n) (TopFunEvalStatus n)
  | FFITopFun String IFunType
    deriving (Show, Generic)
 
-type TopFunDef = SpecializationSpec
+data TopFunDef (n::S) =
+   Specialization       (SpecializationSpec n)
+ | LinearizationPrimal  (LinearizationSpec n)
+ | LinearizationTangent (LinearizationSpec n)
+   deriving (Show, Generic)
 
 newtype TopFunLowerings (n::S) = TopFunLowerings
-  { topFunObjCode :: FunObjCodeName n } -- TODO: add simp, imp etc. as needed
+  { topFunObjCode :: FunObjCodeName n } -- TODO: add optimized, imp etc. as needed
   deriving (Show, Generic, SinkableE, HoistableE, RenameE, AlphaEqE, AlphaHashableE, Pretty)
 
 data AtomBinding (r::IR) (n::S) where
@@ -912,6 +917,10 @@ data SpecializationSpec (n::S) =
    AppSpecialization (AtomName CoreIR n) (Abstracted CoreIR (ListE CType) n)
    deriving (Show, Generic)
 
+type Active = Bool
+data LinearizationSpec (n::S) =
+  LinearizationSpec (TopFunName n) [Active]
+  deriving (Show, Generic)
 
 -- === BindsOneAtomName ===
 
@@ -1177,9 +1186,9 @@ pattern RecordTyWithElems elems <- RecordTy (UnsafeFieldRowElems elems)
 -- === Typeclass instances for Name and other Haskell libraries ===
 
 instance GenericE AtomRules where
-  type RepE AtomRules = (LiftE (Int, SymbolicZeros)) `PairE` CAtom
-  fromE (CustomLinearize ni sz a) = LiftE (ni, sz) `PairE` a
-  toE (LiftE (ni, sz) `PairE` a) = CustomLinearize ni sz a
+  type RepE AtomRules = (LiftE (Int, Int, SymbolicZeros)) `PairE` CAtom
+  fromE (CustomLinearize ni ne sz a) = LiftE (ni, ne, sz) `PairE` a
+  toE (LiftE (ni, ne, sz) `PairE` a) = CustomLinearize ni ne sz a
 instance SinkableE AtomRules
 instance HoistableE AtomRules
 instance AlphaEqE AtomRules
@@ -1866,18 +1875,19 @@ instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec TopFunName
     `PairE` EMap AbsDict SpecDictName
+    `PairE` EMap LinearizationSpec (PairE TopFunName TopFunName)
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
     `PairE` ListE (        LiftE ModuleSourceName
                    `PairE` LiftE FileHash
                    `PairE` ListE ModuleName
                    `PairE` ModuleName)
-  fromE (Cache x y parseCache evalCache) =
-    x `PairE` y `PairE` LiftE parseCache `PairE`
+  fromE (Cache x y z parseCache evalCache) =
+    x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE`
       ListE [LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
              | (sourceName, ((hashVal, deps), result)) <- M.toList evalCache ]
   {-# INLINE fromE #-}
-  toE   (x `PairE` y `PairE` LiftE parseCache `PairE` ListE evalCache) =
-    Cache x y parseCache
+  toE   (x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE` ListE evalCache) =
+    Cache x y z parseCache
       (M.fromList
        [(sourceName, ((hashVal, deps), result))
        | LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
@@ -1891,13 +1901,13 @@ instance RenameE     Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty mempty mempty
+  mempty = Cache mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 x3 x4 <> Cache y1 y2 y3 y4 =
-    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4)
+  Cache x1 x2 x3 x4 x5 <> Cache y1 y2 y3 y4 y5 =
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5)
 
 instance GenericE LamBinding where
   type RepE LamBinding = PairE (LiftE Arrow) CType
@@ -2174,17 +2184,37 @@ instance RenameE        NoInlineDef
 instance AlphaEqE       NoInlineDef
 instance AlphaHashableE NoInlineDef
 
-instance GenericE TopFun where
-  type RepE TopFun = EitherE
-        (NaryPiType SimpIR `PairE` TopFunDef `PairE` ComposeE EvalStatus TopFunLowerings)
-        (LiftE (String, IFunType))
+instance GenericE TopFunDef where
+  type RepE TopFunDef = EitherE3 SpecializationSpec LinearizationSpec LinearizationSpec
   fromE = \case
-    DexTopFun ty def status -> LeftE (ty `PairE` def `PairE` ComposeE status)
-    FFITopFun name ty       -> RightE (LiftE (name, ty))
+    Specialization       s -> Case0 s
+    LinearizationPrimal  s -> Case1 s
+    LinearizationTangent s -> Case2 s
   {-# INLINE fromE #-}
   toE = \case
-    LeftE  (ty `PairE` def `PairE` ComposeE status) -> DexTopFun ty def status
-    RightE (LiftE (name, ty))                       -> FFITopFun name ty
+    Case0 s ->   Specialization       s
+    Case1 s ->   LinearizationPrimal  s
+    Case2 s ->   LinearizationTangent s
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance SinkableE      TopFunDef
+instance HoistableE     TopFunDef
+instance RenameE        TopFunDef
+instance AlphaEqE       TopFunDef
+instance AlphaHashableE TopFunDef
+
+instance GenericE TopFun where
+  type RepE TopFun = EitherE
+        (TopFunDef `PairE` NaryPiType SimpIR `PairE` LamExpr SimpIR `PairE` ComposeE EvalStatus TopFunLowerings)
+        (LiftE (String, IFunType))
+  fromE = \case
+    DexTopFun def ty simp status -> LeftE (def `PairE` ty `PairE` simp `PairE` ComposeE status)
+    FFITopFun name ty    -> RightE (LiftE (name, ty))
+  {-# INLINE fromE #-}
+  toE = \case
+    LeftE  (def `PairE` ty `PairE` simp `PairE` ComposeE status) -> DexTopFun def ty simp status
+    RightE (LiftE (name, ty))            -> FFITopFun name ty
   {-# INLINE toE #-}
 
 instance SinkableE      TopFun
@@ -2209,6 +2239,19 @@ instance HoistableE     SpecializationSpec
 instance RenameE        SpecializationSpec
 instance AlphaEqE       SpecializationSpec
 instance AlphaHashableE SpecializationSpec
+
+instance GenericE LinearizationSpec where
+  type RepE LinearizationSpec = PairE TopFunName (LiftE [Active])
+  fromE (LinearizationSpec fname actives) = PairE fname (LiftE actives)
+  {-# INLINE fromE #-}
+  toE   (PairE fname (LiftE actives)) = LinearizationSpec fname actives
+  {-# INLINE toE #-}
+
+instance SinkableE      LinearizationSpec
+instance HoistableE     LinearizationSpec
+instance RenameE        LinearizationSpec
+instance AlphaEqE       LinearizationSpec
+instance AlphaHashableE LinearizationSpec
 
 instance GenericE SolverBinding where
   type RepE SolverBinding = EitherE2
@@ -2518,8 +2561,8 @@ addMethods e (dName, methods) = do
 addFunUpdate :: Env n -> (TopFunName n, TopFunEvalStatus n) -> Env n
 addFunUpdate e (f, s) = do
   case lookupEnvPure e f of
-    TopFunBinding (DexTopFun piTy def _) ->
-      updateEnv f (TopFunBinding $ DexTopFun piTy def s) e
+    TopFunBinding (DexTopFun def ty simp _) ->
+      updateEnv f (TopFunBinding $ DexTopFun def ty simp s) e
     _ -> error "can't update ffi function impl"
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
@@ -2648,6 +2691,7 @@ instance Store (SimpInCore n)
 instance Store (SolverBinding n)
 instance IRRep r => Store (AtomBinding r n)
 instance Store (SpecializationSpec n)
+instance Store (LinearizationSpec n)
 instance Store (LamBinding n)
 instance IRRep r => Store (DeclBinding r n)
 instance Store (FieldRowElem  n)
@@ -2684,6 +2728,7 @@ instance Store (ImportStatus n)
 instance Store (TopFunLowerings n)
 instance Store a => Store (EvalStatus a)
 instance Store (TopFun n)
+instance Store (TopFunDef n)
 instance Color c => Store (Binding c n)
 instance Store (NoInlineDef n)
 instance Store (ModuleEnv n)

@@ -16,6 +16,7 @@ module TopLevel (
 
 import Data.Foldable (toList)
 import Data.Functor
+import Data.Maybe (catMaybes)
 import Control.Category ((>>>))
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
@@ -280,7 +281,7 @@ evalSourceBlock' mname block = case sbContents block of
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
-        fTop  <- emitTopFunBinding hint $ FFITopFun fname impFunTy
+        fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun fname impFunTy
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
@@ -288,12 +289,14 @@ evalSourceBlock' mname block = case sbContents block of
   DeclareCustomLinearization fname zeros expr -> do
     lookupSourceMap fname >>= \case
       Nothing -> throw UnboundVarErr $ pprint fname
-      Just (UAtomVar fname'_wrong_color) -> do
-        let fname' = undefined
+      Just (UAtomVar fname') -> do
         lookupCustomRules fname' >>= \case
           Nothing -> return ()
           Just _  -> throw TypeErr
             $ pprint fname ++ " already has a custom linearization"
+        lookupAtomName fname' >>= \case
+          NoinlineFun _ -> return ()
+          _ -> throw TypeErr "Custom linearizations only apply to @noinline functions"
         -- We do some special casing to avoid instantiating polymorphic functions.
         impl <- case expr of
           WithSrcE _ (UVar _) ->
@@ -301,8 +304,8 @@ evalSourceBlock' mname block = case sbContents block of
               WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> return $ Var v
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
-        fType <- getType fname'_wrong_color
-        (nimplicit, linFunTy) <- getLinearizationType fname zeros fType
+        fType <- getType fname'
+        (nimplicit, nexplicit, linFunTy) <- getLinearizationType fname zeros fType
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
             implTy <- getType impl
@@ -316,7 +319,7 @@ evalSourceBlock' mname block = case sbContents block of
               , pprint implTy
               ]
           Success () -> return ()
-        emitAtomRules fname' $ CustomLinearize nimplicit zeros impl
+        emitAtomRules fname' $ CustomLinearize nimplicit nexplicit zeros impl
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
@@ -559,15 +562,16 @@ evalBlock typed = do
 
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> [SpecDictName n] -> m n ()
 evalSpecializations fs sdVs = do
-  forM_ fs \f -> lookupTopFun f >>= \case
-    DexTopFun _ def Waiting -> do
-      -- Prevents infinite loop in case compiling `v` ends up requiring `v`
-      -- (even without recursion in Dex itself this is possible via the
-      -- specialization cache)
-      updateTopFunStatus f Running
-      impl <- compileTopLevelFun (getNameHint f) def
-      updateTopFunStatus f (Finished impl)
-    _ -> return ()
+  fSimps <- toposortAnnVars <$> catMaybes <$> forM fs \f -> lookupTopFun f >>= \case
+    DexTopFun _ _ simp Waiting -> return $ Just (f, simp)
+    _ -> return Nothing
+  forM_ fSimps \(f, simp) -> do
+    -- Prevents infinite loop in case compiling `v` ends up requiring `v`
+    -- (even without recursion in Dex itself this is possible via the
+    -- specialization cache)
+    updateTopFunStatus f Running
+    impl <- compileTopLevelFun (getNameHint f) simp
+    updateTopFunStatus f (Finished impl)
   forM_ sdVs \d -> do
     SpecializedDictBinding (SpecializedDict absDict@(Abs bs dict) Nothing) <- lookupEnv d
     methods <- forM [minBound..maxBound] \method -> do
@@ -626,10 +630,8 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => NameHint -> TopFunDef n -> m n (TopFunLowerings n)
-compileTopLevelFun hint fDef = do
-  fCore <- specializedFunCoreDefinition fDef
-  fSimp <- simplifyTopFunction fCore
+compileTopLevelFun :: (Topper m, Mut n) => NameHint -> SLam n -> m n (TopFunLowerings n)
+compileTopLevelFun hint fSimp = do
   fImp <- toImpFunction StandardCC fSimp
   fObj <- toCFunction hint fImp
   void $ loadObject fObj
@@ -672,18 +674,6 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
         mapM_ callDtor dtorPtrs
         destroyLinker l
   return $ NativeFunction ptr destructor
-
-specializedFunCoreDefinition :: (Topper m, Mut n) => TopFunDef n -> m n (LamExpr CoreIR n)
-specializedFunCoreDefinition s@(AppSpecialization f (Abs bs staticArgs)) = do
-  ty <- specializedFunCoreTypeTop s
-  liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
-    -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
-    -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
-    -- "noinline" function and defer its simplification.
-    NoinlineFun (NoInlineDef _ _ _ _ f') <- lookupAtomName (sink f)
-    let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-    ListE staticArgs' <- applyRename (bs@@>extraArgs) staticArgs
-    naryApp (sink f') $ staticArgs' <> map Var originalArgs
 
 toCFunction
   :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
@@ -735,12 +725,8 @@ funNameToObj
   :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
 funNameToObj v = do
   lookupEnv v >>= \case
-    TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ topFunObjCode impl
-    b -> error $ "couldn't find object cache entry: " ++ pprint b
-  -- queryObjCache v >>= \case
-  --   Just v' -> return v'
-  --   Nothing -> throw CompilerErr
-  --     $ "Expected to find an object cache entry for: " ++ pprint v
+    TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ topFunObjCode impl
+    b -> error $ "couldn't find object cache entry for " ++ pprint v ++ "\ngot:\n" ++ pprint b
 
 withCompileTime :: MonadIO m => m Result -> m Result
 withCompileTime m = do
@@ -959,83 +945,72 @@ instance Generic TopStateEx where
 
 -- === helper for custom linearization rules ===
 
-getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, CType n)
-getLinearizationType = undefined
-
--- getLinearizationType'
---   :: (Fallible1 m, EnvReader m)
---   => SourceName -> SymbolicZeros -> NaryPiType SimpIR n -> m n (Int, NaryPiType SimpIR n)
--- getLinearizationType' zeros fname fType = undefined
--- getLinearizationType' zeros fname fType = undefined
- --  liftExcept . runFallibleM =<< liftEnvReaderT (go fType REmpty [] fType)
- -- where
- --  go :: NaryPiType SimpIR n -> RNest (PiBinder SimpIR) n l
- --     -> [SType l] -> SType l
- --     -> EnvReaderT FallibleM l (Int, NaryPiType SimpIR n)
- --  go fullTy implicitArgs revArgTys = \case
- --    Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
- --      unless (eff == Pure) $ throw TypeErr $
- --        "Custom linearization can only be defined for pure functions" ++ but
- --      let implicit = do
- --            unless (null revArgTys) $ throw TypeErr $
- --              "To define a custom linearization, all implicit and class " ++
- --              "arguments of a function have to precede all explicit " ++
- --              "arguments. However, the type of " ++ pprint fname ++
- --              "is:\n\n" ++ pprint fullTy
- --            refreshAbs (Abs pbinder b') \pbinder' b'' ->
- --              go fullTy (RNest implicitArgs pbinder') [] b''
- --      case arr of
- --        ClassArrow -> implicit
- --        ImplicitArrow -> implicit
- --        PlainArrow -> do
- --          b <- case hoist binder b' of
- --            HoistSuccess b -> return b
- --            HoistFailure _ -> throw TypeErr $
- --              "Custom linearization cannot be defined for dependent " ++
- --              "functions" ++ but
- --          go fullTy implicitArgs (a:revArgTys) b
- --        LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
- --    resultTy -> do
- --      when (null revArgTys) $ throw TypeErr $
- --        "Custom linearization can only be defined for functions" ++ but
- --      resultTyTan <- maybeTangentType resultTy >>= \case
- --        Just rtt -> return rtt
- --        Nothing  -> throw TypeErr $ unlines
- --          [ "The type of the result of " ++ pprint fname ++ " is:"
- --          , ""
- --          , "  " ++ pprint resultTy
- --          , ""
- --          , "but it does not have a well-defined tangent space."
- --          ]
- --      tangentWrapper <- case zeros of
- --        InstantiateZeros -> return id
- --        SymbolicZeros -> do
- --          lookupSourceMap "SymbolicTangent" >>= \case
- --            Nothing -> throw UnboundVarErr $
- --              "Can't define a custom linearization with symbolic zeros: " ++
- --              "the SymbolicTangent type is not in scope."
- --            Just (UTyConVar symTanName) -> do
- --              TyConBinding dataDefName _ <- lookupEnv symTanName
- --              return \elTy -> TypeCon "SymbolicTangent" dataDefName
- --                $ DataDefParams [(PlainArrow, elTy)]
- --            Just _ -> throw TypeErr
- --              "SymbolicTangent should name a `data` type"
- --      let prependTangent linTail ty =
- --            maybeTangentType ty >>= \case
- --              Just tty -> tangentWrapper tty --> linTail
- --              Nothing  -> throw TypeErr $ unlines
- --                [ "The type of one of the arguments of " ++ pprint fname ++
- --                  " is:"
- --                , ""
- --                , "  " ++ pprint ty
- --                , ""
- --                , "but it doesn't have a well-defined tangent space."
- --                ]
- --      tanFunTy <- foldM prependTangent resultTyTan revArgTys
- --      (nestLength $ unRNest implicitArgs,) . prependImplicit implicitArgs
- --        <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
- --    where
- --      but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
- --      prependImplicit :: RNest (PiBinder SimpIR) n l -> NaryPiType SimpIR l -> NaryPiType SimpIR n
- --      prependImplicit is ty@(NaryPiType bs eff resultTy) =
- --        NaryPiType (unRNest is >>> bs) eff resultTy
+getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, Int, CType n)
+getLinearizationType fname zeros fType = do
+  liftExcept . runFallibleM =<< liftEnvReaderT (go fType REmpty [] fType)
+ where
+  go :: CType n -> RNest PiBinder n l
+     -> [CType l] -> CType l
+     -> EnvReaderT FallibleM l (Int, Int, CType n)
+  go fullTy implicitArgs revArgTys = \case
+    Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
+      case eff of
+        Pure -> return ()
+        _ -> throw TypeErr $
+         "Custom linearization can only be defined for pure functions" ++ but
+      let implicit = do
+            unless (null revArgTys) $ throw TypeErr $
+              "To define a custom linearization, all implicit and class " ++
+              "arguments of a function have to precede all explicit " ++
+              "arguments. However, the type of " ++ pprint fname ++
+              "is:\n\n" ++ pprint fullTy
+            refreshAbs (Abs pbinder b') \pbinder' b'' ->
+              go fullTy (RNest implicitArgs pbinder') [] b''
+      case arr of
+        ClassArrow -> implicit
+        ImplicitArrow -> implicit
+        PlainArrow -> do
+          b <- case hoist binder b' of
+            HoistSuccess b -> return b
+            HoistFailure _ -> throw TypeErr $
+              "Custom linearization cannot be defined for dependent " ++
+              "functions" ++ but
+          go fullTy implicitArgs (a:revArgTys) b
+        LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
+    resultTy -> do
+      when (null revArgTys) $ throw TypeErr $
+        "Custom linearization can only be defined for functions" ++ but
+      resultTyTan <- maybeTangentType resultTy >>= \case
+        Just rtt -> return rtt
+        Nothing  -> throw TypeErr $ unlines
+          [ "The type of the result of " ++ pprint fname ++ " is:"
+          , ""
+          , "  " ++ pprint resultTy
+          , ""
+          , "but it does not have a well-defined tangent space."
+          ]
+      let prependTangent linTail ty =
+            maybeTangentType ty >>= \case
+              Just tty -> case zeros of
+                InstantiateZeros -> tty --> linTail
+                SymbolicZeros -> do
+                  wrappedTTy <- symbolicTangentTy tty
+                  wrappedTTy --> linTail
+              Nothing  -> throw TypeErr $ unlines
+                [ "The type of one of the arguments of " ++ pprint fname ++
+                  " is:"
+                , ""
+                , "  " ++ pprint ty
+                , ""
+                , "but it doesn't have a well-defined tangent space."
+                ]
+      tanFunTy <- foldM prependTangent resultTyTan revArgTys
+      let nImplicit = nestLength $ unRNest implicitArgs
+      let nExplicit = length revArgTys
+      finalTy <- prependImplicit implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+      return (nImplicit, nExplicit, finalTy)
+    where
+      but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+      prependImplicit :: RNest PiBinder n l -> CType l -> CType n
+      prependImplicit REmpty ty = ty
+      prependImplicit (RNest bs b) ty = prependImplicit bs (Pi (PiType b Pure ty ))

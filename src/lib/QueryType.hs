@@ -19,7 +19,7 @@ module QueryType (
   ixDictType, getSuperclassDicts,
   ixTyFromDict, instantiateHandlerType, getDestBlockType,
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
-  rawStrType, rawFinTabType, getTypeTopFun, getReferentTypeRWSAction
+  rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun
   ) where
 
 import Control.Monad
@@ -637,10 +637,9 @@ labeledRowDifference' (Ext (LabeledItems items) rest)
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
 
-getTypeTopFun :: (IRRep r, EnvReader m) => TopFunName n -> m n (NaryPiType r n)
+getTypeTopFun :: EnvReader m => TopFunName n -> m n (NaryPiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
-  -- TODO: figure out the story with IR variants
-  DexTopFun piTy _ _ -> return $ unsafeCoerceIRE piTy
+  DexTopFun _ piTy _ _ -> return piTy
   FFITopFun _ iTy -> liftIFunType iTy
 
 liftIFunType :: (IRRep r, EnvReader m) => IFunType -> m n (NaryPiType r n)

@@ -304,7 +304,7 @@ instance IRRep r => HasType r (Expr r) where
     TopApp f xs -> do
       NaryPiType bs _ resultTy <- getTypeTopFun =<< renameM f
       xs' <- mapM renameM xs
-      applySubst (bs @@> map SubstVal xs') resultTy
+      checkedApplyNaryAbs (Abs bs resultTy) xs'
     Atom x   -> getTypeE x
     PrimOp op -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof

@@ -340,13 +340,17 @@ normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
 
 -- assumes the atom is already normalized
 normalizeProj :: EnvReader m => Projection -> Atom r n -> m n (Atom r n)
-normalizeProj UnwrapNewtype = \case
+normalizeProj UnwrapNewtype atom = case atom of
    NewtypeCon  _ x -> return x
    x -> return $ ProjectElt UnwrapNewtype x
-normalizeProj (ProjectProduct i) = \case
+normalizeProj (ProjectProduct i) atom = case atom of
   Con (ProdCon xs) -> return $ xs !! i
   DepPair l _ _ | i == 0 -> return l
   DepPair _ r _ | i == 1 -> return r
+  SimpInCore (LiftSimp maybeTy x) -> do
+    maybeTy' <- forM maybeTy \t -> projType i t atom
+    x' <- normalizeProj (ProjectProduct i) x
+    return $ SimpInCore $ LiftSimp maybeTy' x'
   RepValAtom (RepVal t tree) -> do
     t' <- projType i t (RepValAtom (RepVal t tree))
     case tree of

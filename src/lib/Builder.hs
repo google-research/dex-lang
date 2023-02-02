@@ -134,6 +134,13 @@ liftTopBuilderHoisted cont = do
   Distinct <- getDistinct
   return $ runHardFail $ runTopBuilderT env $ localTopBuilder cont
 
+liftTopBuilderAndEmit
+  :: (HoistingTopBuilder TopEnvFrag m, RenameE e, SinkableE e, HoistableE e)
+  => (forall l. (Mut l, DExt n l) => TopBuilderM l (e l))
+  -> m n (Maybe (e n))
+liftTopBuilderAndEmit cont = do
+  liftTopBuilderHoisted cont >>= emitHoistedEnv
+
 newtype DoubleBuilderT (r::IR) (topEmissions::B) (m::MonadKind) (n::S) (a:: *) =
   DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env topEmissions (BuilderEmissions r) m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
@@ -282,8 +289,10 @@ emitTopLet hint letAnn expr = do
   ty <- getType expr
   emitBinding hint $ AtomNameBinding $ LetBound (DeclBinding letAnn ty expr)
 
-emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFun n -> m n (TopFunName n)
-emitTopFunBinding hint f = emitBinding hint $ TopFunBinding f
+emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> LamExpr SimpIR n -> m n (TopFunName n)
+emitTopFunBinding hint def f = do
+  ty <- getNaryLamExprType f
+  emitBinding hint $ TopFunBinding $ DexTopFun def ty f Waiting
 
 updateTopFunStatus :: (Mut n, TopBuilder m) => TopFunName n -> EvalStatus (TopFunLowerings n) -> m n ()
 updateTopFunStatus f status =
@@ -326,13 +335,24 @@ queryIxDictCache d = do
   cache <- ixDictCache <$> getCache
   return $ lookupEMap cache d
 
+queryLinearizationCache :: EnvReader m => LinearizationSpec n -> m n (Maybe (TopFunName n, TopFunName n))
+queryLinearizationCache s = do
+  cache <- linearizationCache <$> getCache
+  return $ fmap fromPairE $ lookupEMap cache s
+
+extendLinearizationCache
+  :: (TopBuilder m, Fallible1 m, Mut n)
+  => LinearizationSpec n -> (TopFunName n, TopFunName n) -> m n ()
+extendLinearizationCache s fs =
+  extendCache $ mempty { linearizationCache = eMapSingleton s (toPairE fs) }
+
 finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [LamExpr SimpIR n] -> m n ()
 finishSpecializedDict name methods =
   emitPartialTopEnvFrag $ mempty {fragFinishSpecializedDict = toSnocList [(name, methods)]}
 
 queryObjCache :: EnvReader m => TopFunName n -> m n (Maybe (FunObjCodeName n))
 queryObjCache v = lookupEnv v >>= \case
-  TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
+  TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
   _ -> return Nothing
 
 emitObjFile
@@ -555,6 +575,13 @@ instance (SinkableE e, HoistableState e, ScopableBuilder r m) => ScopableBuilder
 
 instance (SinkableE e, HoistableState e, HoistingTopBuilder frag m)
   => HoistingTopBuilder frag (StateT1 e m) where
+  emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
+  {-# INLINE emitHoistedEnv #-}
+  canHoistToTop e = lift11 $ canHoistToTop e
+  {-# INLINE canHoistToTop #-}
+
+instance (SinkableE e, HoistingTopBuilder frag m)
+  => HoistingTopBuilder frag (ReaderT1 e m) where
   emitHoistedEnv ab = lift11 $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
   canHoistToTop e = lift11 $ canHoistToTop e
@@ -810,6 +837,15 @@ asNaryLam ty f = liftBuilder do
   buildNaryLamExprFromPi ty \xs ->
     naryApp (sink f) (map Var $ toList xs)
 
+buildNonDepNaryLamExpr
+  :: ScopableBuilder r m
+  => [Type r n]
+  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
+  -> m n (LamExpr r n)
+buildNonDepNaryLamExpr tys cont = do
+  bs <- typesAsBinderNest tys
+  buildNaryLamExpr bs cont
+
 buildNaryLamExpr
   :: ScopableBuilder r m
   => (EmptyAbs (Nest (Binder r)) n)
@@ -893,22 +929,6 @@ buildSplitCase tys scrut resultTy match fallback = do
       0 -> match v
       1 -> fallback v
       _ -> error "should only have two cases"
-
-buildLamExprWithRecon
-  :: ScopableBuilder r m
-  => EmptyAbs (Nest (Binder r)) n
-  -> (forall l. (Emits l, DExt n l) => [AtomName r l] -> m l (e l))
-  -> (forall l1 l2. Nest (Binder r) n l1 -> Nest (Decl r) l1 l2 ->  e l2 -> m l2 (Atom r l2, recon))
-  -> m n (LamExpr r n, recon)
-buildLamExprWithRecon _ _ _ = undefined
-
-buildForWithRecon
-  :: (Emits n, ScopableBuilder r m)
-  => NameHint -> Direction -> IxType r n
-  -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (e l))
-  -> (forall l1 l2. Binder r n l1 -> Nest (Decl r) l1 l2 ->  e l2 -> m l2 (Atom r l2, recon))
-  -> m n (Atom r n, recon)
-buildForWithRecon _ _ _ _ _ = undefined
 
 buildEffLam
   :: ScopableBuilder r m
@@ -1008,10 +1028,10 @@ tangentType ty = maybeTangentType ty >>= \case
   Just tanTy -> return tanTy
   Nothing -> error $ "can't differentiate wrt type: " ++ pprint ty
 
-maybeTangentType :: EnvReader m => SType n -> m n (Maybe (SType n))
+maybeTangentType :: (IRRep r, EnvReader m) => Type r n -> m n (Maybe (Type r n))
 maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
 
-maybeTangentType' :: SType n -> EnvReaderT Maybe n (SType n)
+maybeTangentType' :: IRRep r => Type r n -> EnvReaderT Maybe n (Type r n)
 maybeTangentType' ty = case ty of
   TabTy b bodyTy -> do
     refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
@@ -1047,6 +1067,25 @@ addTangent x y = do
       ty -> notTangent ty
     ty -> notTangent ty
     where notTangent ty = error $ "Not a tangent type: " ++ pprint ty
+
+symbolicTangentTy :: (EnvReader m, Fallible1 m) => CType n -> m n (CType n)
+symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
+  Just (UTyConVar symTanName) -> do
+    TyConBinding dataDefName _ <- lookupEnv symTanName
+    return $ TypeCon "SymbolicTangent" dataDefName $
+      DataDefParams [(PlainArrow, elTy)]
+  Nothing -> throw UnboundVarErr $
+    "Can't define a custom linearization with symbolic zeros: " ++
+    "the SymbolicTangent type is not in scope."
+  Just _ -> throw TypeErr "SymbolicTangent should name a `data` type"
+
+symbolicTangentZero :: EnvReader m => SType n -> m n (SAtom n)
+symbolicTangentZero argTy = return $ SumVal [UnitTy, argTy] 0 UnitVal
+
+symbolicTangentNonZero :: EnvReader m => SAtom n -> m n (SType n)
+symbolicTangentNonZero val = do
+  ty <- getType val
+  return $ SumVal [UnitTy, ty] 1 val
 
 -- === builder versions of common top-level emissions ===
 
@@ -1195,7 +1234,7 @@ ieq :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ BinOp (ICmp Equal) x y
 
-fromPair :: Builder r m => Atom r n -> m n (Atom r n, Atom r n)
+fromPair :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n (Atom r n, Atom r n)
 fromPair pair = do
   ~[x, y] <- getUnpacked pair
   return (x, y)
