@@ -78,6 +78,7 @@ lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
     Abs (destBinder:>resultDestTy) <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
       traverseBlockWithDest dest b $> UnitVal
+{-# SCC lowerFullySequential #-}
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM SimpIR UnitB LFS
@@ -322,7 +323,7 @@ vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
       -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
       Failure errs -> error $ pprint errs
       Success (block', errs) -> return $ (Abs d block', errs)
-{-# INLINE vectorizeLoops #-}
+{-# SCC vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
 addVectErrCtx name payload m =

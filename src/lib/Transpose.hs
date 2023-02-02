@@ -208,7 +208,7 @@ transposeExpr expr ct = case expr of
       False -> do
         e' <- substNonlin e
         void $ buildCase e' UnitTy \i v -> do
-          v' <- emitAtomToName noHint v
+          v' <- emit (Atom v)
           Abs b body <- return $ alts !! i
           extendSubst (b @> RenameNonlin v') do
             transposeBlock body (sink ct)

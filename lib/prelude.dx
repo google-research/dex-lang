@@ -1845,6 +1845,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
 def get_output_stream (_:Unit) : {IO} Stream WriteMode =
   MkStream $ %outputStream
 
+@noinline
 def print (s:String) : {IO} Unit =
   stream = get_output_stream ()
   fwrite stream s
@@ -1871,6 +1872,7 @@ Not to be confused with a partially applied function
 
 '### Error throwing
 
+@noinline
 def error {a} (s:String) : a = unsafe_io do
   print s
   %throwError a
@@ -2567,7 +2569,7 @@ def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
   fst_ref stack := n_new
 
 stack_init_size = 16
-def with_stack {r} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h} r) : r =
+def with_stack {r eff} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h|eff} r) : {|eff} r =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
   with_state (0, init_stack) \ref . f ref
 

@@ -325,7 +325,7 @@ reconstruct ctx e = case ctx of
   Stop -> return e
   TabAppCtx ixs s ctx' -> withSubst s $ reconstructTabApp ctx' e ixs
   EmitToAtomCtx ctx' -> emitExprToAtom e >>= reconstruct ctx'
-  EmitToNameCtx ctx' -> emitAtomToName noHint e >>= reconstruct ctx'
+  EmitToNameCtx ctx' -> emit (Atom e) >>= reconstruct ctx'
   RepWrap ctx' -> reconstruct ctx' $ toE e
 {-# INLINE reconstruct #-}
 

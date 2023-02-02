@@ -126,7 +126,7 @@ inferTopUDecl (ULet letAnn (UPatAnn p tyAnn) rhs) result = case p of
   _ -> do
     PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
       val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
-      v <- emitAtomToName (getNameHint p) val
+      v <- emitHinted (getNameHint p) $ Atom val
       bindLamPat p v do
         applyDefaults
         renameM result
@@ -633,7 +633,7 @@ instance Inferer InfererM where
       GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
 instance Builder CoreIR (InfererM i) where
-  emitDecl hint ann expr = do
+  rawEmitDecl hint ann expr = do
     -- This zonking, and the zonking of the bindings elsewhere, is only to
     -- prevent `getType` from failing. But maybe we should just catch the
     -- failure if it occurs and generate a fresh inference name for the type in
@@ -641,7 +641,7 @@ instance Builder CoreIR (InfererM i) where
     expr' <- zonk expr
     ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
-  {-# INLINE emitDecl #-}
+  {-# INLINE rawEmitDecl #-}
 
 type InferenceNameBinders = Nest (BinderP (AtomNameC CoreIR) SolverBinding)
 
@@ -1095,7 +1095,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
     x' <- inferRho noHint x
     (liftM Var $ emitHinted hint $ App f' (x':|[])) >>= matchRequirement
   UPrim UProjNewtype [x] -> do
-    x' <- inferRho hint x >>= emitAtomToName hint
+    x' <- inferRho hint x >>= emitHinted hint . Atom
     return $ unwrapNewtype $ Var x'
   UPrim prim xs -> do
     xs' <- forM xs \x -> do
@@ -2123,9 +2123,9 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     ty <- getType x
     _  <- fromPairType ty
     x' <- zonk x  -- ensure it has a pair type before unpacking
-    x1 <- getFst x' >>= zonk >>= emitAtomToName (getNameHint p1)
+    x1 <- getFst x' >>= zonk >>= emit . Atom
     bindLamPat p1 x1 do
-      x2  <- getSnd x' >>= zonk >>= emitAtomToName (getNameHint p2)
+      x2  <- getSnd x' >>= zonk >>= emit . Atom
       bindLamPat p2 x2 do
         cont
   UPatDepPair (PairB p1 p2) -> do
@@ -2133,9 +2133,9 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     ty <- getType x
     _  <- fromDepPairType ty
     x' <- zonk x  -- ensure it has a dependent pair type before unpacking
-    x1 <- getFst x' >>= zonk >>= emitAtomToName noHint
+    x1 <- getFst x' >>= zonk >>= emit . Atom
     bindLamPat p1 x1 do
-      x2  <- getSnd x' >>= zonk >>= emitAtomToName noHint
+      x2  <- getSnd x' >>= zonk >>= emit . Atom
       bindLamPat p2 x2 do
         cont
   UPatCon ~(InternalName _ conName) ps -> do
@@ -2149,7 +2149,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         (params, UnitE) <- inferParams (Abs paramBs UnitE)
         constrainVarTy v $ TypeCon sourceName dataDefName params
         x <- cheapNormalize =<< zonk (Var v)
-        xs <- forM idxss \idxs -> normalizeNaryProj idxs x >>= emitAtomToName noHint
+        xs <- forM idxss \idxs -> normalizeNaryProj idxs x >>= emit . Atom
         bindLamPats ps xs cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
   UPatRecord rowPat -> do
@@ -2176,7 +2176,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           bindPats c (ls ++ [l], joinNest ps (Nest p Empty), rvn) rest
         UDynFieldsPat fv p rest -> do
           resolveDelay rv \rv' -> do
-            fv' <- emitAtomToName noHint =<< checkRho noHint
+            fv' <- emit . Atom =<< checkRho noHint
               (WithSrcE Nothing $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
@@ -2185,7 +2185,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
           resolveDelay rv \rv' -> do
-            lv' <- emitAtomToName noHint =<< checkRho noHint
+            lv' <- emit. Atom  =<< checkRho noHint
               (WithSrcE Nothing $ UVar lv) (NewtypeTyCon LabelType)
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
@@ -2219,7 +2219,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
               (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
               (Var r)))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
-          restRecordName <- emitAtomToName noHint restRecord
+          restRecordName <- emit (Atom restRecord)
           bindLamPats ps itemsNestOrdered $ f restRecordName
   UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"

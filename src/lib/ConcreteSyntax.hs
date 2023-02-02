@@ -41,6 +41,7 @@ import Types.Source
 
 sourceBlocks :: Parser [CSourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
+{-# SCC sourceBlocks #-}
 
 -- === Parsing target ADT ===
 

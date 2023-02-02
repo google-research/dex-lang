@@ -260,7 +260,7 @@ linearize f x = do
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
 linearizeLambdaApp (UnaryLamExpr b body) x = do
-  vp <- emitAtomToName noHint x
+  vp <- emit $ Atom x
   extendActiveSubst b vp do
     WithTangent primalResult tangentAction <- linearizeBlock body
     tanFun <- tangentFunAsLambda tangentAction
