@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -47,11 +48,14 @@ typedef struct {
 } Array;
 
 typedef struct {
+  // These should be 64-bit so they never overflow
   atomic_size_t top, bottom;
   _Atomic(Array *) array;
 } Deque;
 
 void init(Deque* q, int size_hint) {
+  // This does not appear in https://fzn.fr/readings/ppopp13.pdf; I am imputing
+  // it.
   atomic_init(&q->top, 0);
   atomic_init(&q->bottom, 0);
   Array* a = (Array*) malloc(sizeof(Array) + sizeof(Work*) * size_hint);
@@ -60,6 +64,28 @@ void init(Deque* q, int size_hint) {
 }
 
 void resize(Deque* q) {
+  // This does not appear in https://fzn.fr/readings/ppopp13.pdf; I am imputing
+  // it.
+  printf("Resizing queue %p\n", q);
+  Array *a = atomic_load_explicit(&q->array, memory_order_relaxed);
+  size_t old_size = a->size;
+  size_t new_size = old_size * 2;
+  Array *new = malloc(sizeof(Array) + sizeof(Work*) * new_size);
+  atomic_init(&new->size, new_size);
+  size_t t = atomic_load_explicit(&q->top, memory_order_relaxed);
+  size_t b = atomic_load_explicit(&q->bottom, memory_order_relaxed);
+  for (size_t i = t; i < b; i++) {
+    new->buffer[i % new_size] = a->buffer[i % old_size];
+  }
+  atomic_store_explicit(&q->array, new, memory_order_relaxed);
+  // Question: When is it safe to free the old array *a?  In the original Chase
+  // and Lev paper, that was taken care of by the garbage collector, which
+  // presumably knew whether any other thread was currently in steal and trying
+  // to read a value from it.
+  // In our case, we can't safely free *a here, because another thread could
+  // be trying to read it.  So we just leak the buffer -- since we only ever
+  // grow these queues, and always by 2x, the leaked memory is never more than
+  // the memory in use by the live queues.
 }
 
 Work* take(Deque *q) {
@@ -210,6 +236,8 @@ Work* done_task(Work* w) {
 }
 
 int main(int argc, char **argv) {
+  // Check that top and bottom are 64-bit so they never overflow
+  assert(sizeof(atomic_size_t) == 8);
   pthread_t threads[nthreads];
   int tids[nthreads];
   thread_queues = (Deque*) malloc(nthreads * sizeof(Deque));
@@ -220,7 +248,7 @@ int main(int argc, char **argv) {
   done_work->join_count = nthreads * nprints;
   for (int i = 0; i < nthreads; ++i) {
     tids[i] = i;
-    init(&thread_queues[i], 128);
+    init(&thread_queues[i], 8);
     for (int j = 0; j < nprints; ++j) {
       Work* work = (Work*) malloc(sizeof(Work) + 2 * sizeof(int*));
       work->code = &print_task;
