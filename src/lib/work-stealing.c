@@ -125,6 +125,8 @@ Work* steal(Deque *q) {
 
 Deque* thread_queues;
 
+atomic_bool done;
+
 // Trampoline: Returns the next item to work on, or NULL if there aren't any.
 Work* do_one_work(int id, Work* work) {
   printf("Worker %d running item %p\n", id, work);
@@ -150,8 +152,7 @@ Work* join_work(Work* work) {
 void* thread(void* payload) {
   int id = * (int*)payload;
   Deque* my_queue = &thread_queues[id];
-  bool done = false;
-  while (!done) {
+  while (true) {
     Work* work = take(my_queue);
     if (work != EMPTY) {
       do_work(id, work);
@@ -171,9 +172,14 @@ void* thread(void* payload) {
         }
       }
       if (stolen == EMPTY) {
-        // Do I have a proof that all the queues are empty now, and the system
-        // is therefore done, or are race conditions possible?
-        done = true;
+        // Even though the queues we all empty when I tried them, somebody
+        // might have added some more work since.  Busy-wait until the global
+        // "done" flag is set.
+        if (atomic_load(&done)) {
+          break;
+        } else {
+          continue;
+        }
       } else {
         do_work(id, stolen);
       }
@@ -191,8 +197,15 @@ Work* print_task(Work* w) {
   int* payload = (int*)w->args[0];
   int item = *payload;
   printf("Did item %p with payload %d\n", w, item);
+  Work* cont = (Work*)w->args[1];
   free(payload);
   free(w);
+  return join_work(cont);
+}
+
+Work* done_task(Work* w) {
+  free(w);
+  atomic_store(&done, true);
   return NULL;
 }
 
@@ -200,16 +213,22 @@ int main(int argc, char **argv) {
   pthread_t threads[nthreads];
   int tids[nthreads];
   thread_queues = (Deque*) malloc(nthreads * sizeof(Deque));
+  int nprints = 10;
+  atomic_store(&done, false);
+  Work* done_work = (Work*) malloc(sizeof(Work));
+  done_work->code = &done_task;
+  done_work->join_count = nthreads * nprints;
   for (int i = 0; i < nthreads; ++i) {
     tids[i] = i;
     init(&thread_queues[i], 128);
-    for (int j = 0; j < 100; ++j) {
-      Work* work = (Work*) malloc(sizeof(Work) + sizeof(int*));
+    for (int j = 0; j < nprints; ++j) {
+      Work* work = (Work*) malloc(sizeof(Work) + 2 * sizeof(int*));
       work->code = &print_task;
       work->join_count = 0;
       int* payload = malloc(sizeof(int));
       *payload = 1000 * i + j;
       work->args[0] = payload;
+      work->args[1] = done_work;
       push(&thread_queues[i], work);
     }
   }
@@ -225,5 +244,6 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
   }
+  printf("Expect %d lines of output (including this one)\n", 2 * nthreads * nprints + nthreads + 2);
   return 0;
 }
