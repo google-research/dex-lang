@@ -433,12 +433,12 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 -- Not sure why the ordinary `sum/for` version doesn't work anymore
 :p
     n = 3 + 7
-    fsum view i:(Fin n). 1.0
+    fsum for i:(Fin n). 1.0
 > 10.
 
 :p
     n = 4
-    fsum view i:(Fin n). 1.0
+    fsum for i:(Fin n). 1.0
 > 4.
 
 :p

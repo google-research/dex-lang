@@ -2181,7 +2181,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
             ans <- emitExpr (RecordVariantOp $ RecordSplit (Var fv') (Var rv'))
-            [subr, rv''] <- emitUnpacked $ unwrapNewtype ans
+            [subr, rv''] <- emitUnpacked ans
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
           resolveDelay rv \rv' -> do
@@ -2191,7 +2191,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
             ans <- emitExpr (RecordVariantOp $ RecordSplitDynamic (Var lv') (Var rv'))
-            [val, rv''] <- emitUnpacked $ unwrapNewtype ans
+            [val, rv''] <- emitUnpacked ans
             bindLamPat p val $ bindPats c (mempty, Empty, rv'') rest
 
       -- Unpacks the record and returns the components in order, as if they
@@ -2205,7 +2205,9 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         let itemsMap = M.fromList $ zip labelOrder itemsNatural
         return $ (itemsMap M.!) <$> [0..M.size itemsMap - 1]
 
-      resolveDelay :: EmitsBoth o => ([Label], Nest UPat i l, CAtomName o) -> (CAtomName o -> InfererM l o a) -> InfererM i o a
+      resolveDelay
+        :: EmitsBoth o => ([Label], Nest UPat i l, CAtomName o)
+        -> (CAtomName o -> InfererM l o a) -> InfererM i o a
       resolveDelay (ls, ps, r) f = case ps of
         Empty -> f r
         _     -> do

@@ -338,10 +338,13 @@ normalizeNaryProj :: EnvReader m => [Projection] -> Atom r n -> m n (Atom r n)
 normalizeNaryProj [] x = return x
 normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
 
--- assumes the atom is already normalized
+-- assumes the atom itself is already normalized
 normalizeProj :: EnvReader m => Projection -> Atom r n -> m n (Atom r n)
 normalizeProj UnwrapNewtype atom = case atom of
    NewtypeCon  _ x -> return x
+   SimpInCore (LiftSimp (Just (NewtypeTyCon t)) x) -> do
+     t' <- snd <$> unwrapNewtypeType t
+     return $ SimpInCore $ LiftSimp (Just t') x
    x -> return $ ProjectElt UnwrapNewtype x
 normalizeProj (ProjectProduct i) atom = case atom of
   Con (ProdCon xs) -> return $ xs !! i

@@ -175,30 +175,34 @@ tangentFunAsLambda cont = do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
 
 getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomName n] -> m n (EmptyAbs (Nest SBinder) n)
-getTangentArgTys [] = return $ EmptyAbs Empty
-getTangentArgTys (v:vs) = getType v >>= \case
-  -- This is a hack to handle heaps/references. They normally come in pairs
-  -- like this, but there's nothing to prevent users writing programs that
-  -- sling around heap variables by themselves. We should try to do something
-  -- better...
-  TC HeapType -> do
-    ref:vs' <- return vs
-    let h = v
-    RefTy (Var h') referentTy <- getType ref
-    tt <- tangentType referentTy
-    if h == h'
-      then do
-        withFreshBinder (getNameHint h) (TC HeapType) \hb -> do
-          let refTy' = RefTy (Var (binderName hb)) (sink tt)
-          withFreshBinder (getNameHint ref) refTy' \refb -> do
-            Abs bs UnitE <- getTangentArgTys $ sinkList vs'
-            return $ EmptyAbs $ Nest (hb:>TC HeapType) $ Nest (refb:>refTy') bs
-      else error "unexpected heap/ref pair"
-  ty -> do
-    tt <- tangentType ty
-    withFreshBinder (getNameHint v) tt \b -> do
-      Abs bs UnitE <- getTangentArgTys $ sinkList vs
-      return $ EmptyAbs $ Nest (b:>tt) bs
+getTangentArgTys topVs = go mempty topVs where
+  go :: (Fallible1 m, EnvExtender m)
+     => EMap SAtomName SAtomName n -> [SAtomName n] -> m n (EmptyAbs (Nest SBinder) n)
+  go _ [] = return $ EmptyAbs Empty
+  go heapMap (v:vs) = getType v >>= \case
+    -- This is a hack to handle heaps/references. They normally come in pairs
+    -- like this, but there's nothing to prevent users writing programs that
+    -- sling around heap variables by themselves. We should try to do something
+    -- better...
+    TC HeapType -> do
+      withFreshBinder (getNameHint v) (TC HeapType) \hb -> do
+        let newHeapMap = sink heapMap <> eMapSingleton (sink v) (binderName hb)
+        Abs bs UnitE <- go newHeapMap $ sinkList vs
+        return $ EmptyAbs $ Nest (hb:>TC HeapType) bs
+    RefTy (Var h) referentTy -> do
+      case lookupEMap heapMap h of
+        Nothing -> error "shouldn't happen?"
+        Just h' -> do
+          tt <- tangentType referentTy
+          let refTy = RefTy (Var h') tt
+          withFreshBinder (getNameHint v) refTy \refb -> do
+            Abs bs UnitE <- go (sink heapMap) $ sinkList vs
+            return $ EmptyAbs $ Nest (refb:>refTy) bs
+    ty -> do
+      tt <- tangentType ty
+      withFreshBinder (getNameHint v) tt \b -> do
+        Abs bs UnitE <- go (sink heapMap) $ sinkList vs
+        return $ EmptyAbs $ Nest (b:>tt) bs
 
 -- tangent lambda
 type LinLam = SLam

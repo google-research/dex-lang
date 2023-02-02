@@ -18,7 +18,7 @@ def first {n a} (xs:n=>a) : Maybe a =
 
 def all_except_last {n a} (xs:n=>a) : List a =
   shortSize = Fin (size n -| 1)
-  allButLast = view i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
+  allButLast = for i:shortSize. xs.(unsafe_from_ordinal _ (ordinal i))
   (AsList _ allButLast)
 
 def merge_unique_sorted_lists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =

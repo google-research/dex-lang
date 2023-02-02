@@ -14,10 +14,8 @@ module TopLevel (
   ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, evalLLVM) where
 
-import Data.Foldable (toList)
 import Data.Functor
 import Data.Maybe (catMaybes)
-import Control.Category ((>>>))
 import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
@@ -560,8 +558,8 @@ evalBlock typed = do
       applyReconTop recon v
 {-# SCC evalBlock #-}
 
-evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> [SpecDictName n] -> m n ()
-evalSpecializations fs sdVs = do
+evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
+evalSpecializations fs = do
   fSimps <- toposortAnnVars <$> catMaybes <$> forM fs \f -> lookupTopFun f >>= \case
     DexTopFun _ _ simp Waiting -> return $ Just (f, simp)
     _ -> return Nothing
@@ -572,33 +570,6 @@ evalSpecializations fs sdVs = do
     updateTopFunStatus f Running
     impl <- compileTopLevelFun (getNameHint f) simp
     updateTopFunStatus f (Finished impl)
-  forM_ sdVs \d -> do
-    SpecializedDictBinding (SpecializedDict absDict@(Abs bs dict) Nothing) <- lookupEnv d
-    methods <- forM [minBound..maxBound] \method -> do
-      ty <- liftEnvReaderM $ ixMethodType method absDict
-      lamExpr <- liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
-        let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
-        dict' <- applyRename (bs @@> extraArgs) dict
-        let actualArgs = case method of Size -> []  -- size is thunked
-                                        _    -> map Var methodArgs
-        methodImpl <- emitExpr $ ProjMethod dict' (fromEnum method)
-        naryApp methodImpl actualArgs
-      simplifyTopFunction lamExpr
-    finishSpecializedDict d methods
-
-ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType CoreIR n)
-ixMethodType method absDict = do
-  refreshAbs absDict \extraArgBs dict -> do
-    getType (ProjMethod dict (fromEnum method)) >>= \case
-      Pi (PiType (PiBinder b t _) _ resultTy) -> do
-        let allBs = extraArgBs >>> Nest (b:>t) Empty
-        return $ NaryPiType allBs Pure resultTy
-      -- non-function methods are thunked
-      ty -> do
-        Abs unitBinder ty' <- toConstAbs ty
-        let unitPiBinder = unitBinder:>UnitTy
-        let allBs = extraArgBs >>> Nest unitPiBinder Empty
-        return $ NaryPiType allBs Pure ty'
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -922,11 +893,9 @@ instance Topper TopperM
 instance TopBuilder TopperM where
   emitBinding = emitBindingDefault
   emitEnv (Abs frag result) = do
-    result' `PairE` ListE names `PairE` ListE dictNames <- TopperM $ emitEnv $
-      Abs frag $ result
-         `PairE` ListE (boundNamesList frag)
-         `PairE` ListE (boundNamesList frag)
-    evalSpecializations names dictNames
+    result' `PairE` ListE names <- TopperM $ emitEnv $
+      Abs frag $ result `PairE` ListE (boundNamesList frag)
+    evalSpecializations names
     return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont

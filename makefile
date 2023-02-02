@@ -221,7 +221,7 @@ endif
 
 test-names = uexpr-tests print-tests adt-tests type-tests cast-tests eval-tests show-tests \
              read-tests shadow-tests monad-tests io-tests exception-tests sort-tests \
-             standalone-function-tests algeff-tests \
+             standalone-function-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
              linalg-tests set-tests fft-tests stats-tests

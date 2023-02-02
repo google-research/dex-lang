@@ -346,10 +346,6 @@ extendLinearizationCache
 extendLinearizationCache s fs =
   extendCache $ mempty { linearizationCache = eMapSingleton s (toPairE fs) }
 
-finishSpecializedDict :: (Mut n, TopBuilder m) => SpecDictName n -> [LamExpr SimpIR n] -> m n ()
-finishSpecializedDict name methods =
-  emitPartialTopEnvFrag $ mempty {fragFinishSpecializedDict = toSnocList [(name, methods)]}
-
 queryObjCache :: EnvReader m => TopFunName n -> m n (Maybe (FunObjCodeName n))
 queryObjCache v = lookupEnv v >>= \case
   TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
@@ -1339,7 +1335,8 @@ applyIxMethod dict method args = case dict of
     Ordinal           -> do [i] <- return args; return i
     UnsafeFromOrdinal -> do [i] <- return args; return i
   IxDictSpecialized _ d params -> do
-    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+    SpecializedDictBinding (SpecializedDict _ maybeFs) <- lookupEnv d
+    Just fs <- return maybeFs
     LamExpr bs body <- return $ fs !! fromEnum method
     let args' = case method of
           Size -> params ++ [UnitVal]

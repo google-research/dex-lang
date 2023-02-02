@@ -16,7 +16,7 @@ mat32 = [[1,2],[3,4],[5,6]]
 
 @noinline
 def standalone_transpose {n m a} (x:n=>m=>a) : m=>n=>a =
-  view i j. x.j.i
+  for i j. x.j.i
 
 :p (standalone_transpose mat23, standalone_transpose mat32)
 > ([[1, 4], [2, 5], [3, 6]], [[1, 3, 5], [2, 4, 6]])

@@ -380,7 +380,7 @@ def weakerInferenceReduction {n} (l : (i:n)=>(..i)=>Float) (j:n): Unit =
 val = for i:(Fin 2). \(x:Float). for j:(..i). 1
 
 :t val
-> ((v#0:(Fin 2)) => Float32 -> (..v#0) => Nat)
+> ((i:(Fin 2)) => Float32 -> (..i) => Nat)
 
 -- Tests for table
 

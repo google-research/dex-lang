@@ -128,7 +128,7 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   RepValAtom _ -> substM atom
   NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
   NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
-  SimpInCore _ -> error "not implemented"
+  SimpInCore _ -> substM atom
 
 traverseExtLabeledItems
   :: forall r f s i o.

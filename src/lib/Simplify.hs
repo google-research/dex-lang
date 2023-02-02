@@ -37,7 +37,7 @@ import RuntimePrint
 import Transpose
 import Types.Core
 import Types.Primitives
-import Util (enumerate, foldMapM, restructure, splitAtExact, bindM2)
+import Util (enumerate, foldMapM, restructure, splitAtExact, bindM2, toSnocList)
 
 -- === Simplification ===
 
@@ -706,12 +706,41 @@ requireIxDictCache dictAbs = do
       ab <- liftTopBuilderHoisted do
         dName <- emitBinding "d" $ sink $ SpecializedDictBinding $ SpecializedDict dictAbs Nothing
         extendCache $ mempty { ixDictCache = eMapSingleton (sink dictAbs) dName }
+        methods <- forM [minBound..maxBound] \method -> simplifyDictMethod (sink dictAbs) method
+        emitPartialTopEnvFrag $
+          mempty {fragFinishSpecializedDict = toSnocList [(dName, methods)]}
         return dName
       maybeD <- emitHoistedEnv ab
       case maybeD of
         Just name -> return name
         Nothing -> error "Couldn't hoist specialized dictionary"
 {-# INLINE requireIxDictCache #-}
+
+simplifyDictMethod :: Mut n => AbsDict n -> IxMethod -> TopBuilderM n (SLam n)
+simplifyDictMethod absDict@(Abs bs dict) method = do
+  ty <- liftEnvReaderM $ ixMethodType method absDict
+  lamExpr <- liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
+    let (extraArgs, methodArgs) = splitAt (nestLength bs) (toList allArgs)
+    dict' <- applyRename (bs @@> extraArgs) dict
+    let actualArgs = case method of Size -> []  -- size is thunked
+                                    _    -> map Var methodArgs
+    methodImpl <- emitExpr $ ProjMethod dict' (fromEnum method)
+    naryApp methodImpl actualArgs
+  simplifyTopFunction lamExpr
+
+ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType CoreIR n)
+ixMethodType method absDict = do
+  refreshAbs absDict \extraArgBs dict -> do
+    getType (ProjMethod dict (fromEnum method)) >>= \case
+      Pi (PiType (PiBinder b t _) _ resultTy) -> do
+        let allBs = extraArgBs >>> Nest (b:>t) Empty
+        return $ NaryPiType allBs Pure resultTy
+      -- non-function methods are thunked
+      ty -> do
+        Abs unitBinder ty' <- toConstAbs ty
+        let unitPiBinder = unitBinder:>UnitTy
+        let allBs = extraArgBs >>> Nest unitPiBinder Empty
+        return $ NaryPiType allBs Pure ty'
 
 -- TODO: do we even need this, or is it just a glorified `SubstM`?
 simplifyAtom :: CAtom i -> SimplifyM i o (CAtom o)
@@ -900,9 +929,11 @@ simplifyRecordVariantOp op = case op of
     let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
     return $ NewtypeCon (VariantCon (void tys)) $ SumVal (toList tys) ix v
   SumToVariant c -> do
-    SumTy cases <- getType c
-    let labels = foldMap (const $ labeledSingleton "c" ()) cases
-    return $ NewtypeCon (VariantCon labels) c
+    getType c >>= \case
+      SumTy cases -> do
+        let labels = foldMap (const $ labeledSingleton "c" ()) cases
+        return $ NewtypeCon (VariantCon labels) c
+      t -> error $ "Not a sum type: " ++ pprint t
   where
     getResTy = getType (RecordVariantOp op)
 
@@ -980,14 +1011,16 @@ simplifyHof _hint hof = case hof of
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' ans
   RunWriter Nothing (BaseMonoid e combine) lam -> do
-    (e', wTy) <- toDataAtom =<< simplifyAtom e
+    LamExpr (BinaryNest h (_:>RefTy _ wTy)) _ <- return lam
+    wTy' <- substM $ ignoreHoistFailure $ hoist h wTy
+    e' <- toDataAtomIgnoreRecon =<< simplifyAtom e
     (combine', CoerceReconAbs) <- simplifyLam combine
     (lam', Abs b recon) <- simplifyLam lam
     let hof' = Hof $ RunWriter Nothing (BaseMonoid e' combine') lam'
     (ans, w) <- fromPair =<< emitExpr hof'
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
-    w' <- liftSimpAtom wTy w
+    w' <- liftSimpAtom (Just wTy') w
     return $ PairVal ans' w'
   RunWriter _ _ _ -> error "Shouldn't see a RunWriter with a dest in Simplify"
   RunState Nothing s lam -> do
@@ -1030,7 +1063,7 @@ simplifyHof _hint hof = case hof of
     block <- liftBuilder $ runSubstReaderT idSubst $
       buildBlock $ exceptToMaybeBlock $ body'
     result <- emitBlock block
-    liftSimpAtom (Just ty) result
+    liftSimpAtom (Just (MaybeTy ty)) result
 
 simplifyBlock :: Emits o => Block CoreIR i -> SimplifyM i o (CAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result

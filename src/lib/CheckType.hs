@@ -1238,13 +1238,14 @@ isData ty = liftM isJust $ runCheck do
 
 checkDataLike :: Typer m => Type CoreIR i -> m i o ()
 checkDataLike ty = case ty of
-  Var _ -> throw TypeErr $ pprint ty
+  Var _ -> notData
   TabPi (TabPiType b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
     renameBinders b \_ -> checkDataLike r
+  NewtypeTyCon LabelType -> notData
   NewtypeTyCon nt -> do
     (_, ty') <- unwrapNewtypeType =<< renameM nt
     dropSubst $ recur ty'
@@ -1254,6 +1255,8 @@ checkDataLike ty = case ty of
     SumType  cs      -> mapM_ recur cs
     RefType _ _      -> return ()
     HeapType         -> return ()
-    _ -> throw TypeErr $ pprint ty
-  _   -> throw TypeErr $ pprint ty
-  where recur = checkDataLike
+    _ -> notData
+  _   -> notData
+  where
+    recur = checkDataLike
+    notData = throw TypeErr $ pprint ty
