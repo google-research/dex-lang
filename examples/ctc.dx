@@ -186,9 +186,9 @@ def ctc {vocab time position} [Eq time, Eq vocab]
       position' = (Unit | Fin position_size_m1)
 
       blank'  = unsafe_from_ordinal vocab' (ordinal blank)
-      logits' = view t:time' v:vocab'.
+      logits' = for t:time' v:vocab'.
         logits.(unsafe_from_ordinal _ (ordinal t)).(unsafe_from_ordinal _ (ordinal v))
-      labels' = view p:position'.
+      labels' = for p:position'.
         unsafe_from_ordinal _ (ordinal labels.(unsafe_from_ordinal _ (ordinal p)))
 
       ctc_non_empty blank' logits' labels'

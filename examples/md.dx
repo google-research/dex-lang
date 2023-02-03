@@ -300,7 +300,7 @@ def bd_push {h n a} [Ix n] (lst_ref: Ref h (BoundedList n a)) (x: a) : {State h}
 def as_list {n a} (lst: BoundedList n a) : List a =
   (lim, buf) = lst
   n_result = ordinal lim
-  AsList _ $ view i:(Fin n_result). buf.(unsafe_from_ordinal _ $ ordinal i)
+  AsList _ $ for i:(Fin n_result). buf.(unsafe_from_ordinal _ $ ordinal i)
 
 '### Cell list
 
