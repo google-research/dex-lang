@@ -92,7 +92,8 @@ instance HoistableState LFS where
 -- annotations manually... The only interesting cases below are really For and TabCon.
 instance GenericTraverser SimpIR UnitB LFS where
   traverseExpr expr = case expr of
-    TabCon ty els -> traverseTabCon Nothing ty els
+    -- TODO: re-enable after fixing traverseTabCon bug
+    -- TabCon ty els -> traverseTabCon Nothing ty els
     Hof (For dir ixDict body) -> traverseFor Nothing dir ixDict body
     Case _ _ _ _ -> do
       Case e alts ty _ <- traverseExprDefault expr
@@ -131,8 +132,9 @@ traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
       DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
 traverseFor _ _ _ _ = error "expected a unary lambda expression"
 
-traverseTabCon :: Emits o => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
-traverseTabCon maybeDest tabTy elems = do
+-- This is buggy. Slicing `indexRef` violates the linearity constraints on dest.
+_traverseTabCon :: Emits o => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
+_traverseTabCon maybeDest tabTy elems = do
   tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
@@ -225,7 +227,8 @@ traverseDeclNestWithDestS destMap s = \case
 
 traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 traverseExprWithDest dest expr = case expr of
-  TabCon ty els -> traverseTabCon tabDest ty els
+  -- TODO: re-enable after fixing traverseTabCon bug
+  -- TabCon ty els -> traverseTabCon tabDest ty els
   Hof (For dir ixDict body) -> traverseFor tabDest dir ixDict body
   Hof (RunWriter Nothing m body) -> traverseRWS Writer body \ref' body' -> do
     m' <- traverseGenericE m
