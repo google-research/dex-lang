@@ -2344,7 +2344,7 @@ data S = (:=>:) S S
 
 -- Name "color" ("type", "kind", etc. already taken)
 data C =
-    AtomNameC {-# UNPACK #-} !IR
+    AtomNameC !IR
   | DataDefNameC
   | TyConNameC
   | DataConNameC
@@ -2796,7 +2796,7 @@ newtype SubstFrag
   deriving (Generic)
 deriving instance (forall c. Show (v c o)) => Show (SubstFrag v i i' o)
 
-data SubstItem (v::V) (n::S) = SubstItem {-# UNPACK #-} !FragNameDistinctness !C (v UnsafeC n)
+data SubstItem (v::V) (n::S) = SubstItem !FragNameDistinctness !C (v UnsafeC n)
 deriving instance (forall c. Show (v c n)) => Show (SubstItem v n)
 
 unsafeFromSubstItem :: forall c v o. SubstItem v o -> (v c o)

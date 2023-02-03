@@ -1277,7 +1277,7 @@ instance Pretty (ReconstructAtom n) where
 
 {-# SPECIALIZE
   buildNaryAbs
-    :: (SinkableE e, RenameE e, SubstE (AtomSubstVal SimpIR) e, HoistableE e)
+    :: (SinkableE e, RenameE e, SubstE AtomSubstVal e, HoistableE e)
     => EmptyAbs (Nest (Binder SimpIR)) n
     -> (forall l. DExt n l => [AtomName SimpIR l] -> SimplifyM i l (e l))
     -> SimplifyM i n (Abs (Nest (Binder SimpIR)) e n) #-}
