@@ -140,7 +140,7 @@ def dex_apply_lowering(ctx, *args, func_atom):
   multi_result = len(ctx.avals_out) > 1
   if multi_result:
     result_type = [mlir.ir.TupleType.get_tuple(result_type)]
-  custom_call = mlir.mhlo.CustomCallOp(
+  custom_call = mlir.hlo.CustomCallOp(
       result_type,
       (native_ptr, *mlir_args),
       call_target_name=mlir.ir.StringAttr.get(custom_call_name),
@@ -151,7 +151,7 @@ def dex_apply_lowering(ctx, *args, func_atom):
       operand_layouts=None,
       result_layouts=None)
   if multi_result:
-    return [mlir.mhlo.GetTupleElementOp(custom_call.result, mlir.i32_attr(i)).result
+    return [mlir.hlo.GetTupleElementOp(custom_call.result, mlir.i32_attr(i)).result
             for i in range(len(ctx.avals_out))]
   else:
     return custom_call.result,
