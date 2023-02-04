@@ -336,7 +336,10 @@ instance IRRep r => HasType r (Expr r) where
       ty'@(TabPi (TabPiType b restTy)) <- checkTypeE TyKind ty
       case fromConstAbs (Abs b restTy) of
         HoistSuccess elTy -> forM_ xs (|: elTy)
-        HoistFailure _    -> error $ "Tab con shouldn't be constructing a dependent table type"
+        -- XXX: in the dependent case we don't check that the element types
+        -- match the annotation because that would require concretely evaluating
+        -- each index from the ix dict.
+        HoistFailure _    -> forM_ xs checkE
       return ty'
     RecordVariantOp x -> typeCheckRecordVariantOp x
     DAMOp op -> typeCheckDAMOp op
