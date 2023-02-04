@@ -119,7 +119,7 @@ interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll
     Nest (b:>argTy) rest -> do
       argTy' <- substM argTy
       (argTree, xsRest) <- listToTree argTy' xs
-      let arg = RepValAtom $ RepVal argTy' argTree
+      arg <- repValAtom $ RepVal argTy' argTree
       (args, dest) <- extendSubst (b @> SubstVal arg) $ go (NaryPiType rest effs resultTy) xsRest
       return (arg:args, dest)
     Empty -> do
@@ -287,7 +287,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   TabApp f' xs' -> do
     xs <- mapM substM xs'
     f <- atomToRepVal =<< substM f'
-    RepValAtom <$> naryIndexRepVal f (toList xs)
+    repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x >>= returnVal
   -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
   PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
@@ -303,8 +303,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         _ -> do
           RepVal sumTy (Branch (tag:xss)) <- atomToRepVal e'
           ts <- caseAltsBinderTys sumTy
-          let tag' = RepValAtom $ RepVal TagRepTy tag
-          let xss' = zipWith (\t x -> RepValAtom $ RepVal t x) ts xss
+          tag' <- repValAtom $ RepVal TagRepTy tag
+          xss' <- zipWithM (\t x -> repValAtom $ RepVal t x) ts xss
           go tag' xss'
         where
           go tag xss = do
@@ -421,7 +421,7 @@ toImpOp maybeDest op = case op of
     returnVal =<< case vty of
       BaseTy vty'@(Vector _ _) -> do
         resultVal <- cast refi' (PtrType (addrSpace, vty'))
-        return $ RepValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
+        repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
       _ -> error "Expected a vector type"
   where
     fsa = fromScalarAtom
@@ -452,7 +452,7 @@ toImpMiscOp maybeDest op = case op of
     assertEq srcRep destRep $
       "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
     RepVal _ tree <- atomToRepVal x
-    returnVal $ RepValAtom $ RepVal resultTy tree
+    returnVal =<< repValAtom (RepVal resultTy tree)
   GarbageVal resultTy -> do
     dest <- maybeAllocDest maybeDest resultTy
     loadAtom dest
@@ -740,7 +740,8 @@ valueToTree (RepVal tyTop valTop) = do
         case ctx of
           REmpty -> do
             tree1 <- rec t1 v1
-            t2' <- applySubst (b@>SubstVal (RepValAtom $ RepVal t1 v1)) t2
+            x <- repValAtom $ RepVal t1 v1
+            t2' <- applySubst (b@>SubstVal x) t2
             tree2 <- go (RNest ctx (DepPairCtx NothingB )) t2' v2
             return $ Branch [tree1, tree2]
           _ -> do
@@ -982,7 +983,7 @@ storeAtom :: Emits n => Dest n -> SAtom n -> SubstImpM i n ()
 storeAtom dest x = storeRepVal dest =<< atomToRepVal x
 
 loadAtom :: Emits n => Dest n -> SubstImpM i n (SAtom n)
-loadAtom d = RepValAtom <$> loadRepVal d
+loadAtom d = repValAtom =<< loadRepVal d
 
 repValFromFlatList :: (TopBuilder m, Mut n) => SType n -> [LitVal] -> m n (SRepVal n)
 repValFromFlatList ty xs = do

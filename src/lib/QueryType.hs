@@ -338,18 +338,6 @@ getNewtypeType con x = case con of
     (DataDef sn _ _) <- lookupDataDef d'
     return $ NewtypeTyCon $ UserADTType sn d' params'
 
-unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
-unwrapLeadingNewtypesType = \case
-  NewtypeTyCon tyCon -> do
-    (dataCon, ty) <- unwrapNewtypeType tyCon
-    (dataCons, ty') <- unwrapLeadingNewtypesType ty
-    return (dataCon:dataCons, ty')
-  ty -> return ([], ty)
-
-wrapNewtypesData :: [NewtypeCon n] -> CAtom n-> CAtom n
-wrapNewtypesData [] x = x
-wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
-
 getTypePrimCon :: IRRep r => PrimCon r (Atom r i) -> TypeQueryM i o (Type r o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l

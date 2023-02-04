@@ -47,6 +47,7 @@ import CheckType ( CheckableE (..), asFFIFunType, checkHasType
 import CheckType (checkTypesM)
 #endif
 import Core
+import CheapReduction
 import Err
 import IRVariants
 import Imp
@@ -269,7 +270,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- getType val
+      ty <- cheapNormalize =<< getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname (UAnnBinder b uty) -> do
     ty <- evalUType uty
@@ -324,7 +325,7 @@ evalSourceBlock' mname block = case sbContents block of
   BadSyntax e -> throwErrs e
   Misc m -> case m of
     GetNameType v -> do
-      ty <- sourceNameType v
+      ty <- cheapNormalize =<< sourceNameType v
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -553,9 +554,8 @@ evalBlock typed = do
         l <- getFilteredLogger
         logFiltered l VectPass $ return [TextOut $ pprint errs]
         checkPass VectPass $ return vo
-      result <- evalLLVM vopt
-      v <- Var <$> emitBinding "data" (AtomNameBinding $ TopDataBound result)
-      applyReconTop recon v
+      result <- repValAtom =<< evalLLVM vopt
+      applyReconTop recon result
 {-# SCC evalBlock #-}
 
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
@@ -781,8 +781,7 @@ getBenchRequirement block = case sbLogLevel block of
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 getDexString val = do
   -- TODO: use a `ByteString` instead of `String`
-  SimpInCore (LiftSimp _ (Var v)) <- return val
-  TopDataBound (RepVal _ tree) <- lookupAtomName v
+  SimpInCore (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val
   Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
   PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
   liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
