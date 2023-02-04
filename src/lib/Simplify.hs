@@ -151,13 +151,13 @@ getRepType ty = go ty where
       withFreshBinder (getNameHint b) l' \b' -> do
         x <- liftSimpAtom (Just $ sink l) (Var $ binderName b')
         r' <- go =<< applySubst (b@>SubstVal x) r
-        return $ DepPairTy $ DepPairType (b':>l') r'
+        return $ DepPairTy $ DepPairType b' r'
     TabPi (TabPiType (b:>ixTy) bodyTy) -> do
       ixTy' <- simplifyIxType ixTy
       withFreshBinder (getNameHint b) ixTy' \b' -> do
         x <- liftSimpAtom (Just $ sink $ ixTypeType ixTy) (Var $ binderName b')
         bodyTy' <- go =<< applySubst (b@>SubstVal x) bodyTy
-        return $ TabPi $ TabPiType (b':>ixTy') bodyTy'
+        return $ TabPi $ TabPiType b' bodyTy'
     NewtypeTyCon con -> do
       (_, ty') <- unwrapNewtypeType con
       go ty'
@@ -209,7 +209,7 @@ withSimplifiedBinders (Nest (bCore:>ty) bsCore) cont = do
     -- TODO: carry a substitution instead of doing N^2 work like this
     Abs bsCore' UnitE <- applySubst (bCore@>SubstVal x) (EmptyAbs bsCore)
     withSimplifiedBinders bsCore' \bsSimp xs ->
-      cont (Nest (bSimp:>simpTy) bsSimp) (sink x:xs)
+      cont (Nest bSimp bsSimp) (sink x:xs)
 
 -- === Reconstructions ===
 
@@ -420,7 +420,7 @@ simplifyAlt split ty cont = fromPairE <$> do
       (newResult, reconAbs) <- telescopicCapture locals resultNonData
       return (Abs decls (PairVal resultData newResult), LamRecon reconAbs)
     block <- makeBlockFromDecls resultWithDecls
-    return $ PairE (Abs (b:>ty) block) recon
+    return $ PairE (Abs b block) recon
 
 getAltNonDataTy :: EnvReader m => Alt SimpIR n -> m n (SType n)
 getAltNonDataTy (Abs bs body) = liftSubstEnvReaderM do
@@ -540,7 +540,7 @@ withSaturatingArgs piTy xs contTop = do
         x' <- liftSimpAtom (Just $ sink cTy) (Var $ binderName b')
         Abs bs' UnitE <- applySubst (b@>SubstVal x') (Abs bs UnitE)
         LamExpr bs'' body <- go bs' \xs' -> cont $ sink x' : xs'
-        return $ LamExpr (Nest (b':>sTy) bs'') body
+        return $ LamExpr (Nest b' bs'') body
 
 determineSpecializationSpec
   :: EnvReader m => AtomName CoreIR n -> [CAtom n] -> m n (SpecializationSpec n, [CAtom n])
@@ -729,7 +729,7 @@ simplifyLam (LamExpr bsTop body) = case bsTop of
   Nest (b:>ty) bs -> do
     ty' <- substM ty
     tySimp <- getRepType ty'
-    withFreshBinder (getNameHint b) tySimp \b' -> do
+    withFreshBinder (getNameHint b) tySimp \(b':>_) -> do
       x <- liftSimpAtom (Just $ sink ty') (Var $ binderName b')
       extendSubst (b@>SubstVal x) do
         (LamExpr bs' body', Abs bsRecon recon) <- simplifyLam $ LamExpr bs body
@@ -1105,7 +1105,7 @@ defuncLinearized ab = liftBuilder $ refreshAbs ab \bs ab' -> do
       LamExpr tBs _ <- return fLin
       residualsTangentsBs <- withFreshBinder "residual" rTy \rB -> do
         Abs tBs' UnitE <- sinkM $ Abs tBs UnitE
-        return $ Abs (Nest (rB:>rTy) tBs') UnitE
+        return $ Abs (Nest rB tBs') UnitE
       residualsTangentsBs' <- return $ ignoreHoistFailure $ hoist decls residualsTangentsBs
       return (Abs decls (PairVal primalResult residuals), reconAbs, residualsTangentsBs')
   primalFun <- LamExpr bs <$> makeBlockFromDecls declsAndResult

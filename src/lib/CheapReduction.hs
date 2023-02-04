@@ -172,7 +172,7 @@ cheapReduceWithDeclsRec decls cont = case decls of
     optional (cheapReduceE expr) >>= \case
       Nothing -> do
         binding' <- substM binding
-        withFreshBinder (getNameHint b) binding' \b' -> do
+        withFreshBinder (getNameHint b) binding' \(b':>_) -> do
           updateCache (binderName b') Nothing
           extendSubst (b@>Rename (binderName b')) do
             Abs decls' result <- cheapReduceWithDeclsRec rest cont
@@ -232,7 +232,7 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
       ixTy' <- cheapReduceE ixTy
       withFreshBinder (getNameHint b) ixTy' \b' -> do
         resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType (b':>ixTy') resultTy'
+        return $ TabPi $ TabPiType b' resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con

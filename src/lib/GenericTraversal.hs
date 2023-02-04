@@ -99,7 +99,7 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+    withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
       effs' <- extendRenamer (bEff@>binderName b') $ substM effs
       extendRenamer (b@>binderName b') do
         withAllowedEffects effs' do
@@ -108,14 +108,14 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Lam _ _ _ -> error "expected a unary lambda expression"
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (PiBinding arr ty') \b' -> do
+    withFreshBinder (getNameHint b) (PiBinding arr ty') \(b':>_) -> do
       extendRenamer (b@>binderName b') $
         Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> tge resultTy)
   TabPi (TabPiType (b:>ty) resultTy) -> do
     ty' <- tge ty
     withFreshBinder (getNameHint b) ty' \b' -> do
       extendRenamer (b@>binderName b') $
-        TabPi <$> (TabPiType (b':>ty') <$> tge resultTy)
+        TabPi <$> (TabPiType b' <$> tge resultTy)
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
@@ -172,7 +172,7 @@ instance IRRep r => GenericallyTraversableE r (DepPairType r) where
   traverseGenericE (DepPairType (b:>lty) rty) = do
     lty' <- tge lty
     withFreshBinder (getNameHint b) lty' \b' -> do
-      extendRenamer (b@>binderName b') $ DepPairType (b':>lty') <$> tge rty
+      extendRenamer (b@>binderName b') $ DepPairType b' <$> tge rty
 
 instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
   traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withoutEffects (tge f)
@@ -254,7 +254,7 @@ traverseBinderNest (Nest (b:>ty) bs) cont = do
   withFreshBinder (getNameHint b) ty' \b' -> do
     extendRenamer (b@>binderName b') do
       traverseBinderNest bs \bs' -> do
-        cont (Nest (b':>ty') bs')
+        cont (Nest b' bs')
 
 instance (GenericallyTraversableE r e1, GenericallyTraversableE r e2) =>
   (GenericallyTraversableE r (EitherE e1 e2)) where
@@ -305,7 +305,7 @@ traverseBinder
 traverseBinder (b:>ty) cont = do
   ty' <- tge ty
   withFreshBinder (getNameHint b) ty' \b' ->
-    extendRenamer (b@>binderName b') $ cont (b':>ty')
+    extendRenamer (b@>binderName b') $ cont b'
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

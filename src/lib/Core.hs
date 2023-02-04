@@ -374,11 +374,11 @@ refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
   => NameHint -> binding n
-  -> (forall l. DExt n l => NameBinder c n l -> m l a)
+  -> (forall l. DExt n l => BinderP c binding n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
   Abs b v <- freshNameM hint
-  refreshAbs (Abs (b:>binding) v) \(b':>_) _ -> cont b'
+  refreshAbs (Abs (b:>binding) v) \b' _ -> cont b'
 {-# INLINE withFreshBinder #-}
 
 withFreshBinders
@@ -393,7 +393,7 @@ withFreshBinders (binding:rest) cont = do
   withFreshBinder noHint binding \b -> do
     ListE rest' <- sinkM $ ListE rest
     withFreshBinders rest' \bs vs ->
-      cont (Nest (b :> binding) bs)
+      cont (Nest b bs)
            (sink (binderName b) : vs)
 
 piBinderAsBinder :: PiBinder n l -> Binder CoreIR n l

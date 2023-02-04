@@ -188,7 +188,7 @@ getTangentArgTys topVs = go mempty topVs where
       withFreshBinder (getNameHint v) (TC HeapType) \hb -> do
         let newHeapMap = sink heapMap <> eMapSingleton (sink v) (binderName hb)
         Abs bs UnitE <- go newHeapMap $ sinkList vs
-        return $ EmptyAbs $ Nest (hb:>TC HeapType) bs
+        return $ EmptyAbs $ Nest hb bs
     RefTy (Var h) referentTy -> do
       case lookupEMap heapMap h of
         Nothing -> error "shouldn't happen?"
@@ -197,12 +197,12 @@ getTangentArgTys topVs = go mempty topVs where
           let refTy = RefTy (Var h') tt
           withFreshBinder (getNameHint v) refTy \refb -> do
             Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-            return $ EmptyAbs $ Nest (refb:>refTy) bs
+            return $ EmptyAbs $ Nest refb bs
     ty -> do
       tt <- tangentType ty
       withFreshBinder (getNameHint v) tt \b -> do
         Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-        return $ EmptyAbs $ Nest (b:>tt) bs
+        return $ EmptyAbs $ Nest b bs
 
 -- tangent lambda
 type LinLam = SLam
@@ -544,8 +544,7 @@ linearizeHof hof = case hof of
     ixTy'   <- renameM ixTy
     (lam', tanLam) <- withFreshBinder noHint ixTy' \ib' -> do
       (block', linLam) <- extendSubst (ib@>binderName ib') $ linearizeBlockDefunc body
-      let ibAnn = ib' :> ixTy'
-      return (UnaryLamExpr ibAnn block', Abs (UnaryNest ibAnn) linLam)
+      return (UnaryLamExpr ib' block', Abs (UnaryNest ib') linLam)
     (primals, residuals) <- emitExpr (Hof $ For d ixDict' lam') >>= unzipTab
     return $ WithTangent primals do
       buildFor noHint d (sink $ IxType ixTy' ixDict') \i' -> do
@@ -615,7 +614,7 @@ linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
       -- ensures that such references can never be *used* once the effect runner
       -- returns, but technically it's legal to return them.
       let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr (h:>TC HeapType) (b:>bTy) body', linLam')
+      return (BinaryLamExpr h b body', linLam')
 linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 withT :: PrimalM i o (e1 o)

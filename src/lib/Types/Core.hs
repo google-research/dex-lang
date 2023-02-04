@@ -712,7 +712,6 @@ newtype TopFunLowerings (n::S) = TopFunLowerings
 data AtomBinding (r::IR) (n::S) where
  LetBound     :: DeclBinding r  n  -> AtomBinding r n
  MiscBound    :: Type        r  n  -> AtomBinding r n
- IxBound      :: IxType      r  n  -> AtomBinding r n
  TopDataBound :: RepVal SimpIR n   -> AtomBinding SimpIR n
  LamBound     :: LamBinding  n     -> AtomBinding CoreIR n
  PiBound      :: PiBinding   n     -> AtomBinding CoreIR n
@@ -728,7 +727,6 @@ atomBindingType b = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
   PiBound     (PiBinding   _ ty)   -> ty
-  IxBound     (IxType ty _)        -> ty
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
@@ -986,7 +984,7 @@ instance ToBinding SolverBinding (AtomNameC CoreIR) where
   toBinding = toBinding . SolverBound
 
 instance IRRep r => ToBinding (IxType r) (AtomNameC r) where
-  toBinding = toBinding . IxBound
+  toBinding (IxType t _) = toBinding t
 
 instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (LeftE  e) = toBinding e
@@ -2122,11 +2120,10 @@ instance RenameE        SynthCandidates
 
 instance IRRep r => GenericE (AtomBinding r) where
   type RepE (AtomBinding r) =
-     EitherE2 (EitherE6
+     EitherE2 (EitherE5
       (DeclBinding   r)              -- LetBound
       (WhenCore r LamBinding)        -- LamBound
       (WhenCore r PiBinding )        -- PiBound
-                          (IxType        r)  -- IxBound
                           (Type          r)  -- MiscBound
       (WhenCore r SolverBinding)             -- SolverBound
      ) (EitherE3
@@ -2139,9 +2136,8 @@ instance IRRep r => GenericE (AtomBinding r) where
     LetBound    x -> Case0 $ Case0 x
     LamBound    x -> Case0 $ Case1 $ WhenIRE x
     PiBound     x -> Case0 $ Case2 $ WhenIRE x
-    IxBound     x -> Case0 $ Case3 x
-    MiscBound   x -> Case0 $ Case4 x
-    SolverBound x -> Case0 $ Case5 $ WhenIRE x
+    MiscBound   x -> Case0 $ Case3 x
+    SolverBound x -> Case0 $ Case4 $ WhenIRE x
     NoinlineFun x -> Case1 $ Case0 $ WhenIRE x
     TopDataBound repVal -> Case1 $ Case1 $ WhenIRE repVal
     FFIFunBound ty v    -> Case1 $ Case2 $ WhenIRE $ ty `PairE` v
@@ -2152,9 +2148,8 @@ instance IRRep r => GenericE (AtomBinding r) where
       Case0 x         -> LetBound x
       Case1 (WhenIRE x) -> LamBound x
       Case2 (WhenIRE x) -> PiBound  x
-      Case3 x         -> IxBound  x
-      Case4 x         -> MiscBound x
-      Case5 (WhenIRE x) -> SolverBound x
+      Case3 x           -> MiscBound x
+      Case4 (WhenIRE x) -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
       Case0 (WhenIRE x) -> NoinlineFun x

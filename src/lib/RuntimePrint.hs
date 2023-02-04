@@ -209,13 +209,11 @@ withBuffer cont = do
       body <- withAllowedEffects eff $ buildBlock do
         cont $ sink $ Var $ binderName b
         return UnitVal
-      let hB   = h :> TC HeapType
-      let bufB = b :> bufTy
-      let eff1 = Abs hB   Pure
-      let eff2 = Abs bufB eff
+      let eff1 = Abs h Pure
+      let eff2 = Abs b eff
       return $
-        Lam (UnaryLamExpr hB
-              (AtomicBlock (Lam (UnaryLamExpr bufB body) PlainArrow eff2)))
+        Lam (UnaryLamExpr h
+              (AtomicBlock (Lam (UnaryLamExpr b body) PlainArrow eff2)))
             ImplicitArrow eff1
   applyPreludeFunction "with_stack_internal" [lam]
 

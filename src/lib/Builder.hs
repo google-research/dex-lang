@@ -260,7 +260,7 @@ class (EnvReader m, MonadFail1 m) => TopBuilder (m::MonadKind1) where
 emitBindingDefault :: (TopBuilder m, Mut n, Color c) => NameHint -> Binding c n -> m n (Name c n)
 emitBindingDefault hint binding = do
   ab <- liftEnvReaderM $ withFreshBinder hint binding \b'-> do
-    let topFrag = TopEnvFrag (toEnvFrag (b':>binding)) mempty
+    let topFrag = TopEnvFrag (toEnvFrag b') mempty
     return $ Abs topFrag $ binderName b'
   emitEnv ab
 
@@ -696,7 +696,7 @@ buildLamGeneral
   -> (forall l. (Emits l, DExt n l) => AtomName CoreIR l -> m l (CAtom l))
   -> m n (CAtom n)
 buildLamGeneral hint arr ty fEff fBody = do
-  withFreshBinder hint (LamBinding arr ty) \b -> do
+  withFreshBinder hint (LamBinding arr ty) \(b:>_) -> do
     let v = binderName b
     effs <- fEff v
     body <- withAllowedEffects effs $ buildBlock $ fBody $ sink v
@@ -724,7 +724,7 @@ buildPi :: (Fallible1 m, CBuilder m)
         -> (forall l. DExt n l => AtomName CoreIR l -> m l (EffectRow CoreIR l, CType l))
         -> m n (PiType n)
 buildPi hint arr ty body =
-  withFreshBinder hint (PiBinding arr ty) \b -> do
+  withFreshBinder hint (PiBinding arr ty) \(b:>_) -> do
     (effs, resultTy) <- body $ binderName b
     return $ PiType (PiBinder b ty arr) effs resultTy
 
@@ -759,7 +759,7 @@ buildAbs
 buildAbs hint binding cont = do
   withFreshBinder hint binding \b -> do
     body <- cont $ binderName b
-    return $ Abs (b:>binding) body
+    return $ Abs b body
 
 varsAsBinderNest :: (EnvReader m, IRRep r) => [AtomName r n] -> m n (EmptyAbs (Nest (Binder r)) n)
 varsAsBinderNest [] = return $ EmptyAbs Empty
@@ -777,7 +777,7 @@ typesAsBinderNest types = liftEnvReaderM $ go types
       [] -> return $ Abs Empty UnitE
       ty:rest -> withFreshBinder noHint ty \b -> do
         Abs bs UnitE <- go $ map sink rest
-        return $ Abs (Nest (b:>ty) bs) UnitE
+        return $ Abs (Nest b bs) UnitE
 
 singletonBinderNest
   :: (EnvReader m, IRRep r)
@@ -815,7 +815,7 @@ buildUnaryLamExpr
   -> (forall l. (Emits l, Distinct l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (LamExpr r n)
 buildUnaryLamExpr hint ty cont = do
-  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest (b:>ty))
+  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest b)
   buildNaryLamExpr bs \[v] -> cont v
 
 buildBinaryLamExpr
@@ -825,7 +825,7 @@ buildBinaryLamExpr
   -> m n (LamExpr r n)
 buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
   bs <- withFreshBinder h1 t1 \b1 -> withFreshBinder h2 (sink t2) \b2 ->
-    return $ EmptyAbs $ BinaryNest (b1:>t1) (b2:>sink t2)
+    return $ EmptyAbs $ BinaryNest b1 b2
   buildNaryLamExpr bs \[v1, v2] -> cont v1 v2
 
 asNaryLam :: EnvReader m => NaryPiType CoreIR n -> Atom CoreIR n -> m n (LamExpr CoreIR n)
@@ -882,7 +882,7 @@ buildCaseAlts scrut indexedAltBody = do
   altBinderTys <- caseAltsBinderTys scrutTy
   forM (enumerate altBinderTys) \(i, bTy) -> do
     withFreshBinder noHint bTy \b ->
-      indexedAltBody i (b:>bTy)
+      indexedAltBody i b
 
 injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
 injectAltResult sumTys con (Abs b body) = liftBuilder do
@@ -940,18 +940,18 @@ buildEffLam rws hint ty body = do
       hVar <- sinkM $ binderName h
       let eff' = extendEffect (RWSEffect rws (Var hVar)) (sink eff)
       body' <- withAllowedEffects eff' $ buildBlock $ body (sink hVar) $ sink ref
-      return $ LamExpr (BinaryNest (h:>TC HeapType) (b:>ty')) body'
+      return $ LamExpr (BinaryNest h b) body'
 
 buildForAnn
   :: (Emits n, ScopableBuilder r m)
   => NameHint -> ForAnn -> IxType r n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
-buildForAnn hint ann ixTy@(IxType iTy ixDict) body = do
-  lam <- withFreshBinder hint ixTy \b -> do
+buildForAnn hint ann (IxType iTy ixDict) body = do
+  lam <- withFreshBinder hint iTy \b -> do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
-    return $ LamExpr (UnaryNest (b:>iTy)) body'
+    return $ LamExpr (UnaryNest b) body'
   emitExpr $ Hof $ For ann ixDict lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
@@ -1526,14 +1526,14 @@ buildTelescopeTy :: (EnvReader m, EnvExtender m, IRRep r)
                  => [AtomName r n] -> [Type r n] -> m n (Type r n)
 buildTelescopeTy [] [] = return UnitTy
 buildTelescopeTy (v:vs) (ty:tys) = do
-  withFreshBinder (getNameHint v) (MiscBound ty) \b -> do
+  withFreshBinder (getNameHint v) ty \b -> do
     Abs fv tys' <- sinkM $ abstractFreeVar v $ ListE tys
     ListE tys'' <- applyRename (fv@>binderName b) tys'
     ListE vs' <- sinkM $ ListE vs
     innerTelescope <- buildTelescopeTy vs' tys''
     return case hoist b innerTelescope of
       HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
-      HoistFailure _ -> DepPairTy $ DepPairType (b:>ty) innerTelescope
+      HoistFailure _ -> DepPairTy $ DepPairType b innerTelescope
 buildTelescopeTy _ _ = error "zip mismatch"
 
 buildTelescopeVal :: (EnvReader m, IRRep r) => [Atom r n] -> Type r n -> m n (Atom r n)

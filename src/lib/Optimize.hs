@@ -303,7 +303,7 @@ instance GenericTraverser SimpIR UnitB LICMS where
         let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
         let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
         block <- applySubst s bodyAbs >>= makeBlockFromDecls
-        return $ UnaryLamExpr (lb':>lbTy) block
+        return $ UnaryLamExpr lb' block
       return $ DAMOp $ Seq dir ix' dests'' body'
     Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
       ix' <- substM ix
@@ -315,7 +315,7 @@ instance GenericTraverser SimpIR UnitB LICMS where
       ixTy <- substM $ binderType b
       body' <- withFreshBinder noHint ixTy \i -> do
         block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
-        return $ UnaryLamExpr (i:>ixTy) block
+        return $ UnaryLamExpr i block
       return $ Hof $ For dir ix' body'
     expr -> traverseExprDefault expr
 
@@ -338,7 +338,7 @@ seqLICM !top !topDestNames !lb !reg decls ans = case decls of
   Nest (Let bb binding) bs -> do
     binding' <- substM binding
     effs <- getEffects binding'
-    withFreshBinder (getNameHint bb) binding' \bb' -> do
+    withFreshBinder (getNameHint bb) binding' \(bb':>_) -> do
       let b = Let bb' binding'
       let moveOn = extendRenamer (bb@>binderName bb') $
                      seqLICM top topDestNames lb (RNest reg b) bs ans

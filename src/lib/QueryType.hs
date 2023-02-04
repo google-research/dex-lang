@@ -269,7 +269,7 @@ instance IRRep r => HasType r (Atom r) where
     Var name -> getTypeE name
     Lam (UnaryLamExpr (b:>ty) body) arr (Abs (bEff:>_) effs) -> do
       ty' <- substM ty
-      withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+      withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
         effs' <- extendRenamer (bEff@>binderName b') $ substM effs
         extendRenamer (b@>binderName b') do
           bodyTy <- getTypeE body
@@ -642,7 +642,7 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
               _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
       NaryPiType bs effs resultTy <- go ts
-      return $ NaryPiType (Nest (b:>BaseTy t) bs) effs resultTy
+      return $ NaryPiType (Nest b bs) effs resultTy
 
 getTypeHof :: IRRep r => Hof r i -> TypeQueryM i o (Type r o)
 getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
@@ -710,7 +710,7 @@ rawStrType :: IRRep r => EnvReader m => m n (Type r n)
 rawStrType = liftEnvReaderM do
   withFreshBinder "n" IdxRepTy \b -> do
     tabTy <- rawFinTabType (Var $ binderName b) CharRepTy
-    return $ DepPairTy $ DepPairType (b:>IdxRepTy) tabTy
+    return $ DepPairTy $ DepPairType b tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => EnvReader m => Atom r n -> Atom r n -> m n (Type r n)

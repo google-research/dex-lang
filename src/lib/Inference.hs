@@ -421,7 +421,6 @@ zonkAtomBindingWithOutMap outMap = \case
  LetBound    e -> LetBound    $ zonkWithOutMap outMap e
  LamBound    e -> LamBound    $ zonkWithOutMap outMap e
  PiBound     e -> PiBound     $ zonkWithOutMap outMap e
- IxBound     e -> IxBound     $ zonkWithOutMap outMap e
  MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
  SolverBound e -> SolverBound $ zonkWithOutMap outMap e
  NoinlineFun e   -> NoinlineFun (zonkWithOutMap outMap e)
@@ -584,7 +583,7 @@ instance InfBuilder (InfererM i) where
                 ++ "\nFailed to exchage binders in buildAbsInf"
                 ++ "\n" ++ pprint infFrag
       Abs b (PairE result s') <- extendInplaceT ab
-      return (Abs (b:>binding) result, hoistRequiredIfaces b s')
+      return (Abs b result, hoistRequiredIfaces b s')
 
 instance Inferer InfererM where
   liftSolverMInf m = InfererM $ SubstReaderT $ lift $ lift11 $
@@ -3041,7 +3040,7 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
         ClassArrow -> return [Var v]
         _ -> return []
       synthExpr <- extendGivens newGivens $ synthTerm resultTy'
-      let lamExpr = UnaryLamExpr (b':>argTy) (AtomicBlock synthExpr)
+      let lamExpr = UnaryLamExpr b' (AtomicBlock synthExpr)
       return $ lamExprToAtom lamExpr arr Nothing
   SynthDictType dictTy -> case dictTy of
     DictType "Ix" _ [NewtypeTyCon (Fin n)] -> return $ DictCon $ IxFin n

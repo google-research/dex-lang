@@ -189,7 +189,6 @@ instance IRRep r => CheckableE (AtomBinding r) where
     LetBound letBinding -> LetBound    <$> checkE letBinding
     LamBound lamBinding -> LamBound    <$> checkE lamBinding
     PiBound  piBinding  -> PiBound     <$> checkE piBinding
-    IxBound  ixTy       -> IxBound     <$> checkE ixTy
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
     TopDataBound val    -> TopDataBound <$> renameM val
@@ -233,7 +232,7 @@ instance IRRep r => HasType r (Atom r) where
     Lam lam arr (Abs bEff effs) -> do
       UnaryLamExpr (b:>ty) body <- return lam
       ty' <- checkTypeE TyKind ty
-      withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+      withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
         effs' <- extendSubst (bEff@>binderName b') $ renameM effs
         withAllowedEffects effs' do
           extendRenamer (b@>binderName b') do
@@ -288,9 +287,9 @@ instance HasType CoreIR SimpInCore where
 instance (ToBinding ann c, Color c, CheckableE ann) => CheckableB (BinderP c ann) where
   checkB (b:>ann) cont = do
     ann' <- checkE ann
-    withFreshBinder (getNameHint b) (toBinding ann') \b' ->
+    withFreshBinder (getNameHint b) ann' \b' ->
       extendRenamer (b@>binderName b') $
-        cont $ b' :> ann'
+        cont b'
 
 instance IRRep r => HasType r (Expr r) where
   getTypeE expr = case expr of
@@ -431,7 +430,7 @@ instance CheckableB PiBinder where
   checkB (PiBinder b ty arr) cont = do
     ty' <- checkTypeE TyKind ty
     let binding = toBinding ty'
-    withFreshBinder (getNameHint b) binding \b' -> do
+    withFreshBinder (getNameHint b) binding \(b':>_) -> do
       extendRenamer (b@>binderName b') do
         withoutEffects do
           cont $ PiBinder b' ty' arr
@@ -727,7 +726,7 @@ getLamExprTypeE (LamExpr bsTop body) = case bsTop of
     withFreshBinder (getNameHint b) ty' \b' ->
       extendRenamer (b@>binderName b') do
         NaryPiType bs' eff resultTy <- getLamExprTypeE (LamExpr bs body)
-        return $ NaryPiType (Nest (b':>ty') bs') eff resultTy
+        return $ NaryPiType (Nest b' bs') eff resultTy
 
 checkRWSAction :: (Typer m, IRRep r) => RWS -> LamExpr r i -> m i o (Type r o, Type r o)
 checkRWSAction rws f = do

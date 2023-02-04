@@ -75,7 +75,7 @@ lowerFullySequential :: EnvReader m => SBlock n -> m n (DestBlock n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   resultDestTy <- RawRefTy <$> getTypeSubst b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
-    Abs (destBinder:>resultDestTy) <$> buildBlock do
+    Abs destBinder <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
       traverseBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequential #-}

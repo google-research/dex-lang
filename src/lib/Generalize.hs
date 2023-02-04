@@ -125,7 +125,7 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     iTy' <- f TypeParam TyKind iTy
     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
     d'   <- f DictParam dictTy d
-    withFreshBinder (getNameHint b) (toBinding iTy') \b' -> do
+    withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
       resultTy' <- applyRename (b@>binderName b') resultTy >>= f TypeParam TyKind
       return $ TabTy (b':>IxType iTy' (IxDictAtom d')) resultTy'
   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI

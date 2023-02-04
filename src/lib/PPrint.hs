@@ -475,7 +475,6 @@ instance IRRep r => Pretty (AtomBinding r n) where
     LetBound    b -> p b
     LamBound    b -> p b
     PiBound     b -> p b
-    IxBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
     FFIFunBound s _ -> p s

@@ -1099,7 +1099,7 @@ computeSizeGivenOrdinal
   -> m n (Abs (Binder SimpIR) (Block SimpIR) n)
 computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
-    Abs (bOrdinal:>IdxRepTy) <$> buildBlock do
+    Abs bOrdinal <$> buildBlock do
       i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
@@ -1186,7 +1186,7 @@ withFreshIBinder
   -> (forall l. DExt n l => IBinder n l -> m l a)
   -> m n a
 withFreshIBinder hint ty cont = do
-  withFreshBinder hint (ImpNameBinding ty) \b ->
+  withFreshBinder hint (ImpNameBinding ty) \(b:>_) ->
     cont $ IBinder b ty
 {-# INLINE withFreshIBinder #-}
 

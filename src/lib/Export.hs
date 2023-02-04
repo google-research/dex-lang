@@ -95,7 +95,7 @@ prepareFunctionForExport cc f = do
             goResult lty \lres ->
               goResult (sink rty) \rres ->
                 cont $ joinNest lres rres
-          _ -> withFreshBinder noHint ty \b -> do
+          _ -> withFreshBinder noHint ty \(b:>_) -> do
             ety <- toExportType ty
             cont $ Nest (ExportResult (b:>ety)) Empty
 
