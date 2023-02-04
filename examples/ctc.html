@@ -475,9 +475,9 @@ and if not, casts them to an equivalent but provably <code>NonEmpty</code> form.
       position&#39; <span class="symbol">=</span> (<span class="type-name">Unit</span> <span class="symbol">|</span> <span class="type-name">Fin</span> position_size_m1)
 
       blank&#39;  <span class="symbol">=</span> unsafe_from_ordinal vocab&#39; (ordinal blank)
-      logits&#39; <span class="symbol">=</span> <span class="keyword">view</span> t<span class="command">:time</span>&#39; v<span class="command">:vocab</span>&#39;<span class="symbol">.</span>
+      logits&#39; <span class="symbol">=</span> <span class="keyword">for</span> t<span class="command">:time</span>&#39; v<span class="command">:vocab</span>&#39;<span class="symbol">.</span>
         logits<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal t))<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal v))
-      labels&#39; <span class="symbol">=</span> <span class="keyword">view</span> p<span class="command">:position</span>&#39;<span class="symbol">.</span>
+      labels&#39; <span class="symbol">=</span> <span class="keyword">for</span> p<span class="command">:position</span>&#39;<span class="symbol">.</span>
         unsafe_from_ordinal _ (ordinal labels<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal p)))
 
       ctc_non_empty blank&#39; logits&#39; labels&#39;
