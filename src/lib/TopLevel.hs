@@ -12,7 +12,7 @@ module TopLevel (
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
-  loadObject, toCFunction, evalLLVM) where
+  loadObject, toCFunction, evalLLVM, asImpFunction) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -554,7 +554,10 @@ evalBlock typed = do
         l <- getFilteredLogger
         logFiltered l VectPass $ return [TextOut $ pprint errs]
         checkPass VectPass $ return vo
-      result <- repValAtom =<< evalLLVM vopt
+      impOpt <- asImpFunction vopt
+      resultVals <- evalLLVM impOpt
+      resultTy <- getDestBlockType vopt
+      result <- repValAtom =<< repValFromFlatList resultTy resultVals
       applyReconTop recon result
 {-# SCC evalBlock #-}
 
@@ -660,14 +663,17 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-evalLLVM :: forall n m. (Topper m, Mut n) => DestBlock n -> m n (SRepVal n)
-evalLLVM block = do
+asImpFunction :: (Topper m, Mut n) => DestBlock n -> m n (ImpFunction n)
+asImpFunction block = do
   backend <- backendName <$> getConfig
-  logger  <- getFilteredLogger
   let (cc, _needsSync) =
         case backend of LLVMCUDA -> (EntryFunCC CUDARequired   , True )
                         _        -> (EntryFunCC CUDANotRequired, False)
-  impFun <- checkPass ImpPass $ blockToImpFunction backend cc block
+  checkPass ImpPass $ blockToImpFunction backend cc block
+
+evalLLVM :: forall n m. (Topper m, Mut n) => ImpFunction n -> m n [LitVal]
+evalLLVM impFun = do
+  logger  <- getFilteredLogger
   let IFunType _ _ resultTypes = impFunType impFun
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
@@ -677,10 +683,7 @@ evalLLVM block = do
   benchRequired <- requiresBench <$> getPassCtx
   nativeFun <- liftIO $ linkFunObjCode obj dyvarStores
     $ LinktimeVals reqFunPtrs reqDataPtrs
-  resultVals <-
-    liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-  resultTy <- getDestBlockType block
-  repValFromFlatList resultTy resultVals
+  liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
 {-# SCC evalLLVM #-}
 
 compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
