@@ -896,10 +896,20 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 :p intpow 2 17
 > 131072
 
+def f (x:Float) : Float =
+  intpow x 2
+
+x2 = 3.1
+f x2
+> 9.61
+
+grad f x2
+> 6.2
+
 -- Integer utility tests
 
-:p map is_power_of_2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
-> [False, True, True, False, True, True, True, False]
+:p map is_power_of_2 [0, 1, 2, 3, 256, 1023, 1024, 1024*1024, 1024*1024 + 1]
+> [False, True, True, False, True, False, True, True, False]
 
 :p map natlog2 [1, 2, 3, 4, 5, 1023, 1024, 1025]
 > [0, 1, 1, 2, 2, 9, 10, 10]
