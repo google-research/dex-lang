@@ -239,17 +239,13 @@ liftImpM cont = do
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
 translateTopLevel :: CallingConvention -> DestBlock i -> SubstImpM i o (ImpFunction o)
-translateTopLevel cc (Abs (destb:>destTy) body) = do
-  Abs decls (ListE results)  <- buildScopedImp do
-    dest <- case destTy of
-      RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
-      _ -> error "Expected a reference type for body destination"
-    extendSubst (destb @> SubstVal (destToAtom dest)) $ void $ translateBlock Nothing body
-    resultAtom <- loadAtom dest
-    ListE <$> repValToList <$> atomToRepVal resultAtom
-  let funImpl = Abs Empty $ ImpBlock decls results
-  let funTy   = IFunType cc [] (map getIType results)
-  return $ ImpFunction funTy funImpl
+translateTopLevel cc (Abs (destb:>destTy) body) = buildNullaryImpFunction cc do
+  dest <- case destTy of
+    RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
+    _ -> error "Expected a reference type for body destination"
+  extendSubst (destb @> SubstVal (destToAtom dest)) $ void $ translateBlock Nothing body
+  resultAtom <- loadAtom dest
+  repValToList <$> atomToRepVal resultAtom
 
 translateBlock :: forall i o. Emits o
                => MaybeDest o -> SBlock i -> SubstImpM i o (SAtom o)
@@ -1201,6 +1197,12 @@ emitCall maybeDest (NaryPiType bs _ resultTy) f xs = do
   let impArgs = concat argsImp ++ destImp
   _ <- impCall f impArgs
   loadAtom dest
+
+buildNullaryImpFunction
+  :: CallingConvention
+  -> (forall l. (Emits l, DExt n l) => SubstImpM i l [IExpr l])
+  -> SubstImpM i n (ImpFunction n)
+buildNullaryImpFunction cc cont = buildImpFunction cc [] $ const cont
 
 buildImpFunction
   :: CallingConvention
