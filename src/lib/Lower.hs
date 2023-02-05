@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Lower
-  ( lowerFullySequential, DestBlock, vectorizeLoops
+  ( lowerFullySequential, vectorizeLoops
   ) where
 
 import Prelude hiding (abs, id, (.))
@@ -39,9 +39,6 @@ import Types.Misc (Output)
 import Types.Primitives
 import Util (foldMapM, enumerate)
 
--- A binder for the destination of block result, body.
-type DestBlock = Abs (Binder SimpIR) SBlock
-
 -- === For loop resolution ===
 
 -- The `lowerFullySequential` pass makes two related changes:
@@ -71,11 +68,11 @@ type DestBlock = Abs (Binder SimpIR) SBlock
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-lowerFullySequential :: EnvReader m => SBlock n -> m n (DestBlock n)
+lowerFullySequential :: EnvReader m => SBlock n -> m n (DestBlock SimpIR n)
 lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
   resultDestTy <- RawRefTy <$> getTypeSubst b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
-    Abs destBinder <$> buildBlock do
+    DestBlock destBinder <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
       traverseBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequential #-}
@@ -313,10 +310,10 @@ instance PrettyPrec (VSubstValC c n) where
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
 vectorizeLoops :: (MonadIO (m n), MonadLogger [Output] (m n), EnvReader m)
-               => Word32 -> Abs (Binder SimpIR) SBlock n
-               -> m n (Abs (Binder SimpIR) SBlock n, Errs)
-vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
-  refreshAbs abs \d (Block _ decls ans) -> do
+               => Word32 -> DestBlock SimpIR n
+               -> m n (DestBlock SimpIR n, Errs)
+vectorizeLoops vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
+  refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
     vblock <- liftBuilderT $ buildBlock do
                 s <- vectorizeLoopsRec emptyInFrag decls
                 applyRename s ans
@@ -325,7 +322,7 @@ vectorizeLoops vectorByteWidth abs = liftEnvReaderM do
       -- caught inside `vectorizeLoopsRec` (and should have been added to the
       -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
       Failure errs -> error $ pprint errs
-      Success (block', errs) -> return $ (Abs d block', errs)
+      Success (block', errs) -> return $ (DestBlock d block', errs)
 {-# SCC vectorizeLoops #-}
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a

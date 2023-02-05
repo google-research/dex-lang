@@ -1119,6 +1119,10 @@ instance IRRep r => PrettyPrec (DAMOp r n) where
     Freeze r  -> "freeze" <+> pApp r
     AllocDest ty -> "alloc" <+> pApp ty
 
+instance IRRep r => Pretty (DestBlock r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (DestBlock r n) where
+  prettyPrec (DestBlock b body) = prettyPrec $ Abs b body
+
 instance IRRep r => Pretty (BaseMonoid r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (BaseMonoid r n) where
   prettyPrec (BaseMonoid x f) =

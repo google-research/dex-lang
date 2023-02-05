@@ -663,7 +663,7 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-asImpFunction :: (Topper m, Mut n) => DestBlock n -> m n (ImpFunction n)
+asImpFunction :: (Topper m, Mut n) => DestBlock SimpIR n -> m n (ImpFunction n)
 asImpFunction block = do
   backend <- backendName <$> getConfig
   let (cc, _needsSync) =
