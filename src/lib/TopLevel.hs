@@ -543,8 +543,8 @@ evalBlock typed = do
   analyzed2 <- whenOpt inlined $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
   opt <- whenOpt inlined2 $ checkPass OptPass . optimize
-  case opt of
-    AtomicBlock result -> applyReconTop recon result
+  simpResult <- case opt of
+    AtomicBlock result -> return result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
       lopt <- whenOpt lowered $ checkPass LowerOptPass .
@@ -557,8 +557,8 @@ evalBlock typed = do
       impOpt <- asImpFunction vopt
       resultVals <- evalLLVM impOpt
       resultTy <- getDestBlockType vopt
-      result <- repValAtom =<< repValFromFlatList resultTy resultVals
-      applyReconTop recon result
+      repValAtom =<< repValFromFlatList resultTy resultVals
+  applyReconTop recon simpResult
 {-# SCC evalBlock #-}
 
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
