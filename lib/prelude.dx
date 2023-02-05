@@ -2281,6 +2281,12 @@ def is_power_of_2 (x:Nat) : Bool =
     then False
     else 0 == %and x' (%isub x' (1::NatRep))
 
+-- This computes the integer part of the binary logarithm of the input.
+-- TODO: natlog2 0 should do something other than underflow the answer.
+-- TODO: Use LLVM ctlz intrinsic instead.  It needs a slightly new
+-- code path in ImpToLLVM, because it's the first LLVM intrinsic
+-- we have with a fixed-point argument.
+-- https://llvm.org/docs/LangRef.html#llvm-ctlz-intrinsic
 def natlog2 (x:Nat) : Nat =
   tmp = yield_state 0 \ans.
     cmp <- run_state 1
@@ -2295,22 +2301,18 @@ def natlog2 (x:Nat) : Nat =
   unsafe_nat_diff tmp 1  -- TODO: something less horrible
 
 def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Nat) : a =
+  iters = if power == 0 then 0 else 1 + natlog2 power
   -- Implements exponentiation by squaring.
   -- This could be nicer if there were a way to explicitly
   -- specify which typelcass instance to use for Mul.
   yield_state one \ans.
     pow <- with_state power
     z <- with_state base
-    while do
-      if get pow > 0
-        then
-          if is_odd (get pow)
-            then ans := times (get ans) (get z)
-          z := times (get z) (get z)
-          pow := intdiv2 (get pow)
-          True
-        else
-          False
+    for _:(Fin iters).
+      if is_odd (get pow)
+        then ans := times (get ans) (get z)
+      z := times (get z) (get z)
+      pow := intdiv2 (get pow)
 
 def intpow {a} [Mul a] (base:a) (power:Nat) : a =
   general_integer_power (*) one base power
