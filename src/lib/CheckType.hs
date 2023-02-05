@@ -212,6 +212,9 @@ instance (CheckableE e1, CheckableE e2) => CheckableE (EitherE e1 e2) where
 instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
   checkE (Abs b e) = checkB b \b' -> Abs b' <$> checkE e
 
+instance (IRRep r) => CheckableE (DestBlock r) where
+  checkE (DestBlock b e) = checkB b \b' -> DestBlock b' <$> checkE e
+
 -- === type checking core ===
 
 instance IRRep r => CheckableE (Atom r) where

@@ -259,14 +259,12 @@ emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 
 -- === Loop invariant code motion ===
 
--- TODO: Resolve import cycle with Lower
-type DestBlock = Abs (Binder SimpIR) SBlock
-
-hoistLoopInvariantDest :: EnvReader m => DestBlock n -> m n (DestBlock n)
-hoistLoopInvariantDest (Abs (db:>dTy) body) =
+hoistLoopInvariantDest :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
+hoistLoopInvariantDest (DestBlock (db:>dTy) body) =
   liftM fst $ liftGenericTraverserM LICMS do
     dTy' <- traverseGenericE dTy
-    buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+    (Abs db' body') <- buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
+    return $ DestBlock db' body'
 {-# SCC hoistLoopInvariantDest #-}
 
 hoistLoopInvariant :: EnvReader m => SBlock n -> m n (SBlock n)
@@ -367,9 +365,9 @@ instance HoistableState FV where
 
 type DCEM = StateT1 FV EnvReaderM
 
-dceDestBlock :: EnvReader m => DestBlock n -> m n (DestBlock n)
-dceDestBlock idb = liftEnvReaderM $
-  refreshAbs idb \d b -> Abs d <$> dceBlock b
+dceDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
+dceDestBlock (DestBlock d b) = liftEnvReaderM $
+  refreshAbs (Abs d b) \d' b' -> DestBlock d' <$> dceBlock b'
 {-# SCC dceDestBlock #-}
 
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)

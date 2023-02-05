@@ -60,10 +60,9 @@ getNaryLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (NaryPiType r
 getNaryLamExprType lam = liftTypeQueryM idSubst $ getLamExprType lam
 {-# INLINE getNaryLamExprType #-}
 
--- TODO: make `DestBlock` a newtype with a real `HasType` instance
-type DestBlock r = Abs (Binder r) (Block r)
+-- TODO: Fold this into a real HasType instance
 getDestBlockType :: (IRRep r, EnvReader m) => DestBlock r n -> m n (Type r n)
-getDestBlockType (Abs (_:>RawRefTy ansTy) _) = return ansTy
+getDestBlockType (DestBlock (_:>RawRefTy ansTy) _) = return ansTy
 getDestBlockType _ = error "Expected a reference type for body destination"
 {-# INLINE getDestBlockType #-}
 

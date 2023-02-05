@@ -37,7 +37,6 @@ import CheckType (CheckableE (..))
 import Core
 import Err
 import IRVariants
-import Lower (DestBlock)
 import MTL1
 import Name
 import Subst
@@ -47,14 +46,15 @@ import Types.Imp
 import Types.Primitives
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
-blockToImpFunction :: EnvReader m => Backend -> CallingConvention -> DestBlock n -> m n (ImpFunction n)
+blockToImpFunction :: EnvReader m
+  => Backend -> CallingConvention -> DestBlock SimpIR n -> m n (ImpFunction n)
 blockToImpFunction _ cc absBlock = liftImpM $ translateTopLevel cc absBlock
 
 toImpFunction
   :: EnvReader m
   => CallingConvention -> LamExpr SimpIR n -> m n (ImpFunction n)
-toImpFunction cc lam' = do
-  lam@(LamExpr bs body) <- return lam'
+toImpFunction cc lam = do
+  (LamExpr bs body) <- return lam
   ty <- getNaryLamExprType lam
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
@@ -238,8 +238,8 @@ liftImpM cont = do
 
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
-translateTopLevel :: CallingConvention -> DestBlock i -> SubstImpM i o (ImpFunction o)
-translateTopLevel cc (Abs (destb:>destTy) body) = buildNullaryImpFunction cc do
+translateTopLevel :: CallingConvention -> DestBlock SimpIR i -> SubstImpM i o (ImpFunction o)
+translateTopLevel cc (DestBlock (destb:>destTy) body) = buildNullaryImpFunction cc do
   dest <- case destTy of
     RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
     _ -> error "Expected a reference type for body destination"

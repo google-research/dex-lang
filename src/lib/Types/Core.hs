@@ -187,6 +187,12 @@ data LamBinding (n::S) = LamBinding Arrow (CType n)
 data LamExpr (r::IR) (n::S) where
   LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
 
+data DestBlock (r::IR) (n::S) where
+  -- The binder is for the destination that holds the result of the Block.
+  -- The Block itself should not return anything -- it communicates results
+  -- entirely through the destination.
+  DestBlock :: forall r n l. Binder r n l -> Block r l -> DestBlock r n
+
 data IxDict r n where
   IxDictAtom        :: Atom CoreIR n         -> IxDict CoreIR n
   -- TODO: make these two only available in SimpIR (currently we can't do that
@@ -1934,6 +1940,21 @@ instance IRRep r => AlphaHashableE (LamExpr r)
 instance IRRep r => RenameE        (LamExpr r)
 deriving instance IRRep r => Show (LamExpr r n)
 deriving via WrapE (LamExpr r) n instance IRRep r => Generic (LamExpr r n)
+
+instance GenericE (DestBlock r) where
+  type RepE (DestBlock r) = Abs (Binder r) (Block r)
+  fromE (DestBlock b block) = Abs b block
+  {-# INLINE fromE #-}
+  toE   (Abs b block) = DestBlock b block
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (DestBlock r)
+instance IRRep r => HoistableE     (DestBlock r)
+instance IRRep r => AlphaEqE       (DestBlock r)
+instance IRRep r => AlphaHashableE (DestBlock r)
+instance IRRep r => RenameE        (DestBlock r)
+deriving instance IRRep r => Show (DestBlock r n)
+deriving via WrapE (DestBlock r) n instance IRRep r => Generic (DestBlock r n)
 
 instance GenericE PiBinding where
   type RepE PiBinding = PairE (LiftE Arrow) CType
