@@ -15,9 +15,11 @@ import Test.QuickCheck
 
 import Builder
 import Core
+import Imp (repValFromFlatList)
 import Lower
 import Name
 import Optimize
+import QueryType (getDestBlockType)
 import TopLevel
 import Types.Core
 import Types.Imp
@@ -35,7 +37,12 @@ exprToBlock expr = do
     return $ Var v
 
 evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
-evalBlock block = lowerFullySequential block >>= evalLLVM
+evalBlock block = do
+  lowered <- lowerFullySequential block
+  imp <- asImpFunction lowered
+  resultVals <- evalLLVM imp
+  resultTy <- getDestBlockType lowered
+  repValFromFlatList resultTy resultVals
 
 evalClosedExpr :: SExpr VoidS -> IO LitVal
 evalClosedExpr expr = do
