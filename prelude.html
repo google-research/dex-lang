@@ -2509,7 +2509,13 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
     <span class="keyword">then</span> <span class="type-name">False</span>
     <span class="keyword">else</span> 0 <span class="symbol">==</span> %and x&#39; (%isub x&#39; (1<span class="symbol">::</span><span class="type-name">NatRep</span>))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> natlog2 (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- This computes the integer part of the binary logarithm of the input.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: natlog2 0 should do something other than underflow the answer.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Use LLVM ctlz intrinsic instead.  It needs a slightly new
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- code path in ImpToLLVM, because it&#39;s the first LLVM intrinsic
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- we have with a fixed-point argument.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- https://llvm.org/docs/LangRef.html#llvm-ctlz-intrinsic
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> natlog2 (x<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   tmp <span class="symbol">=</span> yield_state 0 <span class="symbol">\</span>ans<span class="symbol">.</span>
     cmp <span class="symbol">&lt;-</span> run_state 1
     while <span class="keyword">do</span>
@@ -2523,22 +2529,18 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   unsafe_nat_diff tmp 1  <span class="comment">-- TODO: something less horrible
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> general_integer_power {a} (times<span class="command">:a</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) (one<span class="command">:a</span>) (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+  iters <span class="symbol">=</span> <span class="keyword">if</span> power <span class="symbol">==</span> 0 <span class="keyword">then</span> 0 <span class="keyword">else</span> 1 <span class="symbol">+</span> natlog2 power
   <span class="comment">-- Implements exponentiation by squaring.
 </span>  <span class="comment">-- This could be nicer if there were a way to explicitly
 </span>  <span class="comment">-- specify which typelcass instance to use for Mul.
 </span>  yield_state one <span class="symbol">\</span>ans<span class="symbol">.</span>
     pow <span class="symbol">&lt;-</span> with_state power
     z <span class="symbol">&lt;-</span> with_state base
-    while <span class="keyword">do</span>
-      <span class="keyword">if</span> get pow <span class="symbol">&gt;</span> 0
-        <span class="keyword">then</span>
-          <span class="keyword">if</span> is_odd (get pow)
-            <span class="keyword">then</span> ans <span class="symbol">:=</span> times (get ans) (get z)
-          z <span class="symbol">:=</span> times (get z) (get z)
-          pow <span class="symbol">:=</span> intdiv2 (get pow)
-          <span class="type-name">True</span>
-        <span class="keyword">else</span>
-          <span class="type-name">False</span>
+    <span class="keyword">for</span> _<span class="symbol">:</span>(<span class="type-name">Fin</span> iters)<span class="symbol">.</span>
+      <span class="keyword">if</span> is_odd (get pow)
+        <span class="keyword">then</span> ans <span class="symbol">:=</span> times (get ans) (get z)
+      z <span class="symbol">:=</span> times (get z) (get z)
+      pow <span class="symbol">:=</span> intdiv2 (get pow)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow {a} [<span class="type-name">Mul</span> a] (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   general_integer_power (<span class="symbol">*</span>) one base power
