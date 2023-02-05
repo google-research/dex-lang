@@ -763,7 +763,7 @@ valueToTree (RepVal tyTop valTop) = do
 {-# INLINE valueToTree #-}
 
 storeLeaf :: Emits n => LeafType n -> IExpr n -> IExpr n -> SubstImpM i n ()
-storeLeaf leafTy dest src= case getRefBufferType leafTy of
+storeLeaf leafTy dest src = case getRefBufferType leafTy of
   BufferType Singleton (UnboxedValue _) -> store dest src
   BufferType idxStructure (UnboxedValue _) -> do
     numel <- computeElemCountImp idxStructure
@@ -1573,7 +1573,7 @@ keep track of their sizes (e.g. back in the Haskell runtime).
 
 The destination-passing style, together with the free-before-returning style,
 lets us generate as many views as we like of a buffer without having to count
-references (dynamically or statically). For example, we use we use pointers to
+references (dynamically or statically). For example, we use pointers to
 interior memory locations in a buffer to represent array slices and subarrays.
 We don't need to worry about use-after-free errors because we don't free the
 buffer until the function/block returns, at which point those views will no
@@ -1581,7 +1581,7 @@ longer be available. The only thing that escapes the function is the data
 written into the destination supplied by the caller.
 
 Now back to the important exception, dependent pairs. When we have a dependent
-pair, like `(n:Nat &^ Fin n => Float)`, we don't know the size of the `Fin n =>
+pair, like `(n:Nat &> Fin n => Float)`, we don't know the size of the `Fin n =>
 Float` table because the `n` is given by the *value* of the (first element of
 the) pair. We use these to encode dynamically-sized lists. We handle this case
 by pretending that we can have an array of arbitrary-sized boxes. The
