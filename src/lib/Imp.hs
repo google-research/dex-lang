@@ -52,16 +52,18 @@ blockToImpFunction _ cc absBlock = liftImpM $ translateTopLevel cc absBlock
 
 toImpFunction
   :: EnvReader m
-  => CallingConvention -> LamExpr SimpIR n -> m n (ImpFunction n)
+  => CallingConvention -> DestLamExpr SimpIR n -> m n (ImpFunction n)
 toImpFunction cc lam = do
-  (LamExpr bs body) <- return lam
-  ty <- getNaryLamExprType lam
+  (DestLamExpr bs bodyAbs) <- return lam
+  ty <- getNaryDestLamExprType lam
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
     (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
     extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-      void $ translateBlock (Just $ sink resultDest) body
-      return []
+      (DestBlock destb body) <- return bodyAbs
+      extendSubst (destb @> SubstVal (destToAtom (sink resultDest))) do
+        void $ translateBlock Nothing body
+        return []
 
 getNaryLamImpArgTypesWithCC
   :: EnvReader m => CallingConvention

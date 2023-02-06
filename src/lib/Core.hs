@@ -499,6 +499,10 @@ blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
   BlockAnn _ eff -> eff
 
+destBlockEffects :: IRRep r => DestBlock r n -> EffectRow r n
+destBlockEffects (DestBlock destb block) =
+  ignoreHoistFailure $ hoist destb $ blockEffects block
+
 lamExprToAtom :: LamExpr CoreIR n -> Arrow -> Maybe (EffAbs n) -> Atom CoreIR n
 lamExprToAtom lam@(UnaryLamExpr b block) arr maybeEffAbs = Lam lam arr effAbs
   where effAbs = case maybeEffAbs of

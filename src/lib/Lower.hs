@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Lower
-  ( lowerFullySequential, vectorizeLoops
+  ( lowerFullySequential, lowerFullySequentialLam, vectorizeLoops
   ) where
 
 import Prelude hiding (abs, id, (.))
@@ -76,6 +76,12 @@ lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
       let dest = Var $ sink $ binderName destBinder
       traverseBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequential #-}
+
+lowerFullySequentialLam :: EnvReader m => SLam n -> m n (DestLamExpr SimpIR n)
+lowerFullySequentialLam (LamExpr bs body) = liftEnvReaderM $ do
+  refreshAbs (Abs bs body) \bs' body' -> do
+    body'' <- lowerFullySequential body'
+    return $ DestLamExpr bs' body''
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM SimpIR UnitB LFS

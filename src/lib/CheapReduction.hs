@@ -628,6 +628,7 @@ instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
 instance SubstE AtomSubstVal LamBinding
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
+instance IRRep r => SubstE AtomSubstVal (DestBlock r)
 instance SubstE AtomSubstVal PiBinding
 instance SubstB AtomSubstVal PiBinder
 instance SubstE AtomSubstVal PiType

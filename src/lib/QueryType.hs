@@ -17,7 +17,7 @@ module QueryType (
   numNaryPiArgs,
   sourceNameType, typeBinOp, typeUnOp,
   ixDictType, getSuperclassDicts,
-  ixTyFromDict, instantiateHandlerType, getDestBlockType,
+  ixTyFromDict, instantiateHandlerType, getDestBlockType, getNaryDestLamExprType,
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
   rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun
   ) where
@@ -65,6 +65,10 @@ getDestBlockType :: (IRRep r, EnvReader m) => DestBlock r n -> m n (Type r n)
 getDestBlockType (DestBlock (_:>RawRefTy ansTy) _) = return ansTy
 getDestBlockType _ = error "Expected a reference type for body destination"
 {-# INLINE getDestBlockType #-}
+
+getNaryDestLamExprType :: (IRRep r, EnvReader m) => DestLamExpr r n -> m n (NaryPiType r n)
+getNaryDestLamExprType lam = liftTypeQueryM idSubst $ getDestLamExprType lam
+{-# INLINE getNaryDestLamExprType #-}
 
 getReferentTypeRWSAction :: (EnvReader m, IRRep r) => LamExpr r o -> m o (Type r o)
 getReferentTypeRWSAction f = liftTypeQueryM idSubst $ liftM snd $ getTypeRWSAction f
@@ -675,6 +679,13 @@ getLamExprType (LamExpr bs body) =
   substBinders bs \bs' -> do
     effs <- substM $ blockEffects body
     resultTy <- getTypeE body
+    return $ NaryPiType bs' effs resultTy
+
+getDestLamExprType :: IRRep r => DestLamExpr r i -> TypeQueryM i o (NaryPiType r o)
+getDestLamExprType (DestLamExpr bs body) =
+  substBinders bs \bs' -> do
+    resultTy <- getDestBlockType =<< substM body
+    effs <- substM $ destBlockEffects body
     return $ NaryPiType bs' effs resultTy
 
 getTypeRWSAction :: IRRep r => LamExpr r i -> TypeQueryM i o (Type r o, Type r o)
