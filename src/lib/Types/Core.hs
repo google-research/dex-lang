@@ -193,6 +193,9 @@ data DestBlock (r::IR) (n::S) where
   -- entirely through the destination.
   DestBlock :: forall r n l. Binder r n l -> Block r l -> DestBlock r n
 
+data DestLamExpr (r::IR) (n::S) where
+  DestLamExpr :: Nest (Binder r) n l -> DestBlock r l -> DestLamExpr r n
+
 data IxDict r n where
   IxDictAtom        :: Atom CoreIR n         -> IxDict CoreIR n
   -- TODO: make these two only available in SimpIR (currently we can't do that

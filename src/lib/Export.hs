@@ -22,6 +22,7 @@ import Core
 import Err
 import IRVariants
 import Imp
+import Lower (lowerFullySequentialLam)
 import Name
 import QueryType
 import Simplify
@@ -51,7 +52,8 @@ prepareFunctionForExport cc f = do
     Failure err -> throwErrs err
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
-  fImp <- toImpFunction cc fSimp
+  fLower <- lowerFullySequentialLam fSimp
+  fImp <- toImpFunction cc fLower
   return (fImp, sig)
 
   where

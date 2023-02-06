@@ -606,7 +606,8 @@ execUDecl mname decl = do
 
 compileTopLevelFun :: (Topper m, Mut n) => NameHint -> SLam n -> m n (TopFunLowerings n)
 compileTopLevelFun hint fSimp = do
-  fImp <- toImpFunction StandardCC fSimp
+  fLower <- lowerFullySequentialLam fSimp
+  fImp <- toImpFunction StandardCC fLower
   fObj <- toCFunction hint fImp
   void $ loadObject fObj
   return $ TopFunLowerings fObj
