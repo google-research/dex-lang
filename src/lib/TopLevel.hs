@@ -12,7 +12,8 @@ module TopLevel (
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
-  loadObject, toCFunction, evalLLVM, asImpFunction) where
+  loadObject, toCFunction, evalLLVM, asImpFunction,
+  simpOptimizations, loweredOptimizations) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -535,31 +536,49 @@ whenOpt x act = getConfig <&> optLevel >>= \case
 
 evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
 evalBlock typed = do
+  -- Be careful when adding new compilation passes here.  If you do, be sure to
+  -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
+  -- In most cases it should be easiest to add new passes to simpOptimizations or
+  -- loweredOptimizations, below, because those are reused in all three places.
   synthed <- checkPass SynthPass $ synthTopBlock typed
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
-  analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
-  inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
-  analyzed2 <- whenOpt inlined $ checkPass OccAnalysisPass . analyzeOccurrences
-  inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
-  opt <- whenOpt inlined2 $ checkPass OptPass . optimize
+  opt <- simpOptimizations simp
   simpResult <- case opt of
     AtomicBlock result -> return result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential opt
-      lopt <- whenOpt lowered $ checkPass LowerOptPass .
-        (dceDestBlock >=> hoistLoopInvariantDest)
-      vopt <- whenOpt lopt \lo -> do
-        (vo, errs) <- vectorizeLoops 64 lo
-        l <- getFilteredLogger
-        logFiltered l VectPass $ return [TextOut $ pprint errs]
-        checkPass VectPass $ return vo
-      impOpt <- asImpFunction vopt
+      lOpt <- loweredOptimizations lowered
+      impOpt <- asImpFunction lOpt
       resultVals <- evalLLVM impOpt
-      resultTy <- getDestBlockType vopt
+      resultTy <- getDestBlockType lOpt
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
+
+type HasSimpOptimizations (e::E) (n::S) =
+  (Pretty (e n), CheckableE e, HasAnalyzeOccurrences e, HasInlineBindings e, HasOptimize e)
+
+simpOptimizations :: (Topper m, HasSimpOptimizations e n) => e n -> m n (e n)
+simpOptimizations simp = do
+  analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
+  inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
+  analyzed2 <- whenOpt inlined $ checkPass OccAnalysisPass . analyzeOccurrences
+  inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
+  whenOpt inlined2 $ checkPass OptPass . optimize
+
+type HasLoweredOptimizations (e::E) (n::S) =
+  (Pretty (e n), CheckableE e, HasLowerOpt e, HasVectorizeLoops e)
+
+loweredOptimizations :: (Topper m, HasLoweredOptimizations e n) => e n -> m n (e n)
+loweredOptimizations lowered = do
+  lopt <- whenOpt lowered $ checkPass LowerOptPass .
+    (dceTop >=> hoistLoopInvariant)
+  whenOpt lopt \lo -> do
+    (vo, errs) <- vectorizeLoops 64 lo
+    l <- getFilteredLogger
+    logFiltered l VectPass $ return [TextOut $ pprint errs]
+    checkPass VectPass $ return vo
 
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
 evalSpecializations fs = do
@@ -606,8 +625,10 @@ execUDecl mname decl = do
 
 compileTopLevelFun :: (Topper m, Mut n) => NameHint -> SLam n -> m n (TopFunLowerings n)
 compileTopLevelFun hint fSimp = do
-  fLower <- lowerFullySequentialLam fSimp
-  fImp <- toImpFunction StandardCC fLower
+  fOpt <- simpOptimizations fSimp
+  fLower <- lowerFullySequentialLam fOpt
+  flOpt <- loweredOptimizations fLower
+  fImp <- toImpFunction StandardCC flOpt
   fObj <- toCFunction hint fImp
   void $ loadObject fObj
   return $ TopFunLowerings fObj

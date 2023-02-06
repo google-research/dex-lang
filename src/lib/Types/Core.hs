@@ -1959,6 +1959,21 @@ instance IRRep r => RenameE        (DestBlock r)
 deriving instance IRRep r => Show (DestBlock r n)
 deriving via WrapE (DestBlock r) n instance IRRep r => Generic (DestBlock r n)
 
+instance GenericE (DestLamExpr r) where
+  type RepE (DestLamExpr r) = Abs (Nest (Binder r)) (DestBlock r)
+  fromE (DestLamExpr b block) = Abs b block
+  {-# INLINE fromE #-}
+  toE   (Abs b block) = DestLamExpr b block
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (DestLamExpr r)
+instance IRRep r => HoistableE     (DestLamExpr r)
+instance IRRep r => AlphaEqE       (DestLamExpr r)
+instance IRRep r => AlphaHashableE (DestLamExpr r)
+instance IRRep r => RenameE        (DestLamExpr r)
+deriving instance IRRep r => Show (DestLamExpr r n)
+deriving via WrapE (DestLamExpr r) n instance IRRep r => Generic (DestLamExpr r n)
+
 instance GenericE PiBinding where
   type RepE PiBinding = PairE (LiftE Arrow) CType
   fromE (PiBinding arr ty) = PairE (LiftE arr) ty

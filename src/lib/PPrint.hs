@@ -244,6 +244,10 @@ instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
   prettyPrec (LamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
 
+instance IRRep r => Pretty (DestLamExpr r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (DestLamExpr r n) where
+  prettyPrec (DestLamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
+
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
@@ -428,7 +432,7 @@ prettyLamHelper arr' lamExpr lamType = uncurry prettyLam $ rec arr' lamExpr True
         _ -> (thisOne <> ".", unsafeCoerceE body')
     _ -> error "expected a unary lambda expression"
 
-prettyLam :: IRRep r => Doc ann -> Block r n -> Doc ann
+prettyLam :: Pretty a => Doc ann -> a -> Doc ann
 prettyLam binders body = group $ group (nest 4 $ binders) <> group (nest 2 $ p body)
 
 inlineLastDeclBlock :: IRRep r => Block r n -> Abs (Nest (Decl r)) (Expr r) n

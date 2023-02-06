@@ -215,6 +215,12 @@ instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
 instance (IRRep r) => CheckableE (DestBlock r) where
   checkE (DestBlock b e) = checkB b \b' -> DestBlock b' <$> checkE e
 
+instance (IRRep r) => CheckableE (LamExpr r) where
+  checkE (LamExpr bs body) = checkB bs \bs' -> LamExpr bs' <$> checkE body
+
+instance (IRRep r) => CheckableE (DestLamExpr r) where
+  checkE (DestLamExpr bs body) = checkB bs \bs' -> DestLamExpr bs' <$> checkE body
+
 -- === type checking core ===
 
 instance IRRep r => CheckableE (Atom r) where

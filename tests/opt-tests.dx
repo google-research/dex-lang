@@ -8,8 +8,10 @@ def id' (x:Int) : Int = x
 :pp
   x = id' 1
   5 + 1
+-- First Result is from optimizing id'
 -- CHECK: === Result ===
--- CHECK-NEXT: 6
+-- CHECK: === Result ===
+-- CHECK-NEXT: 0x6
 
 def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + off)
 

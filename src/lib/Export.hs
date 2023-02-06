@@ -52,8 +52,10 @@ prepareFunctionForExport cc f = do
     Failure err -> throwErrs err
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
-  fLower <- lowerFullySequentialLam fSimp
-  fImp <- toImpFunction cc fLower
+  fOpt <- simpOptimizations fSimp
+  fLower <- lowerFullySequentialLam fOpt
+  flOpt <- loweredOptimizations fLower
+  fImp <- toImpFunction cc flOpt
   return (fImp, sig)
 
   where

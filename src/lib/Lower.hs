@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Lower
-  ( lowerFullySequential, lowerFullySequentialLam, vectorizeLoops
+  ( lowerFullySequential, lowerFullySequentialLam, HasVectorizeLoops(..)
   ) where
 
 import Prelude hiding (abs, id, (.))
@@ -28,14 +28,12 @@ import Err
 import GenericTraversal
 import CheapReduction
 import IRVariants
-import Logging
 import MTL1
 import Name
 import Subst
 import PPrint
 import QueryType
 import Types.Core
-import Types.Misc (Output)
 import Types.Primitives
 import Util (foldMapM, enumerate)
 
@@ -315,10 +313,16 @@ instance PrettyPrec (VSubstValC c n) where
 
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
-vectorizeLoops :: (MonadIO (m n), MonadLogger [Output] (m n), EnvReader m)
-               => Word32 -> DestBlock SimpIR n
-               -> m n (DestBlock SimpIR n, Errs)
-vectorizeLoops vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
+class HasVectorizeLoops (e::E) where
+  vectorizeLoops :: (EnvReader m) => Word32 -> e n -> m n (e n, Errs)
+
+instance HasVectorizeLoops (DestBlock SimpIR) where
+  vectorizeLoops = vectorizeLoopsBlock
+
+vectorizeLoopsBlock :: (EnvReader m)
+  => Word32 -> DestBlock SimpIR n
+  -> m n (DestBlock SimpIR n, Errs)
+vectorizeLoopsBlock vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
   refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
     vblock <- liftBuilderT $ buildBlock do
                 s <- vectorizeLoopsRec emptyInFrag decls
@@ -329,7 +333,13 @@ vectorizeLoops vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
       -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
       Failure errs -> error $ pprint errs
       Success (block', errs) -> return $ (DestBlock d block', errs)
-{-# SCC vectorizeLoops #-}
+{-# SCC vectorizeLoopsBlock #-}
+
+instance HasVectorizeLoops (DestLamExpr SimpIR) where
+  vectorizeLoops width (DestLamExpr bs body) = liftEnvReaderM do
+    refreshAbs (Abs bs body) \bs' body' -> do
+      (body'', errs) <- vectorizeLoops width body'
+      return $ (DestLamExpr bs' body'', errs)
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
 addVectErrCtx name payload m =
