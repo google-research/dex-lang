@@ -547,8 +547,8 @@ evalBlock typed = do
   simpResult <- case opt of
     AtomicBlock result -> return result
     _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential opt
-      lOpt <- loweredOptimizations lowered
+      lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
+      NullaryDestLamExpr lOpt <- loweredOptimizations lowered
       impOpt <- asImpFunction lOpt
       resultVals <- evalLLVM impOpt
       resultTy <- getDestBlockType lOpt
@@ -556,7 +556,7 @@ evalBlock typed = do
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
 
-simpOptimizations :: (Topper m) => SLam n -> m n (SLam n)
+simpOptimizations :: Topper m => SLam n -> m n (SLam n)
 simpOptimizations simp = do
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
@@ -564,13 +564,10 @@ simpOptimizations simp = do
   inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
   whenOpt inlined2 $ checkPass OptPass . optimize
 
-type HasLoweredOptimizations (e::E) (n::S) =
-  (Pretty (e n), CheckableE e, HasLowerOpt e, HasVectorizeLoops e)
-
-loweredOptimizations :: (Topper m, HasLoweredOptimizations e n) => e n -> m n (e n)
+loweredOptimizations :: Topper m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
 loweredOptimizations lowered = do
   lopt <- whenOpt lowered $ checkPass LowerOptPass .
-    (dceTop >=> hoistLoopInvariant)
+    (dceTopDest >=> hoistLoopInvariantDest)
   whenOpt lopt \lo -> do
     (vo, errs) <- vectorizeLoops 64 lo
     l <- getFilteredLogger
@@ -623,7 +620,7 @@ execUDecl mname decl = do
 compileTopLevelFun :: (Topper m, Mut n) => NameHint -> SLam n -> m n (TopFunLowerings n)
 compileTopLevelFun hint fSimp = do
   fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequentialLam fOpt
+  fLower <- lowerFullySequential fOpt
   flOpt <- loweredOptimizations fLower
   fImp <- toImpFunction StandardCC flOpt
   fObj <- toCFunction hint fImp

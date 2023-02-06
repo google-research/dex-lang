@@ -22,7 +22,7 @@ import Core
 import Err
 import IRVariants
 import Imp
-import Lower (lowerFullySequentialLam)
+import Lower (lowerFullySequential)
 import Name
 import QueryType
 import Simplify
@@ -53,7 +53,7 @@ prepareFunctionForExport cc f = do
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
   fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequentialLam fOpt
+  fLower <- lowerFullySequential fOpt
   flOpt <- loweredOptimizations fLower
   fImp <- toImpFunction cc flOpt
   return (fImp, sig)

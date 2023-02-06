@@ -50,8 +50,8 @@ _ = for i:(Fin 50). [ordinal i, 2, 3]
   [x0, x1, x2] = arange_f 2
   (x0, x2)
 -- CHECK: === Result ===
--- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
--- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
+-- CHECK: [[x0:[^ ]*]]:Int32 = id{{.*}} 2
+-- CHECK-NEXT: [[x2:[^ ]*]]:Int32 = id{{.*}} 4
 -- CHECK-NEXT: ([[x0]], [[x2]])
 
 "don't unroll large table literals"
