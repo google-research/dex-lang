@@ -1107,6 +1107,9 @@ pattern LabeledRowKind = NewtypeTyCon LabeledRowKindTC
 pattern FinConst :: Word32 -> Type CoreIR n
 pattern FinConst n = NewtypeTyCon (Fin (NatVal n))
 
+pattern NullaryLamExpr :: Block r n -> LamExpr r n
+pattern NullaryLamExpr body = LamExpr Empty body
+
 pattern UnaryLamExpr :: Binder r n l -> Block r l -> LamExpr r n
 pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 

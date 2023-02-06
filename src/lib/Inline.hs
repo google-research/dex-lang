@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Inline (HasInlineBindings(..)) where
+module Inline (inlineBindings) where
 
 import Data.Functor
 import Data.List.NonEmpty qualified as NE
@@ -23,15 +23,13 @@ import Types.Primitives
 
 -- === External API ===
 
-class HasInlineBindings (e::E) where
-  inlineBindings :: (EnvReader m) => e n -> m n (e n)
+inlineBindings :: (EnvReader m) => SLam n -> m n (SLam n)
+inlineBindings = liftLamExpr inlineBindingsBlock
+{-# INLINE inlineBindings #-}
 
-instance HasInlineBindings SBlock where
-  inlineBindings blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop blk
-  {-# SCC inlineBindings #-}
-
-instance HasInlineBindings SLam where
-  inlineBindings = liftLamExpr inlineBindings
+inlineBindingsBlock :: (EnvReader m) => SBlock n -> m n (SBlock n)
+inlineBindingsBlock blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop blk
+{-# SCC inlineBindingsBlock #-}
 
 -- === Data Structure ===
 

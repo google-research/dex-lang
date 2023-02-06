@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module OccAnalysis (HasAnalyzeOccurrences(..)) where
+module OccAnalysis (analyzeOccurrences) where
 
 import Control.Monad.State.Strict
 import Data.Functor
@@ -30,15 +30,13 @@ import QueryType
 -- annotation holding a summary of how that binding is used.  It also eliminates
 -- unused pure bindings as it goes, since it has all the needed information.
 
-class HasAnalyzeOccurrences (e::E) where
-  analyzeOccurrences :: EnvReader m => e n -> m n (e n)
+analyzeOccurrences :: EnvReader m => SLam n -> m n (SLam n)
+analyzeOccurrences = liftLamExpr analyzeOccurrencesBlock
+{-# INLINE analyzeOccurrences #-}
 
-instance HasAnalyzeOccurrences SBlock where
-  analyzeOccurrences = liftOCCM . occ accessOnce
-  {-# SCC analyzeOccurrences #-}
-
-instance HasAnalyzeOccurrences SLam where
-  analyzeOccurrences = liftLamExpr analyzeOccurrences
+analyzeOccurrencesBlock :: EnvReader m => SBlock n -> m n (SBlock n)
+analyzeOccurrencesBlock = liftOCCM . occ accessOnce
+{-# SCC analyzeOccurrencesBlock #-}
 
 -- === Overview ===
 

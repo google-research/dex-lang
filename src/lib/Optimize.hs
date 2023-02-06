@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( HasLowerOpt, HasOptimize, optimize, peepholeOp, hoistLoopInvariant, dceTop, foldCast ) where
+  ( HasLowerOpt, optimize, peepholeOp, hoistLoopInvariant, dceTop, foldCast ) where
 
 import Data.Functor
 import Data.Word
@@ -32,10 +32,8 @@ import QueryType
 import Util (iota)
 
 type HasLowerOpt e = (HasDCETop e, HasHoistLoopInvariant e)
-type HasOptimize e = (HasLowerOpt e, HasUnrollLoops e)
 
-optimize :: (EnvReader m, HasOptimize e)
-  => e n -> m n (e n)
+optimize :: EnvReader m => SLam n -> m n (SLam n)
 optimize = dceTop     -- Clean up user code
        >=> unrollLoops
        >=> dceTop     -- Clean up peephole-optimized code after unrolling
@@ -206,14 +204,11 @@ peepholeExpr expr = case expr of
 
 -- === Loop unrolling ===
 
-class HasUnrollLoops (e::E) where
-  unrollLoops :: EnvReader m => e n -> m n (e n)
+unrollLoops :: EnvReader m => SLam n -> m n (SLam n)
+unrollLoops = liftLamExpr unrollLoopsBlock
 
-instance HasUnrollLoops SBlock where
-  unrollLoops b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
-
-instance HasUnrollLoops SLam where
-  unrollLoops = liftLamExpr unrollLoops
+unrollLoopsBlock :: EnvReader m => SBlock n -> m n (SBlock n)
+unrollLoopsBlock b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
 
 newtype ULS n = ULS Int deriving Show
 type ULM = GenericTraverserM SimpIR UnitB ULS
