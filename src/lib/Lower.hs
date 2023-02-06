@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Lower
-  ( lowerFullySequential, lowerFullySequentialLam, HasVectorizeLoops(..)
+  ( lowerFullySequential, vectorizeLoops
   ) where
 
 import Prelude hiding (abs, id, (.))
@@ -66,20 +66,20 @@ import Util (foldMapM, enumerate)
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-lowerFullySequential :: EnvReader m => SBlock n -> m n (DestBlock SimpIR n)
-lowerFullySequential b = liftM fst $ liftGenericTraverserM LFS do
+lowerFullySequential :: EnvReader m => SLam n -> m n (DestLamExpr SimpIR n)
+lowerFullySequential (LamExpr bs body) = liftEnvReaderM $ do
+  refreshAbs (Abs bs body) \bs' body' -> do
+    body'' <- lowerFullySequentialBlock body'
+    return $ DestLamExpr bs' body''
+
+lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock SimpIR n)
+lowerFullySequentialBlock b = liftM fst $ liftGenericTraverserM LFS do
   resultDestTy <- RawRefTy <$> getTypeSubst b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     DestBlock destBinder <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
       traverseBlockWithDest dest b $> UnitVal
-{-# SCC lowerFullySequential #-}
-
-lowerFullySequentialLam :: EnvReader m => SLam n -> m n (DestLamExpr SimpIR n)
-lowerFullySequentialLam (LamExpr bs body) = liftEnvReaderM $ do
-  refreshAbs (Abs bs body) \bs' body' -> do
-    body'' <- lowerFullySequential body'
-    return $ DestLamExpr bs' body''
+{-# SCC lowerFullySequentialBlock #-}
 
 data LFS (n::S) = LFS
 type LowerM = GenericTraverserM SimpIR UnitB LFS
@@ -313,12 +313,6 @@ instance PrettyPrec (VSubstValC c n) where
 
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
-class HasVectorizeLoops (e::E) where
-  vectorizeLoops :: (EnvReader m) => Word32 -> e n -> m n (e n, Errs)
-
-instance HasVectorizeLoops (DestBlock SimpIR) where
-  vectorizeLoops = vectorizeLoopsBlock
-
 vectorizeLoopsBlock :: (EnvReader m)
   => Word32 -> DestBlock SimpIR n
   -> m n (DestBlock SimpIR n, Errs)
@@ -335,11 +329,13 @@ vectorizeLoopsBlock vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
       Success (block', errs) -> return $ (DestBlock d block', errs)
 {-# SCC vectorizeLoopsBlock #-}
 
-instance HasVectorizeLoops (DestLamExpr SimpIR) where
-  vectorizeLoops width (DestLamExpr bs body) = liftEnvReaderM do
-    refreshAbs (Abs bs body) \bs' body' -> do
-      (body'', errs) <- vectorizeLoops width body'
-      return $ (DestLamExpr bs' body'', errs)
+vectorizeLoops  :: (EnvReader m)
+  => Word32 -> DestLamExpr SimpIR n
+  -> m n (DestLamExpr SimpIR n, Errs)
+vectorizeLoops width (DestLamExpr bs body) = liftEnvReaderM do
+  refreshAbs (Abs bs body) \bs' body' -> do
+    (body'', errs) <- vectorizeLoopsBlock width body'
+    return $ (DestLamExpr bs' body'', errs)
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
 addVectErrCtx name payload m =

@@ -1116,6 +1116,9 @@ pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Block r l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
 
+pattern NullaryDestLamExpr :: DestBlock r n -> DestLamExpr r n
+pattern NullaryDestLamExpr body = DestLamExpr Empty body
+
 pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow r l2 -> CType l2 -> CType n
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 

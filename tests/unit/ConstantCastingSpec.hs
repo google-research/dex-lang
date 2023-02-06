@@ -38,7 +38,7 @@ exprToBlock expr = do
 
 evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
 evalBlock block = do
-  lowered <- lowerFullySequential block
+  NullaryDestLamExpr lowered <- lowerFullySequential $ NullaryLamExpr block
   imp <- asImpFunction lowered
   resultVals <- evalLLVM imp
   resultTy <- getDestBlockType lowered

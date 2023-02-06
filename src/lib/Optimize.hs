@@ -7,7 +7,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( HasLowerOpt, optimize, peepholeOp, hoistLoopInvariant, dceTop, foldCast ) where
+  ( optimize, peepholeOp
+  , hoistLoopInvariant, hoistLoopInvariantDest
+  , dceTop, dceTopDest
+  , foldCast ) where
 
 import Data.Functor
 import Data.Word
@@ -30,8 +33,6 @@ import GenericTraversal
 import Builder
 import QueryType
 import Util (iota)
-
-type HasLowerOpt e = (HasDCETop e, HasHoistLoopInvariant e)
 
 optimize :: EnvReader m => SLam n -> m n (SLam n)
 optimize = dceTop     -- Clean up user code
@@ -264,27 +265,27 @@ emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 
 -- === Loop invariant code motion ===
 
-class HasHoistLoopInvariant (e::E) where
-  hoistLoopInvariant :: EnvReader m => e n -> m n (e n)
+hoistLoopInvariantBlock :: EnvReader m => SBlock n -> m n (SBlock n)
+hoistLoopInvariantBlock body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
+{-# SCC hoistLoopInvariantBlock #-}
 
-instance HasHoistLoopInvariant SBlock where
-  hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
+hoistLoopInvariantDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
+hoistLoopInvariantDestBlock (DestBlock (db:>dTy) body) =
+  liftM fst $ liftGenericTraverserM LICMS do
+    dTy' <- traverseGenericE dTy
+    (Abs db' body') <- buildAbs (getNameHint db) dTy' \v ->
+      extendRenamer (db@>v) $ traverseGenericE body
+    return $ DestBlock db' body'
+{-# SCC hoistLoopInvariantDestBlock #-}
 
-instance HasHoistLoopInvariant (DestBlock SimpIR) where
-  hoistLoopInvariant (DestBlock (db:>dTy) body) =
-    liftM fst $ liftGenericTraverserM LICMS do
-      dTy' <- traverseGenericE dTy
-      (Abs db' body') <- buildAbs (getNameHint db) dTy' \v ->
-        extendRenamer (db@>v) $ traverseGenericE body
-      return $ DestBlock db' body'
+hoistLoopInvariant :: EnvReader m => SLam n -> m n (SLam n)
+hoistLoopInvariant = liftLamExpr hoistLoopInvariantBlock
+{-# INLINE hoistLoopInvariant #-}
 
-instance HasHoistLoopInvariant SLam where
-  hoistLoopInvariant = liftLamExpr hoistLoopInvariant
-
-instance HasHoistLoopInvariant (DestLamExpr SimpIR) where
-  hoistLoopInvariant (DestLamExpr bs body) = liftEnvReaderM $
-    refreshAbs (Abs bs body) \bs' body' ->
-      DestLamExpr bs' <$> hoistLoopInvariant body'
+hoistLoopInvariantDest :: EnvReader m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
+hoistLoopInvariantDest (DestLamExpr bs body) = liftEnvReaderM $
+  refreshAbs (Abs bs body) \bs' body' ->
+    DestLamExpr bs' <$> hoistLoopInvariantDestBlock body'
 
 data LICMS (n::S) = LICMS
 instance SinkableE LICMS where
@@ -381,26 +382,23 @@ instance HoistableState FV where
 
 type DCEM = StateT1 FV EnvReaderM
 
-class HasDCETop (e::E) where
-  dceTop :: EnvReader m => e n -> m n (e n)
+dceTop :: EnvReader m => SLam n -> m n (SLam n)
+dceTop = liftLamExpr dceBlock
+{-# INLINE dceTop #-}
 
-instance HasDCETop SBlock where
-  dceTop = dceBlock
-
-instance HasDCETop (DestBlock SimpIR) where
-  dceTop (DestBlock d b) = liftEnvReaderM $
-    refreshAbs (Abs d b) \d' b' -> DestBlock d' <$> dceBlock b'
-
-instance HasDCETop SLam where
-  dceTop = liftLamExpr dceTop
-
-instance HasDCETop (DestLamExpr SimpIR) where
-  dceTop (DestLamExpr bs body) = liftEnvReaderM $
-    refreshAbs (Abs bs body) \bs' body' -> DestLamExpr bs' <$> dceTop body'
+dceTopDest :: EnvReader m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
+dceTopDest (DestLamExpr bs body) = liftEnvReaderM $
+  refreshAbs (Abs bs body) \bs' body' -> DestLamExpr bs' <$> dceDestBlock body'
+{-# INLINE dceTopDest #-}
 
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty
 {-# SCC dceBlock #-}
+
+dceDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
+dceDestBlock (DestBlock d b) = liftEnvReaderM $
+  refreshAbs (Abs d b) \d' b' -> DestBlock d' <$> dceBlock b'
+{-# INLINE dceDestBlock #-}
 
 class HasDCE (e::E) where
   dce :: e n -> DCEM n (e n)
