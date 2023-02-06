@@ -216,10 +216,21 @@ instance (IRRep r) => CheckableE (DestBlock r) where
   checkE (DestBlock b e) = checkB b \b' -> DestBlock b' <$> checkE e
 
 instance (IRRep r) => CheckableE (LamExpr r) where
-  checkE (LamExpr bs body) = checkB bs \bs' -> LamExpr bs' <$> checkE body
+  checkE (LamExpr bs body) = checkB bs \bs' -> LamExpr bs' <$>
+    checkAllowingAnnotatedEffects body
 
 instance (IRRep r) => CheckableE (DestLamExpr r) where
-  checkE (DestLamExpr bs body) = checkB bs \bs' -> DestLamExpr bs' <$> checkE body
+  checkE (DestLamExpr bs block) = checkB bs \bs' -> DestLamExpr bs' <$> do
+    (DestBlock destb body) <- return block
+    checkB destb \destb' -> DestBlock destb' <$>
+      checkAllowingAnnotatedEffects body
+
+checkAllowingAnnotatedEffects :: (IRRep r, Typer m) => (Block r i) -> m i o (Block r o)
+checkAllowingAnnotatedEffects = \case
+  b@(Block NoBlockAnn _ _) -> checkE b
+  b@(Block (BlockAnn _ effs) _ _) -> do
+    effs' <- renameM effs
+    withAllowedEffects effs' $ checkE b
 
 -- === type checking core ===
 
