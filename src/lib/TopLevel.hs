@@ -543,7 +543,7 @@ evalBlock typed = do
   synthed <- checkPass SynthPass $ synthTopBlock typed
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
-  opt <- simpOptimizations simp
+  NullaryLamExpr opt <- simpOptimizations $ NullaryLamExpr simp
   simpResult <- case opt of
     AtomicBlock result -> return result
     _ -> do
@@ -556,10 +556,7 @@ evalBlock typed = do
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
 
-type HasSimpOptimizations (e::E) (n::S) =
-  (Pretty (e n), CheckableE e, HasAnalyzeOccurrences e, HasInlineBindings e, HasOptimize e)
-
-simpOptimizations :: (Topper m, HasSimpOptimizations e n) => e n -> m n (e n)
+simpOptimizations :: (Topper m) => SLam n -> m n (SLam n)
 simpOptimizations simp = do
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
