@@ -499,6 +499,12 @@ blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
   BlockAnn _ eff -> eff
 
+liftLamExpr :: (IRRep r, EnvReader m)
+  => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
+  -> LamExpr r n -> m n (LamExpr r n)
+liftLamExpr f (LamExpr bs body) = liftEnvReaderM $
+  refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
+
 destBlockEffects :: IRRep r => DestBlock r n -> EffectRow r n
 destBlockEffects (DestBlock destb block) =
   ignoreHoistFailure $ hoist destb $ blockEffects block

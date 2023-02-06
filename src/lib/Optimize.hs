@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( optimize, peepholeOp, hoistLoopInvariantDest, dceDestBlock, foldCast ) where
+  ( HasLowerOpt, HasOptimize, optimize, peepholeOp, hoistLoopInvariant, dceTop, foldCast ) where
 
 import Data.Functor
 import Data.Word
@@ -31,10 +31,14 @@ import Builder
 import QueryType
 import Util (iota)
 
-optimize :: EnvReader m => SBlock n -> m n (SBlock n)
-optimize = dceBlock     -- Clean up user code
+type HasLowerOpt e = (HasDCETop e, HasHoistLoopInvariant e)
+type HasOptimize e = (HasLowerOpt e, HasUnrollLoops e)
+
+optimize :: (EnvReader m, HasOptimize e)
+  => e n -> m n (e n)
+optimize = dceTop     -- Clean up user code
        >=> unrollLoops
-       >=> dceBlock     -- Clean up peephole-optimized code after unrolling
+       >=> dceTop     -- Clean up peephole-optimized code after unrolling
        >=> hoistLoopInvariant
 {-# SCC optimize #-}
 
@@ -202,8 +206,14 @@ peepholeExpr expr = case expr of
 
 -- === Loop unrolling ===
 
-unrollLoops :: EnvReader m => SBlock n -> m n (SBlock n)
-unrollLoops b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
+class HasUnrollLoops (e::E) where
+  unrollLoops :: EnvReader m => e n -> m n (e n)
+
+instance HasUnrollLoops SBlock where
+  unrollLoops b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
+
+instance HasUnrollLoops SLam where
+  unrollLoops = liftLamExpr unrollLoops
 
 newtype ULS n = ULS Int deriving Show
 type ULM = GenericTraverserM SimpIR UnitB ULS
@@ -259,16 +269,27 @@ emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
 
 -- === Loop invariant code motion ===
 
-hoistLoopInvariantDest :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
-hoistLoopInvariantDest (DestBlock (db:>dTy) body) =
-  liftM fst $ liftGenericTraverserM LICMS do
-    dTy' <- traverseGenericE dTy
-    (Abs db' body') <- buildAbs (getNameHint db) dTy' \v -> extendRenamer (db@>v) $ traverseGenericE body
-    return $ DestBlock db' body'
-{-# SCC hoistLoopInvariantDest #-}
+class HasHoistLoopInvariant (e::E) where
+  hoistLoopInvariant :: EnvReader m => e n -> m n (e n)
 
-hoistLoopInvariant :: EnvReader m => SBlock n -> m n (SBlock n)
-hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
+instance HasHoistLoopInvariant SBlock where
+  hoistLoopInvariant body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
+
+instance HasHoistLoopInvariant (DestBlock SimpIR) where
+  hoistLoopInvariant (DestBlock (db:>dTy) body) =
+    liftM fst $ liftGenericTraverserM LICMS do
+      dTy' <- traverseGenericE dTy
+      (Abs db' body') <- buildAbs (getNameHint db) dTy' \v ->
+        extendRenamer (db@>v) $ traverseGenericE body
+      return $ DestBlock db' body'
+
+instance HasHoistLoopInvariant SLam where
+  hoistLoopInvariant = liftLamExpr hoistLoopInvariant
+
+instance HasHoistLoopInvariant (DestLamExpr SimpIR) where
+  hoistLoopInvariant (DestLamExpr bs body) = liftEnvReaderM $
+    refreshAbs (Abs bs body) \bs' body' ->
+      DestLamExpr bs' <$> hoistLoopInvariant body'
 
 data LICMS (n::S) = LICMS
 instance SinkableE LICMS where
@@ -365,10 +386,22 @@ instance HoistableState FV where
 
 type DCEM = StateT1 FV EnvReaderM
 
-dceDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
-dceDestBlock (DestBlock d b) = liftEnvReaderM $
-  refreshAbs (Abs d b) \d' b' -> DestBlock d' <$> dceBlock b'
-{-# SCC dceDestBlock #-}
+class HasDCETop (e::E) where
+  dceTop :: EnvReader m => e n -> m n (e n)
+
+instance HasDCETop SBlock where
+  dceTop = dceBlock
+
+instance HasDCETop (DestBlock SimpIR) where
+  dceTop (DestBlock d b) = liftEnvReaderM $
+    refreshAbs (Abs d b) \d' b' -> DestBlock d' <$> dceBlock b'
+
+instance HasDCETop SLam where
+  dceTop = liftLamExpr dceTop
+
+instance HasDCETop (DestLamExpr SimpIR) where
+  dceTop (DestLamExpr bs body) = liftEnvReaderM $
+    refreshAbs (Abs bs body) \bs' body' -> DestLamExpr bs' <$> dceTop body'
 
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty
