@@ -960,13 +960,19 @@ buildFor :: (Emits n, ScopableBuilder r m)
          -> m n (Atom r n)
 buildFor hint dir ty body = buildForAnn hint dir ty body
 
+buildMap :: (Emits n, ScopableBuilder r m)
+         => Atom r n
+         -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
+         -> m n (Atom r n)
+buildMap xs f = do
+  TabTy (_:>ixTy) _ <- getType xs
+  buildFor noHint Fwd ixTy \i ->
+    tabApp (sink xs) (Var i) >>= f
+
 unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
 unzipTab tab = do
-  TabTy (_:>ixTy) _ <- getType tab
-  fsts <- liftEmitBuilder $ buildFor noHint Fwd ixTy \i ->
-            liftM fst $ tabApp (sink tab) (Var i) >>= fromPair
-  snds <- liftEmitBuilder $ buildFor noHint Fwd ixTy \i ->
-            liftM snd $ tabApp (sink tab) (Var i) >>= fromPair
+  fsts <- liftEmitBuilder $ buildMap tab getFst
+  snds <- liftEmitBuilder $ buildMap tab getSnd
   return (fsts, snds)
 
 emitRunWriter

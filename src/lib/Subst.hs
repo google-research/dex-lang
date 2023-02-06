@@ -295,6 +295,10 @@ runSubstReaderT :: Subst v i o -> SubstReaderT v m i o a -> m o a
 runSubstReaderT env m = runReaderT (runSubstReaderT' m) env
 {-# INLINE runSubstReaderT #-}
 
+withSubstReaderT :: FromName v => SubstReaderT v m n n a -> m n a
+withSubstReaderT = runSubstReaderT idSubst
+{-# INLINE withSubstReaderT #-}
+
 instance (SinkableV v, Monad1 m) => SubstReader v (SubstReaderT v m) where
   getSubst = SubstReaderT ask
   {-# INLINE getSubst #-}
