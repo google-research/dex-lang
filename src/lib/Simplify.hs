@@ -1058,17 +1058,23 @@ linearizeTopFun spec = do
       return (primal, tangent)
 
 linearizeTopFunNoCache :: (Mut n, TopBuilder m) => LinearizationSpec n -> m n (TopFunName n, TopFunName n)
-linearizeTopFunNoCache spec@(LinearizationSpec f actives) = lookupEnv f >>= \case
-  TopFunBinding (DexTopFun (Specialization (AppSpecialization fCore absParams)) _ _ _) -> do
-    lookupCustomRules fCore >>= \case
-      Just customRule -> do
-        PairE fPrimal fTangent <- liftSimplifyM $
-          simplifyCustomLinearization (sink absParams) actives (sink customRule)
-        (,) <$> emitTopFunBinding "primal"  (LinearizationPrimal  spec) fPrimal
-            <*> emitTopFunBinding "tangent" (LinearizationTangent spec) fTangent
-      Nothing -> error "not implemented" -- TODO: if there's no custom rule, derive it from the
-  b -> error $ "not implemented: " ++ pprint b
+linearizeTopFunNoCache spec@(LinearizationSpec f actives) = do
+  TopFunBinding ~(DexTopFun _ _ lam _) <- lookupEnv f
+  PairE fPrimal fTangent <- liftSimplifyM $ tryGetCustomRule (sink f) >>= \case
+    Just (absParams, rule) -> simplifyCustomLinearization (sink absParams) actives (sink rule)
+    Nothing -> liftM toPairE $ liftDoubleBuilderToSimplifyM $ linearizeLam (sink lam) actives
+  (,) <$> emitTopFunBinding "primal"  (LinearizationPrimal  spec) fPrimal
+      <*> emitTopFunBinding "tangent" (LinearizationTangent spec) fTangent
 
+tryGetCustomRule :: EnvReader m => TopFunName n -> m n (Maybe (Abstracted CoreIR (ListE CType) n, AtomRules n))
+tryGetCustomRule f' = do
+  ~(TopFunBinding f) <- lookupEnv f'
+  case f of
+    DexTopFun def _ _ _ -> case def of
+      Specialization (AppSpecialization fCore absParams) ->
+        fmap (absParams,) <$> lookupCustomRules fCore
+      _ -> return Nothing
+    _ -> return Nothing
 
 type Linearized = Abs (Nest SBinder)    -- primal args
                       (Abs (Nest SDecl) -- primal decls

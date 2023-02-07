@@ -1296,6 +1296,15 @@ naryTopApp :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (S
 naryTopApp f xs = emitExpr $ TopApp f xs
 {-# INLINE naryTopApp #-}
 
+naryTopAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
+naryTopAppInlined f xs = do
+  TopFunBinding f' <- lookupEnv f
+  case f' of
+    DexTopFun _ _ (LamExpr bs body) _ ->
+      applySubst (bs@@>(SubstVal<$>xs)) body >>= emitBlock
+    _ -> naryTopApp f xs
+{-# INLINE naryTopAppInlined #-}
+
 naryAppHinted :: (CBuilder m, Emits n)
   => NameHint -> CAtom n -> [CAtom n] -> m n (CAtom n)
 naryAppHinted hint f xs = case nonEmpty xs of

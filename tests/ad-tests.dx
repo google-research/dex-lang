@@ -458,6 +458,21 @@ jvp (\x. w x) [1.0, 1.0] [1.0, 0.0]
 jvp w [1.0, 1.0] [1.0, 0.0]
 > [4., 0.]
 
+------ standalone functions ------
+
+@noinline
+def xy2 (x:Float) (y:Float) : Float =
+  x * y * y
+
+:p check_deriv (\x. xy2 x x) 2.0
+> True
+:p check_deriv (\x. xy2 x 3.0) 2.0
+> True
+:p check_deriv (\x. xy2 2.0 3.0) 2.0
+> True
+:p check_deriv (\x. xy2 5.0 x) 2.0
+> True
+
 ------ Symbolic tangents ------
 
 ST = SymbolicTangent

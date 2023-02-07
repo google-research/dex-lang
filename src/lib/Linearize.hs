@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Linearize (linearize) where
+module Linearize (linearize, linearizeLam) where
 
 import Control.Category ((>>>))
 import Control.Monad.Reader
@@ -54,6 +54,9 @@ pureLin x = do
   x' <- renameM x
   return $ WithTangent x' (sinkM x')
 
+runPrimalMInit :: PrimalM o o a -> DoubleBuilder SimpIR o a
+runPrimalMInit cont = runPrimalM idSubst emptyActivePrimals cont
+
 runPrimalM :: Subst Name i o -> ActivePrimals o -> PrimalM i o a -> DoubleBuilder SimpIR o a
 runPrimalM subst args cont = runReaderT1 args $ runSubstReaderT subst cont
 
@@ -73,8 +76,11 @@ extendActiveEffs eff = local \primals ->
   primals { activeEffs = extendEffRow (eSetSingleton eff) (activeEffs primals)}
 
 extendActivePrimals :: AtomName SimpIR o -> PrimalM i o a -> PrimalM i o a
-extendActivePrimals v =
-  local \primals -> primals { activeVars = activeVars primals ++ [v] }
+extendActivePrimals v = extendActivePrimalss [v]
+
+extendActivePrimalss :: [AtomName SimpIR o] -> PrimalM i o a -> PrimalM i o a
+extendActivePrimalss vs =
+  local \primals -> primals { activeVars = activeVars primals ++ vs }
 
 getTangentArg :: Int -> TangentM o (Atom SimpIR o)
 getTangentArg idx = asks \(TangentArgs vs) -> Var $ vs !! idx
@@ -204,7 +210,6 @@ getTangentArgTys topVs = go mempty topVs where
         Abs bs UnitE <- go (sink heapMap) $ sinkList vs
         return $ EmptyAbs $ Nest b bs
 
-
 class ReconFunctor (f :: E -> E) where
   capture
     :: (EnvReader m, HoistableE e, HoistableB b)
@@ -223,7 +228,7 @@ data MaybeReconAbs (e::E) (n::S) =
  | TrivialRecon (e n)
 
 data ObligateReconAbs (e::E) (n::S) =
-   ObligateRecon (NaryAbs (AtomNameC SimpIR) e n)
+   ObligateRecon (SType n) (NaryAbs (AtomNameC SimpIR) e n)
 
 instance ReconFunctor MaybeReconAbs where
   capture locals original toCapture = do
@@ -247,9 +252,11 @@ instance ReconFunctor MaybeReconAbs where
 instance ReconFunctor ObligateReconAbs where
   capture locals original toCapture = do
     (reconVal, recon) <- telescopicCapture locals toCapture
-    return (PairVal original reconVal, ObligateRecon recon)
+    -- TODO: telescopicCapture should probably return the hoisted type
+    reconValTy <- ignoreHoistFailure <$> hoist locals <$> getType reconVal
+    return (PairVal original reconVal, ObligateRecon reconValTy recon)
   reconstruct primalAux reconAbs = case reconAbs of
-    ObligateRecon (Abs bs linLam) -> do
+    ObligateRecon _ (Abs bs linLam) -> do
       (primal, residuals) <- fromPair primalAux
       residuals' <- unpackTelescope residuals
       linLam' <- applySubst (bs @@> (SubstVal <$> residuals')) linLam
@@ -283,10 +290,25 @@ applyLinLam (LamExpr bs body) = do
 
 -- main API entrypoint
 linearize :: Emits n => SLam n -> SAtom n -> DoubleBuilder SimpIR n (SAtom n, SLam n)
-linearize f x = do
-  runPrimalM idSubst emptyActivePrimals $
-    linearizeLambdaApp f x
+linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
+
+linearizeLam :: SLam n -> [Active] -> DoubleBuilder SimpIR n (SLam n, SLam n)
+linearizeLam (LamExpr bs body) actives = runPrimalMInit do
+  refreshBinders bs \bs' frag -> extendSubst frag do
+    let allPrimals = nestToNames bs'
+    activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
+      True  -> return $ Just v
+      False -> return $ Nothing
+    (body', linLamAbs) <-extendActivePrimalss activeVs do
+      linearizeBlockDefuncGeneral emptyOutFrag body
+    let primalFun = LamExpr bs' body'
+    ObligateRecon ty (Abs bsRecon linLam) <- return linLamAbs
+    tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
+      xs <- unpackTelescope $ Var $ binderName bResidual
+      LamExpr bsTangent tangentBody <- applySubst (bsRecon@@>(SubstVal<$>xs)) linLam
+      return $ LamExpr (bs' >>> (UnaryNest bResidual) >>> bsTangent) tangentBody
+    return (primalFun, tangentFun)
 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
@@ -368,7 +390,9 @@ linearizeExpr expr = case expr of
     (ans, residuals) <- fromPair =<< naryTopApp fPrimal xs'
     return $ WithTangent ans do
       ts' <- forM (catMaybes ts) \(WithTangent UnitE t) -> t
-      naryTopApp (sink fTan) (sinkList xs' ++ [sink residuals] ++ ts')
+      -- XXX: we use the inlining version because transposition can't handle
+      -- non-inlined functions. TODO: fix that.
+      naryTopAppInlined (sink fTan) (sinkList xs' ++ [sink residuals] ++ ts')
     where
       unitLike :: e n -> UnitE n
       unitLike _ = UnitE
@@ -397,13 +421,12 @@ linearizeExpr expr = case expr of
     isActive e' >>= \case
       True -> notImplemented
       False -> do
-        (alts', tys, recons) <- unzip3 <$> buildCaseAlts e' \i b' -> do
+        (alts', recons) <- unzip <$> buildCaseAlts e' \i b' -> do
           Abs b body <- return $ alts !! i
           extendSubst (b@>binderName b') do
             (block, recon) <- linearizeBlockDefuncGeneral (toScopeFrag b') body
-            PairTy _ residualTy <- getType block
-            let residualTy' = ignoreHoistFailure $ hoist b' residualTy
-            return (Abs b' block, residualTy', recon)
+            return (Abs b' block, recon)
+        let tys = recons <&> \(ObligateRecon t _) -> t
         alts'' <- forM (enumerate alts') \(i, alt) -> do
           injectAltResult tys i alt
         let fullResultTy = PairTy resultTy' $ SumTy tys
@@ -412,7 +435,7 @@ linearizeExpr expr = case expr of
         resultTangentType <- tangentType resultTy'
         return $ WithTangent primal do
           buildCase (sink residualss) (sink resultTangentType) \i residuals -> do
-            ObligateRecon (Abs bs linLam) <- return $ sinkList recons !! i
+            ObligateRecon _ (Abs bs linLam) <- return $ sinkList recons !! i
             residuals' <- unpackTelescope residuals
             withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
               applyLinLam linLam
