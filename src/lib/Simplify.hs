@@ -337,16 +337,11 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     liftSimpAtom (Just ty') =<< emitExpr (TabCon tySimp xs')
   UserEffectOp _ -> error "not implemented"
   Case scrut alts resultTy _ -> do
-    -- TODO: this can fail! We need to handle the case of a non-data scrutinee!
     scrut' <- simplifyAtom scrut
-    altBinderTys <- caseAltsBinderTys =<< getType scrut'
-    scrutSimp <- toDataAtomIgnoreRecon scrut'
     resultTy' <- substM resultTy
-    defuncCase scrutSimp resultTy' \i x -> do
+    defuncCaseCore scrut' resultTy' \i x -> do
       Abs b body <- return $ alts !! i
-      let xCoreTy = altBinderTys !! i
-      x' <- liftSimpAtom (Just $ sink xCoreTy) x
-      extendSubst (b@>SubstVal x') $ simplifyBlock body
+      extendSubst (b@>SubstVal x) $ simplifyBlock body
 
 simplifyRefOp :: Emits o => RefOp CoreIR i -> SimplifyM i o (RefOp SimpIR o)
 simplifyRefOp = \case
@@ -368,8 +363,29 @@ caseComputingEffs scrut alts resultTy = do
   Case scrut alts resultTy <$> foldMapM getEffects alts
 {-# INLINE caseComputingEffs #-}
 
-defuncCase
-  :: Emits o
+defuncCaseCore :: Emits o
+  => Atom CoreIR o -> Type CoreIR o
+  -> (forall o'. (Emits o', DExt o o') => Int -> CAtom o' -> SimplifyM i o' (CAtom o'))
+  -> SimplifyM i o (CAtom o)
+defuncCaseCore scrut resultTy cont = do
+  tryAsDataAtom scrut >>= \case
+    Just (scrutSimp, _) -> do
+      altBinderTys <- caseAltsBinderTys =<< getType scrut
+      defuncCase scrutSimp resultTy \i x -> do
+        let xCoreTy = altBinderTys !! i
+        x' <- liftSimpAtom (Just $ sink xCoreTy) x
+        cont i x'
+    Nothing -> case trySelectBranch scrut of
+      Just (i, arg) -> getDistinct >>= \Distinct -> cont i arg
+      Nothing -> case scrut of
+        SimpInCore (ACase scrutSimp alts _) -> do
+          defuncCase scrutSimp resultTy \i x -> do
+            Abs altb altAtom <- return $ alts !! i
+            altAtom' <- applySubst (altb @> SubstVal x) altAtom
+            cont i altAtom'
+        _ -> error $ "Don't know how to scrutinize non-data " ++ pprint scrut
+
+defuncCase :: Emits o
   => Atom SimpIR o -> Type CoreIR o
   -> (forall o'. (Emits o', DExt o o') => Int -> SAtom o' -> SimplifyM i o' (CAtom o'))
   -> SimplifyM i o (CAtom o)
