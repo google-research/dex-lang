@@ -377,13 +377,16 @@ defuncCaseCore scrut resultTy cont = do
         cont i x'
     Nothing -> case trySelectBranch scrut of
       Just (i, arg) -> getDistinct >>= \Distinct -> cont i arg
-      Nothing -> case scrut of
-        SimpInCore (ACase scrutSimp alts _) -> do
-          defuncCase scrutSimp resultTy \i x -> do
-            Abs altb altAtom <- return $ alts !! i
-            altAtom' <- applySubst (altb @> SubstVal x) altAtom
-            cont i altAtom'
-        _ -> error $ "Don't know how to scrutinize non-data " ++ pprint scrut
+      Nothing -> go scrut where
+        go = \case
+          SimpInCore (ACase scrutSimp alts _) -> do
+            defuncCase scrutSimp resultTy \i x -> do
+              Abs altb altAtom <- return $ alts !! i
+              altAtom' <- applySubst (altb @> SubstVal x) altAtom
+              cont i altAtom'
+          NewtypeCon con scrut' | isSumCon con -> go scrut'
+          _ -> nope
+        nope = error $ "Don't know how to scrutinize non-data " ++ pprint scrut
 
 defuncCase :: Emits o
   => Atom SimpIR o -> Type CoreIR o
@@ -1021,11 +1024,23 @@ simplifyHof _hint hof = case hof of
     resultTy <- getTypeSubst $ Hof hof
     liftSimpAtom (Just resultTy) result
   CatchException body-> do
-    SimplifiedBlock body' (CoerceRecon ty) <- buildSimplifiedBlock $ simplifyBlock body
+    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
     block <- liftBuilder $ runSubstReaderT idSubst $
       buildBlock $ exceptToMaybeBlock $ body'
     result <- emitBlock block
-    liftSimpAtom (Just (MaybeTy ty)) result
+    case recon of
+      CoerceRecon ty -> liftSimpAtom (Just (MaybeTy ty)) result
+      LamRecon reconAbs -> do
+        SimplifiedBlock repack recon' <- buildSimplifiedBlock do
+          bodyTy <- getTypeSubst body
+          nothingAlt <- buildAbs noHint UnitTy \_ ->
+            return $ NothingAtom $ (MaybeTy $ sink bodyTy)
+          MaybeTy justTy <- getType $ sink result
+          justAlt <- buildAbs noHint justTy \v ->
+            applyReconAbs (sink reconAbs) (Var v)
+          return $ SimpInCore $ ACase (sink result) [nothingAlt, justAlt] (MaybeTy bodyTy)
+        result' <- emitBlock repack
+        applyRecon recon' result'
 
 simplifyBlock :: Emits o => Block CoreIR i -> SimplifyM i o (CAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result

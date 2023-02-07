@@ -1137,3 +1137,26 @@ case foo of
   Just _ -> 1.0
   Nothing -> 2.0
 > 1.
+
+-- Non-data catch tests
+
+-- Should be able to catch a function
+-- This is a regression test for Issue #1193.
+catch do f64_to_f
+> (Just <function of type (Float64 -> Float32)>)
+
+-- Should be able to catch a function-valued computation that fails
+catch do
+  x = if True
+    then throw ()
+    else 1.0
+  \y. x + y
+> Nothing
+
+-- Should be able to apply a function that came out of a catch
+frob : (Maybe (Float -> Float)) = catch do \x. x + x
+
+case frob of
+  Just func -> func 2.0
+  Nothing -> 0.0
+> 4.
