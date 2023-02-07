@@ -1081,6 +1081,8 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
 :p unsafe_coerce (Fin 1 => (Nat & Nat)) ([1], [2])
 > [(1, 2)]
 
+-- Stack tests
+
 :p
   with_stack Float \stack.
     stack_push stack 1.0
@@ -1107,3 +1109,31 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
     AsList _ xs = read_stack stack
     sum xs
 > 9000000.
+
+-- Non-data case scrutinee tests
+
+-- Check that we can print out a sum-typed non-data value
+Just f64_to_f
+> (Just <function of type (Float64 -> Float32)>)
+
+-- Check that we can print out a sum-typed non-data value that came
+-- from a case (this tickles ACase colliding with the code generated
+-- to print).  The @noinline defeats case-of-known-constructor.
+@noinline
+def id_bool (x:Bool) : Bool = x
+
+case (id_bool True) of
+  True -> Just f64_to_f
+  False -> Nothing
+> (Just <function of type (Float64 -> Float32)>)
+
+-- Check that we can later scrutinize a sum-typed non-data value that
+-- came from a case.
+foo = case (id_bool True) of
+  True -> Just f64_to_f
+  False -> Nothing
+
+case foo of
+  Just _ -> 1.0
+  Nothing -> 2.0
+> 1.
