@@ -1099,9 +1099,9 @@ instance IRRep r => PrettyPrec (Hof r n) where
   prettyPrec hof = atPrec LowestPrec case hof of
     For ann _ lam -> forStr ann <+> prettyLamHelper PlainArrow lam (PrettyFor ann)
     While body    -> "while" <+> pArg body
-    RunReader x body    -> "runReader" <+> pArg x <+> pArg body
-    RunWriter _ bm body -> "runWriter" <+> pArg bm <+> pArg body
-    RunState  _ x body  -> "runState"  <+> pArg x <+> pArg body
+    RunReader x body    -> "runReader" <+> pArg x <> nest 2 (line <> p body)
+    RunWriter _ bm body -> "runWriter" <+> pArg bm <> nest 2 (line <> p body)
+    RunState  _ x body  -> "runState"  <+> pArg x <> nest 2 (line <> p body)
     RunIO body          -> "runIO" <+> pArg body
     RunInit body        -> "runInit" <+> pArg body
     CatchException body -> "catchException" <+> pArg body
@@ -1130,7 +1130,7 @@ instance IRRep r => PrettyPrec (DestBlock r n) where
 instance IRRep r => Pretty (BaseMonoid r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (BaseMonoid r n) where
   prettyPrec (BaseMonoid x f) =
-    atPrec LowestPrec $ "baseMonoid" <+> pArg x <+> pArg f
+    atPrec LowestPrec $ "baseMonoid" <+> pArg x <> nest 2 (line <> pArg f)
 
 instance PrettyPrec Direction where
   prettyPrec d = atPrec ArgPrec $ case d of
