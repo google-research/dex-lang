@@ -233,20 +233,15 @@ data ObligateReconAbs (e::E) (n::S) =
 instance ReconFunctor MaybeReconAbs where
   capture locals original toCapture = do
     (reconVal, recon) <- telescopicCapture locals toCapture
-    ty <- getType reconVal
-    case ty of
-      UnitTy -> do
-        case recon of
-          Abs Empty toCapture' -> return (original, TrivialRecon toCapture')
-          _ -> error "impossible"
+    case recon of
+      Abs Empty toCapture' -> return (original, TrivialRecon toCapture')
       _ -> return (PairVal original reconVal, ReconWithData recon)
 
-  reconstruct primalAux reconAbs = case reconAbs of
+  reconstruct primalAux recon = case recon of
     TrivialRecon linLam -> return (primalAux, linLam)
-    ReconWithData (Abs bs linLam) -> do
+    ReconWithData reconAbs -> do
       (primal, residuals) <- fromPair primalAux
-      residuals' <- unpackTelescope residuals
-      linLam' <- applySubst (bs @@> (SubstVal <$> residuals')) linLam
+      linLam' <- applyReconAbs reconAbs residuals
       return (primal, linLam')
 
 instance ReconFunctor ObligateReconAbs where
@@ -255,11 +250,11 @@ instance ReconFunctor ObligateReconAbs where
     -- TODO: telescopicCapture should probably return the hoisted type
     reconValTy <- ignoreHoistFailure <$> hoist locals <$> getType reconVal
     return (PairVal original reconVal, ObligateRecon reconValTy recon)
-  reconstruct primalAux reconAbs = case reconAbs of
-    ObligateRecon _ (Abs bs linLam) -> do
+
+  reconstruct primalAux recon = case recon of
+    ObligateRecon _ reconAbs -> do
       (primal, residuals) <- fromPair primalAux
-      residuals' <- unpackTelescope residuals
-      linLam' <- applySubst (bs @@> (SubstVal <$> residuals')) linLam
+      linLam' <- applyReconAbs reconAbs residuals
       return (primal, linLam')
 
 linearizeBlockDefunc :: SBlock i -> PrimalM i o (SBlock o, LinLamAbs o)
