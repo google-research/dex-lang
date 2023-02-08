@@ -1546,7 +1546,7 @@ applyReconAbs
   :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
   => ReconAbs r e n -> Atom r n -> m n (e n)
 applyReconAbs (Abs bs result) x = do
-  xs <- unpackTelescope x
+  xs <- unpackTelescope bs x
   applySubst (bs @@> map SubstVal xs) result
 
 -- XXX: assumes arguments are toposorted
@@ -1558,10 +1558,14 @@ buildTelescopeTy (v:vs) (ty:tys) = do
     Abs fv tys' <- sinkM $ abstractFreeVar v $ ListE tys
     ListE tys'' <- applyRename (fv@>binderName b) tys'
     ListE vs' <- sinkM $ ListE vs
-    innerTelescope <- buildTelescopeTy vs' tys''
-    return case hoist b innerTelescope of
-      HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
-      HoistFailure _ -> DepPairTy $ DepPairType b innerTelescope
+    case (vs', tys'') of
+      ([], []) -> return ty
+      ((_:_), (_:_)) -> do
+        innerTelescope <- buildTelescopeTy vs' tys''
+        return case hoist b innerTelescope of
+            HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
+            HoistFailure _ -> DepPairTy $ DepPairType b innerTelescope
+      _ -> error "zip mismatch"
 buildTelescopeTy _ _ = error "zip mismatch"
 
 buildTelescopeVal :: (EnvReader m, IRRep r) => [Atom r n] -> Type r n -> m n (Atom r n)
@@ -1569,6 +1573,7 @@ buildTelescopeVal elts telescopeTy = go elts telescopeTy
   where
     go :: (EnvReader m, IRRep r) => [Atom r n] -> Type r n -> m n (Atom r n)
     go [] UnitTy = return UnitVal
+    go [x] _ = return x
     go (x:xs) (PairTy _ xsTy) = do
       rest <- go xs xsTy
       return $ PairVal x rest
@@ -1591,24 +1596,14 @@ toposortAnnVars annVars =
     nodeToAnnVar :: (e n, Name c n, [Name c n]) -> (Name c n, e n)
     nodeToAnnVar (ann, v, _) = (v, ann)
 
-unpackTelescope :: forall m r n . (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n [Atom r n]
-unpackTelescope atom = do
-  n <- telescopeLength <$> getType atom
-  go n atom
-  where
-    go :: Int -> Atom r n -> m n [Atom r n]
-    go 0 _ = return []
-    go n pair = do
-      left  <- normalizeProj (ProjectProduct 0) pair
-      right <- normalizeProj (ProjectProduct 1) pair
-      (left :) <$> go (n-1) right
-
-    telescopeLength :: Type r n' -> Int
-    telescopeLength ty = case ty of
-      UnitTy -> 0
-      PairTy _ rest -> 1 + telescopeLength rest
-      DepPairTy (DepPairType _ rest) -> 1 + telescopeLength rest
-      _ -> error $ "not a valid telescope: " ++ pprint ty
+unpackTelescope :: forall m r n l1 l2. (Fallible1 m, EnvReader m, IRRep r)
+  => Nest (AtomNameBinder r) l1 l2 -> Atom r n -> m n [Atom r n]
+unpackTelescope Empty _ = return []
+unpackTelescope (Nest _ Empty) atom = return [atom]
+unpackTelescope (Nest _ rest) pair = do
+  left  <- normalizeProj (ProjectProduct 0) pair
+  right <- normalizeProj (ProjectProduct 1) pair
+  (left :) <$> unpackTelescope rest right
 
 -- gives a list of atom names that are free in `e`, including names mentioned in
 -- the types of those names, recursively.

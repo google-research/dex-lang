@@ -611,7 +611,7 @@ execUDecl mname decl = do
           applyRename (b@>v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
-      xs <- unpackTelescope result
+      xs <- unpackTelescope bs result
       vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
       applyRename (bs@@>vs) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'

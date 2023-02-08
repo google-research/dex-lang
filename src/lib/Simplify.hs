@@ -963,7 +963,7 @@ simplifyHof _hint hof = case hof of
         liftM (SimpInCore . TabLam resultTy) $
           buildAbs noHint ixTypeSimp \i -> buildScoped do
             i' <- sinkM i
-            xs <- unpackTelescope =<< tabApp (sink ans) (Var i')
+            xs <- unpackTelescope bsClosure =<< tabApp (sink ans) (Var i')
             applySubst (bIx@>Rename i' <.> bsClosure @@> map SubstVal xs) reconResult
   While body -> do
     SimplifiedBlock body' (CoerceRecon resultTy) <- buildSimplifiedBlock $ simplifyBlock body

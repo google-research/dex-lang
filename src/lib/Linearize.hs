@@ -300,7 +300,7 @@ linearizeLam (LamExpr bs body) actives = runPrimalMInit do
     let primalFun = LamExpr bs' body'
     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope $ Var $ binderName bResidual
+      xs <- unpackTelescope bsRecon $ Var $ binderName bResidual
       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
       tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
       withFreshBinder "t" tangentTy \bTangent -> do
@@ -436,7 +436,7 @@ linearizeExpr expr = case expr of
         return $ WithTangent primal do
           buildCase (sink residualss) (sink resultTangentType) \i residuals -> do
             ObligateRecon _ (Abs bs linLam) <- return $ sinkList recons !! i
-            residuals' <- unpackTelescope residuals
+            residuals' <- unpackTelescope bs residuals
             withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
               applyLinLam linLam
   TabCon ty xs -> do
@@ -617,7 +617,7 @@ linearizeHof hof = case hof of
           Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
           withSubstReaderT $ buildFor noHint d (sink ixTyDict) \i' -> do
             extendSubst (ib''@> Rename i') do
-              residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope
+              residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope bs
               extendSubst (bs @@> (SubstVal <$> residuals')) $
                 applyLinLam linLam'
   RunReader r lam -> do
