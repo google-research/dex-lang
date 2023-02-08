@@ -303,11 +303,18 @@ linearizeLam (LamExpr bs body) actives = runPrimalMInit do
     (body', linLamAbs) <-extendActivePrimalss activeVs do
       linearizeBlockDefuncGeneral emptyOutFrag body
     let primalFun = LamExpr bs' body'
-    ObligateRecon ty (Abs bsRecon linLam) <- return linLamAbs
+    ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
       xs <- unpackTelescope $ Var $ binderName bResidual
-      LamExpr bsTangent tangentBody <- applySubst (bsRecon@@>(SubstVal<$>xs)) linLam
-      return $ LamExpr (bs' >>> (UnaryNest bResidual) >>> bsTangent) tangentBody
+      Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
+      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+      withFreshBinder "t" tangentTy \bTangent -> do
+        tangentBody' <- buildBlock do
+          ts <- getUnpacked $ Var $ sink $ binderName bTangent
+          let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
+                        <.> bsTangent @@> map (SubstVal . sink) ts
+          emitBlock =<< applySubst substFrag tangentBody
+        return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
     return (primalFun, tangentFun)
 
 -- reify the tangent builder as a lambda
@@ -390,9 +397,7 @@ linearizeExpr expr = case expr of
     (ans, residuals) <- fromPair =<< naryTopApp fPrimal xs'
     return $ WithTangent ans do
       ts' <- forM (catMaybes ts) \(WithTangent UnitE t) -> t
-      -- XXX: we use the inlining version because transposition can't handle
-      -- non-inlined functions. TODO: fix that.
-      naryTopAppInlined (sink fTan) (sinkList xs' ++ [sink residuals] ++ ts')
+      naryTopApp (sink fTan) (sinkList xs' ++ [sink residuals, ProdVal ts'])
     where
       unitLike :: e n -> UnitE n
       unitLike _ = UnitE

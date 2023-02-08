@@ -298,6 +298,10 @@ updateTopFunStatus :: (Mut n, TopBuilder m) => TopFunName n -> EvalStatus (TopFu
 updateTopFunStatus f status =
   emitPartialTopEnvFrag $ mempty {fragTopFunUpdates = toSnocList [(f, status)]}
 
+updateTransposeRelation :: (Mut n, TopBuilder m) => TopFunName n -> TopFunName n -> m n ()
+updateTransposeRelation f1 f2 =
+  extendCache $ mempty { transpositionCache = eMapSingleton f1 f2 <> eMapSingleton f2 f1}
+
 bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
 bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName
@@ -778,6 +782,15 @@ typesAsBinderNest types = liftEnvReaderM $ go types
       ty:rest -> withFreshBinder noHint ty \b -> do
         Abs bs UnitE <- go $ map sink rest
         return $ Abs (Nest b bs) UnitE
+
+typesFromNonDepBinderNest
+  :: (EnvReader m, Fallible1 m, IRRep r)
+  => Nest (Binder r) n l -> m n [Type r n]
+typesFromNonDepBinderNest Empty = return []
+typesFromNonDepBinderNest (Nest (b:>ty) rest) = do
+  Abs rest' UnitE <- return $ ignoreHoistFailure $ hoist b (Abs rest UnitE)
+  tys <- typesFromNonDepBinderNest rest'
+  return $ ty : tys
 
 singletonBinderNest
   :: (EnvReader m, IRRep r)

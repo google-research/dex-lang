@@ -858,7 +858,7 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =

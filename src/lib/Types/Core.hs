@@ -537,6 +537,7 @@ data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec TopFunName n
   , ixDictCache :: EMap AbsDict SpecDictName n
   , linearizationCache :: EMap LinearizationSpec (PairE TopFunName TopFunName) n
+  , transpositionCache :: EMap TopFunName TopFunName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
     -- only want to store one entry per module name as a simple cache eviction
     -- policy, so we store it keyed on the module name, with the text hash for
@@ -711,6 +712,9 @@ data TopFun (n::S) =
 data TopFunDef (n::S) =
    Specialization       (SpecializationSpec n)
  | LinearizationPrimal  (LinearizationSpec n)
+   -- Tangent functions all take some number of nonlinear args, then a *single*
+   -- linear arg. This is so that transposition can be an involution - you apply
+   -- it twice and you get back to the original function.
  | LinearizationTangent (LinearizationSpec n)
    deriving (Show, Generic)
 
@@ -1889,18 +1893,19 @@ instance GenericE Cache where
             EMap SpecializationSpec TopFunName
     `PairE` EMap AbsDict SpecDictName
     `PairE` EMap LinearizationSpec (PairE TopFunName TopFunName)
+    `PairE` EMap TopFunName TopFunName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
     `PairE` ListE (        LiftE ModuleSourceName
                    `PairE` LiftE FileHash
                    `PairE` ListE ModuleName
                    `PairE` ModuleName)
-  fromE (Cache x y z parseCache evalCache) =
-    x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE`
+  fromE (Cache x y z w parseCache evalCache) =
+    x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE`
       ListE [LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
              | (sourceName, ((hashVal, deps), result)) <- M.toList evalCache ]
   {-# INLINE fromE #-}
-  toE   (x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE` ListE evalCache) =
-    Cache x y z parseCache
+  toE   (x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE` ListE evalCache) =
+    Cache x y z w parseCache
       (M.fromList
        [(sourceName, ((hashVal, deps), result))
        | LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
@@ -1914,13 +1919,13 @@ instance RenameE     Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty mempty mempty mempty
+  mempty = Cache mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 x3 x4 x5 <> Cache y1 y2 y3 y4 y5 =
-    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5)
+  Cache x1 x2 x3 x4 x5 x6 <> Cache y1 y2 y3 y4 y5 y6 =
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5) (x6<>y6)
 
 instance GenericE LamBinding where
   type RepE LamBinding = PairE (LiftE Arrow) CType

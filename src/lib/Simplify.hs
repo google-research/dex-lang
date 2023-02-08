@@ -1063,8 +1063,12 @@ linearizeTopFunNoCache spec@(LinearizationSpec f actives) = do
   PairE fPrimal fTangent <- liftSimplifyM $ tryGetCustomRule (sink f) >>= \case
     Just (absParams, rule) -> simplifyCustomLinearization (sink absParams) actives (sink rule)
     Nothing -> liftM toPairE $ liftDoubleBuilderToSimplifyM $ linearizeLam (sink lam) actives
-  (,) <$> emitTopFunBinding "primal"  (LinearizationPrimal  spec) fPrimal
-      <*> emitTopFunBinding "tangent" (LinearizationTangent spec) fTangent
+  fTangentT <- transposeTopFun fTangent
+  fPrimal'   <- emitTopFunBinding "primal"   (LinearizationPrimal  spec) fPrimal
+  fTangent'  <- emitTopFunBinding "tangent"  (LinearizationTangent spec) fTangent
+  fTangentT' <- emitTopFunBinding "tangent"  (LinearizationTangent spec) fTangentT
+  updateTransposeRelation fTangent' fTangentT'
+  return (fPrimal', fTangent')
 
 tryGetCustomRule :: EnvReader m => TopFunName n -> m n (Maybe (Abstracted CoreIR (ListE CType) n, AtomRules n))
 tryGetCustomRule f' = do
@@ -1103,9 +1107,10 @@ simplifyCustomLinearization (Abs genBs params) actives rule = do
           tangentType =<< getRepType =<< getType primalArg
         activeTangentTys <- catMaybes <$> forM (zip allTangentTys actives')
           \(t, active) -> return case active of True  -> Just t; False -> Nothing
-        fLin' <- buildNonDepNaryLamExpr activeTangentTys \activeTangentArgs -> do
+        fLin' <- buildUnaryLamExpr "t" (ProdTy activeTangentTys) \activeTangentArg -> do
+          activeTangentArgs <- getUnpacked $ Var activeTangentArg
           ListE allTangentTys' <- sinkM $ ListE allTangentTys
-          tangentArgs <- buildTangentArgs zeros (zip allTangentTys' actives') (Var <$> activeTangentArgs)
+          tangentArgs <- buildTangentArgs zeros (zip allTangentTys' actives') activeTangentArgs
           -- TODO: we're throwing away core type information here. Once we
           -- support core-level tangent types we should make an effort to
           -- correctly restore the core types before applying `fLin`. Right now,

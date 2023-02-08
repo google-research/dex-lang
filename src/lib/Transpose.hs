@@ -4,10 +4,11 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Transpose (transpose) where
+module Transpose (transpose, transposeTopFun) where
 
 import Data.Foldable
 import Data.Functor
+import Control.Category ((>>>))
 import Control.Monad.Reader
 import qualified Data.Set as S
 import GHC.Stack
@@ -28,14 +29,44 @@ import Util (enumerate)
 transpose
   :: (MonadFail1 m, Builder SimpIR m, Emits n)
   => LamExpr SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
-transpose lam ct = liftEmitBuilder do
+transpose lam ct = liftEmitBuilder $ runTransposeM do
   UnaryLamExpr b body <- sinkM lam
-  let argTy = binderType b
-  runReaderT1 (ListE []) $ runSubstReaderT idSubst $
-    withAccumulator argTy \refSubstVal ->
-      extendSubst (b @> refSubstVal) $
-        transposeBlock body (sink ct)
+  withAccumulator (binderType b) \refSubstVal ->
+    extendSubst (b @> refSubstVal) $
+      transposeBlock body (sink ct)
 {-# SCC transpose #-}
+
+runTransposeM :: TransposeM n n a -> BuilderM SimpIR n a
+runTransposeM cont = runReaderT1 (ListE []) $ runSubstReaderT idSubst $ cont
+
+transposeTopFun
+  :: (MonadFail1 m, EnvReader m)
+  => LamExpr SimpIR n -> m n (LamExpr SimpIR n)
+transposeTopFun lam = liftBuilder $ runTransposeM do
+  (Abs bsNonlin (Abs bLin body), Abs bsNonlin'' outTy)  <- unpackLinearLamExpr lam
+  refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
+    outTy' <- applyRename (bsNonlin''@@> nestToNames bsNonlin') outTy
+    withFreshBinder "ct" outTy' \bCT -> do
+      let ct = Var $ binderName bCT
+      body' <- buildBlock do
+        inTy <- substNonlin $ binderType bLin
+        withAccumulator inTy \refSubstVal ->
+          extendSubst (bLin @> refSubstVal) $
+            transposeBlock body (sink ct)
+      return $ LamExpr (bsNonlin' >>> UnaryNest bCT) body'
+
+unpackLinearLamExpr
+  :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n
+  -> m n ( Abs (Nest SBinder) (Abs SBinder SBlock) n
+         , Abs (Nest SBinder) SType n)
+unpackLinearLamExpr lam@(LamExpr bs body) = do
+  let numNonlin = nestLength bs - 1
+  PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
+  NaryPiType bsTy _ resultTy <- getNaryLamExprType lam
+  PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
+  let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
+  return ( Abs bsNonlin $ Abs bLin body
+         , Abs bsNonlinTy resultTy')
 
 -- === transposition monad ===
 
@@ -154,10 +185,20 @@ isLinEff effs@(EffectRow _ NoTail) = do
   let effRegions = freeAtomVarsList effs
   return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
 
+getTransposedTopFun :: EnvReader m => TopFunName n ->  m n (Maybe (TopFunName n))
+getTransposedTopFun f = do
+  cache <- transpositionCache <$> getCache
+  return $ lookupEMap cache f
+
 transposeExpr :: Emits o => SExpr i -> SAtom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
-  Atom atom     -> transposeAtom atom ct
-  TopApp _ _ -> error "transposition for standalone functions not implemented"
+  Atom atom -> transposeAtom atom ct
+  TopApp f xs -> do
+    Just fT <- getTransposedTopFun =<< substNonlin f
+    (xsNonlin, [xLin]) <- return $ splitAt (length xs - 1) xs
+    xsNonlin' <- mapM substNonlin xsNonlin
+    ct' <- naryTopApp fT (xsNonlin' ++ [ct])
+    transposeAtom xLin ct'
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
   TabApp x is -> do
