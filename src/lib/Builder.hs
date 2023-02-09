@@ -1528,7 +1528,52 @@ runMaybeWhile body = do
 
 -- === capturing closures with telescopes ===
 
-type ReconAbs r e = NaryAbs (AtomNameC r) e
+type ReconAbs r e = Abs (ReconBinders r) e
+
+data ReconBinders r n l = ReconBinders
+  (TelescopeType (AtomNameC r) (Type r) n)
+  (Nest (NameBinder (AtomNameC r)) n l)
+
+data TelescopeType c e n =
+   DepTelescope (TelescopeType c e n) (Abs (BinderP c e) (TelescopeType c e) n)
+ | ProdTelescope [e n]
+
+instance IRRep r => GenericB (ReconBinders r) where
+  type RepB (ReconBinders r) =
+    PairB (LiftB (TelescopeType (AtomNameC r) (Type r)))
+          (Nest (NameBinder (AtomNameC r)))
+  fromB (ReconBinders x y) = PairB (LiftB x) y
+  {-# INLINE fromB #-}
+  toB (PairB (LiftB x) y) = ReconBinders x y
+  {-# INLINE toB #-}
+
+instance IRRep r => BindsNameList (ReconBinders r) (AtomNameC r) where
+  bindNameList (ReconBinders _ bs) = bindNameList bs
+
+instance Pretty (ReconBinders r n l) where
+  pretty (ReconBinders _ ab) = pretty ab
+
+instance IRRep r => RenameB    (ReconBinders r)
+instance IRRep r => SinkableB  (ReconBinders r)
+instance IRRep r => ProvesExt  (ReconBinders r)
+instance IRRep r => BindsNames (ReconBinders r)
+instance IRRep r => HoistableB (ReconBinders r)
+
+instance GenericE (TelescopeType c e) where
+  type RepE (TelescopeType c e) = EitherE
+         (PairE (TelescopeType c e) (Abs (BinderP c e) (TelescopeType c e)))
+         (ListE e)
+  fromE (DepTelescope lhs ab) = LeftE (PairE lhs ab)
+  fromE (ProdTelescope tys)   = RightE (ListE tys)
+  {-# INLINE fromE #-}
+  toE (LeftE (PairE lhs ab)) = DepTelescope lhs ab
+  toE (RightE (ListE tys))   = ProdTelescope tys
+  {-# INLINE toE #-}
+
+instance (Color c, SinkableE e) => SinkableE (TelescopeType c e)
+instance (Color c, SinkableE e, RenameE e) => RenameE (TelescopeType c e)
+instance (Color c, ToBinding e c, SubstE AtomSubstVal e) => SubstE AtomSubstVal (TelescopeType c e)
+instance (Color c, HoistableE e) => HoistableE (TelescopeType c e)
 
 telescopicCapture
   :: (EnvReader m, HoistableE e, HoistableB b, IRRep r)
@@ -1536,11 +1581,14 @@ telescopicCapture
 telescopicCapture bs e = do
   vs <- localVarsAndTypeVars bs e
   vTys <- mapM (getType . Var) vs
-  let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
-  ty <- liftEnvReaderM $ buildTelescopeTy vs tys
+  let vsTysSorted = toposortAnnVars $ zip vs vTys
+  let vsSorted = map fst vsTysSorted
+  ty <- liftEnvReaderM $ buildTelescopeTy vsTysSorted
   result <- buildTelescopeVal (map Var vsSorted) ty
-  let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
-  return (result, ab)
+  reconAbs <- return $ ignoreHoistFailure $ hoist bs do
+    case abstractFreeVarsNoAnn vsSorted e of
+      Abs bs' e' -> Abs (ReconBinders ty bs') e'
+  return (result, reconAbs)
 
 applyReconAbs
   :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
@@ -1549,43 +1597,66 @@ applyReconAbs (Abs bs result) x = do
   xs <- unpackTelescope bs x
   applySubst (bs @@> map SubstVal xs) result
 
--- XXX: assumes arguments are toposorted
-buildTelescopeTy :: (EnvReader m, EnvExtender m, IRRep r)
-                 => [AtomName r n] -> [Type r n] -> m n (Type r n)
-buildTelescopeTy [] [] = return UnitTy
-buildTelescopeTy (v:vs) (ty:tys) = do
-  withFreshBinder (getNameHint v) ty \b -> do
-    Abs fv tys' <- sinkM $ abstractFreeVar v $ ListE tys
-    ListE tys'' <- applyRename (fv@>binderName b) tys'
-    ListE vs' <- sinkM $ ListE vs
-    case (vs', tys'') of
-      ([], []) -> return ty
-      ((_:_), (_:_)) -> do
-        innerTelescope <- buildTelescopeTy vs' tys''
-        return case hoist b innerTelescope of
-            HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
-            HoistFailure _ -> DepPairTy $ DepPairType b innerTelescope
-      _ -> error "zip mismatch"
-buildTelescopeTy _ _ = error "zip mismatch"
+buildTelescopeTy
+  :: (EnvReader m, EnvExtender m, Color c, HoistableE e)
+  => [AnnVar c e n] -> m n (TelescopeType c e n)
+buildTelescopeTy [] = return (ProdTelescope [])
+buildTelescopeTy ((v,ty):xs) = do
+  rhs <- buildTelescopeTy xs
+  Abs b rhs' <- return $ abstractFreeVar v rhs
+  case hoist b rhs' of
+    HoistSuccess rhs'' -> return $ prependTelescopeTy ty rhs''
+    HoistFailure _ -> return $ DepTelescope (ProdTelescope []) (Abs (b:>ty) rhs')
 
-buildTelescopeVal :: (EnvReader m, IRRep r) => [Atom r n] -> Type r n -> m n (Atom r n)
-buildTelescopeVal elts telescopeTy = go elts telescopeTy
-  where
-    go :: (EnvReader m, IRRep r) => [Atom r n] -> Type r n -> m n (Atom r n)
-    go [] UnitTy = return UnitVal
-    go [x] _ = return x
-    go (x:xs) (PairTy _ xsTy) = do
-      rest <- go xs xsTy
-      return $ PairVal x rest
-    go (x:xs) (DepPairTy ty) = do
-      xsTy <- instantiateDepPairTy ty x
-      rest <- go xs xsTy
-      return $ DepPair x rest ty
-    go _ _ = error "zip mismatch"
+prependTelescopeTy :: e n -> TelescopeType c e n -> TelescopeType c e n
+prependTelescopeTy x = \case
+  DepTelescope lhs rhs -> DepTelescope (prependTelescopeTy x lhs) rhs
+  ProdTelescope xs -> ProdTelescope (x:xs)
+
+buildTelescopeVal
+  :: (EnvReader m, IRRep r) => [Atom r n]
+  -> TelescopeType (AtomNameC r) (Type r) n -> m n (Atom r n)
+buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
+  go :: (EnvReader m, IRRep r)
+     => TelescopeType (AtomNameC r) (Type r) n ->  [Atom r n]
+     -> m n (Atom r n, [Atom r n])
+  go ty rest = case ty of
+    ProdTelescope tys -> do
+      (xs, rest') <- return $ splitAt (length tys) rest
+      return (ProdVal xs, rest')
+    DepTelescope ty1 (Abs b ty2) -> do
+      (x1, ~(xDep : rest')) <- go ty1 rest
+      ty2' <- applySubst (b@>SubstVal xDep) ty2
+      (x2, rest'') <- go ty2' rest'
+      let depPairTy = DepPairType b (telescopeTypeType ty2)
+      return (PairVal x1 (DepPair xDep x2 depPairTy), rest'')
+
+telescopeTypeType :: TelescopeType (AtomNameC r) (Type r) n -> Type r n
+telescopeTypeType (ProdTelescope tys) = ProdTy tys
+telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
+  let lhs' = telescopeTypeType lhs
+  let rhs' = DepPairTy (DepPairType b (telescopeTypeType rhs))
+  PairTy lhs' rhs'
+
+unpackTelescope
+  :: (Fallible1 m, EnvReader m, IRRep r)
+  => ReconBinders r l1 l2 -> Atom r n -> m n [Atom r n]
+unpackTelescope (ReconBinders tyTop _) xTop = go tyTop xTop where
+  go :: (Fallible1 m, EnvReader m, IRRep r)
+     => TelescopeType c e l-> Atom r n -> m n [Atom r n]
+  go ty x = case ty of
+    ProdTelescope _ -> getUnpacked x
+    DepTelescope ty1 (Abs _  ty2) -> do
+      (x1, xPair) <- fromPair x
+      (xDep, x2) <- fromPair xPair
+      xs1 <- go ty1 x1
+      xs2 <- go ty2 x2
+      return $ xs1 ++ (xDep : xs2)
 
 -- sorts name-annotation pairs so that earlier names may be occur free in later
 -- annotations but not vice versa.
-toposortAnnVars :: forall e c n.  (Color c, HoistableE e) => [(Name c n, e n)] -> [(Name c n, e n)]
+type AnnVar c e n = (Name c n, e n)
+toposortAnnVars :: forall e c n.  (Color c, HoistableE e) => [AnnVar c e n] -> [AnnVar c e n]
 toposortAnnVars annVars =
   let (graph, vertexToNode, _) = graphFromEdges $ map annVarToNode annVars
   in map (nodeToAnnVar . vertexToNode) $ reverse $ topSort graph
@@ -1595,15 +1666,6 @@ toposortAnnVars annVars =
 
     nodeToAnnVar :: (e n, Name c n, [Name c n]) -> (Name c n, e n)
     nodeToAnnVar (ann, v, _) = (v, ann)
-
-unpackTelescope :: forall m r n l1 l2. (Fallible1 m, EnvReader m, IRRep r)
-  => Nest (AtomNameBinder r) l1 l2 -> Atom r n -> m n [Atom r n]
-unpackTelescope Empty _ = return []
-unpackTelescope (Nest _ Empty) atom = return [atom]
-unpackTelescope (Nest _ rest) pair = do
-  left  <- normalizeProj (ProjectProduct 0) pair
-  right <- normalizeProj (ProjectProduct 1) pair
-  (left :) <$> unpackTelescope rest right
 
 -- gives a list of atom names that are free in `e`, including names mentioned in
 -- the types of those names, recursively.

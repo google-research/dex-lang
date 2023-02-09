@@ -1254,7 +1254,6 @@ instance GenericE ReconstructAtom where
 
 instance SinkableE  ReconstructAtom
 instance HoistableE ReconstructAtom
-instance AlphaEqE   ReconstructAtom
 instance RenameE    ReconstructAtom
 
 instance Pretty (ReconstructAtom n) where

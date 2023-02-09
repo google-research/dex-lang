@@ -224,17 +224,17 @@ type LinLam = SLam
 type LinLamAbs = MaybeReconAbs LinLam
 
 data MaybeReconAbs (e::E) (n::S) =
-   ReconWithData (NaryAbs (AtomNameC SimpIR) e n)
+   ReconWithData (ReconAbs SimpIR e n)
  | TrivialRecon (e n)
 
 data ObligateReconAbs (e::E) (n::S) =
-   ObligateRecon (SType n) (NaryAbs (AtomNameC SimpIR) e n)
+   ObligateRecon (SType n) (ReconAbs SimpIR e n)
 
 instance ReconFunctor MaybeReconAbs where
   capture locals original toCapture = do
     (reconVal, recon) <- telescopicCapture locals toCapture
     case recon of
-      Abs Empty toCapture' -> return (original, TrivialRecon toCapture')
+      Abs (ReconBinders _ Empty) toCapture' -> return (original, TrivialRecon toCapture')
       _ -> return (PairVal original reconVal, ReconWithData recon)
 
   reconstruct primalAux recon = case recon of
@@ -734,7 +734,7 @@ instance AlphaEqE    TangentArgs
 instance RenameE     TangentArgs
 
 instance GenericE (MaybeReconAbs e) where
-  type RepE (MaybeReconAbs e) = EitherE (NaryAbs (AtomNameC SimpIR) e) e
+  type RepE (MaybeReconAbs e) = EitherE (ReconAbs SimpIR e) e
   fromE = \case
     ReconWithData ab -> LeftE ab
     TrivialRecon e   -> RightE e
