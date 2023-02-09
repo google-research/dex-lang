@@ -28,6 +28,7 @@ import QueryType
 import Types.Core
 import Types.Primitives
 import Util (bindM2, enumerate)
+import Optimize
 
 -- === linearization monad ===
 
@@ -177,7 +178,7 @@ tangentFunAsLambda
 tangentFunAsLambda cont = do
   ActivePrimals primalVars _ <- getActivePrimals
   tangentTys <- getTangentArgTys primalVars
-  buildNaryLamExpr tangentTys \tangentVars -> do
+  dceTop =<< buildNaryLamExpr tangentTys \tangentVars -> do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
 
 getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomName n] -> m n (EmptyAbs (Nest SBinder) n)
