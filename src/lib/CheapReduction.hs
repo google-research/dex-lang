@@ -264,6 +264,7 @@ instance CheaplyReducibleE CoreIR DictExpr CAtom where
       cheapReduceE (App f xs) <|> justSubst
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
+    DataData ty      -> DictCon . DataData <$> cheapReduceE ty
     where justSubst = DictCon <$> substM d
 
 instance CheaplyReducibleE CoreIR DataDefParams DataDefParams where

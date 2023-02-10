@@ -145,7 +145,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   DictHole _ _ -> error "shouldn't have DictHole past inference"
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
-    rec x >> emitLit ",> " >> rec y
+    rec x >> emitLit " ,> " >> rec y
   -- Done well, this could let you inspect the results of dictionary synthesis
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant

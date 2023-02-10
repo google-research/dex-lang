@@ -32,6 +32,9 @@ Float = Float32
 
 def the (a:Type) (x:a) = x
 
+interface Data a
+  do_not_implement_this_interface_for_the_compiler_relies_on_the_invariant_it_protects : a -> a
+
 '### Casting
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x

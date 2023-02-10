@@ -2880,6 +2880,7 @@ generalizeDictRec dict = do
     IxFin _ -> IxFin <$> Var <$> freshInferenceName NatTy
     InstantiatedGiven _ _ -> notSimplifiedDict
     SuperclassProj _ _    -> notSimplifiedDict
+    DataData _            -> return dict'
     where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
 
 generalizeInstanceArgs :: EmitsInf n => Nest RolePiBinder n l -> [CAtom n] -> SolverM n [CAtom n]
@@ -3044,6 +3045,7 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
       return $ lamExprToAtom lamExpr arr Nothing
   SynthDictType dictTy -> case dictTy of
     DictType "Ix" _ [NewtypeTyCon (Fin n)] -> return $ DictCon $ IxFin n
+    DictType "Data" _ _ -> synthDictForData dictTy <!> synthDictFromGiven dictTy
     _ -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
 {-# SCC synthTerm #-}
 
@@ -3064,6 +3066,36 @@ synthDictFromInstance dictTy@(DictType _ targetClass _) = do
     synthTy <- getInstanceType candidate
     args <- instantiateSynthArgs dictTy synthTy
     return $ DictCon $ InstanceDict candidate args
+
+synthDictForData :: forall n. DictType n -> SyntherM n (SynthAtom n)
+synthDictForData dictTy@(DictType "Data" dName [ty]) = case ty of
+  -- TODO Deduplicate vs CheckType.checkDataLike
+  -- The "Var" case is different
+  Var _ -> synthDictFromGiven dictTy
+  TabPi (TabPiType b eltTy) -> recurBinder (Abs b eltTy) >> success
+  DepPairTy (DepPairType b@(_:>l) r) -> do
+    recur l >> recurBinder (Abs b r) >> success
+  NewtypeTyCon LabelType -> notData
+  NewtypeTyCon nt -> do
+    (_, ty') <- unwrapNewtypeType nt
+    recur ty' >> success
+  TC con -> case con of
+    BaseType _       -> success
+    ProdType as      -> mapM_ recur as >> success
+    SumType  cs      -> mapM_ recur cs >> success
+    RefType _ _      -> success
+    HeapType         -> success
+    _ -> notData
+  _   -> notData
+  where
+    recur ty' = synthDictForData $ DictType "Data" dName [ty']
+    recurBinder :: (RenameB b, BindsEnv b) => Abs b CType n -> SyntherM n (SynthAtom n)
+    recurBinder bAbs = refreshAbs bAbs \b' ty'' -> do
+      ans <- synthDictForData $ DictType "Data" (sink dName) [ty'']
+      return $ ignoreHoistFailure $ hoist b' ans
+    notData = empty
+    success = return $ DictCon $ DataData ty
+synthDictForData dictTy = error $ "Malformed Data dictTy " ++ pprint dictTy
 
 -- TODO: This seems... excessively expensive?
 getInstanceType :: InstanceName n -> SyntherM n (SynthType n)
