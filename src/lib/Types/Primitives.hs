@@ -32,7 +32,6 @@ import GHC.Exts (inline)
 
 import GHC.Generics (Generic (..))
 
-import Err
 import LabeledItems
 import Occurrence
 import IRVariants
@@ -56,10 +55,7 @@ data PrimCon (r::IR) (e:: *) where
   ProdCon      :: [e]               -> PrimCon r e
   SumCon       :: [e] -> Int -> e   -> PrimCon r e -- type, tag, payload
   SumAsProd    :: [e] -> e   -> [e] -> PrimCon r e -- type, tag, payload
-  -- Only used during type inference. If we add `HasCore r` here we won't
-  -- be able to derive the instances. Maybe we should just move it to `Atom`.
-  DictHole     :: AlwaysEqual SrcPosCtx -> e -> PrimCon r e
-  HeapVal      ::                               PrimCon r e
+  HeapVal      ::                      PrimCon r e
   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data MemOp e =

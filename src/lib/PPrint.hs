@@ -298,6 +298,7 @@ instance IRRep r => PrettyPrec (Atom r n) where
     NewtypeCon con x -> prettyPrecNewtype con x
     NewtypeTyCon con -> prettyPrec con
     SimpInCore x -> prettyPrec x
+    DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -1060,7 +1061,6 @@ prettyPrecPrimCon con = case con of
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
   HeapVal -> atPrec ArgPrec "HeapValue"
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec

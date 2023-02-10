@@ -200,7 +200,6 @@ summary atom = case atom of
         Inject (fromIntegral tag) <$> (summary $ payloads !! (fromIntegral tag))
       SumAsProd _ _ _ -> unknown atom
       HeapVal -> invalid "HeapVal"
-      DictHole _ _ -> error "shouldn't appear in SimpIR"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown _ = return IxAll

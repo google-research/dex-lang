@@ -86,7 +86,6 @@ tryAsDataAtom atom = do
       SumCon  tys tag x -> SumCon <$> mapM getRepType tys <*> pure tag <*> go x
       SumAsProd tys tag xs ->
         SumAsProd <$> mapM getRepType tys <*> go tag <*> mapM go xs
-      DictHole _ _ -> error "unexpected DictHole"
       HeapVal       -> return HeapVal
     PtrVar v        -> return $ PtrVar v
     DepPair x y ty -> do
@@ -111,6 +110,7 @@ tryAsDataAtom atom = do
     Eff _           -> notData
     TC _            -> notData
     TabPi _         -> notData
+    DictHole _ _    -> notData
     where
       notData = error $ "Not runtime-representable data: " ++ pprint atom
 
@@ -162,6 +162,7 @@ getRepType ty = go ty where
     Pi _           -> error notDataType
     DictTy _       -> error notDataType
     DictCon _      -> error notType
+    DictHole _ _   -> error notType
     Eff _          -> error notType
     Con _          -> error notType
     PtrVar _       -> error notType
@@ -719,6 +720,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   PtrVar v -> PtrVar <$> substM v
   DictCon d -> (DictCon <$> substM d) >>= cheapNormalize
   DictTy  d -> DictTy <$> substM d
+  DictHole _ _ -> error "shouldn't have dict holes past inference"
   NewtypeCon _ _ -> substM atom
   NewtypeTyCon t -> NewtypeTyCon <$> substM t
   ProjectElt i x -> normalizeProj i =<< simplifyAtom x

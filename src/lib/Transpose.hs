@@ -370,7 +370,6 @@ transposeCon con ct = case con of
       getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
-  DictHole _ _ -> notTangent
   HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 

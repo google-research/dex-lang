@@ -3202,16 +3202,9 @@ instance SinkableE e => SinkableE (NameMapE c e) where
 
 -- === E-kinded IR coercions ===
 
--- XXX: the intention is that we won't have to use these much
+-- XXX: the intention is that we won't have to use this much
 unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
 unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
-
--- XXX: the intention is that we won't have to use these much
-unsafeCoerceIRName :: forall (r'::IR) (r::IR) (n::S). Name (AtomNameC r) n -> Name (AtomNameC r') n
-unsafeCoerceIRName = TrulyUnsafe.unsafeCoerce
-
-unsafeCoerceIRB :: forall (r'::IR) (r::IR) (b::IR->B) (n::S) (l::S) . b r n l -> b r' n l
-unsafeCoerceIRB = TrulyUnsafe.unsafeCoerce
 
 -- === notes ===
 

@@ -954,7 +954,7 @@ getImplicitArg (PiBinder _ argTy arr) = case arr of
   ImplicitArrow -> Just <$> freshType argTy
   ClassArrow -> do
     ctx <- srcPosCtx <$> getErrCtx
-    return $ Just $ Con $ DictHole (AlwaysEqual ctx) argTy
+    return $ Just $ DictHole (AlwaysEqual ctx) argTy
   _ -> return Nothing
 
 -- The name hint names the object being computed
@@ -2098,7 +2098,7 @@ inferParams (Abs paramBs body) = case paramBs of
     return (DataDefParams ((PlainArrow, (Var x)) : params), body')
   Nest (RolePiBinder b ty ClassArrow _) bs -> do
     ctx <- srcPosCtx <$> getErrCtx
-    let d = Con $ DictHole (AlwaysEqual ctx) ty
+    let d = DictHole (AlwaysEqual ctx) ty
     rest <- applySubst (b@>SubstVal d) $ Abs bs body
     (DataDefParams params, body') <- inferParams rest
     return (DataDefParams ((ClassArrow, d):params), body')
@@ -2400,7 +2400,7 @@ asIxType :: CType o -> InfererM i o (IxType CoreIR o)
 asIxType ty = do
   dictTy <- DictTy <$> ixDictType ty
   ctx <- srcPosCtx <$> getErrCtx
-  return $ IxType ty $ IxDictAtom $ Con $ DictHole (AlwaysEqual ctx) dictTy
+  return $ IxType ty $ IxDictAtom $ DictHole (AlwaysEqual ctx) dictTy
 {-# SCC asIxType #-}
 
 -- === Solver ===
@@ -3090,7 +3090,7 @@ instantiateSynthArgs target synthTy = do
     args <- {-# SCC argInstantiation #-} instantiateSynthArgsRec [] target' emptyInFrag synthTy'
     zonk $ ListE args
   forM args \case
-    Con (DictHole _ argTy) -> liftExceptAlt (typeAsSynthType argTy) >>= synthTerm
+    DictHole _ argTy -> liftExceptAlt (typeAsSynthType argTy) >>= synthTerm
     arg -> return arg
 
 instantiateSynthArgsRec
@@ -3102,7 +3102,7 @@ instantiateSynthArgsRec prevArgsRec dictTy subst synthTy = case synthTy of
     argTy' <- applySubst subst argTy
     param <- case arrow of
       ImplicitArrow -> Var <$> freshInferenceName argTy'
-      ClassArrow -> return $ Con $ DictHole (AlwaysEqual Nothing) argTy'
+      ClassArrow -> return $ DictHole (AlwaysEqual Nothing) argTy'
       _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
     instantiateSynthArgsRec (param:prevArgsRec) dictTy (subst <.> b @> SubstVal param) resultTy
   SynthDictType dictTy' -> do
@@ -3142,7 +3142,7 @@ instance HoistableState DictSynthTraverserS where
   hoistState _ _ (DictSynthTraverserS errs) = DictSynthTraverserS errs
 
 instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
-  traverseAtom a@(Con (DictHole (AlwaysEqual ctx) ty)) = do
+  traverseAtom a@(DictHole (AlwaysEqual ctx) ty) = do
     ty' <- cheapNormalize =<< traverseAtom ty
     ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'
     case ans of

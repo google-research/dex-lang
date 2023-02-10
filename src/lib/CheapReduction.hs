@@ -219,15 +219,13 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
     Lam _ _ _ -> substM a
-    Con (DictHole ctx ty') -> do
-      -- TODO: figure out how to do this safely. `HasCore r` guarding `DictHole`
-      -- might be enough.
+    DictHole ctx ty' -> do
       ty <- cheapReduceE ty'
-      runFallibleT1 (trySynthTerm $ unsafeCoerceIRE ty) >>= \case
-        Success d -> return $ unsafeCoerceIRE d
+      runFallibleT1 (trySynthTerm ty) >>= \case
+        Success d -> return d
         Failure _ -> do
           reportSynthesisFail ty
-          return $ Con $ DictHole ctx ty
+          return $ DictHole ctx ty
     TabPi (TabPiType (b:>ixTy) resultTy) -> do
       ixTy' <- cheapReduceE ixTy
       withFreshBinder (getNameHint b) ixTy' \b' -> do

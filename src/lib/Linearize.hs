@@ -591,7 +591,6 @@ linearizePrimCon con = case con of
     return $ WithTangent (Con $ SumAsProd tys' tg' elemsP) do
       elemsT <- forM elemsWithT \(WithTangent _ t) -> t
       return $ Con $ SumAsProd (sinkList tys') (sink tg') elemsT
-  DictHole _ _ -> error "impossible"  -- TODO: static constraint
   HeapVal -> emitZeroT
   where emitZeroT = withZeroT $ renameM $ Con con
 

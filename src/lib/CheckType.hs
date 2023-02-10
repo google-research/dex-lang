@@ -282,6 +282,7 @@ instance IRRep r => HasType r (Atom r) where
     NewtypeCon con x -> NewtypeTyCon <$> typeCheckNewtypeCon con x
     NewtypeTyCon t   -> typeCheckNewtypeTyCon t
     SimpInCore x -> getTypeE x
+    DictHole _ ty -> checkTypeE TyKind ty
     ProjectElt UnwrapNewtype x -> do
       NewtypeTyCon con <- getTypeE x
       snd <$> unwrapNewtypeType con
@@ -486,7 +487,6 @@ typeCheckPrimCon con = case con of
     unless (length tys == length es) $ throw TypeErr "Invalid SumAsProd"
     forM_ (zip es tys') $ uncurry (|:)
     return $ SumTy tys'
-  DictHole _ ty -> checkTypeE TyKind ty
   HeapVal -> return $ TC HeapType
 
 typeCheckNewtypeCon

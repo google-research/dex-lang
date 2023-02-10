@@ -303,6 +303,7 @@ instance IRRep r => HasType r (Atom r) where
         NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
         ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
     SimpInCore x -> getTypeE x
+    DictHole _ ty -> substM ty
 
 instance HasType CoreIR SimpInCore where
   getTypeE = \case
@@ -346,7 +347,6 @@ getTypePrimCon con = case con of
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
   SumCon tys _ _ -> SumTy <$> traverse substM tys
   SumAsProd tys _ _ -> SumTy <$> traverse substM tys
-  DictHole _ ty -> substM ty
   HeapVal       -> return $ TC HeapType
 
 dictExprType :: DictExpr i -> TypeQueryM i o (CType o)

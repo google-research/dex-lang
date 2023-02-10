@@ -69,6 +69,7 @@ data Atom (r::IR) (n::S) where
  DictTy       :: DictType n                    -> Atom CoreIR n
  NewtypeCon   :: NewtypeCon n -> Atom CoreIR n -> Atom CoreIR n
  NewtypeTyCon :: NewtypeTyCon n                -> Atom CoreIR n
+ DictHole     :: AlwaysEqual SrcPosCtx -> Type CoreIR n -> Atom CoreIR n
  -- === Shims between IRs ===
  SimpInCore   :: SimpInCore n    -> Atom CoreIR n
  RepValAtom   :: RepVal SimpIR n -> Atom SimpIR n
@@ -1596,10 +1597,11 @@ instance IRRep r => GenericE (Atom r) where
   {- DepPair -}    ( Atom r `PairE` Atom r `PairE` DepPairType r)
   {- DictCon  -}   (WhenCore r DictExpr)
   {- DictTy  -}    (WhenCore r DictType)
-            ) (EitherE2
+            ) (EitherE3
   {- NewtypeCon -}     (WhenCore r (NewtypeCon `PairE` Atom r))
   {- NewtypeTyCon -}   (WhenCore r NewtypeTyCon)
-            ) (EitherE6
+  {- DictHole -}       (WhenCore r (LiftE (AlwaysEqual SrcPosCtx) `PairE` Type CoreIR))
+              ) (EitherE6
   {- Con -}        (ComposeE (PrimCon r) (Atom r))
   {- TC -}         (ComposeE (PrimTC  r) (Atom r))
   {- Eff -}        ( WhenCore r (EffectRow r))
@@ -1619,6 +1621,7 @@ instance IRRep r => GenericE (Atom r) where
     DictTy  d      -> Case2 $ Case3 $ WhenIRE d
     NewtypeCon c x -> Case3 $ Case0 $ WhenIRE (c `PairE` x)
     NewtypeTyCon t -> Case3 $ Case1 $ WhenIRE t
+    DictHole s t   -> Case3 $ Case2 $ WhenIRE (LiftE s `PairE` t)
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ WhenIRE effs
@@ -1646,6 +1649,7 @@ instance IRRep r => GenericE (Atom r) where
     Case3 val -> case val of
       Case0 (WhenIRE (c `PairE` x)) -> NewtypeCon c x
       Case1 (WhenIRE t)             -> NewtypeTyCon t
+      Case2 (WhenIRE (LiftE s `PairE` t)) -> DictHole s t
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con
