@@ -39,8 +39,8 @@ interface Data a
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
-def unsafe_coerce {a} (b:Type) (x:a) : b = %unsafeCoerce b x -- TODO: `Data` constraint
-def uninitialized_value {a} : a = %garbageVal a              -- TODO: `Data` constraint
+def unsafe_coerce {a} (b:Type) [Data a, Data b] (x:a) : b = %unsafeCoerce b x
+def uninitialized_value {a} [Data a] : a = %garbageVal a
 
 def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
@@ -520,6 +520,8 @@ def not  (x:Bool) : Bool =
 '## More Boolean operations
 TODO: move these with the others?
 
+-- Can't use `%select` because it lowers to `ISelect`, which requires
+-- `a` to be a `BaseTy`.
 def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
@@ -2600,8 +2602,7 @@ def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List
 
 def show_any {a} (x:a) : String = unsafe_coerce String $ %showAny x
 
--- TODO: data constraint
-def coerce_table {n a} (m:Type) [Ix m] (x:n=>a) : m => a =
+def coerce_table {n a} [Data a] (m:Type) [Ix m] (x:n=>a) : m => a =
   if size m == size n
     then unsafe_coerce (m=>a) x
     else error "mismatched sizes in table coercion"
