@@ -655,12 +655,9 @@ simplifyIxType (IxType t ixDict) = do
       params' <- mapM toDataAtomIgnoreReconAssumeNoDecls params
       sdName <- requireIxDictCache dictAbs
       return $ IxDictSpecialized t' sdName params'
-    -- TODO: remove these two coercions once we disallow these cases in CoreIR
     IxDictRawFin n            -> do
       n' <- toDataAtomIgnoreReconAssumeNoDecls n
       return $ IxDictRawFin n'
-    IxDictSpecialized ty d xs ->
-      return $ unsafeCoerceIRE $ IxDictSpecialized ty d xs
 
 requireIxDictCache
   :: (HoistingTopBuilder TopEnvFrag m) => AbsDict n -> m n (Name SpecializedDictNameC n)

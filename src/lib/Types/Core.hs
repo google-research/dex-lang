@@ -204,7 +204,7 @@ data IxDict r n where
   -- it's parameterized by a newtyped-stripped `IxRepVal` instead of `Nat`, and
   -- it describes indices of type `IxRepVal`.
   IxDictRawFin      :: Atom r n                                 -> IxDict r n
-  IxDictSpecialized :: Type r n -> SpecDictName n -> [Atom r n] -> IxDict r n
+  IxDictSpecialized :: SType n -> SpecDictName n -> [SAtom n] -> IxDict SimpIR n
 
 deriving instance IRRep r => Show (IxDict r n)
 deriving via WrapE (IxDict r) n instance IRRep r => Generic (IxDict r n)
@@ -2070,16 +2070,16 @@ instance IRRep r => GenericE (IxDict r) where
     EitherE3
       (WhenCore r (Atom r))
       (Atom r)
-      (Type r `PairE` SpecDictName `PairE` ListE (Atom r))
+      (WhenSimp r (Type r `PairE` SpecDictName `PairE` ListE (Atom r)))
   fromE = \case
     IxDictAtom x -> Case0 $ WhenIRE x
     IxDictRawFin n -> Case1 $ n
-    IxDictSpecialized t d xs -> Case2 $ t `PairE` d `PairE` ListE xs
+    IxDictSpecialized t d xs -> Case2 $ WhenIRE $ t `PairE` d `PairE` ListE xs
   {-# INLINE fromE #-}
   toE = \case
     Case0 (WhenIRE x)          -> IxDictAtom x
     Case1 (n)                  -> IxDictRawFin n
-    Case2 (t `PairE` d `PairE` ListE xs) -> IxDictSpecialized t d xs
+    Case2 (WhenIRE (t `PairE` d `PairE` ListE xs)) -> IxDictSpecialized t d xs
     _ -> error "impossible"
   {-# INLINE toE #-}
 
