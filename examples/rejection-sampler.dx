@@ -2,7 +2,7 @@
 
 'We implement rejection sampling from a Binomial distribution using a uniform proposal.
 
-def rejectionSample {a} (try: Key -> Maybe a) (k:Key) : a =
+def rejectionSample {a} [Data a] (try: Key -> Maybe a) (k:Key) : a =
   iter \i. case try $ hash k i of
     Nothing -> Continue
     Just x  -> Done x

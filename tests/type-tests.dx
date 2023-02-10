@@ -343,7 +343,8 @@ def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
 :p getFst3 [1,2,3]
 > 1
 
-def triRefIndex {h n} (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
+def triRefIndex {h n} [Ix n, Data ((i':n)=>(..i')=>Float)]
+  (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
   %indexRef ref i
 
 (for i:(Fin 5). for j:(i..). 0.0).(0@_)
@@ -557,14 +558,16 @@ def transpose_ix {n} [Ix n] (i:n) (j:(i..)) : (i:n &> ..i) =
 -- :p transpose_lower_to_upper dpair
 -- > [[1, 2, 4], [3, 5], [6]]
 
-'### Tests for function VSpace
+-- '### Tests for function VSpace
+-- that we could restore if we choose to:
+-- https://github.com/google-research/dex-lang/issues/1230
 
-:p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
-> True
-:p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
-> True
-:p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
-> True
+-- :p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
+-- > True
+-- :p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
+-- > True
+-- :p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
+-- > True
 
 '### Miscellany
 

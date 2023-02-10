@@ -141,7 +141,7 @@ data SkewSymmetricMap n [Ix n] =
 
 instance HasDeterminant (SkewSymmetricMap n) given {n}
   determinant' = case is_odd (size n) of
-    True -> zero
+    True -> const zero
     False -> \(MkSkewSymMap a).
       dense_rep = skew_symmetric_prod a eye
       determinant dense_rep  -- Naive algorithm, could be done with Pfaffian

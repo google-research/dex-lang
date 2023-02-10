@@ -1,10 +1,10 @@
 ' # Monte Carlo Tree Search
 MCTS is the decision engine for the notable AlphaGo program.
-It samples rollouts to guide tree search. 
+It samples rollouts to guide tree search.
 The nice thing is Dex can in theory automatically parallelize leaf rollouts.
 
 ' We implement a variant of MCTS with minimax search and upper
-confidence bound for trees (uct) for the two-player mini-game `Count21`. 
+confidence bound for trees (uct) for the two-player mini-game `Count21`.
 This demo implements a doubly-linked tree structure as a Dex array,
 and traverses its branches by indexing.
 [reference](http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf)
@@ -27,13 +27,15 @@ def Tree (node_ix:Type) (a:Type) [Ix node_ix] : Type =
 
 def root_of {node_ix a} (tree:Tree node_ix a) : node_ix = 0@node_ix
 
-def is_leaf {node a} ((Branch _ _ children):Node node a) : Bool = 
+def is_leaf {node a} ((Branch _ _ children):Node node a) : Bool =
   list_length children == 0
 
 def init_tree {a} (max_size:Nat) (default_content:a): Tree (Fin max_size) a =
   root = Branch default_content Nothing (AsList 0 [])
-  nothings = for i:(Fin max_size). Nothing
-  init_array = yield_state nothings \ref. ref!(0@_) := (Just root)
+  init_array = for i:(Fin max_size).
+    if ordinal i == 0
+      then Just root
+      else Nothing
   (init_array, 0@_)
 
 ' ## Game and Node utilities
@@ -46,7 +48,7 @@ def Game (state:Type) (move:Type) : Type =
     game_over : state -> Bool &
   }
 
-def NodeStats (state:Type) : Type = 
+def NodeStats (state:Type) : Type =
   (Nat & Nat & Nat & state)
   -- (#winning rollouts for max/first player, #visit, level, state)
 
@@ -73,7 +75,7 @@ def node_level {node_ix state} (node:(Node node_ix (NodeStats state))) : Nat =
 
 ' ## MCTS functions
 
-' Let $n$ be a node. The upper confidence bound for trees (UCT) is a heuristic 
+' Let $n$ be a node. The upper confidence bound for trees (UCT) is a heuristic
 that balances exploration and exploitation, weighed by $1:\sqrt{2}$ here.
 The reward $Q(n)$ summarizes the performance of $n$'s subtree.
 $N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
@@ -88,7 +90,7 @@ def uct (win:Nat) (n:Nat) (parent_n:Nat) : Float =
 
 def mcts_select {move state node_ix}
     (game: Game state move) (tree: Tree node_ix (NodeStats state)) (key: Key)
-    : node_ix = 
+    : node_ix =
     arr = fst tree
 
     yield_state (root_of tree) \ref. iter \i.
@@ -105,7 +107,7 @@ def mcts_select {move state node_ix}
             then
               criterion = \child.
                 not $ node_is_visited $ from_just arr.child
-              (AsList _ unvisited) = filter criterion children 
+              (AsList _ unvisited) = filter criterion children
               ref := unvisited.(rand_idx key)
               Done ()
             else
@@ -122,7 +124,7 @@ def mcts_select {move state node_ix}
 
 ' Expand the tree (in-place) by adding states one-move away from the current state.
 
-def mcts_expand {move state node_ix h}
+def mcts_expand {move state node_ix h} [Ix node_ix, Data state]
     (game: Game state move)
     (tree_ref: Ref h (Tree node_ix (NodeStats state)))
     (node: node_ix) : {State h} Unit =
@@ -156,7 +158,7 @@ def mcts_expand {move state node_ix h}
 ' Simulate the game starting at a given state until the game terminates and
 return the simulation result.
 
-def mcts_rollout {move state}
+def mcts_rollout {move state} [Data state]
     (game: Game state move)
     (key: Key) (curr_state: state) : Bool =
     -- output is w.r.t. current player
@@ -177,7 +179,7 @@ def mcts_rollout {move state}
 ' Update the record of a node and its chain of ancestors,
 based on the simulation result.
 
-def mcts_backpropagate {move state node_ix h} [Eq node_ix] 
+def mcts_backpropagate {move state node_ix h} [Eq node_ix, Data state]
     (game: Game state move)
     (tree_ref: Ref h (Tree node_ix (NodeStats state)))
     (node: node_ix) (new_rollout_wins: Nat) : {State h} Unit =
@@ -207,7 +209,7 @@ def mcts_backpropagate {move state node_ix h} [Eq node_ix]
 ' Wrap up the procedure for taking one sample and extend the tree.
 
 -- slow: every sample makes two copies of the tree array
-def mcts_sample {move state node_ix} [Eq node_ix]
+def mcts_sample {move state node_ix} [Eq node_ix, Data state]
     (game: Game state move) (key: Key)
     (tree: Tree node_ix (NodeStats state))
     : Tree node_ix (NodeStats state) =
@@ -253,7 +255,7 @@ has a winning strategy.
 key = new_key 0
 
 def test (key:Key) (current_state:Nat) : (Nat & Nat) =
-  init_node_stats : NodeStats Count21State = 
+  init_node_stats : NodeStats Count21State =
     (0, 0, 0, current_state)
   -- (0 wins, 0 visits, level 0, game state)
   start_tree = init_tree MAX_TREE_SIZE init_node_stats
@@ -283,15 +285,15 @@ test key 13
 test key 12
 > (286, 50)
 
-' We fix number of samples (SAMPLES=50) and rollouts (ROLLOUTS_PER_SAMPLE=10). Fully explored 
-trees (`current_state` close to 21) yields extreme win/visits ratios. 
-We also verify that the current player is disadvantaged when the current state 
+' We fix number of samples (SAMPLES=50) and rollouts (ROLLOUTS_PER_SAMPLE=10). Fully explored
+trees (`current_state` close to 21) yields extreme win/visits ratios.
+We also verify that the current player is disadvantaged when the current state
 is a multiple of three.
 
 ' ### A closer look at the game tree
 Say the current sum is 17, the winning move for the current player is to add 1.
-In the following tree, we see that adding 1 (the second node) is indeed 
-considered a more promising choice by `uct` and sees more rollouts than 
+In the following tree, we see that adding 1 (the second node) is indeed
+considered a more promising choice by `uct` and sees more rollouts than
 the alternative (adding 2, the third node).
 
 init_node_stats : NodeStats Count21State = (0, 0, 0, 17)
