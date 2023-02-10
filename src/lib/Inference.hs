@@ -2852,11 +2852,12 @@ synthTopBlock block = do
 -- valid to implement `generalizeDict` by re-synthesizing the whole dictionary,
 -- but we know that the derivation tree has to be the same, so we take the
 -- shortcut of just generalizing the data parameters.
-generalizeDict :: (EnvReader m) => CType n -> Dict n-> m n (Dict n)
+generalizeDict :: (EnvReader m) => CType n -> Dict n -> m n (Dict n)
 generalizeDict ty dict = do
   result <- liftSolverM $ solveLocal $ generalizeDictAndUnify (sink ty) (sink dict)
   case result of
-    Failure e -> error $ pprint e
+    Failure e -> error $ "Failed to generalize " ++ pprint dict
+      ++ " to " ++ pprint ty ++ " because " ++ pprint e
     Success ans -> return ans
 
 generalizeDictAndUnify :: EmitsInf n => CType n -> Dict n -> SolverM n (Dict n)
@@ -2880,7 +2881,7 @@ generalizeDictRec dict = do
     IxFin _ -> IxFin <$> Var <$> freshInferenceName NatTy
     InstantiatedGiven _ _ -> notSimplifiedDict
     SuperclassProj _ _    -> notSimplifiedDict
-    DataData _            -> return dict'
+    DataData ty           -> DataData <$> Var <$> freshInferenceName ty
     where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
 
 generalizeInstanceArgs :: EmitsInf n => Nest RolePiBinder n l -> [CAtom n] -> SolverM n [CAtom n]

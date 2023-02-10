@@ -6,7 +6,7 @@ import plot
 
 LogProb : Type = Float
 
-def runChain {a}
+def runChain {a} [Data a]
       (initialize: Key -> a)
       (step: Key -> a -> a)
       (numSamples: Nat)

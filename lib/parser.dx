@@ -92,7 +92,7 @@ def parse_digit : Parser Int = try $ MkParser \h.
 def optional {a} (p:Parser a) : Parser (Maybe a) =
   (MkParser \h. Just (parse h p)) <|> returnP Nothing
 
-def parse_many {a} (parser:Parser a) : Parser (List a) = MkParser \h.
+def parse_many {a} [Data a] (parser:Parser a) : Parser (List a) = MkParser \h.
   yield_state (AsList _ []) \results.
     iter \_.
       maybeVal = parse h $ optional parser
