@@ -16,7 +16,7 @@ module QueryType (
   litType,
   numNaryPiArgs,
   sourceNameType, typeBinOp, typeUnOp,
-  ixDictType, getSuperclassDicts,
+  ixDictType, dataDictType, getSuperclassDicts,
   ixTyFromDict, instantiateHandlerType, getDestBlockType, getNaryDestLamExprType,
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
   rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun
@@ -370,6 +370,7 @@ dictExprType e = case e of
   IxFin n -> do
     n' <- substM n
     liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n'
+  DataData ty -> DictTy <$> (dataDictType =<< substM ty)
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -381,6 +382,17 @@ ixDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 ixDictType ty = do
   ixClassName <- getIxClassName
   return $ DictType "Ix" ixClassName [ty]
+
+getDataClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
+getDataClassName = lookupSourceMap "Data" >>= \case
+  Nothing -> throw CompilerErr $ "Data interface needed but not defined!"
+  Just (UClassVar v) -> return v
+  Just _ -> error "not a class var"
+
+dataDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
+dataDictType ty = do
+  dataClassName <- getDataClassName
+  return $ DictType "Data" dataClassName [ty]
 
 typeApp  :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
 typeApp fTy [] = return fTy

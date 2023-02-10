@@ -415,6 +415,8 @@ data DictExpr (n::S) =
  | InstanceDict (InstanceName n) [CAtom n]
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (CAtom n)
+   -- Special case for `Data <something that is actually data>`
+ | DataData (CType n)
    deriving (Show, Generic)
 
 -- TODO: Use an IntMap
@@ -1869,21 +1871,24 @@ instance RenameE        DictType
 
 instance GenericE DictExpr where
   type RepE DictExpr =
-    EitherE4
+    EitherE5
  {- InstanceDict -}      (PairE InstanceName (ListE CAtom))
  {- InstantiatedGiven -} (PairE CAtom (ListE CAtom))
  {- SuperclassProj -}    (PairE CAtom (LiftE Int))
  {- IxFin -}             CAtom
+ {- DataData -}          CType
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given (arg:|args) -> Case1 $ PairE given (ListE (arg:args))
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
+    DataData ty        -> Case4 ty
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE ~(arg:args))) -> InstantiatedGiven given (arg:|args)
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
-    Case3 x -> IxFin x
+    Case3 x  -> IxFin x
+    Case4 ty -> DataData ty
     _ -> error "impossible"
 
 instance SinkableE      DictExpr

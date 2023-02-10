@@ -250,3 +250,31 @@ instance Ix TwoMorePoints
 
 :p for i:TwoMorePoints. ordinal i
 > [0, 1]
+
+----------------- Data constraint synthesis -----------------
+
+def data_id {a} [Data a] (x:a) : a = x
+
+data_id 4
+> 4
+
+data_id Int
+> Type error:Couldn't synthesize a class dictionary for: (Data Type)
+>
+> data_id Int
+> ^^^^^^^^
+
+data_id (5, Int)
+> Type error:Couldn't synthesize a class dictionary for: (Data (Nat & Type))
+>
+> data_id (5, Int)
+> ^^^^^^^^
+
+data_id (5, 8)
+> (5, 8)
+
+data_id [4, 5, 6]
+> [4, 5, 6]
+
+data_id (the (n:Nat &> (Fin n) => Nat) (3 ,> [5, 6, 7]))
+> (3 ,> [5, 6, 7])

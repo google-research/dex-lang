@@ -531,7 +531,7 @@ pair = (5 ,> buffer) :: tp
 if False
   then (5 ,> buffer) :: tp
   else (3 ,> for i:(Fin 3). (ordinal i) * 2) :: tp
-> (3,> [0, 2, 4])
+> (3 ,> [0, 2, 4])
 
 '### Tests for dependent pair pattern match
 
