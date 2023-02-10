@@ -297,9 +297,7 @@ instance IRRep r => HasType r (Atom r) where
 
 instance HasType CoreIR SimpInCore where
   getTypeE = \case
-    LiftSimp (Just ty) _ -> renameM ty  -- TODO: check
-    -- TODO: let's just get rid of the `Maybe` from `LiftSimp` and avoid this case altogether.
-    LiftSimp Nothing x -> unsafeCoerceIRE @CoreIR <$> getTypeE x
+    LiftSimp ty _ -> renameM ty  -- TODO: check
     LiftSimpFun piTy _ -> Pi <$> renameM piTy -- TODO: check
     ACase _ _ ty -> renameM ty -- TODO: check
     TabLam t _ -> TabPi <$> renameM t -- TODO: check

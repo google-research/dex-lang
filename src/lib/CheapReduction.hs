@@ -13,7 +13,7 @@ module CheapReduction
   , depPairLeftTy, instantiateDataDef, applyDataConAbs
   , dataDefRep, instantiateDepPairTy, projType, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
-  , liftPlainSimpAtom, liftSimpFun)
+  , liftSimpFun)
   where
 
 import Control.Applicative
@@ -238,7 +238,7 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
     DictCon d -> cheapReduceE d
     SimpInCore (LiftSimp t x) -> do
-      t' <- mapM cheapReduceE t
+      t' <- cheapReduceE t
       x' <- substM x
       liftSimpAtom t' x'
     -- These two are a special-case hack. TODO(dougalm): write a traversal over
@@ -352,18 +352,18 @@ normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
 normalizeProj :: EnvReader m => Projection -> Atom r n -> m n (Atom r n)
 normalizeProj UnwrapNewtype atom = case atom of
    NewtypeCon  _ x -> return x
-   SimpInCore (LiftSimp (Just (NewtypeTyCon t)) x) -> do
+   SimpInCore (LiftSimp (NewtypeTyCon t) x) -> do
      t' <- snd <$> unwrapNewtypeType t
-     return $ SimpInCore $ LiftSimp (Just t') x
+     return $ SimpInCore $ LiftSimp t' x
    x -> return $ ProjectElt UnwrapNewtype x
 normalizeProj (ProjectProduct i) atom = case atom of
   Con (ProdCon xs) -> return $ xs !! i
   DepPair l _ _ | i == 0 -> return l
   DepPair _ r _ | i == 1 -> return r
-  SimpInCore (LiftSimp maybeTy x) -> do
-    maybeTy' <- forM maybeTy \t -> projType i t atom
+  SimpInCore (LiftSimp ty x) -> do
+    ty' <- projType i ty atom
     x' <- normalizeProj (ProjectProduct i) x
-    return $ SimpInCore $ LiftSimp maybeTy' x'
+    return $ SimpInCore $ LiftSimp ty' x'
   RepValAtom (RepVal t tree) -> do
     t' <- projType i t =<< repValAtom (RepVal t tree)
     case tree of
@@ -389,29 +389,6 @@ repValAtom (RepVal ty tree) = case ty of
         malformed = error "malformed repval"
 {-# INLINE repValAtom #-}
 
--- lift a Simp data atom to a CoreToSimp atom with an optional newtype-coercion
-liftSimpAtom
-  :: EnvReader m
-  => Maybe (Type CoreIR n) -> SAtom n -> m n (CAtom n)
-liftSimpAtom maybeTy simpAtom = case maybeTy of
-  Nothing -> liftPlainSimpAtom simpAtom
-  Just ty -> liftSimpAtomWithType ty simpAtom
-{-# INLINE liftSimpAtom #-}
-
-liftPlainSimpAtom :: EnvReader m => SAtom n -> m n (CAtom n)
-liftPlainSimpAtom atom = case atom of
-  Var _ -> fallback
-  Con con -> Con <$> case con of
-    Lit v -> return $ Lit v
-    ProdCon xs -> ProdCon <$> mapM rec xs
-    SumCon ts i x -> SumCon <$> mapM liftSimpType ts <*> pure i <*> rec x
-    _ -> error $ "not implemented: " ++ pprint con
-  _ -> fallback
-  where
-    rec = liftPlainSimpAtom
-    fallback = return $ SimpInCore $ LiftSimp Nothing atom
-{-# INLINE liftPlainSimpAtom #-}
-
 liftSimpType :: EnvReader m => SType n -> m n (CType n)
 liftSimpType = \case
   BaseTy t -> return $ BaseTy t
@@ -421,8 +398,8 @@ liftSimpType = \case
   where rec = liftSimpType
 {-# INLINE liftSimpType #-}
 
-liftSimpAtomWithType :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
-liftSimpAtomWithType ty simpAtom = case simpAtom of
+liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
+liftSimpAtom ty simpAtom = case simpAtom of
   Var _          -> justLift
   ProjectElt _ _ -> justLift
   RepValAtom _   -> justLift -- TODO(dougalm): should we make more effort to pull out products etc?
@@ -440,9 +417,9 @@ liftSimpAtomWithType ty simpAtom = case simpAtom of
       _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty'
     return $ wrapNewtypesData cons atom
   where
-    rec = liftSimpAtomWithType
-    justLift = return $ SimpInCore $ LiftSimp (Just ty) simpAtom
-{-# INLINE liftSimpAtomWithType #-}
+    rec = liftSimpAtom
+    justLift = return $ SimpInCore $ LiftSimp ty simpAtom
+{-# INLINE liftSimpAtom #-}
 
 liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
 liftSimpFun (Pi piTy) f = return $ SimpInCore $ LiftSimpFun piTy f

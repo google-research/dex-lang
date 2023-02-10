@@ -75,7 +75,7 @@ data Atom (r::IR) (n::S) where
 
 type TabLamExpr = Abs (IxBinder SimpIR) (Abs (Nest SDecl) CAtom)
 data SimpInCore (n::S) =
-   LiftSimp (Maybe (CType n)) (SAtom n)
+   LiftSimp (CType n) (SAtom n)
  | LiftSimpFun (PiType n) (LamExpr SimpIR n)
  | TabLam (TabPiType CoreIR n) (TabLamExpr n)
  | ACase (SAtom n) [Abs SBinder CAtom n] (CType n)
@@ -1549,19 +1549,19 @@ instance (Store (e1 n), Store (e2 n)) => Store (ExtLabeledItemsE e1 e2 n)
 
 instance GenericE SimpInCore where
   type RepE SimpInCore = EitherE4
-   {- LiftSimp -} (MaybeE CType `PairE` SAtom)
+   {- LiftSimp -} (CType `PairE` SAtom)
    {- LiftSimpFun -} (PiType `PairE` LamExpr SimpIR)
    {- TabLam -}   (TabPiType CoreIR `PairE` TabLamExpr)
    {- ACase -}    (SAtom `PairE` ListE (Abs SBinder CAtom) `PairE` CType)
   fromE = \case
-    LiftSimp ty x             -> Case0 $ toMaybeE ty `PairE` x
+    LiftSimp ty x             -> Case0 $ ty `PairE` x
     LiftSimpFun ty x          -> Case1 $ ty `PairE` x
     TabLam ty lam             -> Case2 $ ty `PairE` lam
     ACase scrut alts resultTy -> Case3 $ scrut `PairE` ListE alts `PairE` resultTy
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (ty `PairE` x)                    -> LiftSimp (fromMaybeE ty) x
+    Case0 (ty `PairE` x)                    -> LiftSimp ty x
     Case1 (ty `PairE` x)                    -> LiftSimpFun ty x
     Case2 (ty `PairE` lam)                  -> TabLam ty lam
     Case3 (x `PairE` ListE alts `PairE` ty) -> ACase x alts ty
