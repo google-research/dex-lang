@@ -588,11 +588,10 @@ instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports
 
 instance Pretty (ModuleEnv n) where
-  pretty (ModuleEnv imports sm sc effs) =
+  pretty (ModuleEnv imports sm sc) =
     prettyRecord [ ("Imports"         , p imports)
                  , ("Source map"      , p sm)
-                 , ("Synth candidates", p sc)
-                 , ("Effects"         , p effs)]
+                 , ("Synth candidates", p sc) ]
 
 instance Pretty (Env n) where
   pretty (Env env1 env2) =
@@ -855,9 +854,7 @@ instance Pretty (UPatAnn n l) where
       Nothing -> mempty
 
 instance Pretty (EnvFrag n l) where
-  pretty (EnvFrag bindings effects) =
-       "Partial bindings:" <> indented (p bindings)
-    <> "Effects allowed:" <+> p effects
+  pretty (EnvFrag bindings) = p bindings
 
 instance Pretty (Cache n) where
   pretty (Cache _ _ _ _ _ _) = "<cache>" -- TODO

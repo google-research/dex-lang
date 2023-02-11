@@ -102,9 +102,8 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
     withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
       effs' <- extendRenamer (bEff@>binderName b') $ substM effs
       extendRenamer (b@>binderName b') do
-        withAllowedEffects effs' do
-          body' <- tge body
-          return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
+        body' <- tge body
+        return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
   Lam _ _ _ -> error "expected a unary lambda expression"
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty
@@ -176,7 +175,7 @@ instance IRRep r => GenericallyTraversableE r (DepPairType r) where
       extendRenamer (b@>binderName b') $ DepPairType b' <$> tge rty
 
 instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
-  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withoutEffects (tge f)
+  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> tge f
 
 instance GenericallyTraversableE r (RefOp r) where
   traverseGenericE = \case

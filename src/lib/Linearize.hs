@@ -628,7 +628,7 @@ linearizeHof hof = case hof of
     return $ WithTangent primal do
       rLin' <- rLin
       tt <- tangentType $ sink referentTy
-      tanEffLam <- buildEffLam Reader noHint tt \h ref ->
+      tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
       emitExpr $ Hof $ RunReader rLin' tanEffLam
@@ -641,7 +641,7 @@ linearizeHof hof = case hof of
     return $ WithTangent (PairVal primal sFinal) do
       sLin' <- sLin
       tt <- tangentType $ sink referentTy
-      tanEffLam <- buildEffLam State noHint tt \h ref ->
+      tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
       emitExpr $ Hof $ RunState Nothing sLin' tanEffLam
@@ -655,7 +655,7 @@ linearizeHof hof = case hof of
     return $ WithTangent (PairVal primal wFinal) do
       bm'' <- sinkM bm'
       tt <- tangentType $ sink referentTy
-      tanEffLam <- buildEffLam Writer noHint tt \h ref ->
+      tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
       emitExpr $ Hof $ RunWriter Nothing bm'' tanEffLam
@@ -669,18 +669,15 @@ linearizeHof hof = case hof of
 
 linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
 linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  eff <- getAllowedEffects
   withFreshBinder noHint (TC HeapType) \h -> do
     bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
     withFreshBinder noHint bTy \b -> do
       let ref = binderName b
       hVar <- sinkM $ binderName h
-      let eff' = extendEffect (RWSEffect rws (Var hVar)) (sink eff)
-      (body', linLam) <- withAllowedEffects eff' do
-        extendActiveSubst hB hVar $ extendActiveSubst refB ref $
-          -- TODO: maybe we should check whether we need to extend the active effects
-          extendActiveEffs (RWSEffect rws (Var hVar)) do
-            linearizeBlockDefunc body
+      (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
+        -- TODO: maybe we should check whether we need to extend the active effects
+        extendActiveEffs (RWSEffect rws (Var hVar)) do
+          linearizeBlockDefunc body
       -- TODO: this assumes that references aren't returned. Our type system
       -- ensures that such references can never be *used* once the effect runner
       -- returns, but technically it's legal to return them.

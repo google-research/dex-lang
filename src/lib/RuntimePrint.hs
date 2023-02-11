@@ -207,7 +207,7 @@ withBuffer cont = do
     bufTy <- bufferTy (Var $ binderName h)
     withFreshBinder "buf" bufTy \b -> do
       let eff = OneEffect (RWSEffect State (Var $ sink $ binderName h))
-      body <- withAllowedEffects eff $ buildBlock do
+      body <- buildBlock do
         cont $ sink $ Var $ binderName b
         return UnitVal
       let eff1 = Abs h Pure

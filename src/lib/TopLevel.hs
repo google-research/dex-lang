@@ -454,7 +454,7 @@ evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <-
     localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
   TopEnvFrag envFrag moduleEnvFrag <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs _ <-
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs <-
     return $ fragLocalModuleEnv moduleEnvFrag
   let fragToReEmit = TopEnvFrag envFrag $ moduleEnvFrag {
         fragLocalModuleEnv = mempty }
@@ -731,13 +731,7 @@ checkPass name cont = do
     return result
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
-  let allowedEffs = case name of
-                      LowerPass    -> OneEffect InitEffect
-                      LowerOptPass -> OneEffect InitEffect
-                      VectPass     -> OneEffect InitEffect
-                      _            -> mempty
-  {-# SCC afterPassTypecheck #-} (liftExcept =<<) $ liftEnvReaderT $
-    withAllowedEffects @CoreIR allowedEffs $ checkTypesM result
+  checkTypesM result
   logTop $ MiscLog $ "Checks passed"
 #else
   logTop $ MiscLog $ "Checks skipped (not a debug build)"

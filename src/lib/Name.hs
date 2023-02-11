@@ -1357,13 +1357,10 @@ getOutMapInplaceT = UnsafeMakeInplaceT \env decls ->
 
 -- === in-place scope updating monad -- mutable stuff ===
 
--- This is intended to make it possible to implement `extendBindings` from
--- `BindingsReader`.
 extendInplaceTLocal
   :: (ExtOutMap b d, Monad m)
-  => Distinct l
-  => (b n -> b l)
-  -> InplaceT b d m l a
+  => (b n -> b n)
+  -> InplaceT b d m n a
   -> InplaceT b d m n a
 extendInplaceTLocal f cont =
   UnsafeMakeInplaceT \env decls ->

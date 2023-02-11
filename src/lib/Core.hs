@@ -198,7 +198,7 @@ class BindsNames b => BindsEnv (b::B) where
   toEnvFrag b = toEnvFrag $ fromB b
 
 instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) where
-  toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann')) Nothing
+  toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann'))
     where ann' = withExtEvidence b $ sink ann
 
 instance (IRRep r, SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonDepNest r ann) where
@@ -210,15 +210,12 @@ instance (IRRep r, SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonD
         Nest (b:>a) $ zipNest bs $ sinkList anns
       zipNest _ _ = error "Mismatched lengths in NonDepNest"
 
-instance BindsEnv EffectBinder where
-  toEnvFrag (EffectBinder effs) = EnvFrag emptyOutFrag $ Just effs
-
 instance BindsEnv PiBinder where
   toEnvFrag :: Distinct l => PiBinder n l -> EnvFrag n l
   toEnvFrag (PiBinder b ty arr) =
     withExtEvidence b do
       let binding = toBinding $ sink $ PiBinding arr ty
-      EnvFrag (RecSubstFrag $ b @> binding) (Just Pure)
+      EnvFrag (RecSubstFrag $ b @> binding)
 
 instance IRRep r => BindsEnv (Decl r) where
   toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
@@ -236,7 +233,7 @@ instance BindsEnv RolePiBinder where
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv (RecSubstFrag Binding) where
-  toEnvFrag frag = EnvFrag frag mempty
+  toEnvFrag frag = EnvFrag frag
 
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (PairB b1 b2)) where
@@ -244,20 +241,20 @@ instance (BindsEnv b1, BindsEnv b2)
     let bindings2 = toEnvFrag b2
     let ext = toExtEvidence bindings2
     withSubscopeDistinct ext do
-      toEnvFrag b1 `catEnvFrags` bindings2
+      toEnvFrag b1 `catOutFrags` bindings2
 
 instance BindsEnv b => (BindsEnv (Nest b)) where
   toEnvFrag = nestToEnvFrag
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv (LiftB e) where
-  toEnvFrag (LiftB _) = EnvFrag emptyOutFrag mempty
+  toEnvFrag (LiftB _) = EnvFrag emptyOutFrag
   {-# INLINE toEnvFrag #-}
 
 nestToEnvFragRec :: (BindsEnv b, Distinct l) => EnvFrag n h -> Nest b h l -> EnvFrag n l
 nestToEnvFragRec f = \case
   Empty       -> f
-  Nest b rest -> withSubscopeDistinct rest $ nestToEnvFragRec (f `catEnvFrags` toEnvFrag b) rest
+  Nest b rest -> withSubscopeDistinct rest $ nestToEnvFragRec (f `catOutFrags` toEnvFrag b) rest
 
 nestToEnvFrag :: (BindsEnv b, Distinct l) => Nest b n l -> EnvFrag n l
 nestToEnvFrag = nestToEnvFragRec emptyOutFrag
@@ -276,7 +273,7 @@ instance BindsEnv b => (BindsEnv (RNest b)) where
 rnestToEnvFragRec :: (BindsEnv b, Distinct l) => RNest b n h -> EnvFrag h l -> EnvFrag n l
 rnestToEnvFragRec n f = case n of
   REmpty       -> f
-  RNest rest b -> withSubscopeDistinct f $ rnestToEnvFragRec rest (toEnvFrag b `catEnvFrags` f)
+  RNest rest b -> withSubscopeDistinct f $ rnestToEnvFragRec rest (toEnvFrag b `catOutFrags` f)
 
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (EitherB b1 b2)) where
@@ -405,16 +402,6 @@ plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
 classPiBinder :: Binder CoreIR n l -> PiBinder n l
 classPiBinder (b:>ty) = PiBinder b ty ClassArrow
 
-withAllowedEffects :: forall r n a m. EnvExtender m => EffectRow r n -> m n a -> m n a
-withAllowedEffects effs cont =
-  refreshAbs (Abs (EffectBinder $ unsafeCoerceIRE effs) UnitE) \(EffectBinder _) UnitE ->
-    cont
-
-withoutEffects :: EnvExtender m => m n a -> m n a
-withoutEffects cont =
-  refreshAbs (Abs (EffectBinder Pure) UnitE) \(EffectBinder _) UnitE ->
-    cont
-
 getLambdaDicts :: EnvReader m => m n [AtomName CoreIR n]
 getLambdaDicts = do
   env <- withEnv moduleEnv
@@ -426,10 +413,6 @@ getInstanceDicts name = do
   env <- withEnv moduleEnv
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
-
-getAllowedEffects :: (IRRep r, EnvReader m) => m n (EffectRow r n)
-getAllowedEffects = withEnv $ unsafeCoerceIRE . allowedEffects . moduleEnv
-{-# INLINE getAllowedEffects #-}
 
 nonDepPiType :: ScopeReader m
              => Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (PiType n)

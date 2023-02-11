@@ -282,9 +282,9 @@ instance SinkableE SimplifiedBlock
 instance RenameE SimplifiedBlock
 instance HoistableE SimplifiedBlock
 instance CheckableE SimplifiedBlock where
-  checkE (SimplifiedBlock block recon) =
+  checkE (SimplifiedBlock block _) =
     -- TODO: CheckableE instance for the recon too
-    SimplifiedBlock <$> checkE block <*> renameM recon
+    checkE block
 
 instance Pretty (SimplifiedBlock n) where
   pretty (SimplifiedBlock block recon) =

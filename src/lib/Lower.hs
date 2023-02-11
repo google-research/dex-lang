@@ -231,10 +231,10 @@ traverseExprWithDest dest expr = case expr of
   -- TODO: re-enable after fixing traverseTabCon bug
   -- TabCon ty els -> traverseTabCon tabDest ty els
   Hof (For dir ixDict body) -> traverseFor tabDest dir ixDict body
-  Hof (RunWriter Nothing m body) -> traverseRWS Writer body \ref' body' -> do
+  Hof (RunWriter Nothing m body) -> traverseRWS body \ref' body' -> do
     m' <- traverseGenericE m
     return $ RunWriter ref' m' body'
-  Hof (RunState Nothing s body) -> traverseRWS State body \ref' body' -> do
+  Hof (RunState Nothing s body) -> traverseRWS body \ref' body' -> do
     s' <- traverseAtom s
     return $ RunState ref' s' body'
   _ -> generic
@@ -251,22 +251,22 @@ traverseExprWithDest dest expr = case expr of
           return $ Atom ans
 
     traverseRWS
-      :: RWS -> LamExpr SimpIR i
+      :: LamExpr SimpIR i
       -> (Maybe (Dest SimpIR o) -> LamExpr SimpIR o -> LowerM i o (Hof SimpIR o))
       -> LowerM i o (SExpr o)
-    traverseRWS rws (LamExpr (BinaryNest hb rb) body) mkHof = do
+    traverseRWS (LamExpr (BinaryNest hb rb) body) mkHof = do
       unpackRWSDest dest >>= \case
         Nothing -> generic
         Just (bodyDest, refDest) -> do
           let RefTy _ ty = binderType rb
           ty' <- traverseGenericE $ ignoreHoistFailure $ hoist hb ty
           liftM Hof $ mkHof refDest =<<
-            buildEffLam rws (getNameHint rb) ty' \hb' rb' ->
+            buildEffLam (getNameHint rb) ty' \hb' rb' ->
               extendRenamer (hb@>hb' <.> rb@>rb') do
                 case bodyDest of
                   Nothing -> traverseBlock body
                   Just bd -> traverseBlockWithDest (sink bd) body
-    traverseRWS _ _ _ = error "Expected a binary lambda expression"
+    traverseRWS _ _ = error "Expected a binary lambda expression"
 
     unpackRWSDest = \case
       Nothing -> return Nothing

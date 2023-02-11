@@ -1486,7 +1486,7 @@ impInstrTypes instr = case instr of
   where hostPtrTy ty = PtrType (CPU, ty)
 
 instance CheckableE ImpFunction where
-  checkE = renameM -- TODO!
+  checkE _ = return () -- TODO
 
 -- TODO: Don't use Core Envs for Imp!
 instance BindsEnv ImpDecl where

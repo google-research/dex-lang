@@ -703,7 +703,7 @@ buildLamGeneral hint arr ty fEff fBody = do
   withFreshBinder hint (LamBinding arr ty) \(b:>_) -> do
     let v = binderName b
     effs <- fEff v
-    body <- withAllowedEffects effs $ buildBlock $ fBody $ sink v
+    body <- buildBlock $ fBody $ sink v
     return $ Lam (UnaryLamExpr (b:>ty) body) arr (Abs (b:>ty) effs)
 
 -- Body must be an Atom because otherwise the nullary case would require
@@ -941,18 +941,16 @@ buildSplitCase tys scrut resultTy match fallback = do
 
 buildEffLam
   :: ScopableBuilder r m
-  => RWS -> NameHint -> Type r n
+  => NameHint -> Type r n
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> AtomName r l -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildEffLam rws hint ty body = do
-  eff <- getAllowedEffects
+buildEffLam hint ty body = do
   withFreshBinder noHint (TC HeapType) \h -> do
     let ty' = RefTy (Var $ binderName h) (sink ty)
     withFreshBinder hint ty' \b -> do
       let ref = binderName b
       hVar <- sinkM $ binderName h
-      let eff' = extendEffect (RWSEffect rws (Var hVar)) (sink eff)
-      body' <- withAllowedEffects eff' $ buildBlock $ body (sink hVar) $ sink ref
+      body' <- buildBlock $ body (sink hVar) $ sink ref
       return $ LamExpr (BinaryNest h b) body'
 
 buildForAnn
@@ -994,7 +992,7 @@ emitRunWriter
   -> (forall l. (Emits l, DExt n l) => AtomName r l -> AtomName r l -> m l (Atom r l))
   -> m n (Atom r n)
 emitRunWriter hint accTy bm body = do
-  lam <- buildEffLam Writer hint accTy \h ref -> body h ref
+  lam <- buildEffLam hint accTy \h ref -> body h ref
   emitExpr $ Hof $ RunWriter Nothing bm lam
 
 emitRunState
@@ -1004,7 +1002,7 @@ emitRunState
   -> m n (Atom r n)
 emitRunState hint initVal body = do
   stateTy <- getType initVal
-  lam <- buildEffLam State hint stateTy \h ref -> body h ref
+  lam <- buildEffLam hint stateTy \h ref -> body h ref
   emitExpr $ Hof $ RunState Nothing initVal lam
 
 emitRunReader
@@ -1014,7 +1012,7 @@ emitRunReader
   -> m n (Atom r n)
 emitRunReader hint r body = do
   rTy <- getType r
-  lam <- buildEffLam Reader hint rTy \h ref -> body h ref
+  lam <- buildEffLam hint rTy \h ref -> body h ref
   emitExpr $ Hof $ RunReader r lam
 
 -- === vector space (ish) type class ===

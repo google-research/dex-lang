@@ -467,12 +467,7 @@ data SerializedEnv n = SerializedEnv
 data ModuleEnv (n::S) = ModuleEnv
   { envImportStatus    :: ImportStatus n
   , envSourceMap       :: SourceMap n
-  , envSynthCandidates :: SynthCandidates n
-  -- TODO : `CoreIR` isn't right, but we don't want `ModuleEnv` to take an IR
-  -- parameter. The right thing to do is to remove `allowedEffects` from `ModuleEnv`
-  -- and instead add an explicit effects reader for Inference/CheckType, where the IR
-  -- parameter is known. But that's a bigger change.
-  , allowedEffects     :: EffectRow CoreIR n }
+  , envSynthCandidates :: SynthCandidates n }
   deriving (Generic)
 
 data Module (n::S) = Module
@@ -491,7 +486,7 @@ data LoadedModules (n::S) = LoadedModules
   deriving (Show, Generic)
 
 emptyModuleEnv :: ModuleEnv n
-emptyModuleEnv = ModuleEnv emptyImportStatus (SourceMap mempty) mempty Pure
+emptyModuleEnv = ModuleEnv emptyImportStatus (SourceMap mempty) mempty
 
 emptyLoadedModules :: LoadedModules n
 emptyLoadedModules = LoadedModules mempty
@@ -759,28 +754,11 @@ data SolverBinding (n::S) =
  | SkolemBound (CType n)
    deriving (Show, Generic)
 
-data EnvFrag (n::S) (l::S) =
-  EnvFrag (RecSubstFrag Binding n l) (Maybe (EffectRow CoreIR l))
+newtype EnvFrag (n::S) (l::S) = EnvFrag (RecSubstFrag Binding n l)
+        deriving (OutFrag)
 
 instance HasScope Env where
   toScope = toScope . envDefs . topEnv
-
-catEnvFrags :: Distinct n3
-                 => EnvFrag n1 n2 -> EnvFrag n2 n3 -> EnvFrag n1 n3
-catEnvFrags (EnvFrag frag1 maybeEffs1)
-                 (EnvFrag frag2 maybeEffs2) =
-  withExtEvidence (toExtEvidence frag2) do
-    let fragOut = catRecSubstFrags frag1 frag2
-    let effsOut = case maybeEffs2 of
-                     Nothing    -> fmap sink maybeEffs1
-                     Just effs2 -> Just effs2
-    EnvFrag fragOut effsOut
-
-instance OutFrag EnvFrag where
-  emptyOutFrag = EnvFrag emptyOutFrag Nothing
-  {-# INLINE emptyOutFrag #-}
-  catOutFrags frag1 frag2 = catEnvFrags frag1 frag2
-  {-# INLINE catOutFrags #-}
 
 instance OutMap Env where
   emptyOutMap =
@@ -792,7 +770,7 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
   extendOutMap (Env (TopEnv defs rules cache loadedM loadedO)
-                    (ModuleEnv imports sm scs effs)) frag =
+                    (ModuleEnv imports sm scs)) frag =
     withExtEvidence frag $ Env
       (TopEnv
         (defs  `extendRecSubst` frag)
@@ -803,8 +781,7 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
       (ModuleEnv
         (sink imports)
         (sink sm)
-        (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag Nothing))
-        (sink effs))
+        (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag)))
   {-# INLINE extendOutMap #-}
 
 instance ExtOutMap Env EnvFrag where
@@ -812,17 +789,14 @@ instance ExtOutMap Env EnvFrag where
   {-# INLINE extendOutMap #-}
 
 extendEnv :: Distinct l => Env n -> EnvFrag n l -> Env l
-extendEnv env (EnvFrag newEnv maybeNewEff) = do
+extendEnv env (EnvFrag newEnv) = do
   case extendOutMap env newEnv of
-    Env envTop (ModuleEnv imports sm scs oldEff) -> do
-      let newEff = case maybeNewEff of
-                     Nothing  -> sink oldEff
-                     Just eff -> eff
-      Env envTop (ModuleEnv imports sm scs newEff)
+    Env envTop (ModuleEnv imports sm scs) -> do
+      Env envTop (ModuleEnv imports sm scs)
 {-# NOINLINE [1] extendEnv #-}
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
-bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
+bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag)) =
   execWriter $ go $ toSubstPairs frag
   where
     go :: Distinct l
@@ -896,20 +870,6 @@ extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 instance IRRep r => Store (EffectRowTail r n)
 instance IRRep r => Store (EffectRow     r n)
 instance IRRep r => Store (Effect        r n)
-
-data EffectBinder n l where
-  EffectBinder :: EffectRow CoreIR n -> EffectBinder n n
-
-instance  GenericB EffectBinder where
-  type RepB EffectBinder = LiftB (EffectRow CoreIR)
-  fromB (EffectBinder effs) = LiftB effs
-  toB   (LiftB effs) = EffectBinder effs
-
-instance SinkableB EffectBinder
-instance HoistableB EffectBinder
-instance ProvesExt  EffectBinder
-instance BindsNames EffectBinder
-instance RenameB     EffectBinder
 
 -- === Specialization and generalization ===
 
@@ -2499,14 +2459,10 @@ instance Semigroup (SynthCandidates n) where
 instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty
 
-
 instance GenericB EnvFrag where
-  type RepB EnvFrag = PairB (RecSubstFrag Binding) (LiftB (MaybeE (EffectRow CoreIR)))
-  fromB (EnvFrag frag (Just effs)) = PairB frag (LiftB (JustE effs))
-  fromB (EnvFrag frag Nothing    ) = PairB frag (LiftB NothingE)
-  toB   (PairB frag (LiftB (JustE effs))) = EnvFrag frag (Just effs)
-  toB   (PairB frag (LiftB NothingE    )) = EnvFrag frag Nothing
-  toB   _ = error "impossible" -- GHC exhaustiveness bug?
+  type RepB EnvFrag = RecSubstFrag Binding
+  fromB (EnvFrag frag) = frag
+  toB   frag = EnvFrag frag
 
 instance SinkableB   EnvFrag
 instance HoistableB  EnvFrag
@@ -2572,7 +2528,7 @@ instance OutFrag TopEnvFrag where
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
   extendOutMap env
-    (TopEnvFrag (EnvFrag frag _)
+    (TopEnvFrag (EnvFrag frag)
     (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d' fs')) = result''
     where
       Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
@@ -2592,10 +2548,9 @@ instance ExtOutMap Env TopEnvFrag where
           (imports <> imports')
           (sm   <> sm'   <> newImportedSM)
           (scs  <> scs'  <> newImportedSC)
-          (effs <> effs')
         where
-          ModuleEnv imports sm scs effs = withExtEvidence frag $ sink mEnv
-          ModuleEnv imports' sm' scs' effs' = mEnv'
+          ModuleEnv imports sm scs = withExtEvidence frag $ sink mEnv
+          ModuleEnv imports' sm' scs' = mEnv'
           newDirectImports = S.difference (directImports imports') (directImports imports)
           newTransImports  = S.difference (transImports  imports') (transImports  imports)
           newImportedSM  = flip foldMap newDirectImports $ moduleExports         . lookupModulePure
@@ -2700,12 +2655,9 @@ instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
                 `PairE` SourceMap
                 `PairE` SynthCandidates
-                `PairE` EffectRow CoreIR
-  fromE (ModuleEnv imports sm sc eff) =
-    imports `PairE` sm `PairE` sc `PairE` eff
+  fromE (ModuleEnv imports sm sc) = imports `PairE` sm `PairE` sc
   {-# INLINE fromE #-}
-  toE (imports `PairE` sm `PairE` sc `PairE` eff) =
-    ModuleEnv imports sm sc eff
+  toE   (imports `PairE` sm `PairE` sc) = ModuleEnv imports sm sc
   {-# INLINE toE #-}
 
 instance SinkableE      ModuleEnv
@@ -2715,11 +2667,11 @@ instance AlphaHashableE ModuleEnv
 instance RenameE        ModuleEnv
 
 instance Semigroup (ModuleEnv n) where
-  ModuleEnv x1 x2 x3 x4 <> ModuleEnv y1 y2 y3 y4 =
-    ModuleEnv (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4)
+  ModuleEnv x1 x2 x3 <> ModuleEnv y1 y2 y3 =
+    ModuleEnv (x1<>y1) (x2<>y2) (x3<>y3)
 
 instance Monoid (ModuleEnv n) where
-  mempty = ModuleEnv mempty mempty mempty mempty
+  mempty = ModuleEnv mempty mempty mempty
 
 instance Semigroup (LoadedModules n) where
   LoadedModules m1 <> LoadedModules m2 = LoadedModules (m2 <> m1)

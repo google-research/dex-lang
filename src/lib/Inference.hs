@@ -37,7 +37,7 @@ import GHC.Generics (Generic (..))
 
 import Builder
 import CheapReduction
-import CheckType (CheckableE (..), checkExtends, checkedApplyClassParams, tryGetType, asNaryPiType, isData)
+import CheckType
 import Core
 import Err
 import GenericTraversal
@@ -292,6 +292,8 @@ data InfOutMap (n::S) =
     -- inference vars (this is so we can avoid zonking everything in scope when
     -- we zonk bindings)
     (UnsolvedEnv n)
+    -- allowed effects
+    (EffectRow CoreIR n)
 
 data DefaultType = IntDefault | NatDefault
 
@@ -364,19 +366,19 @@ instance OutFrag InfOutFrag where
       InfOutFrag (em >>> em') (sink ds <> ds') (sink ss <> ss')
 
 instance HasScope InfOutMap where
-  toScope (InfOutMap bindings _ _ _) = toScope bindings
+  toScope (InfOutMap bindings _ _ _ _) = toScope bindings
 
 instance OutMap InfOutMap where
-  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst mempty mempty
+  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst mempty mempty Pure
 
 instance ExtOutMap InfOutMap EnvFrag where
-  extendOutMap (InfOutMap bindings ss dd oldUn) frag =
+  extendOutMap (InfOutMap bindings ss dd oldUn effs) frag =
     withExtEvidence frag do
       let newUn = UnsolvedEnv $ getAtomNames frag
       let newEnv = bindings `extendOutMap` frag
       -- As an optimization, only do the zonking for the new stuff.
       let (zonkedUn, zonkedEnv) = zonkUnsolvedEnv (sink ss) newUn newEnv
-      InfOutMap zonkedEnv (sink ss) (sink dd) (sink oldUn <> zonkedUn)
+      InfOutMap zonkedEnv (sink ss) (sink dd) (sink oldUn <> zonkedUn) (sink effs)
 
 newtype UnsolvedEnv (n::S) =
   UnsolvedEnv { fromUnsolvedEnv :: S.Set (CAtomName n) }
@@ -406,7 +408,7 @@ zonkUnsolvedEnv ss unsolved env =
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
       flip lookupEnvPure v <$> get >>= \case
         AtomNameBinding rhs -> do
-          let rhs' = zonkAtomBindingWithOutMap (InfOutMap env ss mempty mempty) rhs
+          let rhs' = zonkAtomBindingWithOutMap (InfOutMap env ss mempty mempty Pure) rhs
           modify $ updateEnv v $ AtomNameBinding rhs'
           let rhsHasInfVars = runEnvReaderM env $ hasInferenceVars rhs'
           when rhsHasInfVars $ tell $ UnsolvedEnv $ S.singleton v
@@ -445,10 +447,10 @@ isInferenceVar v = lookupEnv v >>= \case
 
 instance ExtOutMap InfOutMap InfOutFrag where
   extendOutMap m (InfOutFrag em ds' cs) = do
-    let InfOutMap env ss ds us = m `extendOutMap` toEnvFrag em
+    let InfOutMap env ss ds us effs = m `extendOutMap` toEnvFrag em
     let ds'' = sink ds <> ds'
     let (env', us', ss') = extendOutMapWithConstraints env us ss cs
-    InfOutMap env' ss' ds'' us'
+    InfOutMap env' ss' ds'' us' effs
 
 extendOutMapWithConstraints
   :: Distinct n => Env n -> UnsolvedEnv n -> SolverSubst n -> Constraints n
@@ -515,7 +517,7 @@ runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> 
 
 initInfOutMap :: Env n -> InfOutMap n
 initInfOutMap bindings =
-  InfOutMap bindings emptySolverSubst mempty (UnsolvedEnv mempty)
+  InfOutMap bindings emptySolverSubst mempty (UnsolvedEnv mempty) Pure
 
 newtype InfDeclEmission (n::S) (l::S) = InfDeclEmission (BinderP (AtomNameC CoreIR) InfEmission n l)
 instance ExtOutMap InfOutMap InfDeclEmission where
@@ -600,7 +602,7 @@ instance Inferer InfererM where
         NatDefault -> Defaults mempty (freeVarsE v)
 
   getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
-    InfOutMap _ _ defaults _ <- getOutMapInplaceT
+    InfOutMap _ _ defaults _ _ <- getOutMapInplaceT
     return defaults
 
   gatherUnsolvedInterfaces m = do
@@ -641,6 +643,20 @@ instance Builder CoreIR (InfererM i) where
     ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
   {-# INLINE rawEmitDecl #-}
+
+getAllowedEffects :: InfererM i n (EffectRow CoreIR n)
+getAllowedEffects = do
+  InfOutMap _ _ _ _ effs <- InfererM $ SubstReaderT $ lift $ lift11 getOutMapInplaceT
+  return effs
+
+withoutEffects :: InfererM i o a -> InfererM i o a
+withoutEffects cont = withAllowedEffects Pure cont
+
+withAllowedEffects :: EffectRow CoreIR o -> InfererM i o a -> InfererM i o a
+withAllowedEffects effs cont =
+  InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
+    extendInplaceTLocal (\(InfOutMap x y z w _) -> InfOutMap x y z w effs) do
+      flip runStateT1 s $ runSubstReaderT env $ runInfererM' cont
 
 type InferenceNameBinders = Nest (BinderP (AtomNameC CoreIR) SolverBinding)
 
@@ -877,7 +893,7 @@ infNamesToEmissions = go REmpty
 
 instance EnvReader (InfererM i) where
   unsafeGetEnv = do
-    InfOutMap bindings _ _ _ <- InfererM $ SubstReaderT $ lift $ lift11 $ getOutMapInplaceT
+    InfOutMap bindings _ _ _ _ <- InfererM $ SubstReaderT $ lift $ lift11 $ getOutMapInplaceT
     return bindings
   {-# INLINE unsafeGetEnv #-}
 
@@ -2478,7 +2494,7 @@ liftSolverM cont = do
 
 instance EnvReader SolverM where
   unsafeGetEnv = SolverM do
-    InfOutMap env _ _ _ <- getOutMapInplaceT
+    InfOutMap env _ _ _ _ <- getOutMapInplaceT
     return env
   {-# INLINE unsafeGetEnv #-}
 
@@ -2556,7 +2572,7 @@ applySolverSubstE env solverSubst@(SolverSubst m) e =
 
 zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
                => InfOutMap n -> e n -> e n
-zonkWithOutMap (InfOutMap bindings solverSubst _ _) e =
+zonkWithOutMap (InfOutMap bindings solverSubst _ _ _) e =
   applySolverSubstE bindings solverSubst e
 
 liftSolverOutFrag :: Distinct l => SolverOutFrag n l -> InfOutFrag n l
@@ -3317,17 +3333,14 @@ instance SinkableE e => SinkableE (UDeclInferenceResult e) where
 
 instance (RenameE e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
   checkE = \case
-    UDeclResultDone e -> UDeclResultDone <$> renameM e
-    UDeclResultBindName ann block _ -> do
-      UDeclResultBindName ann <$> checkE block <*> pure (error s)
-    UDeclResultBindPattern hint block _ -> do
-      UDeclResultBindPattern hint <$> checkE block <*> pure (error s)
-    where s = "TODO: implement substitution for UDecl"
+    UDeclResultDone _ -> return ()
+    UDeclResultBindName _ block _ -> checkE block
+    UDeclResultBindPattern _ block _ -> checkE block
 
 instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)
         => EnvReader (InplaceT InfOutMap decls m) where
   unsafeGetEnv = do
-    InfOutMap env _ _ _ <- getOutMapInplaceT
+    InfOutMap env _ _ _ _ <- getOutMapInplaceT
     return env
 
 instance (Monad m, ExtOutMap InfOutMap decls, OutFrag decls)
