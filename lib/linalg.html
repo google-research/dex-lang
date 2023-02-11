@@ -493,10 +493,12 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       sRef<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> s) <span class="symbol">/</span> (upper_tri_diag a)<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: get rid of these by writing a dependent indexing (!) operator.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_mat {a b h} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">LowerTriMat</span> a b)) (i<span class="command">:a</span>) (j<span class="symbol">:</span>(<span class="symbol">..</span>i)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lower_tri_mat {a b h} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Data</span> b]
+    (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">LowerTriMat</span> a b)) (i<span class="command">:a</span>) (j<span class="symbol">:</span>(<span class="symbol">..</span>i)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span>
   d <span class="symbol">=</span> %indexRef ref i
   d<span class="symbol">!</span>j
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upper_tri_mat {a b h} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">UpperTriMat</span> a b)) (i<span class="command">:a</span>) (j<span class="symbol">:</span>(i<span class="symbol">..</span>)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upper_tri_mat {a b h} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Data</span> b]
+    (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">UpperTriMat</span> a b)) (i<span class="command">:a</span>) (j<span class="symbol">:</span>(i<span class="symbol">..</span>)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span>
   d <span class="symbol">=</span> %indexRef ref i
   d<span class="symbol">!</span>j
 </div></div><div class="cell"><div class="code-block">
@@ -530,7 +532,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_permutation {n} [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Permutation</span> n <span class="symbol">=</span>
   (<span class="keyword">for</span> i<span class="symbol">.</span> i<span class="symbol">,</span> 1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_in_place {n h} (pRef<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Permutation</span> n)) (i<span class="command">:n</span>) (j<span class="command">:n</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_in_place {n h} [<span class="type-name">Ix</span> n] (pRef<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Permutation</span> n)) (i<span class="command">:n</span>) (j<span class="command">:n</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
   (permRef<span class="symbol">,</span> signRef) <span class="symbol">=</span> (fst_ref pRef<span class="symbol">,</span> snd_ref pRef)
   tempj <span class="symbol">=</span> get permRef<span class="symbol">!</span>j
   permRef<span class="symbol">!</span>j <span class="symbol">:=</span> get permRef<span class="symbol">!</span>i

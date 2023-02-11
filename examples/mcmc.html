@@ -311,7 +311,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">LogProb</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> runChain {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> runChain {a} [<span class="type-name">Data</span> a]
       (initialize<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a)
       (step<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a)
       (numSamples<span class="symbol">:</span> <span class="type-name">Nat</span>)

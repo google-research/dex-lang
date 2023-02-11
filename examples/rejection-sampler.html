@@ -307,7 +307,7 @@ function render(renderMode) {
 }
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Rejection Sampler for a Binomial Distribution</h1>
 </div></div><div class="cell"><div class="prose-block"><p>We implement rejection sampling from a Binomial distribution using a uniform proposal.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rejectionSample {a} (try<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> a) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rejectionSample {a} [<span class="type-name">Data</span> a] (try<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> a) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   iter <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> try <span class="symbol">$</span> hash k i <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Continue</span>
     <span class="type-name">Just</span> x  <span class="symbol">-&gt;</span> <span class="type-name">Done</span> x

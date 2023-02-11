@@ -336,12 +336,15 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> the (a<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">=</span> x
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Data</span> a
+  <span class="keyword">do</span>_not_implement_this_<span class="keyword">interface</span>_<span class="keyword">for</span>_the_compiler_relies_on_the_invariant_it_protects <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Casting</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> internal_cast {a} (b<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span> %cast b x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_coerce {a} (b<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span> %unsafeCoerce b x <span class="comment">-- TODO: `Data` constraint
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> uninitialized_value {a} <span class="symbol">:</span> a <span class="symbol">=</span> %garbageVal a              <span class="comment">-- TODO: `Data` constraint
-</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafe_coerce {a} (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Data</span> b] (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span> %unsafeCoerce b x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> uninitialized_value {a} [<span class="type-name">Data</span> a] <span class="symbol">:</span> a <span class="symbol">=</span> %garbageVal a
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f64_to_f (x <span class="symbol">:</span> <span class="type-name">Float64</span>) <span class="symbol">:</span> <span class="type-name">Float</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f32_to_f (x <span class="symbol">:</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> <span class="type-name">Float</span>   <span class="symbol">=</span> internal_cast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_f64 (x <span class="symbol">:</span> <span class="type-name">Float</span>)   <span class="symbol">:</span> <span class="type-name">Float64</span> <span class="symbol">=</span> internal_cast _ x
@@ -461,7 +464,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 <h4>Add</h4>
 <p>Things that can be added.
 This defines the <code>Add</code> <a href="https://en.wikipedia.org/wiki/Group_(mathematics)">group</a> and its operators.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Add</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Data</span> a] <span class="type-name">Add</span> a
   add <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a
   zero <span class="symbol">:</span> a
 </div></div><div class="cell"><div class="code-block">
@@ -523,16 +526,18 @@ This defines the <code>Add</code> <a href="https://en.wikipedia.org/wiki/Group_(
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> <span class="type-name">Unit</span>
   sub <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Add</span> a]
-  add <span class="symbol">=</span> <span class="symbol">\</span>f g<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> (f x) <span class="symbol">+</span> (g x)
-  zero <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> zero
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Sub</span> a]
-  sub <span class="symbol">=</span> <span class="symbol">\</span>f g<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> (f x) <span class="symbol">-</span> (g x)
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Instances for Add that we could give to unary functions if we
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- choose to: https://github.com/google-research/dex-lang/issues/1230
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance Add (n-&gt;a) given {n a} [Add a]
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   add = \f g. \x. (f x) + (g x)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   zero = \x. zero
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance Sub (n-&gt;a) given {n a} [Sub a]
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   sub = \f g. \x. (f x) - (g x)
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Mul</h4>
 <p>Things that can be multiplied.
 This defines the <code>Mul</code> <a href="https://en.wikipedia.org/wiki/Monoid">Monoid</a>, and its operator.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Mul</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Data</span> a] <span class="type-name">Mul</span> a
   mul <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a
   one <span class="symbol">:</span> a
 </div></div><div class="cell"><div class="code-block">
@@ -574,10 +579,12 @@ This defines the <code>Mul</code> <a href="https://en.wikipedia.org/wiki/Monoid"
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
   one <span class="symbol">=</span> ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {n a} [<span class="type-name">Mul</span> a]
-  mul <span class="symbol">=</span> <span class="symbol">\</span>f g<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> (f x) <span class="symbol">*</span> (g x)
-  one <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> one
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Instance for Mul that we could give to unary functions if we
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- choose to: https://github.com/google-research/dex-lang/issues/1230
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance Mul (n-&gt;a) given {n a} [Mul a]
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   mul = \f g. \x. (f x) * (g x)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   one = \x. one
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Integral</h4>
 <p>Integer-like things.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Integral</span> a
@@ -621,7 +628,7 @@ Includes floating point and two field rational representations.</p>
   divide <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> %fdiv x y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Index set interface and instances</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Ix</span> n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Data</span> n] <span class="type-name">Ix</span> n
   size n <span class="symbol">:</span> <span class="type-name">Nat</span>
   ordinal <span class="symbol">:</span> n <span class="symbol">-&gt;</span> <span class="type-name">Nat</span>
   unsafe_from_ordinal n <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> n
@@ -772,9 +779,11 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> ((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (i<span class="symbol">&lt;..</span>) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> (n<span class="symbol">-&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">VSpace</span> a]
-  scale_vec <span class="symbol">=</span> <span class="symbol">\</span>s f<span class="symbol">.</span> <span class="symbol">\</span>x<span class="symbol">.</span> s <span class="symbol">.*</span> (f x)
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Instance for VSpace that we could give to unary functions if we
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- choose to: https://github.com/google-research/dex-lang/issues/1230
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance VSpace (n-&gt;a) given {a n} [VSpace a]
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   scale_vec = \s f. \x. s .* (f x)
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> <span class="type-name">Unit</span>
   scale_vec <span class="symbol">=</span> <span class="symbol">\</span>_ _<span class="symbol">.</span> ()
 </div></div><div class="cell"><div class="code-block">
@@ -803,7 +812,9 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>More Boolean operations</h2>
 <p>TODO: move these with the others?</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> select {a} (p<span class="symbol">:</span><span class="type-name">Bool</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> <span class="keyword">case</span> p <span class="keyword">of</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Can&#39;t use `%select` because it lowers to `ISelect`, which requires
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- `a` to be a `BaseTy`.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> select {a} (p<span class="symbol">:</span><span class="type-name">Bool</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> <span class="keyword">case</span> p <span class="keyword">of</span>
   <span class="type-name">True</span>  <span class="symbol">-&gt;</span> x
   <span class="type-name">False</span> <span class="symbol">-&gt;</span> y
 </div></div><div class="cell"><div class="code-block">
@@ -933,7 +944,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
   mcombine <span class="symbol">=</span> mul
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Effects</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Heap</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Heap</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Data</span> a] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get  {h s} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s)       <span class="symbol">:</span> {<span class="type-name">State</span> h} s    <span class="symbol">=</span> %get  ref
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">:=</span>) {h s} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s) (x<span class="command">:s</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span> %put  ref x
 </div></div><div class="cell"><div class="code-block">
@@ -955,12 +966,12 @@ Monoids support <code>fold</code> operations, and similar.</li>
   combine <span class="symbol">=</span> %projMethod1 bm
   %mextend ref empty (<span class="symbol">\</span>x y<span class="symbol">.</span> combine x y) x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">!</span>) {h n a} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %indexRef ref i
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fst_ref {h a b} (ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %fstRef ref
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> snd_ref {h a b} (ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span> %sndRef ref
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">!</span>) {h n a} [<span class="type-name">Data</span> a] (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %indexRef ref i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fst_ref {h a b} [<span class="type-name">Data</span> a] (ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %fstRef ref
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> snd_ref {h a b} [<span class="type-name">Data</span> b] (ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> <span class="type-name">Ref</span> h b <span class="symbol">=</span> %sndRef ref
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> run_reader
-      {r a eff}
+      {r a eff} [<span class="type-name">Data</span> r]
       (init<span class="command">:r</span>)
       (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
@@ -968,7 +979,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
     %runReader init explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_reader
-      {r a eff}
+      {r a eff} [<span class="type-name">Data</span> r]
       (init<span class="command">:r</span>)
       (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
@@ -980,7 +991,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
   getAccumMonoidData <span class="symbol">=</span> d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> run_accum
-      {a b w eff}
+      {a b w eff} [<span class="type-name">Data</span> w]
       [mlift<span class="symbol">:</span><span class="type-name">MonoidLifter</span> b w]
       (bm<span class="symbol">:</span><span class="type-name">Monoid</span> b)
       (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
@@ -995,7 +1006,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
   %runWriter empty (<span class="symbol">\</span>x y<span class="symbol">.</span> combine x y) explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yield_accum
-      {a b w eff}
+      {a b w eff} [<span class="type-name">Data</span> w]
       [mlift<span class="symbol">:</span><span class="type-name">MonoidLifter</span> b w]
       (m<span class="symbol">:</span><span class="type-name">Monoid</span> b)
       (action<span class="symbol">:</span> ((h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">AccumMonoid</span> h b <span class="symbol">?=&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
@@ -1003,7 +1014,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
   snd <span class="symbol">$</span> run_accum m action
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> run_state
-      {a s eff}
+      {a s eff} [<span class="type-name">Data</span> s]
       (init<span class="command">:s</span>)
       (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> s) <span class="symbol">=</span>
@@ -1011,13 +1022,13 @@ Monoids support <code>fold</code> operations, and similar.</li>
   %runState init explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_state
-      {a s eff}
+      {a s eff} [<span class="type-name">Data</span> s]
       (init<span class="command">:s</span>)
       (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span> fst <span class="symbol">$</span> run_state init action
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yield_state
-      {a s eff}
+      {a s eff} [<span class="type-name">Data</span> s]
       (init<span class="command">:s</span>)
       (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a)
       <span class="symbol">:</span> {<span class="symbol">|</span>eff} s <span class="symbol">=</span> snd <span class="symbol">$</span> run_state init action
@@ -1034,7 +1045,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
 </div></div><div class="cell"><div class="prose-block"><h4>Eq</h4>
 <p>Equatable.
 Things that we can tell if they are equal or not to other things.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Eq</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Data</span> a] <span class="type-name">Eq</span> a
   (<span class="symbol">==</span>) <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">/=</span>) {a} [<span class="type-name">Eq</span> a] (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> not <span class="symbol">$</span> x <span class="symbol">==</span> y
@@ -1191,14 +1202,15 @@ i.e. things that can be compared to other things to find if larger, smaller or e
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (<span class="type-name">Maybe</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Ix</span> a]
   first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan {a b n} [<span class="type-name">Ix</span> n] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan {a b n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Data</span> a] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span>
   swap <span class="symbol">$</span> run_state init <span class="symbol">\</span>s<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span>
     c <span class="symbol">=</span> get s
     (c&#39;<span class="symbol">,</span> y) <span class="symbol">=</span> body i c
     s <span class="symbol">:=</span> c&#39;
     y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fold {a n} [<span class="type-name">Ix</span> n] (init<span class="command">:a</span>) (body<span class="symbol">:</span>(n<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a)) <span class="symbol">:</span> a <span class="symbol">=</span> fst <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> (body i x<span class="symbol">,</span> ())
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fold {a n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Data</span> a] (init<span class="command">:a</span>) (body<span class="symbol">:</span>(n<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a)) <span class="symbol">:</span> a <span class="symbol">=</span>
+  fst <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> (body i x<span class="symbol">,</span> ())
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> compare {a} [<span class="type-name">Ord</span> a] (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Ordering</span> <span class="symbol">=</span>
   <span class="keyword">if</span> x <span class="symbol">&lt;</span> y
@@ -1519,12 +1531,13 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="prose-block"><h3>Reductions</h3>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- `combine` should be a commutative and associative, and form a
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- commutative monoid with `identity`
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reduce {a n} (identity<span class="command">:a</span>) (combine<span class="symbol">:</span>(a<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a)) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reduce {a n} [<span class="type-name">Data</span> a] (identity<span class="command">:a</span>) (combine<span class="symbol">:</span>(a<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a)) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
   <span class="comment">-- TODO: implement with the accumulator effect
 </span>  fold identity (<span class="symbol">\</span>i c<span class="symbol">.</span> combine c xs<span class="symbol">.</span>i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: call this `scan` and call the current `scan` something else
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan&#39; {a n} [<span class="type-name">Ix</span> n] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> snd <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> dup (body i x)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan&#39; {a n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Data</span> a] (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  snd <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> dup (body i x)
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: allow tables-via-lambda and get rid of this
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fsum {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sum  {n v} [<span class="type-name">Add</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> reduce zero (<span class="symbol">+</span>) xs
@@ -1535,7 +1548,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> all {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> reduce <span class="type-name">True</span>  (<span class="symbol">&amp;&amp;</span>) xs
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>apply_n</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_n {a} (n<span class="symbol">:</span><span class="type-name">Nat</span>) (x<span class="command">:a</span>) (f<span class="command">:a</span> <span class="symbol">-&gt;</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_n {a} [<span class="type-name">Data</span> a] (n<span class="symbol">:</span><span class="type-name">Nat</span>) (x<span class="command">:a</span>) (f<span class="command">:a</span> <span class="symbol">-&gt;</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
   yield_state x <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> _<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
     ref <span class="symbol">:=</span> f (get ref)
 </div></div><div class="cell"><div class="code-block">
@@ -2019,7 +2032,7 @@ Nor does it promise a particular level of precision for numeric values.</p>
   body&#39; <span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Word8</span> <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> b_to_w8 <span class="symbol">$</span> body ()
   %while body&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">IterResult</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">IterResult</span> a [<span class="type-name">Data</span> a] <span class="symbol">=</span>
   <span class="type-name">Continue</span>
   <span class="type-name">Done</span> a
 </div></div><div class="cell"><div class="code-block">
@@ -2373,9 +2386,9 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> min {o} [<span class="type-name">Ord</span> o] (x1<span class="symbol">:</span> o) (x2<span class="symbol">:</span> o) <span class="symbol">:</span> o <span class="symbol">=</span> min_by id x1 x2
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> max {o} [<span class="type-name">Ord</span> o] (x1<span class="symbol">:</span> o) (x2<span class="symbol">:</span> o) <span class="symbol">:</span> o <span class="symbol">=</span> max_by id x1 x2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum_by {a n o} [<span class="type-name">Ord</span> o] (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum_by {a n o} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Ord</span> o] (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
   reduce xs<span class="symbol">.</span>(0<span class="symbol">@</span>_) (min_by f) xs
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximum_by {a n o} [<span class="type-name">Ord</span> o] (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximum_by {a n o} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Ord</span> o] (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
   reduce xs<span class="symbol">.</span>(0<span class="symbol">@</span>_) (max_by f) xs
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum {n o} [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> minimum_by id xs
@@ -2383,7 +2396,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>argmin/argmax</h3>
 <p>TODO: put in same section as <code>searchsorted</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argscan {n o} (comp<span class="command">:o</span><span class="symbol">-&gt;</span>o<span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argscan {n o} [<span class="type-name">Data</span> o] (comp<span class="command">:o</span><span class="symbol">-&gt;</span>o<span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span>
   zeroth <span class="symbol">=</span> (0<span class="symbol">@</span>_<span class="symbol">,</span> xs<span class="symbol">.</span>(0<span class="symbol">@</span>_))
   compare <span class="symbol">=</span> <span class="symbol">\</span>(idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)<span class="symbol">.</span>
     select (comp x1 x2) (idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)
@@ -2528,7 +2541,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
           <span class="type-name">False</span>
   unsafe_nat_diff tmp 1  <span class="comment">-- TODO: something less horrible
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> general_integer_power {a} (times<span class="command">:a</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) (one<span class="command">:a</span>) (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> general_integer_power {a} [<span class="type-name">Data</span> a] (times<span class="command">:a</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) (one<span class="command">:a</span>) (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   iters <span class="symbol">=</span> <span class="keyword">if</span> power <span class="symbol">==</span> 0 <span class="keyword">then</span> 0 <span class="keyword">else</span> 1 <span class="symbol">+</span> natlog2 power
   <span class="comment">-- Implements exponentiation by squaring.
 </span>  <span class="comment">-- This could be nicer if there were a way to explicitly
@@ -2740,8 +2753,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>stack</h3>
 <p>-- TODO: replace <code>DynBuffer</code> with this?</p>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: `Data` constraint
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Stack</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span> <span class="type-name">Ref</span> h (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">List</span> a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Stack</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Data</span> a] <span class="symbol">=</span> <span class="type-name">Ref</span> h (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">List</span> a)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stack_size {h a} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Nat</span> <span class="symbol">=</span> get <span class="symbol">$</span> fst_ref stack
 </div></div><div class="cell"><div class="code-block">
@@ -2769,7 +2781,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   <span class="type-name">AsList</span> n (get buf)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> stack_push {a h} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+<span class="keyword">def</span> stack_push {a} [<span class="type-name">Data</span> a] {h} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
   n_old <span class="symbol">=</span> stack_size stack
   n_new <span class="symbol">=</span> n_old <span class="symbol">+</span> 1
   ensure_size_at_least stack n_new
@@ -2780,8 +2792,10 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: we need to put the arguments in this order because the compiler
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- currently requires the non-data args to come before the data args. We should
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- fix that.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- In particular, we cannot rely on the Data and Ix constraints to be auto-inferred,
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- because of Issue 1229 https://github.com/google-research/dex-lang/issues/1229.
 </span></div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> stack_extend {a n} [<span class="type-name">Ix</span> n] {h} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+<span class="keyword">def</span> stack_extend {a n} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> n] {h} (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
   n_old <span class="symbol">=</span> stack_size stack
   n_new <span class="symbol">=</span> n_old <span class="symbol">+</span> size n
   ensure_size_at_least stack n_new
@@ -2791,7 +2805,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   fst_ref stack <span class="symbol">:=</span> n_new
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">stack_init_size <span class="symbol">=</span> 16
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_stack {r eff} (a<span class="symbol">:</span><span class="type-name">Type</span>) (f <span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Stack</span> h a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h<span class="symbol">|</span>eff} r) <span class="symbol">:</span> {<span class="symbol">|</span>eff} r <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_stack {r eff} (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Data</span> a] (f <span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Stack</span> h a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h<span class="symbol">|</span>eff} r) <span class="symbol">:</span> {<span class="symbol">|</span>eff} r <span class="symbol">=</span>
   init_stack <span class="symbol">=</span> to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> stack_init_size)<span class="symbol">.</span> uninitialized_value
   with_state (0<span class="symbol">,</span> init_stack) <span class="symbol">\</span>ref <span class="symbol">.</span> f ref
 </div></div><div class="cell"><div class="code-block">
@@ -2806,10 +2820,9 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
     f stack
     read_stack stack
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> show_any {a} (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> unsafe_coerce <span class="type-name">String</span> %showAny x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> show_any {a} (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> unsafe_coerce <span class="type-name">String</span> <span class="symbol">$</span> %showAny x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: data constraint
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> coerce_table {n a} (m<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> m] (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> coerce_table {n a} [<span class="type-name">Data</span> a] (m<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> m] (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
   <span class="keyword">if</span> size m <span class="symbol">==</span> size n
     <span class="keyword">then</span> unsafe_coerce (m<span class="symbol">=&gt;</span>a) x
     <span class="keyword">else</span> error &quot;mismatched sizes in table coercion&quot;

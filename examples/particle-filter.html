@@ -319,7 +319,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   (sampler<span class="symbol">,</span> _) <span class="symbol">=</span> d
   sampler k
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simulate {s v} (model<span class="symbol">:</span> <span class="type-name">Model</span> s v) (t<span class="symbol">:</span> <span class="type-name">Nat</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> t<span class="symbol">=&gt;</span>(s <span class="symbol">&amp;</span> v) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simulate {s v} [<span class="type-name">Data</span> s]
+    (model<span class="symbol">:</span> <span class="type-name">Model</span> s v) (t<span class="symbol">:</span> <span class="type-name">Nat</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> t<span class="symbol">=&gt;</span>(s <span class="symbol">&amp;</span> v) <span class="symbol">=</span>
   (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
   [key<span class="symbol">,</span> subkey] <span class="symbol">=</span> split_key key
   s0 <span class="symbol">=</span> sample init subkey
@@ -332,7 +333,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       s_ref <span class="symbol">:=</span> s_next
       (s<span class="symbol">,</span> v)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> particleFilter {s a v}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> particleFilter {s a v} [<span class="type-name">Data</span> s]
     (num_particles<span class="symbol">:</span> <span class="type-name">Nat</span>) (num_timesteps<span class="symbol">:</span> <span class="type-name">Nat</span>)
     (model<span class="symbol">:</span> <span class="type-name">Model</span> s v)
     (summarize<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles <span class="symbol">=&gt;</span> s) <span class="symbol">-&gt;</span> a)
