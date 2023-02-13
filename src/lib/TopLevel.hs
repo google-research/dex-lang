@@ -43,7 +43,7 @@ import qualified LLVM.AST
 import AbstractSyntax
 import Builder
 import CheckType ( CheckableE (..), asFFIFunType, checkHasType
-                 , asSpecializableFunction)
+                 , asSpecializableFunction, checkExtends)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -540,15 +540,20 @@ evalBlock typed = do
   -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
   -- In most cases it should be easiest to add new passes to simpOptimizations or
   -- loweredOptimizations, below, because those are reused in all three places.
+  checkEffects Pure typed
   synthed <- checkPass SynthPass $ synthTopBlock typed
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
+  checkEffects Pure simp
   NullaryLamExpr opt <- simpOptimizations $ NullaryLamExpr simp
+  checkEffects Pure opt
   simpResult <- case opt of
     AtomicBlock result -> return result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
+      checkEffects (OneEffect InitEffect) (NullaryDestLamApp lowered)
       NullaryDestLamExpr lOpt <- loweredOptimizations lowered
+      checkEffects (OneEffect InitEffect) lOpt
       impOpt <- asImpFunction lOpt
       resultVals <- evalLLVM impOpt
       resultTy <- getDestBlockType lOpt
@@ -737,6 +742,11 @@ checkPass name cont = do
   logTop $ MiscLog $ "Checks skipped (not a debug build)"
 #endif
   return result
+
+checkEffects :: (Topper m, HasEffectsE e r, IRRep r) => EffectRow r n -> e n -> m n ()
+checkEffects allowedEffs e = do
+  actualEffs <- getEffects e
+  checkExtends allowedEffs actualEffs
 
 addResultCtx :: SourceBlock -> Result -> Result
 addResultCtx block (Result outs errs) =

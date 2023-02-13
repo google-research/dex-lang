@@ -188,6 +188,7 @@ data LamBinding (n::S) = LamBinding Arrow (CType n)
 data LamExpr (r::IR) (n::S) where
   LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
 
+-- TODO(dougalm): let's get rid of this and just use a `LamExpr` with an extra argument.
 data DestBlock (r::IR) (n::S) where
   -- The binder is for the destination that holds the result of the Block.
   -- The Block itself should not return anything -- it communicates results

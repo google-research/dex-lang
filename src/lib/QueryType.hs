@@ -19,7 +19,8 @@ module QueryType (
   ixDictType, dataDictType, getSuperclassDicts,
   ixTyFromDict, instantiateHandlerType, getDestBlockType, getNaryDestLamExprType,
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
-  rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun
+  rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun,
+  HasEffectsE (..), NullaryLamApp (..), NullaryDestLamApp (..),
   ) where
 
 import Control.Monad
@@ -837,10 +838,32 @@ instance IRRep r => HasEffectsE (Block r) r where
   getEffectsImpl (Block NoBlockAnn _ _) = return Pure
   {-# INLINE getEffectsImpl #-}
 
+instance IRRep r => HasEffectsE (DestBlock r) r where
+  getEffectsImpl (DestBlock b (Block ann _ _)) = case ann of
+    BlockAnn _ effs -> substM $ ignoreHoistFailure $ hoist b effs
+    NoBlockAnn -> return Pure
+  {-# INLINE getEffectsImpl #-}
+
 instance IRRep r => HasEffectsE (Alt r) r where
   getEffectsImpl (Abs bs body) =
     substBinders bs \bs' ->
       ignoreHoistFailure . hoist bs' <$> getEffectsImpl body
+  {-# INLINE getEffectsImpl #-}
+
+-- wrapper to allow checking the effects of an applied nullary lambda
+data NullaryLamApp r n = NullaryLamApp (LamExpr r n)
+-- XXX: this should only be used for nullary lambdas
+instance IRRep r => HasEffectsE (NullaryLamApp r) r where
+  getEffectsImpl (NullaryLamApp (NullaryLamExpr block)) = getEffectsImpl block
+  getEffectsImpl _ = error "not a nullary lambda"
+  {-# INLINE getEffectsImpl #-}
+
+-- wrapper to allow checking the effects of an applied nullary dest lambda
+data NullaryDestLamApp r n = NullaryDestLamApp (DestLamExpr r n)
+-- XXX: this should only be used for nullary lambdas
+instance IRRep r => HasEffectsE (NullaryDestLamApp r) r where
+  getEffectsImpl (NullaryDestLamApp (NullaryDestLamExpr block)) = getEffectsImpl block
+  getEffectsImpl _ = error "not a nullary lambda"
   {-# INLINE getEffectsImpl #-}
 
 functionEffs :: IRRep r => LamExpr r i -> TypeQueryM i o (EffectRow r o)
