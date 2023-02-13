@@ -23,8 +23,9 @@ import LabeledItems
 import MTL1
 import Name
 import Subst
+import QueryType
 import Types.Core
-import Util (onSndM)
+import Util (onSndM, foldMapM)
 
 liftGenericTraverserM :: (EnvReader m, IRRep r) => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
@@ -76,8 +77,12 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   PrimOp  op -> PrimOp <$> mapM tge op
   Hof hof -> Hof  <$> tge hof
   RefOp ref eff -> RefOp <$> tge ref <*> tge eff
-  Case scrut alts resultTy effs ->
-    Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy <*> substM effs
+  Case scrut alts resultTy _ -> do
+    scrut' <- tge scrut
+    alts' <- mapM traverseAlt alts
+    resultTy' <- tge resultTy
+    effs <- foldMapM getEffects alts'
+    return $ Case scrut' alts' resultTy' effs
   UserEffectOp op -> UserEffectOp <$> case op of
     Handle v xs body -> Handle <$> substM v <*> mapM tge xs <*> tge body
     Resume x y       -> Resume <$> tge x <*> tge y
