@@ -606,14 +606,16 @@ table = [1.0, 2.0]
 
 data A = MkA
 
-interface I a
+interface I param
   m : Unit
-> Error: variable already defined: a
 
 instance I A extraneous given {extraneous}
   m = todo
-> Error in (earlier) definition of variable: I
+> Type error: unexpected extra parameter: extraneous
+>
+> instance I A extraneous given {extraneous}
+>              ^^^^^^^^^^^
 
 instance I
   m = todo
-> Error in (earlier) definition of variable: I
+> Type error: missing interface parameters. Expected 1 got 0
