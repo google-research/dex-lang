@@ -2804,6 +2804,16 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   buf_slice <span class="symbol">:=</span> x
   fst_ref stack <span class="symbol">:=</span> n_new
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stack_pop {a h} [<span class="type-name">Data</span> a] (stack<span class="symbol">:</span><span class="type-name">Stack</span> h a) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Maybe</span> a <span class="symbol">=</span>
+  n_old <span class="symbol">=</span> stack_size stack
+  <span class="keyword">case</span> n_old <span class="symbol">==</span> 0 <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span>
+      n_new <span class="symbol">=</span> unsafe_nat_diff n_old 1
+      buf <span class="symbol">=</span> unsafe_get_stack_buffer stack
+      fst_ref stack <span class="symbol">:=</span> n_new
+      <span class="type-name">Just</span> <span class="symbol">$</span> get buf<span class="symbol">!</span>(unsafe_from_ordinal _ n_new)
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">stack_init_size <span class="symbol">=</span> 16
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_stack {r eff} (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Data</span> a] (f <span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Heap</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Stack</span> h a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h<span class="symbol">|</span>eff} r) <span class="symbol">:</span> {<span class="symbol">|</span>eff} r <span class="symbol">=</span>
   init_stack <span class="symbol">=</span> to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> stack_init_size)<span class="symbol">.</span> uninitialized_value
