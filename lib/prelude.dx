@@ -2501,6 +2501,53 @@ def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
 def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
 def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
+-- A `FullTileIx` type represents `tile_ix`th full tile (of size
+-- `tile_size`) iterating over the index set `n`.
+-- This type is only well formed when tile_ix * tile_size < size n.
+data FullTileIx (n:Type) [Ix n] (tile_size:Nat) (tile_ix:Nat) =
+  UnsafeFullTileIx (Fin tile_size)
+
+instance Ix (FullTileIx n tile_size tile_ix) given {n} {tile_size:Nat} {tile_ix:Nat}
+  size = tile_size
+  ordinal = \(UnsafeFullTileIx i). ordinal i
+  unsafe_from_ordinal = \i. (UnsafeFullTileIx $ unsafe_from_ordinal _ i)
+
+instance Subset (FullTileIx n tile_size tile_ix) n given {n} {tile_size:Nat} {tile_ix:Nat}
+  inject' = \(UnsafeFullTileIx i). unsafe_from_ordinal _ $ tile_size * tile_ix + ordinal i
+  project' = \ix. todo
+  unsafe_project' = \ix. todo
+
+-- A `CodaIx` type represents the last few elements of the index set `n`,
+-- as might be left over after iterating by tiles.
+-- This type is only well formed when size n == coda_offset + coda_size
+data CodaIx (n:Type) [Ix n] (coda_offset:Nat) (coda_size:Nat) =
+  UnsafeCodaIx (Fin coda_size)
+
+instance Ix (CodaIx n coda_offset coda_size) given {n} {coda_offset:Nat} {coda_size:Nat}
+  size = coda_size
+  ordinal = \(UnsafeCodaIx i). ordinal i
+  unsafe_from_ordinal = \i. (UnsafeCodaIx $ unsafe_from_ordinal _ i)
+
+instance Subset (CodaIx n coda_offset coda_size) n given {n} {coda_offset:Nat} {coda_size:Nat}
+  inject' = \(UnsafeCodaIx i). unsafe_from_ordinal _ $ coda_offset + ordinal i
+  project' = \ix. todo
+  unsafe_project' = \ix. todo
+
+-- TODO Can we have a function that takes implicit or class arguments
+-- last?  Status quo crashes with a pattern match failure in
+-- Inference.checkSigma
+def tile {eff} (n:Type) [Ix n]
+    (tile_size: Nat)
+    (body: ((m:Type) -> Ix m ?=> Subset m n ?=> Unit -> {|eff} Unit))
+    : {|eff} Unit =
+  num_tiles = size n `idiv` tile_size
+  coda_size = size n `rem` tile_size
+  coda_offset = num_tiles * tile_size
+  for_ tile_ix:(Fin num_tiles).
+    tile_ix' = ordinal tile_ix
+    body (FullTileIx n tile_size tile_ix') ()
+  body (CodaIx n coda_offset coda_size) ()
+
 -- matmul. Better symbol to use? `@`?
 -- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
 def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
@@ -2509,38 +2556,17 @@ def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
   l_tile_size = 32
   n_tile_size = 128
   m_tile_size = 8
-  -- For the outer loops, it's simpler to have too many tiles, and
-  -- select whether to iterate for the full tile size or the coda
-  -- within the loop.
-  l_tiles = (size l `idiv` l_tile_size) + 1
-  l_coda = size l `rem` l_tile_size
-  n_tiles = (size n `idiv` n_tile_size) + 1
-  n_coda = size n `rem` n_tile_size
-  -- For the inner-most tile-wise loop, though, I replicate it to
-  -- stimulate LLVM to vectorize it; LLVM doesn't seem to want to do
-  -- that when the trip count is dynamic.
-  m_tiles = (size m `idiv` m_tile_size)
-  m_coda = size m `rem` m_tile_size
   yield_accum (AddMonoid Float) \result.
-    for_ l_tile:(Fin l_tiles).
-      l_offsets = if (ordinal l_tile + 1) < l_tiles then l_tile_size else l_coda
-      for_ n_tile:(Fin n_tiles).
-        n_offsets = if (ordinal n_tile + 1) < n_tiles then n_tile_size else n_coda
-        for_ m_tile:(Fin m_tiles).
-          for_ l_offset:(Fin l_offsets).
-            l_ix = unsafe_from_ordinal _ $ ordinal l_tile * l_tile_size + ordinal l_offset
-            for_ n_offset:(Fin n_offsets).
-              n_ix = unsafe_from_ordinal _ $ ordinal n_tile * n_tile_size + ordinal n_offset
-              for_ m_offset:(Fin m_tile_size).
-                m_ix = unsafe_from_ordinal _ $ ordinal m_tile * m_tile_size + ordinal m_offset
+    tile l l_tile_size \l_set _.
+      tile n n_tile_size \n_set _.
+        tile m m_tile_size \m_set _.
+          for_ l_offset:l_set.
+            l_ix = inject l l_offset
+            for_ n_offset:n_set.
+              n_ix = inject _ n_offset
+              for_ m_offset:m_set.
+                m_ix = inject _ m_offset
                 result!l_ix!n_ix += x.l_ix.m_ix * y.m_ix.n_ix
-        for_ l_offset:(Fin l_offsets).
-          l_ix = unsafe_from_ordinal _ $ ordinal l_tile * l_tile_size + ordinal l_offset
-          for_ n_offset:(Fin n_offsets).
-            n_ix = unsafe_from_ordinal _ $ ordinal n_tile * n_tile_size + ordinal n_offset
-            for_ m_offset:(Fin m_coda).
-              m_ix = unsafe_from_ordinal _ $ m_tiles * m_tile_size + ordinal m_offset
-              result!l_ix!n_ix += x.l_ix.m_ix * y.m_ix.n_ix
 
 def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
 def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
