@@ -1277,30 +1277,6 @@ def apply_n {a} [Data a] (n:Nat) (x:a) (f:a -> a) : a =
   yield_state x \ref. for _:(Fin n).
     ref := f (get ref)
 
-'### Linear Algebra
-
-def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
-  dx = (high - low) / n_to_f (size n)
-  for i:n. low + n_to_f (ordinal i) * dx
-
-def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
-def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
-def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
-
--- matmul. Better symbol to use? `@`?
--- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
-def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
-  for i k. fsum for j. x.i.j * y.j.k
-
-def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
-def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
-
-def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
-  fsum for (i,j). x.i * mat.i.j * y.j
-
-def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
-  for i j. select (ordinal i == ordinal j) one zero
-
 '## cumulative sum
 TODO: Move this to be with reductions?
 It's a kind of `scan`.
@@ -2514,3 +2490,63 @@ def coerce_table {n a} [Data a] (m:Type) [Ix m] (x:n=>a) : m => a =
   if size m == size n
     then unsafe_coerce (m=>a) x
     else error "mismatched sizes in table coercion"
+
+'### Linear Algebra
+
+def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
+  dx = (high - low) / n_to_f (size n)
+  for i:n. low + n_to_f (ordinal i) * dx
+
+def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
+def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
+def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
+
+-- matmul. Better symbol to use? `@`?
+-- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
+def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
+  -- for i k. fsum for j. x.i.j * y.j.k
+  -- Tile sizes picked for axch's laptop
+  l_tile_size = 32
+  n_tile_size = 128
+  m_tile_size = 8
+  -- For the outer loops, it's simpler to have too many tiles, and
+  -- select whether to iterate for the full tile size or the coda
+  -- within the loop.
+  l_tiles = (size l `idiv` l_tile_size) + 1
+  l_coda = size l `rem` l_tile_size
+  n_tiles = (size n `idiv` n_tile_size) + 1
+  n_coda = size n `rem` n_tile_size
+  -- For the inner-most tile-wise loop, though, I replicate it to
+  -- stimulate LLVM to vectorize it; LLVM doesn't seem to want to do
+  -- that when the trip count is dynamic.
+  m_tiles = (size m `idiv` m_tile_size)
+  m_coda = size m `rem` m_tile_size
+  yield_accum (AddMonoid Float) \result.
+    for_ l_tile:(Fin l_tiles).
+      l_offsets = if (ordinal l_tile + 1) < l_tiles then l_tile_size else l_coda
+      for_ n_tile:(Fin n_tiles).
+        n_offsets = if (ordinal n_tile + 1) < n_tiles then n_tile_size else n_coda
+        for_ m_tile:(Fin m_tiles).
+          for_ l_offset:(Fin l_offsets).
+            l_ix = unsafe_from_ordinal _ $ ordinal l_tile * l_tile_size + ordinal l_offset
+            for_ n_offset:(Fin n_offsets).
+              n_ix = unsafe_from_ordinal _ $ ordinal n_tile * n_tile_size + ordinal n_offset
+              for_ m_offset:(Fin m_tile_size).
+                m_ix = unsafe_from_ordinal _ $ ordinal m_tile * m_tile_size + ordinal m_offset
+                result!l_ix!n_ix += x.l_ix.m_ix * y.m_ix.n_ix
+        for_ l_offset:(Fin l_offsets).
+          l_ix = unsafe_from_ordinal _ $ ordinal l_tile * l_tile_size + ordinal l_offset
+          for_ n_offset:(Fin n_offsets).
+            n_ix = unsafe_from_ordinal _ $ ordinal n_tile * n_tile_size + ordinal n_offset
+            for_ m_offset:(Fin m_coda).
+              m_ix = unsafe_from_ordinal _ $ m_tiles * m_tile_size + ordinal m_offset
+              result!l_ix!n_ix += x.l_ix.m_ix * y.m_ix.n_ix
+
+def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
+def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
+
+def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
+  fsum for (i,j). x.i * mat.i.j * y.j
+
+def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
+  for i j. select (ordinal i == ordinal j) one zero
