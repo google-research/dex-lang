@@ -439,10 +439,10 @@ linearizeExpr expr = case expr of
             residuals' <- unpackTelescope bs residuals
             withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
               applyLinLam linLam
-  TabCon ty xs -> do
+  TabCon _ ty xs -> do
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
-      emitExpr $ TabCon (sink ty') xs'
+      emitExpr $ TabCon Nothing (sink ty') xs'
   DAMOp _        -> error "shouldn't occur here"
   where
     la = linearizeAtom

@@ -2338,6 +2338,8 @@ inferTabCon :: forall i o. EmitsBoth o
 inferTabCon hint xs reqTy = do
   let n = fromIntegral (length xs) :: Word32
   let finTy = FinConst n
+  ctx <- srcPosCtx <$> getErrCtx
+  let dataDictHole dTy = Just $ WhenIRE $ DictHole (AlwaysEqual ctx) dTy
   case reqTy of
     Infer -> do
       elemTy <- case xs of
@@ -2346,7 +2348,8 @@ inferTabCon hint xs reqTy = do
       ixTy <- asIxType finTy
       tabTy <- ixTy ==> elemTy
       xs' <- forM xs \x -> checkRho noHint x elemTy
-      liftM Var $ emitHinted hint $ TabCon tabTy xs'
+      dTy <- DictTy <$> dataDictType elemTy
+      liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
     Check tabTy -> do
       TabPiType b elemTy <- fromTabPiType True tabTy
       constrainEq (binderType b) finTy
@@ -2354,7 +2357,13 @@ inferTabCon hint xs reqTy = do
         let i' = NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i) :: CAtom o
         elemTy' <- applySubst (b@>SubstVal i') elemTy
         checkRho noHint x elemTy'
-      liftM Var $ emitHinted hint $ TabCon tabTy xs'
+      dTy <- case hoist b elemTy of
+        HoistSuccess elemTy' -> DictTy <$> dataDictType elemTy'
+        HoistFailure _ -> do
+          Pi <$> buildPi noHint ImplicitArrow finTy \i -> do
+            elemTy' <- applyRename (b@>i) elemTy
+            (Pure,) <$> DictTy <$> dataDictType elemTy'
+      liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
 fromTabPiType :: EmitsBoth o => Bool -> CType o -> InfererM i o (TabPiType CoreIR o)

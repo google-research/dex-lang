@@ -465,6 +465,8 @@ data WhenE (p::Bool) (e::E) (n::S) where
 data WhenIRE (r::IR) (r'::IR) (e::E) (n::S) where
   WhenIRE :: e n -> WhenIRE r r e n
 
+deriving instance ShowE e => Show (WhenIRE r r' e n)
+
 data WhenC (c::C) (c'::C) (e::E) (n::S) where
   WhenC :: e n -> WhenC c c e n
 

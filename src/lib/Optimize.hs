@@ -187,7 +187,7 @@ peepholeExpr expr = case expr of
   PrimOp op -> fmap PrimOp <$> peepholeOp op
   TabApp (Var t) (IdxRepVal ord NE.:| []) ->
     lookupAtomName t <&> \case
-      LetBound (DeclBinding ann _ (TabCon tabTy elems))
+      LetBound (DeclBinding ann _ (TabCon Nothing tabTy elems))
         | ann /= NoInlineLet && isFinTabTy tabTy->
         -- It is not safe to assume that this index can always be simplified!
         -- For example, it might be coming from an unsafe_from_ordinal that is
@@ -238,7 +238,7 @@ instance GenericTraverser SimpIR UnitB ULS where
                   NaryPiType (UnaryNest (tb:>_)) _ valTy -> do
                     let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                     let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
-                    return $ Right $ TabCon tabTy vals
+                    return $ Right $ TabCon Nothing tabTy vals
                   _ -> error "Expected `for` body to have a Pi type"
               _ -> error "Expected `for` body to be a lambda expression"
             False -> do
@@ -247,7 +247,7 @@ instance GenericTraverser SimpIR UnitB ULS where
               return $ Right $ Hof $ For Fwd ixDict' body'
         _ -> nothingSpecial
     -- Avoid unrolling loops with large table literals
-    TabCon _ els -> inc (length els) >> nothingSpecial
+    TabCon _ _ els -> inc (length els) >> nothingSpecial
     _ -> nothingSpecial
     where
       inc i = modify \(ULS n) -> ULS (n + i)

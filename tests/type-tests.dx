@@ -405,7 +405,7 @@ c = [1, 2]
 
 -- Tests for type inference of table literals
 
-def mkEmpty (a:Type) : (Fin 0)=>a = []
+def mkEmpty (a:Type) [Data a] : (Fin 0)=>a = []
 
 :t [0.0, 1.0]
 > ((Fin 2) => Float32)
@@ -596,3 +596,11 @@ table = [1.0, 2.0]
 >
 > :html table
 >       ^^^^^
+
+
+-- We can't have table literals of non-data
+:p [\x:Float. x, \x:Float. x + x]
+> Type error:Couldn't synthesize a class dictionary for: (Data (Float32 -> Float32))
+>
+> :p [\x:Float. x, \x:Float. x + x]
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

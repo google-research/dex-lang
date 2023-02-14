@@ -275,7 +275,7 @@ typeCheckExpr effs expr = case expr of
     let subst = (    paramBs @@> map SubstVal params
                  <.> classBs @@> map SubstVal superclassDicts)
     applySubst subst methodTy
-  TabCon ty xs -> do
+  TabCon _ ty xs -> do
     ty'@(TabPi (TabPiType b restTy)) <- checkTypeE TyKind ty
     case fromConstAbs (Abs b restTy) of
       HoistSuccess elTy -> forM_ xs (|: elTy)

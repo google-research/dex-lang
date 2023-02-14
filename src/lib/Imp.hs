@@ -339,7 +339,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     AllocDest ty  -> do
       d <- liftM destToAtom $ allocDest =<< substM ty
       returnVal d
-  TabCon ty rows -> do
+  TabCon _ ty rows -> do
     resultTy@(TabPi (TabPiType b _)) <- substM ty
     let ixTy = binderAnn b
     dest <- maybeAllocDest maybeDest resultTy

@@ -91,7 +91,7 @@ data Expr r n where
  Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow r n -> Expr r n
  Atom   :: Atom r n                          -> Expr r n
  Hof    :: Hof r n                           -> Expr r n
- TabCon :: Type r n -> [Atom r n]            -> Expr r n
+ TabCon :: Maybe (WhenCore r Dict n) -> Type r n -> [Atom r n] -> Expr r n
  RefOp  :: Atom r n -> RefOp r n             -> Expr r n
  PrimOp :: PrimOp (Atom r n)                 -> Expr r n
  App             :: Atom CoreIR n -> NonEmpty (Atom CoreIR n)-> Expr CoreIR n
@@ -1642,7 +1642,7 @@ instance IRRep r => GenericE (Expr r) where
  {- TopApp -} (WhenSimp r (TopFunName `PairE` ListE (Atom r)))
     )
     ( EitherE7
- {- TabCon -}          (Type r `PairE` ListE (Atom r))
+ {- TabCon -}          (MaybeE (WhenCore r Dict) `PairE` Type r `PairE` ListE (Atom r))
  {- RefOp -}           (Atom r `PairE` RefOp r)
  {- PrimOp -}          (ComposeE PrimOp (Atom r))
  {- UserEffectOp -}    (WhenCore r UserEffectOp)
@@ -1657,7 +1657,7 @@ instance IRRep r => GenericE (Expr r) where
     Atom x             -> Case0 $ Case3 (x)
     Hof hof            -> Case0 $ Case4 hof
     TopApp f xs        -> Case0 $ Case5 (WhenIRE (f `PairE` ListE xs))
-    TabCon ty xs       -> Case1 $ Case0 (ty `PairE` ListE xs)
+    TabCon d ty xs     -> Case1 $ Case0 (toMaybeE d `PairE` ty `PairE` ListE xs)
     RefOp ref op       -> Case1 $ Case1 (ref `PairE` op)
     PrimOp op          -> Case1 $ Case2 (ComposeE op)
     UserEffectOp op    -> Case1 $ Case3 (WhenIRE op)
@@ -1675,7 +1675,7 @@ instance IRRep r => GenericE (Expr r) where
       Case5 (WhenIRE (f `PairE` ListE xs))                -> TopApp f xs
       _ -> error "impossible"
     Case1 case1 -> case case1 of
-      Case0 (ty `PairE` ListE xs) -> TabCon ty xs
+      Case0 (d `PairE` ty `PairE` ListE xs) -> TabCon (fromMaybeE d) ty xs
       Case1 (ref `PairE` op)      -> RefOp ref op
       Case2 (ComposeE op)         -> PrimOp op
       Case3 (WhenIRE op)            -> UserEffectOp op

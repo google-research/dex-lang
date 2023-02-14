@@ -433,7 +433,7 @@ instance IRRep r => HasType r (Expr r) where
       fTy <- getTypeE f
       typeTabApp fTy xs
     Atom x   -> getTypeE x
-    TabCon ty _ -> substM ty
+    TabCon _ ty _ -> substM ty
     DAMOp           op -> getTypeE op
     UserEffectOp    op -> getTypeE op
     PrimOp          op -> getTypeE $ ComposeE op
@@ -829,7 +829,7 @@ exprEffects expr = case expr of
     where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
           maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
-  TabCon _ _        -> return Pure
+  TabCon _ _ _      -> return Pure
   ProjMethod _ _    -> return Pure
   RecordVariantOp _ -> return Pure
 

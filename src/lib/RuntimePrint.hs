@@ -240,7 +240,7 @@ pushBuffer buf x = do
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
   t <- finTabTy (NatVal $ fromIntegral $ length s) CharRepTy
-  emitExpr $ TabCon t (map charRepVal s)
+  emitExpr $ TabCon Nothing t (map charRepVal s)
 
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
 getPreludeFunction sourceName = do

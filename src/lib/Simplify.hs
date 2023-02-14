@@ -329,11 +329,11 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     liftSimpAtom resultTy ans
   Hof hof -> simplifyHof hint hof
   RecordVariantOp op -> simplifyRecordVariantOp  =<< mapM simplifyAtom op
-  TabCon ty xs -> do
+  TabCon _ ty xs -> do
     ty' <- substM ty
     tySimp <- getRepType ty'
     xs' <- forM xs \x -> toDataAtomIgnoreRecon =<< simplifyAtom x
-    liftSimpAtom ty' =<< emitExpr (TabCon tySimp xs')
+    liftSimpAtom ty' =<< emitExpr (TabCon Nothing tySimp xs')
   UserEffectOp _ -> error "not implemented"
   Case scrut alts resultTy _ -> do
     scrut' <- simplifyAtom scrut

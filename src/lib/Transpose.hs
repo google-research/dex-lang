@@ -255,7 +255,7 @@ transposeExpr expr ct = case expr of
             transposeBlock body (sink ct)
           return UnitVal
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
-  TabCon ty es -> do
+  TabCon _ ty es -> do
     TabTy b _ <- return ty
     idxTy <- substNonlin $ binderAnn b
     forM_ (enumerate es) \(ordinalIdx, e) -> do

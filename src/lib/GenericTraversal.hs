@@ -87,7 +87,11 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
     Handle v xs body -> Handle <$> substM v <*> mapM tge xs <*> tge body
     Resume x y       -> Resume <$> tge x <*> tge y
     Perform x i      -> Perform <$> tge x <*> pure i
-  TabCon ty xs -> TabCon <$> tge ty <*> mapM tge xs
+  TabCon d ty xs -> do
+    d' <- case d of
+      Nothing -> return Nothing
+      Just (WhenIRE d') -> Just <$> WhenIRE <$> tge d'
+    TabCon d' <$> tge ty <*> mapM tge xs
   ProjMethod d i -> ProjMethod <$> tge d <*> pure i
   RecordVariantOp op -> RecordVariantOp <$> mapM tge op
   DAMOp op -> DAMOp <$> case op of

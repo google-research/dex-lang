@@ -628,7 +628,7 @@ It includes:
  - Concatenation of Lists (including strings)
 Monoids support `fold` operations, and similar.
 
-interface Monoid a
+interface [Data a] Monoid a
   mempty : a
   mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
 
@@ -1132,7 +1132,7 @@ def cast_ptr {a b} (ptr: Ptr a) : Ptr b =
   (MkPtr rawPtr) = ptr
   MkPtr rawPtr
 
-interface Storable a
+interface [Data a] Storable a
   store : Ptr a -> a -> {IO} Unit
   load  : Ptr a ->      {IO} a
   storage_size a : Nat
@@ -1425,7 +1425,7 @@ def to_list {n a} (xs:n=>a) : List a =
   n' = size n
   AsList _ $ unsafe_cast_table (Fin n') xs
 
-instance Monoid (List a) given {a}
+instance Monoid (List a) given {a} [Data a]
   mempty = AsList _ []
   mcombine = \x y.
     (AsList nx xs) = x
@@ -1437,13 +1437,13 @@ instance Monoid (List a) given {a}
         True  -> xs.(unsafe_from_ordinal _ i')
         False -> ys.(unsafe_from_ordinal _ $ unsafe_nat_diff i' nx)
 
-named-instance ListMonoid : Monoid (List a) given (a:Type)
+named-instance ListMonoid : Monoid (List a) given (a:Type) [Data a]
   mempty = mempty
   mcombine = mcombine
 
 -- TODO Eliminate or reimplement this operation, since it costs O(n)
 -- where n is the length of the list held in the reference.
-def append {a h} [AccumMonoid h (List a)]
+def append {a h} [AccumMonoid h (List a), Data a]
   (list: Ref h (List a)) (x:a) : {Accum h} Unit =
     list += AsList _ [x]
 
