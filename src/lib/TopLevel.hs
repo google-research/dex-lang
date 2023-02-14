@@ -631,7 +631,7 @@ compileTopLevelFun hint fSimp = do
   fOpt <- simpOptimizations fSimp
   fLower <- lowerFullySequential fOpt
   flOpt <- loweredOptimizations fLower
-  fImp <- toImpFunction StandardCC flOpt
+  fImp <- checkPass ImpPass $ toImpFunction StandardCC flOpt
   fObj <- toCFunction hint fImp
   void $ loadObject fObj
   return $ TopFunLowerings fObj
