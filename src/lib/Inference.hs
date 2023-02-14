@@ -1948,7 +1948,11 @@ checkInstanceParams bsTop params cont = go bsTop params []
           Abs bs' UnitE <- applyAbs bsAbs (SubstVal pty)
           ListE ptys' <- sinkM $ ListE ptys
           go bs' t (pty:ptys')
-    go _ _ _ = error "zip error"
+    go _ (p@(WithSrcE pos _):_) _ = addSrcContext pos $
+      throw TypeErr $ " unexpected extra parameter: " ++ pprint p
+    go _ _ _ =
+      throw TypeErr $ " missing interface parameters. Expected "
+        ++ show (nestLength bsTop) ++ " got " ++ show (length params)
 
 mergeAbs :: Abs (Nest b) (Abs (Nest b) e) n -> Abs (Nest b) e n
 mergeAbs (Abs bs (Abs bs' e)) = Abs (bs >>> bs') e

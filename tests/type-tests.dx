@@ -597,10 +597,23 @@ table = [1.0, 2.0]
 > :html table
 >       ^^^^^
 
-
 -- We can't have table literals of non-data
 :p [\x:Float. x, \x:Float. x + x]
 > Type error:Couldn't synthesize a class dictionary for: (Data (Float32 -> Float32))
 >
 > :p [\x:Float. x, \x:Float. x + x]
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+data A = MkA
+
+interface I a
+  m : Unit
+> Error: variable already defined: a
+
+instance I A extraneous given {extraneous}
+  m = todo
+> Error in (earlier) definition of variable: I
+
+instance I
+  m = todo
+> Error in (earlier) definition of variable: I
