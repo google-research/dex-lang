@@ -2584,6 +2584,16 @@ def stack_extend {a n} [Data a, Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h}
   buf_slice := x
   fst_ref stack := n_new
 
+def stack_pop {a h} [Data a] (stack:Stack h a) : {State h} Maybe a =
+  n_old = stack_size stack
+  case n_old == 0 of
+    True -> Nothing
+    False ->
+      n_new = unsafe_nat_diff n_old 1
+      buf = unsafe_get_stack_buffer stack
+      fst_ref stack := n_new
+      Just $ get buf!(unsafe_from_ordinal _ n_new)
+
 stack_init_size = 16
 def with_stack {r eff} (a:Type) [Data a] (f : (h:Heap) ?-> Stack h a -> {State h|eff} r) : {|eff} r =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
