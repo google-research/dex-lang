@@ -400,7 +400,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (<span class="type-name">LowerTriMap</span> n) <span class="keyword">given</span> {n}
   determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> lower_tri_diag x
   transposeType <span class="symbol">=</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
+  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
   identity&#39; <span class="symbol">=</span> <span class="type-name">MkLowerTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (<span class="type-name">LowerTriMap</span> n) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
@@ -419,7 +419,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (<span class="type-name">UpperTriMap</span> n) <span class="keyword">given</span> {n}
   determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> upper_tri_diag x
   transposeType <span class="symbol">=</span> <span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
+  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
   identity&#39; <span class="symbol">=</span> <span class="type-name">MkUpperTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (0 <span class="symbol">==</span> ordinal j) one zero
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (<span class="type-name">UpperTriMap</span> n) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]

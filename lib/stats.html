@@ -534,7 +534,7 @@ rather than relying on monoid reduction using <code>add</code>.</p>
     <span class="type-name">Exp</span> <span class="symbol">$</span> log (0<span class="symbol">.</span>5 <span class="symbol">*</span> erfc ((loc <span class="symbol">-</span> x) <span class="symbol">/</span> (scale <span class="symbol">*</span> sqrt(2<span class="symbol">.</span>0))))
   survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Normal</span> loc scale) x<span class="symbol">.</span>
     <span class="type-name">Exp</span> <span class="symbol">$</span> log (0<span class="symbol">.</span>5 <span class="symbol">*</span> erfc ((x <span class="symbol">-</span> loc) <span class="symbol">/</span> (scale <span class="symbol">*</span> sqrt(2<span class="symbol">.</span>0))))
-  quantile <span class="symbol">=</span> todo  <span class="comment">-- Add `erfinv`.
+  quantile <span class="symbol">=</span> <span class="symbol">\</span>_ _<span class="symbol">.</span> todo  <span class="comment">-- Add `erfinv`.
 </span></div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Poisson distribution</h3>

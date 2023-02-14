@@ -306,7 +306,7 @@ function render(renderMode) {
     }
 }
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Parser Combinators</h1>
-</div></div><div class="cell"><div class="prose-block"><p>Basic combinator-based parser in Dex (as opposed of Dex).</p>
+</div></div><div class="cell"><div class="prose-block"><p>Basic combinator-based parser in Dex (as opposed to of Dex).</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Utilities unrelated to parsing</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> from_ordinal_exc (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (i<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">Except</span>} n <span class="symbol">=</span>
   <span class="keyword">if</span> (0 <span class="symbol">&lt;=</span> i) <span class="symbol">&amp;&amp;</span> (i <span class="symbol">&lt;</span> size n)
@@ -315,11 +315,11 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: allow this to happen in-place
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: if it takes too long to make that possible, start with a bounded version
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> push {h a} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">List</span> a)) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> push {h a} [<span class="type-name">Data</span> a] (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">List</span> a)) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
   l <span class="symbol">=</span> get ref
   ref <span class="symbol">:=</span> l <span class="symbol">&lt;&gt;</span> <span class="type-name">AsList</span> _ [x]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> index_list {a} (l<span class="symbol">:</span><span class="type-name">List</span> a) (i<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">Except</span>} a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> index_list {a} [<span class="type-name">Data</span> a] (l<span class="symbol">:</span><span class="type-name">List</span> a) (i<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">Except</span>} a <span class="symbol">=</span>
   (<span class="type-name">AsList</span> n xs) <span class="symbol">=</span> l
   xs<span class="symbol">.</span>(from_ordinal_exc _ i)
 </div></div><div class="cell"><div class="code-block">

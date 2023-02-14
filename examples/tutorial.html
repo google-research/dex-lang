@@ -835,7 +835,7 @@ single lists.</p>
 items with label of shoes (label 5) from the image set.</p>
 </div></div><div class="cell"><div class="code-block">shoes <span class="symbol">=</span> (5 <span class="symbol">@</span> <span class="type-name">Class</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> findShoes {a b} (x <span class="symbol">:</span> a<span class="symbol">=&gt;</span>b) (y <span class="symbol">:</span> a<span class="symbol">=&gt;</span><span class="type-name">Class</span>) <span class="symbol">:</span> <span class="type-name">List</span> b <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> findShoes {a b} [<span class="type-name">Data</span> b] (x <span class="symbol">:</span> a<span class="symbol">=&gt;</span>b) (y <span class="symbol">:</span> a<span class="symbol">=&gt;</span><span class="type-name">Class</span>) <span class="symbol">:</span> <span class="type-name">List</span> b <span class="symbol">=</span>
   concat <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> (y<span class="symbol">.</span>i <span class="symbol">==</span> (5 <span class="symbol">@</span> _)) <span class="keyword">of</span>
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> to_list [x<span class="symbol">.</span>i]
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> to_list []

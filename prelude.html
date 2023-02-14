@@ -917,7 +917,7 @@ It includes:</p>
 <li>Concatenation of Lists (including strings)
 Monoids support <code>fold</code> operations, and similar.</li>
 </ul>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Monoid</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Data</span> a] <span class="type-name">Monoid</span> a
   mempty <span class="symbol">:</span> a
   mcombine <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a  <span class="comment">-- can&#39;t use `&lt;&gt;` just for parser reasons?
 </span></div></div><div class="cell"><div class="code-block">
@@ -1037,7 +1037,7 @@ Monoids support <code>fold</code> operations, and similar.</li>
   f&#39; <span class="symbol">:</span> (<span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span><span class="symbol">|</span>eff} a) <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> f ()
   %runIO f&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unreachable {a} (()<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unreachable {a} [<span class="type-name">Data</span> a] (()<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
   %throwError a
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Type classes</h2>
@@ -1412,7 +1412,7 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
   <span class="type-name">MkPtr</span> rawPtr
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Storable</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Data</span> a] <span class="type-name">Storable</span> a
   store <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span>
   load  <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span>      {<span class="type-name">IO</span>} a
   storage_size a <span class="symbol">:</span> <span class="type-name">Nat</span>
@@ -1693,7 +1693,7 @@ It's a kind of <code>scan</code>.</p>
   n&#39; <span class="symbol">=</span> size n
   <span class="type-name">AsList</span> _ <span class="symbol">$</span> unsafe_cast_table (<span class="type-name">Fin</span> n&#39;) xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Data</span> a]
   mempty <span class="symbol">=</span> <span class="type-name">AsList</span> _ []
   mcombine <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span>
     (<span class="type-name">AsList</span> nx xs) <span class="symbol">=</span> x
@@ -1705,13 +1705,13 @@ It's a kind of <code>scan</code>.</p>
         <span class="type-name">True</span>  <span class="symbol">-&gt;</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ i&#39;)
         <span class="type-name">False</span> <span class="symbol">-&gt;</span> ys<span class="symbol">.</span>(unsafe_from_ordinal _ <span class="symbol">$</span> unsafe_nat_diff i&#39; nx)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">ListMonoid</span> <span class="symbol">:</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> (a<span class="symbol">:</span><span class="type-name">Type</span>)
+</div></div><div class="cell"><div class="code-block">named<span class="symbol">-</span><span class="keyword">instance</span> <span class="type-name">ListMonoid</span> <span class="symbol">:</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">given</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Data</span> a]
   mempty <span class="symbol">=</span> mempty
   mcombine <span class="symbol">=</span> mcombine
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO Eliminate or reimplement this operation, since it costs O(n)
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- where n is the length of the list held in the reference.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> append {a h} [<span class="type-name">AccumMonoid</span> h (<span class="type-name">List</span> a)]
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> append {a h} [<span class="type-name">AccumMonoid</span> h (<span class="type-name">List</span> a)<span class="symbol">,</span> <span class="type-name">Data</span> a]
   (list<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">List</span> a)) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">Accum</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
     list <span class="symbol">+=</span> <span class="type-name">AsList</span> _ [x]
 </div></div><div class="cell"><div class="code-block">
@@ -2130,11 +2130,11 @@ i.e. a function that is not actually defined for all of its supposed domain.
 Not to be confused with a partially applied function</p>
 </div></div><div class="cell"><div class="prose-block"><h3>Error throwing</h3>
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> error {a} (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
+<span class="keyword">def</span> error {a} [<span class="type-name">Data</span> a] (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafe_io <span class="keyword">do</span>
   print s
   %throwError a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> todo {a} <span class="symbol">:</span> a <span class="symbol">=</span> error &quot;<span class="type-name">TODO</span><span class="symbol">:</span> implement it<span class="symbol">!</span>&quot;
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> todo {a} [<span class="type-name">Data</span> a] <span class="symbol">:</span> a <span class="symbol">=</span> error &quot;<span class="type-name">TODO</span><span class="symbol">:</span> implement it<span class="symbol">!</span>&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>File Operations</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> delete_file (f<span class="symbol">:</span><span class="type-name">FilePath</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
@@ -2142,7 +2142,7 @@ Not to be confused with a partially applied function</p>
     removeFFI ptr
   ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_file {a}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_file {a} [<span class="type-name">Data</span> a]
       (f<span class="symbol">:</span><span class="type-name">FilePath</span>) (mode<span class="symbol">:</span><span class="type-name">StreamMode</span>)
       (action<span class="symbol">:</span> <span class="type-name">Stream</span> mode <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} a)
       <span class="symbol">:</span> {<span class="type-name">IO</span>} a <span class="symbol">=</span>
@@ -2206,7 +2206,7 @@ Not to be confused with a partially applied function</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: safe (runtime-checked) and unsafe versions
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cast_table {n a} (m<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> m] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cast_table {n a} (m<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Data</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">case</span> size m <span class="symbol">==</span> size n <span class="keyword">of</span>
      <span class="type-name">True</span>  <span class="symbol">-&gt;</span> unsafe_cast_table _ xs
      <span class="type-name">False</span> <span class="symbol">-&gt;</span> error <span class="symbol">$</span>
@@ -2597,7 +2597,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
       eltIdx <span class="symbol">:=</span> eltIdxVal <span class="symbol">+</span> 1
       xs<span class="symbol">.</span>(eltIdxVal<span class="symbol">@</span>_)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cat_maybes {a n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Maybe</span> a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cat_maybes {a n} [<span class="type-name">Data</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Maybe</span> a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
   (num_res<span class="symbol">,</span> res_inds) <span class="symbol">=</span> yield_state (0<span class="symbol">::</span><span class="type-name">Nat</span><span class="symbol">,</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="type-name">Nothing</span>) <span class="symbol">\</span>ref<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> xs<span class="symbol">.</span>i <span class="keyword">of</span>
       <span class="type-name">Just</span> _ <span class="symbol">-&gt;</span>
@@ -2612,10 +2612,10 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
         <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> todo <span class="comment">-- Impossible
 </span>      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> todo <span class="comment">-- Impossible
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> filter {a n} [<span class="type-name">Ix</span> n] (condition<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> filter {a n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Data</span> a] (condition<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
   cat_maybes <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">if</span> condition xs<span class="symbol">.</span>i <span class="keyword">then</span> <span class="type-name">Just</span> xs<span class="symbol">.</span>i <span class="keyword">else</span> <span class="type-name">Nothing</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> arg_filter {a n} [<span class="type-name">Ix</span> n] (condition<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> n <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> arg_filter {a n} [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Data</span> a] (condition<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> n <span class="symbol">=</span>
   cat_maybes <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">if</span> condition xs<span class="symbol">.</span>i <span class="keyword">then</span> <span class="type-name">Just</span> i <span class="keyword">else</span> <span class="type-name">Nothing</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use `ix_offset : [Ix n] -&gt; n -&gt; Int -&gt; Maybe n` instead
@@ -2700,7 +2700,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   <span class="keyword">if</span> not b <span class="keyword">then</span> throw ()
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Misc instances that require <code>error</code></h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a (a<span class="symbol">|</span>b) <span class="keyword">given</span> {a b}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a (a<span class="symbol">|</span>b) <span class="keyword">given</span> {a b} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Data</span> b]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Left</span> x
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Left</span>  y <span class="symbol">-&gt;</span> <span class="type-name">Just</span> y
@@ -2709,7 +2709,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
     <span class="type-name">Left</span>  x <span class="symbol">-&gt;</span> x
     <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> error &quot;<span class="type-name">Can</span>&#39;t project <span class="type-name">Right</span> branch to <span class="type-name">Left</span> branch&quot;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a (b<span class="symbol">|</span>a) <span class="keyword">given</span> {a b}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> a (b<span class="symbol">|</span>a) <span class="keyword">given</span> {a b} [<span class="type-name">Data</span> a<span class="symbol">,</span> <span class="type-name">Data</span> b]
   inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Right</span> x
   project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Left</span>  x <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
