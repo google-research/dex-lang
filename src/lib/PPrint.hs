@@ -258,7 +258,7 @@ instance Pretty (DictType n) where
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where
   prettyPrec (DepPairType b rhs) =
-    atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
+    atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <> nest 2 (line <> p rhs)
 
 instance Pretty (EffectOpType n) where
   pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
