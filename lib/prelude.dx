@@ -749,7 +749,7 @@ def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
   f' : (Unit -> {IO|eff} a) = \_. f ()
   %runIO f'
 
-def unreachable {a} (():Unit) : a = unsafe_io do
+def unreachable {a} [Data a] (():Unit) : a = unsafe_io do
   %throwError a
 
 '## Type classes
@@ -1886,11 +1886,11 @@ Not to be confused with a partially applied function
 '### Error throwing
 
 @noinline
-def error {a} (s:String) : a = unsafe_io do
+def error {a} [Data a] (s:String) : a = unsafe_io do
   print s
   %throwError a
 
-def todo {a} : a = error "TODO: implement it!"
+def todo {a} [Data a] : a = error "TODO: implement it!"
 
 '### File Operations
 
@@ -1899,7 +1899,7 @@ def delete_file (f:FilePath) : {IO} Unit =
     removeFFI ptr
   ()
 
-def with_file {a}
+def with_file {a} [Data a]
       (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
       : {IO} a =
@@ -1965,7 +1965,7 @@ def to_ix (n:Type) [Ix n] (i:Nat) : Maybe n =
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
-def cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
+def cast_table {n a} (m:Type) [Ix m, Data a] (xs:n=>a) : m=>a =
   case size m == size n of
      True  -> unsafe_cast_table _ xs
      False -> error $
@@ -2369,7 +2369,7 @@ def concat {n a} (lists:n=>(List a)) : List a =
       eltIdx := eltIdxVal + 1
       xs.(eltIdxVal@_)
 
-def cat_maybes {a n} (xs:n=>Maybe a) : List a =
+def cat_maybes {a n} [Data a] (xs:n=>Maybe a) : List a =
   (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
     for i. case xs.i of
       Just _ ->
@@ -2384,10 +2384,10 @@ def cat_maybes {a n} (xs:n=>Maybe a) : List a =
         Nothing -> todo -- Impossible
       Nothing -> todo -- Impossible
 
-def filter {a n} [Ix n] (condition:a->Bool) (xs:n=>a) : List a =
+def filter {a n} [Ix n, Data a] (condition:a->Bool) (xs:n=>a) : List a =
   cat_maybes $ for i. if condition xs.i then Just xs.i else Nothing
 
-def arg_filter {a n} [Ix n] (condition:a->Bool) (xs:n=>a) : List n =
+def arg_filter {a n} [Ix n, Data a] (condition:a->Bool) (xs:n=>a) : List n =
   cat_maybes $ for i. if condition xs.i then Just i else Nothing
 
 -- TODO: use `ix_offset : [Ix n] -> n -> Int -> Maybe n` instead
@@ -2477,7 +2477,7 @@ def assert (b:Bool) : {Except} Unit =
 
 '### Misc instances that require `error`
 
-instance Subset a (a|b) given {a b}
+instance Subset a (a|b) given {a b} [Data a, Data b]
   inject' = \x. Left x
   project' = \x. case x of
     Left  y -> Just y
@@ -2486,7 +2486,7 @@ instance Subset a (a|b) given {a b}
     Left  x -> x
     Right x -> error "Can't project Right branch to Left branch"
 
-instance Subset a (b|a) given {a b}
+instance Subset a (b|a) given {a b} [Data a, Data b]
   inject' = \x. Right x
   project' = \x. case x of
     Left  x -> Nothing

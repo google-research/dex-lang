@@ -305,17 +305,17 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 --   (a, b, c, d)
 -- > (0, (0, (0, 0)))
 
-def bug (n : Type) : Unit =
+def bug (n : Type) [Data n]: Unit =
   for w':n.
     w : n = todo
     for i:(w..). ()
   ()
-> Leaked local variables:[v#0]
+> Leaked local variables:[v#1]
 > Block:
->  v#0:n = todo n
->  v#1:((v#0..) => Unit) = for i:(v#0..). ()
->  v#1
-> Of type: ((v#0..) => Unit)
+>  v#1:n = todo n (synthesize (Data n))
+>  v#2:((v#1..) => Unit) = for i:(v#1..). ()
+>  v#2
+> Of type: ((v#1..) => Unit)
 > With effects: {}
 >
 >   for w':n.

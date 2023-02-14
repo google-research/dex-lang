@@ -3071,7 +3071,9 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
       return $ lamExprToAtom lamExpr arr Nothing
   SynthDictType dictTy -> case dictTy of
     DictType "Ix" _ [NewtypeTyCon (Fin n)] -> return $ DictCon $ IxFin n
-    DictType "Data" _ _ -> synthDictForData dictTy <!> synthDictFromGiven dictTy
+    DictType "Data" _ [t] -> do
+      void (synthDictForData dictTy <!> synthDictFromGiven dictTy)
+      return $ DictCon $ DataData t
     _ -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
 {-# SCC synthTerm #-}
 
