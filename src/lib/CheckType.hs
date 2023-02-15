@@ -8,9 +8,8 @@ module CheckType (
   CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM, checkHasType,
   checkExtends, checkedApplyClassParams,
-  tryGetType,
-  checkUnOp, checkBinOp,
-  isData, asFirstOrderFunction, asSpecializableFunction, asFFIFunType,
+  tryGetType, checkUnOp, checkBinOp,
+  isData, asFirstOrderFunction, asFFIFunType,
   asNaryPiType
   ) where
 
@@ -1127,30 +1126,6 @@ checkScalarOrPairType (PairTy a b) = do
   return $ tys1 ++ tys2
 checkScalarOrPairType (BaseTy ty) = return [ty]
 checkScalarOrPairType ty = throw TypeErr $ pprint ty
-
--- TODO: consider effects
--- TODO: check that the remaining args and result are "data"
--- TODO: determine the static args lazily, at the use sites
-asSpecializableFunction :: EnvReader m => CType n -> m n (Maybe (Int, [Arrow], NaryPiType CoreIR n))
-asSpecializableFunction ty =
-  case asNaryPiType ty of
-    Just (arrs, piTy@(NaryPiType bs _ _)) -> do
-      let n = numStaticArgs bs
-      return $ Just (n, arrs, piTy)
-    Nothing -> return Nothing
-  where
-    numStaticArgs :: Nest (Binder CoreIR) n l -> Int
-    numStaticArgs Empty = 0
-    numStaticArgs (Nest b rest) =
-      if isStaticArg b
-        then 1 + numStaticArgs rest
-        else 0
-
-    isStaticArg :: Binder CoreIR n l -> Bool
-    isStaticArg b = case binderType b of
-      TyKind   -> True
-      DictTy _ -> True
-      _        -> False
 
 -- TODO: consider effects
 asFirstOrderFunction :: EnvReader m => Type CoreIR n -> m n (Maybe ([Arrow], NaryPiType CoreIR n))

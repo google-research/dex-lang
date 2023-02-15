@@ -612,7 +612,6 @@ instance SubstB AtomSubstVal RolePiBinder
 instance IRRep r => SubstE AtomSubstVal (TabPiType r)
 instance IRRep r => SubstE AtomSubstVal (NaryPiType r)
 instance IRRep r => SubstE AtomSubstVal (DepPairType r)
-instance SubstE AtomSubstVal NoInlineDef
 instance SubstE AtomSubstVal SolverBinding
 instance IRRep r => SubstE AtomSubstVal (DeclBinding r)
 instance IRRep r => SubstB AtomSubstVal (Decl r)

@@ -42,8 +42,7 @@ import qualified LLVM.AST
 
 import AbstractSyntax
 import Builder
-import CheckType ( CheckableE (..), asFFIFunType, checkHasType
-                 , asSpecializableFunction, checkExtends)
+import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -295,7 +294,7 @@ evalSourceBlock' mname block = case sbContents block of
           Just _  -> throw TypeErr
             $ pprint fname ++ " already has a custom linearization"
         lookupAtomName fname' >>= \case
-          NoinlineFun _ -> return ()
+          NoinlineFun _ _ -> return ()
           _ -> throw TypeErr "Custom linearizations only apply to @noinline functions"
         -- We do some special casing to avoid instantiating polymorphic functions.
         impl <- case expr of
@@ -604,13 +603,9 @@ execUDecl mname decl = do
       result <- evalBlock block
       case ann of
         NoInlineLet -> do
-          ty <- getType result
-          asSpecializableFunction ty >>= \case
-            Nothing -> throw TypeErr $ "Not a valid @noinline function type: " ++ pprint ty
-            Just (numReqArgs, arrs, naryTy) -> do
-              f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun $
-                     NoInlineDef numReqArgs arrs naryTy ty result
-              applyRename (b@>f) sm >>= emitSourceMap
+          fTy <- getType result
+          f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
+          applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
           v <- emitTopLet (getNameHint b) ann (Atom result)
           applyRename (b@>v) sm >>= emitSourceMap

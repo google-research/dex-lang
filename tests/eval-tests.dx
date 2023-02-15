@@ -873,6 +873,16 @@ def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
 @noinline
 def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
+
+-- regression test for #1229 - checks that constraints and data args can be interleaved
+@noinline
+def interleave_args {n} (x:Float) (xs:n=>Float) : Float =
+  x + sum xs
+
+interleave_args 1.0 [2.0, 3.0]
+> 6.
+
+
 -- This will compile extremely slowly if non-inlining is broken
 :p f6 0
 > 100000

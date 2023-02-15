@@ -425,7 +425,7 @@ zonkAtomBindingWithOutMap outMap = \case
  PiBound     e -> PiBound     $ zonkWithOutMap outMap e
  MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
  SolverBound e -> SolverBound $ zonkWithOutMap outMap e
- NoinlineFun e   -> NoinlineFun (zonkWithOutMap outMap e)
+ NoinlineFun t e -> NoinlineFun (zonkWithOutMap outMap t) (zonkWithOutMap outMap e)
  FFIFunBound x y -> FFIFunBound (zonkWithOutMap outMap x) (zonkWithOutMap outMap y)
 
 -- TODO: Wouldn't it be faster to carry the set of inference-emitted names in the out map?

@@ -8,6 +8,7 @@ module Generalize (generalizeArgs, generalizeIxDict) where
 
 import Control.Monad
 
+import CheckType (isData)
 import Core
 import Err
 import Types.Core
@@ -29,26 +30,29 @@ generalizeIxDict dict = liftGeneralizerM do
   return dictGeneralized
 {-# INLINE generalizeIxDict #-}
 
-generalizeArgs ::EnvReader m => [Arrow] -> Nest (Binder CoreIR) n l -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
-generalizeArgs arrowsTop reqTys allArgs = liftGeneralizerM $ runSubstReaderT idSubst do
-  PairE (Abs reqTys' UnitE) (ListE allArgs') <- sinkM $ PairE (Abs reqTys UnitE) (ListE allArgs)
-  ListE <$> go arrowsTop reqTys' allArgs'
+generalizeArgs ::EnvReader m => CType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
+generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
+  PairE fTy' (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
+  ListE <$> go fTy' argsTop'
   where
-    go :: [Arrow] -> Nest (Binder CoreIR) i i' -> [Atom CoreIR n]
+    go :: CType i -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go [] Empty [] = return []
-    go (arr:arrs) (Nest (b:>ty) bs) (arg:args) = do
+    go (Pi (PiType (PiBinder b ty arr) _ resultTy)) (arg:args) = do
       ty' <- substM ty
       arg' <- case ty' of
-        TyKind   -> liftSubstReaderT $ generalizeType arg
+        TyKind -> liftSubstReaderT $ generalizeType arg
         DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
-        -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
-        -- non-type, non-dict arguments (e.g. a function). We just don't
-        -- generalize in that case.
-        _ -> return arg
-      args'' <- extendSubst (b@>SubstVal arg') $ go arrs bs args
+        _ -> isData ty' >>= \case
+          True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
+          False -> do
+            -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+            -- non-type, non-dict arguments (e.g. a function). We just don't
+            -- generalize in that case.
+            return arg
+      args'' <- extendSubst (b@>SubstVal arg') $ go resultTy args
       return $ arg' : args''
-    go _ _ _ = error "zip error"
+    go _ [] = return []
+    go _ _ = error "zip error"
 {-# INLINE generalizeArgs #-}
 
 -- === generalizer monad plumbing ===

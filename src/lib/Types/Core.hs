@@ -728,7 +728,7 @@ data AtomBinding (r::IR) (n::S) where
  LamBound     :: LamBinding  n     -> AtomBinding CoreIR n
  PiBound      :: PiBinding   n     -> AtomBinding CoreIR n
  SolverBound  :: SolverBinding n   -> AtomBinding CoreIR n
- NoinlineFun  :: NoInlineDef n     -> AtomBinding CoreIR n
+ NoinlineFun  :: CType n -> CAtom n -> AtomBinding CoreIR n
  FFIFunBound  :: NaryPiType CoreIR n -> TopFunName n -> AtomBinding CoreIR n
 
 deriving instance IRRep r => Show (AtomBinding r n)
@@ -742,12 +742,9 @@ atomBindingType b = case b of
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
-  NoinlineFun (NoInlineDef _ _ _ ty _) -> ty
+  NoinlineFun ty _                 -> ty
   TopDataBound (RepVal ty _) -> ty
   FFIFunBound piTy _ -> naryPiTypeAsType piTy
-
-data NoInlineDef n = NoInlineDef Int [Arrow] (NaryPiType CoreIR n) (CType n) (CAtom n)
-     deriving (Show, Generic)
 
 -- TODO: Move this to Inference!
 data SolverBinding (n::S) =
@@ -889,7 +886,7 @@ data SpecializedDictDef n =
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-   AppSpecialization (AtomName CoreIR n) (Abstracted CoreIR (ListE CType) n)
+   AppSpecialization (AtomName CoreIR n) (Abstracted CoreIR (ListE CAtom) n)
    deriving (Show, Generic)
 
 type Active = Bool
@@ -2147,7 +2144,7 @@ instance IRRep r => GenericE (AtomBinding r) where
                           (Type          r)  -- MiscBound
       (WhenCore r SolverBinding)             -- SolverBound
      ) (EitherE3
-      (WhenCore r NoInlineDef)                       -- NoinlineFun
+      (WhenCore r (PairE CType CAtom))               -- NoinlineFun
       (WhenSimp r (RepVal SimpIR))                   -- TopDataBound
       (WhenCore r (NaryPiType r `PairE` TopFunName)) -- FFIFunBound
      )
@@ -2158,7 +2155,7 @@ instance IRRep r => GenericE (AtomBinding r) where
     PiBound     x -> Case0 $ Case2 $ WhenIRE x
     MiscBound   x -> Case0 $ Case3 x
     SolverBound x -> Case0 $ Case4 $ WhenIRE x
-    NoinlineFun x -> Case1 $ Case0 $ WhenIRE x
+    NoinlineFun t x -> Case1 $ Case0 $ WhenIRE $ PairE t x
     TopDataBound repVal -> Case1 $ Case1 $ WhenIRE repVal
     FFIFunBound ty v    -> Case1 $ Case2 $ WhenIRE $ ty `PairE` v
   {-# INLINE fromE #-}
@@ -2172,7 +2169,7 @@ instance IRRep r => GenericE (AtomBinding r) where
       Case4 (WhenIRE x) -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
-      Case0 (WhenIRE x) -> NoinlineFun x
+      Case0 (WhenIRE (PairE t x)) -> NoinlineFun t x
       Case1 (WhenIRE repVal)                         -> TopDataBound repVal
       Case2 (WhenIRE (ty `PairE` v))                 -> FFIFunBound ty v
       _ -> error "impossible"
@@ -2185,19 +2182,6 @@ instance IRRep r => HoistableE  (AtomBinding r)
 instance IRRep r => RenameE     (AtomBinding r)
 instance IRRep r => AlphaEqE       (AtomBinding r)
 instance IRRep r => AlphaHashableE (AtomBinding r)
-
-instance GenericE NoInlineDef where
-  type RepE NoInlineDef = LiftE (Int, [Arrow]) `PairE` NaryPiType CoreIR `PairE` Type CoreIR `PairE` Atom CoreIR
-  fromE (NoInlineDef n arr ty ty' x) = LiftE (n,arr) `PairE` ty `PairE` ty' `PairE` x
-  {-# INLINE fromE #-}
-  toE   (LiftE (n,arr) `PairE` ty `PairE` ty' `PairE` x) = NoInlineDef n arr ty ty' x
-  {-# INLINE toE #-}
-
-instance SinkableE      NoInlineDef
-instance HoistableE     NoInlineDef
-instance RenameE        NoInlineDef
-instance AlphaEqE       NoInlineDef
-instance AlphaHashableE NoInlineDef
 
 instance GenericE TopFunDef where
   type RepE TopFunDef = EitherE3 SpecializationSpec LinearizationSpec LinearizationSpec
@@ -2737,7 +2721,6 @@ instance Store a => Store (EvalStatus a)
 instance Store (TopFun n)
 instance Store (TopFunDef n)
 instance Color c => Store (Binding c n)
-instance Store (NoInlineDef n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance Store (ann n) => Store (NonDepNest r ann n l)

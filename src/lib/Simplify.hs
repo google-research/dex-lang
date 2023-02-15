@@ -8,7 +8,7 @@
 
 module Simplify
   ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..), ReconstructAtom (..), applyReconTop,
-    emitSpecialization, linearizeTopFun) where
+    linearizeTopFun) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -37,7 +37,7 @@ import RuntimePrint
 import Transpose
 import Types.Core
 import Types.Primitives
-import Util (enumerate, foldMapM, restructure, splitAtExact, bindM2, toSnocList)
+import Util (enumerate, foldMapM, restructure, bindM2, toSnocList)
 
 -- === Simplification ===
 
@@ -489,7 +489,7 @@ simplifyApp hint f xs =  case f of
             liftSimpAtom resultTy' =<< emitBlock body'
       Var v -> do
         lookupAtomName v >>= \case
-          NoinlineFun noInlineDef -> simplifyTopFunApp v noInlineDef (toList xs)
+          NoinlineFun _ _ -> simplifyTopFunApp v (toList xs)
           FFIFunBound _ f' -> do
             fTy <- getType $ Var v
             resultTy <- getAppType fTy (toList xs)
@@ -519,65 +519,51 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
         LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtomAndInline x
         _ -> return $ Var v
 
-simplifyTopFunApp :: Emits n => CAtomName n -> NoInlineDef n -> [CAtom n] -> SimplifyM i n (CAtom n)
-simplifyTopFunApp v def xs = do
-  NoInlineDef numSpecializationArgs _ piTy _ _ <- return def
-  withSaturatingArgs piTy xs \xs' -> do
-    case splitAtExact numSpecializationArgs (toList xs') of
-      Just (specializationArgs, runtimeArgs) -> do
-        (spec, extraArgs) <- determineSpecializationSpec (sink v) specializationArgs
-        ab <- getSpecializedFunction spec
-        Just specializedFunction <- emitHoistedEnv ab
-        allArgs <- mapM toDataAtomIgnoreRecon (extraArgs ++ runtimeArgs)
-        naryTopApp specializedFunction allArgs
-      Nothing -> error $ "Specialization of " ++ pprint v ++
-        " requires saturated application of specialization args."
+simplifyTopFunApp :: Emits n => CAtomName n -> [CAtom n] -> SimplifyM i n (CAtom n)
+simplifyTopFunApp fName xs = do
+  fTy <- getType $ Var fName
+  resultTy <- getAppType fTy xs
+  case resultTy of
+    Pi piTy ->
+      -- we don't have enough arguments yet, so we eta expand and wait for more
+      etaExpand piTy \trailingArgs ->
+        naryApp (Var $ sink fName) (sinkList xs ++ trailingArgs)
+    _ -> isData resultTy >>= \case
+      True -> do
+        (xsGeneralized, runtimeArgs) <- generalizeArgs fTy xs
+        let spec = AppSpecialization fName xsGeneralized
+        Just specializedFunction <- getSpecializedFunction spec >>= emitHoistedEnv
+        runtimeArgs' <- mapM toDataAtomIgnoreRecon runtimeArgs
+        liftSimpAtom resultTy =<< naryTopApp specializedFunction runtimeArgs'
+      False ->
+        -- TODO: we should probably just fall back to inlining in this case,
+        -- especially if we want make everything @noinline by default.
+        error $ "can't specialize " ++ pprint fName ++ " " ++ pprint xs
 
--- supplies enough args to saturate application, eta-expanding as needed
-withSaturatingArgs
-  :: Emits n => NaryPiType CoreIR n -> [CAtom n]
-  -> (forall l. (Emits l, DExt n l) => [CAtom l] -> SimplifyM i l (SAtom l))
-  -> SimplifyM i n (CAtom n)
-withSaturatingArgs piTy xs contTop = do
-  piTy'@(NaryPiType bsRest _ resultTy) <- instantiateNaryPi piTy xs
-  case bsRest of
-    Empty -> do
-      Distinct <- getDistinct
-      liftSimpAtom resultTy =<< contTop xs
-    _ -> do
-      lam <- go bsRest \xsRest -> contTop $ sinkList xs ++ xsRest
-      liftSimpFun (naryPiTypeAsType piTy') lam
+etaExpand :: EnvReader m
+          => PiType n
+          -> (forall l. (Emits l, DExt n l) => [CAtom l] -> BuilderM CoreIR l (CAtom l))
+          -> m n (CAtom n)
+etaExpand piTy contTop = liftBuilder $
+  -- shouldn't have decls at the top level because we expect at least one lambda wrapper
+  buildScopedAssumeNoDecls $ go (Pi $ sink piTy) contTop
   where
-    go :: Nest CBinder n any
-       -> (forall l. (Emits l, DExt n l) => [CAtom l] -> SimplifyM i l (SAtom l))
-       -> SimplifyM i n (SLam n)
-    go Empty cont = do
-      block <- buildBlock $ cont []
-      return $ LamExpr Empty block
-    go (Nest (b:>cTy) bs) cont = do
-      sTy <- getRepType cTy
-      withFreshBinder (getNameHint b) sTy \b' -> do
-        x' <- liftSimpAtom (sink cTy) (Var $ binderName b')
-        Abs bs' UnitE <- applySubst (b@>SubstVal x') (Abs bs UnitE)
-        LamExpr bs'' body <- go bs' \xs' -> cont $ sink x' : xs'
-        return $ LamExpr (Nest b' bs'') body
-
-determineSpecializationSpec
-  :: EnvReader m => AtomName CoreIR n -> [CAtom n] -> m n (SpecializationSpec n, [CAtom n])
-determineSpecializationSpec fname staticArgs = do
-  lookupAtomName fname >>= \case
-    NoinlineFun (NoInlineDef _ arrs (NaryPiType bs _ _) _ _) -> do
-      (PairB staticArgBinders _) <- return $ splitNestAt (length staticArgs) bs
-      let staticArrs = take (length staticArgs) arrs
-      (ab, extraArgs) <- generalizeArgs staticArrs staticArgBinders staticArgs
-      return (AppSpecialization fname ab, extraArgs)
-    _ -> error "should only be specializing top functions"
+    go :: Emits n => Type CoreIR n
+       -> (forall l. (Emits l, DExt n l) => [CAtom l] -> BuilderM CoreIR l (CAtom l))
+       -> BuilderM CoreIR n (CAtom n)
+    go (Pi (PiType (PiBinder b argTy arr) effs resultTy)) cont =
+      buildLamGeneral noHint arr argTy
+        (\arg -> applyRename (b@>arg) effs)
+        (\arg -> do
+            resultTy' <- applyRename (b@>arg) resultTy
+            go resultTy' \args -> cont ((sink $ Var arg) : args))
+    go _ cont = getDistinct >>= \Distinct -> cont []
 
 getSpecializedFunction :: EnvReader m => SpecializationSpec n -> m n (Abs TopEnvFrag TopFunName n)
 getSpecializedFunction s = do
   querySpecializationCache s >>= \case
     Just name -> return $ Abs emptyOutFrag name
-    _ -> liftTopBuilderHoisted $ emitSpecialization (sink s)
+    Nothing -> liftTopBuilderHoisted $ emitSpecialization (sink s)
 
 emitSpecialization :: (Mut n, TopBuilder m) => SpecializationSpec n -> m n (TopFunName n)
 emitSpecialization s = do
@@ -589,31 +575,14 @@ emitSpecialization s = do
   return name
 
 specializedFunCoreDefinition :: (Mut n, TopBuilder m) => SpecializationSpec n -> m n (LamExpr CoreIR n)
-specializedFunCoreDefinition s@(AppSpecialization f (Abs bs staticArgs)) = do
-  ty <- specializedFunCoreTypeTop s
-  liftBuilder $ buildNaryLamExprFromPi ty \allArgs -> do
-    -- This is needed to avoid an infinite loop. Otherwise, in simplifyTopFunction,
+specializedFunCoreDefinition (AppSpecialization f (Abs bs staticArgs)) = do
+  liftBuilder $ buildNaryLamExpr (EmptyAbs bs) \runtimeArgs -> do
+    -- This avoids an infinite loop. Otherwise, in simplifyTopFunction,
     -- where we eta-expand and try to simplify `App f args`, we would see `f` as a
     -- "noinline" function and defer its simplification.
-    NoinlineFun (NoInlineDef _ _ _ _ f') <- lookupAtomName (sink f)
-    let (extraArgs, originalArgs) = splitAt (nestLength bs) (toList allArgs)
-    ListE staticArgs' <- applyRename (bs@@>extraArgs) staticArgs
-    naryApp (sink f') $ staticArgs' <> map Var originalArgs
-
-specializedFunCoreTypeTop
-  :: (Mut n, TopBuilder m)
-  => SpecializationSpec n -> m n (NaryPiType CoreIR n)
-specializedFunCoreTypeTop spec = liftSimplifyM $ specializedFunCoreType $ sink spec
-
-specializedFunCoreType :: SpecializationSpec n -> SimplifyM i n (NaryPiType CoreIR n)
-specializedFunCoreType (AppSpecialization f ab) = do
-  refreshAbs ab \extraArgBs (ListE staticArgs) -> do
-    lookupAtomName (sink f) >>= \case
-      NoinlineFun (NoInlineDef _ _ fTy _ _) -> do
-        NaryPiType dynArgBs effs resultTy <- instantiateNaryPi fTy staticArgs
-        let allBs = extraArgBs >>> dynArgBs
-        return $ NaryPiType allBs effs resultTy
-      _ -> error "should only be specializing top-level functions"
+    NoinlineFun _ f' <- lookupAtomName (sink f)
+    ListE staticArgs' <- applyRename (bs@@>runtimeArgs) staticArgs
+    naryApp f' staticArgs'
 
 simplifyTabApp :: forall i o. Emits o
   => CAtom o -> [CAtom o] -> SimplifyM i o (CAtom o)
@@ -1087,23 +1056,19 @@ type Linearized = Abs (Nest SBinder)    -- primal args
 simplifyCustomLinearization
   :: Abstracted CoreIR (ListE CType) n -> [Active] -> AtomRules n
   -> SimplifyM i n (PairE SLam SLam n)
-simplifyCustomLinearization (Abs genBs params) actives rule = do
-  let actives' = drop (nestLength genBs) actives
+simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
   CustomLinearize nImplicit nExplicit zeros fCustom <- return rule
-  defuncLinearized =<< withSimplifiedBinders genBs \genBs' genArgs -> do
-    ListE params' <- applySubst (genBs @@> (SubstVal <$> genArgs)) params
-    Just customRuleTy <- fromNaryPiType (nImplicit + nExplicit) <$> getType (sink fCustom)
-    NaryPiType primalBs _ _ <- instantiateNaryPi customRuleTy params'
-    withSimplifiedBinders primalBs \primalBs' primalArgs -> do
-      ListE params'' <- sinkM $ ListE params'
-      let allArgs = params'' ++ primalArgs
-      scoped <- buildScoped do
+  defuncLinearized =<< withSimplifiedBinders runtimeBs \runtimeBs' runtimeArgs -> do
+      Abs runtimeBs' <$> buildScoped do
+        ListE staticArgs' <- applySubst (runtimeBs @@> (SubstVal . sink <$> runtimeArgs)) staticArgs
         fCustom' <- sinkM fCustom
-        pairResult <- dropSubst $ simplifyPossiblyNullaryApp noHint fCustom' (sinkList allArgs)
+        pairResult <- dropSubst $ simplifyPossiblyNullaryApp noHint fCustom' staticArgs'
         (primalResult, fLin) <- fromPair pairResult
         primalResult' <- toDataAtomIgnoreRecon primalResult
-        allTangentTys <- forM (sinkList primalArgs) \primalArg -> do
+        let explicitPrimalArgs = drop nImplicit staticArgs'
+        allTangentTys <- forM explicitPrimalArgs \primalArg -> do
           tangentType =<< getRepType =<< getType primalArg
+        let actives' = drop (length actives - nExplicit) actives
         activeTangentTys <- catMaybes <$> forM (zip allTangentTys actives')
           \(t, active) -> return case active of True  -> Just t; False -> Nothing
         fLin' <- buildUnaryLamExpr "t" (ProdTy activeTangentTys) \activeTangentArg -> do
@@ -1122,7 +1087,6 @@ simplifyCustomLinearization (Abs genBs params) actives rule = do
           tangentResult <- dropSubst $ simplifyPossiblyNullaryApp noHint fLin' tangentArgs'
           toDataAtomIgnoreRecon tangentResult
         return $ PairE primalResult' fLin'
-      return $ Abs (genBs' >>> primalBs') scoped
   where
     buildTangentArgs :: Emits n => SymbolicZeros -> [(SType n, Active)] -> [SAtom n] -> SimplifyM i n [SAtom n]
     buildTangentArgs _ [] [] = return []
