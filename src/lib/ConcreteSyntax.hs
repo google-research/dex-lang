@@ -392,11 +392,12 @@ interfaceDef = withSrc do
   keyWord InterfaceKW
   superclasses <- superclassConstraints
   className <- nameAndArgs
-  methodDecls <- try (onePerLine do
-    methodName <- cNames
-    void $ label "type annotation" $ sym ":"
-    ty <- cGroup
-    return (methodName, ty)) <|> (return [])
+  methodDecls <- try (withIndent (keyWord PassKW) >> return [])
+    <|> onePerLine do
+      methodName <- cNames
+      void $ label "type annotation" $ sym ":"
+      ty <- cGroup
+      return (methodName, ty)
   return $ CInterface superclasses className methodDecls
 
 superclassConstraints :: Parser [Group]
@@ -461,7 +462,7 @@ topLet = withSrc do
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
-             <|> (withIndent $ mayNotBreak $ p `sepBy1` (try nextLine))
+             <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
 {-# INLINE onePerLine #-}
 
 -- === Groups ===
@@ -491,7 +492,8 @@ instanceDef isNamed = withSrc $ do
     True  -> keyWord NamedInstanceKW *> (Just . fromString <$> anyName) <* sym ":"
   header <- cGroup
   givens <- optional (keyWord GivenKW >> cGroup)
-  methods <- try (onePerLine instanceMethod) <|> (return [])
+  methods <- try (withIndent (keyWord PassKW) >> return []) <|>
+             (onePerLine instanceMethod)
   return $ CInstance header (fromMaybe (WithSrc Nothing CEmpty) givens) methods name
 
 instanceMethod :: Parser (SourceName, CBlock)
