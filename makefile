@@ -280,7 +280,7 @@ dither-data: $(dither-data)
 run-examples/dither: dither-data
 update-examples/dither: dither-data
 
-tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests doc-format-test
+tests: opt-tests unit-tests lower-tests quine-tests repl-test module-tests doc-format-test file-check-tests
 
 # Keep the unit tests in their own working directory too, due to
 # https://github.com/commercialhaskell/stack/issues/4977
@@ -301,6 +301,9 @@ doc-format-test: $(doc-files) $(example-files) $(lib-files)
 	python3 misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > /dev/null
 
 quine-tests: $(quine-test-targets)
+
+file-check-tests: just-build
+	misc/file-check tests/instance-interface-syntax-tests.dx $(dex) -O script
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t

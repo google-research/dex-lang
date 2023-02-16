@@ -75,7 +75,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | IfKW | ThenKW | ElseKW | DoKW
              | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
-             | CustomLinearizationKW | CustomLinearizationSymbolicKW
+             | CustomLinearizationKW | CustomLinearizationSymbolicKW | PassKW
   deriving (Enum)
 
 keyWordToken :: KeyWord -> String
@@ -106,6 +106,7 @@ keyWordToken = \case
   ResumeKW        -> "resume"
   CustomLinearizationKW -> "custom-linearization"
   CustomLinearizationSymbolicKW -> "custom-linearization-symbolic"
+  PassKW          -> "pass"
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string (fromString $ keyWordToken kw)
@@ -115,7 +116,7 @@ keyWordSet :: HS.HashSet String
 keyWordSet = HS.fromList keyWordStrs
 
 keyWordStrs :: [String]
-keyWordStrs = map keyWordToken [DefKW .. CustomLinearizationSymbolicKW]
+keyWordStrs = map keyWordToken [DefKW .. PassKW]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $
