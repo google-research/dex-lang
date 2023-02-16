@@ -679,7 +679,7 @@ temptab
 
 shoes = (5 @ Class)
 
-def findShoes {a b} (x : a=>b) (y : a=>Class) : List b =
+def findShoes {a b} [Data b] (x : a=>b) (y : a=>Class) : List b =
   concat for i. case (y.i == (5 @ _)) of
     True  -> to_list [x.i]
     False -> to_list []

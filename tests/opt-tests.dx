@@ -8,8 +8,10 @@ def id' (x:Int) : Int = x
 :pp
   x = id' 1
   5 + 1
+-- First Result is from optimizing id'
 -- CHECK: === Result ===
--- CHECK-NEXT: 6
+-- CHECK: === Result ===
+-- CHECK-NEXT: 0x6
 
 def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + off)
 
@@ -48,8 +50,8 @@ _ = for i:(Fin 50). [ordinal i, 2, 3]
   [x0, x1, x2] = arange_f 2
   (x0, x2)
 -- CHECK: === Result ===
--- CHECK: [[x0:.*]]:Int32 = id{{.*}} 2
--- CHECK-NEXT: [[x2:.*]]:Int32 = id{{.*}} 4
+-- CHECK: [[x0:[^ ]*]]:Int32 = id{{.*}} 2
+-- CHECK-NEXT: [[x2:[^ ]*]]:Int32 = id{{.*}} 4
 -- CHECK-NEXT: ([[x0]], [[x2]])
 
 "don't unroll large table literals"
@@ -57,17 +59,17 @@ _ = for i:(Fin 50). [ordinal i, 2, 3]
 
 %passes opt
 x = for i:(Fin 4). [0, 0, 0, ordinal i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
--- CHECK: [ 0
--- CHECK: , 0 ]
--- CHECK-NOT: [0
+-- CHECK: [ 0x0
+-- CHECK: , 0x0 ]
+-- CHECK-NOT: [0x0
 
 "no excessive nested unrolling"
 -- CHECK-LABEL: no excessive nested unrolling
 
 %passes opt
 _ = for i:(Fin 20) j:(Fin 4). ordinal j
--- CHECK: [0, 1, 2, 3]
--- CHECK-NOT: [0, 1, 2, 3]
+-- CHECK: [0x0, 0x1, 0x2, 0x3]
+-- CHECK-NOT: [0x0, 0x1, 0x2, 0x3]
 
 "no excessive atom body unrolling"
 -- CHECK-LABEL: no excessive atom body unrolling
@@ -94,7 +96,7 @@ _ = for i:(Fin 10).
 -- not in the j loop
 -- CHECK: [[n:v#[0-9]+]]:Word32 = %iadd {{.*}} 0x2
 -- CHECK-NOT: seq
--- CHECK: alloc {{.*}}Fin{{.*}}[[n]]
+-- CHECK: alloc {{.*}}RawFin{{.*}}[[n]]
 -- CHECK: seq
 -- CHECK: seq
 
@@ -104,7 +106,7 @@ _ = for i:(Fin 10).
 %passes opt
 _ = for i:(Fin 20) j:(Fin 4). ordinal j
 -- CHECK-NOT: for
--- CHECK: [[x:v#[0-9]+]]:{{.*}} = [0, 1, 2, 3]
+-- CHECK: [[x:v#[0-9]+]]:{{.*}} = [0x0, 0x1, 0x2, 0x3]
 -- CHECK: for {{.*}}:{{.*}}. [[x]]
 
 -- === Peephole optimization ===
@@ -114,22 +116,14 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 
 %passes opt
 :pp (2 > 1 || 4 < 5) && 6 == 6
--- CHECK: (1| () |)@(Bool)
-
--- Testing user name preservation
-
-%passes simp
-:pp
-  unmistakable_name = for i:(Fin 10). 2 * ordinal i
-  for j. unmistakable_name.j
--- CHECK: unmista
+-- CHECK: (1| () |)
 
 "vectorization"
 -- CHECK-LABEL: vectorization
 
 %passes vect
 _ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
--- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 16 &
+-- CHECK: seq (RawFin 0x10)
 -- CHECK: [[i0:v#[0-9]+]]:<16xInt32> = vbroadcast
 -- CHECK: [[i1:v#[0-9]+]]:<16xInt32> = viota
 -- CHECK: [[i2:v#[0-9]+]]:<16xInt32> = %iadd [[i0]] [[i1]]
@@ -138,7 +132,7 @@ _ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
 
 %passes vect
 _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
--- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 16 &
+-- CHECK: seq (RawFin 0x10)
 -- CHECK: [[i0:v#[0-9]+]]:<16xFloat32> = vbroadcast
 -- CHECK: [[i1:v#[0-9]+]]:<16xFloat32> = viota
 -- CHECK: [[i2:v#[0-9]+]]:<16xFloat32> = %fadd [[i0]] [[i1]]
@@ -147,7 +141,7 @@ _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
 
 %passes vect
 _ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
--- CHECK: seq {{.*}} {{v#[0-9]+}}:(Fin 32 &
+-- CHECK: seq (RawFin 0x20)
 -- CHECK: [[i0:v#[0-9]+]]:<8xFloat64> = vbroadcast
 -- CHECK: [[i1:v#[0-9]+]]:<8xFloat64> = viota
 -- CHECK: [[i2:v#[0-9]+]]:<8xFloat64> = %fadd [[i0]] [[i1]]

@@ -114,14 +114,14 @@ myPair = (1, 2.3)
 > []
 
 :p
-  x : (Fin 2 & Fin 2) => Int = [1, 2, 3, 4]
+  x : (Fin 2 & Fin 2) => Int = coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
   x
 > [1, 2, 3, 4]
 
 :p [] :: (Fin 0 => Int)
 > []
 
-:p [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
+:p coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
 > [1, 2, 3, 4]
 
 
@@ -289,14 +289,14 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 
 -- Can only unpack tables indexed by `Fin n`
 :p
-  [a, b, c, d] = [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
+  [a, b, c, d] = coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
   (a, b, c, d)
 > Type error:
-> Expected: ((Fin 2 & Fin 2) => Int32)
->   Actual: ((Fin 4) => a)
-> (Solving for: [a])
+> Expected: ((Fin 2 & Fin 2) => a)
+>   Actual: ((Fin 4) => b)
+> (Solving for: [a, b])
 >
->   [a, b, c, d] = [1, 2, 3, 4] :: ((Fin 2 & Fin 2) => Int)
+>   [a, b, c, d] = coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
 >   ^^^^^^^^^^^^^
 
 -- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
@@ -305,17 +305,17 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 --   (a, b, c, d)
 -- > (0, (0, (0, 0)))
 
-def bug (n : Type) : Unit =
+def bug (n : Type) [Data n]: Unit =
   for w':n.
     w : n = todo
     for i:(w..). ()
   ()
-> Leaked local variables:[v#0]
+> Leaked local variables:[v#1]
 > Block:
->  v#0:n = todo n
->  v#1:((v#0..) => Unit) = for i:(v#0..). ()
->  v#1
-> Of type: ((v#0..) => Unit)
+>  v#1:n = todo n (synthesize (Data n))
+>  v#2:((v#1..) => Unit) = for i:(v#1..). ()
+>  v#2
+> Of type: ((v#1..) => Unit)
 > With effects: {}
 >
 >   for w':n.

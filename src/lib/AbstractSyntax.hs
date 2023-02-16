@@ -65,6 +65,7 @@ import Err
 import LabeledItems
 import Name
 import PPrint ()
+import IRVariants
 import Types.Primitives hiding (Equal)
 import Types.Source
 import Util
@@ -165,7 +166,7 @@ topDecl = dropSrc topDecl' where
     return $ UHandlerDecl (fromString effName) bodyTyArg' (toNest args')
       effs returnTy methods' (fromString hName)
 
-dataArg :: Group -> SyntaxM [(UAnnBinderArrow AtomNameC) 'VoidS 'VoidS]
+dataArg :: Group -> SyntaxM [(UAnnBinderArrow (AtomNameC CoreIR)) 'VoidS 'VoidS]
 dataArg = \case
   g@(WithSrc _ (CBracket Square _)) -> map classUAnnBinder <$> multiIfaceBinder g
   arg -> do
@@ -197,7 +198,7 @@ generalCon binOpt (name, args) = do
 -- binder is missing, assume UIgnore; if the anntation is missing,
 -- assume TypeKind.
 optAnnotatedBinder :: (Maybe Group, Maybe Group)
-                   -> SyntaxM (UAnnBinder AtomNameC VoidS VoidS)
+                   -> SyntaxM (UAnnBinder (AtomNameC CoreIR) VoidS VoidS)
 optAnnotatedBinder (lhs, rhs) = do
   lhs' <- mapM (identifier "type-annotated binder") lhs
   rhs' <- mapM expr rhs
@@ -205,7 +206,7 @@ optAnnotatedBinder (lhs, rhs) = do
     $ fromMaybe tyKind rhs'
   where tyKind = ns $ UPrim (UPrimTC TypeKind) []
 
-multiIfaceBinder :: Group -> SyntaxM [UAnnBinder AtomNameC VoidS VoidS]
+multiIfaceBinder :: Group -> SyntaxM [UAnnBinder (AtomNameC CoreIR) VoidS VoidS]
 multiIfaceBinder = dropSrc \case
   (CBracket Square g) -> do tys <- mapM expr $ nary Comma g
                             return $ map (UAnnBinder UIgnore) tys
@@ -228,7 +229,7 @@ decl ann = dropSrc decl' where
     case maybeTy of
       Just ty -> do
         (effs, returnTy) <- optEffects $ effectsToTop ty
-        when (null params' && effs /= Pure) $ throw SyntaxErr "Nullary def can't have effects"
+        when (null params' && effs /= UPure) $ throw SyntaxErr "Nullary def can't have effects"
         let funTy = buildPiType params' effs returnTy
         let lamBinders = params' <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
         body' <- block body
@@ -383,13 +384,13 @@ optEffects :: Group -> SyntaxM (UEffectRow VoidS, UExpr VoidS)
 optEffects g = case g of
   (Binary Juxtapose (Bracketed Curly effs) ty) ->
     (,) <$> effects effs <*> expr ty
-  _ -> (Pure,) <$> expr g
+  _ -> (UPure,) <$> expr g
 
 effects :: Group -> SyntaxM (UEffectRow VoidS)
 effects g = do
   rhs' <- mapM (identifier "effect row remainder variable") rhs
   lhs' <- mapM effect $ nary Comma lhs
-  return $ EffectRow (S.fromList lhs') $ fmap fromString rhs'
+  return $ UEffectRow (S.fromList lhs') $ fmap fromString rhs'
   where
     (lhs, rhs) = case g of
       (Binary Pipe l r) -> (l, Just r)
@@ -398,14 +399,14 @@ effects g = do
 effect :: Group -> SyntaxM (UEffect VoidS)
 effect (WithSrc _ (CParens (ExprBlock g))) = effect g
 effect (Binary Juxtapose (Identifier "Read") (Identifier h)) =
-  return $ RWSEffect Reader $ (Just $ fromString h)
+  return $ URWSEffect Reader $ fromString h
 effect (Binary Juxtapose (Identifier "Accum") (Identifier h)) =
-  return $ RWSEffect Writer $ (Just $ fromString h)
+  return $ URWSEffect Writer $ fromString h
 effect (Binary Juxtapose (Identifier "State") (Identifier h)) =
-  return $ RWSEffect State $ (Just $ fromString h)
-effect (Identifier "Except") = return ExceptionEffect
-effect (Identifier "IO") = return IOEffect
-effect (Identifier effName) = return $ UserEffect (fromString effName)
+  return $ URWSEffect State $ fromString h
+effect (Identifier "Except") = return UExceptionEffect
+effect (Identifier "IO") = return UIOEffect
+effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
 method :: (SourceName, CBlock) -> SyntaxM (UMethodDef VoidS)
@@ -512,15 +513,12 @@ expr = propagateSrcE expr' where
         UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
   expr' (CLambda args body) =
     dropSrcE <$> liftM2 buildLam (concat <$> mapM argument args) (block body)
-  expr' (CFor KView indices body) =
-    dropSrcE <$> (buildTabLam <$> mapM patOptAnn indices <*> block body)
   expr' (CFor kind indices body) = do
     let (dir, trailingUnit) = case kind of
           KFor  -> (Fwd, False)
           KFor_ -> (Fwd, True)
           KRof  -> (Rev, False)
           KRof_ -> (Rev, True)
-          KView -> error "Impossible"
     -- TODO: Can we fetch the source position from the error context, to feed into `buildFor`?
     e <- buildFor (0, 0) dir <$> mapM patOptAnn indices <*> block body
     if trailingUnit
@@ -721,11 +719,11 @@ variant (g:gs) = do
 -- === Builders ===
 
 buildPiType :: [UPatAnnArrow VoidS VoidS] -> UEffectRow VoidS -> UType VoidS -> UType VoidS
-buildPiType [] Pure ty = ty
+buildPiType [] UPure ty = ty
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType (UPatAnnArrow p arr : bs) eff resTy = ns case bs of
   [] -> UPi $ UPiExpr arr p eff resTy
-  _  -> UPi $ UPiExpr arr p Pure $ buildPiType bs eff resTy
+  _  -> UPi $ UPiExpr arr p UPure $ buildPiType bs eff resTy
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildLam :: [UPatAnnArrow VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
@@ -735,14 +733,6 @@ buildLam binders body@(WithSrcE pos _) = case binders of
   (UPatAnnArrow b arr):bs -> WithSrcE (joinPos pos' pos) $ ULam lamb
      where UPatAnn (WithSrcB pos' _) _ = b
            lamb = ULamExpr arr b $ buildLam bs body
-
-buildTabLam :: [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
-buildTabLam binders body@(WithSrcE pos _) = case binders of
-  [] -> body
-  -- TODO: join with source position of binders too
-  b:bs -> WithSrcE (joinPos pos' pos) $ UTabLam lamb
-   where UPatAnn (WithSrcB pos' _) _ = b
-         lamb = UTabLamExpr b $ buildTabLam bs body
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildFor :: SrcPos -> Direction -> [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS

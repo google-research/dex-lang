@@ -19,6 +19,7 @@ import Data.List (foldl')
 import Data.Store (Store (..))
 import GHC.Generics (Generic (..))
 
+import IRVariants
 import Name
 
 -- === Use Analysis ===
@@ -164,7 +165,7 @@ data Access (n::S) where
   -- argument, as the name in the `Binder` argument varies over its
   -- type.
   -- Corresponds to `for`.
-  ForEach :: forall n l. (NameBinder AtomNameC n l) -> Access l -> Access n
+  ForEach :: forall n l. (NameBinder (AtomNameC SimpIR) n l) -> Access l -> Access n
 
 deriving instance Show (Access n)
 
@@ -189,13 +190,13 @@ location _ _ = error "Cannot nest general Access in Location"
 -- being able to analyze usefully.
 data IxExpr (n::S) =
   -- Indexing by an identifier in scope
-    Var (Name AtomNameC n)
+    Var (Name (AtomNameC SimpIR) n)
   -- An index of product type
   | Product [IxExpr n]
   -- An index of sum type
   | Inject Int (IxExpr n)
   -- Unknown deterministic function of the given names
-  | Deterministic [Name AtomNameC n]
+  | Deterministic [Name (AtomNameC SimpIR) n]
   -- All indices are accessed, or we are conservatively assuming they are
   -- because we don't know which are accessed.  See note "IxAll semantics" in
   -- "Notes".
@@ -420,7 +421,7 @@ interp = \case
 -- answer is "yes", we do still have to recur, because we need to
 -- translate the interation-space binder into data space.
 
-iterate :: Bool -> (NameBinder AtomNameC iter iter')
+iterate :: Bool -> (NameBinder (AtomNameC SimpIR) iter iter')
           -> Use iter' -> (Use iter)
 iterate True _ (Const ct) = Const ct
 iterate False _ (Const ct) =
@@ -471,7 +472,7 @@ iterate injective ib (Max uses) =
 iterate injective ib (Sum uses) =
   foldl' plus zero $ map (iterate injective ib) uses
 
-iterateIxExpr :: NameBinder AtomNameC iter iter'
+iterateIxExpr :: NameBinder (AtomNameC SimpIR) iter iter'
               -> IxExpr iter' -> State Bool (IxExpr iter)
 iterateIxExpr ib (Var i) =
   case hoist ib i of
@@ -827,10 +828,10 @@ usageInfo (AccessInfo s dyn) =
 
 instance GenericE IxExpr where
   type RepE IxExpr = EitherE5
-    (Name AtomNameC)
+    (Name (AtomNameC SimpIR))
     (ListE IxExpr)
     (PairE (LiftE Int) IxExpr)
-    (ListE (Name AtomNameC))
+    (ListE (Name (AtomNameC SimpIR)))
     UnitE
   fromE = \case
     (Var n)            -> Case0   n
@@ -857,7 +858,7 @@ instance GenericE Access where
     (PairE (ListE IxExpr) (LiftE Count))
     (ListE Access)
     (ListE Access)
-    (Abs (NameBinder AtomNameC) Access)
+    (Abs (NameBinder (AtomNameC SimpIR)) Access)
   fromE = \case
     (Location ixs ct) -> Case0 $ PairE (ListE ixs) (LiftE ct)
     (Any as) -> Case1 $ ListE as

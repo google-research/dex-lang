@@ -23,32 +23,36 @@ import Types.Primitives
 
 -- === External API ===
 
-inlineBindings :: (EnvReader m) => SBlock n -> m n (SBlock n)
-inlineBindings blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop blk
-{-# SCC inlineBindings #-}
+inlineBindings :: (EnvReader m) => SLam n -> m n (SLam n)
+inlineBindings = liftLamExpr inlineBindingsBlock
+{-# INLINE inlineBindings #-}
+
+inlineBindingsBlock :: (EnvReader m) => SBlock n -> m n (SBlock n)
+inlineBindingsBlock blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop blk
+{-# SCC inlineBindingsBlock #-}
 
 -- === Data Structure ===
 
-data InlineExpr (o::S) where
-  DoneEx :: SExpr o -> InlineExpr o
-  SuspEx :: SExpr i -> Subst InlineSubstVal i o -> InlineExpr o
+data InlineExpr (r::IR) (o::S) where
+  DoneEx :: SExpr o -> InlineExpr SimpIR o
+  SuspEx :: SExpr i -> Subst InlineSubstVal i o -> InlineExpr SimpIR o
 
-instance Show (InlineExpr n) where
+instance Show (InlineExpr r n) where
   show = \case
     DoneEx e -> "finished " ++ show e
     SuspEx e _ -> "unfinished " ++ show e
 
-instance RenameE InlineExpr where
+instance RenameE (InlineExpr r) where
   renameE (scope, subst) = \case
     DoneEx e -> DoneEx $ renameE (scope, subst) e
     SuspEx e s -> SuspEx e $ renameE (scope, subst) s
 
-instance SinkableE InlineExpr where
+instance SinkableE (InlineExpr r) where
   sinkingProofE rename = \case
     DoneEx e   -> DoneEx $ sinkingProofE rename e
     SuspEx e s -> SuspEx e $ sinkingProofE rename s
 
-type InlineSubstVal = SubstVal AtomNameC InlineExpr
+type InlineSubstVal = SubstVal InlineExpr
 
 newtype InlineM (i::S) (o::S) (a:: *) = InlineM
   { runInlineM :: SubstReaderT InlineSubstVal (BuilderM SimpIR) i o a }
@@ -212,11 +216,10 @@ inlineDeclsSubst = \case
     -- the solution is to just not have view atoms in the IR by this point,
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
-    ixDepthExpr :: Expr r n -> Int
+    ixDepthExpr :: Expr SimpIR n -> Int
     ixDepthExpr (Hof (For _ _ (UnaryLamExpr _ body))) = 1 + ixDepthBlock body
-    ixDepthExpr (Atom (TabLam (TabLamExpr _ body))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
-    ixDepthBlock :: Block r n -> Int
+    ixDepthBlock :: Block SimpIR n -> Int
     ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr
     ixDepthBlock (AtomicBlock result) = ixDepthExpr $ Atom result
     ixDepthBlock _ = 0
@@ -400,6 +403,8 @@ instance Inlinable (Name HandlerNameC) where
   inline ctx n = substM n >>= reconstruct ctx
 instance Inlinable (Name SpecializedDictNameC) where
   inline ctx n = substM n >>= reconstruct ctx
+instance Inlinable (Name TopFunNameC) where
+  inline ctx n = substM n >>= reconstruct ctx
 
 instance Inlinable e => Inlinable (ComposeE PrimOp e) where
   inline ctx (ComposeE op) =
@@ -420,18 +425,17 @@ instance Inlinable e => Inlinable (ComposeE LabeledItems e) where
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (ExtLabeledItemsE e1 e2)
 instance Inlinable (LamExpr SimpIR)
-instance Inlinable (PiType SimpIR)
-instance Inlinable (TabLamExpr SimpIR)
 instance Inlinable (TabPiType SimpIR)
 instance Inlinable (DepPairType SimpIR)
-instance Inlinable EffectRow
-instance Inlinable Effect
-instance Inlinable (DictExpr SimpIR)
-instance Inlinable (DictType SimpIR)
-instance Inlinable (FieldRowElems SimpIR)
-instance Inlinable (FieldRowElem SimpIR)
-instance Inlinable (DataDefParams SimpIR)
+instance Inlinable (EffectRowTail SimpIR)
+instance Inlinable (EffectRow SimpIR)
+instance Inlinable (Effect   SimpIR)
 instance Inlinable (DAMOp SimpIR)
+instance Inlinable (IxDict SimpIR)
+
+instance Inlinable (RepVal SimpIR) where
+  inline ctx (RepVal ty rep) =
+    (RepVal <$> inline Stop ty <*> mapM substMAssumingRenameOnly rep) >>= reconstruct ctx
 
 instance (Inlinable e1, Inlinable e2) => Inlinable (PairE e1 e2) where
   inline ctx (PairE l r) =
@@ -474,17 +478,21 @@ instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Block SimpIR)) where
         Abs b' <$> (buildBlock $ (inline Stop body >>= emitBlock))
     reconstruct ctx abs'
 
-asRenameSubst :: (Color c, ShowE e) => Subst (SubstVal c e) i o -> Subst Name i o
+asRenameSubst :: Subst InlineSubstVal i o -> Subst Name i o
 asRenameSubst s = newSubst $ assumingRenameOnly s where
-  assumingRenameOnly :: (Color c, Color c1, ShowE e)
-    => Subst (SubstVal c1 e) i o -> Name c i -> Name c o
+  assumingRenameOnly :: Color c => Subst InlineSubstVal i o -> Name c i -> Name c o
   assumingRenameOnly subst n = case subst ! n of
     Rename n' -> n'
     SubstVal v -> error $ "Unexpected non-rename substitution "
       ++ "maps " ++ (show n) ++ " to " ++ (show v)
 
+substMAssumingRenameOnly :: (SinkableE e, RenameE e) => e i -> InlineM i o (e o)
+substMAssumingRenameOnly e = do
+  s <- getSubst
+  runSubstReaderT (asRenameSubst s) $ renameM e
+
 instance (RenameB b, BindsEnv b)
-  => Inlinable (Abs b (PairE EffectRow (Atom SimpIR))) where
+  => Inlinable (Abs b (PairE (EffectRow SimpIR) (Atom SimpIR))) where
   inline ctx (Abs b body) = do
     s <- getSubst
     babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
@@ -511,6 +519,16 @@ instance Inlinable e => Inlinable (WhenE True e) where
   {-# INLINE inline #-}
 instance Inlinable (WhenE False e) where
   inline _ _ = error "Unreachable"
+  {-# INLINE inline #-}
+
+instance Inlinable (WhenCore SimpIR e) where inline _ = \case
+instance Inlinable e => Inlinable (WhenCore CoreIR e) where
+  inline ctx (WhenIRE e) = (WhenIRE <$> inline Stop e) >>= reconstruct ctx
+  {-# INLINE inline #-}
+
+instance Inlinable (WhenSimp CoreIR e) where inline _ = \case
+instance Inlinable e => Inlinable (WhenSimp SimpIR e) where
+  inline ctx (WhenIRE e) = (WhenIRE <$> inline Stop e) >>= reconstruct ctx
   {-# INLINE inline #-}
 
 -- See Note [Confuse GHC] from Simplify.hs

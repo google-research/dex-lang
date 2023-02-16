@@ -276,12 +276,12 @@ bound for the list's size.
 
 -- TODO Can we encapsulate this BoundedList type as a `data` and still
 -- define in-place mutation operations on it?
-def BoundedList n [Ix n] a = (n & (n => a))
+def BoundedList n [Ix n] a [Data a] = (n & (n => a))
 
 def unsafe_next_index {n} [Ix n] (ix:n) : n =
   unsafe_from_ordinal n $ ordinal ix + 1
 
-def empty_bounded_list {n a} [Ix n] (dummy_val: a) : BoundedList n a =
+def empty_bounded_list {n a} [Ix n, Data a] (dummy_val: a) : BoundedList n a =
   (unsafe_from_ordinal _ 0, for _. dummy_val)
 
 -- The point of a `BoundedList` is O(1) push by in-place mutation
@@ -300,7 +300,7 @@ def bd_push {h n a} [Ix n] (lst_ref: Ref h (BoundedList n a)) (x: a) : {State h}
 def as_list {n a} (lst: BoundedList n a) : List a =
   (lim, buf) = lst
   n_result = ordinal lim
-  AsList _ $ view i:(Fin n_result). buf.(unsafe_from_ordinal _ $ ordinal i)
+  AsList _ $ for i:(Fin n_result). buf.(unsafe_from_ordinal _ $ ordinal i)
 
 '### Cell list
 
@@ -311,7 +311,7 @@ def GridIx dim grid_size [Ix dim] = dim => (Fin grid_size)
 'A cell list is now just a `BoundedList` of the (indices of) the atoms
 that appear in each cell in the grid.
 
-def CellTable dim grid_size bucket_size atom_ix [Ix dim] =
+def CellTable dim grid_size bucket_size atom_ix [Ix dim] [Data atom_ix] =
   GridIx dim grid_size => BoundedList (Fin bucket_size) atom_ix
 
 -- Compute the cell an atom should go into.

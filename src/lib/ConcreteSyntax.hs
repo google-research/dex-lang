@@ -118,7 +118,7 @@ data Group'
   | CPrefix SourceName Group -- covers unary - and unary + among others
   | CPostfix SourceName Group
   | CLambda [Group] CBlock  -- The arguments do not have Juxtapose at the top level
-  | CFor ForKind [Group] CBlock -- also for_, rof, rof_, view
+  | CFor ForKind [Group] CBlock -- also for_, rof, rof_
   | CCase Group [(Group, CBlock)] -- scrutinee, alternatives
   | CIf Group CBlock (Maybe CBlock)
   | CDo CBlock
@@ -181,7 +181,6 @@ data ForKind
   | KFor_
   | KRof
   | KRof_
-  | KView
   deriving (Show, Generic)
 
 data CBlock = CBlock [CDecl] -- last decl should be a CExpr
@@ -592,7 +591,6 @@ cFor = do
                 <|> keyWord For_KW $> KFor_
                 <|> keyWord RofKW  $> KRof
                 <|> keyWord Rof_KW $> KRof_
-                <|> keyWord ViewKW $> KView
 
 cCase :: Parser Group'
 cCase = do
@@ -726,8 +724,7 @@ leafGroupNoBrackets = do
     _ | isDigit next -> (    CNat   <$> natLit
                          <|> CFloat <$> doubleLit)
     '\\' -> cLam
-    -- For exprs include view, for, rof, for_, rof_
-    'v'  -> cFor  <|> CIdentifier <$> anyName
+    -- For exprs include for, rof, for_, rof_
     'f'  -> cFor  <|> CIdentifier <$> anyName
     'r'  -> cFor  <|> CIdentifier <$> (anyName <|> (keyWord ResumeKW >> return "resume"))
     'c'  -> cCase <|> CIdentifier <$> anyName
@@ -978,15 +975,16 @@ primNames = M.fromList
   , ("Word64Ptr" , baseTy $ ptrTy $ Scalar Word64Type)
   , ("Float32Ptr", baseTy $ ptrTy $ Scalar Float32Type)
   , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
-  , ("Nat"       , UPrimTC $ Nat)
-  , ("Fin"       , UPrimTC $ Fin ())
-  , ("Label"     , UPrimTC $ LabelType)
-  , ("Ref"       , UPrimTC $ RefType (Just ()) ())
+  , ("Nat"           , UNat)
+  , ("Fin"           , UFin)
+  , ("Label"         , ULabelType)
+  , ("EffKind"       , UEffectRowKind)
+  , ("LabeledRowKind", ULabeledRowKind)
+  , ("NatCon"        , UNatCon)
+  , ("Ref"       , UPrimTC $ RefType () ())
   , ("PairType"  , UPrimTC $ ProdType [(), ()])
   , ("UnitType"  , UPrimTC $ ProdType [])
   , ("HeapType"  , UPrimTC $ HeapType)
-  , ("EffKind"   , UPrimTC $ EffectRowKind)
-  , ("LabeledRowKind", UPrimTC $ LabeledRowKindTC)
   , ("fstRef"     , UProjRef 0)
   , ("sndRef"     , UProjRef 1)
   , ("indexRef"   , UIndexRef)
@@ -1007,13 +1005,11 @@ primNames = M.fromList
   , ("select"        , miscOp $ Select () () ())
   , ("showAny"       , miscOp $ ShowAny ())
   , ("showScalar"    , miscOp $ ShowScalar ())
-  , ("projNewtype" , UProjBaseNewtype)
+  , ("projNewtype" , UProjNewtype)
   , ("projMethod0" , UProjMethod 0)
   , ("projMethod1" , UProjMethod 1)
   , ("projMethod2" , UProjMethod 2)
   , ("pair"        , UPrimCon $ ProdCon [(), ()])
-  , ("newtype"     , UPrimCon $ Newtype () ())
-  , ("explicitDict", UPrimCon $ ExplicitDict () ())
   , ("explicitApply", UExplicitApply)
   , ("monoLit", UMonoLiteral)
   , ("sumToVariant", URecordVariantOp $ SumToVariant ())

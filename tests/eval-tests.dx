@@ -433,12 +433,12 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 -- Not sure why the ordinary `sum/for` version doesn't work anymore
 :p
     n = 3 + 7
-    fsum view i:(Fin n). 1.0
+    fsum for i:(Fin n). 1.0
 > 10.
 
 :p
     n = 4
-    fsum view i:(Fin n). 1.0
+    fsum for i:(Fin n). 1.0
 > 4.
 
 :p
@@ -834,9 +834,13 @@ s1 = "hello world"
   sum zs + sum zs
 > 12
 
-triLit : (i:Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
-triLit
-> [[0], [1, 2], [3, 4, 5], [6, 7, 8, 9]]
+-- triLit : (i:Fin 4)=>(..i)=>Int =
+--   [ coerce_table _ [0]
+--   , coerce_table _ [1, 2]
+--   , coerce_table _ [3, 4, 5]
+--   , coerce_table _ [6, 7, 8, 9] ]
+-- triLit
+-- > [[0], [1, 2], [3, 4, 5], [6, 7, 8, 9]]
 
 -- @noinline
 def fromLeftFloat (x:(Float | Int)) : Float =
@@ -869,6 +873,16 @@ def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
 @noinline
 def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
+
+-- regression test for #1229 - checks that constraints and data args can be interleaved
+@noinline
+def interleave_args {n} (x:Float) (xs:n=>Float) : Float =
+  x + sum xs
+
+interleave_args 1.0 [2.0, 3.0]
+> 6.
+
+
 -- This will compile extremely slowly if non-inlining is broken
 :p f6 0
 > 100000
@@ -892,10 +906,20 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 :p intpow 2 17
 > 131072
 
+def f (x:Float) : Float =
+  intpow x 2
+
+x2 = 3.1
+f x2
+> 9.61
+
+grad f x2
+> 6.2
+
 -- Integer utility tests
 
-:p map is_power_of_2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
-> [False, True, True, False, True, True, True, False]
+:p map is_power_of_2 [0, 1, 2, 3, 256, 1023, 1024, 1024*1024, 1024*1024 + 1]
+> [False, True, True, False, True, False, True, True, False]
 
 :p map natlog2 [1, 2, 3, 4, 5, 1023, 1024, 1025]
 > [0, 1, 1, 2, 2, 9, 10, 10]
@@ -1067,6 +1091,8 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
 :p unsafe_coerce (Fin 1 => (Nat & Nat)) ([1], [2])
 > [(1, 2)]
 
+-- Stack tests
+
 :p
   with_stack Float \stack.
     stack_push stack 1.0
@@ -1093,3 +1119,54 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
     AsList _ xs = read_stack stack
     sum xs
 > 9000000.
+
+-- Non-data case scrutinee tests
+
+-- Check that we can print out a sum-typed non-data value
+Just f64_to_f
+> (Just <function of type (Float64 -> Float32)>)
+
+-- Check that we can print out a sum-typed non-data value that came
+-- from a case (this tickles ACase colliding with the code generated
+-- to print).  The @noinline defeats case-of-known-constructor.
+@noinline
+def id_bool (x:Bool) : Bool = x
+
+case (id_bool True) of
+  True -> Just f64_to_f
+  False -> Nothing
+> (Just <function of type (Float64 -> Float32)>)
+
+-- Check that we can later scrutinize a sum-typed non-data value that
+-- came from a case.
+foo = case (id_bool True) of
+  True -> Just f64_to_f
+  False -> Nothing
+
+case foo of
+  Just _ -> 1.0
+  Nothing -> 2.0
+> 1.
+
+-- Non-data catch tests
+
+-- Should be able to catch a function
+-- This is a regression test for Issue #1193.
+catch do f64_to_f
+> (Just <function of type (Float64 -> Float32)>)
+
+-- Should be able to catch a function-valued computation that fails
+catch do
+  x = if True
+    then throw ()
+    else 1.0
+  \y. x + y
+> Nothing
+
+-- Should be able to apply a function that came out of a catch
+frob : (Maybe (Float -> Float)) = catch do \x. x + x
+
+case frob of
+  Just func -> func 2.0
+  Nothing -> 0.0
+> 4.

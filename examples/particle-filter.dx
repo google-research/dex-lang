@@ -13,7 +13,8 @@ def sample {a} (d: Distribution a) (k: Key) : a =
   (sampler, _) = d
   sampler k
 
-def simulate {s v} (model: Model s v) (t: Nat) (key: Key) : Fin t=>(s & v) =
+def simulate {s v} [Data s]
+    (model: Model s v) (t: Nat) (key: Key) : Fin t=>(s & v) =
   (init, dynamics, observe) = model
   [key, subkey] = split_key key
   s0 = sample init subkey
@@ -26,7 +27,7 @@ def simulate {s v} (model: Model s v) (t: Nat) (key: Key) : Fin t=>(s & v) =
       s_ref := s_next
       (s, v)
 
-def particleFilter {s a v}
+def particleFilter {s a v} [Data s]
     (num_particles: Nat) (num_timesteps: Nat)
     (model: Model s v)
     (summarize: (Fin num_particles => s) -> a)

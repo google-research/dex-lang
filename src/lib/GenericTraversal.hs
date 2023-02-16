@@ -23,11 +23,11 @@ import LabeledItems
 import MTL1
 import Name
 import Subst
+import QueryType
 import Types.Core
-import Types.Primitives
-import Util (onSndM)
+import Util (onSndM, foldMapM)
 
-liftGenericTraverserM :: EnvReader m => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
+liftGenericTraverserM :: (EnvReader m, IRRep r) => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
   liftM runHardFail $ liftDoubleBuilderTNoEmissions $
     runStateT1 (runSubstReaderT idSubst $ runGenericTraverserM' m) s
@@ -35,7 +35,7 @@ liftGenericTraverserM s m =
 
 liftGenericTraverserMTopEmissions
   :: ( EnvReader m, SinkableE e, RenameE e, SinkableE s
-     , RenameE s, ExtOutMap Env frag, OutFrag frag)
+     , RenameE s, ExtOutMap Env frag, OutFrag frag, IRRep r)
   => s n
   -> (forall l. DExt n l => GenericTraverserM r frag s l l (e l))
   -> m n (Abs frag (PairE e s) n)
@@ -47,8 +47,8 @@ liftGenericTraverserMTopEmissions s m =
 
 newtype GenericTraverserM r f s i o a =
   GenericTraverserM
-    { runGenericTraverserM' :: SubstReaderT (AtomSubstVal r) (StateT1 s (DoubleBuilderT r f HardFailM)) i o a }
-    deriving (Functor, Applicative, Monad, SubstReader (AtomSubstVal r), MonadFail, Fallible, MonadState (s o))
+    { runGenericTraverserM' :: SubstReaderT AtomSubstVal (StateT1 s (DoubleBuilderT r f HardFailM)) i o a }
+    deriving (Functor, Applicative, Monad, SubstReader AtomSubstVal, MonadFail, Fallible, MonadState (s o))
 
 deriving instance GenericTraverser r f s => EnvExtender     (GenericTraverserM r f s i)
 deriving instance GenericTraverser r f s => ScopeReader     (GenericTraverserM r f s i)
@@ -57,7 +57,7 @@ deriving instance GenericTraverser r f s => ScopableBuilder r (GenericTraverserM
 deriving instance GenericTraverser r f s => Builder r         (GenericTraverserM r f s i)
 deriving instance GenericTraverser r f s => HoistingTopBuilder f (GenericTraverserM r f s i)
 
-class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s)
+class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, HoistableState s, IRRep r)
       => GenericTraverser r f s where
   traverseExpr :: Emits o => Expr r i -> GenericTraverserM r f s i o (Expr r o)
   traverseExpr = traverseExprDefault
@@ -71,18 +71,27 @@ class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, Hoistab
 traverseExprDefault :: Emits o => GenericTraverser r f s => Expr r i -> GenericTraverserM r f s i o (Expr r o)
 traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   App g xs -> App <$> tge g <*> mapM tge xs
+  TopApp f xs -> TopApp <$> substM f <*> mapM tge xs
   TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
   PrimOp  op -> PrimOp <$> mapM tge op
   Hof hof -> Hof  <$> tge hof
   RefOp ref eff -> RefOp <$> tge ref <*> tge eff
-  Case scrut alts resultTy effs ->
-    Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy <*> substM effs
+  Case scrut alts resultTy _ -> do
+    scrut' <- tge scrut
+    alts' <- mapM traverseAlt alts
+    resultTy' <- tge resultTy
+    effs <- foldMapM getEffects alts'
+    return $ Case scrut' alts' resultTy' effs
   UserEffectOp op -> UserEffectOp <$> case op of
     Handle v xs body -> Handle <$> substM v <*> mapM tge xs <*> tge body
     Resume x y       -> Resume <$> tge x <*> tge y
     Perform x i      -> Perform <$> tge x <*> pure i
-  TabCon ty xs -> TabCon <$> tge ty <*> mapM tge xs
+  TabCon d ty xs -> do
+    d' <- case d of
+      Nothing -> return Nothing
+      Just (WhenIRE d') -> Just <$> WhenIRE <$> tge d'
+    TabCon d' <$> tge ty <*> mapM tge xs
   ProjMethod d i -> ProjMethod <$> tge d <*> pure i
   RecordVariantOp op -> RecordVariantOp <$> mapM tge op
   DAMOp op -> DAMOp <$> case op of
@@ -92,55 +101,43 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
     Place x y            -> Place <$> tge x <*> tge y
     Freeze x             -> Freeze <$> tge x
 
-traverseAtomDefault :: GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
+traverseAtomDefault
+  :: forall r f s i o.
+  GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+    withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
       effs' <- extendRenamer (bEff@>binderName b') $ substM effs
       extendRenamer (b@>binderName b') do
-        withAllowedEffects effs' do
-          body' <- tge body
-          return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
+        body' <- tge body
+        return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
   Lam _ _ _ -> error "expected a unary lambda expression"
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (PiBinding arr ty') \b' -> do
+    withFreshBinder (getNameHint b) (PiBinding arr ty') \(b':>_) -> do
       extendRenamer (b@>binderName b') $
         Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> tge resultTy)
-  TabLam (TabLamExpr (b:>ty) body) -> do
-    ty' <- tge ty
-    let hint = getNameHint b
-    withFreshBinder hint ty' \b' -> do
-      extendRenamer (b@>binderName b') do
-        body' <- tge body
-        return $ TabLam $ TabLamExpr (b':>ty') body'
   TabPi (TabPiType (b:>ty) resultTy) -> do
     ty' <- tge ty
     withFreshBinder (getNameHint b) ty' \b' -> do
       extendRenamer (b@>binderName b') $
-        TabPi <$> (TabPiType (b':>ty') <$> tge resultTy)
+        TabPi <$> (TabPiType b' <$> tge resultTy)
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
   PtrVar _ -> substM atom
-  TypeCon sn dataDefName params ->
-    TypeCon sn <$> substM dataDefName <*> tge params
   DictCon dictExpr -> DictCon <$> tge dictExpr
   DictTy dictTy -> DictTy <$> tge dictTy
-  LabeledRow elems -> LabeledRow <$> traverseGenericE elems
-  RecordTy elems -> RecordTy <$> traverseGenericE elems
-  VariantTy ext -> VariantTy <$> traverseExtLabeledItems ext
   ProjectElt _ _ -> substM atom
   DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
   RepValAtom _ -> substM atom
-  -- TODO(dougalm): We don't need these because we don't use generic traversals
-  -- on anything except SimpIR and CoreIR. We should add that as a constraint on
-  -- `r` and then we can delete these cases.
-  ACase _ _ _ -> nyi
-  where nyi = error $ "not implemented: " ++ pprint atom
+  NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
+  NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
+  DictHole s ty -> DictHole s <$> tge ty
+  SimpInCore _ -> substM atom
 
 traverseExtLabeledItems
   :: forall r f s i o.
@@ -161,14 +158,14 @@ tge = traverseGenericE
 class GenericallyTraversableE (r::IR) (e::E) | e -> r where
   traverseGenericE :: GenericTraverser r f s => e i -> GenericTraverserM r f s i o (e o)
 
-instance GenericallyTraversableE r (Atom r) where
+instance IRRep r => GenericallyTraversableE r (Atom r) where
   traverseGenericE = traverseAtom
 
-instance GenericallyTraversableE r (Block r) where
+instance IRRep r => GenericallyTraversableE r (Block r) where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
 
-instance GenericallyTraversableE r (FieldRowElems r) where
+instance GenericallyTraversableE CoreIR FieldRowElems where
   traverseGenericE elems = do
     els' <- fromFieldRowElems <$> substM elems
     dropSubst $ fieldRowElemsFromList <$> forM els' \case
@@ -176,18 +173,18 @@ instance GenericallyTraversableE r (FieldRowElems r) where
       DynField  labVar ty -> DynField labVar <$> tge ty
       DynFields rowVar    -> return $ DynFields rowVar
 
-instance GenericallyTraversableE r (DataDefParams r) where
+instance GenericallyTraversableE CoreIR DataDefParams where
   traverseGenericE (DataDefParams params) =
     DataDefParams <$> mapM (onSndM tge) params
 
-instance GenericallyTraversableE r (DepPairType r) where
+instance IRRep r => GenericallyTraversableE r (DepPairType r) where
   traverseGenericE (DepPairType (b:>lty) rty) = do
     lty' <- tge lty
     withFreshBinder (getNameHint b) lty' \b' -> do
-      extendRenamer (b@>binderName b') $ DepPairType (b':>lty') <$> tge rty
+      extendRenamer (b@>binderName b') $ DepPairType b' <$> tge rty
 
-instance GenericallyTraversableE r (BaseMonoid r) where
-  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> withAllowedEffects Pure (tge f)
+instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
+  traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> tge f
 
 instance GenericallyTraversableE r (RefOp r) where
   traverseGenericE = \case
@@ -201,33 +198,60 @@ instance GenericallyTraversableE r (RefOp r) where
 instance GenericallyTraversableE r (IxType r) where
   traverseGenericE (IxType ty dict) = IxType <$> tge ty <*> tge dict
 
-instance GenericallyTraversableE r (DictExpr r) where
+instance GenericallyTraversableE CoreIR DictExpr where
   traverseGenericE e = confuseGHC >>= \_ -> case e of
     InstanceDict v args -> InstanceDict <$> substM v <*> mapM tge args
     InstantiatedGiven given args -> InstantiatedGiven <$> tge given <*> mapM tge args
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
-    IxFin n ->  IxFin <$> tge n
-    ExplicitMethods d params -> ExplicitMethods <$> substM d <*> mapM tge params
+    IxFin n     -> IxFin <$> tge n
+    DataData ty -> DataData <$> tge ty
 
-instance GenericallyTraversableE r (DictType r) where
+instance GenericallyTraversableE r (IxDict r) where
+  traverseGenericE = \case
+    IxDictAtom x             -> IxDictAtom <$> tge x
+    IxDictRawFin n           -> IxDictRawFin <$> tge n
+    IxDictSpecialized t d xs -> IxDictSpecialized <$> tge t <*> substM d <*> mapM tge xs
+
+instance GenericallyTraversableE CoreIR DictType where
   traverseGenericE (DictType sn cn params) = DictType sn <$> substM cn <*> mapM tge params
 
-instance GenericallyTraversableE r (LamExpr r) where
+instance IRRep r => GenericallyTraversableE r (LamExpr r) where
   traverseGenericE (LamExpr bs body) = do
     traverseBinderNest bs \bs' -> LamExpr bs' <$> tge body
 
-instance GenericallyTraversableE r (Hof r) where
+instance IRRep r => GenericallyTraversableE r (Hof r) where
   traverseGenericE = \case
     For d ixDict f       -> For d <$> tge ixDict <*> tge f
     While body           -> While <$> tge body
-    Linearize f          -> Linearize <$> tge f
-    Transpose f          -> Transpose <$> tge f
+    Linearize f x        -> Linearize <$> tge f <*> tge x
+    Transpose f x        -> Transpose <$> tge f <*> tge x
     RunReader r f        -> RunReader <$> tge r <*> tge f
     RunWriter d bm f     -> RunWriter <$> mapM tge d <*> tge bm <*> tge f
     RunState d s f       -> RunState <$> mapM tge d <*> tge s <*> tge f
     RunIO body           -> RunIO <$> tge body
     RunInit body         -> RunInit <$> tge body
     CatchException body  -> CatchException <$> tge body
+
+instance GenericallyTraversableE CoreIR NewtypeTyCon where
+  traverseGenericE = \case
+    UserADTType s d p -> UserADTType s <$> substM d <*> tge p
+    LabeledRowCon tys -> LabeledRowCon <$> tge tys
+    RecordTyCon tys   -> RecordTyCon <$> tge tys
+    VariantTyCon ext  -> VariantTyCon <$> traverseExtLabeledItems ext
+    LabelCon s        -> return $ LabelCon s
+    LabelType         -> return LabelType
+    LabeledRowKindTC  -> return LabeledRowKindTC
+    Nat               -> return Nat
+    Fin x             -> Fin <$> tge x
+    EffectRowKind     -> return EffectRowKind
+
+instance GenericallyTraversableE CoreIR NewtypeCon where
+  traverseGenericE = \case
+    RecordCon  items     -> return $ RecordCon items
+    VariantCon items     -> return $ VariantCon items
+    UserADTData d params -> UserADTData <$> substM d <*> tge params
+    NatCon               -> return NatCon
+    FinCon n             -> FinCon <$> tge n
 
 traverseBinderNest
   :: GenericTraverser r f s
@@ -240,7 +264,7 @@ traverseBinderNest (Nest (b:>ty) bs) cont = do
   withFreshBinder (getNameHint b) ty' \b' -> do
     extendRenamer (b@>binderName b') do
       traverseBinderNest bs \bs' -> do
-        cont (Nest (b':>ty') bs')
+        cont (Nest b' bs')
 
 instance (GenericallyTraversableE r e1, GenericallyTraversableE r e2) =>
   (GenericallyTraversableE r (EitherE e1 e2)) where
@@ -264,8 +288,8 @@ traverseDeclNest decls cont = do
 {-# INLINE traverseDeclNest #-}
 
 traverseDeclNestS :: (GenericTraverser r f s, Emits o)
-                  => Subst (AtomSubstVal r) l o -> Nest (Decl r) l i'
-                  -> GenericTraverserM r f s i o (Subst (AtomSubstVal r) i' o)
+                  => Subst AtomSubstVal l o -> Nest (Decl r) l i'
+                  -> GenericTraverserM r f s i o (Subst AtomSubstVal i' o)
 traverseDeclNestS !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
@@ -291,7 +315,7 @@ traverseBinder
 traverseBinder (b:>ty) cont = do
   ty' <- tge ty
   withFreshBinder (getNameHint b) ty' \b' ->
-    extendRenamer (b@>binderName b') $ cont (b':>ty')
+    extendRenamer (b@>binderName b') $ cont b'
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

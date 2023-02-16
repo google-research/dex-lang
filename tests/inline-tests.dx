@@ -81,7 +81,7 @@ def id' (x:Nat) : Nat = x
 -- before it produces anything a type expression can't handle, and
 -- thus execute.
 
-:pp
+:p
   ix = (1@(Fin 2))
   sum (for i:(Fin 2) j:(..i). ordinal j).ix
 -- CHECK: 1

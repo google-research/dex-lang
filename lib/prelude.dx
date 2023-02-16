@@ -32,12 +32,15 @@ Float = Float32
 
 def the (a:Type) (x:a) = x
 
+interface Data a
+  do_not_implement_this_interface_for_the_compiler_relies_on_the_invariant_it_protects : a -> a
+
 '### Casting
 
 def internal_cast {a} (b:Type) (x:a) : b = %cast b x
 
-def unsafe_coerce {a} (b:Type) (x:a) : b = %unsafeCoerce b x -- TODO: `Data` constraint
-def uninitialized_value {a} : a = %garbageVal a              -- TODO: `Data` constraint
+def unsafe_coerce {a} (b:Type) [Data a, Data b] (x:a) : b = %unsafeCoerce b x
+def uninitialized_value {a} [Data a] : a = %garbageVal a
 
 def f64_to_f (x : Float64) : Float   = internal_cast _ x
 def f32_to_f (x : Float32) : Float   = internal_cast _ x
@@ -60,7 +63,7 @@ Nat = %Nat
 NatRep = Word32
 
 def nat_to_rep (x : Nat)    : NatRep = %projNewtype x
-def rep_to_nat (x : NatRep) : Nat    = %newtype Nat x
+def rep_to_nat (x : NatRep) : Nat    = %NatCon x
 
 def n_to_w8  (x : Nat) : Word8   = internal_cast _ $ nat_to_rep x
 def n_to_w32 (x : Nat) : Word32  = internal_cast _ $ nat_to_rep x
@@ -160,7 +163,7 @@ def high_word (x : Word64) : Word32 = internal_cast _ x
 Things that can be added.
 This defines the `Add` [group](https://en.wikipedia.org/wiki/Group_(mathematics)) and its operators.
 
-interface Add a
+interface [Data a] Add a
   add : a -> a -> a
   zero : a
 
@@ -222,17 +225,19 @@ instance Add Unit
 instance Sub Unit
   sub = \x y. ()
 
-instance Add (n->a) given {n a} [Add a]
-  add = \f g. \x. (f x) + (g x)
-  zero = \x. zero
-instance Sub (n->a) given {n a} [Sub a]
-  sub = \f g. \x. (f x) - (g x)
+-- Instances for Add that we could give to unary functions if we
+-- choose to: https://github.com/google-research/dex-lang/issues/1230
+-- instance Add (n->a) given {n a} [Add a]
+--   add = \f g. \x. (f x) + (g x)
+--   zero = \x. zero
+-- instance Sub (n->a) given {n a} [Sub a]
+--   sub = \f g. \x. (f x) - (g x)
 
 '#### Mul
 Things that can be multiplied.
 This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
 
-interface Mul a
+interface [Data a] Mul a
   mul : a -> a -> a
   one : a
 
@@ -274,9 +279,11 @@ instance Mul Unit
   mul = \x y. ()
   one = ()
 
-instance Mul (n->a) given {n a} [Mul a]
-  mul = \f g. \x. (f x) * (g x)
-  one = \x. one
+-- Instance for Mul that we could give to unary functions if we
+-- choose to: https://github.com/google-research/dex-lang/issues/1230
+-- instance Mul (n->a) given {n a} [Mul a]
+--   mul = \f g. \x. (f x) * (g x)
+--   one = \x. one
 
 '#### Integral
 Integer-like things.
@@ -324,7 +331,7 @@ instance Fractional Float32
 
 '## Index set interface and instances
 
-interface Ix n
+interface [Data n] Ix n
   size n : Nat
   ordinal : n -> Nat
   unsafe_from_ordinal n : Nat -> n
@@ -380,7 +387,7 @@ instance Ix Unit
   ordinal = \_. 0
   unsafe_from_ordinal = \_. ()
 
-def iota (n:Type) [Ix n] : n=>Nat = view i. ordinal i
+def iota (n:Type) [Ix n] : n=>Nat = for i. ordinal i
 
 '## Arithmetic instances for table types
 
@@ -478,8 +485,10 @@ instance VSpace ((i:n) => (..<i) => a) given {a n} [VSpace a]
 instance VSpace ((i:n) => (i<..) => a) given {a n} [VSpace a]
   scale_vec = \s xs. for i. s .* xs.i
 
-instance VSpace (n->a) given {a n} [VSpace a]
-  scale_vec = \s f. \x. s .* (f x)
+-- Instance for VSpace that we could give to unary functions if we
+-- choose to: https://github.com/google-research/dex-lang/issues/1230
+-- instance VSpace (n->a) given {a n} [VSpace a]
+--   scale_vec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
   scale_vec = \_ _. ()
@@ -511,6 +520,8 @@ def not  (x:Bool) : Bool =
 '## More Boolean operations
 TODO: move these with the others?
 
+-- Can't use `%select` because it lowers to `ISelect`, which requires
+-- `a` to be a `BaseTy`.
 def select {a} (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
@@ -617,7 +628,7 @@ It includes:
  - Concatenation of Lists (including strings)
 Monoids support `fold` operations, and similar.
 
-interface Monoid a
+interface [Data a] Monoid a
   mempty : a
   mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
 
@@ -645,7 +656,7 @@ named-instance MulMonoid : Monoid a given (a:Type) [Mul a]
 
 '## Effects
 
-def Ref (r:Heap) (a:Type) : Type = %Ref r a
+def Ref (r:Heap) (a:Type) [Data a] : Type = %Ref r a
 def get  {h s} (ref:Ref h s)       : {State h} s    = %get  ref
 def (:=) {h s} (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 
@@ -667,12 +678,12 @@ def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
   combine = %projMethod1 bm
   %mextend ref empty (\x y. combine x y) x
 
-def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
-def fst_ref {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
-def snd_ref {h a b} (ref: Ref h (a & b)) : Ref h b = %sndRef ref
+def (!) {h n a} [Data a] (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
+def fst_ref {h a b} [Data a] (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def snd_ref {h a b} [Data b] (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
 def run_reader
-      {r a eff}
+      {r a eff} [Data r]
       (init:r)
       (action: ((h:Heap) ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
@@ -680,7 +691,7 @@ def run_reader
     %runReader init explicitAction
 
 def with_reader
-      {r a eff}
+      {r a eff} [Data r]
       (init:r)
       (action: ((h:Heap) ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
@@ -692,7 +703,7 @@ named-instance mk_accum_monoid : AccumMonoid h w given {h w} (d:AccumMonoidData 
   getAccumMonoidData = d
 
 def run_accum
-      {a b w eff}
+      {a b w eff} [Data w]
       [mlift:MonoidLifter b w]
       (bm:Monoid b)
       (action: ((h:Heap) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
@@ -707,7 +718,7 @@ def run_accum
   %runWriter empty (\x y. combine x y) explicitAction
 
 def yield_accum
-      {a b w eff}
+      {a b w eff} [Data w]
       [mlift:MonoidLifter b w]
       (m:Monoid b)
       (action: ((h:Heap) ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
@@ -715,7 +726,7 @@ def yield_accum
   snd $ run_accum m action
 
 def run_state
-      {a s eff}
+      {a s eff} [Data s]
       (init:s)
       (action: (h:Heap) ?-> Ref h s -> {State h |eff} a)
       : {|eff} (a & s) =
@@ -723,13 +734,13 @@ def run_state
   %runState init explicitAction
 
 def with_state
-      {a s eff}
+      {a s eff} [Data s]
       (init:s)
       (action: (h:Heap) ?-> Ref h s -> {State h |eff} a)
       : {|eff} a = fst $ run_state init action
 
 def yield_state
-      {a s eff}
+      {a s eff} [Data s]
       (init:s)
       (action: (h:Heap) ?-> Ref h s -> {State h |eff} a)
       : {|eff} s = snd $ run_state init action
@@ -738,7 +749,7 @@ def unsafe_io {a eff} (f: Unit -> {IO|eff} a) : {|eff} a =
   f' : (Unit -> {IO|eff} a) = \_. f ()
   %runIO f'
 
-def unreachable {a} (():Unit) : a = unsafe_io do
+def unreachable {a} [Data a] (():Unit) : a = unsafe_io do
   %throwError a
 
 '## Type classes
@@ -749,7 +760,7 @@ def unreachable {a} (():Unit) : a = unsafe_io do
 Equatable.
 Things that we can tell if they are equal or not to other things.
 
-interface Eq a
+interface [Data a] Eq a
   (==) : a -> a -> Bool
 
 def (/=) {a} [Eq a] (x:a) (y:a) : Bool = not $ x == y
@@ -908,14 +919,15 @@ instance NonEmpty (a|b) given {a b} [Ix b, NonEmpty a]
 instance NonEmpty (Maybe a) given {a} [Ix a]
   first_ix = unsafe_from_ordinal _ 0
 
-def scan {a b n} [Ix n] (init:a) (body:n->a->(a&b)) : (a & n=>b) =
+def scan {a b n} [Ix n, Data a] (init:a) (body:n->a->(a&b)) : (a & n=>b) =
   swap $ run_state init \s. for i.
     c = get s
     (c', y) = body i c
     s := c'
     y
 
-def fold {a n} [Ix n] (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
+def fold {a n} [Ix n, Data a] (init:a) (body:(n->a->a)) : a =
+  fst $ scan init \i x. (body i x, ())
 
 def compare {a} [Ord a] (x:a) (y:a) : Ordering =
   if x < y
@@ -1120,7 +1132,7 @@ def cast_ptr {a b} (ptr: Ptr a) : Ptr b =
   (MkPtr rawPtr) = ptr
   MkPtr rawPtr
 
-interface Storable a
+interface [Data a] Storable a
   store : Ptr a -> a -> {IO} Unit
   load  : Ptr a ->      {IO} a
   storage_size a : Nat
@@ -1202,9 +1214,9 @@ pi : Float = 3.141592653589793
 def id {a} (x:a) : a = x
 def dup {a} (x:a) : (a & a) = (x, x)
 def map {a b n eff} (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
-def zip {a b n} (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = view i. (xs.i, ys.i)
+def zip {a b n} (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip {a b n} (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
-def fanout {a} (n:Type) [Ix n] (x:a) : n=>a = view i. x
+def fanout {a} (n:Type) [Ix n] (x:a) : n=>a = for i. x
 def sq  {a} [Mul a] (x:a) : a = x * x
 def abs {a} [Sub a, Ord a] (x:a) : a = select (x > zero) x (zero - x)
 def mod {a} [Add a, Integral a] (x:a) (y:a) : a = rem (y + rem x y) y
@@ -1243,12 +1255,13 @@ def reindex {a b v} [Ix b] (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
 
 -- `combine` should be a commutative and associative, and form a
 -- commutative monoid with `identity`
-def reduce {a n} (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
+def reduce {a n} [Data a] (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
   -- TODO: implement with the accumulator effect
   fold identity (\i c. combine c xs.i)
 
 -- TODO: call this `scan` and call the current `scan` something else
-def scan' {a n} [Ix n] (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
+def scan' {a n} [Ix n, Data a] (init:a) (body:n->a->a) : n=>a =
+  snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
 def fsum {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. ref += xs.i
 def sum  {n v} [Add v] (xs:n=>v) : v = reduce zero (+) xs
@@ -1260,7 +1273,7 @@ def all {n} (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
 '### apply_n
 
-def apply_n {a} (n:Nat) (x:a) (f:a -> a) : a =
+def apply_n {a} [Data a] (n:Nat) (x:a) (f:a -> a) : a =
   yield_state x \ref. for _:(Fin n).
     ref := f (get ref)
 
@@ -1270,20 +1283,20 @@ def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
   dx = (high - low) / n_to_f (size n)
   for i:n. low + n_to_f (ordinal i) * dx
 
-def transpose {n m a} (x:n=>m=>a) : m=>n=>a = view i j. x.j.i
-def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
+def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
+def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
 def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
 -- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
 def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
-  for i k. fsum view j. x.i.j * y.j.k
+  for i k. fsum for j. x.i.j * y.j.k
 
 def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
 def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
 
 def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
-  fsum view (i,j). x.i * mat.i.j * y.j
+  fsum for (i,j). x.i * mat.i.j * y.j
 
 def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
   for i j. select (ordinal i == ordinal j) one zero
@@ -1311,11 +1324,11 @@ def cumsum_low {n a} [Add a] (xs: n=>a) : n=>a =
 '### AD operations
 
 -- TODO: add vector space constraints
-def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = (%linearize (\x. f x)) x
+def linearize {a b} (f:a->b) (x:a) : (b & a --o b) = (%linearize (\x. f x) x)
 def jvp {a b} (f:a->b) (x:a) : a --o b = snd (linearize f x)
-def transpose_linear {a b} (f:a --o b) : b --o a =
+def transpose_linear {a b} (f:a --o b) : b --o a = \ct.
   f' : a --o b = \x. f x
-  %linearTranspose f'
+  %linearTranspose f' ct
 
 def vjp {a b} (f:a->b) (x:a) : (b & b --o a) =
   (y, df) = linearize f x
@@ -1412,7 +1425,7 @@ def to_list {n a} (xs:n=>a) : List a =
   n' = size n
   AsList _ $ unsafe_cast_table (Fin n') xs
 
-instance Monoid (List a) given {a}
+instance Monoid (List a) given {a} [Data a]
   mempty = AsList _ []
   mcombine = \x y.
     (AsList nx xs) = x
@@ -1424,13 +1437,13 @@ instance Monoid (List a) given {a}
         True  -> xs.(unsafe_from_ordinal _ i')
         False -> ys.(unsafe_from_ordinal _ $ unsafe_nat_diff i' nx)
 
-named-instance ListMonoid : Monoid (List a) given (a:Type)
+named-instance ListMonoid : Monoid (List a) given (a:Type) [Data a]
   mempty = mempty
   mcombine = mcombine
 
 -- TODO Eliminate or reimplement this operation, since it costs O(n)
 -- where n is the length of the list held in the reference.
-def append {a h} [AccumMonoid h (List a)]
+def append {a h} [AccumMonoid h (List a), Data a]
   (list: Ref h (List a)) (x:a) : {Accum h} Unit =
     list += AsList _ [x]
 
@@ -1769,7 +1782,7 @@ def while {eff} (body: Unit -> {|eff} Bool) : {|eff} Unit =
   body' : Unit -> {|eff} Word8 = \_. b_to_w8 $ body ()
   %while body'
 
-data IterResult a =
+data IterResult a [Data a] =
   Continue
   Done a
 
@@ -1873,11 +1886,11 @@ Not to be confused with a partially applied function
 '### Error throwing
 
 @noinline
-def error {a} (s:String) : a = unsafe_io do
+def error {a} [Data a] (s:String) : a = unsafe_io do
   print s
   %throwError a
 
-def todo {a} : a = error "TODO: implement it!"
+def todo {a} [Data a] : a = error "TODO: implement it!"
 
 '### File Operations
 
@@ -1886,7 +1899,7 @@ def delete_file (f:FilePath) : {IO} Unit =
     removeFFI ptr
   ()
 
-def with_file {a}
+def with_file {a} [Data a]
       (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
       : {IO} a =
@@ -1952,7 +1965,7 @@ def to_ix (n:Type) [Ix n] (i:Nat) : Maybe n =
 
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
-def cast_table {n a} (m:Type) [Ix m] (xs:n=>a) : m=>a =
+def cast_table {n a} (m:Type) [Ix m, Data a] (xs:n=>a) : m=>a =
   case size m == size n of
      True  -> unsafe_cast_table _ xs
      False -> error $
@@ -2141,9 +2154,9 @@ def max_by {a o} [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
 def min {o} [Ord o] (x1: o) (x2: o) : o = min_by id x1 x2
 def max {o} [Ord o] (x1: o) (x2: o) : o = max_by id x1 x2
 
-def minimum_by {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
+def minimum_by {a n o} [Data a, Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (min_by f) xs
-def maximum_by {a n o} [Ord o] (f:a->o) (xs:n=>a) : a =
+def maximum_by {a n o} [Data a, Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (max_by f) xs
 
 def minimum {n o} [Ord o] (xs:n=>o) : o = minimum_by id xs
@@ -2152,7 +2165,7 @@ def maximum {n o} [Ord o] (xs:n=>o) : o = maximum_by id xs
 '### argmin/argmax
 TODO: put in same section as `searchsorted`
 
-def argscan {n o} (comp:o->o->Bool) (xs:n=>o) : n =
+def argscan {n o} [Data o] (comp:o->o->Bool) (xs:n=>o) : n =
   zeroth = (0@_, xs.(0@_))
   compare = \(idx1, x1) (idx2, x2).
     select (comp x1 x2) (idx1, x1) (idx2, x2)
@@ -2281,6 +2294,12 @@ def is_power_of_2 (x:Nat) : Bool =
     then False
     else 0 == %and x' (%isub x' (1::NatRep))
 
+-- This computes the integer part of the binary logarithm of the input.
+-- TODO: natlog2 0 should do something other than underflow the answer.
+-- TODO: Use LLVM ctlz intrinsic instead.  It needs a slightly new
+-- code path in ImpToLLVM, because it's the first LLVM intrinsic
+-- we have with a fixed-point argument.
+-- https://llvm.org/docs/LangRef.html#llvm-ctlz-intrinsic
 def natlog2 (x:Nat) : Nat =
   tmp = yield_state 0 \ans.
     cmp <- run_state 1
@@ -2294,23 +2313,19 @@ def natlog2 (x:Nat) : Nat =
           False
   unsafe_nat_diff tmp 1  -- TODO: something less horrible
 
-def general_integer_power {a} (times:a->a->a) (one:a) (base:a) (power:Nat) : a =
+def general_integer_power {a} [Data a] (times:a->a->a) (one:a) (base:a) (power:Nat) : a =
+  iters = if power == 0 then 0 else 1 + natlog2 power
   -- Implements exponentiation by squaring.
   -- This could be nicer if there were a way to explicitly
   -- specify which typelcass instance to use for Mul.
   yield_state one \ans.
     pow <- with_state power
     z <- with_state base
-    while do
-      if get pow > 0
-        then
-          if is_odd (get pow)
-            then ans := times (get ans) (get z)
-          z := times (get z) (get z)
-          pow := intdiv2 (get pow)
-          True
-        else
-          False
+    for _:(Fin iters).
+      if is_odd (get pow)
+        then ans := times (get ans) (get z)
+      z := times (get z) (get z)
+      pow := intdiv2 (get pow)
 
 def intpow {a} [Mul a] (base:a) (power:Nat) : a =
   general_integer_power (*) one base power
@@ -2354,7 +2369,7 @@ def concat {n a} (lists:n=>(List a)) : List a =
       eltIdx := eltIdxVal + 1
       xs.(eltIdxVal@_)
 
-def cat_maybes {a n} (xs:n=>Maybe a) : List a =
+def cat_maybes {a n} [Data a] (xs:n=>Maybe a) : List a =
   (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
     for i. case xs.i of
       Just _ ->
@@ -2369,10 +2384,10 @@ def cat_maybes {a n} (xs:n=>Maybe a) : List a =
         Nothing -> todo -- Impossible
       Nothing -> todo -- Impossible
 
-def filter {a n} [Ix n] (condition:a->Bool) (xs:n=>a) : List a =
+def filter {a n} [Ix n, Data a] (condition:a->Bool) (xs:n=>a) : List a =
   cat_maybes $ for i. if condition xs.i then Just xs.i else Nothing
 
-def arg_filter {a n} [Ix n] (condition:a->Bool) (xs:n=>a) : List n =
+def arg_filter {a n} [Ix n, Data a] (condition:a->Bool) (xs:n=>a) : List n =
   cat_maybes $ for i. if condition xs.i then Just i else Nothing
 
 -- TODO: use `ix_offset : [Ix n] -> n -> Int -> Maybe n` instead
@@ -2462,7 +2477,7 @@ def assert (b:Bool) : {Except} Unit =
 
 '### Misc instances that require `error`
 
-instance Subset a (a|b) given {a b}
+instance Subset a (a|b) given {a b} [Data a, Data b]
   inject' = \x. Left x
   project' = \x. case x of
     Left  y -> Just y
@@ -2471,7 +2486,7 @@ instance Subset a (a|b) given {a b}
     Left  x -> x
     Right x -> error "Can't project Right branch to Left branch"
 
-instance Subset a (b|a) given {a b}
+instance Subset a (b|a) given {a b} [Data a, Data b]
   inject' = \x. Right x
   project' = \x. case x of
     Left  x -> Nothing
@@ -2518,8 +2533,7 @@ instance NonEmpty (a=>b) given {a b} [Ix a, NonEmpty b]
 '### stack
 -- TODO: replace `DynBuffer` with this?
 
--- TODO: `Data` constraint
-def Stack (h:Heap) (a:Type) = Ref h (Nat & List a)
+def Stack (h:Heap) (a:Type) [Data a] = Ref h (Nat & List a)
 
 def stack_size {h a} (stack:Stack h a) : {State h} Nat = get $ fst_ref stack
 
@@ -2547,7 +2561,7 @@ def read_stack {h a} (stack:Stack h a) : {State h} (List a) =
   AsList n (get buf)
 
 @noinline
-def stack_push {a h} (stack:Stack h a) (x:a) : {State h} Unit =
+def stack_push {a} [Data a] {h} (stack:Stack h a) (x:a) : {State h} Unit =
   n_old = stack_size stack
   n_new = n_old + 1
   ensure_size_at_least stack n_new
@@ -2558,8 +2572,10 @@ def stack_push {a h} (stack:Stack h a) (x:a) : {State h} Unit =
 -- TODO: we need to put the arguments in this order because the compiler
 -- currently requires the non-data args to come before the data args. We should
 -- fix that.
+-- In particular, we cannot rely on the Data and Ix constraints to be auto-inferred,
+-- because of Issue 1229 https://github.com/google-research/dex-lang/issues/1229.
 @noinline
-def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
+def stack_extend {a n} [Data a, Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
   n_old = stack_size stack
   n_new = n_old + size n
   ensure_size_at_least stack n_new
@@ -2568,8 +2584,18 @@ def stack_extend {a n} [Ix n] {h} (stack:Stack h a) (x:n=>a) : {State h} Unit =
   buf_slice := x
   fst_ref stack := n_new
 
+def stack_pop {a h} [Data a] (stack:Stack h a) : {State h} Maybe a =
+  n_old = stack_size stack
+  case n_old == 0 of
+    True -> Nothing
+    False ->
+      n_new = unsafe_nat_diff n_old 1
+      buf = unsafe_get_stack_buffer stack
+      fst_ref stack := n_new
+      Just $ get buf!(unsafe_from_ordinal _ n_new)
+
 stack_init_size = 16
-def with_stack {r eff} (a:Type) (f : (h:Heap) ?-> Stack h a -> {State h|eff} r) : {|eff} r =
+def with_stack {r eff} (a:Type) [Data a] (f : (h:Heap) ?-> Stack h a -> {State h|eff} r) : {|eff} r =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value
   with_state (0, init_stack) \ref . f ref
 
@@ -2584,4 +2610,9 @@ def with_stack_internal (f : (h:Heap) ?-> Stack h Char -> {State h} Unit) : List
     f stack
     read_stack stack
 
-def show_any {a} (x:a) : String = %showAny x
+def show_any {a} (x:a) : String = unsafe_coerce String $ %showAny x
+
+def coerce_table {n a} [Data a] (m:Type) [Ix m] (x:n=>a) : m => a =
+  if size m == size n
+    then unsafe_coerce (m=>a) x
+    else error "mismatched sizes in table coercion"

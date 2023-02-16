@@ -12,8 +12,8 @@ def UpperTriMat (n:Type) [Ix n] (v:Type) : Type = (i:n)=>(i..)=>v
 def refl_less {n} [Ix n] (i:n) : (..i) = unsafe_project _ i
 def refl_more {n} [Ix n] (i:n) : (i..) = unsafe_project _ i
 
-def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = view i. u.i.(refl_more i)
-def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = view i. l.i.(refl_less i)
+def upper_tri_diag {n v} (u:UpperTriMat n v) : n=>v = for i. u.i.(refl_more i)
+def lower_tri_diag {n v} (l:LowerTriMat n v) : n=>v = for i. l.i.(refl_less i)
 
 def is_last {n} [Ix n] (x:n) : Bool = (ordinal x + 1) == size n
 
@@ -191,10 +191,12 @@ def backward_substitute {n v} [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v
       sRef!i := (b.i - s) / (upper_tri_diag a).i
 
 -- Todo: get rid of these by writing a dependent indexing (!) operator.
-def lower_tri_mat {a b h} (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
+def lower_tri_mat {a b h} [Data a, Data b]
+    (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
   d = %indexRef ref i
   d!j
-def upper_tri_mat {a b h} (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
+def upper_tri_mat {a b h} [Data a, Data b]
+    (ref:Ref h (UpperTriMat a b)) (i:a) (j:(i..)) : Ref h b =
   d = %indexRef ref i
   d!j
 
@@ -230,7 +232,7 @@ def apply_permutation {n t} ((perm, _):Permutation n) (xs: n=>t) : n=>t =
 def identity_permutation {n} [Ix n] : Permutation n =
   (for i. i, 1.0)
 
-def swap_in_place {n h} (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
+def swap_in_place {n h} [Ix n] (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
   (permRef, signRef) = (fst_ref pRef, snd_ref pRef)
   tempj = get permRef!j
   permRef!j := get permRef!i

@@ -32,7 +32,7 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
 
 def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = min_by fst
 
-def minimumbyfst {n a} : (n=>(Float & a)) -> (Float & a) = minimum_by fst
+def minimumbyfst {n a} [Data a] : (n=>(Float & a)) -> (Float & a) = minimum_by fst
 
 '### Rand helpers
 

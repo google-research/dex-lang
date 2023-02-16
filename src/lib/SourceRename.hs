@@ -21,8 +21,8 @@ import LabeledItems
 import Name
 import Core (EnvReader (..), withEnv, lookupSourceMapPure)
 import PPrint ()
+import IRVariants
 import Types.Source
-import Types.Primitives
 import Types.Core (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
@@ -127,7 +127,7 @@ ambiguousVarErrMsg v defs =
     defsPretty (LocalVar _) =
       error "shouldn't be possible because module vars can't shadow local ones"
 
-instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
+instance SourceRenamableE (SourceNameOr (Name (AtomNameC CoreIR))) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
       UAtomVar v -> return $ InternalName sourceName v
@@ -168,7 +168,7 @@ instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceOrI
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
-instance SourceRenamableB (UBinder AtomNameC) where
+instance SourceRenamableB (UBinder (AtomNameC CoreIR)) where
   sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
 
 instance SourceRenamableB UPatAnn where
@@ -177,13 +177,13 @@ instance SourceRenamableB UPatAnn where
     sourceRenameB b \b' ->
       cont $ UPatAnn b' ann'
 
-instance SourceRenamableB (UAnnBinder AtomNameC) where
+instance SourceRenamableB (UAnnBinder (AtomNameC CoreIR)) where
   sourceRenameB (UAnnBinder b ann) cont = do
     ann' <- sourceRenameE ann
     sourceRenameB b \b' ->
       cont $ UAnnBinder b' ann'
 
-instance SourceRenamableB (UAnnBinderArrow AtomNameC) where
+instance SourceRenamableB (UAnnBinderArrow (AtomNameC CoreIR)) where
   sourceRenameB (UAnnBinderArrow b ann arr) cont = do
     ann' <- sourceRenameE ann
     sourceRenameB b \b' ->
@@ -203,9 +203,6 @@ instance SourceRenamableE UExpr' where
       sourceRenameB pat \pat' ->
         UPi <$> (UPiExpr arr pat' <$> sourceRenameE eff <*> sourceRenameE body)
     UApp f x -> UApp <$> sourceRenameE f <*> sourceRenameE x
-    UTabLam (UTabLamExpr pat body) ->
-      sourceRenameB pat \pat' ->
-        UTabLam <$> UTabLamExpr pat' <$> sourceRenameE body
     UTabPi (UTabPiExpr pat body) ->
       sourceRenameB pat \pat' ->
         UTabPi <$> (UTabPiExpr pat' <$> sourceRenameE body)
@@ -251,18 +248,17 @@ instance SourceRenamableE UAlt where
     sourceRenameB pat \pat' ->
       UAlt pat' <$> sourceRenameE body
 
-instance ((forall c n. Ord (a c n)), SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => SourceRenamableE (EffectRowP a) where
-  sourceRenameE (EffectRow row tailVar) =
-    EffectRow <$> row' <*> mapM sourceRenameE tailVar
+instance SourceRenamableE UEffectRow where
+  sourceRenameE (UEffectRow row tailVar) =
+    UEffectRow <$> row' <*> mapM sourceRenameE tailVar
     where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
 
-instance (SourceRenamableE (a AtomNameC), SourceRenamableE (a EffectNameC)) => SourceRenamableE (EffectP a) where
-  sourceRenameE (RWSEffect rws (Just name)) = RWSEffect rws <$> Just <$> sourceRenameE name
-  sourceRenameE (RWSEffect rws Nothing) = return $ RWSEffect rws Nothing
-  sourceRenameE ExceptionEffect = return ExceptionEffect
-  sourceRenameE IOEffect = return IOEffect
-  sourceRenameE (UserEffect name) = UserEffect <$> sourceRenameE name
-  sourceRenameE InitEffect = return InitEffect
+instance SourceRenamableE UEffect where
+  sourceRenameE (URWSEffect rws name) = URWSEffect rws <$> sourceRenameE name
+  sourceRenameE UExceptionEffect = return UExceptionEffect
+  sourceRenameE UIOEffect = return UIOEffect
+  sourceRenameE (UUserEffect name) = UUserEffect <$> sourceRenameE name
+  sourceRenameE UInitEffect = return UInitEffect
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $
@@ -312,7 +308,7 @@ instance SourceRenamableB UDecl where
         cont $ UHandlerDecl effName' bodyTyArg' tyArgs' retEff' retTy' ops' handlerName'
 
 renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
-                 => Nest (UAnnBinder AtomNameC) i' i
+                 => Nest (UAnnBinder (AtomNameC CoreIR)) i' i
                  -> UMethodType i
                  -> SourceName
                  -> m o (UMethodType o)
@@ -344,7 +340,7 @@ instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b
         cont $ PairB b1' b2'
 
 sourceRenameUBinderNest
-  :: (Renamer m, Color c, Distinct o)
+  :: (Color c, Renamer m, Distinct o)
   => (forall l. Name c l -> UVar l)
   -> Nest (UBinder c) i i'
   -> (forall o'. DExt o o' => Nest (UBinder c) o o' ->  m o' a)
@@ -355,7 +351,7 @@ sourceRenameUBinderNest asUVar (Nest b bs) cont =
     sourceRenameUBinderNest asUVar bs \bs' ->
       cont $ Nest b' bs'
 
-sourceRenameUBinder :: (Distinct o, Renamer m, Color c)
+sourceRenameUBinder :: (Color c, Distinct o, Renamer m)
                     => (forall l. Name c l -> UVar l)
                     -> UBinder c i i'
                     -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)
@@ -434,7 +430,7 @@ class SourceRenamablePat (pat::B) where
                   -> (forall o'. DExt o o' => SiblingSet -> pat o o' -> m o' a)
                   -> m o a
 
-instance SourceRenamablePat (UBinder AtomNameC) where
+instance SourceRenamablePat (UBinder (AtomNameC CoreIR)) where
   sourceRenamePat sibs ubinder cont = do
     newSibs <- case ubinder of
       UBindSource b -> do

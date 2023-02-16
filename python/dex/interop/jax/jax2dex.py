@@ -67,7 +67,7 @@ class FinTabType(Type):
   size: int  # TODO Expr
   ty: Type
   def pprint(self) -> str:
-    return f'((Fin (%newtype Nat (%monoLit {self.size})))=>{self.ty.pprint()})'
+    return f'((Fin (%NatCon (%monoLit {self.size})))=>{self.ty.pprint()})'
 
 @dataclass
 class FinType(Type):
@@ -410,7 +410,7 @@ expr_makers[lax.exp_p] = lambda ctx, x: App(Var('exp'), x)
 
 IX_REP_DTYPE = np.dtype('uint32')
 def IxRepLiteral(n): return Literal(n, IX_REP_DTYPE)
-def MkNat(n): return App(Prim('newtype'), Prim('Nat'), n)
+def MkNat(n): return App(Prim('NatCon'), n)
 def NatLiteral(n): return MkNat(Literal(n, IX_REP_DTYPE))
 
 def _broadcast_in_dim(ctx, x, *dyn_shape, shape, broadcast_dimensions):

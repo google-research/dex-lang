@@ -371,8 +371,13 @@ grad (\x . (min' x (x+1))) 1.0
 grad (\x . [x].(argmin [x])) 1.0
 > 1.
 
+-- Regression test for bug #821, AD of a record-typed function
+grad (get_at #foo) { foo = 1 }
+> {foo = 1.}
+
 -------------------- Custom linearization --------------------
 
+@noinline
 f = \x:Float. x * 2
 fLin = \x:Float. (f x, \xt:Float. xt * 4)
 
@@ -399,6 +404,7 @@ flip deriv 1.0 \x:Float.
   f2 x
 > 4.
 
+@noinline
 g = \x:(Float & Float). 4 .* x
 
 custom-linearization g \x. (g x, g x)
@@ -413,6 +419,7 @@ custom-linearization g \x. (g x, g x)
 
 data IHaveNoTangentType = MkIHaveNoTangentType
 
+@noinline
 noInputTangent = \x:IHaveNoTangentType. 2.0
 
 custom-linearization noInputTangent \x. (noInputTangent x, 0.0)
@@ -422,6 +429,7 @@ custom-linearization noInputTangent \x. (noInputTangent x, 0.0)
 >
 > but it doesn't have a well-defined tangent space.
 
+@noinline
 noOutputTangent = \x:Float. MkIHaveNoTangentType
 
 custom-linearization noOutputTangent \x. (noOutputTangent x, 0.0)
@@ -432,6 +440,7 @@ custom-linearization noOutputTangent \x. (noOutputTangent x, 0.0)
 > but it does not have a well-defined tangent space.
 
 -- Functions of multiple arguments should be supported
+@noinline
 h = \x:Float y:Float. x * 2 + y
 hLin = \x y. (h x y, \xt:Float yt:Float. xt + yt)
 
@@ -441,6 +450,7 @@ deriv (\x. h x x) 1.0 == deriv (\x. x + x) 1.0
 > True
 
 -- Index-polymorphic custom linearization
+@noinline
 def w {n} [Ix n] (x:n=>Float) : n=>Float = 2 .* x
 def wLin {n} [Ix n] (x:n=>Float) : (n=>Float & n=>Float -> n=>Float) = (w x, \xt:(n=>Float). 4 .* xt)
 
@@ -449,16 +459,29 @@ custom-linearization w wLin
 jvp (\x. w x) [1.0, 1.0] [1.0, 0.0]
 > [4., 0.]
 
--- This is a little unexpected at first, but the result makes sense when you think about it...
--- w has implicit args, so we're really taking a jvp of (w _ _), which is a function returned by
--- a partial application of w to some inference holes.
 jvp w [1.0, 1.0] [1.0, 0.0]
-> [2., 0.]
+> [4., 0.]
+
+------ standalone functions ------
+
+@noinline
+def xy2 (x:Float) (y:Float) : Float =
+  x * y * y
+
+:p check_deriv (\x. xy2 x x) 2.0
+> True
+:p check_deriv (\x. xy2 x 3.0) 2.0
+> True
+:p check_deriv (\x. xy2 2.0 3.0) 2.0
+> True
+:p check_deriv (\x. xy2 5.0 x) 2.0
+> True
 
 ------ Symbolic tangents ------
 
 ST = SymbolicTangent
 
+@noinline
 def q (x:Float) (y:Float) : Float = x * 2 + y
 def qLin (x:Float) (y:Float) : _ =
   def lin (xt:ST Float) (yt: ST Float) : Float =

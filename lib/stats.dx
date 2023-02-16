@@ -236,7 +236,7 @@ instance OrderedDist NormalDist Float Float
     Exp $ log (0.5 * erfc ((loc - x) / (scale * sqrt(2.0))))
   survivor = \(Normal loc scale) x.
     Exp $ log (0.5 * erfc ((x - loc) / (scale * sqrt(2.0))))
-  quantile = todo  -- Add `erfinv`.
+  quantile = \_ _. todo  -- Add `erfinv`.
 
 
 '### Poisson distribution

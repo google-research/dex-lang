@@ -15,9 +15,11 @@ import Test.QuickCheck
 
 import Builder
 import Core
+import Imp (repValFromFlatList)
 import Lower
 import Name
 import Optimize
+import QueryType (getDestBlockType)
 import TopLevel
 import Types.Core
 import Types.Imp
@@ -28,14 +30,19 @@ import Util
 castOp :: ScalarBaseType -> LitVal -> PrimOp (SAtom VoidS)
 castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) (Con (Lit x))
 
-exprToBlock :: EnvReader m => Expr r n -> m n (Block r n)
+exprToBlock :: EnvReader m => SExpr n -> m n (SBlock n)
 exprToBlock expr = do
   liftBuilder $ buildBlock $ do
     v <- emit $ sink expr
     return $ Var v
 
-evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SAtom n)
-evalBlock block = lowerFullySequential block >>= evalLLVM
+evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
+evalBlock block = do
+  NullaryDestLamExpr lowered <- lowerFullySequential $ NullaryLamExpr block
+  imp <- asImpFunction lowered
+  resultVals <- evalLLVM imp
+  resultTy <- getDestBlockType lowered
+  repValFromFlatList resultTy resultVals
 
 evalClosedExpr :: SExpr VoidS -> IO LitVal
 evalClosedExpr expr = do
@@ -43,8 +50,7 @@ evalClosedExpr expr = do
   env <- initTopState
   fst <$> runTopperM cfg env do
     block <- exprToBlock $ unsafeCoerceE expr
-    (Var name) <- evalBlock block
-    (AtomNameBinding (TopDataBound (RepVal _ (Leaf (ILit ans))))) <- lookupEnv name
+    RepVal _ (Leaf (ILit ans)) <- evalBlock block
     return ans
 
 instance Arbitrary LitVal where

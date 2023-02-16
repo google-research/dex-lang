@@ -108,7 +108,9 @@ xr = map n_to_f arr
 > ((Fin 2) => (Fin 2) => Nat)
 
 :t [[1, 2], [3]]
-> Type error:Literal has 1 element, but required type has 2.
+> Type error:
+> Expected: (Fin 2)
+>   Actual: (Fin 1)
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -341,7 +343,8 @@ def getFst3 {b:Type} {n:Type} (xs:n=>b) : b =
 :p getFst3 [1,2,3]
 > 1
 
-def triRefIndex {h n} (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
+def triRefIndex {h n} [Ix n, Data ((i':n)=>(..i')=>Float)]
+  (ref:Ref h ((i':n)=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
   %indexRef ref i
 
 (for i:(Fin 5). for j:(i..). 0.0).(0@_)
@@ -378,7 +381,7 @@ def weakerInferenceReduction {n} (l : (i:n)=>(..i)=>Float) (j:n): Unit =
 val = for i:(Fin 2). \(x:Float). for j:(..i). 1
 
 :t val
-> ((v#0:(Fin 2)) => Float32 -> (..v#0) => Nat)
+> ((i:(Fin 2)) => Float32 -> (..i) => Nat)
 
 -- Tests for table
 
@@ -402,7 +405,7 @@ c = [1, 2]
 
 -- Tests for type inference of table literals
 
-def mkEmpty (a:Type) : (Fin 0)=>a = []
+def mkEmpty (a:Type) [Data a] : (Fin 0)=>a = []
 
 :t [0.0, 1.0]
 > ((Fin 2) => Float32)
@@ -410,24 +413,19 @@ def mkEmpty (a:Type) : (Fin 0)=>a = []
 > ((Fin 2) => (Fin 1) => Float32)
 :t [0.0, 1.0] :: (Fin 2)=>Float
 > ((Fin 2) => Float32)
-:t [0.0, 1.0] :: ((Fin 1) & (Fin 2))=>Float
+:t (coerce_table _ [0.0, 1.0]) :: ((Fin 1) & (Fin 2))=>Float
 > ((Fin 1 & Fin 2) => Float32)
-
-:t [[0.0], [1.0, 2.0]] :: (i:Fin 2)=>(..i)=>Float
-> ((i:(Fin 2)) => (..i) => Float32)
-:t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] :: (i:Fin 2)=>(..i)=>(Fin 2)=>Float
-> ((i:(Fin 2)) => (..i) => (Fin 2) => Float32)
-:t [0@_, 1@_]::((i:Fin 2)=>(..i))
-> ((i:(Fin 2)) => ..i)
 
 def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
   for i j. x.(i, j)
 
-:t uncurryTable [0.0, 1.0, 2.0, 3.0]  -- We should be able to infer the tuple type here
+-- We should be able to infer the tuple type here
+:t uncurryTable (coerce_table _ [0.0, 1.0, 2.0, 3.0])
 > ((Fin 2) => (Fin 2) => Float32)
-:t uncurryTable [0, 1, 2, 3]          -- Extra difficulty: need to default the integer type
-> ((Fin 2) => (Fin 2) => Nat)
 
+-- Extra difficulty: need to default the integer type
+:t uncurryTable (coerce_table _ [0, 1, 2, 3])
+> ((Fin 2) => (Fin 2) => Nat)
 
 -- Make sure that the local type alias is unifiable with Int
 def GetInt (n : Int) : Type = Int
@@ -452,7 +450,7 @@ q 5
 -- Dereference variable names when resolving table type annotations
 -- This is a regression test for
 -- https://github.com/google-research/dex-lang/issues/563
-:t [0.0, 1.0]::(Bool=>Float)
+:t coerce_table Bool [0.0, 1.0]
 > (Bool => Float32)
 
 -- Regression test for
@@ -460,13 +458,17 @@ q 5
 -- This should not take a long time, because we should compare sizes
 -- before constructing the indices of the annotated index set.
 :t [0.0, 1.0]::((Fin 100000000)=>Float)
-> Type error:Literal has 2 elements, but required type has 100000000.
+> Type error:
+> Expected: (Fin 100000000)
+>   Actual: (Fin 2)
 >
 > :t [0.0, 1.0]::((Fin 100000000)=>Float)
 >    ^^^^^^^^^^
 
 :t [0.0, 1.0]::((i: Fin 100000000)=>(..i)=>Float)
-> Type error:Literal has 2 elements, but required type has 100000000.
+> Type error:
+> Expected: (Fin 100000000)
+>   Actual: (Fin 2)
 >
 > :t [0.0, 1.0]::((i: Fin 100000000)=>(..i)=>Float)
 >    ^^^^^^^^^^
@@ -477,13 +479,8 @@ def frob {n} (_:Unit) : Unit =
   [0.0, 1.0]::((Fin n)=>Float)
   ()
 > Type error:
-> Expected: ((Fin n) => Float32)
->   Actual: ((Fin 2) => Float32)
-> If attempting to construct a fixed-size table not
-> indexed by 'Fin n' for some static n, this error may
-> indicate there was not enough information to infer
-> a concrete index set; try adding an explicit
-> annotation.
+> Expected: (Fin n)
+>   Actual: (Fin 2)
 >
 >   [0.0, 1.0]::((Fin n)=>Float)
 >   ^^^^^^^^^^
@@ -535,7 +532,7 @@ pair = (5 ,> buffer) :: tp
 if False
   then (5 ,> buffer) :: tp
   else (3 ,> for i:(Fin 3). (ordinal i) * 2) :: tp
-> (3,> [0, 2, 4])
+> (3 ,> [0, 2, 4])
 
 '### Tests for dependent pair pattern match
 
@@ -547,25 +544,30 @@ def transpose_ix {n} [Ix n] (i:n) (j:(i..)) : (i:n &> ..i) =
   i' = unsafe_project _ i
   (j' ,> i')
 
-def transpose_lower_to_upper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
-  for i j.
-    (j' ,> i') = transpose_ix i j
-    lower.j'.i'
+-- TODO: re-enable when we have a better story for explicitly constructing dependent tables
+-- def transpose_lower_to_upper {n v} (lower:LowerTriMat n v) : UpperTriMat n v =
+--   for i j.
+--     (j' ,> i') = transpose_ix i j
+--     lower.j'.i'
 
-dpair : ((i:Fin 3)=>(..i)=>Int) =
-  [[1], [2,3], [4,5,6]]
+-- dpair : ((i:Fin 3)=>(..i)=>Int) =
+--   coerce_table _ [ coerce_table _ [1]
+--                  , coerce_table _ [2,3]
+--                  , coerce_table _ [4,5,6]]
 
-:p transpose_lower_to_upper dpair
-> [[1, 2, 4], [3, 5], [6]]
+-- :p transpose_lower_to_upper dpair
+-- > [[1, 2, 4], [3, 5], [6]]
 
-'### Tests for function VSpace
+-- '### Tests for function VSpace
+-- that we could restore if we choose to:
+-- https://github.com/google-research/dex-lang/issues/1230
 
-:p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
-> True
-:p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
-> True
-:p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
-> True
+-- :p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
+-- > True
+-- :p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
+-- > True
+-- :p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
+-- > True
 
 '### Miscellany
 
@@ -594,3 +596,26 @@ table = [1.0, 2.0]
 >
 > :html table
 >       ^^^^^
+
+-- We can't have table literals of non-data
+:p [\x:Float. x, \x:Float. x + x]
+> Type error:Couldn't synthesize a class dictionary for: (Data (Float32 -> Float32))
+>
+> :p [\x:Float. x, \x:Float. x + x]
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+data A = MkA
+
+interface I param
+  m : Unit
+
+instance I A extraneous given {extraneous}
+  m = todo
+> Type error: unexpected extra parameter: extraneous
+>
+> instance I A extraneous given {extraneous}
+>              ^^^^^^^^^^^
+
+instance I
+  m = todo
+> Type error: missing interface parameters. Expected 1 got 0

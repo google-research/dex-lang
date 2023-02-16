@@ -83,9 +83,9 @@ dexToCAtom atomPtr resultPtr = do
     scalarAtomToCAtom :: Atom CoreIR n -> IO CInt
     scalarAtomToCAtom atom = case atom of
       Con con -> case con of
-        Lit l          -> poke resultPtr (CLit l) $> 1
-        Newtype NatTy rep -> scalarAtomToCAtom rep
+        Lit l -> poke resultPtr (CLit l) $> 1
         _ -> notSerializable
+      NewtypeCon NatCon rep -> scalarAtomToCAtom rep
       _ -> notSerializable
 
     notSerializable = setError "Unserializable atom" $> 0

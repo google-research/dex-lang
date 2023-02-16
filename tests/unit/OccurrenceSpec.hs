@@ -14,6 +14,7 @@ import Data.String
 import Test.Hspec
 
 import MTL1
+import IRVariants
 import Name hiding (NameMap)
 import Occurrence
 
@@ -39,7 +40,7 @@ data UIxExpr =
 instance IsString UIxExpr where
   fromString = UVar
 
-resolveNames :: UAccess -> Abs (Nest (NameBinder 'AtomNameC)) Access 'VoidS
+resolveNames :: UAccess -> Abs (Nest (NameBinder ('AtomNameC SimpIR))) Access 'VoidS
 resolveNames (Free names uaccess) = runResolverM
   $ withFreshNamesM (map getNameHint names) \bs ->
     local ((NameMap $ M.fromList
@@ -56,7 +57,7 @@ withFreshNamesM [] cont = cont Empty
 withFreshNamesM (hint:hints) cont = withFreshM hint \b ->
   withFreshNamesM hints \bs -> cont $ Nest b bs
 
-newtype NameMap (n::S) = NameMap (M.Map String (Name 'AtomNameC n))
+newtype NameMap (n::S) = NameMap (M.Map String (Name ('AtomNameC SimpIR) n))
   deriving (Semigroup, Monoid)
 
 instance SinkableE NameMap where
@@ -87,7 +88,7 @@ resolveNames'' (UProduct elts) = Product <$> mapM resolveNames'' elts
 resolveNames'' (UInject i elt) = Inject i <$> resolveNames'' elt
 resolveNames'' (UDeterministic names) = Deterministic <$> mapM lookupName names
 
-lookupName :: String -> ResolverM n (Name 'AtomNameC n)
+lookupName :: String -> ResolverM n (Name ('AtomNameC SimpIR) n)
 lookupName str = do
   (NameMap names) <- ask
   case M.lookup str names of

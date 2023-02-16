@@ -7,7 +7,7 @@ def update {n} (points:n=>Point) (key:Key) ((x,y):Point) : Point =
   (x', y') = points.(rand_idx key)
   (0.5 * (x + x'), 0.5 * (y + y'))
 
-def runChain {a} (n:Nat) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
+def runChain {a} [Data a] (n:Nat) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
   scan' x0 (many f key)
 
 trianglePoints : (Fin 3)=>Point = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]

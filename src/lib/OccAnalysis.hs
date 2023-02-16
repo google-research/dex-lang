@@ -4,9 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module OccAnalysis (
-  analyzeOccurrences
-  ) where
+module OccAnalysis (analyzeOccurrences) where
 
 import Control.Monad.State.Strict
 import Data.Functor
@@ -32,9 +30,13 @@ import QueryType
 -- annotation holding a summary of how that binding is used.  It also eliminates
 -- unused pure bindings as it goes, since it has all the needed information.
 
-analyzeOccurrences :: (EnvReader m) => SBlock n -> m n (SBlock n)
-analyzeOccurrences = liftOCCM . occ accessOnce
-{-# SCC analyzeOccurrences #-}
+analyzeOccurrences :: EnvReader m => SLam n -> m n (SLam n)
+analyzeOccurrences = liftLamExpr analyzeOccurrencesBlock
+{-# INLINE analyzeOccurrences #-}
+
+analyzeOccurrencesBlock :: EnvReader m => SBlock n -> m n (SBlock n)
+analyzeOccurrencesBlock = liftOCCM . occ accessOnce
+{-# SCC analyzeOccurrencesBlock #-}
 
 -- === Overview ===
 
@@ -63,7 +65,7 @@ analyzeOccurrences = liftOCCM . occ accessOnce
 -- Our primary operating structure is a map (potentially partial) from names to
 -- their current Occ.AccessInfo information.
 
-newtype FV (n::S) = FV { freeVars :: (NameMapE 'AtomNameC AccessInfo n) }
+newtype FV (n::S) = FV { freeVars :: (NameMapE (AtomNameC SimpIR) AccessInfo n) }
 
 instance Monoid (FV n) where
   mempty = FV mempty
@@ -123,7 +125,7 @@ useManyTimesStatic (FV fvs) = FV $ mapNameMapE update fvs where
 --   environment), and
 -- - Binders introduced by `for`
 
-type OCCM = ReaderT1 (NameMapE 'AtomNameC IxExpr) (StateT1 FV EnvReaderM)
+type OCCM = ReaderT1 (NameMapE (AtomNameC SimpIR) IxExpr) (StateT1 FV EnvReaderM)
 
 liftOCCM :: (EnvReader m) => OCCM n a -> m n a
 liftOCCM action = liftEnvReaderM $ fst
@@ -152,7 +154,7 @@ isolated action = do
   lift11 $ lift11 $ runStateT1 (runReaderT1 r action) mempty
 
 -- Extend the IxExpr environment
-extend :: (BindsOneName b 'AtomNameC)
+extend :: (BindsOneName b (AtomNameC SimpIR))
   => b any n -> IxExpr n -> OCCM n a -> OCCM n a
 extend b ix = local (<> singletonNameMapE (binderName b) ix)
 
@@ -186,7 +188,6 @@ summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
   Var name -> ixExpr name
   Con c -> constructor c
-  ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
   _ -> unknown atom
   where
     invalid tag = error $ "Unexpected indexing by " ++ tag
@@ -195,13 +196,6 @@ summary atom = case atom of
       Lit _ -> return $ Deterministic []
       ProdCon elts -> Product <$> mapM summary elts
       SumCon _ tag payload -> Inject tag <$> summary payload
-      SumAsProd _ (TagRepVal tag) payloads ->
-        Inject (fromIntegral tag) <$> (summary $ payloads !! (fromIntegral tag))
-      SumAsProd _ _ _ -> unknown atom
-      LabelCon _ -> invalid "LabelCon"
-      Newtype _ e -> summary e
-      ExplicitDict _ _ -> invalid "ExplicitDict"
-      DictHole _ _ -> invalid "DictHole"
       HeapVal -> invalid "HeapVal"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
@@ -221,7 +215,7 @@ class HasOCC (e::E) where
   default occ :: (GenericE e, HasOCC (RepE e)) => Access n -> e n -> OCCM n (e n)
   occ a e = confuseGHC >>= \_ -> toE <$> occ a (fromE e)
 
-instance HasOCC (Name AtomNameC) where
+instance HasOCC (AtomName SimpIR) where
   occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo One a)) $> n
   {-# INLINE occ #-}
 instance HasOCC (Name HandlerNameC ) where occ _ n = return n
@@ -229,6 +223,7 @@ instance HasOCC (Name DataDefNameC ) where occ _ n = return n
 instance HasOCC (Name EffectNameC  ) where occ _ n = return n
 instance HasOCC (Name InstanceNameC) where occ _ n = return n
 instance HasOCC (Name ClassNameC   ) where occ _ n = return n
+instance HasOCC (Name TopFunNameC  ) where occ _ n = return n
 instance HasOCC (Name SpecializedDictNameC) where occ _ n = return n
 
 instance HasOCC SBlock where
@@ -288,9 +283,9 @@ occNest a decls ans = case decls of
         -- query the effects of an expression before it is substituted, and the
         -- type querying subsystem is not set up to do that.
         effs <- getEffects expr
-        let ann = if effs == Pure
-              then OccInfoPure usage
-              else OccInfoImpure usage
+        let ann = case effs of
+              Pure -> OccInfoPure usage
+              _    -> OccInfoImpure usage
         let binding'' = DeclBinding ann ty expr
         return $ Abs (Nest (Let b' binding'') ds'') ans''
 
@@ -443,21 +438,13 @@ occWithBinder (Abs (b:>ty) body) cont = do
 {-# INLINE occWithBinder #-}
 
 instance HasOCC SAtom where
-  occ a atom = case atom of
-    ACase _ _ _ -> error "Unexpected ACase outside of Simplify"
-    _ -> generic
-    where
-      generic = toE <$> (occ a $ fromE atom)
+  occ a atom = toE <$> (occ a $ fromE atom)
 
 -- We shouldn't need this instance, because Imp names can't appear in SimpIR,
 -- but we need to add some tricks to make GHC realize that.
 instance HasOCC (Name ImpNameC) where occ _ = error "Unexpected ImpName"
 
 instance HasOCC (Name PtrNameC) where occ _ x = return x
-
-instance HasOCC (TabLamExpr SimpIR) where
-  occ _ view = inlinedLater view
-  {-# INLINE occ #-}
 
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case
@@ -500,17 +487,16 @@ instance (HasOCC e1, HasOCC e2) => HasOCC (ExtLabeledItemsE e1 e2)
 instance HasOCC (LamExpr SimpIR) where
   occ _ _ = error "Impossible"
   {-# INLINE occ #-}
-instance HasOCC (PiType SimpIR)
 instance HasOCC (TabPiType SimpIR)
 instance HasOCC (DepPairType SimpIR)
-instance HasOCC EffectRow
-instance HasOCC Effect
-instance HasOCC (DictExpr SimpIR)
-instance HasOCC (DictType SimpIR)
-instance HasOCC (FieldRowElems SimpIR)
-instance HasOCC (FieldRowElem SimpIR)
-instance HasOCC (DataDefParams SimpIR)
+instance HasOCC (EffectRow SimpIR)
+instance HasOCC (EffectRowTail SimpIR)
+instance HasOCC (Effect SimpIR)
 instance HasOCC (DAMOp SimpIR)
+instance HasOCC (IxDict SimpIR)
+
+instance HasOCC (RepVal SimpIR) where
+  occ _ (RepVal ty rep) = RepVal <$> occTy ty <*> pure rep
 
 -- === The instances for RepE types ===
 
@@ -566,6 +552,14 @@ instance HasOCC e => HasOCC (WhenE True e) where
   occ a (WhenE e) = WhenE <$> occ a e
 instance HasOCC (WhenE False e) where
   occ _ _ = undefined
+
+instance HasOCC (WhenCore SimpIR e) where occ _ = \case
+instance HasOCC e => HasOCC (WhenCore CoreIR e) where
+  occ a (WhenIRE e) = WhenIRE <$> occ a e
+
+instance HasOCC (WhenSimp CoreIR e) where occ _ = \case
+instance HasOCC e => HasOCC (WhenSimp SimpIR e) where
+  occ a (WhenIRE e) = WhenIRE <$> occ a e
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: EnvReader m => m n (DistinctEvidence n)

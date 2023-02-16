@@ -23,6 +23,7 @@ module Types.Source where
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
+import qualified Data.Set              as S
 import Data.String (IsString, fromString)
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
@@ -61,11 +62,23 @@ pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
-type UEffect = EffectP SourceOrInternalName
-type UEffectRow = EffectRowP SourceOrInternalName
+data UEffect (n::S) =
+   URWSEffect RWS (SourceOrInternalName (AtomNameC CoreIR) n)
+ | UExceptionEffect
+ | UIOEffect
+ | UUserEffect (SourceOrInternalName EffectNameC n)
+ | UInitEffect
+
+data UEffectRow (n::S) =
+  UEffectRow (S.Set (UEffect n)) (Maybe (SourceOrInternalName (AtomNameC CoreIR) n))
+  deriving (Generic)
+
+pattern UPure :: UEffectRow n
+pattern UPure <- ((\(UEffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
+  where UPure = UEffectRow mempty Nothing
 
 data UVar (n::S) =
-   UAtomVar     (Name AtomNameC     n)
+   UAtomVar     (Name (AtomNameC CoreIR) n)
  | UTyConVar    (Name TyConNameC    n)
  | UDataConVar  (Name DataConNameC  n)
  | UClassVar    (Name ClassNameC    n)
@@ -90,7 +103,6 @@ data UExpr' (n::S) =
  | ULam (ULamExpr n)
  | UPi  (UPiExpr n)
  | UApp (UExpr n) (UExpr n)
- | UTabLam (UTabLamExpr n)
  | UTabPi  (UTabPiExpr n)
  | UDepPairTy (UDepPairType n)
  | UDepPair (UExpr n) (UExpr n)
@@ -127,9 +139,6 @@ data ULamExpr (n::S) where
 data UPiExpr (n::S) where
   UPiExpr :: Arrow -> UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
 
-data UTabLamExpr (n::S) where
-  UTabLamExpr :: UPatAnn n l -> UType l -> UTabLamExpr n
-
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UPatAnn n l -> UType l -> UTabPiExpr n
 
@@ -139,19 +148,19 @@ data UDepPairType (n::S) where
 data UDeclExpr (n::S) where
   UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
 
-type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameC) n l)
+type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder (AtomNameC CoreIR)) n l)
 
 -- TODO Why are the type and data constructor names SourceName, rather
 -- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
     :: SourceName
-    -> Nest (UAnnBinderArrow AtomNameC) n l
+    -> Nest (UAnnBinderArrow (AtomNameC CoreIR)) n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
 data UDataDefTrail (l::S) where
-  UDataDefTrail :: Nest (UAnnBinder AtomNameC) l l' -> UDataDefTrail l
+  UDataDefTrail :: Nest (UAnnBinder (AtomNameC CoreIR)) l l' -> UDataDefTrail l
 
 data UDecl (n::S) (l::S) where
   ULet :: LetAnn -> UPatAnn n l -> UExpr n -> UDecl n l
@@ -161,7 +170,7 @@ data UDecl (n::S) (l::S) where
     ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
     -> UDecl n l
   UInterface
-    :: Nest (UAnnBinder AtomNameC) n p     -- parameter binders
+    :: Nest (UAnnBinder (AtomNameC CoreIR)) n p     -- parameter binders
     ->  [UType p]                          -- superclasses
     ->  [UMethodType p]                    -- method types
     -> UBinder ClassNameC n l'             -- class name
@@ -173,7 +182,7 @@ data UDecl (n::S) (l::S) where
     ->   [UExpr l']                      -- class parameters
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
-    -> MaybeB (UBinder AtomNameC) n l    -- optional instance name
+    -> MaybeB (UBinder (AtomNameC CoreIR)) n l    -- optional instance name
     -> UDecl n l
   UEffectDecl
     :: [UEffectOpType n]                  -- operation types
@@ -182,7 +191,7 @@ data UDecl (n::S) (l::S) where
     -> UDecl n l
   UHandlerDecl
     :: SourceNameOr (Name EffectNameC) n  -- effect name
-    -> UBinder AtomNameC n b              -- body type argument
+    -> UBinder (AtomNameC CoreIR) n b              -- body type argument
     -> Nest UPatAnnArrow b l'             -- type args
     ->   UEffectRow l'                    -- returning effect
     ->   UType l'                         -- returning type
@@ -244,7 +253,7 @@ data UAlt (n::S) where
 
 data UFieldRowPat (n::S) (l::S) where
   UEmptyRowPat    :: UFieldRowPat n n
-  URemFieldsPat   :: UBinder AtomNameC n l -> UFieldRowPat n l
+  URemFieldsPat   :: UBinder (AtomNameC CoreIR) n l -> UFieldRowPat n l
   UStaticFieldPat :: Label               -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
   UDynFieldsPat   :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
   UDynFieldPat    :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
@@ -254,7 +263,7 @@ instance Show (UFieldRowPat n l) where
 
 type UPat = WithSrcB UPat'
 data UPat' (n::S) (l::S) =
-   UPatBinder (UBinder AtomNameC n l)
+   UPatBinder (UBinder (AtomNameC CoreIR) n l)
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
  | UPatDepPair (PairB UPat UPat n l)
@@ -338,7 +347,7 @@ data SymbolicZeros = SymbolicZeros | InstantiateZeros
 data SourceBlock' =
    EvalUDecl (UDecl VoidS VoidS)
  | Command CmdName (UExpr VoidS)
- | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
+ | DeclareForeign SourceName (UAnnBinder (AtomNameC CoreIR) VoidS VoidS)
  | DeclareCustomLinearization SourceName SymbolicZeros (UExpr VoidS)
  | Misc SourceBlockMisc
  | UnParseable ReachedEOF String  -- Grouping failure like `x + * y`.
@@ -409,8 +418,10 @@ data PrimName =
   | UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
-  | UProjBaseNewtype | UExplicitApply | UMonoLiteral
+  | UProjNewtype | UExplicitApply | UMonoLiteral
   | UIndexRef | UProjRef Int | UProjMethod Int
+  | UNat | UNatCon | UFin | ULabelType
+  | UEffectRowKind | ULabeledRowKind
     deriving (Show, Eq)
 
 -- === instances ===
@@ -467,7 +478,7 @@ instance Pretty (SourceMap n) where
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
 instance GenericE UVar where
-  type RepE UVar = EitherE8 (Name AtomNameC)     (Name TyConNameC)
+  type RepE UVar = EitherE8 (Name (AtomNameC CoreIR)) (Name TyConNameC)
                             (Name DataConNameC)  (Name ClassNameC)
                             (Name MethodNameC)   (Name EffectNameC)
                             (Name EffectOpNameC) (Name HandlerNameC)
@@ -523,7 +534,7 @@ instance HasNameHint ModuleSourceName where
   getNameHint Prelude = getNameHint @String "prelude"
   getNameHint Main = getNameHint @String "main"
 
-instance Color c => HasNameHint (UBinder c n l) where
+instance HasNameHint (UBinder c n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
     UIgnore       -> noHint
@@ -611,7 +622,6 @@ deriving instance Show (UBinder s n l)
 deriving instance Show (UDataDefTrail n)
 deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
-deriving instance Show (UTabLamExpr n)
 deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDepPairType n)
 deriving instance Show (UDeclExpr n)
@@ -620,3 +630,10 @@ deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 
+deriving instance Show (UEffect n)
+deriving instance Eq   (UEffect n)
+deriving instance Ord  (UEffect n)
+
+deriving instance Show (UEffectRow n)
+deriving instance Eq   (UEffectRow n)
+deriving instance Ord  (UEffectRow n)

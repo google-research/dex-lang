@@ -1,6 +1,6 @@
 '# Parser Combinators
 
-'Basic combinator-based parser in Dex (as opposed of Dex).
+'Basic combinator-based parser in Dex (as opposed to of Dex).
 
 '## Utilities unrelated to parsing
 
@@ -11,11 +11,11 @@ def from_ordinal_exc (n:Type) [Ix n] (i:Nat) : {Except} n =
 
 -- TODO: allow this to happen in-place
 -- TODO: if it takes too long to make that possible, start with a bounded version
-def push {h a} (ref:Ref h (List a)) (x:a) : {State h} Unit =
+def push {h a} [Data a] (ref:Ref h (List a)) (x:a) : {State h} Unit =
   l = get ref
   ref := l <> AsList _ [x]
 
-def index_list {a} (l:List a) (i:Nat) : {Except} a =
+def index_list {a} [Data a] (l:List a) (i:Nat) : {Except} a =
   (AsList n xs) = l
   xs.(from_ordinal_exc _ i)
 
@@ -92,7 +92,7 @@ def parse_digit : Parser Int = try $ MkParser \h.
 def optional {a} (p:Parser a) : Parser (Maybe a) =
   (MkParser \h. Just (parse h p)) <|> returnP Nothing
 
-def parse_many {a} (parser:Parser a) : Parser (List a) = MkParser \h.
+def parse_many {a} [Data a] (parser:Parser a) : Parser (List a) = MkParser \h.
   yield_state (AsList _ []) \results.
     iter \_.
       maybeVal = parse h $ optional parser

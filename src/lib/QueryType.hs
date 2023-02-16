@@ -14,26 +14,26 @@ module QueryType (
   instantiateDataDef, applyDataConAbs, dataDefRep,
   instantiateNaryPi, instantiateDepPairTy, instantiatePi, instantiateTabPi,
   litType,
-  numNaryPiArgs, specializedFunType,
-  projectionIndices, sourceNameType, typeBinOp, typeUnOp,
-  isSingletonType, singletonTypeVal, ixDictType, getSuperclassDicts, ixTyFromDict,
-  isNewtype, instantiateHandlerType, getDestBlockType,
-  getNaryLamExprType, strType, finTabType
+  numNaryPiArgs,
+  sourceNameType, typeBinOp, typeUnOp,
+  ixDictType, dataDictType, getSuperclassDicts,
+  ixTyFromDict, instantiateHandlerType, getDestBlockType, getNaryDestLamExprType,
+  getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
+  rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun,
+  HasEffectsE (..), NullaryLamApp (..), NullaryDestLamApp (..),
   ) where
 
-import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.List (elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import Data.Maybe (isJust)
-import qualified Data.Set        as S
 
 import Types.Primitives
 import Types.Core
 import Types.Source
+import Types.Imp
 import IRVariants
 import Core
 import CheapReduction
@@ -46,8 +46,7 @@ import PPrint ()
 
 -- === Main API for querying types ===
 
-getTypeSubst :: (SubstReader (AtomSubstVal r) m
-                , EnvReader2 m, HasType r e)
+getTypeSubst :: (SubstReader AtomSubstVal m, EnvReader2 m, HasType r e)
              => e i -> m i o (Type r o)
 getTypeSubst e = do
   subst <- getSubst
@@ -58,30 +57,36 @@ getType :: (EnvReader m, HasType r e) => e n -> m n (Type r n)
 getType e = liftTypeQueryM idSubst $ getTypeE e
 {-# INLINE getType #-}
 
-getNaryLamExprType :: EnvReader m => LamExpr r n -> m n (NaryPiType r n)
+getNaryLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (NaryPiType r n)
 getNaryLamExprType lam = liftTypeQueryM idSubst $ getLamExprType lam
 {-# INLINE getNaryLamExprType #-}
 
--- TODO: make `DestBlock` a newtype with a real `HasType` instance
-type DestBlock r = Abs (Binder r) (Block r)
-getDestBlockType :: EnvReader m => DestBlock r n -> m n (Type r n)
-getDestBlockType (Abs (_:>RawRefTy ansTy) _) = return ansTy
+-- TODO: Fold this into a real HasType instance
+getDestBlockType :: (IRRep r, EnvReader m) => DestBlock r n -> m n (Type r n)
+getDestBlockType (DestBlock (_:>RawRefTy ansTy) _) = return ansTy
 getDestBlockType _ = error "Expected a reference type for body destination"
 {-# INLINE getDestBlockType #-}
 
+getNaryDestLamExprType :: (IRRep r, EnvReader m) => DestLamExpr r n -> m n (NaryPiType r n)
+getNaryDestLamExprType lam = liftTypeQueryM idSubst $ getDestLamExprType lam
+{-# INLINE getNaryDestLamExprType #-}
+
+getReferentTypeRWSAction :: (EnvReader m, IRRep r) => LamExpr r o -> m o (Type r o)
+getReferentTypeRWSAction f = liftTypeQueryM idSubst $ liftM snd $ getTypeRWSAction f
+
 -- === Querying effects ===
 
-isPure :: (EnvReader m, HasEffectsE e r) => e n -> m n Bool
+isPure :: (IRRep r, EnvReader m, HasEffectsE e r) => e n -> m n Bool
 isPure e = getEffects e <&> \case
   Pure -> True
   _    -> False
 
-getEffects :: (EnvReader m, HasEffectsE e r) => e n -> m n (EffectRow n)
+getEffects :: (EnvReader m, HasEffectsE e r) => e n -> m n (EffectRow r n)
 getEffects e = liftTypeQueryM idSubst $ getEffectsImpl e
 {-# INLINE getEffects #-}
 
-getEffectsSubst :: (EnvReader2 m, SubstReader (AtomSubstVal r) m, HasEffectsE e r)
-              => e i -> m i o (EffectRow o)
+getEffectsSubst :: (EnvReader2 m, SubstReader AtomSubstVal m, HasEffectsE e r)
+                => e i -> m i o (EffectRow r o)
 getEffectsSubst e = do
   subst <- getSubst
   liftTypeQueryM subst $ getEffectsImpl e
@@ -89,38 +94,41 @@ getEffectsSubst e = do
 
 -- === Exposed helpers for querying types and effects ===
 
-caseAltsBinderTys :: (Fallible1 m, EnvReader m)
+caseAltsBinderTys :: (IRRep r, Fallible1 m, EnvReader m)
                   => Type r n -> m n [Type r n]
 caseAltsBinderTys ty = case ty of
-  TypeCon _ defName params -> do
-    def <- lookupDataDef defName
-    cons <- instantiateDataDef def params
-    return [unsafeCoerceIRE repTy | DataConDef _ repTy _ <- cons]
   SumTy types -> return types
-  VariantTy (NoExt types) -> return $ toList types
-  VariantTy _ -> fail "Can't pattern-match partially-known variants"
-  _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
+  NewtypeTyCon t -> case t of
+    VariantTyCon (NoExt types) -> return $ toList types
+    VariantTyCon _ -> fail "Can't pattern-match partially-known variants"
+    UserADTType _ defName params -> do
+      def <- lookupDataDef defName
+      cons <- instantiateDataDef def params
+      return [repTy | DataConDef _ repTy _ <- cons]
+    _ -> fail msg
+  _ -> fail msg
+  where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
-extendEffect :: Effect n -> EffectRow n -> EffectRow n
-extendEffect eff (EffectRow effs t) = EffectRow (S.insert eff effs) t
+extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
+extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
-getAppType :: EnvReader m => Type r n -> [Atom r n] -> m n (Type r n)
+getAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 getAppType f xs = liftTypeQueryM idSubst $ typeApp f xs
 {-# INLINE getAppType #-}
 
-getTabAppType :: EnvReader m => Type r n -> [Atom r n] -> m n (Type r n)
+getTabAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 getTabAppType f xs = case NE.nonEmpty xs of
   Nothing -> getType f
   Just xs' -> liftTypeQueryM idSubst $ typeTabApp f xs'
 {-# INLINE getTabAppType #-}
 
-getBaseMonoidType :: Fallible1 m => ScopeReader m => Type r n -> m n (Type r n)
+getBaseMonoidType :: (IRRep r, Fallible1 m) => ScopeReader m => Type r n -> m n (Type r n)
 getBaseMonoidType ty = case ty of
   Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
 {-# INLINE getBaseMonoidType #-}
 
-getReferentTy :: MonadFail m => EmptyAbs (PairB (Binder r) (Binder r)) n -> m (Type r n)
+getReferentTy :: (IRRep r, MonadFail m) => EmptyAbs (PairB (Binder r) (Binder r)) n -> m (Type r n)
 getReferentTy (Abs (PairB hB refB) UnitE) = do
   RefTy _ ty <- return $ binderType refB
   HoistSuccess ty' <- return $ hoist hB ty
@@ -135,19 +143,19 @@ getMethodIndex className methodSourceName = do
     Just i -> return i
 {-# INLINE getMethodIndex #-}
 
-instantiateNaryPi :: EnvReader m => NaryPiType r n  -> [Atom r n] -> m n (NaryPiType r n)
+instantiateNaryPi :: (IRRep r, EnvReader m) => NaryPiType r n  -> [Atom r n] -> m n (NaryPiType r n)
 instantiateNaryPi (NaryPiType bs eff resultTy) args = do
   PairB bs1 bs2 <- return $ splitNestAt (length args) bs
   applySubst (bs1 @@> map SubstVal args) (NaryPiType bs2 eff resultTy)
 {-# INLINE instantiateNaryPi #-}
 
-instantiatePi :: EnvReader m => PiType r n -> Atom r n -> m n (EffectRow n, Type r n)
+instantiatePi :: EnvReader m => PiType n -> CAtom n -> m n (EffectRow CoreIR n, CType n)
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 {-# INLINE instantiatePi #-}
 
-instantiateTabPi :: EnvReader m => TabPiType r n -> Atom r n -> m n (Type r n)
+instantiateTabPi :: (IRRep r, EnvReader m) => TabPiType r n -> Atom r n -> m n (Type r n)
 instantiateTabPi (TabPiType b body) x = applyAbs (Abs b body) (SubstVal x)
 {-# INLINE instantiateTabPi #-}
 
@@ -165,45 +173,19 @@ litType v = case v of
 numNaryPiArgs :: NaryPiType r n -> Int
 numNaryPiArgs (NaryPiType bs _ _) = nestLength bs
 
-specializedFunType :: EnvReader m => SpecializationSpec n -> m n (NaryPiType r n)
-specializedFunType (AppSpecialization f ab) = liftEnvReaderM $
-  refreshAbs ab \extraArgBs (ListE staticArgs) -> do
-    let extraArgBs' = fmapNest plainPiBinder extraArgBs
-    lookupAtomName (sink f) >>= \case
-      TopFunBound fTy _ -> do
-        NaryPiType dynArgBs effs resultTy <- instantiateNaryPi fTy staticArgs
-        let allBs = extraArgBs' >>> dynArgBs
-        return $ unsafeCoerceIRE $ NaryPiType allBs effs resultTy
-      _ -> error "should only be specializing top-level functions"
-
-userEffect :: EffectName n -> Atom r n
+userEffect :: EffectName n -> CAtom n
 userEffect v = Eff (OneEffect (UserEffect v))
 
-projectionIndices :: (Fallible1 m, EnvReader m) => Type r n -> m n [[Projection]]
-projectionIndices ty = case ty of
-  TypeCon _ defName _ -> do
-    DataDef _ _ cons <- lookupDataDef defName
-    case cons of
-      [DataConDef _ _ idxs] -> return idxs
-      _ -> unsupported
-  StaticRecordTy types -> return $ iota (length types) <&> \i ->
-    [ProjectProduct i, UnwrapCompoundNewtype]
-  ProdTy tys -> return $ iota (length tys) <&> \i -> [ProjectProduct i]
-  DepPairTy _ -> return $ [[ProjectProduct 0], [ProjectProduct 1]]
-  _ -> unsupported
-  where unsupported = error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
-
-sourceNameType :: (EnvReader m, Fallible1 m)
-               => SourceName -> m n (Type r n)
+sourceNameType :: (EnvReader m, Fallible1 m) => SourceName -> m n (Type CoreIR n)
 sourceNameType v = do
   lookupSourceMap v >>= \case
     Nothing -> throw UnboundVarErr $ pprint v
     Just uvar -> case uvar of
       UAtomVar    v' -> getType $ Var v'
-      UTyConVar   v' -> lookupEnv v' >>= \case TyConBinding _     e -> unsafeCoerceIRE <$> getType e
-      UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> unsafeCoerceIRE <$> getType e
-      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def    -> return $ unsafeCoerceIRE $ getClassTy def
-      UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> unsafeCoerceIRE <$> getType e
+      UTyConVar   v' -> lookupEnv v' >>= \case TyConBinding _     e -> getType e
+      UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
+      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  def    -> return $ getClassTy def
+      UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _ e  -> getType e
       UEffectVar  v' -> getType $ userEffect v'
       UEffectOpVar _ -> error "not implemented: sourceNameType::UEffectOpVar"  -- TODO(alex): implement
       UHandlerVar  _ -> error "not implemented: sourceNameType::UHandlerVar"   -- TODO(alex): implement
@@ -227,18 +209,18 @@ typeUnOp = const id  -- All unary ops preserve the type of the input
 
 -- === computing effects ===
 
-computeAbsEffects :: (EnvExtender m, RenameE e)
-  => Abs (Nest (Decl r)) e n -> m n (Abs (Nest (Decl r)) (EffectRow `PairE` e) n)
+computeAbsEffects :: (IRRep r, EnvExtender m, RenameE e)
+  => Abs (Nest (Decl r)) e n -> m n (Abs (Nest (Decl r)) (EffectRow r `PairE` e) n)
 computeAbsEffects it = refreshAbs it \decls result -> do
   effs <- declNestEffects decls
   return $ Abs decls (effs `PairE` result)
 {-# INLINE computeAbsEffects #-}
 
-declNestEffects :: (EnvReader m) => Nest (Decl r) n l -> m l (EffectRow l)
+declNestEffects :: (IRRep r, EnvReader m) => Nest (Decl r) n l -> m l (EffectRow r l)
 declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
 {-# INLINE declNestEffects #-}
 
-declNestEffectsRec :: Nest (Decl r) n l -> EffectRow l -> EnvReaderM l (EffectRow l)
+declNestEffectsRec :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> EnvReaderM l (EffectRow r l)
 declNestEffectsRec Empty !acc = return acc
 declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
   expr <- sinkM $ declExpr decl
@@ -251,57 +233,53 @@ declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
 
 -- === implementation of querying types ===
 
-newtype TypeQueryM (r::IR) (i::S) (o::S) (a :: *) = TypeQueryM {
-  runTypeQueryM :: SubstReaderT (AtomSubstVal r) EnvReaderM i o a }
+newtype TypeQueryM (i::S) (o::S) (a :: *) = TypeQueryM {
+  runTypeQueryM :: SubstReaderT AtomSubstVal EnvReaderM i o a }
   deriving ( Functor, Applicative, Monad
            , EnvReader, EnvExtender, ScopeReader
-           , SubstReader (AtomSubstVal r))
+           , SubstReader AtomSubstVal)
 
-liftTypeQueryM :: (EnvReader m) => Subst (AtomSubstVal r) i o
-               -> TypeQueryM r i o a -> m o a
+liftTypeQueryM :: (EnvReader m) => Subst AtomSubstVal i o
+               -> TypeQueryM i o a -> m o a
 liftTypeQueryM subst act =
   liftEnvReaderM $
     runSubstReaderT subst $
       runTypeQueryM act
 {-# INLINE liftTypeQueryM #-}
 
-instance MonadFail (TypeQueryM r i o) where
+instance MonadFail (TypeQueryM i o) where
   fail = error
   {-# INLINE fail #-}
 
-instance Fallible (TypeQueryM r i o) where
+instance Fallible (TypeQueryM i o) where
   throwErrs err = error $ pprint err
   {-# INLINE throwErrs #-}
   addErrCtx = const id
   {-# INLINE addErrCtx #-}
 
 class HasType (r::IR) (e::E) | e -> r where
-  getTypeE :: e i -> TypeQueryM r i o (Type r o)
+  getTypeE :: e i -> TypeQueryM i o (Type r o)
 
-instance HasType r (AtomName r) where
+instance IRRep r => HasType r (AtomName r) where
   getTypeE name = do
     substM (Var name) >>= \case
-      --- XXX: unsafe. fix!  The issue is that we have no way to statically check that
-      --- a name occurring in SimpIR is not referring to a CoreIR binding, or anything
-      --- like that.
-      Var name' -> (unsafeCoerceIRE . atomBindingType) <$> lookupAtomName name'
+      Var name' -> atomBindingType <$> lookupAtomName name'
       atom -> getType atom
   {-# INLINE getTypeE #-}
 
-instance HasType r (Atom r) where
-  getTypeE :: forall i o. Atom r i -> TypeQueryM r i o (Type r o)
+instance IRRep r => HasType r (Atom r) where
+  getTypeE :: forall i o. Atom r i -> TypeQueryM i o (Type r o)
   getTypeE atom = case atom of
     Var name -> getTypeE name
     Lam (UnaryLamExpr (b:>ty) body) arr (Abs (bEff:>_) effs) -> do
       ty' <- substM ty
-      withFreshBinder (getNameHint b) (LamBinding arr ty') \b' -> do
+      withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
         effs' <- extendRenamer (bEff@>binderName b') $ substM effs
         extendRenamer (b@>binderName b') do
           bodyTy <- getTypeE body
           return $ Pi $ PiType (PiBinder b' ty' arr) effs' bodyTy
     Lam _ _ _ -> error "expected a unary lambda expression"
     Pi _ -> return TyKind
-    TabLam lamExpr -> getTypeE lamExpr
     TabPi _ -> return TyKind
     DepPair _ _ ty -> do
       ty' <- substM ty
@@ -312,56 +290,66 @@ instance HasType r (Atom r) where
     Eff _ -> return EffKind
     PtrVar v -> substM v >>= lookupEnv >>= \case
       PtrBinding ty _ -> return $ PtrTy ty
-    TypeCon _ _ _ -> return TyKind
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
-    LabeledRow _ -> return LabeledRowKind
-    RecordTy _ -> return TyKind
-    VariantTy _ -> return TyKind
-    ACase _ _ resultTy -> substM resultTy
-    RepValAtom repVal -> do
-      RepVal ty _ <- substM repVal
-      return ty
-    ProjectElt i x -> do
+    NewtypeTyCon con -> getTypeE con
+    NewtypeCon con x -> getNewtypeType con x
+    RepValAtom repVal -> do RepVal ty _ <- substM repVal; return ty
+    ProjectElt (ProjectProduct i) x -> do
+      ty <- getTypeE x
+      x' <- substM x
+      projType i ty x'
+    ProjectElt UnwrapNewtype x -> do
       getTypeE x >>= \case
-        ProdTy xs -> return $ xs !! iProj
-        DepPairTy t | iProj == 0 -> return $ depPairLeftTy t
-        DepPairTy t | iProj == 1 -> do
-          x' <- substM x
-          xFst <- normalizeProj (ProjectProduct 0) x'
-          instantiateDepPairTy t xFst
-        ty | isNewtype ty -> projectNewtype ty
-        Var v -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint (Var v)
-        ty -> throw TypeErr $
-              "Only single-member ADTs and record types can be projected. Got " <> pprint ty
-        where
-          iProj = case i of
-            ProjectProduct i' -> i'
-            _ -> error "Not a product projection"
+        NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
+        ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
+    SimpInCore x -> getTypeE x
+    DictHole _ ty -> substM ty
 
--- === newtype conversion ===
+instance HasType CoreIR SimpInCore where
+  getTypeE = \case
+    LiftSimp t _ -> substM t
+    LiftSimpFun piTy _ -> Pi <$> substM piTy
+    TabLam t _ -> TabPi <$> substM t
+    ACase _ _ t -> substM t
 
-instance HasType r (TabLamExpr r) where
-  getTypeE (TabLamExpr (b:>ann) body) = do
-    ann' <- substM ann
-    withFreshBinder (getNameHint b) (toBinding ann') \b' ->
-      extendRenamer (b@>binderName b') $ do
-        bodyTy <- getTypeE body
-        return $ TabTy (b':>ann') bodyTy
+instance HasType CoreIR NewtypeTyCon where
+  getTypeE = \case
+    Nat               -> return TyKind
+    Fin _             -> return TyKind
+    EffectRowKind     -> return TyKind
+    LabelType         -> return TyKind
+    RecordTyCon  _    -> return TyKind
+    VariantTyCon _    -> return TyKind
+    LabeledRowKindTC  -> return TyKind
+    UserADTType _ _ _ -> return TyKind
+    LabelCon _        -> return $ NewtypeTyCon LabelType
+    LabeledRowCon _   -> return LabeledRowKind
 
-getTypePrimCon :: PrimCon r (Atom r i) -> TypeQueryM r i o (Type r o)
+getNewtypeType :: NewtypeCon i -> CAtom i -> TypeQueryM i o (CType o)
+getNewtypeType con x = case con of
+  NatCon          -> return $ NewtypeTyCon Nat
+  FinCon n        -> NewtypeTyCon . Fin <$> substM n
+  RecordCon labels -> do
+    TC (ProdType tys) <- getTypeE x
+    return $ StaticRecordTy $ restructure tys labels
+  VariantCon labels -> do
+    TC (SumType tys) <- getTypeE x
+    return $ VariantTy $ NoExt $ restructure tys labels
+  UserADTData d params -> do
+    d' <- substM d
+    params' <- substM params
+    (DataDef sn _ _) <- lookupDataDef d'
+    return $ NewtypeTyCon $ UserADTType sn d' params'
+
+getTypePrimCon :: IRRep r => PrimCon r (Atom r i) -> TypeQueryM i o (Type r o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
   SumCon tys _ _ -> SumTy <$> traverse substM tys
-  SumAsProd tys _ _ -> SumTy <$> traverse substM tys
-  Newtype ty _ -> substM ty
-  LabelCon _   -> return $ TC $ LabelType
-  ExplicitDict dictTy _ -> substM dictTy
-  DictHole _ ty -> substM ty
   HeapVal       -> return $ TC HeapType
 
-dictExprType :: DictExpr r i -> TypeQueryM r i o (Type r o)
+dictExprType :: DictExpr i -> TypeQueryM i o (CType o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- substM instanceName
@@ -369,7 +357,7 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM substM args
     let bs' = fmapNest (\(RolePiBinder b _ _ _) -> b) bs
-    ListE params' <- applySubst (bs' @@> map SubstVal args') (ListE (map unsafeCoerceIRE params))
+    ListE params' <- applySubst (bs' @@> map SubstVal args') $ ListE params
     return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
@@ -377,14 +365,12 @@ dictExprType e = case e of
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
     ClassDef _ _ bs superclasses _ <- lookupClassDef className
-    applySubst (bs @@> map SubstVal params) $ unsafeCoerceIRE (superclassTypes superclasses !! i)
+    applySubst (bs @@> map SubstVal params) $
+      superclassTypes superclasses !! i
   IxFin n -> do
     n' <- substM n
-    liftM DictTy $ ixDictType $ TC $ Fin n'
-  ExplicitMethods v params -> do
-    params' <- mapM substM params
-    SpecializedDictBinding (SpecializedDict (Abs bs dict) _) <- lookupEnv =<< substM v
-    dropSubst $ extendSubst (bs @@> map SubstVal params') $ getTypeE (unsafeCoerceIRE dict)
+    liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n'
+  DataData ty -> DictTy <$> (dataDictType =<< substM ty)
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -392,12 +378,23 @@ getIxClassName = lookupSourceMap "Ix" >>= \case
   Just (UClassVar v) -> return v
   Just _ -> error "not a class var"
 
-ixDictType :: (Fallible1 m, EnvReader m) => Type r n -> m n (DictType r n)
+ixDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 ixDictType ty = do
   ixClassName <- getIxClassName
   return $ DictType "Ix" ixClassName [ty]
 
-typeApp  :: Type r o -> [Atom r i] -> TypeQueryM r i o (Type r o)
+getDataClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
+getDataClassName = lookupSourceMap "Data" >>= \case
+  Nothing -> throw CompilerErr $ "Data interface needed but not defined!"
+  Just (UClassVar v) -> return v
+  Just _ -> error "not a class var"
+
+dataDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
+dataDictType ty = do
+  dataClassName <- getDataClassName
+  return $ DictType "Data" dataClassName [ty]
+
+typeApp  :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
 typeApp fTy [] = return fTy
 typeApp fTy xs = case fromNaryPiType (length xs) fTy of
   Just (NaryPiType bs _ resultTy) -> do
@@ -408,10 +405,10 @@ typeApp fTy xs = case fromNaryPiType (length xs) fTy of
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
-typeTabApp :: Type r o -> NE.NonEmpty (Atom r i) -> TypeQueryM r i o (Type r o)
+typeTabApp :: IRRep r => Type r o -> NE.NonEmpty (Atom r i) -> TypeQueryM i o (Type r o)
 typeTabApp tabTy xs = go tabTy $ toList xs
   where
-    go :: Type r o -> [Atom r i] -> TypeQueryM r i o (Type r o)
+    go :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
     go ty [] = return ty
     go ty (i:rest) = do
       TabTy (b:>_) resultTy <- return ty
@@ -419,19 +416,23 @@ typeTabApp tabTy xs = go tabTy $ toList xs
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
 
-instance HasType r (DictExpr r) where
+instance HasType CoreIR DictExpr where
   getTypeE e = dictExprType e
 
-instance HasType r (Expr r) where
+instance IRRep r => HasType r (Expr r) where
   getTypeE expr = case expr of
     App f xs -> do
       fTy <- getTypeE f
       typeApp fTy $ toList xs
+    TopApp f xs -> do
+      NaryPiType bs _ resultTy <- getTypeTopFun =<< substM f
+      xs' <- mapM substM xs
+      applySubst (bs @@> map SubstVal xs') resultTy
     TabApp f xs -> do
       fTy <- getTypeE f
       typeTabApp fTy xs
     Atom x   -> getTypeE x
-    TabCon ty _ -> substM ty
+    TabCon _ ty _ -> substM ty
     DAMOp           op -> getTypeE op
     UserEffectOp    op -> getTypeE op
     PrimOp          op -> getTypeE $ ComposeE op
@@ -445,7 +446,7 @@ instance HasType r (Expr r) where
       superclassDicts <- getSuperclassDicts def <$> substM dict
       let subst = (    paramBs @@> map SubstVal params
                    <.> classBs @@> map SubstVal superclassDicts)
-      applySubst subst (unsafeCoerceIRE methodTy)
+      applySubst subst methodTy
     RefOp ref m -> do
       TC (RefType h s) <- getTypeE ref
       case m of
@@ -462,7 +463,7 @@ instance HasType r (Expr r) where
           ProdTy tys <- return s
           return $ TC $ RefType h $ tys !! i
 
-instance HasType r (DAMOp r) where
+instance IRRep r => HasType r (DAMOp r) where
   getTypeE = \case
     AllocDest ty -> RawRefTy <$> substM ty
     Place _ _ -> return UnitTy
@@ -472,7 +473,7 @@ instance HasType r (DAMOp r) where
     Seq _ _ cinit _ -> getTypeE cinit
     RememberDest d _ -> getTypeE d
 
-instance HasType r (UserEffectOp r) where
+instance HasType CoreIR UserEffectOp where
   getTypeE = \case
     Handle hndName [] body -> do
       hndName' <- substM hndName
@@ -483,10 +484,10 @@ instance HasType r (UserEffectOp r) where
       Eff (OneEffect (UserEffect effName)) <- return eff
       EffectDef _ ops <- substM effName >>= lookupEffectDef
       let (_, EffectOpType _pol lamTy) = ops !! i
-      return $ unsafeCoerceIRE lamTy
+      return lamTy
     Resume retTy _ -> substM retTy
 
-instance HasType r (ComposeE PrimOp (Atom r)) where
+instance IRRep r => HasType r (ComposeE PrimOp (Atom r)) where
   getTypeE (ComposeE primOp) = case primOp of
     BinOp op x _ -> do
       xTy <- getTypeBaseType x
@@ -513,8 +514,8 @@ instance HasType r (ComposeE PrimOp (Atom r)) where
       OutputStream ->
         return $ BaseTy $ hostPtrTy $ Scalar Word8Type
         where hostPtrTy ty = PtrType (CPU, ty)
-      ShowAny _ -> strType
-      ShowScalar _ -> PairTy IdxRepTy <$> finTabType (NatVal showStringBufferSize) CharRepTy
+      ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
+      ShowScalar _ -> PairTy IdxRepTy <$> rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
     VectorOp op -> case op of
       VectorBroadcast _ vty -> substM vty
       VectorIota vty -> substM vty
@@ -522,7 +523,7 @@ instance HasType r (ComposeE PrimOp (Atom r)) where
         TC (RefType h _) -> TC . RefType h <$> substM vty
         ty -> error $ "Not a reference type: " ++ pprint ty
 
-instance HasType r (ComposeE RecordVariantOp (Atom r)) where
+instance HasType CoreIR (ComposeE RecordVariantOp CAtom) where
   getTypeE (ComposeE recordVariantOp) = case recordVariantOp of
     SumToVariant x -> getTypeE x >>= \case
       SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
@@ -540,7 +541,7 @@ instance HasType r (ComposeE RecordVariantOp (Atom r)) where
       rty <- getTypeE record
       case rty of
         RecordTy rest -> case lab' of
-          Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem
+          NewtypeTyCon (LabelCon l) -> return $ RecordTy $ prependFieldRowElem
                                 (StaticFields (labeledSingleton l vty)) rest
           Var labVar       -> return $ RecordTy $ prependFieldRowElem
                                 (DynField labVar vty) rest
@@ -551,7 +552,7 @@ instance HasType r (ComposeE RecordVariantOp (Atom r)) where
       lab' <- cheapNormalize =<< substM lab
       rty <- getTypeE record
       case (lab', rty) of
-        (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
+        (NewtypeTyCon (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
           let (h, items') = splitLabeledItems (labeledSingleton l ()) items
           return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
         (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
@@ -604,24 +605,26 @@ instance HasType r (ComposeE RecordVariantOp (Atom r)) where
       return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
     VariantMake ty _ _ _ -> substM ty
 
-instantiateHandlerType :: EnvReader m => HandlerName n -> Atom r n -> [Atom r n] -> m n (Type r n)
+instantiateHandlerType :: EnvReader m => HandlerName n -> CAtom n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
   HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
-  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) (unsafeCoerceIRE retTy)
+  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
 
-getSuperclassDicts :: ClassDef n -> Atom r n -> [Atom r n]
+getSuperclassDicts :: ClassDef n -> CAtom n -> [CAtom n]
 getSuperclassDicts (ClassDef _ _ _ (SuperclassBinders classBs _) _) dict =
   for [0 .. nestLength classBs - 1] \i -> DictCon $ SuperclassProj dict i
 
-getTypeBaseType :: HasType r e => e i -> TypeQueryM r i o BaseType
+getTypeBaseType :: (IRRep r, HasType r e) => e i -> TypeQueryM i o BaseType
 getTypeBaseType e =
   getTypeE e >>= \case
     TC (BaseType b) -> return b
     ty -> throw TypeErr $ "Expected a base type. Got: " ++ pprint ty
 
-labeledRowDifference' :: ExtLabeledItems (Type r o) (AtomName r o)
-                      -> ExtLabeledItems (Type r o) (AtomName r o)
-                      -> TypeQueryM r i o (ExtLabeledItems (Type r o) (AtomName r o))
+labeledRowDifference'
+  :: IRRep r
+  => ExtLabeledItems (Type r o) (AtomName r o)
+  -> ExtLabeledItems (Type r o) (AtomName r o)
+  -> TypeQueryM i o (ExtLabeledItems (Type r o) (AtomName r o))
 labeledRowDifference' (Ext (LabeledItems items) rest)
                       (Ext (LabeledItems subitems) subrest) = do
   -- Extract remaining types from the left.
@@ -636,22 +639,40 @@ labeledRowDifference' (Ext (LabeledItems items) rest)
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
 
-getTypeHof :: Hof r i -> TypeQueryM r i o (Type r o)
+getTypeTopFun :: EnvReader m => TopFunName n -> m n (NaryPiType SimpIR n)
+getTypeTopFun f = lookupTopFun f >>= \case
+  DexTopFun _ piTy _ _ -> return piTy
+  FFITopFun _ iTy -> liftIFunType iTy
+
+liftIFunType :: (IRRep r, EnvReader m) => IFunType -> m n (NaryPiType r n)
+liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
+  go :: IRRep r => [BaseType] -> EnvReaderM n (NaryPiType r n)
+  go = \case
+    [] -> return $ NaryPiType Empty (OneEffect IOEffect) resultTy
+      where resultTy = case resultTys of
+              [] -> UnitTy
+              [t] -> BaseTy t
+              [t1, t2] -> PairTy (BaseTy t1) (BaseTy t2)
+              _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
+    t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
+      NaryPiType bs effs resultTy <- go ts
+      return $ NaryPiType (Nest b bs) effs resultTy
+
+getTypeHof :: IRRep r => Hof r i -> TypeQueryM i o (Type r o)
 getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ dict f -> do
-    NaryPiType (UnaryNest (PiBinder b _ _)) _ eltTy <- getLamExprType f
+    NaryPiType (UnaryNest (b:>_)) _ eltTy <- getLamExprType f
     ixTy <- ixTyFromDict =<< substM dict
     return $ TabTy (b:>ixTy) eltTy
   While _ -> return UnitTy
-  Linearize f -> do
-    NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprType f
+  Linearize f _ -> do
+    NaryPiType (UnaryNest (binder:>a)) Pure b <- getLamExprType f
     let b' = ignoreHoistFailure $ hoist binder b
     fLinTy <- a --@ b'
-    a --> PairTy b' fLinTy
-  Transpose f -> do
-    NaryPiType (UnaryNest (PiBinder binder a _)) Pure b <- getLamExprType f
-    let b' = ignoreHoistFailure $ hoist binder b
-    b' --@ a
+    return $ PairTy b' fLinTy
+  Transpose f _ -> do
+    NaryPiType (UnaryNest (_:>a)) _ _ <- getLamExprType f
+    return a
   RunReader _ f -> do
     (resultTy, _) <- getTypeRWSAction f
     return resultTy
@@ -664,23 +685,29 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   RunInit f -> getTypeE f
   CatchException f -> MaybeTy <$> getTypeE f
 
-getLamExprType :: LamExpr r i -> TypeQueryM r i o (NaryPiType r o)
+getLamExprType :: IRRep r => LamExpr r i -> TypeQueryM i o (NaryPiType r o)
 getLamExprType (LamExpr bs body) =
   substBinders bs \bs' -> do
     effs <- substM $ blockEffects body
     resultTy <- getTypeE body
-    let piBinders = fmapNest (\(b:>ty) -> PiBinder b ty PlainArrow) bs'
-    return $ NaryPiType piBinders effs resultTy
+    return $ NaryPiType bs' effs resultTy
 
-getTypeRWSAction :: LamExpr r i -> TypeQueryM r i o (Type r o, Type r o)
+getDestLamExprType :: IRRep r => DestLamExpr r i -> TypeQueryM i o (NaryPiType r o)
+getDestLamExprType (DestLamExpr bs body) =
+  substBinders bs \bs' -> do
+    resultTy <- getDestBlockType =<< substM body
+    effs <- substM $ destBlockEffects body
+    return $ NaryPiType bs' effs resultTy
+
+getTypeRWSAction :: IRRep r => LamExpr r i -> TypeQueryM i o (Type r o, Type r o)
 getTypeRWSAction f = do
   NaryPiType (BinaryNest regionBinder refBinder) _ resultTy <- getLamExprType f
-  PiBinder _ (RefTy _ referentTy) _ <- return refBinder
+  RefTy _ referentTy <- return $ binderType refBinder
   let referentTy' = ignoreHoistFailure $ hoist regionBinder referentTy
   let resultTy' = ignoreHoistFailure $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
 
-instance HasType r (Block r) where
+instance IRRep r => HasType r (Block r) where
   getTypeE (Block NoBlockAnn Empty result) = getTypeE result
   getTypeE (Block (BlockAnn ty _) _ _) = substM ty
   getTypeE _ = error "impossible"
@@ -688,46 +715,42 @@ instance HasType r (Block r) where
 getClassTy :: ClassDef n -> Type CoreIR n
 getClassTy (ClassDef _ _ bs _ _) = go bs
   where
-    go :: Nest (RolePiBinder CoreIR) n l -> Type CoreIR n
+    go :: Nest RolePiBinder n l -> CType n
     go Empty = TyKind
     go (Nest (RolePiBinder b ty arr _) rest) = Pi $ PiType (PiBinder b ty arr) Pure $ go rest
 
-ixTyFromDict :: (EnvReader m) => Atom r n -> m n (IxType r n)
-ixTyFromDict dict = do
-  getType dict >>= \case
-    DictTy (DictType "Ix" _ [iTy]) -> return $ IxType iTy dict
+ixTyFromDict :: IRRep r => EnvReader m => IxDict r n -> m n (IxType r n)
+ixTyFromDict ixDict = flip IxType ixDict <$> case ixDict of
+  IxDictAtom dict -> getType dict >>= \case
+    DictTy (DictType "Ix" _ [iTy]) -> return iTy
     _ -> error $ "Not an Ix dict: " ++ pprint dict
+  IxDictRawFin _ -> return IdxRepTy
+  IxDictSpecialized n _ _ -> return n
 
-strType :: EnvReader m => m n (Type r n)
-strType = constructPreludeType "List" $ DataDefParams [(PlainArrow, CharRepTy)]
+rawStrType :: IRRep r => EnvReader m => m n (Type r n)
+rawStrType = liftEnvReaderM do
+  withFreshBinder "n" IdxRepTy \b -> do
+    tabTy <- rawFinTabType (Var $ binderName b) CharRepTy
+    return $ DepPairTy $ DepPairType b tabTy
 
-finTabType :: EnvReader m => Atom r n -> Atom r n -> m n (Type r n)
-finTabType n eltTy = IxType (TC (Fin n )) (DictCon (IxFin n)) ==> eltTy
-
-constructPreludeType :: EnvReader m => String -> DataDefParams r n -> m n (Type r n)
-constructPreludeType sourceName params = do
-  lookupSourceMap sourceName >>= \case
-    Just uvar -> case uvar of
-      UTyConVar v -> lookupEnv v >>= \case
-        TyConBinding def _ -> return $ TypeCon sourceName def params
-      _ -> notfound
-    Nothing -> notfound
- where notfound = error $ "Type constructor not defined: " ++ sourceName
+-- `n` argument is IdxRepVal, not Nat
+rawFinTabType :: IRRep r => EnvReader m => Atom r n -> Atom r n -> m n (Type r n)
+rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 
 -- === querying effects implementation ===
 
 class HasEffectsE (e::E) (r::IR) | e -> r where
-  getEffectsImpl :: e i -> TypeQueryM r i o (EffectRow o)
+  getEffectsImpl :: e i -> TypeQueryM i o (EffectRow r o)
 
-instance HasEffectsE (Expr r) r where
+instance IRRep r => HasEffectsE (Expr r) r where
   getEffectsImpl = exprEffects
   {-# INLINE getEffectsImpl #-}
 
-instance HasEffectsE (DeclBinding r) r where
+instance IRRep r => HasEffectsE (DeclBinding r) r where
   getEffectsImpl (DeclBinding _ _ expr) = getEffectsImpl expr
   {-# INLINE getEffectsImpl #-}
 
-exprEffects :: Expr r i -> TypeQueryM r i o (EffectRow o)
+exprEffects :: IRRep r => Expr r i -> TypeQueryM i o (EffectRow r o)
 exprEffects expr = case expr of
   Atom _  -> return Pure
   App f xs -> do
@@ -739,9 +762,13 @@ exprEffects expr = case expr of
         applySubst subst effs
       Nothing -> error $
         "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint expr
+  TopApp f xs -> do
+    NaryPiType bs effs _ <- getTypeTopFun =<< substM f
+    xs' <- mapM substM xs
+    applySubst (bs @@> fmap SubstVal xs') effs
   TabApp _ _ -> return Pure
   RefOp ref m -> do
-    h <- getMaybeHeapVar <$> getTypeSubst ref
+    TC (RefType h _) <- getTypeSubst ref
     return case m of
       MGet      -> OneEffect (RWSEffect State  h)
       MPut    _ -> OneEffect (RWSEffect State  h)
@@ -755,7 +782,9 @@ exprEffects expr = case expr of
       HandlerDef eff _ _ _ _ _ _ <- substM v >>= lookupHandlerDef
       deleteEff (UserEffect eff) <$> getEffectsImpl body
     Resume _ _  -> return Pure
-    Perform ~(Eff eff) _ -> substM eff
+    Perform effVal _ -> do
+      Eff eff <- return effVal
+      substM eff
   PrimOp primOp -> case primOp of
     UnOp  _ _   -> return Pure
     BinOp _ _ _ -> return Pure
@@ -788,103 +817,65 @@ exprEffects expr = case expr of
   Hof hof -> case hof of
     For _ _ f     -> functionEffs f
     While body    -> getEffectsImpl body
-    Linearize _   -> return Pure  -- Body has to be a pure function
-    Transpose _   -> return Pure  -- Body has to be a pure function
+    Linearize _ _ -> return Pure  -- Body has to be a pure function
+    Transpose _ _ -> return Pure  -- Body has to be a pure function
     RunReader _ f -> rwsFunEffects Reader f
     RunWriter d _ f -> rwsFunEffects Writer f <&> maybeInit d
     RunState  d _ f -> rwsFunEffects State  f <&> maybeInit d
     RunIO          f -> deleteEff IOEffect        <$> getEffectsImpl f
     RunInit        f -> deleteEff InitEffect      <$> getEffectsImpl f
     CatchException f -> deleteEff ExceptionEffect <$> getEffectsImpl f
-    where maybeInit :: Maybe (Atom r i) -> (EffectRow o -> EffectRow o)
+    where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
           maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   Case _ _ _ effs -> substM effs
-  TabCon _ _        -> return Pure
+  TabCon _ _ _      -> return Pure
   ProjMethod _ _    -> return Pure
   RecordVariantOp _ -> return Pure
 
-instance HasEffectsE (Block r) r where
+instance IRRep r => HasEffectsE (Block r) r where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs
   getEffectsImpl (Block NoBlockAnn _ _) = return Pure
   {-# INLINE getEffectsImpl #-}
 
-instance HasEffectsE (Alt r) r where
+instance IRRep r => HasEffectsE (DestBlock r) r where
+  getEffectsImpl (DestBlock b (Block ann _ _)) = case ann of
+    BlockAnn _ effs -> substM $ ignoreHoistFailure $ hoist b effs
+    NoBlockAnn -> return Pure
+  {-# INLINE getEffectsImpl #-}
+
+instance IRRep r => HasEffectsE (Alt r) r where
   getEffectsImpl (Abs bs body) =
     substBinders bs \bs' ->
       ignoreHoistFailure . hoist bs' <$> getEffectsImpl body
   {-# INLINE getEffectsImpl #-}
 
-functionEffs :: LamExpr r i -> TypeQueryM r i o (EffectRow o)
+-- wrapper to allow checking the effects of an applied nullary lambda
+data NullaryLamApp r n = NullaryLamApp (LamExpr r n)
+-- XXX: this should only be used for nullary lambdas
+instance IRRep r => HasEffectsE (NullaryLamApp r) r where
+  getEffectsImpl (NullaryLamApp (NullaryLamExpr block)) = getEffectsImpl block
+  getEffectsImpl _ = error "not a nullary lambda"
+  {-# INLINE getEffectsImpl #-}
+
+-- wrapper to allow checking the effects of an applied nullary dest lambda
+data NullaryDestLamApp r n = NullaryDestLamApp (DestLamExpr r n)
+-- XXX: this should only be used for nullary lambdas
+instance IRRep r => HasEffectsE (NullaryDestLamApp r) r where
+  getEffectsImpl (NullaryDestLamApp (NullaryDestLamExpr block)) = getEffectsImpl block
+  getEffectsImpl _ = error "not a nullary lambda"
+  {-# INLINE getEffectsImpl #-}
+
+functionEffs :: IRRep r => LamExpr r i -> TypeQueryM i o (EffectRow r o)
 functionEffs f = getLamExprType f >>= \case
   NaryPiType b effs _ -> return $ ignoreHoistFailure $ hoist b effs
 
-rwsFunEffects :: RWS -> LamExpr r i -> TypeQueryM r i o (EffectRow o)
+rwsFunEffects :: IRRep r => RWS -> LamExpr r i -> TypeQueryM i o (EffectRow r o)
 rwsFunEffects rws f = getLamExprType f >>= \case
    NaryPiType (BinaryNest h ref) effs _ -> do
      let effs' = ignoreHoistFailure $ hoist ref effs
-     let effs'' = deleteEff (RWSEffect rws (Just (binderName h))) effs'
+     let effs'' = deleteEff (RWSEffect rws (Var $ binderName h)) effs'
      return $ ignoreHoistFailure $ hoist h effs''
    _ -> error "Expected a binary function type"
 
-deleteEff :: Effect n -> EffectRow n -> EffectRow n
-deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
-
-getMaybeHeapVar :: Type r o -> Maybe (AtomName r o)
-getMaybeHeapVar (TC (RefType h _)) = case h of
-  Just (Var h') -> Just h'
-  Just (Con HeapVal) -> Nothing
-  Nothing            -> Nothing
-  _ -> error "expect heap parameter to be a var or HeapVal"
-getMaybeHeapVar refTy = error $ "not a ref type: " ++ pprint refTy
-
--- === singleton types ===
-
--- The following implementation should be valid:
---   isSingletonType :: EnvReader m => Type n -> m n Bool
---   isSingletonType ty =
---     singletonTypeVal ty >>= \case
---       Nothing -> return False
---       Just _  -> return True
--- But a separate implementation doesn't have to go under binders,
--- because it doesn't have to reconstruct the singleton value (which
--- may be type annotated and whose type may refer to names).
-
-isSingletonType :: Type r n -> Bool
-isSingletonType topTy = isJust $ checkIsSingleton topTy
-  where
-    checkIsSingleton :: Type r n -> Maybe ()
-    checkIsSingleton ty = case ty of
-      Pi (PiType _ Pure body) -> checkIsSingleton body
-      TabPi (TabPiType _ body) -> checkIsSingleton body
-      StaticRecordTy items -> mapM_ checkIsSingleton items
-      TC con -> case con of
-        ProdType tys -> mapM_ checkIsSingleton tys
-        _ -> Nothing
-      _ -> Nothing
-
-singletonTypeVal :: EnvReader m => Type r n -> m n (Maybe (Atom r n))
-singletonTypeVal ty = liftEnvReaderT $
-  runSubstReaderT idSubst $ singletonTypeValRec ty
-{-# INLINE singletonTypeVal #-}
-
--- TODO: TypeCon with a single case?
-singletonTypeValRec :: Type r i
-  -> SubstReaderT Name (EnvReaderT Maybe) i o (Atom r o)
-singletonTypeValRec ty = case ty of
-  Pi (PiType b Pure body) -> do
-    renameBinders b \(PiBinder b' ty' arr) -> do
-      body' <- singletonTypeValRec body
-      return $ Lam (LamExpr (UnaryNest (b':>ty')) $ AtomicBlock body') arr (Abs (b':>ty') Pure)
-  TabPi (TabPiType b body) ->
-    renameBinders b \b' -> do
-      body' <- singletonTypeValRec body
-      return $ TabLam $ TabLamExpr b' $ AtomicBlock body'
-  StaticRecordTy items -> do
-    StaticRecordTy items' <- renameM ty
-    Record items' <$> traverse singletonTypeValRec (toList items)
-  TC con -> case con of
-    ProdType tys -> ProdVal <$> traverse singletonTypeValRec tys
-    _            -> notASingleton
-  _ -> notASingleton
-  where notASingleton = fail "not a singleton type"
-
+deleteEff :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
+deleteEff eff (EffectRow effs t) = EffectRow (effs `eSetDifference` eSetSingleton eff) t

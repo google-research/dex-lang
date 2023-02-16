@@ -102,7 +102,7 @@ data LowerTriMap n [Ix n] =
 instance HasDeterminant (LowerTriMap n) given {n}
   determinant' = \(MkLowerTriMap x). prod $ lower_tri_diag x
   transposeType = UpperTriMat n Float
-  transpose' = error "Can't transpose to different types yet."
+  transpose' = \_. error "Can't transpose to different types yet."
   identity' = MkLowerTriMap for i j. select (ordinal i == ordinal j) one zero
 
 instance LinearEndo (LowerTriMap n) (n=>v) given {n v} [Mul v, VSpace v]
@@ -122,7 +122,7 @@ data UpperTriMap n [Ix n] =
 instance HasDeterminant (UpperTriMap n) given {n}
   determinant' = \(MkUpperTriMap x). prod $ upper_tri_diag x
   transposeType = LowerTriMat n Float
-  transpose' = error "Can't transpose to different types yet."
+  transpose' = \_. error "Can't transpose to different types yet."
   identity' = MkUpperTriMap for i j. select (0 == ordinal j) one zero
 
 instance LinearEndo (UpperTriMap n) (n=>v) given {n v} [Mul v, VSpace v]
@@ -141,7 +141,7 @@ data SkewSymmetricMap n [Ix n] =
 
 instance HasDeterminant (SkewSymmetricMap n) given {n}
   determinant' = case is_odd (size n) of
-    True -> zero
+    True -> const zero
     False -> \(MkSkewSymMap a).
       dense_rep = skew_symmetric_prod a eye
       determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
