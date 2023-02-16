@@ -1,0 +1,49 @@
+
+interface Empty a
+  pass
+-- CHECK-NOT: Parse error
+
+instance Empty Int
+  pass
+-- CHECK-NOT: Parse error
+
+instance Empty Float32
+  witness = 0.0
+-- CHECK-NOT: Parse error
+-- CHECK: Error: variable not in scope: witness
+
+interface Inhabited a
+  witness : a
+-- CHECK-NOT: Parse error
+
+instance Inhabited Int
+  witness = 0
+-- CHECK-NOT: Parse error
+
+instance Inhabited Float32
+  witness = 0.0
+  pass
+-- CHECK: Parse error
+-- CHECK: "pass" is a reserved word
+
+instance Inhabited Float64
+  witness = 0.0
+ pass
+-- CHECK: Parse error
+-- CHECK: unexpected "pa"
+-- CHECK: expecting end of line
+
+instance Inhabited Word32
+  witness = 0
+   pass
+-- CHECK: Parse error
+-- CHECK: unexpected space
+-- CHECK: expecting name or symbol name
+
+instance Inhabited Word64
+  pass
+-- CHECK: Type error:Missing method: witness
+  witness = 0
+-- CHECK: Parse error
+-- CHECK: unexpected "wi"
+-- CHECK: expecting end of line
