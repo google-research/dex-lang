@@ -84,8 +84,6 @@ tryAsDataAtom atom = do
       Lit v -> return $ Lit v
       ProdCon xs -> ProdCon <$> mapM go xs
       SumCon  tys tag x -> SumCon <$> mapM getRepType tys <*> pure tag <*> go x
-      SumAsProd tys tag xs ->
-        SumAsProd <$> mapM getRepType tys <*> go tag <*> mapM go xs
       HeapVal       -> return HeapVal
     PtrVar v        -> return $ PtrVar v
     DepPair x y ty -> do

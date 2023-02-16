@@ -582,15 +582,6 @@ linearizePrimCon con = case con of
   Lit _ -> emitZeroT
   ProdCon xs -> fmapLin (ProdVal . fromComposeE) $ seqLin (fmap linearizeAtom xs)
   SumCon  _ _ _ -> notImplemented
-  SumAsProd tys tg elems -> do
-    tys' <- forM tys \t -> renameM t
-    tg' <- renameM tg
-    -- There must be a way to do this with `seqLin` etc but it's too much for me
-    elemsWithT <- traverse linearizeAtom elems
-    let elemsP = fmap (\(WithTangent x _) -> x) elemsWithT
-    return $ WithTangent (Con $ SumAsProd tys' tg' elemsP) do
-      elemsT <- forM elemsWithT \(WithTangent _ t) -> t
-      return $ Con $ SumAsProd (sinkList tys') (sink tg') elemsT
   HeapVal -> emitZeroT
   where emitZeroT = withZeroT $ renameM $ Con con
 

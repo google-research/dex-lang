@@ -347,7 +347,6 @@ getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
   SumCon tys _ _ -> SumTy <$> traverse substM tys
-  SumAsProd tys _ _ -> SumTy <$> traverse substM tys
   HeapVal       -> return $ TC HeapType
 
 dictExprType :: DictExpr i -> TypeQueryM i o (CType o)

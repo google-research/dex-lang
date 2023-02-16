@@ -54,7 +54,6 @@ data PrimCon (r::IR) (e:: *) where
   Lit          :: LitVal            -> PrimCon r e
   ProdCon      :: [e]               -> PrimCon r e
   SumCon       :: [e] -> Int -> e   -> PrimCon r e -- type, tag, payload
-  SumAsProd    :: [e] -> e   -> [e] -> PrimCon r e -- type, tag, payload
   HeapVal      ::                      PrimCon r e
   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 

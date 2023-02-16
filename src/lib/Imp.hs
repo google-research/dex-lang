@@ -296,14 +296,12 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
       Just (con, arg) -> do
         Abs b body <- return $ alts !! con
         extendSubst (b @> SubstVal arg) $ translateBlock maybeDest body
-      Nothing -> case e' of
-        Con (SumAsProd _ tag xss) -> go tag xss
-        _ -> do
-          RepVal sumTy (Branch (tag:xss)) <- atomToRepVal e'
-          ts <- caseAltsBinderTys sumTy
-          tag' <- repValAtom $ RepVal TagRepTy tag
-          xss' <- zipWithM (\t x -> repValAtom $ RepVal t x) ts xss
-          go tag' xss'
+      Nothing -> do
+        RepVal sumTy (Branch (tag:xss)) <- atomToRepVal e'
+        ts <- caseAltsBinderTys sumTy
+        tag' <- repValAtom $ RepVal TagRepTy tag
+        xss' <- zipWithM (\t x -> repValAtom $ RepVal t x) ts xss
+        go tag' xss'
         where
           go tag xss = do
             tag' <- fromScalarAtom tag
@@ -459,15 +457,15 @@ toImpMiscOp maybeDest op = case op of
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
   SumTag con -> case con of
     Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
-    Con (SumAsProd _ tag _) -> returnVal tag
     RepValAtom dRepVal -> go dRepVal
     _ -> error $ "Not a data constructor: " ++ pprint con
     where go dRepVal = do
             RepVal _ (Branch (tag:_)) <- return dRepVal
             return $ RepValAtom $ RepVal TagRepTy tag
   ToEnum ty i -> returnVal =<< case ty of
-    SumTy cases ->
-      return $ Con $ SumAsProd cases i $ cases <&> const UnitVal
+    SumTy cases -> do
+      i' <- fromScalarAtom i
+      return $ RepValAtom $ RepVal ty $ Branch $ Leaf i' : map (const (Branch [])) cases
     _ -> error $ "Not an enum: " ++ pprint ty
   OutputStream -> returnIExprVal =<< emitInstr IOutputStream
   ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
@@ -859,10 +857,6 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
       return $ Branch [lhsTree, rhsTree]
     Con (Lit l) -> return $ Leaf $ ILit l
     Con (ProdCon xs) -> Branch <$> mapM go xs
-    Con (SumAsProd _ tag payload) -> do
-      tag'     <- go tag
-      payload' <- mapM go payload
-      return $ Branch (tag':payload')
     Con (SumCon cases tag payload) -> do
       -- TODO: something better. Maybe we shouldn't have SumCon except during simplification?
       dest@(Dest _ (Branch (tagDest:dests))) <- allocDest (SumTy cases)

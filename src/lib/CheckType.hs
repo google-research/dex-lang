@@ -401,12 +401,6 @@ typeCheckPrimCon con = case con of
     unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
     payload |: (caseTys !! tag)
     return $ SumTy caseTys
-  SumAsProd tys tag es -> do
-    tag |: TagRepTy
-    tys' <- traverse renameM tys
-    unless (length tys == length es) $ throw TypeErr "Invalid SumAsProd"
-    forM_ (zip es tys') $ uncurry (|:)
-    return $ SumTy tys'
   HeapVal -> return $ TC HeapType
 
 typeCheckNewtypeCon

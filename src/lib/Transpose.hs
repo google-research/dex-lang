@@ -369,7 +369,6 @@ transposeCon con ct = case con of
     forM_ (enumerate xs) \(i, x) ->
       getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
-  SumAsProd _ _ _   -> notImplemented
   HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 

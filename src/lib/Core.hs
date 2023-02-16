@@ -620,8 +620,6 @@ mkBundle = bundleFold UnitVal PairVal
 trySelectBranch :: IRRep r => Atom r n -> Maybe (Int, Atom r n)
 trySelectBranch e = case e of
   SumVal _ i value -> Just (i, value)
-  Con (SumAsProd _ (TagRepVal tag) vals) -> Just (i, vals !! i)
-    where i = fromIntegral tag
   NewtypeCon con e' | isSumCon con -> trySelectBranch e'
   _ -> Nothing
 

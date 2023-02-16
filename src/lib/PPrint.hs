@@ -1057,8 +1057,6 @@ prettyPrecPrimCon con = case con of
     encloseSep "(" ")" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
-  SumAsProd ty tag payload -> atPrec LowestPrec $
-    "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   HeapVal -> atPrec ArgPrec "HeapValue"
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec

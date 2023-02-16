@@ -196,9 +196,6 @@ summary atom = case atom of
       Lit _ -> return $ Deterministic []
       ProdCon elts -> Product <$> mapM summary elts
       SumCon _ tag payload -> Inject tag <$> summary payload
-      SumAsProd _ (TagRepVal tag) payloads ->
-        Inject (fromIntegral tag) <$> (summary $ payloads !! (fromIntegral tag))
-      SumAsProd _ _ _ -> unknown atom
       HeapVal -> invalid "HeapVal"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
