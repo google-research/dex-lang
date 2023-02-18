@@ -430,9 +430,7 @@ toImpMiscOp :: Emits o => MaybeDest o -> MiscOp (SAtom o) -> SubstImpM i o (SAto
 toImpMiscOp maybeDest op = case op of
   ThrowError resultTy -> do
     emitStatement IThrowError
-    -- XXX: we'd be reading uninitialized data here but it's ok because control never reaches
-    -- this point since we just threw an error.
-    loadAtom =<< maybeAllocDest maybeDest resultTy
+    buildGarbageVal resultTy
   CastOp destTy x -> do
     BaseTy _  <- getType x
     BaseTy bt <- return destTy
@@ -449,9 +447,7 @@ toImpMiscOp maybeDest op = case op of
       "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
     RepVal _ tree <- atomToRepVal x
     returnVal =<< repValAtom (RepVal resultTy tree)
-  GarbageVal resultTy -> do
-    dest <- maybeAllocDest maybeDest resultTy
-    loadAtom dest
+  GarbageVal resultTy -> buildGarbageVal resultTy
   Select p x y -> do
     BaseTy _ <- getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
@@ -858,13 +854,11 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
     Con (Lit l) -> return $ Leaf $ ILit l
     Con (ProdCon xs) -> Branch <$> mapM go xs
     Con (SumCon cases tag payload) -> do
-      -- TODO: something better. Maybe we shouldn't have SumCon except during simplification?
-      dest@(Dest _ (Branch (tagDest:dests))) <- allocDest (SumTy cases)
-      storeAtom (Dest (cases!!tag) (dests!!tag)) payload
-      storeAtom (Dest TagRepTy tagDest) (TagRepVal $ fromIntegral tag)
-      RepValAtom dRepVal <- loadAtom dest
-      (RepVal _ tree) <- return dRepVal
-      return tree
+      tag' <- go $ TagRepVal $ fromIntegral tag
+      xs <- forM (enumerate cases) \(i, t) -> if i == tag
+        then go payload
+        else buildGarbageVal t <&> \(RepValAtom (RepVal _ tree)) -> tree
+      return $ Branch $ tag':xs
     Con HeapVal -> return $ Branch []
     Var v -> lookupAtomName v >>= \case
       TopDataBound (RepVal _ tree) -> return tree
@@ -910,19 +904,21 @@ data AllocContext = Managed | Unmanaged deriving (Show, Eq)
 allocDestWithAllocContext :: Emits n => AllocContext -> SType n -> SubstImpM i n (Dest n)
 allocDestWithAllocContext ctx destValTy = do
   descTree <- typeToTree destValTy
-  destTree <- forM descTree \leafTy -> do
-    BufferType idxStructure elemTy <- return $ getRefBufferType leafTy
-    numel <- computeElemCountImp idxStructure
-    let baseTy = elemTypeToBaseType elemTy
-    ptr <- emitAllocWithContext ctx baseTy numel
-    case elemTy of
-      UnboxedValue _ -> return ()
-      BoxedBuffer boxElemTy ->
-        case numel of
-          IIdxRepVal 1 -> store ptr (nullPtrIExpr $ elemTypeToBaseType boxElemTy)
-          _ -> emitStatement $ InitializeZeros ptr numel
-    return ptr
+  destTree <- forM descTree \leafTy -> allocBuffer ctx $ getRefBufferType leafTy
   return $ Dest destValTy $ destTree
+
+allocBuffer :: Emits n => AllocContext -> BufferType n -> SubstImpM i n (IExpr n)
+allocBuffer ctx (BufferType idxStructure elemTy) = do
+  numel <- computeElemCountImp idxStructure
+  let baseTy = elemTypeToBaseType elemTy
+  ptr <- emitAllocWithContext ctx baseTy numel
+  case elemTy of
+    UnboxedValue _ -> return ()
+    BoxedBuffer boxElemTy ->
+      case numel of
+        IIdxRepVal 1 -> store ptr (nullPtrIExpr $ elemTypeToBaseType boxElemTy)
+        _ -> emitStatement $ InitializeZeros ptr numel
+  return ptr
 
 emitAllocWithContext
   :: (Emits n, ImpBuilder m)
@@ -990,6 +986,13 @@ litValToIExpr litval = case litval of
     ptrName <- emitBinding "ptr" $ PtrBinding ty ptr
     return $ IPtrVar ptrName ty
   _ -> return $ ILit litval
+
+buildGarbageVal :: Emits n => SType n -> SubstImpM i n (SAtom n)
+buildGarbageVal ty =
+  RepValAtom <$> RepVal ty <$> traverseScalarRepTys ty \leafTy -> do
+    case getIExprInterpretation leafTy of
+      BufferPtr bufferTy -> allocBuffer Managed bufferTy
+      RawValue b -> return $ ILit $ emptyLit b
 
 -- === Operations on dests ===
 

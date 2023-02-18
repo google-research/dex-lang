@@ -285,6 +285,19 @@ getFloatLit l = case l of
   Float32Lit f -> realToFrac f
   _ -> error $ "Expected a floating-point literal"
 
+emptyLit :: BaseType -> LitVal
+emptyLit = \case
+  Scalar b -> case b of
+    Int64Type   -> Int64Lit 0
+    Int32Type   -> Int32Lit 0
+    Word8Type   -> Word8Lit 0
+    Word32Type  -> Word32Lit 0
+    Word64Type  -> Word64Lit 0
+    Float64Type -> Float64Lit 0
+    Float32Type -> Float32Lit 0
+  PtrType t -> PtrLit t NullPtr
+  Vector _ _ -> error "not implemented"
+
 -- === Typeclass instances ===
 
 instance Store Arrow
