@@ -24,7 +24,6 @@
 module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
 import Control.Applicative
-import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import Data.Word
 import Data.Functor
 import Data.Foldable (toList)
@@ -182,9 +181,6 @@ data BlockAnn r n l where
   BlockAnn :: Type r n -> EffectRow r n -> BlockAnn r n l
   NoBlockAnn :: BlockAnn r n n
 
-data LamBinding (n::S) = LamBinding Arrow (CType n)
-  deriving (Show, Generic)
-
 data LamExpr (r::IR) (n::S) where
   LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
 
@@ -227,15 +223,8 @@ data TabPiType (r::IR) (n::S) where
 data NaryPiType (r::IR) (n::S) where
   NaryPiType :: Nest (Binder r) n l -> EffectRow r l -> Type r l -> NaryPiType r n
 
-data PiBinding (n::S) = PiBinding Arrow (Type CoreIR n)
-  deriving (Show, Generic)
-
-data PiBinder (n::S) (l::S) =
-  PiBinder (AtomNameBinder CoreIR n l) (CType n) Arrow
-  deriving (Show, Generic)
-
 data PiType (n::S) where
-  PiType :: PiBinder n l -> EffectRow CoreIR l -> Type CoreIR l -> PiType n
+  PiType :: CBinder n l -> Arrow -> EffectRow CoreIR l -> Type CoreIR l -> PiType n
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: Binder r n l -> Type r l -> DepPairType r n
@@ -445,9 +434,9 @@ data Env n = Env
   deriving (Generic)
 
 data TopEnv (n::S) = TopEnv
-  { envDefs  :: RecSubst Binding n
-  , envCustomRules :: CustomRules n
-  , envCache :: Cache n
+  { envDefs          :: RecSubst Binding n
+  , envCustomRules   :: CustomRules n
+  , envCache         :: Cache n
   , envLoadedModules :: LoadedModules n
   , envLoadedObjects :: LoadedObjects n }
   deriving (Generic)
@@ -640,8 +629,8 @@ deriving via WrapE EffectDef n instance Generic (EffectDef n)
 
 data HandlerDef (n::S) where
   HandlerDef :: EffectName n
-             -> PiBinder n r -- body type arg
-             -> Nest PiBinder r l
+             -> CBinder n r -- body type arg
+             -> Nest RolePiBinder r l
                -> EffectRow CoreIR l
                -> CType l          -- return type
                -> [Block CoreIR l] -- effect operations
@@ -650,7 +639,7 @@ data HandlerDef (n::S) where
 
 instance GenericE HandlerDef where
   type RepE HandlerDef =
-    EffectName `PairE` Abs (PiBinder `PairB` Nest PiBinder)
+    EffectName `PairE` Abs (CBinder `PairB` Nest RolePiBinder)
       (EffectRow CoreIR `PairE` CType `PairE` ListE (Block CoreIR) `PairE` Block CoreIR)
   fromE (HandlerDef name bodyTyArg bs effs ty ops ret) =
     name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)
@@ -725,8 +714,6 @@ data AtomBinding (r::IR) (n::S) where
  LetBound     :: DeclBinding r  n  -> AtomBinding r n
  MiscBound    :: Type        r  n  -> AtomBinding r n
  TopDataBound :: RepVal SimpIR n   -> AtomBinding SimpIR n
- LamBound     :: LamBinding  n     -> AtomBinding CoreIR n
- PiBound      :: PiBinding   n     -> AtomBinding CoreIR n
  SolverBound  :: SolverBinding n   -> AtomBinding CoreIR n
  NoinlineFun  :: CType n -> CAtom n -> AtomBinding CoreIR n
  FFIFunBound  :: NaryPiType CoreIR n -> TopFunName n -> AtomBinding CoreIR n
@@ -737,8 +724,6 @@ deriving via WrapE (AtomBinding r) n instance IRRep r => Generic (AtomBinding r 
 atomBindingType :: AtomBinding r n -> Type r n
 atomBindingType b = case b of
   LetBound    (DeclBinding _ ty _) -> ty
-  LamBound    (LamBinding  _ ty)   -> ty
-  PiBound     (PiBinding   _ ty)   -> ty
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
@@ -767,8 +752,7 @@ instance OutMap Env where
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO)
-                    (ModuleEnv imports sm scs)) frag =
+  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO) moduleEnv) frag =
     withExtEvidence frag $ Env
       (TopEnv
         (defs  `extendRecSubst` frag)
@@ -776,10 +760,7 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
         (sink cache)
         (sink loadedM)
         (sink loadedO))
-      (ModuleEnv
-        (sink imports)
-        (sink sm)
-        (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag)))
+      (sink moduleEnv)
   {-# INLINE extendOutMap #-}
 
 instance ExtOutMap Env EnvFrag where
@@ -793,28 +774,11 @@ extendEnv env (EnvFrag newEnv) = do
       Env envTop (ModuleEnv imports sm scs)
 {-# NOINLINE [1] extendEnv #-}
 
-bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
-bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag)) =
-  execWriter $ go $ toSubstPairs frag
-  where
-    go :: Distinct l
-       => Nest (SubstPair Binding l) n l -> Writer (SynthCandidates l) ()
-    go nest = case nest of
-      Empty -> return ()
-      Nest (SubstPair b binding) rest -> withExtEvidence rest do
-        case binding of
-           AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [binderName b] mempty)
-           AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
-             tell $ sink (SynthCandidates [binderName b] mempty)
-           _ -> return ()
-        go rest
-
 naryPiTypeAsType :: NaryPiType CoreIR n -> Type CoreIR n
 naryPiTypeAsType (NaryPiType Empty Pure resultTy) = resultTy
 naryPiTypeAsType (NaryPiType (Nest (b:>ty) bs) effs resultTy) = case bs of
-  Empty -> Pi $ PiType (PiBinder b ty PlainArrow) effs resultTy
-  Nest _ _ -> Pi $ PiType (PiBinder b ty PlainArrow) Pure $ naryPiTypeAsType $ NaryPiType bs effs resultTy
+  Empty -> Pi $ PiType (b:>ty) PlainArrow effs resultTy
+  Nest _ _ -> Pi $ PiType (b:>ty) PlainArrow Pure $ naryPiTypeAsType $ NaryPiType bs effs resultTy
 naryPiTypeAsType _ = error "Effectful naryPiType should have at least one argument"
 
 -- === effects ===
@@ -912,9 +876,6 @@ bindersTypes n@(Nest b bs) = ty : bindersTypes bs
 instance IRRep r => BindsOneAtomName r (BinderP (AtomNameC r) (Type r)) where
   binderType (_ :> ty) = ty
 
-instance BindsOneAtomName CoreIR PiBinder where
-  binderType (PiBinder _ ty _) = ty
-
 instance IRRep r => BindsOneAtomName r (IxBinder r) where
   binderType (_ :> IxType ty _) = ty
 
@@ -945,12 +906,6 @@ instance IRRep r => ToBinding (AtomBinding r) (AtomNameC r) where
 instance IRRep r => ToBinding (DeclBinding r) (AtomNameC r) where
   toBinding = toBinding . LetBound
 
-instance ToBinding LamBinding (AtomNameC CoreIR) where
-  toBinding = toBinding . LamBound
-
-instance ToBinding PiBinding (AtomNameC CoreIR) where
-  toBinding = toBinding . PiBound
-
 instance IRRep r => ToBinding (Atom r) (AtomNameC r) where
   toBinding = toBinding . MiscBound
 
@@ -970,7 +925,7 @@ class HasArgType (e::E) (r::IR) | e -> r where
   argType :: e n -> Type r n
 
 instance HasArgType PiType CoreIR where
-  argType (PiType (PiBinder _ ty _) _ _) = ty
+  argType (PiType (_:>ty) _ _ _) = ty
 
 instance HasArgType (TabPiType r) r where
   argType (TabPiType (_:>IxType ty _) _) = ty
@@ -1083,9 +1038,6 @@ pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
 
 pattern NullaryDestLamExpr :: DestBlock r n -> DestLamExpr r n
 pattern NullaryDestLamExpr body = DestLamExpr Empty body
-
-pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow r l2 -> CType l2 -> CType n
-pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
 pattern AtomicBlock :: Atom r n -> Block r n
 pattern AtomicBlock atom <- Block _ Empty atom
@@ -1894,19 +1846,6 @@ instance Semigroup (Cache n) where
   Cache x1 x2 x3 x4 x5 x6 <> Cache y1 y2 y3 y4 y5 y6 =
     Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5) (x6<>y6)
 
-instance GenericE LamBinding where
-  type RepE LamBinding = PairE (LiftE Arrow) CType
-  fromE (LamBinding arr ty) = PairE (LiftE arr) ty
-  {-# INLINE fromE #-}
-  toE   (PairE (LiftE arr) ty) = LamBinding arr ty
-  {-# INLINE toE #-}
-
-instance SinkableE     LamBinding
-instance HoistableE    LamBinding
-instance RenameE       LamBinding
-instance AlphaEqE       LamBinding
-instance AlphaHashableE LamBinding
-
 instance GenericE (LamExpr r) where
   type RepE (LamExpr r) = Abs (Nest (Binder r)) (Block r)
   fromE (LamExpr b block) = Abs b block
@@ -1952,49 +1891,11 @@ instance IRRep r => RenameE        (DestLamExpr r)
 deriving instance IRRep r => Show (DestLamExpr r n)
 deriving via WrapE (DestLamExpr r) n instance IRRep r => Generic (DestLamExpr r n)
 
-instance GenericE PiBinding where
-  type RepE PiBinding = PairE (LiftE Arrow) CType
-  fromE (PiBinding arr ty) = PairE (LiftE arr) ty
-  {-# INLINE fromE #-}
-  toE   (PairE (LiftE arr) ty) = PiBinding arr ty
-  {-# INLINE toE #-}
-
-instance SinkableE      PiBinding
-instance HoistableE     PiBinding
-instance RenameE        PiBinding
-instance AlphaEqE       PiBinding
-instance AlphaHashableE PiBinding
-
-instance GenericB PiBinder where
-  type RepB PiBinder = BinderP (AtomNameC CoreIR) PiBinding
-  fromB (PiBinder b ty arr) = b :> PiBinding arr ty
-  toB   (b :> PiBinding arr ty) = PiBinder b ty arr
-
-instance BindsAtMostOneName PiBinder (AtomNameC CoreIR) where
-  PiBinder b _ _ @> x = b @> x
-  {-# INLINE (@>) #-}
-
-instance BindsOneName PiBinder (AtomNameC CoreIR) where
-  binderName (PiBinder b _ _) = binderName b
-  {-# INLINE binderName #-}
-
-instance HasNameHint (PiBinder n l) where
-  getNameHint (PiBinder b _ _) = getNameHint b
-  {-# INLINE getNameHint #-}
-
-instance ProvesExt   PiBinder
-instance BindsNames  PiBinder
-instance SinkableB   PiBinder
-instance HoistableB  PiBinder
-instance RenameB     PiBinder
-instance AlphaEqB PiBinder
-instance AlphaHashableB PiBinder
-
 instance GenericE PiType where
-  type RepE PiType = Abs PiBinder (PairE (EffectRow CoreIR) CType)
-  fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
+  type RepE PiType = Abs CBinder (LiftE Arrow `PairE` EffectRow CoreIR `PairE` CType)
+  fromE (PiType b arr eff resultTy) = Abs b (LiftE arr `PairE` eff `PairE` resultTy)
   {-# INLINE fromE #-}
-  toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
+  toE   (Abs b (LiftE arr `PairE` eff `PairE` resultTy)) = PiType b arr eff resultTy
   {-# INLINE toE #-}
 
 instance SinkableE      PiType
@@ -2006,12 +1907,10 @@ deriving instance Show (PiType n)
 deriving via WrapE PiType n instance Generic (PiType n)
 
 instance GenericB RolePiBinder where
-  type RepB RolePiBinder =
-    PairB (LiftB (LiftE ParamRole))
-          (BinderP (AtomNameC CoreIR) PiBinding)
-  fromB (RolePiBinder b ty arr role) = PairB (LiftB (LiftE role)) (b :> PiBinding arr ty)
+  type RepB RolePiBinder = BinderP (AtomNameC CoreIR) (PairE CType (LiftE (Arrow,ParamRole)))
+  fromB (RolePiBinder b ty arr role) = b :> PairE ty (LiftE (arr, role))
   {-# INLINE fromB #-}
-  toB   (PairB (LiftB (LiftE role)) (b :> PiBinding arr ty)) = RolePiBinder b ty arr role
+  toB   (b :> PairE ty (LiftE (arr, role))) = RolePiBinder b ty arr role
   {-# INLINE toB #-}
 
 instance HasNameHint (RolePiBinder n l) where
@@ -2137,12 +2036,10 @@ instance RenameE        SynthCandidates
 
 instance IRRep r => GenericE (AtomBinding r) where
   type RepE (AtomBinding r) =
-     EitherE2 (EitherE5
+     EitherE2 (EitherE3
       (DeclBinding   r)              -- LetBound
-      (WhenCore r LamBinding)        -- LamBound
-      (WhenCore r PiBinding )        -- PiBound
-                          (Type          r)  -- MiscBound
-      (WhenCore r SolverBinding)             -- SolverBound
+      (Type          r)              -- MiscBound
+      (WhenCore r SolverBinding)     -- SolverBound
      ) (EitherE3
       (WhenCore r (PairE CType CAtom))               -- NoinlineFun
       (WhenSimp r (RepVal SimpIR))                   -- TopDataBound
@@ -2151,10 +2048,8 @@ instance IRRep r => GenericE (AtomBinding r) where
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
-    LamBound    x -> Case0 $ Case1 $ WhenIRE x
-    PiBound     x -> Case0 $ Case2 $ WhenIRE x
-    MiscBound   x -> Case0 $ Case3 x
-    SolverBound x -> Case0 $ Case4 $ WhenIRE x
+    MiscBound   x -> Case0 $ Case1 x
+    SolverBound x -> Case0 $ Case2 $ WhenIRE x
     NoinlineFun t x -> Case1 $ Case0 $ WhenIRE $ PairE t x
     TopDataBound repVal -> Case1 $ Case1 $ WhenIRE repVal
     FFIFunBound ty v    -> Case1 $ Case2 $ WhenIRE $ ty `PairE` v
@@ -2163,10 +2058,8 @@ instance IRRep r => GenericE (AtomBinding r) where
   toE = \case
     Case0 x' -> case x' of
       Case0 x         -> LetBound x
-      Case1 (WhenIRE x) -> LamBound x
-      Case2 (WhenIRE x) -> PiBound  x
-      Case3 x           -> MiscBound x
-      Case4 (WhenIRE x) -> SolverBound x
+      Case1 x           -> MiscBound x
+      Case2 (WhenIRE x) -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
       Case0 (WhenIRE (PairE t x)) -> NoinlineFun t x
@@ -2683,7 +2576,6 @@ instance Store (SolverBinding n)
 instance IRRep r => Store (AtomBinding r n)
 instance Store (SpecializationSpec n)
 instance Store (LinearizationSpec n)
-instance Store (LamBinding n)
 instance IRRep r => Store (DeclBinding r n)
 instance Store (FieldRowElem  n)
 instance Store (FieldRowElems n)
@@ -2695,8 +2587,6 @@ instance Store (DataConDef n)
 instance IRRep r => Store (Block r n)
 instance IRRep r => Store (LamExpr r n)
 instance IRRep r => Store (IxType r n)
-instance Store (PiBinding n)
-instance Store (PiBinder n l)
 instance Store (PiType n)
 instance IRRep r => Store (TabPiType r n)
 instance IRRep r => Store (DepPairType  r n)

@@ -233,13 +233,6 @@ instance IRRep r => Pretty (NaryPiType r n) where
   pretty (NaryPiType bs effs resultTy) =
     (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
-instance Pretty (PiBinder n l) where
-  pretty (PiBinder b ty arrow) = case arrow of
-    PlainArrow    -> p (b:>ty)
-    ClassArrow    -> "[" <> p (b:>ty) <> "]"
-    ImplicitArrow -> "{" <> p (b:>ty) <> "}"
-    LinArrow      -> p (b:>ty)
-
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
   prettyPrec (LamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
@@ -371,7 +364,7 @@ forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (PiType n) where
-  pretty (PiType (PiBinder b ty arr) eff body) = let
+  pretty (PiType (b:>ty) arr eff body) = let
     prettyBinder = prettyBinderHelper (b:>ty) (PairE eff body)
     prettyBody = case body of
       Pi subpi -> pretty subpi
@@ -479,8 +472,6 @@ instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 instance IRRep r => Pretty (AtomBinding r n) where
   pretty binding = case binding of
     LetBound    b -> p b
-    LamBound    b -> p b
-    PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
     FFIFunBound s _ -> p s
@@ -493,14 +484,6 @@ instance Pretty (SpecializationSpec n) where
 
 instance Pretty IxMethod where
   pretty method = p $ show method
-
-instance Pretty (LamBinding n) where
-  pretty (LamBinding arr ty) =
-    "Lambda binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
-
-instance Pretty (PiBinding n) where
-  pretty (PiBinding arr ty) =
-    "Pi binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
 
 instance Pretty (SolverBinding n) where
   pretty (InfVarBound  ty _) = "Inference variable of type:" <+> p ty

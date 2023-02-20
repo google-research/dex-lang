@@ -1643,6 +1643,17 @@ instance ( ExtOutMap b d1, OutFrag d1
   unsafeGetScope = liftDoubleInplaceT unsafeGetScope
   {-# INLINE unsafeGetScope #-}
 
+extendDoubleInplaceTLocal
+  :: (ExtOutMap b d1, ExtOutMap b d2, OutFrag d1, OutFrag d2, Monad m)
+  => (b n -> b n)
+  -> DoubleInplaceT b d1 d2 m n a
+  -> DoubleInplaceT b d1 d2 m n a
+extendDoubleInplaceTLocal f cont =
+  UnsafeMakeDoubleInplaceT $ StateT \(topScope, d1Prev) ->
+    UnsafeMakeInplaceT \env d2 ->
+      unsafeRunInplaceT (runStateT (unsafeRunDoubleInplaceT cont) (topScope, d1Prev)) (f env) d2
+{-# INLINE extendDoubleInplaceTLocal #-}
+
 -- === name hints ===
 
 instance HasNameHint (BinderP c ann n l) where

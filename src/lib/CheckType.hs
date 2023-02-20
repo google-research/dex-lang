@@ -170,11 +170,11 @@ instance IRRep r => HasType r (Atom r) where
     Lam lam arr (Abs bEff effs) -> do
       UnaryLamExpr (b:>ty) body <- return lam
       ty' <- checkTypeE TyKind ty
-      withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
+      withFreshBinder (getNameHint b) ty' \b' -> do
         effs' <- extendSubst (bEff@>binderName b') $ renameM effs
         extendRenamer (b@>binderName b') do
           resultTy <- checkBlockWithEffs effs' body
-          return $ Pi $ PiType (PiBinder b' ty' arr) effs' resultTy
+          return $ Pi $ PiType b' arr effs' resultTy
     Pi piType -> getTypeE piType
     TabPi piType -> getTypeE piType
     DepPair l r ty -> do
@@ -309,12 +309,6 @@ instance IRRep r => HasType r (Block r) where
         extendRenamer (b@>binderName b') do
           go (sink effs) (sink reqTy) decls result
 
-instance CheckableE LamBinding where
-  checkE (LamBinding _ ty) = ty |: TyKind
-
-instance CheckableE PiBinding where
-  checkE (PiBinding _ ty) = ty |: TyKind
-
 instance CheckableE DataDefParams where
   checkE (DataDefParams params) = mapM_ (onSndM checkE) params
 
@@ -326,7 +320,7 @@ dictExprType e = case e of
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM renameM args
     checkArgTys bs args'
-    ListE params' <- applyNaryAbs (Abs bs (ListE params)) (map SubstVal args')
+    ListE params' <- applySubst (bs@@>(SubstVal<$>args')) (ListE params)
     return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
@@ -351,7 +345,7 @@ instance IRRep r => HasType r (DepPairType r) where
     return TyKind
 
 instance HasType CoreIR PiType where
-  getTypeE (PiType b@(PiBinder _ _ arr) eff resultTy) = do
+  getTypeE (PiType b arr eff resultTy) = do
     checkArrowAndEffects arr eff
     checkB b \_ -> do
       void $ checkE eff
@@ -365,14 +359,6 @@ instance IRRep r => HasType r (TabPiType r) where
   getTypeE (TabPiType b resultTy) = do
     checkB b \_ -> resultTy|:TyKind
     return TyKind
-
-instance CheckableB PiBinder where
-  checkB (PiBinder b ty arr) cont = do
-    ty' <- checkTypeE TyKind ty
-    let binding = toBinding ty'
-    withFreshBinder (getNameHint b) binding \(b':>_) -> do
-      extendRenamer (b@>binderName b') do
-        cont $ PiBinder b' ty' arr
 
 instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
   checkB nest cont = case nest of
@@ -738,12 +724,12 @@ checkTabApp tabTy xs = go tabTy $ toList xs
 
 asNaryPiType :: IRRep r => Type r n -> Maybe ([Arrow], NaryPiType r n)
 asNaryPiType piTy = case piTy of
-  Pi (PiType (PiBinder b ty arr) effs resultTy) -> case effs of
+  Pi (PiType b arr effs resultTy) -> case effs of
    Pure -> case asNaryPiType resultTy of
      Just (arrs, NaryPiType bs effs' resultTy') ->
-        Just (arr:arrs, NaryPiType (Nest (b:>ty) bs) effs' resultTy')
-     Nothing -> Just ([arr], NaryPiType (Nest (b:>ty) Empty) Pure resultTy)
-   _ -> Just ([arr], NaryPiType (Nest (b:>ty) Empty) effs resultTy)
+        Just (arr:arrs, NaryPiType (Nest b bs) effs' resultTy')
+     Nothing -> Just ([arr], NaryPiType (Nest b Empty) Pure resultTy)
+   _ -> Just ([arr], NaryPiType (Nest b Empty) effs resultTy)
   _ -> Nothing
 
 checkArgTys

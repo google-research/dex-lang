@@ -477,7 +477,7 @@ simplifyApp hint f xs =  case f of
           extendSubst (b@>SubstVal x) do
             xs' <- mapM sinkM xs
             simplifyApp hint body xs'
-      SimpInCore (LiftSimpFun (PiType b _ resultTy) (LamExpr bs body)) -> do
+      SimpInCore (LiftSimpFun (PiType b _ _ resultTy) (LamExpr bs body)) -> do
         if nestLength bs /= length xs
           then error "Expect saturated application, right?"
           else do
@@ -549,7 +549,7 @@ etaExpand piTy contTop = liftBuilder $
     go :: Emits n => Type CoreIR n
        -> (forall l. (Emits l, DExt n l) => [CAtom l] -> BuilderM CoreIR l (CAtom l))
        -> BuilderM CoreIR n (CAtom n)
-    go (Pi (PiType (PiBinder b argTy arr) effs resultTy)) cont =
+    go (Pi (PiType (b:>argTy) arr effs resultTy)) cont =
       buildLamGeneral noHint arr argTy
         (\arg -> applyRename (b@>arg) effs)
         (\arg -> do
@@ -662,7 +662,7 @@ ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (NaryPiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
     getType (ProjMethod dict (fromEnum method)) >>= \case
-      Pi (PiType (PiBinder b t _) _ resultTy) -> do
+      Pi (PiType (b:>t) _ _ resultTy) -> do
         let allBs = extraArgBs >>> Nest (b:>t) Empty
         return $ NaryPiType allBs Pure resultTy
       -- non-function methods are thunked

@@ -73,7 +73,8 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
-import Util (Tree (..), measureSeconds, File (..), readFileWithHash)
+import Util ( Tree (..), measureSeconds, File (..), readFileWithHash
+            , SnocList (..), tryUnsnoc, snoc, toSnocList)
 
 -- === top-level monad ===
 
@@ -933,13 +934,13 @@ instance Generic TopStateEx where
 
 getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, Int, CType n)
 getLinearizationType fname zeros fType = do
-  liftExcept . runFallibleM =<< liftEnvReaderT (go fType REmpty [] fType)
+  liftExcept . runFallibleM =<< liftEnvReaderT (go fType (toSnocList []) REmpty [] fType)
  where
-  go :: CType n -> RNest PiBinder n l
+  go :: CType n -> SnocList Arrow -> RNest CBinder n l
      -> [CType l] -> CType l
      -> EnvReaderT FallibleM l (Int, Int, CType n)
-  go fullTy implicitArgs revArgTys = \case
-    Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
+  go fullTy arrs implicitArgs revArgTys = \case
+    Pi (PiType pbinder@(binder:>a) arr eff b') -> do
       case eff of
         Pure -> return ()
         _ -> throw TypeErr $
@@ -951,7 +952,7 @@ getLinearizationType fname zeros fType = do
               "arguments. However, the type of " ++ pprint fname ++
               "is:\n\n" ++ pprint fullTy
             refreshAbs (Abs pbinder b') \pbinder' b'' ->
-              go fullTy (RNest implicitArgs pbinder') [] b''
+              go fullTy (snoc arrs arr) (RNest implicitArgs pbinder') [] b''
       case arr of
         ClassArrow -> implicit
         ImplicitArrow -> implicit
@@ -961,7 +962,7 @@ getLinearizationType fname zeros fType = do
             HoistFailure _ -> throw TypeErr $
               "Custom linearization cannot be defined for dependent " ++
               "functions" ++ but
-          go fullTy implicitArgs (a:revArgTys) b
+          go fullTy arrs implicitArgs (a:revArgTys) b
         LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
     resultTy -> do
       when (null revArgTys) $ throw TypeErr $
@@ -993,10 +994,13 @@ getLinearizationType fname zeros fType = do
       tanFunTy <- foldM prependTangent resultTyTan revArgTys
       let nImplicit = nestLength $ unRNest implicitArgs
       let nExplicit = length revArgTys
-      finalTy <- prependImplicit implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+      finalTy <- prependImplicit arrs implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
       return (nImplicit, nExplicit, finalTy)
     where
       but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-      prependImplicit :: RNest PiBinder n l -> CType l -> CType n
-      prependImplicit REmpty ty = ty
-      prependImplicit (RNest bs b) ty = prependImplicit bs (Pi (PiType b Pure ty ))
+      prependImplicit :: SnocList Arrow -> RNest CBinder n l -> CType l -> CType n
+      prependImplicit arrsTop bsTop ty = case (tryUnsnoc arrsTop, bsTop) of
+        (Nothing, REmpty) -> ty
+        (Just (arrsRest, arr), RNest bs b) ->
+          prependImplicit arrsRest bs (Pi (PiType b arr Pure ty ))
+        _ -> error "zip error"

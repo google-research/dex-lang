@@ -124,7 +124,7 @@ getTabAppType f xs = case NE.nonEmpty xs of
 
 getBaseMonoidType :: (IRRep r, Fallible1 m) => ScopeReader m => Type r n -> m n (Type r n)
 getBaseMonoidType ty = case ty of
-  Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
+  Pi (PiType b _ _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
 {-# INLINE getBaseMonoidType #-}
 
@@ -150,7 +150,7 @@ instantiateNaryPi (NaryPiType bs eff resultTy) args = do
 {-# INLINE instantiateNaryPi #-}
 
 instantiatePi :: EnvReader m => PiType n -> CAtom n -> m n (EffectRow CoreIR n, CType n)
-instantiatePi (PiType b eff body) x = do
+instantiatePi (PiType b _ eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 {-# INLINE instantiatePi #-}
@@ -273,11 +273,11 @@ instance IRRep r => HasType r (Atom r) where
     Var name -> getTypeE name
     Lam (UnaryLamExpr (b:>ty) body) arr (Abs (bEff:>_) effs) -> do
       ty' <- substM ty
-      withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
+      withFreshBinder (getNameHint b) ty' \b' -> do
         effs' <- extendRenamer (bEff@>binderName b') $ substM effs
         extendRenamer (b@>binderName b') do
           bodyTy <- getTypeE body
-          return $ Pi $ PiType (PiBinder b' ty' arr) effs' bodyTy
+          return $ Pi $ PiType b' arr effs' bodyTy
     Lam _ _ _ -> error "expected a unary lambda expression"
     Pi _ -> return TyKind
     TabPi _ -> return TyKind
@@ -717,7 +717,7 @@ getClassTy (ClassDef _ _ bs _ _) = go bs
   where
     go :: Nest RolePiBinder n l -> CType n
     go Empty = TyKind
-    go (Nest (RolePiBinder b ty arr _) rest) = Pi $ PiType (PiBinder b ty arr) Pure $ go rest
+    go (Nest (RolePiBinder b ty arr _) rest) = Pi $ PiType (b:>ty) arr Pure $ go rest
 
 ixTyFromDict :: IRRep r => EnvReader m => IxDict r n -> m n (IxType r n)
 ixTyFromDict ixDict = flip IxType ixDict <$> case ixDict of

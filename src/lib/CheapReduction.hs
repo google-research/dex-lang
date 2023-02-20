@@ -588,7 +588,6 @@ instance SubstE AtomSubstVal EffectOpType
 instance SubstE AtomSubstVal IExpr
 instance IRRep r => SubstE AtomSubstVal (RepVal r)
 instance SubstE AtomSubstVal DataDefParams
-instance SubstE AtomSubstVal DataDef
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
 instance SubstE AtomSubstVal UserEffectOp
@@ -597,18 +596,13 @@ instance IRRep r => SubstE AtomSubstVal (Hof r)
 instance IRRep r => SubstE AtomSubstVal (RefOp r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
 instance IRRep r => SubstE AtomSubstVal (Block r)
-instance SubstE AtomSubstVal InstanceDef
 instance SubstE AtomSubstVal InstanceBody
 instance SubstE AtomSubstVal MethodType
 instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
-instance SubstE AtomSubstVal LamBinding
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
 instance IRRep r => SubstE AtomSubstVal (DestBlock r)
-instance SubstE AtomSubstVal PiBinding
-instance SubstB AtomSubstVal PiBinder
 instance SubstE AtomSubstVal PiType
-instance SubstB AtomSubstVal RolePiBinder
 instance IRRep r => SubstE AtomSubstVal (TabPiType r)
 instance IRRep r => SubstE AtomSubstVal (NaryPiType r)
 instance IRRep r => SubstE AtomSubstVal (DepPairType r)
@@ -619,6 +613,10 @@ instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
+
+instance SubstB AtomSubstVal RolePiBinder where
+  substB env (RolePiBinder b ty arr role) cont =
+    substB env (b:>ty) \env' (b':>ty') -> cont env' $ RolePiBinder b' ty' arr role
 
 -- XXX: we need a special instance here because `SuperclassBinder` have all
 -- their types at the level of the top binder, rather than interleaving them

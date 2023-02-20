@@ -397,11 +397,7 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     Abs b v <- freshNameM hint
     let ab = Abs (b:>binding) v
     ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
-      let envFrag = toEnvFrag b'
-      let scs = bindingsFragToSynthCandidates envFrag
-      let topFrag = TopEnvFrag envFrag $
-            mempty { fragLocalModuleEnv = mempty { envSynthCandidates = scs} }
-      return $ Abs topFrag v'
+      return $ Abs (TopEnvFrag (toEnvFrag b') mempty) v'
     TopBuilderT $ extendInplaceT ab'
 
   emitEnv ab = TopBuilderT $ extendInplaceT ab
@@ -700,37 +696,37 @@ buildLamGeneral
   -> (forall l. (Emits l, DExt n l) => AtomName CoreIR l -> m l (CAtom l))
   -> m n (CAtom n)
 buildLamGeneral hint arr ty fEff fBody = do
-  withFreshBinder hint (LamBinding arr ty) \(b:>_) -> do
+  withFreshBinder hint ty \b -> do
     let v = binderName b
     effs <- fEff v
     body <- buildBlock $ fBody $ sink v
-    return $ Lam (UnaryLamExpr (b:>ty) body) arr (Abs (b:>ty) effs)
+    return $ Lam (UnaryLamExpr b body) arr (Abs b effs)
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
 buildPureNaryLam :: ScopableBuilder CoreIR m
-                 => EmptyAbs (Nest PiBinder) n
+                 => [Arrow] -> EmptyAbs (Nest CBinder) n
                  -> (forall l. DExt n l => [AtomName CoreIR l] -> m l (CAtom l))
                  -> m n (CAtom n)
-buildPureNaryLam (EmptyAbs Empty) cont = do
+buildPureNaryLam [] (EmptyAbs Empty) cont = do
   Distinct <- getDistinct
   cont []
-buildPureNaryLam (EmptyAbs (Nest (PiBinder b ty arr) rest)) cont = do
+buildPureNaryLam (arr:arrs) (EmptyAbs (Nest (b:>ty) rest)) cont = do
   buildPureLam (getNameHint b) arr ty \x -> do
     rest' <- applyRename (b@>x) $ EmptyAbs rest
-    buildPureNaryLam rest' \xs -> do
+    buildPureNaryLam arrs rest' \xs -> do
       x' <- sinkM x
       cont (x':xs)
-buildPureNaryLam _ _ = error "impossible"
+buildPureNaryLam _ _ _ = error "impossible"
 
 buildPi :: (Fallible1 m, CBuilder m)
         => NameHint -> Arrow -> CType n
         -> (forall l. DExt n l => AtomName CoreIR l -> m l (EffectRow CoreIR l, CType l))
         -> m n (PiType n)
 buildPi hint arr ty body =
-  withFreshBinder hint (PiBinding arr ty) \(b:>_) -> do
+  withFreshBinder hint ty \(b:>_) -> do
     (effs, resultTy) <- body $ binderName b
-    return $ PiType (PiBinder b ty arr) effs resultTy
+    return $ PiType (b:>ty) arr effs resultTy
 
 buildNaryPi
   :: CBuilder m
@@ -1135,14 +1131,6 @@ emitDataConName dataDefName conIdx conAtom = do
   let (DataConDef name _ _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
 
-zipNest :: (forall ii ii'. a -> b ii ii' -> b' ii ii')
-        -> [a]
-        -> Nest b  i i'
-        -> Nest b' i i'
-zipNest _ _ Empty = Empty
-zipNest f (x:t) (Nest b rest) = Nest (f x b) $ zipNest f t rest
-zipNest _ _ _ = error "List too short!"
-
 emitMethod
   :: (Mut n, TopBuilder m)
   => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
@@ -1156,13 +1144,13 @@ makeMethodGetter className explicit methodIdx = liftBuilder do
   className' <- sinkM className
   ClassDef sourceName _ paramBs _ _ <- getClassDef className'
   let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
-  buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
+  buildPureNaryLam arrows (EmptyAbs $ asPiBinders paramBs) \params -> do
     let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
     buildPureLam noHint ClassArrow dictTy \dict ->
       emitExpr $ ProjMethod (Var dict) methodIdx
   where
-    zipPiBinders :: [Arrow] -> Nest RolePiBinder i i' -> Nest PiBinder i i'
-    zipPiBinders = zipNest \arr (RolePiBinder b ty _ _) -> PiBinder b ty arr
+    asPiBinders :: Nest RolePiBinder i i' -> Nest CBinder i i'
+    asPiBinders = fmapNest \(RolePiBinder b ty _ _) -> b:>ty
 
 emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> CAtom n -> m n (Name TyConNameC n)
 emitTyConName dataDefName tyConAtom = do

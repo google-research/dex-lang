@@ -37,7 +37,7 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
   where
     go :: CType i -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go (Pi (PiType (PiBinder b ty arr) _ resultTy)) (arg:args) = do
+    go (Pi (PiType (b:>ty) arr _ resultTy)) (arg:args) = do
       ty' <- substM ty
       arg' <- case ty' of
         TyKind -> liftSubstReaderT $ generalizeType arg

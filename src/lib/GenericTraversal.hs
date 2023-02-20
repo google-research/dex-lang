@@ -108,17 +108,17 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
+    withFreshBinder (getNameHint b) ty' \b' -> do
       effs' <- extendRenamer (bEff@>binderName b') $ substM effs
       extendRenamer (b@>binderName b') do
         body' <- tge body
-        return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
+        return $ Lam (UnaryLamExpr b' body') arr (Abs b' effs')
   Lam _ _ _ -> error "expected a unary lambda expression"
-  Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
+  Pi (PiType (b:>ty) arr eff resultTy) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (PiBinding arr ty') \(b':>_) -> do
+    withFreshBinder (getNameHint b) ty' \b' -> do
       extendRenamer (b@>binderName b') $
-        Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> tge resultTy)
+        Pi <$> (PiType b' arr <$> substM eff <*> tge resultTy)
   TabPi (TabPiType (b:>ty) resultTy) -> do
     ty' <- tge ty
     withFreshBinder (getNameHint b) ty' \b' -> do
