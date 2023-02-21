@@ -71,13 +71,22 @@ data UDeclInferenceResult e n =
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
-inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  PairE def' (Abs ddbs' (ListE cbs')) <- liftInfererM $ solveLocal $ inferDataDef def
+inferTopUDecl (UStructDecl def tc) result = do
+  PairE def' (LiftE fieldNames) <- liftInfererM $ solveLocal $ inferStructDef def
   defName <- emitDataDef def'
+  forM_ (enumerate fieldNames) \(i, fieldName) -> do
+    projFun <- buildProjectionFun defName i
+    updateFieldDefs defName fieldName projFun
+  [dataCon] <- buildDataCons defName
+  updateFieldDefs defName "new" dataCon
   tc' <- emitTyConName defName =<< tyConDefAsAtom defName
-  dcs' <- forM (enumerate cbs') \(i, cbs'') ->
-    emitDataConName defName i =<< dataConDefAsAtom (Abs ddbs' cbs'') defName i
-  let subst = tc @> tc' <.> dcs @@> dcs'
+  UDeclResultDone <$> applyRename (tc @> tc') result
+inferTopUDecl (UDataDefDecl def tc dcs) result = do
+  def' <- liftInfererM (solveLocal $ inferDataDef def) >>= emitDataDef
+  tc' <- emitTyConName def' =<< tyConDefAsAtom def'
+  dcs' <- buildDataCons def'
+  dcs'' <- forM (enumerate dcs') \(i, dc) -> emitDataConName def' i dc
+  let subst = tc @> tc' <.> dcs @@> dcs''
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
   let classSourceName = uBinderSourceName className
@@ -1145,6 +1154,14 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
         x' -> return x'
     matchRequirement =<< matchPrimApp prim xs'
   ULabel name -> matchRequirement $ NewtypeTyCon $ LabelCon name
+  UFieldAccess x f -> do
+    x' <- inferFieldLHS x
+    matchRequirement =<< case x' of
+      Left tyConName -> lookupFieldName tyConName f
+      Right (tyConName, x'') -> do
+        f' <- lookupFieldName tyConName f
+        f'' <- instantiateSigma f'
+        app f'' x''
   URecord elems ->
     matchRequirement =<< resolveDelay =<< foldM go (Nothing, mempty) (reverse elems)
     where
@@ -1264,6 +1281,28 @@ inferPrimArg x = do
       (Just reduced, DictTypeHoistSuccess, []) -> return reduced
       _ -> throw CompilerErr "Type args to primops must be reducible"
     _ -> emitBlock xBlock
+
+inferFieldLHS
+  :: EmitsBoth o
+  => UExpr i -> InfererM i o (Either (DataDefName o) (DataDefName o, CAtom o))
+inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
+  case x of
+    UVar (InternalName _ (UTyConVar v)) -> do
+      TyConBinding defName _ <- lookupEnv =<< renameM v
+      return $ Left defName
+    _ -> do
+      x' <- inferRho noHint (WithSrcE pos x)
+      ty <- getType =<< zonk x'
+      case ty of
+        NewtypeTyCon (UserADTType _ tyName _) -> return $ Right (tyName, x')
+        ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
+
+lookupFieldName :: DataDefName o -> FieldName -> InfererM i o (CAtom o)
+lookupFieldName dataDefName (WithSrc src name) = addSrcContext src do
+  DataDefBinding (DataDef sn _ _) (FieldDefs fields) <- lookupEnv dataDefName
+  case M.lookup name fields of
+    Nothing -> throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name
+    Just x -> return x
 
 matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
 matchPrimApp = \case
@@ -1659,28 +1698,27 @@ tyConDefAsAtom defName = liftBuilder do
   buildTyConLam defName PlainArrow \sourceName params ->
     return $ TypeCon sourceName (sink defName) params
 
-dataConDefAsAtom :: EnvReader m
-                 => Abs (Nest RolePiBinder) (EmptyAbs (Nest (Binder CoreIR))) n
-                 -> DataDefName n -> Int -> m n (CAtom n)
-dataConDefAsAtom bsAbs defName conIx = liftBuilder do
+buildDataCons :: EnvReader m => DataDefName n -> m n [CAtom n]
+buildDataCons defName = do
+  DataDef _ _ dataCons <- lookupDataDef defName
+  forM (enumerate dataCons) \(i, _) -> buildDataCon defName i
+
+buildDataCon :: EnvReader m => DataDefName n -> Int -> m n (CAtom n)
+buildDataCon defName conIx = liftBuilder do
   buildTyConLam defName ImplicitArrow \_ params -> do
     defName' <- sinkM defName
     def <- lookupDataDef defName'
     conDefs <- instantiateDataDef def params
-    let DataConDef _ conRep _ = conDefs !! conIx
-    Abs conArgBinders UnitE <- applyDataConAbs (sink bsAbs) params
-    let arrs = replicate (nestLength conArgBinders) PlainArrow
-    buildPureNaryLam arrs (EmptyAbs conArgBinders) \conArgs -> do
-      conProd <- buildDataCon (sink conRep) $ Var <$> conArgs
+    DataConDef _ (EmptyAbs dataBs) repTy _ <- return $ conDefs !! conIx
+    let arrs = replicate (nestLength dataBs) PlainArrow
+    buildPureNaryLam arrs (EmptyAbs dataBs) \conArgs -> do
+      conProd <- wrap (sink repTy) $ Var <$> conArgs
       return $ NewtypeCon (sink $ UserADTData defName' params) $
         case conDefs of
           []  -> error "unreachable"
           [_] -> conProd
           _   -> SumVal conTys conIx conProd
-            where conTys = sinkList $ conDefs <&> \(DataConDef _ rty _) -> rty
-
-buildDataCon :: EnvReader m => CType n -> [CAtom n] -> m n (CAtom n)
-buildDataCon repTy topArgs = wrap repTy topArgs
+            where conTys = sinkList $ conDefs <&> \(DataConDef _ _ rty _) -> rty
   where
     wrap :: EnvReader m => CType n -> [CAtom n] -> m n (CAtom n)
     wrap _ [arg] = return $ arg
@@ -1697,7 +1735,17 @@ buildDataCon repTy topArgs = wrap repTy topArgs
         ans <- wrap rty'' t
         return $ DepPair h ans dpt
         where h:t = args
-      _ -> error $ "Unexpected data con representation type: " ++ pprint repTy
+      _ -> error $ "Unexpected data con representation type: " ++ pprint rty
+
+buildProjectionFun :: EnvReader m => DataDefName n -> Int -> m n (CAtom n)
+buildProjectionFun defName i = liftBuilder do
+  buildTyConLam defName ImplicitArrow \_ params -> do
+    defName' <- sinkM defName
+    def@(DataDef sn _ _) <- lookupDataDef defName'
+    let argTy = NewtypeTyCon $ sink $ UserADTType sn defName' params
+    [DataConDef _ _ _ projs] <- instantiateDataDef def params
+    buildLam "x" PlainArrow argTy Pure \x -> do
+      normalizeNaryProj (projs!!i) (Var x)
 
 inferRole :: CType o -> Arrow -> InfererM i o ParamRole
 inferRole ty arr = case arr of
@@ -1714,17 +1762,23 @@ inferRole ty arr = case arr of
         False -> return DataParam
 {-# INLINE inferRole #-}
 
-inferDataDef
-  :: EmitsInf o => UDataDef i
-  -> InfererM i o (PairE DataDef
-      (Abs (Nest RolePiBinder) (ListE (EmptyAbs (Nest (Binder CoreIR))))) o)
+inferDataDef :: EmitsInf o => UDataDef i -> InfererM i o (DataDef o)
 inferDataDef (UDataDef tyConName paramBs dataCons) = do
-  Abs paramBs' (ListE dataConsWithBs') <-
+  Abs paramBs' (ListE dataCons') <-
     withNestedUBindersTyCon paramBs \_ -> do
       ListE <$> mapM inferDataCon dataCons
-  let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
-  return $ PairE (DataDef tyConName paramBs' dataCons')
-                 (Abs paramBs' $ ListE bs')
+  return (DataDef tyConName paramBs' dataCons')
+
+inferStructDef
+  :: EmitsInf o => UStructDef i
+  -> InfererM i o (PairE DataDef (LiftE [SourceName]) o)
+inferStructDef (UStructDef tyConName paramBs fields) = do
+  let (fieldNames, fieldTys) = unzip fields
+  Abs paramBs' dataConBs <- withNestedUBindersTyCon paramBs \_ -> do
+    mapM checkUType fieldTys >>= typesAsBinderNest
+  let (repTy, projIdxs) = dataConRepTy dataConBs
+  let dataConDef = DataConDef (tyConName ++ ".new") dataConBs repTy projIdxs
+  return $ PairE (DataDef tyConName paramBs' [dataConDef]) (LiftE fieldNames)
 
 withNestedUBindersTyCon
   :: forall i i' o e. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
@@ -1741,13 +1795,11 @@ withNestedUBindersTyCon bs cont = case bs of
           cont (name':names)
     return $ Abs (Nest b' rest') body
 
-inferDataCon :: EmitsInf o
-             => (SourceName, UDataDefTrail i)
-             -> InfererM i o (PairE DataConDef (EmptyAbs (Nest (Binder CoreIR))) o)
+inferDataCon :: EmitsInf o => (SourceName, UDataDefTrail i) -> InfererM i o (DataConDef o)
 inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
   let (repTy, projIdxs) = dataConRepTy argBs'
-  return $ PairE (DataConDef sourceName repTy projIdxs) argBs'
+  return $ DataConDef sourceName argBs' repTy projIdxs
 
 dataConRepTy :: EmptyAbs (Nest (Binder CoreIR)) n -> (CType n, [[Projection]])
 dataConRepTy (Abs topBs UnitE) = case topBs of
@@ -2095,7 +2147,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
-    DataConDef _ repTy idxs <- return $ cons !! con
+    DataConDef _ _ repTy idxs <- return $ cons !! con
     when (length idxs /= nestLength ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length idxs)
                                              ++ " got " ++ show (nestLength ps)
@@ -2179,7 +2231,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     (dataDefName, _) <- getDataCon =<< renameM conName
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     case cons of
-      [DataConDef _ _ idxss] -> do
+      [DataConDef _ _ _ idxss] -> do
         when (length idxss /= nestLength ps) $ throw TypeErr $
           "Unexpected number of pattern binders. Expected " ++ show (length idxss)
                                                  ++ " got " ++ show (nestLength ps)

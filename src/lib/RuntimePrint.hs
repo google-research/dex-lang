@@ -133,7 +133,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
           return UnitVal
       where
         showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
-        showDataCon (DataConDef sn _ projss) arg = do
+        showDataCon (DataConDef sn _ _ projss) arg = do
           case projss of
             [] -> emitLit sn
             _ -> parens do

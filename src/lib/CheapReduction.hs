@@ -465,9 +465,8 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) (DataDefParams params) = do
-  let dataDefParams' = DataDefParams [(arr, x) | (arr, x) <- params]
-  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) dataDefParams'
+instantiateDataDef (DataDef _ bs cons) params = do
+  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) params
 {-# INLINE instantiateDataDef #-}
 
 applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, EnvReader m)
@@ -481,8 +480,8 @@ applyDataConAbs (Abs bs e) (DataDefParams xs) =
 dataDefRep :: [DataConDef n] -> CType n
 dataDefRep = \case
   [] -> error "unreachable"  -- There's no representation for a void type
-  [DataConDef _ ty _] -> ty
-  tys -> SumTy $ tys <&> \(DataConDef _ ty _) -> ty
+  [DataConDef _ _ ty _] -> ty
+  tys -> SumTy $ tys <&> \(DataConDef _ _ ty _) -> ty
 
 instantiateDepPairTy :: (IRRep r, EnvReader m) => DepPairType r n -> Atom r n -> m n (Type r n)
 instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)

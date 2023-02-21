@@ -143,6 +143,10 @@ topDecl = dropSrc topDecl' where
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
+  topDecl' (CStruct name args fields) = do
+    binders <- toNest . concat <$> mapM dataArg args
+    fields' <- mapM fieldCon fields
+    return $ UStructDecl (UStructDef name binders fields') (fromString name)
   topDecl' (CInterface supers self methods) = do
     supers' <- mapM expr supers
     (name, params) <- tyCon self
@@ -184,6 +188,9 @@ tyCon = generalCon $ binOptR Colon
 -- This corresponds to dataConDef in the original parser.
 dataCon :: NameAndArgs -> SyntaxM (UConDef VoidS VoidS)
 dataCon = generalCon $ binOptL Colon
+
+fieldCon :: NameAndType -> SyntaxM (SourceName, UType VoidS)
+fieldCon (name, ty) = (name,) <$> expr ty
 
 -- generalCon is the common part of tyCon and dataCon.
 generalCon :: (Group -> (Maybe Group, Maybe Group))
@@ -455,6 +462,12 @@ expr = propagateSrcE expr' where
       Juxtapose     -> apply mkApp
       Dollar        -> apply mkApp
       IndexingDot   -> apply mkTabApp
+      FieldAccessDot -> do
+        lhs' <- expr lhs
+        WithSrc src rhs' <- return rhs
+        addSrcContext src $ case rhs' of
+          CIdentifier name -> return $ UFieldAccess lhs' (WithSrc src name)
+          _ -> throw SyntaxErr "Field must be a name"
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
       (EvalBinOp s) -> evalOp s
       Ampersand     -> evalOp "(&)"

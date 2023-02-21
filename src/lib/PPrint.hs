@@ -495,8 +495,8 @@ instance Pretty (Binding c n) where
     -- TODO: can we avoid printing needing IRRep? Presumably it's related to
     -- manipulating sets or something, which relies on Eq/Ord, which relies on renaming.
     AtomNameBinding   info -> "Atom name:" <+> pretty (unsafeCoerceIRE @CoreIR info)
-    DataDefBinding    dataDef -> pretty dataDef
-    TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
+    DataDefBinding dataDef _ -> pretty dataDef
+    TyConBinding   dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
     DataConBinding    dataDefName idx e -> "Data constructor:" <+> pretty dataDefName <+> "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
     ClassBinding    classDef -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
@@ -532,7 +532,7 @@ instance Pretty (DataDef n) where
     "data" <+> p name <+> (spaced $ fromNest bs) <> prettyLines cons
 
 instance Pretty (DataConDef n) where
-  pretty (DataConDef name repTy _) =
+  pretty (DataConDef name _ repTy _) =
     p name <+> ":" <+> p repTy
 
 instance Pretty (ClassDef n) where
@@ -710,6 +710,7 @@ instance PrettyPrec (UExpr' n) where
       nest 2 (prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
     ULabeledRow elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "?") ": " elems
+    UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f
     URecord   elems -> atPrec ArgPrec $ prettyUFieldRowElems (line' <> ",") "=" elems
     URecordTy elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "&") ": " elems
     UVariant labels label value -> prettyVariant labels label value
@@ -742,6 +743,9 @@ instance Pretty (UDecl n l) where
   pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
+  pretty (UStructDecl (UStructDef nm bs fields) bTyCon) =
+    "struct" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
+       (prettyLines fields)
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods
@@ -1292,6 +1296,7 @@ instance Pretty Bin' where
   pretty Ampersand = "&"
   pretty DepAmpersand = "&>"
   pretty IndexingDot = "."
+  pretty FieldAccessDot = "~"
   pretty Comma = ","
   pretty DepComma = ",>"
   pretty Colon = ":"

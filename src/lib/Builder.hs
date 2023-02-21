@@ -1100,8 +1100,12 @@ symbolicTangentNonZero val = do
 
 emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =
-  emitBinding hint $ DataDefBinding dataDef
+  emitBinding hint $ DataDefBinding dataDef mempty
   where hint = getNameHint sourceName
+
+updateFieldDefs :: (Mut n, TopBuilder m) => DataDefName n -> SourceName -> CAtom n -> m n ()
+updateFieldDefs defName sourceName val =
+  emitPartialTopEnvFrag $ mempty {fragFieldDefUpdates = toSnocList [(defName, sourceName, val)]}
 
 emitEffectDef :: (Mut n, TopBuilder m) => EffectDef n -> m n (EffectName n)
 emitEffectDef effectDef@(EffectDef name _) =
@@ -1128,7 +1132,7 @@ emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
 emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> CAtom n -> m n (Name DataConNameC n)
 emitDataConName dataDefName conIdx conAtom = do
   DataDef _ _ dataCons <- lookupDataDef dataDefName
-  let (DataConDef name _ _) = dataCons !! conIdx
+  let (DataConDef name _ _ _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
 
 emitMethod

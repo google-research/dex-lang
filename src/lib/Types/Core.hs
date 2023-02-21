@@ -134,6 +134,7 @@ type PtrName      = Name PtrNameC
 type SpecDictName = Name SpecializedDictNameC
 type TopFunName   = Name TopFunNameC
 type FunObjCodeName = Name FunObjCodeNameC
+type TyConName    = Name TyConNameC
 
 type AtomBinderP (r::IR) = BinderP (AtomNameC r)
 type Binder r = AtomBinderP r (Type r) :: B
@@ -159,8 +160,11 @@ data DataDef n where
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
   -- list of projection indices that recovers elements from the representation.
-  DataConDef SourceName (CType n) [[Projection]]
+  DataConDef SourceName (EmptyAbs (Nest CBinder) n) (CType n) [[Projection]]
   deriving (Show, Generic)
+
+newtype FieldDefs (n::S) = FieldDefs (M.Map SourceName (CAtom n))
+        deriving (Store, Semigroup, Monoid)
 
 data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
 
@@ -506,7 +510,8 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
   , fragLoadedObjects   :: LoadedObjects n
   , fragLocalModuleEnv  :: ModuleEnv n
   , fragFinishSpecializedDict :: SnocList (SpecDictName n, [LamExpr SimpIR n])
-  , fragTopFunUpdates         :: SnocList (TopFunName n, TopFunEvalStatus n) }
+  , fragTopFunUpdates         :: SnocList (TopFunName n, TopFunEvalStatus n)
+  , fragFieldDefUpdates       :: SnocList (DataDefName n, SourceName, CAtom n) }
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
@@ -570,8 +575,8 @@ dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 -- TODO: consider making this an open union via a typeable-like class
 data Binding (c::C) (n::S) where
   AtomNameBinding   :: AtomBinding r n                 -> Binding (AtomNameC r)   n
-  DataDefBinding    :: DataDef n                       -> Binding DataDefNameC    n
-  TyConBinding      :: DataDefName n        -> CAtom n -> Binding TyConNameC      n
+  DataDefBinding    :: DataDef n -> FieldDefs n        -> Binding DataDefNameC    n
+  TyConBinding      :: DataDefName n -> CAtom n        -> Binding TyConNameC      n
   DataConBinding    :: DataDefName n -> Int -> CAtom n -> Binding DataConNameC    n
   ClassBinding      :: ClassDef n                      -> Binding ClassNameC      n
   InstanceBinding   :: InstanceDef n                   -> Binding InstanceNameC   n
@@ -1180,10 +1185,11 @@ instance AlphaEqE DataDef
 instance AlphaHashableE DataDef
 
 instance GenericE DataConDef where
-  type RepE DataConDef = (LiftE (SourceName, [[Projection]])) `PairE` Type CoreIR
-  fromE (DataConDef name repTy idxs) = (LiftE (name, idxs)) `PairE` repTy
+  type RepE DataConDef = (LiftE (SourceName, [[Projection]]))
+    `PairE` EmptyAbs (Nest CBinder) `PairE` Type CoreIR
+  fromE (DataConDef name bs repTy idxs) = (LiftE (name, idxs)) `PairE` bs `PairE` repTy
   {-# INLINE fromE #-}
-  toE   ((LiftE (name, idxs)) `PairE` repTy) = DataConDef name repTy idxs
+  toE   ((LiftE (name, idxs)) `PairE` bs `PairE` repTy) = DataConDef name bs repTy idxs
   {-# INLINE toE #-}
 instance SinkableE      DataConDef
 instance HoistableE     DataConDef
@@ -2171,7 +2177,7 @@ instance GenericE (Binding c) where
     EitherE3
       (EitherE7
           (WhenAtomName        c AtomBinding)
-          (WhenC DataDefNameC  c (DataDef))
+          (WhenC DataDefNameC  c (DataDef `PairE` FieldDefs))
           (WhenC TyConNameC    c (DataDefName `PairE` CAtom))
           (WhenC DataConNameC  c (DataDefName `PairE` LiftE Int `PairE` CAtom))
           (WhenC ClassNameC    c (ClassDef))
@@ -2191,8 +2197,8 @@ instance GenericE (Binding c) where
 
   fromE = \case
     AtomNameBinding   binding           -> Case0 $ Case0 $ WhenAtomName binding
-    DataDefBinding    dataDef           -> Case0 $ Case1 $ WhenC $ dataDef
-    TyConBinding      dataDefName     e -> Case0 $ Case2 $ WhenC $ dataDefName `PairE` e
+    DataDefBinding    dataDef defs      -> Case0 $ Case1 $ WhenC $ dataDef `PairE` defs
+    TyConBinding      dataDefName e     -> Case0 $ Case2 $ WhenC $ dataDefName `PairE` e
     DataConBinding    dataDefName idx e -> Case0 $ Case3 $ WhenC $ dataDefName `PairE` LiftE idx `PairE` e
     ClassBinding      classDef          -> Case0 $ Case4 $ WhenC $ classDef
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ WhenC $ instanceDef
@@ -2210,7 +2216,7 @@ instance GenericE (Binding c) where
 
   toE = \case
     Case0 (Case0 (WhenAtomName binding))                  -> AtomNameBinding   binding
-    Case0 (Case1 (WhenC (dataDef)))                       -> DataDefBinding    dataDef
+    Case0 (Case1 (WhenC (dataDef `PairE` defs)))          -> DataDefBinding    dataDef defs
     Case0 (Case2 (WhenC (n `PairE` e)))                   -> TyConBinding      n e
     Case0 (Case3 (WhenC (n `PairE` LiftE idx `PairE` e))) -> DataConBinding    n idx e
     Case0 (Case4 (WhenC (classDef)))                      -> ClassBinding      classDef
@@ -2356,15 +2362,18 @@ instance GenericE PartialTopEnvFrag where
                               `PairE` ModuleEnv
                               `PairE` ListE (PairE SpecDictName (ListE (LamExpr SimpIR)))
                               `PairE` ListE (PairE TopFunName (ComposeE EvalStatus TopFunLowerings))
-  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d fs) =
-    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d' `PairE` fs'
+                              `PairE` ListE (DataDefName `PairE` LiftE SourceName `PairE` CAtom)
+  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d fs fields) =
+    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d' `PairE` fs' `PairE` fields'
     where d'  = ListE $ [name `PairE` ListE methods | (name, methods) <- toList d]
           fs' = ListE $ [name `PairE` ComposeE impl | (name, impl)    <- toList fs]
+          fields' = ListE $ [dname `PairE` LiftE sname `PairE` x | (dname, sname, x) <- toList fields]
   {-# INLINE fromE #-}
-  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d `PairE` fs) =
-    PartialTopEnvFrag cache rules loadedM loadedO env d' fs'
+  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d `PairE` fs `PairE` fields) =
+    PartialTopEnvFrag cache rules loadedM loadedO env d' fs' fields'
     where d'  = toSnocList [(name, methods) | name `PairE` ListE methods <- fromListE d]
           fs' = toSnocList [(name, impl)    | name `PairE` ComposeE impl <- fromListE fs]
+          fields' = toSnocList [(dname, sname, x)    | dname `PairE` LiftE sname `PairE` x <- fromListE fields]
   {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
@@ -2372,11 +2381,11 @@ instance HoistableE     PartialTopEnvFrag
 instance RenameE        PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 x7 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 y7 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6) (x7 <> y7)
+  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 x7 x8 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 y7 y8 =
+    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6) (x7<>y7) (x8<>y8)
 
 instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty mempty
+  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance GenericB TopEnvFrag where
@@ -2407,12 +2416,13 @@ instance OutFrag TopEnvFrag where
 instance ExtOutMap Env TopEnvFrag where
   extendOutMap env
     (TopEnvFrag (EnvFrag frag)
-    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d' fs')) = result''
+    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d' fs' fields')) = result'''
     where
       Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
       result = Env newTopEnv newModuleEnv
       result'  = foldl addMethods   result (toList d' )
       result'' = foldl addFunUpdate result' (toList fs')
+      result''' = foldl addFieldDefUpdate result'' (toList fields')
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
@@ -2444,6 +2454,12 @@ addMethods e (dName, methods) = do
       let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
       updateEnv dName newBinding e
     Just _ -> error "shouldn't be adding methods if we already have them"
+
+addFieldDefUpdate :: Env n -> (DataDefName n, SourceName, CAtom n) -> Env n
+addFieldDefUpdate e (dname, sname, val) =
+  case lookupEnvPure e dname of
+    DataDefBinding def (FieldDefs fieldDefs) ->
+      updateEnv dname (DataDefBinding def $ FieldDefs $ M.insert sname val fieldDefs) e
 
 addFunUpdate :: Env n -> (TopFunName n, TopFunEvalStatus n) -> Env n
 addFunUpdate e (f, s) = do
@@ -2562,6 +2578,21 @@ instance Semigroup (LoadedObjects n) where
 
 instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
+
+instance GenericE FieldDefs where
+  type RepE FieldDefs = ListE (PairE (LiftE SourceName) CAtom)
+  fromE (FieldDefs m) = ListE [PairE (LiftE v) def | (v, def) <- M.toList m]
+  {-# INLINE fromE #-}
+  toE   (ListE pairs) = FieldDefs $ M.fromList [(v, def) | (PairE (LiftE v) def) <- pairs]
+  {-# INLINE toE #-}
+
+deriving via WrapE FieldDefs n instance Generic (FieldDefs n)
+
+instance SinkableE      FieldDefs
+instance HoistableE     FieldDefs
+instance AlphaEqE       FieldDefs
+instance AlphaHashableE FieldDefs
+instance RenameE        FieldDefs
 
 instance Hashable Projection
 instance Hashable IxMethod

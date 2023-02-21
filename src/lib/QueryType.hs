@@ -104,7 +104,7 @@ caseAltsBinderTys ty = case ty of
     UserADTType _ defName params -> do
       def <- lookupDataDef defName
       cons <- instantiateDataDef def params
-      return [repTy | DataConDef _ repTy _ <- cons]
+      return [repTy | DataConDef _ _ repTy _ <- cons]
     _ -> fail msg
   _ -> fail msg
   where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty

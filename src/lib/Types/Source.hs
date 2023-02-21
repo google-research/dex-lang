@@ -115,6 +115,7 @@ data UExpr' (n::S) =
  | UTabCon [UExpr n]
  | UPrim PrimName [UExpr n]
  | ULabel String
+ | UFieldAccess (UExpr n) FieldName
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
  | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
@@ -133,6 +134,8 @@ data UFieldRowElem (n::S)
   | UDynFields   (UExpr n)
   deriving (Show)
 
+type FieldName = WithSrc String
+
 data ULamExpr (n::S) where
   ULamExpr :: Arrow -> UPatAnn n l -> UExpr l -> ULamExpr n
 
@@ -150,14 +153,19 @@ data UDeclExpr (n::S) where
 
 type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder (AtomNameC CoreIR)) n l)
 
--- TODO Why are the type and data constructor names SourceName, rather
--- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
-    :: SourceName
+    :: SourceName  -- source name for pretty printing
     -> Nest (UAnnBinderArrow (AtomNameC CoreIR)) n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
+
+data UStructDef (n::S) where
+  UStructDef
+    :: SourceName   -- source name for pretty printing
+    -> Nest (UAnnBinderArrow (AtomNameC CoreIR)) n l
+    -> [(SourceName, UType l)]  -- named payloads
+    -> UStructDef n
 
 data UDataDefTrail (l::S) where
   UDataDefTrail :: Nest (UAnnBinder (AtomNameC CoreIR)) l l' -> UDataDefTrail l
@@ -168,6 +176,10 @@ data UDecl (n::S) (l::S) where
     :: UDataDef n                          -- actual definition
     -> UBinder TyConNameC n l'             -- type constructor name
     ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
+    -> UDecl n l
+  UStructDecl
+    :: UStructDef n                        -- actual definition
+    -> UBinder TyConNameC n l              -- type constructor name
     -> UDecl n l
   UInterface
     :: Nest (UAnnBinder (AtomNameC CoreIR)) n p     -- parameter binders
@@ -279,6 +291,9 @@ pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
 
 -- === Source context helpers ===
+
+data WithSrc a = WithSrc SrcPosCtx a
+  deriving (Show, Functor)
 
 data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
   deriving (Show)
@@ -626,6 +641,7 @@ deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDepPairType n)
 deriving instance Show (UDeclExpr n)
 deriving instance Show (UDataDef n)
+deriving instance Show (UStructDef n)
 deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)

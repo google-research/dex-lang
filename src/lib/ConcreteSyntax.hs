@@ -10,7 +10,7 @@ module ConcreteSyntax (
   binOptL, binOptR, nary,
   WithSrc (..), CSourceBlock, CSourceBlock' (..),
   CTopDecl, CTopDecl' (..), CBlock (..), CDecl, CDecl' (..),
-  NameAndArgs, Group, Group'(..),
+  NameAndArgs, NameAndType, Group, Group'(..),
   Bin, Bin' (..), Bracket (..), LabelPrefix (..), ForKind (..),
   pattern ExprDecl, pattern ExprBlock, pattern Bracketed,
   pattern Binary, pattern Prefix, pattern Postfix, pattern Identifier) where
@@ -45,9 +45,6 @@ sourceBlocks = manyTill (sourceBlock <* outputLines) eof
 
 -- === Parsing target ADT ===
 
-data WithSrc a = WithSrc SrcPosCtx a
-  deriving (Show, Functor)
-
 type CSourceBlock = SourceBlockP CSourceBlock'
 
 data CSourceBlock'
@@ -65,6 +62,9 @@ data CTopDecl'
   | CData SourceName -- Type constructor name
       [Group] -- Arguments, including class constraints
       [NameAndArgs] -- Constructor names and argument sets
+  | CStruct SourceName -- Type constructor name
+      [Group] -- Arguments, including class constraints
+      [(SourceName, Group)] -- Field names and types
   | CInterface [Group] -- Superclasses
       NameAndArgs -- Class name and arguments
       -- Method declarations: name, arguments, type.  TODO: Allow operators?
@@ -79,6 +79,7 @@ data CTopDecl'
   deriving (Show, Generic)
 
 type NameAndArgs = (SourceName, [Group])
+type NameAndType = (SourceName, Group)
 
 type CDecl = WithSrc CDecl'
 data CDecl'
@@ -131,6 +132,7 @@ data Bin'
   | Ampersand
   | DepAmpersand
   | IndexingDot
+  | FieldAccessDot
   | Comma
   | DepComma
   | Colon
@@ -148,6 +150,7 @@ interp_operator = \case
   "&"   -> Ampersand
   "&>"  -> DepAmpersand
   "."   -> IndexingDot
+  "~"   -> FieldAccessDot
   ","   -> Comma
   ",>"  -> DepComma
   ":"   -> Colon
@@ -330,6 +333,7 @@ sourceBlock' =
       proseBlock
   <|> topLevelCommand
   <|> liftM CTopDecl (dataDef <* eolf)
+  <|> liftM CTopDecl (structDef <* eolf)
   <|> liftM CTopDecl (DeclTopDecl PlainLet <$> instanceDef True  <* eolf)
   <|> liftM CTopDecl (DeclTopDecl PlainLet <$> instanceDef False <* eolf)
   <|> liftM CTopDecl (interfaceDef <* eolf)
@@ -376,6 +380,15 @@ explicitCommand = do
   return $ case (e, cmd) of
     (ExprBlock (WithSrc _ (CIdentifier v)), GetType) -> CMisc $ GetNameType v
     _ -> CCommand cmd e
+
+structDef :: Parser CTopDecl
+structDef = withSrc do
+  keyWord StructKW
+  tyName <- anyName
+  args <- many cGroupNoJuxtEqual
+  sym "="
+  fields <- onePerLine nameAndType
+  return $ CStruct tyName args fields
 
 dataDef :: Parser CTopDecl
 dataDef = withSrc do
@@ -443,6 +456,13 @@ effectOpDef = do
   sym "="
   rhs <- cBlock
   return ((fromString v), rp, rhs)
+
+nameAndType :: Parser NameAndType
+nameAndType = do
+  n <- anyName
+  sym ":"
+  arg <- cGroup
+  return (n, arg)
 
 nameAndArgs :: Parser NameAndArgs
 nameAndArgs = do
@@ -774,7 +794,8 @@ replaceOp name op tbl = map (map replace) tbl where
 
 ops :: PrecTable Group
 ops =
-  [ [symOpL   ".", symOpL   "!"]
+  [ [symOpR   "~"]
+  , [symOpL   ".", symOpL   "!"]
   , [juxtaposition]
   , [unOpPre  "-", unOpPre  "+"]
   , [backquote]

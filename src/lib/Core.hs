@@ -318,7 +318,7 @@ lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding obj m -> retu
 {-# INLINE lookupFunObjCode #-}
 
 lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
-lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
+lookupDataDef name = lookupEnv name >>= \case DataDefBinding x _ -> return x
 {-# INLINE lookupDataDef #-}
 
 lookupClassDef :: EnvReader m => ClassName n -> m n (ClassDef n)
@@ -430,7 +430,7 @@ fromNonDepTabType ty = do
   return (ixTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [CType n]
-nonDepDataConTys (DataConDef _ repTy idxs) =
+nonDepDataConTys (DataConDef _ _ repTy idxs) =
   case repTy of
     ProdTy tys | length idxs == length tys -> Just tys
     _ -> Nothing
