@@ -17,7 +17,6 @@ import Foreign.C.String
 import Foreign.Ptr
 
 import Builder
-import CheckType (asFirstOrderFunction)
 import Core
 import Err
 import IRVariants
@@ -40,9 +39,7 @@ exportFunctions = error "Not implemented"
 prepareFunctionForExport
   :: (Mut n, Topper m) => CallingConvention -> CAtom n -> m n (ImpFunction n, ExportedSignature VoidS)
 prepareFunctionForExport cc f = do
-  (arrs, naryPi) <- getType f >>= asFirstOrderFunction >>= \case
-    Nothing  -> throw TypeErr "Only first-order functions can be exported"
-    Just npi -> return npi
+  Pi naryPi@(PiType (WithAttrs (ArgAttrs arrs) _) _ _) <- getType f
   closedNaryPi <- case hoistToTop naryPi of
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
@@ -50,7 +47,7 @@ prepareFunctionForExport cc f = do
   sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig arrs closedNaryPi of
     Success sig -> return sig
     Failure err -> throwErrs err
-  f' <- asNaryLam naryPi f
+  f' <- asNaryLam f
   fSimp <- simplifyTopFunction f'
   fOpt <- simpOptimizations fSimp
   fLower <- lowerFullySequential fOpt
@@ -60,8 +57,8 @@ prepareFunctionForExport cc f = do
 
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => [Arrow] -> NaryPiType CoreIR n -> m n (ExportedSignature n)
-    naryPiToExportSig arrs (NaryPiType tbs effs resultTy) = do
+                      => [Arrow] -> PiType CoreIR n -> m n (ExportedSignature n)
+    naryPiToExportSig arrs (PiType (WithAttrs _ tbs) effs resultTy) = do
         case effs of
           Pure -> return ()
           _    -> throw TypeErr "Only pure functions can be exported"

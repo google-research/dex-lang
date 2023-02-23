@@ -102,7 +102,7 @@ data UExpr' (n::S) =
    UVar (SourceNameOr UVar n)
  | ULam (ULamExpr n)
  | UPi  (UPiExpr n)
- | UApp (UExpr n) (UExpr n)
+ | UApp (UExpr n) [UExpr n]
  | UTabPi  (UTabPiExpr n)
  | UDepPairTy (UDepPairType n)
  | UDepPair (UExpr n) (UExpr n)
@@ -137,10 +137,10 @@ data UFieldRowElem (n::S)
 type FieldName = WithSrc String
 
 data ULamExpr (n::S) where
-  ULamExpr :: Arrow -> UPatAnn n l -> UExpr l -> ULamExpr n
+  ULamExpr :: [Arrow] -> Nest UPatAnn n l -> UExpr l -> ULamExpr n
 
 data UPiExpr (n::S) where
-  UPiExpr :: Arrow -> UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
+  UPiExpr :: [Arrow] -> Nest UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
 
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UPatAnn n l -> UType l -> UTabPiExpr n

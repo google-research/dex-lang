@@ -10,7 +10,7 @@
 module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
   , DictTypeHoistStatus (..), normalizeProj, asNaryProj, normalizeNaryProj
-  , depPairLeftTy, instantiateDataDef, applyDataConAbs
+  , depPairLeftTy, instantiateDataDef
   , dataDefRep, instantiateDepPairTy, projType, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun)
@@ -218,7 +218,7 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- means that we will follow the full call chain, so it's really expensive!
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
-    Lam _ _ _ -> substM a
+    Lam _ _ -> substM a
     DictHole ctx ty' -> do
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthTerm ty) >>= \case
@@ -261,7 +261,7 @@ instance CheaplyReducibleE CoreIR DictExpr CAtom where
           applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
         child' -> return $ DictCon $ SuperclassProj child' superclassIx
     InstantiatedGiven f xs -> do
-      cheapReduceE (App f xs) <|> justSubst
+      cheapReduceE (App f (toList xs)) <|> justSubst
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
     DataData ty      -> DictCon . DataData <$> cheapReduceE ty
@@ -282,8 +282,8 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
     Atom atom -> cheapReduceE atom
     App f' xs' -> do
       f <- cheapReduceE f'
-      case fromNaryLamExact (length xs') f of
-        Just (LamExpr bs body) -> do
+      case f of
+        Lam (PiType _ Pure _) (LamExpr bs body) -> do
           xs <- mapM cheapReduceE xs'
           let subst = bs @@> fmap SubstVal xs
           dropSubst $ extendSubst subst $ cheapReduceE body
@@ -421,7 +421,7 @@ liftSimpAtom ty simpAtom = case simpAtom of
 {-# INLINE liftSimpAtom #-}
 
 liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
-liftSimpFun (Pi piTy) f = return $ SimpInCore $ LiftSimpFun piTy f
+liftSimpFun (Pi piTy ) f = return $ SimpInCore $ LiftSimpFun piTy f
 liftSimpFun _ _ = error "not a pi type"
 
 -- See Note [Confuse GHC] from Simplify.hs
@@ -465,15 +465,8 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) params = do
-  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) params
-{-# INLINE instantiateDataDef #-}
-
-applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, EnvReader m)
-                => Abs (Nest RolePiBinder) e n -> DataDefParams n -> m n (e n)
-applyDataConAbs (Abs bs e) (DataDefParams xs) =
-  applySubst (bs @@> (SubstVal <$> map snd xs)) e
-{-# INLINE applyDataConAbs #-}
+instantiateDataDef (DataDef _ bs cons) (DataDefParams xs) = do
+  fromListE <$> applySubst (bs @@> (SubstVal <$> map snd xs)) (ListE cons)
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -601,21 +594,17 @@ instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
 instance IRRep r => SubstE AtomSubstVal (DestBlock r)
-instance SubstE AtomSubstVal PiType
 instance IRRep r => SubstE AtomSubstVal (TabPiType r)
-instance IRRep r => SubstE AtomSubstVal (NaryPiType r)
+instance IRRep r => SubstE AtomSubstVal (PiType r)
 instance IRRep r => SubstE AtomSubstVal (DepPairType r)
 instance SubstE AtomSubstVal SolverBinding
 instance IRRep r => SubstE AtomSubstVal (DeclBinding r)
+instance IRRep r => SubstB AtomSubstVal (BindersWithAttrs a r)
 instance IRRep r => SubstB AtomSubstVal (Decl r)
 instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
-
-instance SubstB AtomSubstVal RolePiBinder where
-  substB env (RolePiBinder b ty arr role) cont =
-    substB env (b:>ty) \env' (b':>ty') -> cont env' $ RolePiBinder b' ty' arr role
 
 -- XXX: we need a special instance here because `SuperclassBinder` have all
 -- their types at the level of the top binder, rather than interleaving them

@@ -150,7 +150,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
   ProjectElt _ _ -> notAType
-  Lam _ _ _    -> notAType
+  Lam _ _      -> notAType
   DictCon _    -> notAType
   Con _        -> notAType
   Eff _        -> notAType
@@ -202,21 +202,17 @@ withBuffer
   :: Emits n
   => (forall l . (Emits l, DExt n l) => CAtom l -> BuilderM CoreIR l ())
   -> BuilderM CoreIR n (CAtom n)
-withBuffer cont = do
-  lam <- withFreshBinder "h" (TC HeapType) \h -> do
-    bufTy <- bufferTy (Var $ binderName h)
-    withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (Var $ sink $ binderName h))
-      body <- buildBlock do
-        cont $ sink $ Var $ binderName b
-        return UnitVal
-      let eff1 = Abs h Pure
-      let eff2 = Abs b eff
-      return $
-        Lam (UnaryLamExpr h
-              (AtomicBlock (Lam (UnaryLamExpr b body) PlainArrow eff2)))
-            ImplicitArrow eff1
-  applyPreludeFunction "with_stack_internal" [lam]
+withBuffer cont = undefined
+-- withBuffer cont = do
+--   lam <- withFreshBinder "h" (TC HeapType) \h -> do
+--     bufTy <- bufferTy (Var $ binderName h)
+--     withFreshBinder "buf" bufTy \b -> do
+--       body <- buildBlock do
+--         cont $ sink $ Var $ binderName b
+--         return UnitVal
+--       let effAbs = Abs (BinaryNest h b) Pure
+--       return $ Lam (LamExpr (BinaryNest h b) body) [ImplicitArrow, PlainArrow] effAbs
+--   applyPreludeFunction "with_stack_internal" [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
 bufferTy h = do
@@ -254,7 +250,7 @@ getPreludeFunction sourceName = do
 applyPreludeFunction :: (Emits n, CBuilder m) => String -> [CAtom n] -> m n (CAtom n)
 applyPreludeFunction name args = do
   f <- getPreludeFunction name
-  naryApp f args
+  app f args
 
 strType :: EnvReader m => m n (CType n)
 strType = constructPreludeType "List" $ DataDefParams [(PlainArrow, CharRepTy)]

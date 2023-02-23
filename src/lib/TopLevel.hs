@@ -337,7 +337,7 @@ evalSourceBlock' mname block = case sbContents block of
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
     addTypeAnn e = WithSrcE Nothing . UTypeAnn e
     addShowAny :: UExpr n -> UExpr n
-    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") e
+    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") [e]
     referTo :: SourceName -> UExpr n
     referTo = WithSrcE Nothing . UVar . SourceName
 
@@ -933,74 +933,75 @@ instance Generic TopStateEx where
 -- === helper for custom linearization rules ===
 
 getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, Int, CType n)
-getLinearizationType fname zeros fType = do
-  liftExcept . runFallibleM =<< liftEnvReaderT (go fType (toSnocList []) REmpty [] fType)
- where
-  go :: CType n -> SnocList Arrow -> RNest CBinder n l
-     -> [CType l] -> CType l
-     -> EnvReaderT FallibleM l (Int, Int, CType n)
-  go fullTy arrs implicitArgs revArgTys = \case
-    Pi (PiType pbinder@(binder:>a) arr eff b') -> do
-      case eff of
-        Pure -> return ()
-        _ -> throw TypeErr $
-         "Custom linearization can only be defined for pure functions" ++ but
-      let implicit = do
-            unless (null revArgTys) $ throw TypeErr $
-              "To define a custom linearization, all implicit and class " ++
-              "arguments of a function have to precede all explicit " ++
-              "arguments. However, the type of " ++ pprint fname ++
-              "is:\n\n" ++ pprint fullTy
-            refreshAbs (Abs pbinder b') \pbinder' b'' ->
-              go fullTy (snoc arrs arr) (RNest implicitArgs pbinder') [] b''
-      case arr of
-        ClassArrow -> implicit
-        ImplicitArrow -> implicit
-        PlainArrow -> do
-          b <- case hoist binder b' of
-            HoistSuccess b -> return b
-            HoistFailure _ -> throw TypeErr $
-              "Custom linearization cannot be defined for dependent " ++
-              "functions" ++ but
-          go fullTy arrs implicitArgs (a:revArgTys) b
-        LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
-    resultTy -> do
-      when (null revArgTys) $ throw TypeErr $
-        "Custom linearization can only be defined for functions" ++ but
-      resultTyTan <- maybeTangentType resultTy >>= \case
-        Just rtt -> return rtt
-        Nothing  -> throw TypeErr $ unlines
-          [ "The type of the result of " ++ pprint fname ++ " is:"
-          , ""
-          , "  " ++ pprint resultTy
-          , ""
-          , "but it does not have a well-defined tangent space."
-          ]
-      let prependTangent linTail ty =
-            maybeTangentType ty >>= \case
-              Just tty -> case zeros of
-                InstantiateZeros -> tty --> linTail
-                SymbolicZeros -> do
-                  wrappedTTy <- symbolicTangentTy tty
-                  wrappedTTy --> linTail
-              Nothing  -> throw TypeErr $ unlines
-                [ "The type of one of the arguments of " ++ pprint fname ++
-                  " is:"
-                , ""
-                , "  " ++ pprint ty
-                , ""
-                , "but it doesn't have a well-defined tangent space."
-                ]
-      tanFunTy <- foldM prependTangent resultTyTan revArgTys
-      let nImplicit = nestLength $ unRNest implicitArgs
-      let nExplicit = length revArgTys
-      finalTy <- prependImplicit arrs implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
-      return (nImplicit, nExplicit, finalTy)
-    where
-      but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-      prependImplicit :: SnocList Arrow -> RNest CBinder n l -> CType l -> CType n
-      prependImplicit arrsTop bsTop ty = case (tryUnsnoc arrsTop, bsTop) of
-        (Nothing, REmpty) -> ty
-        (Just (arrsRest, arr), RNest bs b) ->
-          prependImplicit arrsRest bs (Pi (PiType b arr Pure ty ))
-        _ -> error "zip error"
+getLinearizationType _ _ _ = undefined
+-- getLinearizationType fname zeros fType = do
+--   liftExcept . runFallibleM =<< liftEnvReaderT (go fType (toSnocList []) REmpty [] fType)
+--  where
+--   go :: CType n -> SnocList Arrow -> RNest CBinder n l
+--      -> [CType l] -> CType l
+--      -> EnvReaderT FallibleM l (Int, Int, CType n)
+--   go fullTy arrs implicitArgs revArgTys = \case
+--     Pi (PiType pbinder@(binder:>a) eff b') arr -> do
+--       case eff of
+--         Pure -> return ()
+--         _ -> throw TypeErr $
+--          "Custom linearization can only be defined for pure functions" ++ but
+--       let implicit = do
+--             unless (null revArgTys) $ throw TypeErr $
+--               "To define a custom linearization, all implicit and class " ++
+--               "arguments of a function have to precede all explicit " ++
+--               "arguments. However, the type of " ++ pprint fname ++
+--               "is:\n\n" ++ pprint fullTy
+--             refreshAbs (Abs pbinder b') \pbinder' b'' ->
+--               go fullTy (snoc arrs arr) (RNest implicitArgs pbinder') [] b''
+--       case arr of
+--         ClassArrow -> implicit
+--         ImplicitArrow -> implicit
+--         PlainArrow -> do
+--           b <- case hoist binder b' of
+--             HoistSuccess b -> return b
+--             HoistFailure _ -> throw TypeErr $
+--               "Custom linearization cannot be defined for dependent " ++
+--               "functions" ++ but
+--           go fullTy arrs implicitArgs (a:revArgTys) b
+--         LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
+--     resultTy -> do
+--       when (null revArgTys) $ throw TypeErr $
+--         "Custom linearization can only be defined for functions" ++ but
+--       resultTyTan <- maybeTangentType resultTy >>= \case
+--         Just rtt -> return rtt
+--         Nothing  -> throw TypeErr $ unlines
+--           [ "The type of the result of " ++ pprint fname ++ " is:"
+--           , ""
+--           , "  " ++ pprint resultTy
+--           , ""
+--           , "but it does not have a well-defined tangent space."
+--           ]
+--       let prependTangent linTail ty =
+--             maybeTangentType ty >>= \case
+--               Just tty -> case zeros of
+--                 InstantiateZeros -> tty --> linTail
+--                 SymbolicZeros -> do
+--                   wrappedTTy <- symbolicTangentTy tty
+--                   wrappedTTy --> linTail
+--               Nothing  -> throw TypeErr $ unlines
+--                 [ "The type of one of the arguments of " ++ pprint fname ++
+--                   " is:"
+--                 , ""
+--                 , "  " ++ pprint ty
+--                 , ""
+--                 , "but it doesn't have a well-defined tangent space."
+--                 ]
+--       tanFunTy <- foldM prependTangent resultTyTan revArgTys
+--       let nImplicit = nestLength $ unRNest implicitArgs
+--       let nExplicit = length revArgTys
+--       finalTy <- prependImplicit arrs implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+--       return (nImplicit, nExplicit, finalTy)
+--     where
+--       but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
+--       prependImplicit :: SnocList Arrow -> RNest CBinder n l -> CType l -> CType n
+--       prependImplicit arrsTop bsTop ty = case (tryUnsnoc arrsTop, bsTop) of
+--         (Nothing, REmpty) -> ty
+--         (Just (arrsRest, arr), RNest bs b) ->
+--           prependImplicit arrsRest bs (Pi (PiType b arr Pure ty ))
+--         _ -> error "zip error"

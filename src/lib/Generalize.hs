@@ -37,20 +37,21 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
   where
     go :: CType i -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go (Pi (PiType (b:>ty) arr _ resultTy)) (arg:args) = do
-      ty' <- substM ty
-      arg' <- case ty' of
-        TyKind -> liftSubstReaderT $ generalizeType arg
-        DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
-        _ -> isData ty' >>= \case
-          True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
-          False -> do
-            -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
-            -- non-type, non-dict arguments (e.g. a function). We just don't
-            -- generalize in that case.
-            return arg
-      args'' <- extendSubst (b@>SubstVal arg') $ go resultTy args
-      return $ arg' : args''
+    go (Pi _) (arg:args) = undefined
+    -- go (Pi (PiType (b:>ty) arr _ resultTy)) (arg:args) = do
+    --   ty' <- substM ty
+    --   arg' <- case ty' of
+    --     TyKind -> liftSubstReaderT $ generalizeType arg
+    --     DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
+    --     _ -> isData ty' >>= \case
+    --       True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
+    --       False -> do
+    --         -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+    --         -- non-type, non-dict arguments (e.g. a function). We just don't
+    --         -- generalize in that case.
+    --         return arg
+    --   args'' <- extendSubst (b@>SubstVal arg') $ go resultTy args
+    --   return $ arg' : args''
     go _ [] = return []
     go _ _ = error "zip error"
 {-# INLINE generalizeArgs #-}
@@ -121,10 +122,10 @@ traverseTyParams
   -> (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
   -> m n (Atom CoreIR n)
 traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
-  DictTy (DictType sn name params) -> do
-    Abs paramRoles UnitE <- getClassRoleBinders name
-    params' <- traverseRoleBinders f paramRoles params
-    return $ DictTy $ DictType sn name params'
+  -- DictTy (DictType sn name params) -> do
+  --   Abs paramRoles UnitE <- getClassRoleBinders name
+  --   params' <- traverseRoleBinders f paramRoles params
+  --   return $ DictTy $ DictType sn name params'
   TabPi (TabPiType (b:>(IxType iTy (IxDictAtom d))) resultTy) -> do
     iTy' <- f TypeParam TyKind iTy
     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
@@ -151,34 +152,34 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     VariantTyCon ~(Ext elems Nothing) -> do
       elems' <- traverse (f TypeParam TyKind) elems
       return $ VariantTyCon $ Ext elems' Nothing
-    UserADTType sn def (DataDefParams arrParams) -> do
-      Abs roleBinders UnitE <- getDataDefRoleBinders def
-      let (arrs, params) = unzip arrParams
-      params' <- traverseRoleBinders f roleBinders params
-      return $ UserADTType sn def $ DataDefParams $ zip arrs params'
+    -- UserADTType sn def (DataDefParams arrParams) -> do
+    --   Abs roleBinders UnitE <- getDataDefRoleBinders def
+    --   let (arrs, params) = unzip arrParams
+    --   params' <- traverseRoleBinders f roleBinders params
+    --   return $ UserADTType sn def $ DataDefParams $ zip arrs params'
     LabelCon l -> return $ LabelCon l
     LabeledRowCon r -> return $ LabeledRowCon r
   _ -> error $ "Not implemented: " ++ pprint ty
 {-# INLINE traverseTyParams #-}
 
-traverseRoleBinders
-  :: forall m n n'. EnvReader m
-  => (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
-  ->  Nest RolePiBinder n n' -> [Atom CoreIR n] -> m n [Atom CoreIR n]
-traverseRoleBinders f allBinders allParams =
-  runSubstReaderT idSubst $ go allBinders allParams
-  where
-    go :: forall i i'. Nest RolePiBinder i i' -> [Atom CoreIR n]
-       -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
-    go Empty [] = return []
-    go (Nest (RolePiBinder b ty _ role) bs) (param:params) = do
-      ty' <- substM ty
-      Distinct <- getDistinct
-      param' <- liftSubstReaderT $ f role ty' param
-      params'' <- extendSubst (b@>SubstVal param') $ go bs params
-      return $ param' : params''
-    go _ _ = error "zip error"
-{-# INLINE traverseRoleBinders #-}
+-- traverseRoleBinders
+--   :: forall m n n'. EnvReader m
+--   => (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
+--   ->  Nest RolePiBinder n n' -> [Atom CoreIR n] -> m n [Atom CoreIR n]
+-- traverseRoleBinders f allBinders allParams =
+--   runSubstReaderT idSubst $ go allBinders allParams
+--   where
+--     go :: forall i i'. Nest RolePiBinder i i' -> [Atom CoreIR n]
+--        -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
+--     go Empty [] = return []
+--     go (Nest (RolePiBinder b ty _ role) bs) (param:params) = do
+--       ty' <- substM ty
+--       Distinct <- getDistinct
+--       param' <- liftSubstReaderT $ f role ty' param
+--       params'' <- extendSubst (b@>SubstVal param') $ go bs params
+--       return $ param' : params''
+--     go _ _ = error "zip error"
+-- {-# INLINE traverseRoleBinders #-}
 
 traverserseFieldRowElemTypes
   :: Monad m => (Type CoreIR n -> m (Type CoreIR n))
@@ -191,13 +192,13 @@ traverserseFieldRowElemTypes f els = fieldRowElemsFromList <$> traverse checkEle
       DynField _ _ -> error "shouldn't have dynamic fields post-simplification"
       DynFields _  -> error "shouldn't have dynamic fields post-simplification"
 
-getDataDefRoleBinders :: EnvReader m => DataDefName n -> m n (Abs (Nest RolePiBinder) UnitE n)
+getDataDefRoleBinders :: EnvReader m => DataDefName n -> m n (Abs RolePiBinders UnitE n)
 getDataDefRoleBinders def = do
   DataDef _ bs _ <- lookupDataDef def
   return $ Abs bs UnitE
 {-# INLINE getDataDefRoleBinders #-}
 
-getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs (Nest RolePiBinder) UnitE n)
+getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs RolePiBinders UnitE n)
 getClassRoleBinders def = do
   ClassDef _ _ bs _ _ <- lookupClassDef def
   return $ Abs bs UnitE

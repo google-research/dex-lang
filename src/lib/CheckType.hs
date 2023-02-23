@@ -9,8 +9,7 @@ module CheckType (
   checkTypes, checkTypesM, checkHasType,
   checkExtends, checkedApplyClassParams,
   tryGetType, checkUnOp, checkBinOp,
-  isData, asFirstOrderFunction, asFFIFunType,
-  asNaryPiType
+  isData, asFFIFunType,
   ) where
 
 import Prelude hiding (id)
@@ -32,7 +31,7 @@ import LabeledItems
 import Name
 import Subst
 import PPrint ()
-import QueryType hiding (HasType)
+import QueryType hiding (HasType (..), dictExprType)
 import Types.Core
 import Types.Imp
 import Types.Primitives
@@ -167,15 +166,8 @@ instance IRRep r => CheckableE (Block r) where
 instance IRRep r => HasType r (Atom r) where
   getTypeE atom = case atom of
     Var name -> getTypeE name
-    Lam lam arr (Abs bEff effs) -> do
-      UnaryLamExpr (b:>ty) body <- return lam
-      ty' <- checkTypeE TyKind ty
-      withFreshBinder (getNameHint b) ty' \b' -> do
-        effs' <- extendSubst (bEff@>binderName b') $ renameM effs
-        extendRenamer (b@>binderName b') do
-          resultTy <- checkBlockWithEffs effs' body
-          return $ Pi $ PiType b' arr effs' resultTy
-    Pi piType -> getTypeE piType
+    Lam ty _ -> Pi <$> renameM ty  -- TODO: check the lambda
+    Pi _ -> return $ TyKind  -- TODO: check
     TabPi piType -> getTypeE piType
     DepPair l r ty -> do
       ty' <- checkTypeE TyKind ty
@@ -191,7 +183,7 @@ instance IRRep r => HasType r (Atom r) where
       PtrBinding ty _ -> return $ PtrTy ty
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ className params) -> do
-      ClassDef _ _ paramBs _ _ <- renameM className >>= lookupClassDef
+      ClassDef _ _ (WithAttrs _ paramBs) _ _ <- renameM className >>= lookupClassDef
       params' <- mapM renameM params
       checkArgTys paramBs params'
       return TyKind
@@ -233,13 +225,13 @@ typeCheckExpr :: (Typer m, IRRep r) => EffectRow r o -> Expr r i -> m i o (Type 
 typeCheckExpr effs expr = case expr of
   App f xs -> do
     fTy <- getTypeE f
-    checkApp effs fTy $ toList xs
+    checkApp effs fTy xs
   TabApp f xs -> do
     fTy <- getTypeE f
     checkTabApp fTy xs
   -- TODO: check!
   TopApp f xs -> do
-    NaryPiType bs _ resultTy <- getTypeTopFun =<< renameM f
+    PiType (WithAttrs _ bs) _ resultTy <- getTypeTopFun =<< renameM f
     xs' <- mapM renameM xs
     checkedApplyNaryAbs (Abs bs resultTy) xs'
   Atom x   -> getTypeE x
@@ -316,7 +308,7 @@ dictExprType :: Typer m => DictExpr i -> m i o (CType o)
 dictExprType e = case e of
   InstanceDict instanceName args -> do
     instanceName' <- renameM instanceName
-    InstanceDef className bs params _ <- lookupInstanceDef instanceName'
+    InstanceDef className (WithAttrs _ bs) params _ <- lookupInstanceDef instanceName'
     ClassDef sourceName _ _ _ _ <- lookupClassDef className
     args' <- mapM renameM args
     checkArgTys bs args'
@@ -324,10 +316,10 @@ dictExprType e = case e of
     return $ DictTy $ DictType sourceName className params'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
-    checkApp Pure givenTy (toList args)
+    checkApp Pure givenTy args
   SuperclassProj d i -> do
     DictTy (DictType _ className params) <- getTypeE d
-    ClassDef _ _ bs superclasses _ <- lookupClassDef className
+    ClassDef _ _ (WithAttrs _ bs) superclasses _ <- lookupClassDef className
     checkedApplyNaryAbs
       (Abs (toBinderNest bs) (superclassTypes superclasses !! i))
       params
@@ -342,14 +334,6 @@ instance HasType CoreIR DictExpr where
 instance IRRep r => HasType r (DepPairType r) where
   getTypeE (DepPairType b ty) = do
     checkB b \_ -> ty |: TyKind
-    return TyKind
-
-instance HasType CoreIR PiType where
-  getTypeE (PiType b arr eff resultTy) = do
-    checkArrowAndEffects arr eff
-    checkB b \_ -> do
-      void $ checkE eff
-      resultTy|:TyKind
     return TyKind
 
 instance IRRep r => CheckableE (IxType r) where
@@ -554,7 +538,7 @@ typeCheckPrimHof :: forall r m i o. (Typer m, IRRep r) => EffectRow r o -> Hof r
 typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixDict f -> do
     ixTy <- ixTyFromDict =<< renameM ixDict
-    NaryPiType (UnaryNest (b:>argTy)) _ eltTy <- checkLamExpr f
+    UnaryPi (b:>argTy) _ eltTy <- checkLamExpr f
     checkTypesEq (ixTypeType ixTy) argTy
     return $ TabTy (b:>ixTy) eltTy
   While body -> do
@@ -562,13 +546,13 @@ typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case ho
     checkTypesEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f x -> do
-    NaryPiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
+    UnaryPi (binder:>a) Pure b <- checkLamExpr f
     b' <- liftHoistExcept $ hoist binder b
-    fLinTy <- a --@ b'
+    fLinTy <- Pi <$> unaryNonDepPiType LinArrow a Pure b'
     x |: a
     return $ PairTy b' fLinTy
   Transpose f x -> do
-    NaryPiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
+    UnaryPi (binder:>a) Pure b <- checkLamExpr f
     b' <- liftHoistExcept $ hoist binder b
     x |: b'
     return a
@@ -612,13 +596,12 @@ typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
     case carryTy' of
       ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
       _ -> badCarry
-    NaryPiType (UnaryNest b) _ _ <- checkLamExprWithEffs effs f
+    UnaryPi b _ _ <- checkLamExprWithEffs effs f
     checkTypesEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d
-    NaryPiType (UnaryNest b) _ UnitTy <- checkLamExpr body
-
+    UnaryPi  b _ UnitTy <- checkLamExpr body
     checkTypesEq (binderType b) dTy
     return dTy
   AllocDest ty -> RawRefTy <$> checkTypeE TyKind ty
@@ -631,22 +614,22 @@ typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
     RawRefTy ty <- getTypeE ref
     return ty
 
-checkLamExpr :: (Typer m, IRRep r) => LamExpr r i -> m i o (NaryPiType r o)
+checkLamExpr :: (Typer m, IRRep r) => LamExpr r i -> m i o (PiType r o)
 checkLamExpr (LamExpr bsTop body) = case bsTop of
   Empty -> do
     resultTy <- getTypeE body
     effs <- renameM $ blockEffects body
-    return $ NaryPiType Empty effs resultTy
+    return $ PiType (WithAttrs PlainArgs Empty) effs resultTy
   Nest (b:>ty) bs -> do
     ty' <- checkTypeE TyKind ty
     withFreshBinder (getNameHint b) ty' \b' ->
       extendRenamer (b@>binderName b') do
-        NaryPiType bs' eff resultTy <- checkLamExpr (LamExpr bs body)
-        return $ NaryPiType (Nest b' bs') eff resultTy
+        PiType (WithAttrs _ bs') eff resultTy <- checkLamExpr (LamExpr bs body)
+        return $ PiType (WithAttrs PlainArgs (Nest b' bs')) eff resultTy
 
-checkLamExprWithEffs :: (Typer m, IRRep r) => EffectRow r o -> LamExpr r i -> m i o (NaryPiType r o)
+checkLamExprWithEffs :: (Typer m, IRRep r) => EffectRow r o -> LamExpr r i -> m i o (PiType r o)
 checkLamExprWithEffs allowedEffs lam = do
-  piTy@(NaryPiType bs effs _) <- checkLamExpr lam
+  piTy@(PiType bs effs _) <- checkLamExpr lam
   effs' <- liftHoistExcept $ hoist bs effs
   checkExtends allowedEffs effs'
   return piTy
@@ -698,18 +681,19 @@ checkAlt resultTyReq bTyReq effs (Abs b body) = do
     checkTypesEq (sink resultTyReq) resultTy
 
 checkApp :: (Typer m, IRRep r) => EffectRow r o -> Type r o -> [Atom r i] -> m i o (Type r o)
-checkApp _ fTy [] = return fTy
-checkApp allowedEffs fTy xs = case fromNaryPiType (length xs) fTy of
-  Just (NaryPiType bs effs resultTy) -> do
-    xs' <- mapM renameM xs
-    checkArgTys bs xs'
-    let subst = bs @@> fmap SubstVal xs'
-    PairE effs' resultTy' <- applySubst subst $ PairE effs resultTy
-    checkExtends allowedEffs effs'
-    return resultTy'
-  Nothing -> throw TypeErr $
-    "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
-      ++ " (tried to apply it to: " ++ pprint xs ++ ")"
+checkApp = undefined
+-- checkApp _ fTy [] = return fTy
+-- checkApp allowedEffs fTy xs = case fromPiType (length xs) fTy of
+--   Just (PiType bs effs resultTy) -> do
+--     xs' <- mapM renameM xs
+--     checkArgTys bs xs'
+--     let subst = bs @@> fmap SubstVal xs'
+--     PairE effs' resultTy' <- applySubst subst $ PairE effs resultTy
+--     checkExtends allowedEffs effs'
+--     return resultTy'
+--   Nothing -> throw TypeErr $
+--     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
+--       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
 checkTabApp :: (Typer m, IRRep r) => Type r o -> NonEmpty (Atom r i) -> m i o (Type r o)
 checkTabApp tabTy xs = go tabTy $ toList xs
@@ -721,16 +705,6 @@ checkTabApp tabTy xs = go tabTy $ toList xs
       i' <- checkTypeE ixTy i
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
-
-asNaryPiType :: IRRep r => Type r n -> Maybe ([Arrow], NaryPiType r n)
-asNaryPiType piTy = case piTy of
-  Pi (PiType b arr effs resultTy) -> case effs of
-   Pure -> case asNaryPiType resultTy of
-     Just (arrs, NaryPiType bs effs' resultTy') ->
-        Just (arr:arrs, NaryPiType (Nest b bs) effs' resultTy')
-     Nothing -> Just ([arr], NaryPiType (Nest b Empty) Pure resultTy)
-   _ -> Just ([arr], NaryPiType (Nest b Empty) effs resultTy)
-  _ -> Nothing
 
 checkArgTys
   :: (Typer m, SubstB AtomSubstVal b, BindsNames b, BindsOneAtomName r b, IRRep r)
@@ -744,11 +718,6 @@ checkArgTys (Nest b bs) (x:xs) = do
   checkArgTys bs' xs
 checkArgTys _ _ = throw TypeErr $ "wrong number of args"
 {-# INLINE checkArgTys #-}
-
-checkArrowAndEffects :: (Fallible m, IRRep r) => Arrow -> EffectRow r n -> m ()
-checkArrowAndEffects PlainArrow _ = return ()
-checkArrowAndEffects _ Pure = return ()
-checkArrowAndEffects _ _ = throw TypeErr $ "Only plain arrows may have effects"
 
 checkIntBaseType :: Fallible m => BaseType -> m ()
 checkIntBaseType t = case t of
@@ -961,15 +930,13 @@ typeCheckRecordVariantOp = \case
 checkedInstantiateDataDef
   :: (EnvReader m, Fallible1 m)
   => DataDef n -> DataDefParams n -> m n [DataConDef n]
-checkedInstantiateDataDef (DataDef _ bs cons) (DataDefParams xs) = do
-  fromListE <$> checkedApplyNaryAbs
-    (Abs (fmapNest (\(RolePiBinder b ty _ _) -> b:>ty) bs) (ListE cons))
-    (map snd xs)
+checkedInstantiateDataDef (DataDef _ (WithAttrs _ bs) cons) (DataDefParams xs) = do
+  fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) (map snd xs)
 
 checkedApplyClassParams
   :: (EnvReader m, Fallible1 m) => ClassDef n -> [CType n]
   -> m n (Abs SuperclassBinders (ListE MethodType) n)
-checkedApplyClassParams (ClassDef _ _ bs superclassBs methodTys) params = do
+checkedApplyClassParams (ClassDef _ _ (WithAttrs _ bs) superclassBs methodTys) params = do
   let body = Abs superclassBs (ListE methodTys)
   checkedApplyNaryAbs (Abs (toBinderNest bs) body) params
 
@@ -1072,14 +1039,14 @@ runCheck cont = do
   Distinct <- getDistinct
   liftTyperT $ cont
 
-asFFIFunType :: EnvReader m => CType n -> m n (Maybe (IFunType, NaryPiType CoreIR n))
+asFFIFunType :: EnvReader m => CType n -> m n (Maybe (IFunType, PiType CoreIR n))
 asFFIFunType ty = return do
-  (_, naryPiTy) <- asNaryPiType ty
+  Pi naryPiTy <- return ty
   impTy <- checkFFIFunTypeM naryPiTy
   return (impTy, naryPiTy)
 
-checkFFIFunTypeM :: (IRRep r, Fallible m) => NaryPiType r n -> m  IFunType
-checkFFIFunTypeM (NaryPiType (Nest b bs) eff resultTy) = do
+checkFFIFunTypeM :: (IRRep r, Fallible m) => PiType r n -> m  IFunType
+checkFFIFunTypeM (PiType (WithAttrs _ (Nest b bs)) eff resultTy) = do
   argTy <- checkScalar $ binderType b
   case bs of
     Empty -> do
@@ -1090,7 +1057,7 @@ checkFFIFunTypeM (NaryPiType (Nest b bs) eff resultTy) = do
                  _ -> FFIMultiResultCC
       return $ IFunType cc [argTy] resultTys
     Nest b' rest -> do
-      let naryPiRest = NaryPiType (Nest b' rest) eff resultTy
+      let naryPiRest = PiType (WithAttrs PlainArgs (Nest b' rest)) eff resultTy
       IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
       return $ IFunType cc (argTy:argTys) resultTys
 checkFFIFunTypeM _ = error "expected at least one argument"
@@ -1106,24 +1073,6 @@ checkScalarOrPairType (PairTy a b) = do
   return $ tys1 ++ tys2
 checkScalarOrPairType (BaseTy ty) = return [ty]
 checkScalarOrPairType ty = throw TypeErr $ pprint ty
-
--- TODO: consider effects
-asFirstOrderFunction :: EnvReader m => Type CoreIR n -> m n (Maybe ([Arrow], NaryPiType CoreIR n))
-asFirstOrderFunction ty = do
-  result <- runCheck (asFirstOrderFunctionM (sink ty))
-  forM result \(LiftE arrs `PairE` piTy) -> return (arrs, piTy)
-
-asFirstOrderFunctionM :: Typer m => Type CoreIR i -> m i o (PairE (LiftE [Arrow]) (NaryPiType CoreIR) o)
-asFirstOrderFunctionM ty = case asNaryPiType ty of
-  Nothing -> throw TypeErr "Not a monomorphic first-order function"
-  Just (arrs, naryPi@(NaryPiType bs eff resultTy)) -> do
-    renameBinders bs \bs' -> do
-      ts <- mapM sinkM $ bindersTypes bs'
-      dropSubst $ mapM_ checkDataLike ts
-      Pure <- return eff
-      checkDataLike resultTy
-    naryPi' <- renameM naryPi
-    return $ LiftE arrs `PairE` naryPi'
 
 isData :: EnvReader m => Type CoreIR n -> m n Bool
 isData ty = liftM isJust $ runCheck do

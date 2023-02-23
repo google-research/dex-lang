@@ -221,10 +221,6 @@ instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
 
-instance BindsEnv RolePiBinder where
-  toEnvFrag (RolePiBinder b ty _ _) = toEnvFrag (b:>ty)
-  {-# INLINE toEnvFrag #-}
-
 instance BindsEnv (RecSubstFrag Binding) where
   toEnvFrag frag = EnvFrag frag
 
@@ -243,6 +239,9 @@ instance BindsEnv b => (BindsEnv (Nest b)) where
 instance BindsEnv (LiftB e) where
   toEnvFrag (LiftB _) = EnvFrag emptyOutFrag
   {-# INLINE toEnvFrag #-}
+
+instance IRRep r => BindsEnv (BindersWithAttrs a r) where
+  toEnvFrag (WithAttrs _ bs) = toEnvFrag bs
 
 nestToEnvFragRec :: (BindsEnv b, Distinct l) => EnvFrag n h -> Nest b h l -> EnvFrag n l
 nestToEnvFragRec f = \case
@@ -398,30 +397,17 @@ getInstanceDicts name = do
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
 
-nonDepPiType :: ScopeReader m
-             => Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (PiType n)
-nonDepPiType arr argTy eff resultTy =
+unaryNonDepPiType :: ScopeReader m
+                  => Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (PiType CoreIR n)
+unaryNonDepPiType arr argTy eff resultTy =
   toConstAbs (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
-      return $ PiType (b:>argTy) arr eff' resultTy'
+      return $ PiType (WithAttrs (ArgAttrs [arr]) (UnaryNest (b:>argTy))) eff' resultTy'
 
 nonDepTabPiType :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (TabPiType r n)
 nonDepTabPiType argTy resultTy =
   toConstAbs resultTy >>= \case
     Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
-
-considerNonDepPiType :: PiType n -> Maybe (Arrow, CType n, EffectRow CoreIR n, CType n)
-considerNonDepPiType (PiType (b:>argTy) arr eff resultTy) = do
-  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
-  return (arr, argTy, eff', resultTy')
-
-fromNonDepPiType :: (IRRep r, ScopeReader m, MonadFail1 m)
-                 => Arrow -> Type r n -> m n (Type r n, EffectRow r n, Type r n)
-fromNonDepPiType arr ty = do
-  Pi (PiType (b:>argTy) arr' eff resultTy) <- return ty
-  unless (arr == arr') $ fail "arrow type mismatch"
-  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
-  return $ (argTy, eff', resultTy')
 
 fromNonDepTabType :: (IRRep r, ScopeReader m, MonadFail1 m) => Type r n -> m n (IxType r n, Type r n)
 fromNonDepTabType ty = do
@@ -435,32 +421,9 @@ nonDepDataConTys (DataConDef _ _ repTy idxs) =
     ProdTy tys | length idxs == length tys -> Just tys
     _ -> Nothing
 
-infixr 1 ?-->
-infixr 1 -->
-infixr 1 --@
-
-(?-->) :: ScopeReader m => CType n -> CType n -> m n (CType n)
-a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
-
-(-->) :: ScopeReader m => CType n -> CType n -> m n (CType n)
-a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
-
-(--@) :: ScopeReader m => CType n -> CType n -> m n (CType n)
-a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
-
 (==>) :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b
 
--- These `fromNary` functions traverse a chain of unary structures (LamExpr,
--- TabLamExpr, PiType, respectively) up to the given maxDepth, and return the
--- discovered binders packed as the nary structure (NaryLamExpr or NaryPiType),
--- including a count of how many binders there were.
--- - If there are no binders, return Nothing.
--- - If there are more than maxDepth binders, only return maxDepth of them, and
---   leave the others in the unary structure.
--- - The `exact` versions only succeed if at least maxDepth binders were
---   present, in which case exactly maxDepth binders are packed into the nary
---   structure.  Excess binders, if any, are still left in the unary structures.
 blockEffects :: IRRep r => Block r n -> EffectRow r n
 blockEffects (Block blockAnn _ _) = case blockAnn of
   NoBlockAnn -> Pure
@@ -476,41 +439,17 @@ destBlockEffects :: IRRep r => DestBlock r n -> EffectRow r n
 destBlockEffects (DestBlock destb block) =
   ignoreHoistFailure $ hoist destb $ blockEffects block
 
-lamExprToAtom :: LamExpr CoreIR n -> Arrow -> Maybe (EffAbs n) -> Atom CoreIR n
-lamExprToAtom lam@(UnaryLamExpr b block) arr maybeEffAbs = Lam lam arr effAbs
-  where effAbs = case maybeEffAbs of
-          Just e -> e
-          Nothing -> Abs b $ blockEffects block
-lamExprToAtom _ _ _ = error "not a unary lambda expression"
 
-naryLamExprToAtom :: LamExpr CoreIR n -> [Arrow] -> CAtom n
-naryLamExprToAtom lam@(LamExpr (Nest b bs) body) (arr:arrs) = case bs of
-  Empty -> lamExprToAtom lam arr Nothing
-  _ -> do
-    let rest = naryLamExprToAtom (LamExpr bs body) arrs
-    Lam (UnaryLamExpr b (AtomicBlock rest)) arr (Abs b Pure)
-naryLamExprToAtom _ _ = error "unexpected nullary lambda expression"
-
--- first argument is the number of args expected
-fromNaryLamExact :: Int -> Atom r n -> Maybe (LamExpr r n)
-fromNaryLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
-fromNaryLamExact exactDepth lam = do
-  (realDepth, naryLam) <- fromNaryLam exactDepth lam
-  guard $ realDepth == exactDepth
-  return naryLam
-
-fromNaryLam :: Int -> Atom r n -> Maybe (Int, LamExpr r n)
-fromNaryLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
-fromNaryLam maxDepth = \case
-  Lam (LamExpr (Nest b Empty) body) _ (Abs _ effs) ->
-    extend <|> (Just (1, LamExpr (Nest b Empty) body))
-    where
-      extend = case (effs, body) of
-        (Pure, AtomicBlock lam) | maxDepth > 1 -> do
-          (d, LamExpr bs body2) <- fromNaryLam (maxDepth - 1) lam
-          return $ (d + 1, LamExpr (Nest b bs) body2)
-        _ -> Nothing
-  _ -> Nothing
+-- These `fromNary` functions traverse a chain of unary structures (LamExpr,
+-- TabLamExpr, PiType, respectively) up to the given maxDepth, and return the
+-- discovered binders packed as the nary structure (NaryLamExpr or NaryPiType),
+-- including a count of how many binders there were.
+-- - If there are no binders, return Nothing.
+-- - If there are more than maxDepth binders, only return maxDepth of them, and
+--   leave the others in the unary structure.
+-- - The `exact` versions only succeed if at least maxDepth binders were
+--   present, in which case exactly maxDepth binders are packed into the nary
+--   structure.  Excess binders, if any, are still left in the unary structures.
 
 type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
 
@@ -547,17 +486,6 @@ fromNaryForExpr maxDepth = \case
         (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
         return (d + 1, LamExpr (Nest b bs) body2)
   _ -> Nothing
-
--- first argument is the number of args expected
-fromNaryPiType :: Int -> Type r n -> Maybe (NaryPiType r n)
-fromNaryPiType n _ | n <= 0 = error "expected positive number of args"
-fromNaryPiType 1 ty = case ty of
-  Pi (PiType b _ effs resultTy) -> Just $ NaryPiType (Nest b Empty) effs resultTy
-  _ -> Nothing
-fromNaryPiType n (Pi (PiType b1 _ Pure piTy)) = do
-  NaryPiType (Nest b2 bs) effs resultTy <- fromNaryPiType (n-1) piTy
-  Just $ NaryPiType (Nest b1 (Nest b2 bs)) effs resultTy
-fromNaryPiType _ _ = Nothing
 
 mkConsListTy :: [Type r n] -> Type r n
 mkConsListTy = foldr PairTy UnitTy

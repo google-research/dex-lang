@@ -426,7 +426,7 @@ block (CBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
   binder' <- patOptAnn binder
   rhs' <- block rhs
   body <- block $ CBlock ds
-  return $ WithSrcE pos $ UApp rhs' $ ns $ ULam $ ULamExpr PlainArrow binder' body
+  return $ mkUnaryApp rhs' (ns $ ULam $ ULamExpr [PlainArrow] (UnaryNest binder') body)
 block (CBlock (d@(WithSrc pos _):ds)) = do
   d' <- decl PlainLet d
   e' <- block $ CBlock ds
@@ -443,7 +443,7 @@ expr = propagateSrcE expr' where
   expr' (CNat word)         = return $ UNatLit word
   expr' (CInt int)          = return $ UIntLit int
   expr' (CString str)       = return $ UApp (fromString "to_list")
-    $ ns $ UTabCon $ map (ns . charExpr) str
+    [ns $ UTabCon $ map (ns . charExpr) str]
   expr' (CChar char)        = return $ charExpr char
   expr' (CFloat num)        = return $ UFloatLit num
   expr' CHole               = return   UHole
@@ -459,8 +459,8 @@ expr = propagateSrcE expr' where
     Right (labels, g') -> UVariantLift labels <$> expr g'
   expr' (CBin (WithSrc opSrc op) lhs rhs) =
     case op of
-      Juxtapose     -> apply mkApp
-      Dollar        -> apply mkApp
+      -- Juxtapose     -> apply mkApp
+      -- Dollar        -> apply mkApp
       IndexingDot   -> apply mkTabApp
       FieldAccessDot -> do
         lhs' <- expr lhs
@@ -486,11 +486,12 @@ expr = propagateSrcE expr' where
       Arrow arr     -> do
         lhs' <- tyOptPat lhs
         (effs, ty) <- optEffects $ effectsToTop rhs
-        return $ UPi $ UPiExpr arr lhs' effs ty
+        return $ UPi $ UPiExpr [arr] (UnaryNest lhs') effs ty
     where
       evalOp s = do
-        app1 <- mkApp (WithSrcE opSrc (fromString s)) <$> expr lhs
-        UApp app1 <$> expr rhs
+        lhs' <- expr lhs
+        rhs' <- expr rhs
+        return $ dropSrcE $ mkApp (WithSrcE opSrc (fromString s)) [lhs', rhs']
       apply kind = do
         lhs' <- expr lhs
         dropSrcE . (kind lhs') <$> expr rhs
@@ -509,12 +510,12 @@ expr = propagateSrcE expr' where
         UFloatLit i -> UFloatLit (-i)
         -- TODO propagate source info form `expr g` to the nested
         -- expression `e`, instead of writing `ns e`.
-        e -> dropSrcE $ mkApp (ns "neg") $ ns e
+        e -> dropSrcE $ mkUnaryApp (ns "neg") $ ns e
       _ -> throw SyntaxErr $ "Prefix (" ++ name ++ ") not legal as a bare expression"
     where
       range :: SourceName -> UExpr VoidS -> UExpr' VoidS
       range rangeName lim =
-        UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
+        dropSrcE $ mkApp (ns $ fromString rangeName) [ns UHole, lim]
   expr' (CPostfix name g) =
     case name of
       ".." -> range "RangeFrom" <$> expr g
@@ -522,8 +523,7 @@ expr = propagateSrcE expr' where
       _ -> throw SyntaxErr $ "Postfix (" ++ name ++ ") not legal as a bare expression"
     where
       range :: SourceName -> UExpr VoidS -> UExpr' VoidS
-      range rangeName lim =
-        UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
+      range rangeName lim = dropSrcE $ mkApp (ns $ fromString rangeName) [ns UHole, lim]
   expr' (CLambda args body) =
     dropSrcE <$> liftM2 buildLam (concat <$> mapM argument args) (block body)
   expr' (CFor kind indices body) = do
@@ -548,7 +548,7 @@ expr = propagateSrcE expr' where
     return $ UCase p'
       [ UAlt (nsB $ UPatCon "True"  Empty) c'
       , UAlt (nsB $ UPatCon "False" Empty) a']
-  expr' (CDo blk) = ULam . (ULamExpr PlainArrow (UPatAnn (nsB $ UPatUnit UnitB) Nothing)) <$> block blk
+  expr' (CDo blk) = ULam . (ULamExpr [PlainArrow] (UnaryNest $ UPatAnn (nsB $ UPatUnit UnitB) Nothing)) <$> block blk
 
 charExpr :: Char -> (UExpr' VoidS)
 charExpr c = UPrim (UPrimCon $ Lit $ Word8Lit $ fromIntegral $ fromEnum c) []
@@ -558,81 +558,10 @@ unitExpr = UPrim (UPrimCon $ ProdCon []) []
 
 labelExpr :: LabelPrefix -> String -> UExpr' VoidS
 labelExpr PlainLabel str = ULabel str
-labelExpr RecordIsoLabel field =
-  UApp (ns "MkIso") $
-    ns $ URecord
-      [ UStaticField "fwd" (lam
-          (uPatRecordLit [(field, "x")] (Just "r"))
-        $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r"))
-      , UStaticField "bwd" (lam
-        (nsB $ UPatPair $ toPairB "x" "r")
-        $ ns $ URecord [UStaticField field "x", UDynFields "r"])
-      ]
-labelExpr VariantIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-              $ "Left" `mkApp` "x"
-          , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
-              $ "Right" `mkApp` "r"
-          ])
-      , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["x"]))
-              $ ns $ UVariant NoLabeledItems field $ "x"
-          , alt (nsB $ UPatCon "Right" (toNest ["r"]))
-              $ ns $ UVariantLift (labeledSingleton field ()) $ "r"
-          ])
-      ]
-labelExpr RecordZipIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam
-        (nsB $ UPatPair $ PairB
-          (uPatRecordLit [] (Just "l"))
-          (uPatRecordLit [(field, "x")] (Just "r")))
-        $ "(,)"
-          `mkApp` (ns $ URecord [UStaticField field "x", UDynFields "l"])
-          `mkApp` (ns $ URecord [UDynFields "r"]))
-      , UStaticField "bwd" (lam
-        (nsB $ UPatPair $ PairB
-          (uPatRecordLit [(field, "x")] (Just "l"))
-          (uPatRecordLit [] (Just "r")))
-        $ "(,)"
-          `mkApp` (ns $ URecord [UDynFields "l"])
-          `mkApp` (ns $ URecord [UStaticField field "x", UDynFields"r"]))
-      ]
-labelExpr VariantZipIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["l"]))
-              $ "Left" `mkApp` (ns $
-                  UVariantLift (labeledSingleton field ()) $ "l")
-          , alt (nsB $ UPatCon "Right" (toNest ["w"]))
-              $ ns $ UCase "w"
-              [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-                  $ "Left" `mkApp` (ns $
-                      UVariant NoLabeledItems field $ "x")
-              , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
-                  $ "Right" `mkApp` "r"
-              ]
-          ])
-      , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["w"]))
-              $ ns $ UCase "w"
-              [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-                  $ "Right" `mkApp` (ns $
-                      UVariant NoLabeledItems field $ "x")
-              , alt (nsB $ UPatVariantLift (labeledSingleton field ())
-                                           "r")
-                  $ "Left" `mkApp` "r"
-              ]
-          , alt (nsB $ UPatCon "Right" (toNest ["l"]))
-              $ "Right" `mkApp` (ns $
-                  UVariantLift (labeledSingleton field ()) "l")
-          ])
-      ]
+labelExpr RecordIsoLabel _ = error "not implemented"
+labelExpr VariantIsoLabel _ = error "not implemented"
+labelExpr RecordZipIsoLabel _ = error "not implemented"
+labelExpr VariantZipIsoLabel _ = error "not implemented"
 
 uPatRecordLit :: [(String, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
 uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPats
@@ -647,7 +576,7 @@ uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPa
 -- ambiguous type variable errors referring to the inner scopes
 -- defined thereby.
 lam :: UPat VoidS VoidS -> UExpr VoidS -> WithSrcE UExpr' VoidS
-lam p b = ns $ ULam $ ULamExpr PlainArrow (UPatAnn p Nothing) b
+lam p b = ns $ ULam $ ULamExpr [PlainArrow] (UnaryNest (UPatAnn p Nothing)) b
 
 alt :: UPat VoidS VoidS -> UExpr VoidS -> UAlt VoidS
 alt = UAlt
@@ -731,21 +660,20 @@ variant (g:gs) = do
 
 -- === Builders ===
 
+unzipUPatAnnArrows :: [UPatAnnArrow VoidS VoidS] -> (Nest UPatAnn VoidS VoidS,  [Arrow])
+unzipUPatAnnArrows = undefined
+    -- go [] = (Empty, []) --
+    -- go ((UPatAnnArrow b arr):bs) = (Nest b bs', arr:arrs)
+    --   where (bs', arrs) = go bs
+
 buildPiType :: [UPatAnnArrow VoidS VoidS] -> UEffectRow VoidS -> UType VoidS -> UType VoidS
-buildPiType [] UPure ty = ty
-buildPiType [] _ _ = error "shouldn't be possible"
-buildPiType (UPatAnnArrow p arr : bs) eff resTy = ns case bs of
-  [] -> UPi $ UPiExpr arr p eff resTy
-  _  -> UPi $ UPiExpr arr p UPure $ buildPiType bs eff resTy
+buildPiType bs effs resultTy = ns $ UPi $ UPiExpr arrs bs' effs resultTy
+  where (bs', arrs) = unzipUPatAnnArrows bs
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildLam :: [UPatAnnArrow VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
-buildLam binders body@(WithSrcE pos _) = case binders of
-  [] -> body
-  -- TODO: join with source position of binders too
-  (UPatAnnArrow b arr):bs -> WithSrcE (joinPos pos' pos) $ ULam lamb
-     where UPatAnn (WithSrcB pos' _) _ = b
-           lamb = ULamExpr arr b $ buildLam bs body
+buildLam bs body@(WithSrcE pos _) = ns $ ULam $ ULamExpr arrs bs' body
+  where (bs', arrs) = unzipUPatAnnArrows bs
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildFor :: SrcPos -> Direction -> [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
@@ -790,8 +718,11 @@ toPairB s1 s2 = PairB parse1 parse2 where
 joinSrcE :: WithSrcE a1 n1 -> WithSrcE a2 n2 -> a3 n3 -> WithSrcE a3 n3
 joinSrcE (WithSrcE p1 _) (WithSrcE p2 _) x = WithSrcE (joinPos p1 p2) x
 
-mkApp :: UExpr (n::S) -> UExpr n -> UExpr n
-mkApp f x = joinSrcE f x $ UApp f x
+mkUnaryApp :: UExpr (n::S) -> UExpr n -> UExpr n
+mkUnaryApp f x = undefined -- joinSrcE f x $ UApp f xs
+
+mkApp :: UExpr (n::S) -> [UExpr n] -> UExpr n
+mkApp f xs = undefined -- joinSrcE f x $ UApp f xs
 
 mkTabApp :: UExpr (n::S) -> UExpr n -> UExpr n
 mkTabApp f x = joinSrcE f x $ UTabApp f x

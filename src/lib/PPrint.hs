@@ -229,8 +229,8 @@ instance IRRep r => Pretty (Decl r n l) where
     align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
-instance IRRep r => Pretty (NaryPiType r n) where
-  pretty (NaryPiType bs effs resultTy) =
+instance IRRep r => Pretty (PiType r n) where
+  pretty (PiType (WithAttrs _ bs) effs resultTy) =
     (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
@@ -274,7 +274,7 @@ instance IRRep r => Pretty (Atom r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    Lam lam arr _ -> atPrec LowestPrec $ "\\" <> prettyLamHelper arr lam PrettyLam
+    -- Lam _ lam -> atPrec LowestPrec $ "\\" <> prettyLamHelper PlainArrow lam PrettyLam
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
@@ -363,17 +363,6 @@ forStr :: ForAnn -> Doc ann
 forStr Fwd = "for"
 forStr Rev = "rof"
 
-instance Pretty (PiType n) where
-  pretty (PiType (b:>ty) arr eff body) = let
-    prettyBinder = prettyBinderHelper (b:>ty) (PairE eff body)
-    prettyBody = case body of
-      Pi subpi -> pretty subpi
-      _ -> pLowest body
-    prettyEff = case eff of
-      Pure -> space
-      _    -> space <> pretty eff <> space
-    in prettyBinder <> (group $ line <> p arr <> prettyEff <> prettyBody)
-
 instance IRRep r => Pretty (TabPiType r n) where
   pretty (TabPiType (b :> IxType ty dict) body) = let
     prettyBody = case body of
@@ -402,30 +391,31 @@ prettyBinderHelper (b:>ty) body =
 data PrettyLamType = PrettyLam | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: IRRep r => Arrow -> LamExpr r n -> PrettyLamType -> Doc ann
-prettyLamHelper arr' lamExpr lamType = uncurry prettyLam $ rec arr' lamExpr True
- where
-  wrap :: Arrow -> Doc ann -> Doc ann
-  wrap arr arg = case lamType of
-    PrettyLam -> case arr of
-      PlainArrow    -> arg
-      LinArrow      -> arg
-      ImplicitArrow -> "{" <> arg <> "}"
-      ClassArrow    -> "[" <> arg <> "]"
-    PrettyFor _ -> arg
-  rec :: IRRep r => Arrow -> LamExpr r n -> Bool -> (Doc ann, Block r n)
-  rec arr lam first = case lam of
-    UnaryLamExpr (b:>ty) body' -> do
-      let thisOne = (if first then "" else line) <> wrap arr (p (b:>ty))
-      case inlineLastDeclBlock body' of
-        Abs Empty (Atom (Lam next arrNext _)) ->
-          let (binders', block) = rec arrNext next False
-          in (thisOne <> binders', unsafeCoerceE block)
-        Abs Empty (Hof (For ann dict next))
-          | lamType == PrettyFor ann ->
-              let (binders', block) = rec PlainArrow next False
-              in (thisOne <> prettyIxDict dict <> binders', unsafeCoerceE block)
-        _ -> (thisOne <> ".", unsafeCoerceE body')
-    _ -> error "expected a unary lambda expression"
+prettyLamHelper arr' lamExpr lamType = undefined
+-- prettyLamHelper arr' lamExpr lamType = uncurry prettyLam $ rec arr' lamExpr True
+--  where
+--   wrap :: Arrow -> Doc ann -> Doc ann
+--   wrap arr arg = case lamType of
+--     PrettyLam -> case arr of
+--       PlainArrow    -> arg
+--       LinArrow      -> arg
+--       ImplicitArrow -> "{" <> arg <> "}"
+--       ClassArrow    -> "[" <> arg <> "]"
+--     PrettyFor _ -> arg
+--   rec :: IRRep r => Arrow -> LamExpr r n -> Bool -> (Doc ann, Block r n)
+--   rec arr lam first = case lam of
+--     UnaryLamExpr (b:>ty) body' -> do
+--       let thisOne = (if first then "" else line) <> wrap arr (p (b:>ty))
+--       case inlineLastDeclBlock body' of
+--         Abs Empty (Atom (Lam next arrNext _)) ->
+--           let (binders', block) = rec arrNext next False
+--           in (thisOne <> binders', unsafeCoerceE block)
+--         Abs Empty (Hof (For ann dict next))
+--           | lamType == PrettyFor ann ->
+--               let (binders', block) = rec PlainArrow next False
+--               in (thisOne <> prettyIxDict dict <> binders', unsafeCoerceE block)
+--         _ -> (thisOne <> ".", unsafeCoerceE body')
+--     _ -> error "expected a unary lambda expression"
 
 prettyLam :: Pretty a => Doc ann -> a -> Doc ann
 prettyLam binders body = group $ group (nest 4 $ binders) <> group (nest 2 $ p body)
@@ -528,7 +518,7 @@ instance Pretty (DataDefParams n) where
     bracketize (LinArrow, x) = p x
 
 instance Pretty (DataDef n) where
-  pretty (DataDef name bs cons) =
+  pretty (DataDef name (WithAttrs _ bs) cons) =
     "data" <+> p name <+> (spaced $ fromNest bs) <> prettyLines cons
 
 instance Pretty (DataConDef n) where
@@ -546,8 +536,11 @@ instance Pretty (ClassDef n) where
 instance Pretty ParamRole where
   pretty r = p (show r)
 
-instance Pretty (RolePiBinder n l) where
-  pretty (RolePiBinder b ty _ _) = p (b:>ty)
+instance Pretty (RolePiBinders n l) where
+  pretty r = undefined
+
+instance Pretty (PiBinders r n l) where
+  pretty r = undefined
 
 instance Pretty (InstanceDef n) where
   pretty (InstanceDef className bs params _) =
@@ -658,9 +651,8 @@ instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
   prettyPrec (ULamExpr arr pat body) = atPrec LowestPrec $ align $
     "\\" <> p pat <> punctuation <+> nest 2 (pLowest body)
-    where punctuation = case arr of
-                          PlainArrow -> "."
-                          _          -> " " <> p arr
+    where punctuation = "."
+
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
   prettyPrec (UPiExpr arr pat UPure ty) = atPrec LowestPrec $ align $
