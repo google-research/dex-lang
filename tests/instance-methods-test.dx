@@ -1,0 +1,14 @@
+
+interface Shows a
+  shows : a -> String
+  showsList : List a -> String
+
+-- The body of method `showsList` uses method `shows` from the same instance.
+instance Shows Nat
+  shows = show
+  showsList = \xs.
+    (AsList n ys) = xs
+    strings = map shows ys
+    reduce "" (<>) strings
+
+showsList (AsList 3 [0, 1, 2])

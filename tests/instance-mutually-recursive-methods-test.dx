@@ -1,0 +1,17 @@
+
+interface Shows a
+  shows : a -> String
+  showsList : List a -> String
+
+-- Methods `shows `and `showsList` refer to each other in a mutually recursive
+-- fashion: the body of method `showsList` uses method `shows` from the same
+-- instance, and the body of method `showsList` uses method `shows` also from
+-- this instance.
+instance Shows Nat
+  shows = \x. showsList (AsList 1 [x])
+  showsList = \xs.
+    (AsList n ys) = xs
+    strings = map shows ys
+    reduce "" (<>) strings
+
+showsList (AsList 3 [0, 1, 2])
