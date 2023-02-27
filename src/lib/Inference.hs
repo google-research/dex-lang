@@ -1161,6 +1161,8 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
       Right (tyConName, x'') -> do
         f' <- lookupFieldName tyConName f
         f'' <- instantiateSigma f'
+        Pi (PiType (_:>reqArgTy) _ _ _) <- getType f''
+        getType x'' >>= constrainEq reqArgTy
         app f'' x''
   URecord elems ->
     matchRequirement =<< resolveDelay =<< foldM go (Nothing, mempty) (reverse elems)

@@ -20,3 +20,12 @@ my_struct = MyStruct~new 1 2 "abc"
 
 :t my_struct
 > MyStruct
+
+struct MyParametricStruct a =
+  foo  : a
+  bar  : Nat
+
+:p
+  foo = MyParametricStruct~new 1.0 1
+  foo~bar
+> 1
