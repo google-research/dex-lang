@@ -18,7 +18,6 @@ import QueryType
 import Name
 import Subst
 import MTL1
-import LabeledItems
 import Types.Primitives
 
 generalizeIxDict :: EnvReader m => Atom CoreIR n -> m n (Generalized CoreIR CAtom n)
@@ -148,9 +147,6 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     LabeledRowKindTC -> return LabeledRowKindTC
     LabelType        -> return LabelType
     RecordTyCon elems -> RecordTyCon  <$> traverserseFieldRowElemTypes (f TypeParam TyKind) elems
-    VariantTyCon ~(Ext elems Nothing) -> do
-      elems' <- traverse (f TypeParam TyKind) elems
-      return $ VariantTyCon $ Ext elems' Nothing
     UserADTType sn def (DataDefParams arrParams) -> do
       Abs roleBinders UnitE <- getDataDefRoleBinders def
       let (arrs, params) = unzip arrParams

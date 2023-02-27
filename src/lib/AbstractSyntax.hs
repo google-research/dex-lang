@@ -52,7 +52,6 @@ module AbstractSyntax (
 
 import Control.Monad (forM, when, liftM2)
 import Data.Functor
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe
 import Data.Set qualified as S
 import Data.String (IsString, fromString)
@@ -62,7 +61,6 @@ import Data.Text.Encoding qualified as T
 import ConcreteSyntax hiding (sourceBlock)
 import ConcreteSyntax qualified as C
 import Err
-import LabeledItems
 import Name
 import PPrint ()
 import IRVariants
@@ -301,9 +299,6 @@ pat = propagateSrcB pat' where
     (WithSrc _ CEmpty) -> return $ UPatRecord UEmptyRowPat
     _ -> UPatRecord <$> (fieldRowPatList Equal $ nary Comma g)
   pat' (CBracket Square g) = UPatTable . toNest <$> (mapM pat $ nary Comma g)
-  pat' (CBracket CurlyPipe g) = variant (nary Pipe g) >>= \case
-    Left (labels, label, g') -> UPatVariant labels label <$> pat g'
-    Right (labels, g') -> UPatVariantLift labels <$> pat g'
   -- A single name in parens is also interpreted as a nullary
   -- constructor to match
   pat' (CParens (ExprBlock g)) = dropSrcB <$> casePat g
@@ -454,9 +449,6 @@ expr = propagateSrcE expr' where
   -- should be detected upstream, before calling expr.
   expr' (CBracket Square g) = UTabCon <$> (mapM expr $ nary Comma g)
   expr' (CBracket Curly  g) = labeledExprs g
-  expr' (CBracket CurlyPipe g) = variant (nary Pipe g) >>= \case
-    Left (labels, label, g') -> UVariant labels label <$> expr g'
-    Right (labels, g') -> UVariantLift labels <$> expr g'
   expr' (CBin (WithSrc opSrc op) lhs rhs) =
     case op of
       Juxtapose     -> apply mkApp
@@ -568,22 +560,6 @@ labelExpr RecordIsoLabel field =
         (nsB $ UPatPair $ toPairB "x" "r")
         $ ns $ URecord [UStaticField field "x", UDynFields "r"])
       ]
-labelExpr VariantIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-              $ "Left" `mkApp` "x"
-          , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
-              $ "Right" `mkApp` "r"
-          ])
-      , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["x"]))
-              $ ns $ UVariant NoLabeledItems field $ "x"
-          , alt (nsB $ UPatCon "Right" (toNest ["r"]))
-              $ ns $ UVariantLift (labeledSingleton field ()) $ "r"
-          ])
-      ]
 labelExpr RecordZipIsoLabel field =
   UApp "MkIso" $
     ns $ URecord
@@ -602,37 +578,6 @@ labelExpr RecordZipIsoLabel field =
           `mkApp` (ns $ URecord [UDynFields "l"])
           `mkApp` (ns $ URecord [UStaticField field "x", UDynFields"r"]))
       ]
-labelExpr VariantZipIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["l"]))
-              $ "Left" `mkApp` (ns $
-                  UVariantLift (labeledSingleton field ()) $ "l")
-          , alt (nsB $ UPatCon "Right" (toNest ["w"]))
-              $ ns $ UCase "w"
-              [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-                  $ "Left" `mkApp` (ns $
-                      UVariant NoLabeledItems field $ "x")
-              , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
-                  $ "Right" `mkApp` "r"
-              ]
-          ])
-      , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["w"]))
-              $ ns $ UCase "w"
-              [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-                  $ "Right" `mkApp` (ns $
-                      UVariant NoLabeledItems field $ "x")
-              , alt (nsB $ UPatVariantLift (labeledSingleton field ())
-                                           "r")
-                  $ "Left" `mkApp` "r"
-              ]
-          , alt (nsB $ UPatCon "Right" (toNest ["l"]))
-              $ "Right" `mkApp` (ns $
-                  UVariantLift (labeledSingleton field ()) "l")
-          ])
-      ]
 
 uPatRecordLit :: [(String, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
 uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPats
@@ -649,9 +594,6 @@ uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPa
 lam :: UPat VoidS VoidS -> UExpr VoidS -> WithSrcE UExpr' VoidS
 lam p b = ns $ ULam $ ULamExpr PlainArrow (UPatAnn p Nothing) b
 
-alt :: UPat VoidS VoidS -> UExpr VoidS -> UAlt VoidS
-alt = UAlt
-
 labeledExprs :: Group -> SyntaxM (UExpr' VoidS)
 -- We treat {} as an empty record, despite its ambiguity.
 labeledExprs (WithSrc _ CEmpty) = return $ URecord []
@@ -666,17 +608,6 @@ labeledExprs g@(Binary Ampersand _ _) =
   URecordTy <$> (fieldRowList Colon $ nary Ampersand g)
 labeledExprs g@(Binary Question _ _) =
   ULabeledRow <$> (fieldRowList Colon $ nary Question g)
-labeledExprs g@(Binary Pipe _ _) =
-  UVariantTy <$> ((fieldRowList Colon $ nary Pipe g) >>= fix) where
-    fix :: UFieldRowElems VoidS -> SyntaxM (ExtLabeledItems (UExpr VoidS) (UExpr VoidS))
-    fix [] = return $ NoExt NoLabeledItems
-    fix (UStaticField name e:rest) = prefixExtLabeledItems (labeledSingleton name e) <$> fix rest
-    fix (UDynField _ _:_) = throw SyntaxErr "Variant types do not allow computed fields"
-    fix (UDynFields e:rest) = do
-      rest' <- fix rest
-      case rest' of
-        NoExt items -> return $ Ext items $ Just e
-        _ -> throw SyntaxErr "Variant types for not allow two default fields ..."
 -- If we have a singleton, we can try to disambiguate by the internal
 -- separator.  Equal always means record.
 labeledExprs g@(Binary Equal _ _) = URecord . (:[]) <$> oneField Equal g
@@ -715,19 +646,6 @@ oneField bind = \case
 
 fieldPun :: SrcPosCtx -> String -> UFieldRowElem VoidS
 fieldPun src field = UStaticField (fromString field) (WithSrcE src $ fromString field)
-
-variant :: [Group] -> SyntaxM (Either (LabeledItems (), Label, Group) (LabeledItems (), Group))
-variant [] = throw SyntaxErr "Illegal empty variant"
-variant (g:gs) = do
-  let (first, final) = unsnocNonempty (g:|gs)
-  first' <- foldr (<>) NoLabeledItems . map (flip labeledSingleton ())
-    <$> mapM (identifier "variant field label") first
-  case final of
-    (Binary Equal lhs rhs) -> do
-      lhs' <- identifier "variant field label" lhs
-      return $ Left (first', lhs', rhs)
-    (Prefix "..." rhs) -> return $ Right (first', rhs)
-    _ -> throw SyntaxErr "Last field of variant must be a labeled field foo=bar or a remainder ...bar"
 
 -- === Builders ===
 

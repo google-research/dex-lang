@@ -93,17 +93,6 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = TC (BaseType (Scalar Int64Type))
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
-    VariantTyCon (NoExt tys) -> do
-      let labels = toList $ reflectLabels tys
-      emitLit "{|"
-      void $ buildCase atom UnitTy \fieldIx arg -> do
-        let (label, numPrevReps) = labels !! fieldIx
-        emitLit $  (fold $ replicate numPrevReps $ label <> "|")
-                <> (" " <> label <> " = ")
-        rec arg
-        return UnitVal
-      emitLit " |}"
-    VariantTyCon _  -> unexpectedPolymorphism
     StaticRecordTyCon tys -> do
       xs <- getUnpacked $ unwrapNewtype atom
       let LabeledItems row = restructure xs tys

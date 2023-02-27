@@ -17,7 +17,6 @@ import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
 import Err
-import LabeledItems
 import Name
 import Core (EnvReader (..), withEnv, lookupSourceMapPure)
 import PPrint ()
@@ -227,13 +226,8 @@ instance SourceRenamableE UExpr' where
     ULabel name -> return $ ULabel name
     UFieldAccess x f -> UFieldAccess <$> sourceRenameE x <*> pure f
     URecord elems -> URecord <$> mapM sourceRenameE elems
-    UVariant types label val ->
-      UVariant types <$> return label <*> sourceRenameE val
-    UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
     ULabeledRow elems -> ULabeledRow <$> mapM sourceRenameE elems
     URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
-    UVariantTy (Ext tys ext) -> UVariantTy <$>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
     UNatLit   x -> return $ UNatLit x
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
@@ -473,12 +467,6 @@ instance SourceRenamablePat UPat' where
           cont sibs'' $ UPatDepPair $ PairB p1' p2'
     UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
     UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
-    UPatVariant labels label p ->
-      sourceRenamePat sibs p \sibs' p' ->
-        cont sibs' $ UPatVariant labels label p'
-    UPatVariantLift labels p ->
-      sourceRenamePat sibs p \sibs' p' ->
-        cont sibs' $ UPatVariantLift labels p'
     UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
 
 instance SourceRenamablePat UFieldRowPat where
@@ -568,8 +556,6 @@ instance HasSourceNames UPat where
     UPatDepPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatUnit UnitB -> mempty
     UPatRecord p -> sourceNames p
-    UPatVariant _ _ p -> sourceNames p
-    UPatVariantLift _ p -> sourceNames p
     UPatTable ps -> sourceNames ps
 
 instance HasSourceNames UFieldRowPat where

@@ -55,60 +55,13 @@ Syntax for records, variants, and their types.
   (a1, a2, b1, c1)
 > (1, (2, (3, 4)))
 
-'Variant (enum) types
-
-:p {| }
-> { |}
-
-:p {a:Int | b:Float}
-> {a: Int32 | b: Float32}
-
-:p {a:Int | b:Float | }
-> {a: Int32 | b: Float32}
-
-:p {a:Int | a:Float}
-> {a: Int32 | a: Float32}
-
-
-'Variants (enums)
-
-
-:p {| a=3 |} :: {a:Int | b:Float}
-> {| a = 3 |}
-
-:p {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
-> {|a| a = 3. |}
-
-:t {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
-> {a: Int32 | a: Float32 | a: Int32}
-
-:p
-  x : {a:Int | b:Float} = {| a=3 |}
-  y : {a:Float | a:Int | ...} = {| a | ...x |}
-  y
-> {|a| a = 3 |}
-
-
 'Parse errors
-
-:p {a:Int & b:Float | c:Int }
-> Syntax error: Bad field spec.  Expected an explicit field `label : expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
->
-> :p {a:Int & b:Float | c:Int }
->     ^^^^^^^^^^^^^^^^
 
 :p {a:Int,}
 > Syntax error: Bad field spec.  Expected an explicit field `label = expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
 >
 > :p {a:Int,}
 >     ^^^^^
-
-:p {|3}
-> Syntax error: Bad field spec.  Expected an explicit field `label : expr`, a remaining fields expression `... expr`, or a label-field pun `label`.
->
-> :p {|3}
->      ^
-
 
 
 'Unpacking
@@ -158,21 +111,6 @@ def getTwoFoosAndABar {a b c} {rest : Fields}
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^
 
-:p
-  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
-  ({| a | a = a |}) = x
-  x
-> Type error:Variant not allowed in can't-fail pattern
->
->   ({| a | a = a |}) = x
->    ^^^^^^^^^^^^^^^
-
-x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
-({| a | a = a |}) = x
-> Type error:Variant not allowed in can't-fail pattern
->
-> ({| a | a = a |}) = x
->  ^^^^^^^^^^^^^^^
 
 'Record puns
 
@@ -198,13 +136,6 @@ x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 >   {b=b, a=a1, a=a2} -> (a1, a2, b)
 >   ^^^^^^^^^^^^^^^^^^
 
-:p
-  x : {a:Int | a:Float | b:Int} = {| a | a = 3.0 |}
-  case x of
-    {| a = x |} -> i_to_f x
-    {| a | a = x |} -> x
-    {| b = x |} -> i_to_f x
-> 3.
 
 'Table values and imp lowering
 
@@ -219,88 +150,6 @@ myRecordTable : (Fin 2)=>{a:Int & b:Float} =
     {a=b, b=a}
 > [{a = 2., b = 1}, {a = 4., b = 3}]
 
-myVariantTable : (Fin 2)=>{a:Int | b:Float} = [{| a=1 |}, {| b=2.0 |}]
-:p myVariantTable
-> [{| a = 1 |}, {| b = 2. |}]
-
-:p for i:(Fin 2).
-    v : {a:_ | b:_} = case myVariantTable.i of
-      {| a=a |} -> {| b=a |}
-      {| b=b |} -> {| a=b |}
-    v
-> [{| b = 1 |}, {| a = 2. |}]
-
--- Known variant, unused tail pattern
-:p
-  x : {a:Int | a:Float | b:Int | c:Int } = {| a | a = 3.0 |}
-  case x of
-    {| a = x |} -> 1.0
-    {| a | a = x |} -> x
-    {|a|a| ..._ |} -> 5.0
-> 3.
-
--- Known variant, missing pattern
-:p
-  x : {a:Int | a:Float | b:Int | c:Int } = {| a | a = 3.0 |}
-  case x of
-    {| a = x |} -> 1.0
-    {| a | a = x |} -> x
-> 3.
-
--- Known variant, used tail pattern
-myVal =
-  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
-  case x of
-    {| a = x |} -> todo
-    {|a| ...rest |} -> rest
-
-:p myVal
-> {| b = 4 |}
-:t myVal
-> {a: Float32 | b: Int32 | c: Int32}
-
--- Badly written tail pattern
-:p
-  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
-  case x of
-    {| a = x |} -> 1
-    {| ...rest |} -> 2
-> Type error:Variant explicit alternatives overlap with tail pattern.
->
->   case x of
->   ^^^^^^^^^^
-
--- Too many tail patterns
-:p
-  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
-  case x of
-    {| a = x |} -> 1
-    {|a| ...rest |} -> 2
-    {| ...rest2 |} -> 3
-> Type error:Can't specify more than one variant tail pattern.
->
->   case x of
->   ^^^^^^^^^^
-
-def splitTwoFoosOrABar {a b c} {rest:Fields}
-                       (x : {foo:a | foo:b | bar:c | ...rest})
-                       : ({x:a | y:b | z:c} | {| ...rest}) =
-  case x of
-    {| foo=x |}                 -> Left {| x=x |}
-    {| foo | foo=y |}           -> Left {| y=y |}
-    {| bar=z |}                 -> Left {| z=z |}
-    {|foo|foo|bar| ...other |}  -> Right other
-
-myStuff :(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_}) =
-  [ {| foo=1 |},
-    {| bar=2 |},
-    {| foo | foo=3 |},
-    {| baz=4 |},
-    {| foo | foo | foo=5 |}
-  ]
-
-:p for i. splitTwoFoosOrABar myStuff.i
-> [(Left {| x = 1 |}), (Left {| z = 2 |}), (Left {| y = 3 |}), (Right {| baz = 4 |}), (Right {| foo = 5 |})]
 
 'As index sets
 
@@ -324,40 +173,6 @@ instance Ix {a:n & b:m} given {n m} [Ix n, Ix m]
 recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
 :p recordsAsIndices
 > [{a = 0, b = 0}, {a = 1, b = 0}, {a = 0, b = 1}, {a = 1, b = 1}, {a = 0, b = 2}, {a = 1, b = 2}]
-
--- TODO: this still causes an error
--- :p for i:(Fin 6). recordsAsIndices.((ordinal i) @ _)
-
-def abToEither {a b} : Iso {a:a | b:b} (a|b) =
-  fwd = \v.  case v of
-    {|a=x|} -> Left x
-    {|b=x|} -> Right x
-  bwd = \v. case v of
-    Left x  -> {|a=x|}
-    Right x -> {|b=x|}
-  MkIso {fwd, bwd}
-instance Ix {a:n | b:m} given {n m} [Ix n, Ix m]
-  size = size n + size m
-  ordinal = ordinal <<< app_iso abToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToEither
-
-:p size {a:Fin 10 | b:Fin 3}
-> 13
-
-:p
-  x : {a:Fin 10 | b:Fin 3} = {| b=(2@_) |}
-  ordinal x
-> 12
-
-:p from_ordinal {a:Fin 10 | b:Fin 3} 4
-> {| a = 4 |}
-
-:p from_ordinal {a:Fin 10 | b:Fin 3} 11
-> {| b = 1 |}
-
-variantsAsIndices : {a:Fin 10 | b:Fin 3}=>{a:Fin 10 | b:Fin 3} = for i. i
-:p variantsAsIndices
-> [{| a = 0 |}, {| a = 1 |}, {| a = 2 |}, {| a = 3 |}, {| a = 4 |}, {| a = 5 |}, {| a = 6 |}, {| a = 7 |}, {| a = 8 |}, {| a = 9 |}, {| b = 0 |}, {| b = 1 |}, {| b = 2 |}]
 
 -- === First-class labels ===
 

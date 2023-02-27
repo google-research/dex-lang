@@ -168,15 +168,13 @@ interp_operator = \case
   name  -> EvalBinOp $ "(" <> name <> ")"
 
 -- We can add others, like @{ or [| or whatever
-data Bracket = Square | Curly | CurlyPipe
+data Bracket = Square | Curly
   deriving (Show, Generic)
 
 data LabelPrefix
   = PlainLabel
   | RecordIsoLabel
-  | VariantIsoLabel
   | RecordZipIsoLabel
-  | VariantZipIsoLabel
   deriving (Show, Generic)
 
 data ForKind
@@ -753,7 +751,6 @@ leafGroupNoBrackets = do
     _    -> CIdentifier <$> anyName
 
 -- What does an open curly brace actually mean in Dex?  It could be
--- - A variant, which is defined by being bracketed with {| and |}
 -- - A fieldful thing, which is syntactically weird because
 --   - The separator (one of &, |, ?, and comma) may appear immediately after
 --     the open brace, to disambiguate a single-element fieldful thing
@@ -768,11 +765,8 @@ leafGroupNoBrackets = do
 -- - An effect row, which may (and often does) have a leading |
 --   - This just looks like a unary fieldful thing delimited by |
 --
--- Observe that there is a local ambiguity between variant data and a
--- singleton variant type, both of which start with "{|"
 curlyBraced :: Parser Group'
-curlyBraced = try (bracketed (symbol "{|") (symbol "|}") $ CBracket CurlyPipe <$> cGroup)
-              <|> CBracket Curly <$> (withSrc $ symbol "{}" $> CEmpty)
+curlyBraced =     CBracket Curly <$> (withSrc $ symbol "{}" $> CEmpty)
               <|> braces (CBracket Curly <$> cGroupInBraces)
 
 -- A `PrecTable` is enough information to (i) remove or replace
@@ -860,9 +854,7 @@ ops =
 labelPrefix :: Parser LabelPrefix
 labelPrefix = sym "#" $> RecordIsoLabel
   <|> sym "##" $> PlainLabel
-  <|> sym "#?" $> VariantIsoLabel
   <|> sym "#&" $> RecordZipIsoLabel
-  <|> sym "#|" $> VariantZipIsoLabel
 
 opWithSrc :: Parser (SrcPos -> a -> a -> a)
           -> Parser (a -> a -> a)
@@ -1033,7 +1025,6 @@ primNames = M.fromList
   , ("pair"        , UPrimCon $ ProdCon [(), ()])
   , ("explicitApply", UExplicitApply)
   , ("monoLit", UMonoLiteral)
-  , ("sumToVariant", URecordVariantOp $ SumToVariant ())
   ]
   where
     binary op = UPrimOp $ BinOp op () ()

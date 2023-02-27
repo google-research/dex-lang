@@ -241,7 +241,7 @@ inferEffOpType (UEffectOpType policy ty) = do
 class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m )
       => InfBuilder (m::MonadKind1) where
 
-  -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
+  -- XXX: we should almost always used the zonking `buildDeclsInf` ,
   -- except where it's not possible because the result isn't atom-substitutable,
   -- such as the source map at the top level.
   buildDeclsInfUnzonked
@@ -1176,7 +1176,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
         UDynField    v e -> do
           v' <- checkRho noHint (WithSrcE Nothing $ UVar v) (NewtypeTyCon LabelType)
           e' <- inferRho noHint e
-          rec' <- emitExpr . RecordVariantOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
+          rec' <- emitExpr . RecordOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
           return (Just rec', mempty)
         UDynFields   v -> do
           anyFields <- freshInferenceName LabeledRowKind
@@ -1184,7 +1184,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           case delayedRec of
             (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
             _ -> do
-              rec' <- emitExpr . RecordVariantOp . RecordCons v' =<< resolveDelay delayedRec
+              rec' <- emitExpr . RecordOp . RecordCons v' =<< resolveDelay delayedRec
               return (Just rec', mempty)
 
       resolveDelay :: EmitsInf o
@@ -1195,30 +1195,13 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           True  -> return rec
           False -> do
             dr <- getRecord delayedItems
-            emitExpr $ RecordVariantOp $ RecordCons dr rec
+            emitExpr $ RecordOp $ RecordCons dr rec
         where
           getRecord delayedItems = do
             tys <- traverse getType delayedItems
             return $ Record (void tys) $ toList delayedItems
-  UVariant labels@(LabeledItems lmap) label value -> do
-    value' <- inferRho noHint value
-    ty <- getType value'
-    unless (M.size lmap == 0 || M.size lmap == 1) $ throw TypeErr
-      "All labels in a variant literal should use the same field name."
-    prevTys <- mapM (const $ freshType TyKind) labels
-    rest <- freshInferenceName LabeledRowKind
-    let items = prevTys <> labeledSingleton label ty
-    let extItems = Ext items $ Just rest
-    let i = length $ lookupLabel labels label
-    matchRequirement =<< emitExpr (RecordVariantOp $ VariantMake (VariantTy extItems) label i value')
   URecordTy   elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
   ULabeledRow elems -> matchRequirement =<< LabeledRow . fieldRowElemsFromList . concat <$> mapM inferFieldRowElem elems
-  UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
-  UVariantLift labels value -> do
-    row <- freshInferenceName LabeledRowKind
-    value' <- zonk =<< (checkRho noHint value $ VariantTy $ Ext NoLabeledItems $ Just row)
-    prev <- mapM (\() -> freshType TyKind) labels
-    matchRequirement =<< emitExpr (RecordVariantOp $ VariantLift prev value')
   UNatLit x -> do
     lookupSourceMap "from_unsigned_integer" >>= \case
       Nothing ->
@@ -1315,7 +1298,7 @@ matchPrimApp = \case
  UPrimTC  tc  -> \xs -> TC  <$> restructurePrim tc  xs
  UPrimCon con -> \xs -> Con <$> restructurePrim con xs
  UPrimOp  op         -> \xs -> ee =<< (PrimOp          <$> restructurePrim op xs)
- URecordVariantOp op -> \xs -> ee =<< (RecordVariantOp <$> restructurePrim op xs)
+ URecordOp op -> \xs -> ee =<< (RecordOp <$> restructurePrim op xs)
  UMAsk      -> \case ~[r]    -> ee $ RefOp r MAsk
  UMGet      -> \case ~[r]    -> ee $ RefOp r MGet
  UMPut      -> \case ~[r, x] -> ee $ RefOp r $ MPut x
@@ -1503,13 +1486,7 @@ buildNthOrderedAlt alts scrutTy resultTy i v = do
 -- `CaseAltIndex` used in the surface IR.
 nthCaseAltIdx :: CType n -> Int -> CaseAltIndex
 nthCaseAltIdx ty i = case ty of
-  TypeCon _ _ _ -> ConAlt i
-  VariantTy (NoExt types) -> case lookup i pairedIndices of
-    Just idx -> idx
-    Nothing -> error "alt index out of range"
-    where
-      pairedIndices :: [(Int, CaseAltIndex)]
-      pairedIndices = enumerate $ [VariantAlt l idx | (l, idx, _) <- toList (withLabels types)]
+  TypeCon _ _ _ -> i
   _ -> error $ "can't pattern-match on: " <> pprint ty
 
 buildMonomorphicCase
@@ -1538,51 +1515,7 @@ buildSortedCase scrut alts resultTy = do
           let [IndexedAlt _ alt] = alts
           emitBlock =<< applyAbs alt (SubstVal $ unwrapNewtype scrut)
         _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
-    VariantTy (Ext types tailName) -> do
-      case filter isVariantTailAlt alts of
-        [] -> case tailName of
-          Nothing ->
-            -- We already know the type exactly, so just emit a case.
-            liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
-          Just _ -> do
-            -- Split off the types we don't know about, mapping them to a
-            -- runtime error.
-            liftEmitBuilder $ buildSplitCase types scrut resultTy
-              (\v -> do ListE alts' <- sinkM $ ListE alts
-                        resultTy'   <- sinkM resultTy
-                        liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
-              (\_ -> do resultTy' <- sinkM resultTy
-                        emitOp $ MiscOp $ ThrowError resultTy')
-        [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
-            -- Split off the types skipped by the tail pattern.
-            let splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
-            let left = LabeledItems $ M.intersectionWith splitLeft
-                        (fromLabeledItems types) skippedItems
-            checkNoTailOverlaps alts left
-            liftEmitBuilder $ buildSplitCase left scrut resultTy
-              (\v -> do ListE alts' <- sinkM $ ListE alts
-                        resultTy'   <- sinkM resultTy
-                        liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
-              (\v -> do tailAlt' <- sinkM tailAlt
-                        applyAbs tailAlt' (SubstVal v) >>= emitBlock )
-        _ -> throw TypeErr "Can't specify more than one variant tail pattern."
     _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
-
--- Make sure all of the alternatives are exclusive with the tail pattern (could
--- technically allow overlap but this is simpler). Split based on the tail
--- pattern's skipped types.
-checkNoTailOverlaps :: Fallible1 m => [IndexedAlt n] -> LabeledItems (CType n) ->  m n ()
-checkNoTailOverlaps alts (LabeledItems tys) = do
-  forM_ alts \case
-    (IndexedAlt (VariantAlt label i) _) ->
-      case M.lookup label tys of
-        Just tys' | i <= length tys' -> return ()
-        _ -> throw TypeErr "Variant explicit alternatives overlap with tail pattern."
-    _ -> return ()
-
-isVariantTailAlt :: IndexedAlt n -> Bool
-isVariantTailAlt (IndexedAlt (VariantTailAlt _) _) = True
-isVariantTailAlt _ = False
 
 -- ===
 
@@ -2110,10 +2043,7 @@ constrainVarTy v tyReq = do
   varTy <- getType $ Var v
   constrainEq tyReq varTy
 
-data CaseAltIndex = ConAlt Int
-                  | VariantAlt Label Int
-                  | VariantTailAlt (LabeledItems ())
-  deriving (Eq, Show)
+type CaseAltIndex = Int
 
 checkCaseAlt :: EmitsBoth o
              => RhoType o -> CType o -> UAlt i -> InfererM i o (IndexedAlt o)
@@ -2128,14 +2058,7 @@ getCaseAltIndex :: UPat i i' -> InfererM i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
   UPatCon ~(InternalName _ conName) _ -> do
     (_, con) <- renameM conName >>= getDataCon
-    return $ ConAlt con
-  UPatVariant (LabeledItems lmap) label _ -> do
-    let i = case M.lookup label lmap of
-              Just prev -> length prev
-              Nothing -> 0
-    return (VariantAlt label i)
-  UPatVariantLift labels _ -> do
-    return (VariantTailAlt labels)
+    return con
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 checkCasePat :: EmitsBoth o
@@ -2158,23 +2081,6 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
         ans <- normalizeNaryProj (init projs) (Var arg)
         emit $ Atom ans
       bindLamPats ps args $ cont
-  UPatVariant labels label p -> do
-    ty <- freshType TyKind
-    prevTys <- mapM (const $ freshType TyKind) labels
-    rest <- freshInferenceName LabeledRowKind
-    let patTypes = prevTys <> labeledSingleton label ty
-    let extPatTypes = Ext patTypes $ Just rest
-    constrainEq scrutineeTy $ VariantTy extPatTypes
-    buildAltInf ty \x ->
-      bindLamPat p x cont
-  UPatVariantLift labels p -> do
-    prevTys <- mapM (const $ freshType TyKind) labels
-    rest <- freshInferenceName LabeledRowKind
-    let extPatTypes = Ext prevTys $ Just rest
-    constrainEq scrutineeTy $ VariantTy extPatTypes
-    let ty = VariantTy $ Ext NoLabeledItems $ Just rest
-    buildAltInf ty \x ->
-      bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
@@ -2269,7 +2175,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
               (WithSrcE Nothing $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
-            ans <- emitExpr (RecordVariantOp $ RecordSplit (Var fv') (Var rv'))
+            ans <- emitExpr (RecordOp $ RecordSplit (Var fv') (Var rv'))
             [subr, rv''] <- emitUnpacked ans
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
@@ -2279,7 +2185,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
-            ans <- emitExpr (RecordVariantOp $ RecordSplitDynamic (Var lv') (Var rv'))
+            ans <- emitExpr (RecordOp $ RecordSplitDynamic (Var lv') (Var rv'))
             [val, rv''] <- emitUnpacked ans
             bindLamPat p val $ bindPats c (mempty, Empty, rv'') rest
 
@@ -2304,14 +2210,12 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           tailVar <- freshInferenceName LabeledRowKind
           constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
           [itemsRecord, restRecord] <- getUnpacked =<<
-            (emitExpr $ RecordVariantOp (RecordSplit
+            (emitExpr $ RecordOp (RecordSplit
               (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
               (Var r)))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
           restRecordName <- emit (Atom restRecord)
           bindLamPats ps itemsNestOrdered $ f restRecordName
-  UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
-  UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
     elemTy <- freshType TyKind
     let n = fromIntegral (nestLength ps) :: Word32
@@ -2394,18 +2298,6 @@ checkUParam k uty@(WithSrcE pos _) = do
           "Can't reduce type expression: " ++ pprint uty ++ "\n" ++
           "This might be due to a failure to find a viable interface implementation " ++
           "for: " ++ intercalate ", " (pprint <$> ds')
-
-checkExtLabeledRow :: EmitsBoth o
-                   => ExtLabeledItems (UExpr i) (UExpr i)
-                   -> InfererM i o (ExtLabeledItems (CType o) (CAtomName o))
-checkExtLabeledRow (Ext types Nothing) = do
-  types' <- mapM checkUType types
-  return $ Ext types' Nothing
-checkExtLabeledRow (Ext types (Just ext)) = do
-  types' <- mapM checkUType types
-  -- Only variables can have kind LabeledRowKind at the moment.
-  Var ext' <- checkRho noHint ext LabeledRowKind
-  return $ Ext types' $ Just ext'
 
 inferTabCon :: forall i o. EmitsBoth o
   => NameHint -> [UExpr i] -> RequiredTy RhoType o -> InfererM i o (CAtom o)
@@ -2752,7 +2644,6 @@ instance Unifiable NewtypeTyCon where
     (LabelCon s, LabelCon s') -> guard (s == s')
     (UserADTType _ c params, UserADTType _ c' params') -> guard (c == c') >> unify params params'
     (RecordTyCon  els, RecordTyCon els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
-    (VariantTyCon xs, VariantTyCon xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
     (LabeledRowCon els, LabeledRowCon els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
     _ -> empty
 

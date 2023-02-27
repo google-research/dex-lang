@@ -29,7 +29,6 @@ import CheapReduction
 import Core
 import Err
 import IRVariants
-import LabeledItems
 import MTL1
 import Subst
 import Name
@@ -921,19 +920,6 @@ buildCase scrut resultTy indexedAltBody = do
           return $ blk `PairE` eff
         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
       emitExpr $ Case scrut alts resultTy $ mconcat effs
-
-buildSplitCase :: (Emits n, ScopableBuilder CoreIR m)
-               => LabeledItems (CType n) -> CAtom n -> CType n
-               -> (forall l. (Emits l, DExt n l) => CAtom l -> m l (CAtom l))
-               -> (forall l. (Emits l, DExt n l) => CAtom l -> m l (CAtom l))
-               -> m n (CAtom n)
-buildSplitCase tys scrut resultTy match fallback = do
-  split <- emitExpr $ RecordVariantOp $ VariantSplit tys scrut
-  buildCase split resultTy \i v ->
-    case i of
-      0 -> match v
-      1 -> fallback v
-      _ -> error "should only have two cases"
 
 buildEffLam
   :: ScopableBuilder r m

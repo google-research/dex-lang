@@ -117,11 +117,8 @@ data UExpr' (n::S) =
  | ULabel String
  | UFieldAccess (UExpr n) FieldName
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
- | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
- | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
  | ULabeledRow (UFieldRowElems n)                    -- {@v:X ? a:Y ? b:Z ? ...rest}
  | URecordTy (UFieldRowElems n)                      -- {@v:X & a:Y & b:Z & ...rest}
- | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
  | UNatLit   Word64
  | UIntLit   Int
  | UFloatLit Double
@@ -282,8 +279,6 @@ data UPat' (n::S) (l::S) =
  | UPatUnit (UnitB n l)
  -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
  | UPatRecord (UFieldRowPat n l)
- | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
- | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
  | UPatTable (Nest UPat n l)
   deriving (Show)
 
@@ -429,7 +424,7 @@ data PrimName =
     UPrimTC  (PrimTC CoreIR ())
   | UPrimCon (PrimCon CoreIR ())
   | UPrimOp  (PrimOp ())
-  | URecordVariantOp (RecordVariantOp ())
+  | URecordOp (RecordOp ())
   | UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException

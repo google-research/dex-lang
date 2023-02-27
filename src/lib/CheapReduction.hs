@@ -444,7 +444,6 @@ unwrapNewtypeType = \case
   Nat                   -> return (NatCon, IdxRepTy)
   Fin n                 -> return (FinCon n, NatTy)
   StaticRecordTyCon tys    -> return (RecordCon  (void tys), ProdTy (toList tys))
-  VariantTyCon (NoExt tys) -> return (VariantCon (void tys), SumTy  (toList tys))
   UserADTType _ defName params -> do
     def <- lookupDataDef defName
     ty' <- dataDefRep <$> instantiateDataDef def params

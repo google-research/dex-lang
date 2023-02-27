@@ -25,11 +25,5 @@ data MyType = MyValue Nat
 :pcodegen ['a', 'b', 'c']
 > [0x61, 0x62, 0x63]
 
-:pcodegen {| a=3 |} :: {a:Int | b:Float}
-> {| a = 3 |}
-
-:pcodegen {| a | a = 3.0 |} :: {a:Int | a:Float | a:Int}
-> {|a| a = 3. |}
-
 :pcodegen "abcd"
 > "abcd"

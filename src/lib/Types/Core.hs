@@ -96,7 +96,7 @@ data Expr r n where
  App             :: Atom CoreIR n -> NonEmpty (Atom CoreIR n)-> Expr CoreIR n
  UserEffectOp    :: UserEffectOp n                           -> Expr CoreIR n
  ProjMethod      :: Atom CoreIR n -> Int                     -> Expr CoreIR n
- RecordVariantOp :: RecordVariantOp (Atom CoreIR n)          -> Expr CoreIR n
+ RecordOp        :: RecordOp (Atom CoreIR n) -> Expr CoreIR n
  DAMOp           :: DAMOp SimpIR n           -> Expr SimpIR n
 
 deriving instance IRRep r => Show (Expr r n)
@@ -322,7 +322,6 @@ type SLam    = LamExpr SimpIR
 -- Describes how to lift the "shallow" representation type to the newtype.
 data NewtypeCon (n::S) =
    RecordCon  (LabeledItems ())
- | VariantCon (LabeledItems ())
  | UserADTData (DataDefName n) (DataDefParams n)
  | NatCon
  | FinCon (Atom CoreIR n)
@@ -335,7 +334,6 @@ data NewtypeTyCon (n::S) =
  | LabeledRowKindTC
  | LabelType
  | RecordTyCon  (FieldRowElems n)
- | VariantTyCon (ExtLabeledItems (Type CoreIR n) (AtomName CoreIR n))
  | LabelCon String
  | LabeledRowCon (FieldRowElems n)
  | UserADTType SourceName (DataDefName n) (DataDefParams n)
@@ -350,12 +348,8 @@ pattern LabeledRow xs = NewtypeTyCon (LabeledRowCon xs)
 pattern RecordTy :: FieldRowElems n -> Atom CoreIR n
 pattern RecordTy xs = NewtypeTyCon (RecordTyCon xs)
 
-pattern VariantTy :: ExtLabeledItems (Type CoreIR n) (AtomName CoreIR n) -> Atom CoreIR n
-pattern VariantTy xs = NewtypeTyCon (VariantTyCon xs)
-
 isSumCon :: NewtypeCon n -> Bool
 isSumCon = \case
- VariantCon _ -> True
  UserADTData _ _ -> True
  _ -> False
 
@@ -1198,25 +1192,22 @@ instance AlphaEqE       DataConDef
 instance AlphaHashableE DataConDef
 
 instance GenericE NewtypeCon where
-  type RepE NewtypeCon = EitherE5
+  type RepE NewtypeCon = EitherE4
    {- RecordCon -}    (LiftE (LabeledItems ()))
-   {- VariantCon -}   (LiftE (LabeledItems ()))
    {- UserADTData -}  (DataDefName `PairE` DataDefParams)
    {- NatCon -}       UnitE
    {- FinCon -}       CAtom
   fromE = \case
     RecordCon  l    -> Case0 $ LiftE l
-    VariantCon l    -> Case1 $ LiftE l
-    UserADTData d p -> Case2 $ d `PairE` p
-    NatCon          -> Case3 UnitE
-    FinCon n        -> Case4 n
+    UserADTData d p -> Case1 $ d `PairE` p
+    NatCon          -> Case2 UnitE
+    FinCon n        -> Case3 n
   {-# INLINE fromE #-}
   toE = \case
     Case0 (LiftE l)     -> RecordCon  l
-    Case1 (LiftE l)     -> VariantCon l
-    Case2 (d `PairE` p) -> UserADTData d p
-    Case3 UnitE         -> NatCon
-    Case4 n             -> FinCon n
+    Case1 (d `PairE` p) -> UserADTData d p
+    Case2 UnitE         -> NatCon
+    Case3 n             -> FinCon n
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1234,9 +1225,8 @@ instance GenericE NewtypeTyCon where
     {- EffectRowKind -}    UnitE
     {- LabeledRowKindTC -} UnitE
     {- LabelType -}        UnitE
-         ) ( EitherE5
+         ) ( EitherE4
     {- RecordTyCon -}      FieldRowElems
-    {- VariantTyCon  -}    (ExtLabeledItemsE (Type CoreIR) (AtomName CoreIR))
     {- LabelCon -}         (LiftE String)
     {- LabeledRowCon -}    FieldRowElems
     {- UserADTType -}      (LiftE SourceName `PairE` DataDefName `PairE` DataDefParams)
@@ -1248,10 +1238,9 @@ instance GenericE NewtypeTyCon where
     LabeledRowKindTC  -> Case0 $ Case3 UnitE
     LabelType         -> Case0 $ Case4 UnitE
     RecordTyCon   xs  -> Case1 $ Case0 xs
-    VariantTyCon  xs  -> Case1 $ Case1 $ ExtLabeledItemsE xs
-    LabelCon      s   -> Case1 $ Case2 (LiftE s)
-    LabeledRowCon x   -> Case1 $ Case3 x
-    UserADTType s d p -> Case1 $ Case4 (LiftE s `PairE` d `PairE` p)
+    LabelCon      s   -> Case1 $ Case1 (LiftE s)
+    LabeledRowCon x   -> Case1 $ Case2 x
+    UserADTType s d p -> Case1 $ Case3 (LiftE s `PairE` d `PairE` p)
   {-# INLINE fromE #-}
 
   toE = \case
@@ -1264,10 +1253,9 @@ instance GenericE NewtypeTyCon where
       _ -> error "impossible"
     Case1 case1 -> case case1 of
       Case0 xs                            -> RecordTyCon   xs
-      Case1 (ExtLabeledItemsE xs)         -> VariantTyCon  xs
-      Case2 (LiftE s)                     -> LabelCon      s
-      Case3 x                             -> LabeledRowCon x
-      Case4 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
+      Case1 (LiftE s)                     -> LabelCon      s
+      Case2 x                             -> LabeledRowCon x
+      Case3 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1602,7 +1590,7 @@ instance IRRep r => GenericE (Expr r) where
  {- PrimOp -}          (ComposeE PrimOp (Atom r))
  {- UserEffectOp -}    (WhenCore r UserEffectOp)
  {- ProjMethod -}      (WhenCore r (Atom r `PairE` LiftE Int))
- {- RecordVariantOp -} (WhenCore r (ComposeE RecordVariantOp (Atom r)))
+ {- RecordOp -}        (WhenCore r (ComposeE RecordOp (Atom r)))
  {- DAMOp -}           (WhenSimp r (DAMOp r)))
 
   fromE = \case
@@ -1617,7 +1605,7 @@ instance IRRep r => GenericE (Expr r) where
     PrimOp op          -> Case1 $ Case2 (ComposeE op)
     UserEffectOp op    -> Case1 $ Case3 (WhenIRE op)
     ProjMethod d i     -> Case1 $ Case4 (WhenIRE (d `PairE` LiftE i))
-    RecordVariantOp op -> Case1 $ Case5 (WhenIRE (ComposeE op))
+    RecordOp op        -> Case1 $ Case5 (WhenIRE (ComposeE op))
     DAMOp op           -> Case1 $ Case6 (WhenIRE op)
   {-# INLINE fromE #-}
   toE = \case
@@ -1635,7 +1623,7 @@ instance IRRep r => GenericE (Expr r) where
       Case2 (ComposeE op)         -> PrimOp op
       Case3 (WhenIRE op)            -> UserEffectOp op
       Case4 (WhenIRE (d `PairE` LiftE i)) -> ProjMethod d i
-      Case5 (WhenIRE (ComposeE op)) -> RecordVariantOp op
+      Case5 (WhenIRE (ComposeE op)) -> RecordOp op
       Case6 (WhenIRE op)            -> DAMOp op
       _ -> error "impossible"
     _ -> error "impossible"

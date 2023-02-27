@@ -21,6 +21,7 @@ module QueryType (
   getNaryLamExprType, unwrapNewtypeType, unwrapLeadingNewtypesType, wrapNewtypesData,
   rawStrType, rawFinTabType, getReferentTypeRWSAction, liftIFunType, getTypeTopFun,
   HasEffectsE (..), NullaryLamApp (..), NullaryDestLamApp (..),
+  makePreludeMaybeTy
   ) where
 
 import Control.Monad
@@ -99,15 +100,13 @@ caseAltsBinderTys :: (IRRep r, Fallible1 m, EnvReader m)
 caseAltsBinderTys ty = case ty of
   SumTy types -> return types
   NewtypeTyCon t -> case t of
-    VariantTyCon (NoExt types) -> return $ toList types
-    VariantTyCon _ -> fail "Can't pattern-match partially-known variants"
     UserADTType _ defName params -> do
       def <- lookupDataDef defName
       cons <- instantiateDataDef def params
       return [repTy | DataConDef _ _ repTy _ <- cons]
     _ -> fail msg
   _ -> fail msg
-  where msg = "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
+  where msg = "Case analysis only supported on ADTs, not on " ++ pprint ty
 
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
@@ -320,7 +319,6 @@ instance HasType CoreIR NewtypeTyCon where
     EffectRowKind     -> return TyKind
     LabelType         -> return TyKind
     RecordTyCon  _    -> return TyKind
-    VariantTyCon _    -> return TyKind
     LabeledRowKindTC  -> return TyKind
     UserADTType _ _ _ -> return TyKind
     LabelCon _        -> return $ NewtypeTyCon LabelType
@@ -333,9 +331,6 @@ getNewtypeType con x = case con of
   RecordCon labels -> do
     TC (ProdType tys) <- getTypeE x
     return $ StaticRecordTy $ restructure tys labels
-  VariantCon labels -> do
-    TC (SumType tys) <- getTypeE x
-    return $ VariantTy $ NoExt $ restructure tys labels
   UserADTData d params -> do
     d' <- substM d
     params' <- substM params
@@ -394,6 +389,12 @@ dataDictType ty = do
   dataClassName <- getDataClassName
   return $ DictType "Data" dataClassName [ty]
 
+makePreludeMaybeTy :: EnvReader m => CType n -> m n (CType n)
+makePreludeMaybeTy ty = do
+  ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
+  ~(TyConBinding dataDefName _) <- lookupEnv tyConName
+  return $ TypeCon "Maybe" dataDefName $ DataDefParams [(PlainArrow, ty)]
+
 typeApp  :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
 typeApp fTy [] = return fTy
 typeApp fTy xs = case fromNaryPiType (length xs) fTy of
@@ -436,7 +437,7 @@ instance IRRep r => HasType r (Expr r) where
     DAMOp           op -> getTypeE op
     UserEffectOp    op -> getTypeE op
     PrimOp          op -> getTypeE $ ComposeE op
-    RecordVariantOp op -> getTypeE $ ComposeE op
+    RecordOp        op -> getTypeE $ ComposeE op
     Hof  hof -> getTypeHof hof
     Case _ _ resultTy _ -> substM resultTy
     ProjMethod dict i -> do
@@ -523,11 +524,8 @@ instance IRRep r => HasType r (ComposeE PrimOp (Atom r)) where
         TC (RefType h _) -> TC . RefType h <$> substM vty
         ty -> error $ "Not a reference type: " ++ pprint ty
 
-instance HasType CoreIR (ComposeE RecordVariantOp CAtom) where
-  getTypeE (ComposeE recordVariantOp) = case recordVariantOp of
-    SumToVariant x -> getTypeE x >>= \case
-      SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
-      ty -> error $ "Not a sum type: " ++ pprint ty
+instance HasType CoreIR (ComposeE RecordOp CAtom) where
+  getTypeE (ComposeE recordOp) = case recordOp of
     RecordCons l r -> do
       lty <- getTypeE l
       rty <- getTypeE r
@@ -585,25 +583,6 @@ instance HasType CoreIR (ComposeE RecordVariantOp CAtom) where
                 return $ Just $ StaticFields rest : ys
               _ -> return Nothing
           _ -> return Nothing
-    VariantLift types variant -> do
-      types' <- mapM substM types
-      rty <- getTypeE variant
-      rest <- case rty of
-        VariantTy rest -> return rest
-        _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
-                          <> pprint variant <> " (of type " <> pprint rty <> ")"
-      return $ VariantTy $ prefixExtLabeledItems types' rest
-    VariantSplit types variant -> do
-      types' <- mapM substM types
-      fullty <- getTypeE variant
-      full <- case fullty of
-        VariantTy full -> return full
-        _ -> throw TypeErr $ "Can't split a non-variant object "
-                            <> pprint variant <> " (of type " <> pprint fullty
-                            <> ")"
-      diff <- labeledRowDifference' full (NoExt types')
-      return $ SumTy [ VariantTy $ NoExt types', VariantTy diff ]
-    VariantMake ty _ _ _ -> substM ty
 
 instantiateHandlerType :: EnvReader m => HandlerName n -> CAtom n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
@@ -683,7 +662,7 @@ getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy resultTy stateTy
   RunIO f -> getTypeE f
   RunInit f -> getTypeE f
-  CatchException f -> MaybeTy <$> getTypeE f
+  CatchException f -> getTypeE f >>= makePreludeMaybeTy
 
 getLamExprType :: IRRep r => LamExpr r i -> TypeQueryM i o (NaryPiType r o)
 getLamExprType (LamExpr bs body) =
@@ -830,7 +809,7 @@ exprEffects expr = case expr of
   Case _ _ _ effs -> substM effs
   TabCon _ _ _      -> return Pure
   ProjMethod _ _    -> return Pure
-  RecordVariantOp _ -> return Pure
+  RecordOp _        -> return Pure
 
 instance IRRep r => HasEffectsE (Block r) r where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs

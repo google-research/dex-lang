@@ -14,7 +14,6 @@ import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Data.Maybe
-import Data.List (elemIndex)
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.List.NonEmpty as NE
@@ -36,6 +35,7 @@ import QueryType
 import RuntimePrint
 import Transpose
 import Types.Core
+import Types.Source
 import Types.Primitives
 import Util (enumerate, foldMapM, restructure, bindM2, toSnocList)
 
@@ -58,7 +58,7 @@ import Util (enumerate, foldMapM, restructure, bindM2, toSnocList)
 -- plan is for `CatchException` to become a user-defined effect, and
 -- for simplification to discharge all of them.
 
--- Simplification also discharges bulk record and variant operations
+-- Simplification also discharges bulk record operations
 -- by converting them into individual projections and constructors.
 
 -- Simplification also opportunistically does peep-hole optimizations:
@@ -326,7 +326,7 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     ans <- emitExpr $ RefOp ref' eff'
     liftSimpAtom resultTy ans
   Hof hof -> simplifyHof hint hof
-  RecordVariantOp op -> simplifyRecordVariantOp  =<< mapM simplifyAtom op
+  RecordOp op -> simplifyRecordOp  =<< mapM simplifyAtom op
   TabCon _ ty xs -> do
     ty' <- substM ty
     tySimp <- getRepType ty'
@@ -418,6 +418,7 @@ defuncCase scrut resultTy cont = do
           let nonDataVal = SimpInCore $ ACase sumVal reconAlts newNonDataTy
           Distinct <- getDistinct
           fromSplit split dataVal nonDataVal
+
 simplifyAlt
   :: SplitDataNonData n
   -> SType o
@@ -781,8 +782,8 @@ buildSimplifiedBlock cont = do
       let ty' = ignoreHoistFailure $ hoist (toScopeFrag decls) ty
       return $ SimplifiedBlock block (CoerceRecon ty')
 
-simplifyRecordVariantOp :: Emits o => RecordVariantOp (CAtom o) -> SimplifyM i o (CAtom o)
-simplifyRecordVariantOp op = case op of
+simplifyRecordOp :: Emits o => RecordOp (CAtom o) -> SimplifyM i o (CAtom o)
+simplifyRecordOp op = case op of
   RecordCons left right -> getType left >>= \case
     StaticRecordTy leftTys -> getType right >>= \case
       StaticRecordTy rightTys -> do
@@ -824,49 +825,6 @@ simplifyRecordVariantOp op = case op of
         return $ PairVal (head $ toList val) $
           Record (void otherItemTys) $ toList rest
       _ -> error "not a record"
-  VariantLift leftTys right -> do
-    VariantTy (NoExt rightTys) <- getType right
-    let fullTys = leftTys <> rightTys
-    let fullLabels = toList $ reflectLabels fullTys
-    let labels = toList $ reflectLabels rightTys
-    -- Emit a case statement (ordered by the arg type) that lifts the type.
-    rightSimp <- toDataAtomIgnoreRecon right
-    resTy <- getResTy
-    resTySimp <- getRepType resTy
-    liftSimpAtom resTy =<< buildCase rightSimp resTySimp \caseIdx v -> do
-      -- TODO: This is slow! Optimize this! We keep searching through lists all the time!
-      let (label, i) = labels !! caseIdx
-      let idx = fromJust $ elemIndex (label, i + length (lookupLabel leftTys label)) fullLabels
-      SumTy resTys <- sinkM resTySimp
-      return $ SumVal resTys idx v
-  VariantSplit leftTysLabeled full' -> do
-    VariantTy (NoExt fullTysLabeled) <- getType full'
-    let rightTysLabeled = snd $ splitLabeledItems leftTysLabeled fullTysLabeled
-    resTy <- getResTy
-    leftTys <- forM (toList leftTysLabeled) \t -> getRepType t
-    rightTys <- mapM getRepType $ toList rightTysLabeled
-    full <- toDataAtomIgnoreRecon full'
-    resTySimp <- getRepType resTy
-    liftSimpAtom resTy =<< buildCase full resTySimp \caseIdx v -> do
-      SumTy resTys <- sinkM resTySimp
-      let (label, i) = toList (reflectLabels fullTysLabeled) !! caseIdx
-      let labelIx labs li = fromJust $ elemIndex li (toList $ reflectLabels labs)
-      case leftTysLabeled `lookupLabel` label of
-        [] -> return $ SumVal resTys 1 $ SumVal (sinkList rightTys) (labelIx rightTysLabeled (label, i)) v
-        tys -> if i < length tys
-          then return $ SumVal resTys 0 $ SumVal (sinkList leftTys ) (labelIx leftTysLabeled (label, i)) v
-          else return $ SumVal resTys 1 $ SumVal (sinkList rightTys) (labelIx rightTysLabeled (label, i - length tys)) v
-  VariantMake ~(VariantTy (NoExt tys)) label i v -> do
-    let ix = fromJust $ elemIndex (label, i) $ toList $ reflectLabels tys
-    return $ NewtypeCon (VariantCon (void tys)) $ SumVal (toList tys) ix v
-  SumToVariant c -> do
-    getType c >>= \case
-      SumTy cases -> do
-        let labels = foldMap (const $ labeledSingleton "c" ()) cases
-        return $ NewtypeCon (VariantCon labels) c
-      t -> error $ "Not a sum type: " ++ pprint t
-  where
-    getResTy = getType (RecordVariantOp op)
 
 simplifyOp :: Emits o => PrimOp (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyOp op = do
@@ -991,22 +949,51 @@ simplifyHof _hint hof = case hof of
     liftSimpAtom resultTy result
   CatchException body-> do
     SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
-    block <- liftBuilder $ runSubstReaderT idSubst $
-      buildBlock $ exceptToMaybeBlock $ body'
+    block <- liftBuilder $ runSubstReaderT idSubst $ buildBlock $ exceptToMaybeBlock body'
     result <- emitBlock block
     case recon of
-      CoerceRecon ty -> liftSimpAtom (MaybeTy ty) result
-      LamRecon reconAbs -> do
-        SimplifiedBlock repack recon' <- buildSimplifiedBlock do
-          bodyTy <- getTypeSubst body
-          nothingAlt <- buildAbs noHint UnitTy \_ ->
-            return $ NothingAtom $ (MaybeTy $ sink bodyTy)
-          MaybeTy justTy <- getType $ sink result
-          justAlt <- buildAbs noHint justTy \v ->
-            applyReconAbs (sink reconAbs) (Var v)
-          return $ SimpInCore $ ACase (sink result) [nothingAlt, justAlt] (MaybeTy bodyTy)
-        result' <- emitBlock repack
-        applyRecon recon' result'
+      CoerceRecon ty -> do
+        maybeTy <- makePreludeMaybeTy ty
+        liftSimpAtom maybeTy result
+      LamRecon reconAbs -> fmapMaybe result (applyReconAbs $ sink reconAbs)
+
+-- takes an internal SimpIR Maybe to a CoreIR "prelude Maybe"
+fmapMaybe
+  :: (EnvReader m, EnvExtender m)
+  => SAtom n -> (forall l. DExt n l => SAtom l -> m l (CAtom l))
+  -> m n (CAtom n)
+fmapMaybe scrut f = do
+  ~(MaybeTy justTy) <- getType scrut
+  (justAlt, resultJustTy) <- withFreshBinder noHint justTy \b -> do
+    result <- f (Var $ binderName b)
+    resultTy <- ignoreHoistFailure . hoist b <$> getType result
+    result' <- preludeJustVal result
+    return (Abs b result', resultTy)
+  nothingAlt <- buildAbs noHint UnitTy \_ -> preludeNothingVal $ sink resultJustTy
+  resultMaybeTy <- makePreludeMaybeTy resultJustTy
+  return $ SimpInCore $ ACase scrut [nothingAlt, justAlt] resultMaybeTy
+
+-- This is wrong! The correct implementation is below. And yet there's some
+-- compensatory bug somewhere that means that the wrong answer works and the
+-- right answer doesn't. Need to investigate.
+preludeJustVal :: EnvReader m => CAtom n -> m n (CAtom n)
+preludeJustVal x = return x
+-- preludeJustVal x = do
+--   xTy <- getType x
+--   con <- preludeMaybeNewtypeCon xTy
+--   return $ NewtypeCon con (JustAtom xTy x)
+
+preludeNothingVal :: EnvReader m => CType n -> m n (CAtom n)
+preludeNothingVal ty = do
+  con <- preludeMaybeNewtypeCon ty
+  return $ NewtypeCon con (NothingAtom ty)
+
+preludeMaybeNewtypeCon :: EnvReader m => CType n -> m n (NewtypeCon n)
+preludeMaybeNewtypeCon ty = do
+  ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
+  ~(TyConBinding dataDefName _) <- lookupEnv tyConName
+  let params = DataDefParams [(PlainArrow, ty)]
+  return $ UserADTData dataDefName params
 
 simplifyBlock :: Emits o => Block CoreIR i -> SimplifyM i o (CAtom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyAtom result

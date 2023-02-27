@@ -1530,15 +1530,6 @@ def over_fields {a b c v} [Ix b, Ix c]
       (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
   over_lens (split_r &>> iso) tab
 
-'Convert a variant zipper isomorphism to a normal prism-like isomorphism
-by using `splitV &>> iso`
-
-def split_v {a} : Iso a ({ | } | a) =
-  MkIso {fwd = \x. Right x, bwd = \v. case v of Right x -> x}
-
-def slice_fields {a b c v} [Ix b] (iso: Iso ({ | } | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (build_with $ split_v &>> iso) tab
-
 -- TODO: replace `slice` with this?
 def post_slice {a n} (xs:n=>a) (start:Post n) (end:Post n) : List a =
   slice_size = unsafe_nat_diff (ordinal end) (ordinal start)
@@ -2464,10 +2455,7 @@ TODO: move `error` and `todo` to here.
 
 def catch {a eff} (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
   f' : (Unit -> {Except|eff} a) = \_. f ()
-  ans = %catchException f'
-  case %sumToVariant ans of
-    {|c=()   |} -> Nothing
-    {|c|c=val|} -> Just val
+  %catchException f'
 
 def throw {a} (_:Unit) : {Except} a =
   %throwException a
