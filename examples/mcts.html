@@ -343,13 +343,11 @@ and traverses its branches by indexing.
   (init_array<span class="symbol">,</span> 0<span class="symbol">@</span>_)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Game and Node utilities</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Game</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) (move<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  {
-    possible_moves <span class="symbol">:</span> state <span class="symbol">-&gt;</span> (<span class="type-name">List</span> move) <span class="symbol">&amp;</span>
-    win_or_lose <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">&amp;</span>
-    update <span class="symbol">:</span> state <span class="symbol">-&gt;</span> move <span class="symbol">-&gt;</span> state <span class="symbol">&amp;</span>
-    game_over <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">&amp;</span>
-  }
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Game</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) (move<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span>
+  possible_moves <span class="symbol">:</span> state <span class="symbol">-&gt;</span> (<span class="type-name">List</span> move)
+  win_or_lose <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
+  update <span class="symbol">:</span> state <span class="symbol">-&gt;</span> move <span class="symbol">-&gt;</span> state
+  game_over <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NodeStats</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
   (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span> <span class="symbol">&amp;</span> state)
@@ -435,10 +433,10 @@ $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$</p>
     (_<span class="symbol">,</span> _<span class="symbol">,</span> base_level<span class="symbol">,</span> base_state) <span class="symbol">=</span> base_stats
 
     <span class="comment">-- prepare child nodes
-</span>    (<span class="type-name">AsList</span> n base_moves) <span class="symbol">=</span> (get_at <span class="iso-sugar">#possible</span>_moves game) base_state
+</span>    (<span class="type-name">AsList</span> n base_moves) <span class="symbol">=</span> game<span class="symbol">~</span>possible_moves base_state
     child_nodes <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
       new_move <span class="symbol">=</span> base_moves<span class="symbol">.</span>i
-      new_state <span class="symbol">=</span> (get_at <span class="iso-sugar">#update</span> game) base_state new_move
+      new_state <span class="symbol">=</span> game<span class="symbol">~</span>update base_state new_move
       new_stats <span class="symbol">=</span> (0<span class="symbol">,</span> 0<span class="symbol">,</span> base_level <span class="symbol">+</span> 1<span class="symbol">,</span> new_state)
       <span class="type-name">Branch</span> new_stats (<span class="type-name">Just</span> node) (to_list [])
 
@@ -462,16 +460,16 @@ return the simulation result.</p>
     <span class="comment">-- output is w.r.t. current player
 </span>    with_state curr_state <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
       curr_state&#39; <span class="symbol">=</span> get ref
-      <span class="keyword">if</span> (get_at <span class="iso-sugar">#game</span>_over game) curr_state&#39;
+      <span class="keyword">if</span> game<span class="symbol">~</span>game_over curr_state&#39;
         <span class="keyword">then</span>
           <span class="comment">-- #win_or_lose is w.r.t. the last player
-</span>          result <span class="symbol">=</span> (get_at <span class="iso-sugar">#win</span>_or_lose game) curr_state&#39;
+</span>          result <span class="symbol">=</span> game<span class="symbol">~</span>win_or_lose curr_state&#39;
           <span class="type-name">Done</span> <span class="symbol">$</span> xor (is_even i) result
         <span class="keyword">else</span>
-          (<span class="type-name">AsList</span> _ new_moves) <span class="symbol">=</span> (get_at <span class="iso-sugar">#possible</span>_moves game) curr_state&#39;
+          (<span class="type-name">AsList</span> _ new_moves) <span class="symbol">=</span> game<span class="symbol">~</span>possible_moves curr_state&#39;
           <span class="comment">-- rollout policy: uniform random
 </span>          new_move <span class="symbol">=</span> new_moves<span class="symbol">.</span>(rand_idx (hash key i))
-          ref <span class="symbol">:=</span> (get_at <span class="iso-sugar">#update</span> game) curr_state&#39; new_move
+          ref <span class="symbol">:=</span> game<span class="symbol">~</span>update curr_state&#39; new_move
           <span class="type-name">Continue</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Update the record of a node and its chain of ancestors,
@@ -514,7 +512,7 @@ based on the simulation result.</p>
     leaf <span class="symbol">=</span> from_just (fst tree)<span class="symbol">.</span>leaf_ix
 
     tree&#39; <span class="symbol">=</span> yield_state tree <span class="symbol">\</span>tree_ref<span class="symbol">.</span>
-      <span class="keyword">if</span> not <span class="symbol">$</span> (get_at <span class="iso-sugar">#game</span>_over game) <span class="symbol">$</span> node_state leaf <span class="keyword">then</span>
+      <span class="keyword">if</span> not <span class="symbol">$</span> game<span class="symbol">~</span>game_over <span class="symbol">$</span> node_state leaf <span class="keyword">then</span>
         mcts_expand game tree_ref leaf_ix
 
     leaf_min_player <span class="symbol">=</span> leaf <span class="symbol">|&gt;</span> node_level <span class="symbol">|&gt;</span> is_odd
@@ -534,13 +532,13 @@ based on the simulation result.</p>
 between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 wins.</p>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Count21State</span> <span class="symbol">=</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Count21Move</span> <span class="symbol">=</span> <span class="type-name">Nat</span>
-</div></div><div class="cell"><div class="code-block"><span class="type-name">Count21</span> <span class="symbol">:</span> <span class="type-name">Game</span> <span class="type-name">Count21State</span> <span class="type-name">Count21Move</span> <span class="symbol">=</span> {
-  possible_moves <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span><span class="symbol">.</span> to_list [1<span class="symbol">,</span>2]<span class="symbol">,</span>
-  win_or_lose <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">==</span> 21<span class="symbol">,</span>
-  update <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span> move<span class="symbol">.</span> sum <span class="symbol">+</span> move<span class="symbol">,</span>
-  game_over <span class="symbol">=</span> <span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">&gt;=</span> 21<span class="symbol">,</span>
-}
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Count21</span> <span class="symbol">:</span> <span class="type-name">Game</span> <span class="type-name">Count21State</span> <span class="type-name">Count21Move</span> <span class="symbol">=</span>
+   (<span class="type-name">Game</span><span class="symbol">~</span>new (<span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span><span class="symbol">.</span> to_list [1<span class="symbol">,</span>2])
+             (<span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">==</span> 21)
+             (<span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span> move<span class="symbol">.</span> sum <span class="symbol">+</span> move)
+             (<span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">&gt;=</span> 21))
 </div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h3>Approximate winning chances by sampling</h3>
 <p>In theory, multiples of three are bad positions for the current player,
 since the opponent has a winning strategy by always choosing

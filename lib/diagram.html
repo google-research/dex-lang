@@ -331,15 +331,12 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">green <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [i_to_w8   0<span class="symbol">,</span> i_to_w8 255<span class="symbol">,</span> i_to_w8   0]
 </div></div><div class="cell"><div class="code-block">blue  <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [i_to_w8   0<span class="symbol">,</span> i_to_w8   0<span class="symbol">,</span> i_to_w8 255]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="type-name">GeomStyle</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> {
-    fillColor   <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
-  <span class="symbol">&amp;</span> strokeColor <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
-  <span class="symbol">&amp;</span> strokeWidth <span class="symbol">:</span> <span class="type-name">Int</span> }
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">GeomStyle</span> <span class="symbol">=</span>
+ fillColor   <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
+ strokeColor <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
+ strokeWidth <span class="symbol">:</span> <span class="type-name">Int</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">default_geom_style <span class="symbol">:</span> <span class="type-name">GeomStyle</span> <span class="symbol">=</span> {
-    fillColor   <span class="symbol">=</span> <span class="type-name">Nothing</span>
-  <span class="symbol">,</span> strokeColor <span class="symbol">=</span> <span class="type-name">Just</span> black
-  <span class="symbol">,</span> strokeWidth <span class="symbol">=</span> 1 }
+</div></div><div class="cell"><div class="code-block">default_geom_style <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">~</span>new <span class="type-name">Nothing</span> (<span class="type-name">Just</span> black) 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: consider sharing attributes among a set of objects for efficiency
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="type-name">MkDiagram</span> (<span class="type-name">List</span> (<span class="type-name">GeomStyle</span> <span class="symbol">&amp;</span> <span class="type-name">Point</span> <span class="symbol">&amp;</span> <span class="type-name">Geom</span>))
@@ -399,11 +396,18 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     (attr       <span class="symbol">,</span> geoms) <span class="symbol">=</span> objs<span class="symbol">.</span>i
     (update attr<span class="symbol">,</span> geoms)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_fill_color   (c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">$</span> set_at <span class="iso-sugar">#fillColor</span>   (<span class="type-name">Just</span> c)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_color (c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">$</span> set_at <span class="iso-sugar">#strokeColor</span> (<span class="type-name">Just</span> c)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_width (w<span class="symbol">:</span><span class="type-name">Int</span>)       <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">$</span> set_at <span class="iso-sugar">#strokeWidth</span> w
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_stroke                 <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">$</span> set_at <span class="iso-sugar">#strokeColor</span> <span class="type-name">Nothing</span>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_fill                   <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">$</span> set_at <span class="iso-sugar">#fillColor</span>   <span class="type-name">Nothing</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these would be better if we had field-access-based ref projections, so we could
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- write `geom~fillColor := c` instead of unpack and packing explicitly.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_fill_color   (c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
+ <span class="type-name">GeomStyle</span><span class="symbol">~</span>new (<span class="type-name">Just</span> c) s<span class="symbol">~</span>strokeColor s<span class="symbol">~</span>strokeWidth
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_color (c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
+ <span class="type-name">GeomStyle</span><span class="symbol">~</span>new s<span class="symbol">~</span>fillColor (<span class="type-name">Just</span> c) s<span class="symbol">~</span>strokeWidth
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_width (w<span class="symbol">:</span><span class="type-name">Int</span>)      <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
+ <span class="type-name">GeomStyle</span><span class="symbol">~</span>new s<span class="symbol">~</span>fillColor s<span class="symbol">~</span>strokeColor w
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_stroke                 <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
+ <span class="type-name">GeomStyle</span><span class="symbol">~</span>new s<span class="symbol">~</span>fillColor <span class="type-name">Nothing</span> s<span class="symbol">~</span>strokeWidth
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_fill                   <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
+ <span class="type-name">GeomStyle</span><span class="symbol">~</span>new <span class="type-name">Nothing</span> s<span class="symbol">~</span>strokeColor s<span class="symbol">~</span>strokeWidth
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Serialization to SVG string</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).</p>
@@ -446,19 +450,17 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
 <span class="keyword">def</span> attr_string (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  (   (&quot;stroke&quot;       <span class="symbol">&lt;=&gt;</span> (optional_html_color <span class="symbol">$</span> get_at <span class="iso-sugar">#strokeColor</span> attr))
-  <span class="symbol">&lt;+&gt;</span> (&quot;fill&quot;         <span class="symbol">&lt;=&gt;</span> (optional_html_color <span class="symbol">$</span> get_at <span class="iso-sugar">#fillColor</span>   attr))
-  <span class="symbol">&lt;+&gt;</span> (&quot;stroke<span class="symbol">-</span>width&quot; <span class="symbol">&lt;=&gt;</span> (get_at <span class="iso-sugar">#strokeWidth</span> attr)))
+  (   (&quot;stroke&quot;       <span class="symbol">&lt;=&gt;</span> (optional_html_color attr<span class="symbol">~</span>strokeColor))
+  <span class="symbol">&lt;+&gt;</span> (&quot;fill&quot;         <span class="symbol">&lt;=&gt;</span> (optional_html_color attr<span class="symbol">~</span>fillColor))
+  <span class="symbol">&lt;+&gt;</span> (&quot;stroke<span class="symbol">-</span>width&quot; <span class="symbol">&lt;=&gt;</span> (attr<span class="symbol">~</span>strokeWidth)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
 <span class="keyword">def</span> render_geom (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) ((x<span class="symbol">,</span>y)<span class="symbol">:</span><span class="type-name">Point</span>) (geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
   <span class="comment">-- For things that are solid. SVG says they have fill=stroke.
-</span>  solidAttr <span class="symbol">=</span> set_at <span class="iso-sugar">#fillColor</span> (get_at <span class="iso-sugar">#strokeColor</span> attr) attr
-
+</span>  solidAttr <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">~</span>new attr<span class="symbol">~</span>strokeColor attr<span class="symbol">~</span>strokeColor attr<span class="symbol">~</span>strokeWidth
   groupEle <span class="symbol">=</span> <span class="symbol">\</span>attr<span class="symbol">.</span> tag_brackets_attr &quot;g&quot; (attr_string attr)
   <span class="keyword">case</span> geom <span class="keyword">of</span>
     <span class="type-name">PointGeom</span> <span class="symbol">-&gt;</span>
-      pointAttr <span class="symbol">=</span> set_at <span class="iso-sugar">#fillColor</span> (get_at <span class="iso-sugar">#strokeColor</span> attr) attr
       groupEle solidAttr <span class="symbol">$</span> self_closing_brackets <span class="symbol">$</span>
         (&quot;circle&quot; <span class="symbol">&lt;+&gt;</span>
          &quot;cx&quot; <span class="symbol">&lt;=&gt;</span> x <span class="symbol">&lt;.&gt;</span>

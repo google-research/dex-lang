@@ -19,7 +19,6 @@
 - [examples/ctc.dx](examples/ctc.html) [Connectionist Temporal Classification](https://www.cs.toronto.edu/~graves/icml_2006.pdf)
 - [examples/raytrace.dx](examples/raytrace.html) Multi-step Ray Tracer
 - [examples/particle-filter.dx](examples/particle-filter.html) Particle Filter
-- [examples/isomorphisms.dx](examples/isomorphisms.html) Isomorphisms in Dex
 - [examples/fluidsim.dx](examples/fluidsim.html) Fluid Simulation
 - [examples/sgd.dx](examples/sgd.html) Stochastic Gradient Descent with Momentum
 - [examples/psd.dx](examples/psd.html) PSD Solver Based on Cholesky Decomposition

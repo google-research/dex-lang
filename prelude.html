@@ -1715,102 +1715,18 @@ It's a kind of <code>scan</code>.</p>
   (list<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">List</span> a)) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">Accum</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
     list <span class="symbol">+=</span> <span class="type-name">AsList</span> _ [x]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>Isomorphisms</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Iso</span> a b <span class="symbol">=</span> <span class="type-name">MkIso</span> { fwd<span class="symbol">:</span> a <span class="symbol">-&gt;</span> b <span class="symbol">&amp;</span> bwd<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a }
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> app_iso {a b} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a b) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span>
-  (<span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}) <span class="symbol">=</span> iso
-  fwd x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> flip_iso {a b} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a b) <span class="symbol">:</span> <span class="type-name">Iso</span> b a <span class="symbol">=</span>
-  (<span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}) <span class="symbol">=</span> iso
-  <span class="type-name">MkIso</span> {fwd<span class="symbol">=</span>bwd<span class="symbol">,</span> bwd<span class="symbol">=</span>fwd}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rev_iso {a b} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a b) (x<span class="command">:b</span>) <span class="symbol">:</span> a <span class="symbol">=</span> app_iso (flip_iso iso) x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> id_iso {a} <span class="symbol">:</span> <span class="type-name">Iso</span> a a <span class="symbol">=</span> <span class="type-name">MkIso</span> {fwd<span class="symbol">=</span>id<span class="symbol">,</span> bwd<span class="symbol">=</span>id}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&amp;&gt;&gt;</span>) {a b c} (iso1<span class="symbol">:</span> <span class="type-name">Iso</span> a b) (iso2<span class="symbol">:</span> <span class="type-name">Iso</span> b c) <span class="symbol">:</span> <span class="type-name">Iso</span> a c <span class="symbol">=</span>
-  (<span class="type-name">MkIso</span> {fwd<span class="symbol">=</span>fwd1<span class="symbol">,</span> bwd<span class="symbol">=</span>bwd1}) <span class="symbol">=</span> iso1
-  (<span class="type-name">MkIso</span> {fwd<span class="symbol">=</span>fwd2<span class="symbol">,</span> bwd<span class="symbol">=</span>bwd2}) <span class="symbol">=</span> iso2
-  <span class="type-name">MkIso</span> {fwd<span class="symbol">=</span>(fwd1 <span class="symbol">&gt;&gt;&gt;</span> fwd2)<span class="symbol">,</span> bwd<span class="symbol">=</span>(bwd1 <span class="symbol">&lt;&lt;&lt;</span> bwd2)}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;&lt;&amp;</span>) {a b c} (iso2<span class="symbol">:</span> <span class="type-name">Iso</span> b c) (iso1<span class="symbol">:</span> <span class="type-name">Iso</span> a b) <span class="symbol">:</span> <span class="type-name">Iso</span> a c <span class="symbol">=</span> iso1 <span class="symbol">&amp;&gt;&gt;</span> iso2
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Lens-like accessors</h3>
-<p>note: <code>#foo is an Iso {foo: a &amp; ...b} (a &amp; {&amp;...b}))</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_at  {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">&amp;</span> c)) <span class="symbol">:</span> a <span class="symbol">-&gt;</span> b <span class="symbol">=</span> fst <span class="symbol">&lt;&lt;&lt;</span> app_iso iso
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pop_at  {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">&amp;</span> c)) <span class="symbol">:</span> a <span class="symbol">-&gt;</span> c <span class="symbol">=</span> snd <span class="symbol">&lt;&lt;&lt;</span> app_iso iso
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> push_at {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">&amp;</span> c)) (x<span class="command">:b</span>) (r<span class="command">:c</span>) <span class="symbol">:</span> a <span class="symbol">=</span> rev_iso iso (x<span class="symbol">,</span> r)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_at  {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">&amp;</span> c)) (x<span class="command">:b</span>) (r<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
-  push_at iso x <span class="symbol">$</span> pop_at iso r
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Prism-like accessors</h3>
-<p>note: <code>#?foo is an Iso {foo: a | ...b} (a | {|...b}))</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> match_with {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">|</span> c)) (x<span class="symbol">:</span> a) <span class="symbol">:</span> <span class="type-name">Maybe</span> b <span class="symbol">=</span>
-  <span class="keyword">case</span> app_iso iso x <span class="keyword">of</span>
-    <span class="type-name">Left</span> x <span class="symbol">-&gt;</span> <span class="type-name">Just</span> x
-    <span class="type-name">Right</span> _ <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> build_with {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">|</span> c)) (x<span class="symbol">:</span> b) <span class="symbol">:</span> a <span class="symbol">=</span> rev_iso iso <span class="symbol">$</span> <span class="type-name">Left</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_pair_iso {a b} <span class="symbol">:</span> <span class="type-name">Iso</span> (a <span class="symbol">&amp;</span> b) (b <span class="symbol">&amp;</span> a) <span class="symbol">=</span>
-  <span class="type-name">MkIso</span> {fwd <span class="symbol">=</span> <span class="symbol">\</span>(a<span class="symbol">,</span> b)<span class="symbol">.</span> (b<span class="symbol">,</span> a)<span class="symbol">,</span> bwd <span class="symbol">=</span> <span class="symbol">\</span>(b<span class="symbol">,</span> a)<span class="symbol">.</span> (a<span class="symbol">,</span> b)}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Complement lens</h3>
-<p>Complement the focus of a lens-like isomorphism</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> except_lens {a b c} (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">&amp;</span> c)) <span class="symbol">:</span> <span class="type-name">Iso</span> a (c <span class="symbol">&amp;</span> b) <span class="symbol">=</span> iso <span class="symbol">&amp;&gt;&gt;</span> swap_pair_iso
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_either_iso {a b} <span class="symbol">:</span> <span class="type-name">Iso</span> (a <span class="symbol">|</span> b) (b <span class="symbol">|</span> a) <span class="symbol">=</span>
-  fwd <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
-    <span class="type-name">Left</span> l <span class="symbol">-&gt;</span> <span class="type-name">Right</span> l
-    <span class="type-name">Right</span> r <span class="symbol">-&gt;</span> <span class="type-name">Left</span> r
-  bwd <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
-    <span class="type-name">Left</span> r <span class="symbol">-&gt;</span> <span class="type-name">Right</span> r
-    <span class="type-name">Right</span> l <span class="symbol">-&gt;</span> <span class="type-name">Left</span> l
-  <span class="type-name">MkIso</span> {fwd<span class="symbol">,</span> bwd}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Complement prism</h3>
-<p>Complement the focus of a prism-like isomorphism</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> except_prism {a b c} <span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">|</span> c) <span class="symbol">-&gt;</span> <span class="type-name">Iso</span> a (c <span class="symbol">|</span> b) <span class="symbol">=</span> <span class="symbol">\</span>iso<span class="symbol">.</span> iso <span class="symbol">&amp;&gt;&gt;</span> swap_either_iso
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- Use a lens-like iso to split a 1d table into a 2d table
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> over_lens {a b c v} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> c] (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (b <span class="symbol">&amp;</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> (b<span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>v) <span class="symbol">=</span>
-  <span class="keyword">for</span> i j<span class="symbol">.</span> tab<span class="symbol">.</span>(rev_iso iso (i<span class="symbol">,</span> j))
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Zipper</h3>
-<p>Zipper isomorphisms to easily specify many record/variant fields:</p>
-<pre><code>#&amp;foo is an Iso ({&amp;...l} &amp; {foo:a &amp; ...r}) ({foo:a &amp; ...l} &amp; {&amp;...r})
-#|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
-</code></pre>
-</div></div><div class="cell"><div class="prose-block"><p>Convert a record zipper isomorphism to a normal lens-like isomorphism
-by using <code>splitR &amp;&gt;&gt; iso</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split_r {a} <span class="symbol">:</span> <span class="type-name">Iso</span> a ({<span class="symbol">&amp;</span>} <span class="symbol">&amp;</span> a) <span class="symbol">=</span> <span class="type-name">MkIso</span> {fwd <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> ({}<span class="symbol">,</span> x)<span class="symbol">,</span> bwd <span class="symbol">=</span> <span class="symbol">\</span>({}<span class="symbol">,</span> x)<span class="symbol">.</span> x}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> over_fields {a b c v} [<span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> c]
-      (iso<span class="symbol">:</span> <span class="type-name">Iso</span> ({<span class="symbol">&amp;</span>} <span class="symbol">&amp;</span> a) (b <span class="symbol">&amp;</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
-  over_lens (split_r <span class="symbol">&amp;&gt;&gt;</span> iso) tab
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Convert a variant zipper isomorphism to a normal prism-like isomorphism
-by using <code>splitV &amp;&gt;&gt; iso</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split_v {a} <span class="symbol">:</span> <span class="type-name">Iso</span> a ({ <span class="symbol">|</span> } <span class="symbol">|</span> a) <span class="symbol">=</span>
-  <span class="type-name">MkIso</span> {fwd <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">Right</span> x<span class="symbol">,</span> bwd <span class="symbol">=</span> <span class="symbol">\</span>v<span class="symbol">.</span> <span class="keyword">case</span> v <span class="keyword">of</span> <span class="type-name">Right</span> x <span class="symbol">-&gt;</span> x}
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> slice_fields {a b c v} [<span class="type-name">Ix</span> b] (iso<span class="symbol">:</span> <span class="type-name">Iso</span> ({ <span class="symbol">|</span> } <span class="symbol">|</span> a) (b <span class="symbol">|</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
-  reindex (build_with <span class="symbol">$</span> split_v <span class="symbol">&amp;&gt;&gt;</span> iso) tab
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: replace `slice` with this?
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> post_slice {a n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Post</span> n) (end<span class="symbol">:</span><span class="type-name">Post</span> n) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
   slice_size <span class="symbol">=</span> unsafe_nat_diff (ordinal end) (ordinal start)
   to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> slice_size)<span class="symbol">.</span>
     xs<span class="symbol">.</span>(unsafe_from_ordinal n (ordinal i <span class="symbol">+</span> ordinal start))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>Dynamic buffer</h2>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: would be nice to be able to use records here
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DynBuffer</span> a <span class="symbol">=</span>
-  <span class="type-name">MkDynBuffer</span> {
-      size    <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Nat</span>
-    <span class="symbol">&amp;</span> maxSize <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Nat</span>
-    <span class="symbol">&amp;</span> buffer  <span class="symbol">:</span> <span class="type-name">Ptr</span> (<span class="type-name">Ptr</span> a) }
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- &#39;## Dynamic buffer
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">DynBuffer</span> a <span class="symbol">=</span>
+  size    <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Nat</span>
+  max_size <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Nat</span>
+  buffer  <span class="symbol">:</span> <span class="type-name">Ptr</span> (<span class="type-name">Ptr</span> a)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> with_dynamic_buffer {a b} [<span class="type-name">Storable</span> a]
       (action<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} b) <span class="symbol">:</span> {<span class="type-name">IO</span>} b <span class="symbol">=</span>
@@ -1821,27 +1737,24 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
   store maxSizePtr initMaxSize
   bufferPtr <span class="symbol">&lt;-</span> with_alloc 1
   store bufferPtr <span class="symbol">$</span> malloc initMaxSize
-  result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">MkDynBuffer</span> {
-      size    <span class="symbol">=</span> sizePtr
-    <span class="symbol">,</span> maxSize <span class="symbol">=</span> maxSizePtr
-    <span class="symbol">,</span> buffer  <span class="symbol">=</span> bufferPtr }
+  result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">DynBuffer</span><span class="symbol">~</span>new sizePtr maxSizePtr bufferPtr
   free <span class="symbol">$</span> load bufferPtr
   result
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maybe_increase_buffer_size {a} [<span class="type-name">Storable</span> a]
-      ((<span class="type-name">MkDynBuffer</span> db)<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (sizeDelta<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
-  size    <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#size</span>    db
-  maxSize <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#maxSize</span> db
-  bufPtr  <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#buffer</span>  db
+      (db <span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (sizeDelta<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  size     <span class="symbol">=</span> load db<span class="symbol">~</span>size
+  max_size <span class="symbol">=</span> load db<span class="symbol">~</span>max_size
+  bufPtr   <span class="symbol">=</span> load db<span class="symbol">~</span>buffer
   newSize <span class="symbol">=</span> sizeDelta <span class="symbol">+</span> size
-  <span class="keyword">if</span> newSize <span class="symbol">&gt;</span> maxSize <span class="keyword">then</span>
+  <span class="keyword">if</span> newSize <span class="symbol">&gt;</span> max_size <span class="keyword">then</span>
     <span class="comment">-- TODO: maybe this should use integer arithmetic?
 </span>    newMaxSize <span class="symbol">=</span> f_to_n <span class="symbol">$</span> pow 2<span class="symbol">.</span>0 (ceil <span class="symbol">$</span> log2 <span class="symbol">$</span> n_to_f newSize)
     newBufPtr <span class="symbol">=</span> malloc newMaxSize
     memcpy newBufPtr bufPtr size
     free bufPtr
-    store (get_at <span class="iso-sugar">#maxSize</span> db) newMaxSize
-    store (get_at <span class="iso-sugar">#buffer</span>  db) newBufPtr
+    store db<span class="symbol">~</span>max_size newMaxSize
+    store db<span class="symbol">~</span>buffer   newBufPtr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> add_at_nat_ptr (ptr<span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Nat</span>) (n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   store ptr (load ptr <span class="symbol">+</span> n)
@@ -1850,17 +1763,15 @@ by using <code>splitV &amp;&gt;&gt; iso</code></p>
       (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (new<span class="symbol">:</span><span class="type-name">List</span> a) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   (<span class="type-name">AsList</span> n xs) <span class="symbol">=</span> new
   maybe_increase_buffer_size buf n
-  (<span class="type-name">MkDynBuffer</span> db) <span class="symbol">=</span> buf
-  bufPtr <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#buffer</span> db
-  size   <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#size</span> db
+  bufPtr <span class="symbol">=</span> load buf<span class="symbol">~</span>buffer
+  size   <span class="symbol">=</span> load buf<span class="symbol">~</span>size
   store_table (bufPtr <span class="symbol">+&gt;&gt;</span> size) xs
-  add_at_nat_ptr (get_at <span class="iso-sugar">#size</span> db) n
+  add_at_nat_ptr buf<span class="symbol">~</span>size n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> load_dynamic_buffer {a} [<span class="type-name">Storable</span> a]
       (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) <span class="symbol">:</span> {<span class="type-name">IO</span>} (<span class="type-name">List</span> a) <span class="symbol">=</span>
-  (<span class="type-name">MkDynBuffer</span> db) <span class="symbol">=</span> buf
-  bufPtr <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#buffer</span> db
-  size   <span class="symbol">=</span> load <span class="symbol">$</span> get_at <span class="iso-sugar">#size</span> db
+  bufPtr <span class="symbol">=</span> load buf<span class="symbol">~</span>buffer
+  size   <span class="symbol">=</span> load buf<span class="symbol">~</span>size
   <span class="type-name">AsList</span> size <span class="symbol">$</span> table_from_ptr _ bufPtr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> push_dynamic_buffer {a} [<span class="type-name">Storable</span> a]
@@ -2688,10 +2599,7 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
 <p>TODO: move <code>error</code> and <code>todo</code> to here.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> catch {a eff} (f<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">Except</span><span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Maybe</span> a <span class="symbol">=</span>
   f&#39; <span class="symbol">:</span> (<span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">Except</span><span class="symbol">|</span>eff} a) <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> f ()
-  ans <span class="symbol">=</span> %catchException f&#39;
-  <span class="keyword">case</span> %sumToVariant ans <span class="keyword">of</span>
-    {<span class="symbol">|</span>c<span class="symbol">=</span>()   <span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-    {<span class="symbol">|</span>c<span class="symbol">|</span>c<span class="symbol">=</span>val<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">Just</span> val
+  %catchException f&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> throw {a} (_<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="type-name">Except</span>} a <span class="symbol">=</span>
   %throwException a

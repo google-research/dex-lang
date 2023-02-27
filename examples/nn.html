@@ -313,29 +313,17 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu (input <span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   select (input <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) input 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Layer</span> inp<span class="symbol">:</span><span class="type-name">Type</span> out<span class="symbol">:</span><span class="type-name">Type</span> params<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
-  <span class="type-name">AsLayer</span> {forward<span class="symbol">:</span>(params <span class="symbol">-&gt;</span> inp <span class="symbol">-&gt;</span> out) <span class="symbol">&amp;</span> init<span class="symbol">:</span>(<span class="type-name">Key</span> <span class="symbol">-&gt;</span> params)}
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Layer</span> inp<span class="symbol">:</span><span class="type-name">Type</span> out<span class="symbol">:</span><span class="type-name">Type</span> params<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+  forward<span class="symbol">:</span>(params <span class="symbol">-&gt;</span> inp <span class="symbol">-&gt;</span> out)
+  init<span class="symbol">:</span>(<span class="type-name">Key</span> <span class="symbol">-&gt;</span> params)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> forward {i o p} (l<span class="symbol">:</span><span class="type-name">Layer</span> i o p) (p <span class="symbol">:</span> p) (x <span class="symbol">:</span> i) <span class="symbol">:</span> o <span class="symbol">=</span>
-  (<span class="type-name">AsLayer</span> l&#39; ) <span class="symbol">=</span> l
-  (get_at <span class="iso-sugar">#forward</span> l&#39;) p x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> init {i o p} (l<span class="symbol">:</span><span class="type-name">Layer</span> i o p) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> p  <span class="symbol">=</span>
-  (<span class="type-name">AsLayer</span> l&#39;) <span class="symbol">=</span> l
-  (get_at <span class="iso-sugar">#init</span> l&#39;) k
-</div></div><div class="cell"><div class="code-block">
-
 </div></div><div class="cell"><div class="prose-block"><h2>Layers</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Dense layer</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">DenseParams</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
    ((a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">&amp;</span> (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dense (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="symbol">:</span> <span class="type-name">Layer</span> (a<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (<span class="type-name">DenseParams</span> a b) <span class="symbol">=</span>
-  <span class="type-name">AsLayer</span> {
-    forward <span class="symbol">=</span> (<span class="symbol">\</span> ((weight<span class="symbol">,</span> bias)) x <span class="symbol">.</span>
-               <span class="keyword">for</span> j<span class="symbol">.</span> (bias<span class="symbol">.</span>j <span class="symbol">+</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> weight<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> x<span class="symbol">.</span>i))<span class="symbol">,</span>
-    init <span class="symbol">=</span> arb
-  }
+  <span class="type-name">Layer</span><span class="symbol">~</span>new ((<span class="symbol">\</span> ((weight<span class="symbol">,</span> bias)) x <span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> (bias<span class="symbol">.</span>j <span class="symbol">+</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> weight<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> x<span class="symbol">.</span>i))) arb
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>CNN layer</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">CNNParams</span> (inc<span class="symbol">:</span><span class="type-name">Type</span>) (outc<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> inc<span class="symbol">,</span> <span class="type-name">Ix</span> outc] (kw<span class="symbol">:</span><span class="type-name">Nat</span>) (kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
@@ -361,10 +349,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     <span class="type-name">Layer</span> (inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
           (outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
           (<span class="type-name">CNNParams</span> inc outc kw kh) <span class="symbol">=</span>
-  <span class="type-name">AsLayer</span> {
-    forward <span class="symbol">=</span> (<span class="symbol">\</span> (weight<span class="symbol">,</span> bias) x<span class="symbol">.</span> <span class="keyword">for</span> o i j <span class="symbol">.</span> (conv2d x weight)<span class="symbol">.</span>o<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> bias<span class="symbol">.</span>o)<span class="symbol">,</span>
-    init <span class="symbol">=</span> arb
-  }
+  <span class="type-name">Layer</span><span class="symbol">~</span>new (<span class="symbol">\</span> (weight<span class="symbol">,</span> bias) x<span class="symbol">.</span> <span class="keyword">for</span> o i j <span class="symbol">.</span> (conv2d x weight)<span class="symbol">.</span>o<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> bias<span class="symbol">.</span>o) arb
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Pooling</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split {m n o v} [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> o] (x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
@@ -394,15 +379,14 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simple (h1<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> h1] <span class="symbol">=</span>
   ndense1 <span class="symbol">=</span> dense (<span class="type-name">Fin</span> 2) h1
   ndense2 <span class="symbol">=</span> dense h1 (<span class="type-name">Fin</span> 2)
-  <span class="type-name">AsLayer</span> {
-    forward <span class="symbol">=</span> (<span class="symbol">\</span> (dense1<span class="symbol">,</span> dense2) x<span class="symbol">.</span>
-         x1&#39; <span class="symbol">=</span> forward ndense1 dense1 x
-         x1 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i
-         logsoftmax <span class="symbol">$</span> forward ndense2 dense2 x1)<span class="symbol">,</span>
-    init <span class="symbol">=</span> (<span class="symbol">\</span>key<span class="symbol">.</span>
-         [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key key
-         (init ndense1 k1<span class="symbol">,</span> init ndense2 k2))
-  }
+  (<span class="type-name">Layer</span><span class="symbol">~</span>new
+     (<span class="symbol">\</span> (dense1<span class="symbol">,</span> dense2) x<span class="symbol">.</span>
+          x1&#39; <span class="symbol">=</span> ndense1<span class="symbol">~</span>forward dense1 x
+          x1 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i
+          logsoftmax <span class="symbol">$</span> ndense2<span class="symbol">~</span>forward dense2 x1)
+     (<span class="symbol">\</span>key<span class="symbol">.</span>
+        [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key key
+        (ndense1<span class="symbol">~</span>init k1<span class="symbol">,</span> ndense2<span class="symbol">~</span>init k2)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> simple
 </div><div class="result-block">((h1:Type)
@@ -424,12 +408,12 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       <span class="symbol">:</span> (epochs <span class="symbol">=&gt;</span> p <span class="symbol">&amp;</span> epochs <span class="symbol">=&gt;</span> <span class="type-name">Float</span> ) <span class="symbol">=</span>
   xs <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> a <span class="symbol">=</span> split x
   ys <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> b <span class="symbol">=</span> split y
-  unzip <span class="symbol">$</span> with_state (init model <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
+  unzip <span class="symbol">$</span> with_state (model<span class="symbol">~</span>init <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
      <span class="keyword">for</span> _ <span class="symbol">:</span> epochs<span class="symbol">.</span>
        loss <span class="symbol">=</span> sum <span class="symbol">$</span> <span class="keyword">for</span> b <span class="symbol">:</span> minibatches<span class="symbol">.</span>
               (loss<span class="symbol">,</span> gradfn) <span class="symbol">=</span>  vjp (<span class="symbol">\</span> params<span class="symbol">.</span>
                             <span class="symbol">-</span>sum <span class="keyword">for</span> j<span class="symbol">.</span>
-                                       result <span class="symbol">=</span> forward model params xs<span class="symbol">.</span>b<span class="symbol">.</span>j
+                                       result <span class="symbol">=</span> model<span class="symbol">~</span>forward params xs<span class="symbol">.</span>b<span class="symbol">.</span>j
                                        result<span class="symbol">.</span>(ys<span class="symbol">.</span>b<span class="symbol">.</span>j)) (get params)
               gparams <span class="symbol">=</span> gradfn 1<span class="symbol">.</span>0
               params <span class="symbol">:=</span> (get params) <span class="symbol">-</span> scale_vec (0<span class="symbol">.</span>05 <span class="symbol">/</span> (i_to_f 100)) gparams
@@ -442,7 +426,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">span <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 10) (<span class="symbol">-</span>1<span class="symbol">.</span>0) (1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">tests <span class="symbol">=</span> <span class="keyword">for</span> h <span class="symbol">:</span> (<span class="type-name">Fin</span> 50)<span class="symbol">.</span> <span class="keyword">for</span> i <span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span>
-    r <span class="symbol">=</span> forward simple_model all_params<span class="symbol">.</span>((ordinal h <span class="symbol">*</span> 10)<span class="symbol">@</span>_) [span<span class="symbol">.</span>i<span class="symbol">,</span> span<span class="symbol">.</span>j]
+    r <span class="symbol">=</span> simple_model<span class="symbol">~</span>forward all_params<span class="symbol">.</span>((ordinal h <span class="symbol">*</span> 10)<span class="symbol">@</span>_) [span<span class="symbol">.</span>i<span class="symbol">,</span> span<span class="symbol">.</span>j]
     [exp r<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> exp r<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> 0<span class="symbol">.</span>0]
 </div></div><div class="cell"><div class="code-block">
 
@@ -460,22 +444,21 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="type-name">Pooled</span> <span class="symbol">=</span> (h2 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 7 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 7)
   ndense1 <span class="symbol">=</span> dense <span class="type-name">Pooled</span> h3
   ndense2 <span class="symbol">=</span> dense h3 <span class="type-name">Class</span>
-  <span class="type-name">AsLayer</span> {
-    forward <span class="symbol">=</span> (<span class="symbol">\</span> (cnn1<span class="symbol">,</span> cnn2<span class="symbol">,</span> dense1<span class="symbol">,</span> dense2) inp<span class="symbol">.</span>
+  (<span class="type-name">Layer</span><span class="symbol">~</span>new
+    (<span class="symbol">\</span> (cnn1<span class="symbol">,</span> cnn2<span class="symbol">,</span> dense1<span class="symbol">,</span> dense2) inp<span class="symbol">.</span>
          x<span class="symbol">:</span><span class="type-name">Image</span> <span class="symbol">=</span> inp
-         x1&#39; <span class="symbol">=</span> forward ncnn1 cnn1 x
+         x1&#39; <span class="symbol">=</span> ncnn1<span class="symbol">~</span>forward cnn1 x
          x1 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
-         x2&#39; <span class="symbol">=</span> forward ncnn2 cnn2 x1
+         x2&#39; <span class="symbol">=</span> ncnn2<span class="symbol">~</span>forward cnn2 x1
          x2 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x2&#39;<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
          x3 <span class="symbol">:</span> (h2 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> c<span class="symbol">.</span> meanpool (<span class="type-name">Fin</span> 4) (<span class="type-name">Fin</span> 4) x2<span class="symbol">.</span>c
-         x4&#39; <span class="symbol">=</span> forward ndense1 dense1 <span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> x3<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+         x4&#39; <span class="symbol">=</span> ndense1<span class="symbol">~</span>forward dense1 <span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> x3<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
          x4 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x4&#39;<span class="symbol">.</span>i
-         logsoftmax <span class="symbol">$</span> forward ndense2 dense2 x4)<span class="symbol">,</span>
-    init <span class="symbol">=</span> (<span class="symbol">\</span>key<span class="symbol">.</span>
+         logsoftmax <span class="symbol">$</span> ndense2<span class="symbol">~</span>forward dense2 x4)
+    (<span class="symbol">\</span>key<span class="symbol">.</span>
          [k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3<span class="symbol">,</span> k4] <span class="symbol">=</span> split_key key
-         (init ncnn1 k1<span class="symbol">,</span> init ncnn2 k2<span class="symbol">,</span>
-         init ndense1 k3<span class="symbol">,</span> init ndense2 k4))
-  }
+         (ncnn1<span class="symbol">~</span>init k1<span class="symbol">,</span> ncnn2<span class="symbol">~</span>init k2<span class="symbol">,</span>
+         ndense1<span class="symbol">~</span>init k3<span class="symbol">,</span> ndense2<span class="symbol">~</span>init k4)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> lenet
 </div><div class="result-block">((h1:Type)
