@@ -206,7 +206,7 @@ example-names := \
   mandelbrot pi sierpinski rejection-sampler \
   regression brownian_motion particle-swarm-optimizer \
   ode-integrator mcmc ctc raytrace particle-filter \
-  isomorphisms fluidsim \
+  fluidsim \
   sgd psd kernelregression nn \
   quaternions manifold-gradients schrodinger tutorial \
   latex linear-maps dither mcts md

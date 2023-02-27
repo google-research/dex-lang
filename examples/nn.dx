@@ -8,17 +8,9 @@ import png
 def relu (input : Float) : Float =
   select (input > 0.0) input 0.0
 
-data Layer inp:Type out:Type params:Type =
-  AsLayer {forward:(params -> inp -> out) & init:(Key -> params)}
-
-def forward {i o p} (l:Layer i o p) (p : p) (x : i) : o =
-  (AsLayer l' ) = l
-  (get_at #forward l') p x
-
-def init {i o p} (l:Layer i o p) (k:Key) : p  =
-  (AsLayer l') = l
-  (get_at #init l') k
-
+struct Layer inp:Type out:Type params:Type =
+  forward:(params -> inp -> out)
+  init:(Key -> params)
 
 '## Layers
 
@@ -28,11 +20,7 @@ def DenseParams (a:Type) (b:Type) [Ix a, Ix b] : Type =
    ((a=>b=>Float) & (b=>Float))
 
 def dense (a:Type) (b:Type) [Ix a, Ix b] : Layer (a=>Float) (b=>Float) (DenseParams a b) =
-  AsLayer {
-    forward = (\ ((weight, bias)) x .
-               for j. (bias.j + sum for i. weight.i.j * x.i)),
-    init = arb
-  }
+  Layer~new ((\ ((weight, bias)) x . for j. (bias.j + sum for i. weight.i.j * x.i))) arb
 
 'CNN layer
 
@@ -59,10 +47,7 @@ def cnn {h w} (inc:Type) (outc:Type) [Ix inc, Ix outc] (kw:Nat) (kh:Nat) :
     Layer (inc=>(Fin h)=>(Fin w)=>Float)
           (outc=>(Fin h)=>(Fin w)=>Float)
           (CNNParams inc outc kw kh) =
-  AsLayer {
-    forward = (\ (weight, bias) x. for o i j . (conv2d x weight).o.i.j + bias.o),
-    init = arb
-  }
+  Layer~new (\ (weight, bias) x. for o i j . (conv2d x weight).o.i.j + bias.o) arb
 
 'Pooling
 
@@ -95,15 +80,14 @@ xs = for i. [x1.i, x2.i]
 def simple (h1:Type) [Ix h1] =
   ndense1 = dense (Fin 2) h1
   ndense2 = dense h1 (Fin 2)
-  AsLayer {
-    forward = (\ (dense1, dense2) x.
-         x1' = forward ndense1 dense1 x
-         x1 = for i. relu x1'.i
-         logsoftmax $ forward ndense2 dense2 x1),
-    init = (\key.
-         [k1, k2] = split_key key
-         (init ndense1 k1, init ndense2 k2))
-  }
+  (Layer~new
+     (\ (dense1, dense2) x.
+          x1' = ndense1~forward dense1 x
+          x1 = for i. relu x1'.i
+          logsoftmax $ ndense2~forward dense2 x1)
+     (\key.
+        [k1, k2] = split_key key
+        (ndense1~init k1, ndense2~init k2)))
 
 :t simple
 > ((h1:Type)
@@ -127,12 +111,12 @@ def trainClass {a b p batch} [VSpace p, Ix b, Ix batch]
       : (epochs => p & epochs => Float ) =
   xs : minibatches => minibatch => a = split x
   ys : minibatches => minibatch => b = split y
-  unzip $ with_state (init model $ new_key 0) $ \params .
+  unzip $ with_state (model~init $ new_key 0) $ \params .
      for _ : epochs.
        loss = sum $ for b : minibatches.
               (loss, gradfn) =  vjp (\ params.
                             -sum for j.
-                                       result = forward model params xs.b.j
+                                       result = model~forward params xs.b.j
                                        result.(ys.b.j)) (get params)
               gparams = gradfn 1.0
               params := (get params) - scale_vec (0.05 / (i_to_f 100)) gparams
@@ -145,7 +129,7 @@ simple_model = simple (Fin 10)
 
 span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
-    r = forward simple_model all_params.((ordinal h * 10)@_) [span.i, span.j]
+    r = simple_model~forward all_params.((ordinal h * 10)@_) [span.i, span.j]
     [exp r.(1@_), exp r.(0@_), 0.0]
 
 
@@ -165,22 +149,21 @@ def lenet (h1:Type) (h2:Type) (h3:Type) [Ix h1, Ix h2, Ix h3] =
   Pooled = (h2 & Fin 7 & Fin 7)
   ndense1 = dense Pooled h3
   ndense2 = dense h3 Class
-  AsLayer {
-    forward = (\ (cnn1, cnn2, dense1, dense2) inp.
+  (Layer~new
+    (\ (cnn1, cnn2, dense1, dense2) inp.
          x:Image = inp
-         x1' = forward ncnn1 cnn1 x
+         x1' = ncnn1~forward cnn1 x
          x1 = for i j k. relu x1'.i.j.k
-         x2' = forward ncnn2 cnn2 x1
+         x2' = ncnn2~forward cnn2 x1
          x2 = for i j k. relu x2'.i.j.k
          x3 : (h2 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
-         x4' = forward ndense1 dense1 for (i,j,k). x3.i.j.k
+         x4' = ndense1~forward dense1 for (i,j,k). x3.i.j.k
          x4 = for i. relu x4'.i
-         logsoftmax $ forward ndense2 dense2 x4),
-    init = (\key.
+         logsoftmax $ ndense2~forward dense2 x4)
+    (\key.
          [k1, k2, k3, k4] = split_key key
-         (init ncnn1 k1, init ncnn2 k2,
-         init ndense1 k3, init ndense2 k4))
-  }
+         (ncnn1~init k1, ncnn2~init k2,
+         ndense1~init k3, ndense2~init k4)))
 
 :t lenet
 > ((h1:Type)

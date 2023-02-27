@@ -25,15 +25,12 @@ red   : HtmlColor = [i_to_w8 255, i_to_w8   0, i_to_w8   0]
 green : HtmlColor = [i_to_w8   0, i_to_w8 255, i_to_w8   0]
 blue  : HtmlColor = [i_to_w8   0, i_to_w8   0, i_to_w8 255]
 
-GeomStyle : Type = {
-    fillColor   : Maybe HtmlColor
-  & strokeColor : Maybe HtmlColor
-  & strokeWidth : Int }
+struct GeomStyle =
+ fillColor   : Maybe HtmlColor
+ strokeColor : Maybe HtmlColor
+ strokeWidth : Int
 
-default_geom_style : GeomStyle = {
-    fillColor   = Nothing
-  , strokeColor = Just black
-  , strokeWidth = 1 }
+default_geom_style = GeomStyle~new Nothing (Just black) 1
 
 -- TODO: consider sharing attributes among a set of objects for efficiency
 data Diagram = MkDiagram (List (GeomStyle & Point & Geom))
@@ -93,11 +90,18 @@ def update_geom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
     (attr       , geoms) = objs.i
     (update attr, geoms)
 
-def set_fill_color   (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #fillColor   (Just c)
-def set_stroke_color (c:HtmlColor) : Diagram -> Diagram = update_geom $ set_at #strokeColor (Just c)
-def set_stroke_width (w:Int)       : Diagram -> Diagram = update_geom $ set_at #strokeWidth w
-def remove_stroke                 : Diagram -> Diagram = update_geom $ set_at #strokeColor Nothing
-def remove_fill                   : Diagram -> Diagram = update_geom $ set_at #fillColor   Nothing
+-- TODO: these would be better if we had field-access-based ref projections, so we could
+-- write `geom~fillColor := c` instead of unpack and packing explicitly.
+def set_fill_color   (c:HtmlColor) : Diagram -> Diagram = update_geom \s.
+ GeomStyle~new (Just c) s~strokeColor s~strokeWidth
+def set_stroke_color (c:HtmlColor) : Diagram -> Diagram = update_geom \s.
+ GeomStyle~new s~fillColor (Just c) s~strokeWidth
+def set_stroke_width (w:Int)      : Diagram -> Diagram = update_geom \s.
+ GeomStyle~new s~fillColor s~strokeColor w
+def remove_stroke                 : Diagram -> Diagram = update_geom \s.
+ GeomStyle~new s~fillColor Nothing s~strokeWidth
+def remove_fill                   : Diagram -> Diagram = update_geom \s.
+ GeomStyle~new Nothing s~strokeColor s~strokeWidth
 
 '## Serialization to SVG string
 
@@ -142,19 +146,17 @@ def optional_html_color(c: Maybe HtmlColor) : String =
 
 @noinline
 def attr_string (attr:GeomStyle) : String =
-  (   ("stroke"       <=> (optional_html_color $ get_at #strokeColor attr))
-  <+> ("fill"         <=> (optional_html_color $ get_at #fillColor   attr))
-  <+> ("stroke-width" <=> (get_at #strokeWidth attr)))
+  (   ("stroke"       <=> (optional_html_color attr~strokeColor))
+  <+> ("fill"         <=> (optional_html_color attr~fillColor))
+  <+> ("stroke-width" <=> (attr~strokeWidth)))
 
 @noinline
 def render_geom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
-  solidAttr = set_at #fillColor (get_at #strokeColor attr) attr
-
+  solidAttr = GeomStyle~new attr~strokeColor attr~strokeColor attr~strokeWidth
   groupEle = \attr. tag_brackets_attr "g" (attr_string attr)
   case geom of
     PointGeom ->
-      pointAttr = set_at #fillColor (get_at #strokeColor attr) attr
       groupEle solidAttr $ self_closing_brackets $
         ("circle" <+>
          "cx" <=> x <.>

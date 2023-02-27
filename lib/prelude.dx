@@ -1447,103 +1447,18 @@ def append {a h} [AccumMonoid h (List a), Data a]
   (list: Ref h (List a)) (x:a) : {Accum h} Unit =
     list += AsList _ [x]
 
-'## Isomorphisms
-
-data Iso a b = MkIso { fwd: a -> b & bwd: b -> a }
-
-def app_iso {a b} (iso: Iso a b) (x:a) : b =
-  (MkIso {fwd, bwd}) = iso
-  fwd x
-
-def flip_iso {a b} (iso: Iso a b) : Iso b a =
-  (MkIso {fwd, bwd}) = iso
-  MkIso {fwd=bwd, bwd=fwd}
-
-def rev_iso {a b} (iso: Iso a b) (x:b) : a = app_iso (flip_iso iso) x
-
-def id_iso {a} : Iso a a = MkIso {fwd=id, bwd=id}
-
-def (&>>) {a b c} (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
-  (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
-  (MkIso {fwd=fwd2, bwd=bwd2}) = iso2
-  MkIso {fwd=(fwd1 >>> fwd2), bwd=(bwd1 <<< bwd2)}
-
-def (<<&) {a b c} (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
-
-'### Lens-like accessors
-note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
-
-def get_at  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
-def pop_at  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
-def push_at {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
-def set_at  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
-  push_at iso x $ pop_at iso r
-
-'### Prism-like accessors
-note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
-
-def match_with {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
-  case app_iso iso x of
-    Left x -> Just x
-    Right _ -> Nothing
-def build_with {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
-
-def swap_pair_iso {a b} : Iso (a & b) (b & a) =
-  MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
-
-'### Complement lens
-Complement the focus of a lens-like isomorphism
-
-def except_lens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
-
-def swap_either_iso {a b} : Iso (a | b) (b | a) =
-  fwd = \x. case x of
-    Left l -> Right l
-    Right r -> Left r
-  bwd = \x. case x of
-    Left r -> Right r
-    Right l -> Left l
-  MkIso {fwd, bwd}
-
-'### Complement prism
-Complement the focus of a prism-like isomorphism
-
-def except_prism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swap_either_iso
-
--- Use a lens-like iso to split a 1d table into a 2d table
-def over_lens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
-  for i j. tab.(rev_iso iso (i, j))
-
-'### Zipper
-Zipper isomorphisms to easily specify many record/variant fields:
-```
-#&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
-#|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
-```
-
-' Convert a record zipper isomorphism to a normal lens-like isomorphism
-by using `splitR &>> iso`
-
-def split_r {a} : Iso a ({&} & a) = MkIso {fwd = \x. ({}, x), bwd = \({}, x). x}
-
-def over_fields {a b c v} [Ix b, Ix c]
-      (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  over_lens (split_r &>> iso) tab
-
 -- TODO: replace `slice` with this?
 def post_slice {a n} (xs:n=>a) (start:Post n) (end:Post n) : List a =
   slice_size = unsafe_nat_diff (ordinal end) (ordinal start)
   to_list for i:(Fin slice_size).
     xs.(unsafe_from_ordinal n (ordinal i + ordinal start))
 
-'## Dynamic buffer
+-- '## Dynamic buffer
 
--- TODO: would be nice to be able to use records here
-data DynBuffer a =
-  MkDynBuffer {
-      size    : Ptr Nat
-    & maxSize : Ptr Nat
-    & buffer  : Ptr (Ptr a) }
+struct DynBuffer a =
+  size    : Ptr Nat
+  max_size : Ptr Nat
+  buffer  : Ptr (Ptr a)
 
 def with_dynamic_buffer {a b} [Storable a]
       (action: DynBuffer a -> {IO} b) : {IO} b =
@@ -1554,27 +1469,24 @@ def with_dynamic_buffer {a b} [Storable a]
   store maxSizePtr initMaxSize
   bufferPtr <- with_alloc 1
   store bufferPtr $ malloc initMaxSize
-  result = action $ MkDynBuffer {
-      size    = sizePtr
-    , maxSize = maxSizePtr
-    , buffer  = bufferPtr }
+  result = action $ DynBuffer~new sizePtr maxSizePtr bufferPtr
   free $ load bufferPtr
   result
 
 def maybe_increase_buffer_size {a} [Storable a]
-      ((MkDynBuffer db): DynBuffer a) (sizeDelta:Nat) : {IO} Unit =
-  size    = load $ get_at #size    db
-  maxSize = load $ get_at #maxSize db
-  bufPtr  = load $ get_at #buffer  db
+      (db : DynBuffer a) (sizeDelta:Nat) : {IO} Unit =
+  size     = load db~size
+  max_size = load db~max_size
+  bufPtr   = load db~buffer
   newSize = sizeDelta + size
-  if newSize > maxSize then
+  if newSize > max_size then
     -- TODO: maybe this should use integer arithmetic?
     newMaxSize = f_to_n $ pow 2.0 (ceil $ log2 $ n_to_f newSize)
     newBufPtr = malloc newMaxSize
     memcpy newBufPtr bufPtr size
     free bufPtr
-    store (get_at #maxSize db) newMaxSize
-    store (get_at #buffer  db) newBufPtr
+    store db~max_size newMaxSize
+    store db~buffer   newBufPtr
 
 def add_at_nat_ptr (ptr: Ptr Nat) (n:Nat) : {IO} Unit =
   store ptr (load ptr + n)
@@ -1583,17 +1495,15 @@ def extend_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
   maybe_increase_buffer_size buf n
-  (MkDynBuffer db) = buf
-  bufPtr = load $ get_at #buffer db
-  size   = load $ get_at #size db
+  bufPtr = load buf~buffer
+  size   = load buf~size
   store_table (bufPtr +>> size) xs
-  add_at_nat_ptr (get_at #size db) n
+  add_at_nat_ptr buf~size n
 
 def load_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) : {IO} (List a) =
-  (MkDynBuffer db) = buf
-  bufPtr = load $ get_at #buffer db
-  size   = load $ get_at #size db
+  bufPtr = load buf~buffer
+  size   = load buf~size
   AsList size $ table_from_ptr _ bufPtr
 
 def push_dynamic_buffer {a} [Storable a]

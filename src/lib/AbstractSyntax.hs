@@ -54,7 +54,7 @@ import Control.Monad (forM, when, liftM2)
 import Data.Functor
 import Data.Maybe
 import Data.Set qualified as S
-import Data.String (IsString, fromString)
+import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text.Encoding qualified as T
 
@@ -550,49 +550,6 @@ unitExpr = UPrim (UPrimCon $ ProdCon []) []
 
 labelExpr :: LabelPrefix -> String -> UExpr' VoidS
 labelExpr PlainLabel str = ULabel str
-labelExpr RecordIsoLabel field =
-  UApp (ns "MkIso") $
-    ns $ URecord
-      [ UStaticField "fwd" (lam
-          (uPatRecordLit [(field, "x")] (Just "r"))
-        $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r"))
-      , UStaticField "bwd" (lam
-        (nsB $ UPatPair $ toPairB "x" "r")
-        $ ns $ URecord [UStaticField field "x", UDynFields "r"])
-      ]
-labelExpr RecordZipIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam
-        (nsB $ UPatPair $ PairB
-          (uPatRecordLit [] (Just "l"))
-          (uPatRecordLit [(field, "x")] (Just "r")))
-        $ "(,)"
-          `mkApp` (ns $ URecord [UStaticField field "x", UDynFields "l"])
-          `mkApp` (ns $ URecord [UDynFields "r"]))
-      , UStaticField "bwd" (lam
-        (nsB $ UPatPair $ PairB
-          (uPatRecordLit [(field, "x")] (Just "l"))
-          (uPatRecordLit [] (Just "r")))
-        $ "(,)"
-          `mkApp` (ns $ URecord [UDynFields "l"])
-          `mkApp` (ns $ URecord [UStaticField field "x", UDynFields"r"]))
-      ]
-
-uPatRecordLit :: [(String, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
-uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPats
-  where
-    extPat = case ext of
-      Nothing                          -> UEmptyRowPat
-      Just (WithSrcB _ (UPatBinder b)) -> URemFieldsPat b
-      _                                -> error "unexpected ext pattern"
-    addLabel (l, p) rest = UStaticFieldPat l p rest
-
--- Explicitly specify types for `lam` and `alt` to prevent
--- ambiguous type variable errors referring to the inner scopes
--- defined thereby.
-lam :: UPat VoidS VoidS -> UExpr VoidS -> WithSrcE UExpr' VoidS
-lam p b = ns $ ULam $ ULamExpr PlainArrow (UPatAnn p Nothing) b
 
 labeledExprs :: Group -> SyntaxM (UExpr' VoidS)
 -- We treat {} as an empty record, despite its ambiguity.
@@ -696,14 +653,6 @@ propagateSrcB act (WithSrc src x) = addSrcContext src (WithSrcB src <$> act x)
 
 dropSrcB :: WithSrcB binder n l -> binder n l
 dropSrcB (WithSrcB _ x) = x
-
-toPairB :: forall a b. (IsString (a VoidS VoidS), IsString (b VoidS VoidS))
-           => String -> String -> PairB a b VoidS VoidS
-toPairB s1 s2 = PairB parse1 parse2 where
-  parse1 :: a VoidS VoidS
-  parse1 = fromString s1
-  parse2 :: b VoidS VoidS
-  parse2 = fromString s2
 
 joinSrcE :: WithSrcE a1 n1 -> WithSrcE a2 n2 -> a3 n3 -> WithSrcE a3 n3
 joinSrcE (WithSrcE p1 _) (WithSrcE p2 _) x = WithSrcE (joinPos p1 p2) x

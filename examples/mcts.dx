@@ -40,13 +40,11 @@ def init_tree {a} (max_size:Nat) (default_content:a): Tree (Fin max_size) a =
 
 ' ## Game and Node utilities
 
-def Game (state:Type) (move:Type) : Type =
-  {
-    possible_moves : state -> (List move) &
-    win_or_lose : state -> Bool &
-    update : state -> move -> state &
-    game_over : state -> Bool &
-  }
+struct Game (state:Type) (move:Type) =
+  possible_moves : state -> (List move)
+  win_or_lose : state -> Bool
+  update : state -> move -> state
+  game_over : state -> Bool
 
 def NodeStats (state:Type) : Type =
   (Nat & Nat & Nat & state)
@@ -136,10 +134,10 @@ def mcts_expand {move state node_ix h} [Ix node_ix, Data state]
     (_, _, base_level, base_state) = base_stats
 
     -- prepare child nodes
-    (AsList n base_moves) = (get_at #possible_moves game) base_state
+    (AsList n base_moves) = game~possible_moves base_state
     child_nodes = for i.
       new_move = base_moves.i
-      new_state = (get_at #update game) base_state new_move
+      new_state = game~update base_state new_move
       new_stats = (0, 0, base_level + 1, new_state)
       Branch new_stats (Just node) (to_list [])
 
@@ -164,16 +162,16 @@ def mcts_rollout {move state} [Data state]
     -- output is w.r.t. current player
     with_state curr_state \ref. iter \i.
       curr_state' = get ref
-      if (get_at #game_over game) curr_state'
+      if game~game_over curr_state'
         then
           -- #win_or_lose is w.r.t. the last player
-          result = (get_at #win_or_lose game) curr_state'
+          result = game~win_or_lose curr_state'
           Done $ xor (is_even i) result
         else
-          (AsList _ new_moves) = (get_at #possible_moves game) curr_state'
+          (AsList _ new_moves) = game~possible_moves curr_state'
           -- rollout policy: uniform random
           new_move = new_moves.(rand_idx (hash key i))
-          ref := (get_at #update game) curr_state' new_move
+          ref := game~update curr_state' new_move
           Continue
 
 ' Update the record of a node and its chain of ancestors,
@@ -218,7 +216,7 @@ def mcts_sample {move state node_ix} [Eq node_ix, Data state]
     leaf = from_just (fst tree).leaf_ix
 
     tree' = yield_state tree \tree_ref.
-      if not $ (get_at #game_over game) $ node_state leaf then
+      if not $ game~game_over $ node_state leaf then
         mcts_expand game tree_ref leaf_ix
 
     leaf_min_player = leaf |> node_level |> is_odd
@@ -239,12 +237,12 @@ between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 win
 
 Count21State = Nat
 Count21Move = Nat
-Count21 : Game Count21State Count21Move = {
-  possible_moves = \sum:Count21State. to_list [1,2],
-  win_or_lose = \sum. sum == 21,
-  update = \sum:Count21State move. sum + move,
-  game_over = \sum. sum >= 21,
-}
+Count21 : Game Count21State Count21Move =
+   (Game~new (\sum:Count21State. to_list [1,2])
+             (\sum. sum == 21)
+             (\sum:Count21State move. sum + move)
+             (\sum. sum >= 21))
+
 
 ' ### Approximate winning chances by sampling
 In theory, multiples of three are bad positions for the current player,

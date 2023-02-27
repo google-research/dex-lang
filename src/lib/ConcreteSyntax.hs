@@ -171,10 +171,7 @@ interp_operator = \case
 data Bracket = Square | Curly
   deriving (Show, Generic)
 
-data LabelPrefix
-  = PlainLabel
-  | RecordIsoLabel
-  | RecordZipIsoLabel
+data LabelPrefix = PlainLabel
   deriving (Show, Generic)
 
 data ForKind
@@ -852,9 +849,7 @@ ops =
   backquote = ("backquote", Expr.InfixL $ opWithSrc $ backquoteName >>= (return . binApp . EvalBinOp))
 
 labelPrefix :: Parser LabelPrefix
-labelPrefix = sym "#" $> RecordIsoLabel
-  <|> sym "##" $> PlainLabel
-  <|> sym "#&" $> RecordZipIsoLabel
+labelPrefix = sym "##" $> PlainLabel
 
 opWithSrc :: Parser (SrcPos -> a -> a -> a)
           -> Parser (a -> a -> a)

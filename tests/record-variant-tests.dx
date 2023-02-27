@@ -150,30 +150,6 @@ myRecordTable : (Fin 2)=>{a:Int & b:Float} =
     {a=b, b=a}
 > [{a = 2., b = 1}, {a = 4., b = 3}]
 
-
-'As index sets
-
--- Use a non-standard iteration order by putting b before a!
-def abToPair {a b} : Iso {a:a & b:b} (b&a) =
-  fwd = \({a, b}). (b, a)
-  bwd = \(b, a). {a, b}
-  MkIso {fwd, bwd}
-instance Ix {a:n & b:m} given {n m} [Ix n, Ix m]
-  size = size n * size m
-  ordinal = ordinal <<< app_iso abToPair
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso abToPair
-
-:p size {a:Fin 10 & b:Fin 3}
-> 30
-:p ordinal {a=(7@Fin 10), b=(2@Fin 3)}
-> 27
-:p from_ordinal {a:Fin 10 & b:Fin 3} 14
-> {a = 4, b = 1}
-
-recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
-:p recordsAsIndices
-> [{a = 0, b = 0}, {a = 1, b = 0}, {a = 0, b = 1}, {a = 1, b = 1}, {a = 0, b = 2}, {a = 1, b = 2}]
-
 -- === First-class labels ===
 
 abc : Label = ##abc
