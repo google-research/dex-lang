@@ -139,7 +139,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
   ProjectElt _ _ -> notAType
-  Lam _ _ _    -> notAType
+  Lam _        -> notAType
   DictCon _    -> notAType
   Con _        -> notAType
   Eff _        -> notAType
@@ -201,10 +201,9 @@ withBuffer cont = do
         return UnitVal
       let eff1 = Abs h Pure
       let eff2 = Abs b eff
-      return $
-        Lam (UnaryLamExpr h
-              (AtomicBlock (Lam (UnaryLamExpr b body) PlainArrow eff2)))
-            ImplicitArrow eff1
+      return $ Lam (CoreLamExpr
+         (UnaryLamExpr h (AtomicBlock (Lam (CoreLamExpr (UnaryLamExpr b body) PlainArrow eff2))))
+         ImplicitArrow eff1)
   applyPreludeFunction "with_stack_internal" [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)

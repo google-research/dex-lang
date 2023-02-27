@@ -67,21 +67,21 @@ toImpFunction cc lam = do
 
 getNaryLamImpArgTypesWithCC
   :: EnvReader m => CallingConvention
-  -> NaryPiType SimpIR n -> m n [BaseType]
+  -> PiType SimpIR n -> m n [BaseType]
 getNaryLamImpArgTypesWithCC XLACC _ = return [i8pp, i8pp]
   where i8pp = PtrType (CPU, PtrType (CPU, Scalar Word8Type))
 getNaryLamImpArgTypesWithCC _ t = do
   (argTyss, destTys) <- getNaryLamImpArgTypes t
   return $ concat argTyss ++ destTys
 
-getImpFunType :: EnvReader m => CallingConvention -> NaryPiType SimpIR n -> m n IFunType
+getImpFunType :: EnvReader m => CallingConvention -> PiType SimpIR n -> m n IFunType
 getImpFunType StandardCC piTy = do
   argTys <- getNaryLamImpArgTypesWithCC StandardCC piTy
   return $ IFunType StandardCC argTys []
 getImpFunType cc _ = error $ "unsupported calling convention: " ++ pprint cc
 
 interpretImpArgsWithCC
-  :: Emits n => CallingConvention -> NaryPiType SimpIR n
+  :: Emits n => CallingConvention -> PiType SimpIR n
   -> [IExpr n] -> SubstImpM i n ([SAtom n], Dest n)
 interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
   (argBaseTys, resultBaseTys) <- getNaryLamImpArgTypes t
@@ -102,27 +102,27 @@ interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
       cast ptr (PtrType (CPU, pointeeTy))
 interpretImpArgsWithCC _ t xsAll = interpretImpArgs t xsAll
 
-getNaryLamImpArgTypes :: EnvReader m => NaryPiType SimpIR n -> m n ([[BaseType]], [BaseType])
+getNaryLamImpArgTypes :: EnvReader m => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
 getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
-  go :: NaryPiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
-  go (NaryPiType bs effs resultTy) = case bs of
+  go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
+  go (PiType bs effs resultTy) = case bs of
     Nest piB rest -> do
       ts <- getRepBaseTypes $ binderType piB
-      refreshAbs (Abs piB (NaryPiType rest effs resultTy)) \_ restPi -> do
+      refreshAbs (Abs piB (PiType rest effs resultTy)) \_ restPi -> do
         (argTys, resultTys) <- go restPi
         return (ts:argTys, resultTys)
     Empty -> ([],) <$> getDestBaseTypes resultTy
 
-interpretImpArgs :: EnvReader m => NaryPiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
+interpretImpArgs :: EnvReader m => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
 interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll where
-  go :: NaryPiType SimpIR i -> [IExpr o]
+  go :: PiType SimpIR i -> [IExpr o]
      -> SubstReaderT AtomSubstVal EnvReaderM i o ([SAtom o], Dest o)
-  go (NaryPiType bs effs resultTy) xs = case bs of
+  go (PiType bs effs resultTy) xs = case bs of
     Nest (b:>argTy) rest -> do
       argTy' <- substM argTy
       (argTree, xsRest) <- listToTree argTy' xs
       arg <- repValAtom $ RepVal argTy' argTree
-      (args, dest) <- extendSubst (b @> SubstVal arg) $ go (NaryPiType rest effs resultTy) xsRest
+      (args, dest) <- extendSubst (b @> SubstVal arg) $ go (PiType rest effs resultTy) xsRest
       return (arg:args, dest)
     Empty -> do
       resultTy' <- substM resultTy
@@ -1186,9 +1186,9 @@ withFreshIBinder hint ty cont = do
 {-# INLINE withFreshIBinder #-}
 
 emitCall
-  :: Emits n => MaybeDest n -> NaryPiType SimpIR n
+  :: Emits n => MaybeDest n -> PiType SimpIR n
   -> ImpFunName n -> [SAtom n] -> SubstImpM i n (SAtom n)
-emitCall maybeDest (NaryPiType bs _ resultTy) f xs = do
+emitCall maybeDest (PiType bs _ resultTy) f xs = do
   resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
   dest <- maybeAllocDest maybeDest resultTy'
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x

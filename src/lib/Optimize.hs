@@ -235,7 +235,7 @@ instance GenericTraverser SimpIR UnitB ULS where
                   extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
                 inc $ fromIntegral n  -- To account for the TabCon we emit below
                 getNaryLamExprType body' >>= \case
-                  NaryPiType (UnaryNest (tb:>_)) _ valTy -> do
+                  PiType (UnaryNest (tb:>_)) _ valTy -> do
                     let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                     let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
                     return $ Right $ TabCon Nothing tabTy vals

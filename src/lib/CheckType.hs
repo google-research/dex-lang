@@ -167,14 +167,14 @@ instance IRRep r => CheckableE (Block r) where
 instance IRRep r => HasType r (Atom r) where
   getTypeE atom = case atom of
     Var name -> getTypeE name
-    Lam lam arr (Abs bEff effs) -> do
+    Lam (CoreLamExpr lam arr (Abs bEff effs)) -> do
       UnaryLamExpr (b:>ty) body <- return lam
       ty' <- checkTypeE TyKind ty
       withFreshBinder (getNameHint b) ty' \b' -> do
         effs' <- extendSubst (bEff@>binderName b') $ renameM effs
         extendRenamer (b@>binderName b') do
           resultTy <- checkBlockWithEffs effs' body
-          return $ Pi $ PiType b' arr effs' resultTy
+          return $ Pi $ CorePiType b' arr effs' resultTy
     Pi piType -> getTypeE piType
     TabPi piType -> getTypeE piType
     DepPair l r ty -> do
@@ -239,7 +239,7 @@ typeCheckExpr effs expr = case expr of
     checkTabApp fTy xs
   -- TODO: check!
   TopApp f xs -> do
-    NaryPiType bs _ resultTy <- getTypeTopFun =<< renameM f
+    PiType bs _ resultTy <- getTypeTopFun =<< renameM f
     xs' <- mapM renameM xs
     checkedApplyNaryAbs (Abs bs resultTy) xs'
   Atom x   -> getTypeE x
@@ -344,8 +344,8 @@ instance IRRep r => HasType r (DepPairType r) where
     checkB b \_ -> ty |: TyKind
     return TyKind
 
-instance HasType CoreIR PiType where
-  getTypeE (PiType b arr eff resultTy) = do
+instance HasType CoreIR CorePiType where
+  getTypeE (CorePiType b arr eff resultTy) = do
     checkArrowAndEffects arr eff
     checkB b \_ -> do
       void $ checkE eff
@@ -550,7 +550,7 @@ typeCheckPrimHof :: forall r m i o. (Typer m, IRRep r) => EffectRow r o -> Hof r
 typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixDict f -> do
     ixTy <- ixTyFromDict =<< renameM ixDict
-    NaryPiType (UnaryNest (b:>argTy)) _ eltTy <- checkLamExpr f
+    PiType (UnaryNest (b:>argTy)) _ eltTy <- checkLamExpr f
     checkTypesEq (ixTypeType ixTy) argTy
     return $ TabTy (b:>ixTy) eltTy
   While body -> do
@@ -558,13 +558,13 @@ typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case ho
     checkTypesEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f x -> do
-    NaryPiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
+    PiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
     b' <- liftHoistExcept $ hoist binder b
     fLinTy <- a --@ b'
     x |: a
     return $ PairTy b' fLinTy
   Transpose f x -> do
-    NaryPiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
+    PiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
     b' <- liftHoistExcept $ hoist binder b
     x |: b'
     return a
@@ -610,12 +610,12 @@ typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
     case carryTy' of
       ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
       _ -> badCarry
-    NaryPiType (UnaryNest b) _ _ <- checkLamExprWithEffs effs f
+    PiType (UnaryNest b) _ _ <- checkLamExprWithEffs effs f
     checkTypesEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d
-    NaryPiType (UnaryNest b) _ UnitTy <- checkLamExpr body
+    PiType (UnaryNest b) _ UnitTy <- checkLamExpr body
 
     checkTypesEq (binderType b) dTy
     return dTy
@@ -629,22 +629,22 @@ typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
     RawRefTy ty <- getTypeE ref
     return ty
 
-checkLamExpr :: (Typer m, IRRep r) => LamExpr r i -> m i o (NaryPiType r o)
+checkLamExpr :: (Typer m, IRRep r) => LamExpr r i -> m i o (PiType r o)
 checkLamExpr (LamExpr bsTop body) = case bsTop of
   Empty -> do
     resultTy <- getTypeE body
     effs <- renameM $ blockEffects body
-    return $ NaryPiType Empty effs resultTy
+    return $ PiType Empty effs resultTy
   Nest (b:>ty) bs -> do
     ty' <- checkTypeE TyKind ty
     withFreshBinder (getNameHint b) ty' \b' ->
       extendRenamer (b@>binderName b') do
-        NaryPiType bs' eff resultTy <- checkLamExpr (LamExpr bs body)
-        return $ NaryPiType (Nest b' bs') eff resultTy
+        PiType bs' eff resultTy <- checkLamExpr (LamExpr bs body)
+        return $ PiType (Nest b' bs') eff resultTy
 
-checkLamExprWithEffs :: (Typer m, IRRep r) => EffectRow r o -> LamExpr r i -> m i o (NaryPiType r o)
+checkLamExprWithEffs :: (Typer m, IRRep r) => EffectRow r o -> LamExpr r i -> m i o (PiType r o)
 checkLamExprWithEffs allowedEffs lam = do
-  piTy@(NaryPiType bs effs _) <- checkLamExpr lam
+  piTy@(PiType bs effs _) <- checkLamExpr lam
   effs' <- liftHoistExcept $ hoist bs effs
   checkExtends allowedEffs effs'
   return piTy
@@ -696,7 +696,7 @@ checkAlt resultTyReq bTyReq effs (Abs b body) = do
 checkApp :: (Typer m, IRRep r) => EffectRow r o -> Type r o -> [Atom r i] -> m i o (Type r o)
 checkApp _ fTy [] = return fTy
 checkApp allowedEffs fTy xs = case fromNaryPiType (length xs) fTy of
-  Just (NaryPiType bs effs resultTy) -> do
+  Just (PiType bs effs resultTy) -> do
     xs' <- mapM renameM xs
     checkArgTys bs xs'
     let subst = bs @@> fmap SubstVal xs'
@@ -718,14 +718,14 @@ checkTabApp tabTy xs = go tabTy $ toList xs
       resultTy' <- applySubst (b@>SubstVal i') resultTy
       go resultTy' rest
 
-asNaryPiType :: IRRep r => Type r n -> Maybe ([Arrow], NaryPiType r n)
+asNaryPiType :: IRRep r => Type r n -> Maybe ([Arrow], PiType r n)
 asNaryPiType piTy = case piTy of
-  Pi (PiType b arr effs resultTy) -> case effs of
+  Pi (CorePiType b arr effs resultTy) -> case effs of
    Pure -> case asNaryPiType resultTy of
-     Just (arrs, NaryPiType bs effs' resultTy') ->
-        Just (arr:arrs, NaryPiType (Nest b bs) effs' resultTy')
-     Nothing -> Just ([arr], NaryPiType (Nest b Empty) Pure resultTy)
-   _ -> Just ([arr], NaryPiType (Nest b Empty) effs resultTy)
+     Just (arrs, PiType bs effs' resultTy') ->
+        Just (arr:arrs, PiType (Nest b bs) effs' resultTy')
+     Nothing -> Just ([arr], PiType (Nest b Empty) Pure resultTy)
+   _ -> Just ([arr], PiType (Nest b Empty) effs resultTy)
   _ -> Nothing
 
 checkArgTys
@@ -1039,14 +1039,14 @@ runCheck cont = do
   Distinct <- getDistinct
   liftTyperT $ cont
 
-asFFIFunType :: EnvReader m => CType n -> m n (Maybe (IFunType, NaryPiType CoreIR n))
+asFFIFunType :: EnvReader m => CType n -> m n (Maybe (IFunType, PiType CoreIR n))
 asFFIFunType ty = return do
   (_, naryPiTy) <- asNaryPiType ty
   impTy <- checkFFIFunTypeM naryPiTy
   return (impTy, naryPiTy)
 
-checkFFIFunTypeM :: (IRRep r, Fallible m) => NaryPiType r n -> m  IFunType
-checkFFIFunTypeM (NaryPiType (Nest b bs) eff resultTy) = do
+checkFFIFunTypeM :: (IRRep r, Fallible m) => PiType r n -> m  IFunType
+checkFFIFunTypeM (PiType (Nest b bs) eff resultTy) = do
   argTy <- checkScalar $ binderType b
   case bs of
     Empty -> do
@@ -1057,7 +1057,7 @@ checkFFIFunTypeM (NaryPiType (Nest b bs) eff resultTy) = do
                  _ -> FFIMultiResultCC
       return $ IFunType cc [argTy] resultTys
     Nest b' rest -> do
-      let naryPiRest = NaryPiType (Nest b' rest) eff resultTy
+      let naryPiRest = PiType (Nest b' rest) eff resultTy
       IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
       return $ IFunType cc (argTy:argTys) resultTys
 checkFFIFunTypeM _ = error "expected at least one argument"
@@ -1075,15 +1075,15 @@ checkScalarOrPairType (BaseTy ty) = return [ty]
 checkScalarOrPairType ty = throw TypeErr $ pprint ty
 
 -- TODO: consider effects
-asFirstOrderFunction :: EnvReader m => Type CoreIR n -> m n (Maybe ([Arrow], NaryPiType CoreIR n))
+asFirstOrderFunction :: EnvReader m => Type CoreIR n -> m n (Maybe ([Arrow], PiType CoreIR n))
 asFirstOrderFunction ty = do
   result <- runCheck (asFirstOrderFunctionM (sink ty))
   forM result \(LiftE arrs `PairE` piTy) -> return (arrs, piTy)
 
-asFirstOrderFunctionM :: Typer m => Type CoreIR i -> m i o (PairE (LiftE [Arrow]) (NaryPiType CoreIR) o)
+asFirstOrderFunctionM :: Typer m => Type CoreIR i -> m i o (PairE (LiftE [Arrow]) (PiType CoreIR) o)
 asFirstOrderFunctionM ty = case asNaryPiType ty of
   Nothing -> throw TypeErr "Not a monomorphic first-order function"
-  Just (arrs, naryPi@(NaryPiType bs eff resultTy)) -> do
+  Just (arrs, naryPi@(PiType bs eff resultTy)) -> do
     renameBinders bs \bs' -> do
       ts <- mapM sinkM $ bindersTypes bs'
       dropSubst $ mapM_ checkDataLike ts

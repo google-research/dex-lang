@@ -699,7 +699,7 @@ buildLamGeneral hint arr ty fEff fBody = do
     let v = binderName b
     effs <- fEff v
     body <- buildBlock $ fBody $ sink v
-    return $ Lam (UnaryLamExpr b body) arr (Abs b effs)
+    return $ Lam (CoreLamExpr (UnaryLamExpr b body) arr (Abs b effs))
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
@@ -721,11 +721,11 @@ buildPureNaryLam _ _ _ = error "impossible"
 buildPi :: (Fallible1 m, CBuilder m)
         => NameHint -> Arrow -> CType n
         -> (forall l. DExt n l => AtomName CoreIR l -> m l (EffectRow CoreIR l, CType l))
-        -> m n (PiType n)
+        -> m n (CorePiType n)
 buildPi hint arr ty body =
   withFreshBinder hint ty \(b:>_) -> do
     (effs, resultTy) <- body $ binderName b
-    return $ PiType (b:>ty) arr effs resultTy
+    return $ CorePiType (b:>ty) arr effs resultTy
 
 buildNaryPi
   :: CBuilder m
@@ -741,7 +741,7 @@ buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
     piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
     return (Pure, piTy)
 
-buildNonDepPi :: EnvReader m => NameHint -> Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (PiType n)
+buildNonDepPi :: EnvReader m => NameHint -> Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (CorePiType n)
 buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
   argTy' <- sinkM argTy
   buildPi hint arr argTy' \_ -> do
@@ -836,7 +836,7 @@ buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
     return $ EmptyAbs $ BinaryNest b1 b2
   buildNaryLamExpr bs \[v1, v2] -> cont v1 v2
 
-asNaryLam :: EnvReader m => NaryPiType CoreIR n -> Atom CoreIR n -> m n (LamExpr CoreIR n)
+asNaryLam :: EnvReader m => PiType CoreIR n -> Atom CoreIR n -> m n (LamExpr CoreIR n)
 asNaryLam ty f = liftBuilder do
   buildNaryLamExprFromPi ty \xs ->
     naryApp (sink f) (map Var $ toList xs)
@@ -865,10 +865,10 @@ buildNaryLamExpr (Abs bs UnitE) cont = case bs of
 
 buildNaryLamExprFromPi
   :: ScopableBuilder r m
-  => NaryPiType r n
+  => PiType r n
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildNaryLamExprFromPi (NaryPiType bs _ _) cont = buildNaryLamExpr (EmptyAbs bs) cont
+buildNaryLamExprFromPi (PiType bs _ _) cont = buildNaryLamExpr (EmptyAbs bs) cont
 
 buildAlt
   :: ScopableBuilder r m

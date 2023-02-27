@@ -218,7 +218,7 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- means that we will follow the full call chain, so it's really expensive!
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
-    Lam _ _ _ -> substM a
+    Lam _ -> substM a
     DictHole ctx ty' -> do
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthTerm ty) >>= \case
@@ -600,9 +600,10 @@ instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
 instance IRRep r => SubstE AtomSubstVal (DestBlock r)
-instance SubstE AtomSubstVal PiType
+instance SubstE AtomSubstVal CorePiType
+instance SubstE AtomSubstVal CoreLamExpr
 instance IRRep r => SubstE AtomSubstVal (TabPiType r)
-instance IRRep r => SubstE AtomSubstVal (NaryPiType r)
+instance IRRep r => SubstE AtomSubstVal (PiType r)
 instance IRRep r => SubstE AtomSubstVal (DepPairType r)
 instance SubstE AtomSubstVal SolverBinding
 instance IRRep r => SubstE AtomSubstVal (DeclBinding r)

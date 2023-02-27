@@ -222,8 +222,8 @@ instance IRRep r => Pretty (Decl r n l) where
     align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
-instance IRRep r => Pretty (NaryPiType r n) where
-  pretty (NaryPiType bs effs resultTy) =
+instance IRRep r => Pretty (PiType r n) where
+  pretty (PiType bs effs resultTy) =
     (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
@@ -267,7 +267,7 @@ instance IRRep r => Pretty (Atom r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    Lam lam arr _ -> atPrec LowestPrec $ "\\" <> prettyLamHelper arr lam PrettyLam
+    Lam (CoreLamExpr lam arr _) -> atPrec LowestPrec $ "\\" <> prettyLamHelper arr lam PrettyLam
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
@@ -349,8 +349,8 @@ forStr :: ForAnn -> Doc ann
 forStr Fwd = "for"
 forStr Rev = "rof"
 
-instance Pretty (PiType n) where
-  pretty (PiType (b:>ty) arr eff body) = let
+instance Pretty (CorePiType n) where
+  pretty (CorePiType (b:>ty) arr eff body) = let
     prettyBinder = prettyBinderHelper (b:>ty) (PairE eff body)
     prettyBody = case body of
       Pi subpi -> pretty subpi
@@ -403,7 +403,7 @@ prettyLamHelper arr' lamExpr lamType = uncurry prettyLam $ rec arr' lamExpr True
     UnaryLamExpr (b:>ty) body' -> do
       let thisOne = (if first then "" else line) <> wrap arr (p (b:>ty))
       case inlineLastDeclBlock body' of
-        Abs Empty (Atom (Lam next arrNext _)) ->
+        Abs Empty (Atom (Lam (CoreLamExpr next arrNext _))) ->
           let (binders', block) = rec arrNext next False
           in (thisOne <> binders', unsafeCoerceE block)
         Abs Empty (Hof (For ann dict next))

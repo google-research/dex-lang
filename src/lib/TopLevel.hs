@@ -948,7 +948,7 @@ getLinearizationType fname zeros fType = do
      -> [CType l] -> CType l
      -> EnvReaderT FallibleM l (Int, Int, CType n)
   go fullTy arrs implicitArgs revArgTys = \case
-    Pi (PiType pbinder@(binder:>a) arr eff b') -> do
+    Pi (CorePiType pbinder@(binder:>a) arr eff b') -> do
       case eff of
         Pure -> return ()
         _ -> throw TypeErr $
@@ -1010,5 +1010,5 @@ getLinearizationType fname zeros fType = do
       prependImplicit arrsTop bsTop ty = case (tryUnsnoc arrsTop, bsTop) of
         (Nothing, REmpty) -> ty
         (Just (arrsRest, arr), RNest bs b) ->
-          prependImplicit arrsRest bs (Pi (PiType b arr Pure ty ))
+          prependImplicit arrsRest bs (Pi (CorePiType b arr Pure ty ))
         _ -> error "zip error"

@@ -60,8 +60,8 @@ prepareFunctionForExport cc f = do
 
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => [Arrow] -> NaryPiType CoreIR n -> m n (ExportedSignature n)
-    naryPiToExportSig arrs (NaryPiType tbs effs resultTy) = do
+                      => [Arrow] -> PiType CoreIR n -> m n (ExportedSignature n)
+    naryPiToExportSig arrs (PiType tbs effs resultTy) = do
         case effs of
           Pure -> return ()
           _    -> throw TypeErr "Only pure functions can be exported"

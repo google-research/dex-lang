@@ -210,10 +210,10 @@ checkHandlerOp effName retTy ~(UEffectOpDef pol (InternalName _ opName) opBody) 
   when (pol /= pol') $ throw TypeErr
     ("operation " ++ pprint opName ++ " was declared with " ++ pprint pol ++ " but defined with " ++ pprint pol')
   -- need expected type of lambda
-  Just (_, NaryPiType bs _ _) <- return $ asNaryPiType opTy
+  Just (_, PiType bs _ _) <- return $ asNaryPiType opTy
   internalOpTy <- refreshAbs (Abs bs UnitE) \bs' UnitE ->
     -- TODO(alex): Pure is wrong... handle effects from handler def
-    return $ naryPiTypeAsType (NaryPiType bs' Pure (sink retTy))
+    return $ naryPiTypeAsType (PiType bs' Pure (sink retTy))
   -- TODO(alex): introduce resume into scope (with correct type)
   -- TODO(alex): handle pol
   opBody' <- buildBlockInf $ checkSigma noHint opBody (sink internalOpTy)
@@ -949,7 +949,7 @@ data RequiredTy (e::E) (n::S) = Check (e n)
 checkSigma :: EmitsBoth o
            => NameHint -> UExpr i -> SigmaType o -> InfererM i o (CAtom o)
 checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
-  Pi piTy@(PiType (b:>_) arrow _ _)
+  Pi piTy@(CorePiType (b:>_) arrow _ _)
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _)) | arrow == arrow' -> checkULam lam piTy
         -- we have to add the lambda argument corresponding to the implicit pi
@@ -990,7 +990,7 @@ instantiateSigmaWithArgs f = do
 
 getImplicitArgs :: EmitsInf o => CType o -> InfererM i o [CAtom o]
 getImplicitArgs ty = case ty of
-  Pi (PiType (_:>argTy) arr _ _) ->
+  Pi (CorePiType (_:>argTy) arr _ _) ->
     getImplicitArg arr argTy >>= \case
       Nothing -> return []
       Just arg -> do
@@ -1026,7 +1026,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
-    Lam lam@(UnaryLamExpr b' _) _ _ <- case reqTy of
+    Lam (CoreLamExpr lam@(UnaryLamExpr b' _) _ _) <- case reqTy of
       Check (TabPi tabPiTy) -> do
         lamPiTy <- buildForTypeFromTabType allowedEff tabPiTy
         checkULam uLamExpr lamPiTy
@@ -1161,7 +1161,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
       Right (tyConName, x'') -> do
         f' <- lookupFieldName tyConName f
         f'' <- instantiateSigma f'
-        Pi (PiType (_:>reqArgTy) _ _ _) <- getType f''
+        Pi (CorePiType (_:>reqArgTy) _ _ _) <- getType f''
         getType x'' >>= constrainEq reqArgTy
         app f'' x''
   URecord elems ->
@@ -1332,17 +1332,17 @@ matchPrimApp = \case
 
    lam2 :: Fallible m => Atom r n -> m (LamExpr r n)
    lam2 x = do
-     Lam (UnaryLamExpr b1 (AtomicBlock (Lam (UnaryLamExpr b2 body) _ _))) _ _ <- return x
+     Lam (CoreLamExpr (UnaryLamExpr b1 (AtomicBlock (Lam (CoreLamExpr (UnaryLamExpr b2 body) _ _)))) _ _) <- return x
      return $ BinaryLamExpr b1 b2 body
 
    lam1 :: Fallible m => Atom r n -> m (LamExpr r n)
    lam1 x = do
-     Lam (UnaryLamExpr b body) _ _ <- return x
+     Lam (CoreLamExpr (UnaryLamExpr b body) _ _) <- return x
      return $ UnaryLamExpr b body
 
    lam0 :: Fallible m => Atom r n -> m (Block r n)
    lam0 x = do
-     Lam (UnaryLamExpr b body) _ _ <- return x
+     Lam (CoreLamExpr (UnaryLamExpr b body) _ _) <- return x
      HoistSuccess body' <- return $ hoist b body
      return body'
 
@@ -1423,14 +1423,14 @@ inferNaryApp fCtx f args = addSrcContext fCtx do
 -- includes instantiated params and dicts.
 inferNaryAppArgs
   :: EmitsBoth o
-  => [Arrow] -> NaryPiType CoreIR o -> NonEmpty (UExprArg i) -> InfererM i o (NonEmpty (CAtom o), [UExprArg i])
-inferNaryAppArgs [] (NaryPiType Empty _ _) _ = error "shouldn't have nullary function"
-inferNaryAppArgs [arr] (NaryPiType (Nest (b:>argTy) Empty) effs resultTy) uArgs = do
+  => [Arrow] -> PiType CoreIR o -> NonEmpty (UExprArg i) -> InfererM i o (NonEmpty (CAtom o), [UExprArg i])
+inferNaryAppArgs [] (PiType Empty _ _) _ = error "shouldn't have nullary function"
+inferNaryAppArgs [arr] (PiType (Nest (b:>argTy) Empty) effs resultTy) uArgs = do
   let isDependent = binderName b `isFreeIn` PairE effs resultTy
   (x, remaining) <- inferAppArg isDependent arr (b:>argTy) uArgs
   return (x:|[], remaining)
-inferNaryAppArgs (a:arrs) (NaryPiType (Nest (b1:>b1Ty) (Nest b2 rest)) effs resultTy) uArgs = do
-  let restNaryPi = NaryPiType (Nest b2 rest) effs resultTy
+inferNaryAppArgs (a:arrs) (PiType (Nest (b1:>b1Ty) (Nest b2 rest)) effs resultTy) uArgs = do
+  let restNaryPi = PiType (Nest b2 rest) effs resultTy
   let isDependent = binderName b1 `isFreeIn` restNaryPi
   (x, uArgs') <- inferAppArg isDependent a (b1:>b1Ty) uArgs
   x' <- zonk x
@@ -1555,7 +1555,7 @@ buildHandlerLam v = do
         block <- buildBlock $ app (Var (sink body)) UnitVal
         emitExpr $ UserEffectOp $ Handle (sink v) [] block
 
-buildForTypeFromTabType :: EffectRow CoreIR n -> TabPiType CoreIR n -> InfererM i n (PiType n)
+buildForTypeFromTabType :: EffectRow CoreIR n -> TabPiType CoreIR n -> InfererM i n (CorePiType n)
 buildForTypeFromTabType effs tabPiTy@(TabPiType (b:>ixTy) _) = do
   let IxType ty _ = ixTy
   buildPi (getNameHint b) PlainArrow ty \i -> do
@@ -1863,8 +1863,8 @@ inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
   buildLamInf (getNameHint p) arrow argTy (\_ -> sinkM effs) \v ->
     bindLamPat p v $ inferSigma noHint body
 
-checkULam :: EmitsBoth o => ULamExpr i -> PiType o -> InfererM i o (CAtom o)
-checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (_:>argTy) arr _ _) = do
+checkULam :: EmitsBoth o => ULamExpr i -> CorePiType o -> InfererM i o (CAtom o)
+checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(CorePiType (_:>argTy) arr _ _) = do
   case ann of
     Nothing    -> return ()
     Just annTy -> constrainEq argTy =<< checkUType annTy
@@ -1997,8 +1997,8 @@ introDicts (h:t) m = do
 
 introDictTys :: forall i o. EmitsInf o
              => [CType o]
-             -> (forall l. (EmitsInf l, DExt o l) => InfererM i l (PiType l))
-             -> InfererM i o (PiType o)
+             -> (forall l. (EmitsInf l, DExt o l) => InfererM i l (CorePiType l))
+             -> InfererM i o (CorePiType o)
 introDictTys []    m = do Distinct <- getDistinct; m
 introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
   ListE t' <- sinkM $ ListE t
@@ -2346,7 +2346,7 @@ fromTabPiType expectPi ty = do
   return piTy
 
 -- Bool flag is just to tweak the reported error message
-fromPiType :: EmitsBoth o => Bool -> Arrow -> CType o -> InfererM i o (PiType o)
+fromPiType :: EmitsBoth o => Bool -> Arrow -> CType o -> InfererM i o (CorePiType o)
 fromPiType _ _ (Pi piTy) = return piTy -- TODO: check arrow
 fromPiType expectPi arr ty = do
   a <- freshType TyKind
@@ -2760,9 +2760,9 @@ unifyEq :: AlphaEqE e => e n -> e n -> SolverM n ()
 unifyEq e1 e2 = guard =<< alphaEq e1 e2
 {-# INLINE unifyEq #-}
 
-unifyPiType :: EmitsInf n => PiType n -> PiType n -> SolverM n ()
-unifyPiType (PiType (b1:>ann1) arr1 eff1 ty1)
-            (PiType (b2:>ann2) arr2 eff2 ty2) = do
+unifyPiType :: EmitsInf n => CorePiType n -> CorePiType n -> SolverM n ()
+unifyPiType (CorePiType (b1:>ann1) arr1 eff1 ty1)
+            (CorePiType (b2:>ann2) arr2 eff2 ty2) = do
   unless (arr1 == arr2) empty
   unify ann1 ann2
   v <- freshSkolemName ann1
@@ -2978,7 +2978,7 @@ getSynthType x = do
 
 typeAsSynthType :: CType n -> Except (SynthType n)
 typeAsSynthType (DictTy dictTy) = return $ SynthDictType dictTy
-typeAsSynthType (Pi (PiType b arrow Pure resultTy))
+typeAsSynthType (Pi (CorePiType b arrow Pure resultTy))
   | arrow == ImplicitArrow || arrow == ClassArrow = do
      resultTy' <- typeAsSynthType resultTy
      return $ SynthPiType arrow $ Abs b resultTy'
@@ -3179,20 +3179,20 @@ instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
       case ans of
         Failure errs -> put (DictSynthTraverserS errs) >> substM atom
         Success d    -> return d
-    Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
+    Lam (CoreLamExpr (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs)) -> do
       ty' <- tge ty
       withFreshBinder (getNameHint b) ty' \b' -> do
         effs' <- extendRenamer (bEff@>binderName b') $ substM effs
         extendSynthCandidatesDict arr (binderName b') do
           extendRenamer (b@>binderName b') do
             body' <- tge body
-            return $ Lam (UnaryLamExpr b' body') arr (Abs b' effs')
-    Pi (PiType (b:>ty) arr eff resultTy) -> do
+            return $ Lam (CoreLamExpr (UnaryLamExpr b' body') arr (Abs b' effs'))
+    Pi (CorePiType (b:>ty) arr eff resultTy) -> do
       ty' <- tge ty
       withFreshBinder (getNameHint b) ty' \b' -> do
         extendSynthCandidatesDict arr (binderName b') do
           extendRenamer (b@>binderName b') $
-            Pi <$> (PiType b' arr <$> substM eff <*> tge resultTy)
+            Pi <$> (CorePiType b' arr <$> substM eff <*> tge resultTy)
     _ -> traverseAtomDefault atom
     where tge :: (GenericallyTraversableE r e, GenericTraverser r f s)
               => e i -> GenericTraverserM r f s i o (e o)
@@ -3264,14 +3264,14 @@ buildPiInf
   :: EmitsInf n
   => NameHint -> Arrow -> CType n
   -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (EffectRow CoreIR l, CType l))
-  -> InfererM i n (PiType n)
+  -> InfererM i n (CorePiType n)
 buildPiInf hint arr ty body = do
   Abs (b:>_) (PairE effs resultTy) <-
     buildAbsInf hint arr ty \v ->
       withoutEffects do
         (effs, resultTy) <- body v
         return $ PairE effs resultTy
-  return $ PiType (b:>ty) arr effs resultTy
+  return $ CorePiType (b:>ty) arr effs resultTy
 
 buildTabPiInf
   :: EmitsInf n
