@@ -1,0 +1,533 @@
+'# Caustic Rendering
+Based on [Tantalum](https://benedikt-bitterli.me/tantalum/).
+
+'## Rendering utilities
+
+AbsPoint = (Int & Int)
+RelPoint = (Float & Float)
+
+def pixel (w:Int)?-> (h:Int)?-> (x:Int) (y:Int) : (Fin w & Fin h) = (x@_, y@_)
+
+-- Draw into a canvas. This function takes an effectful rasterization function
+-- and runs it on an empty canvas, returning the results.
+def drawIntoCanvas (height:Int) (width:Int)
+                   (f: ref:Type ?-> Ref ref ((Fin width & Fin height) =>out)
+                                ->{Accum ref} Unit)
+                   : Fin height=>Fin width=>out =
+  canvas = snd $ withAccum f
+  for y x. canvas.(x, y)
+
+square = \x:Float. x * x
+
+inf = 1./0.
+
+-- If we interpolate from one value to another, when will we enter and exit a
+-- given range?
+def time_of_entry_and_exit
+    (v_at_0:Float)
+    (v_at_1:Float)
+    (interval_low:Float)
+    (interval_high:Float)
+    : (Float & Float) =
+  case v_at_0 == v_at_1 of
+    True ->
+      -- We are always at the same position!
+      v = v_at_0
+      case v > interval_low && v < interval_high of
+        True -> (-inf, inf) -- We are always in the range
+        False -> (inf, -inf) -- We are never in the range
+    False ->
+      bounds = [interval_low, interval_high]
+      time_of_bounds = for i. (bounds.i - v_at_0) / (v_at_1 - v_at_0)
+      (minimum time_of_bounds, maximum time_of_bounds)
+
+def interp (v_at_0:Float) (v_at_1:Float) (t:Float) : Float =
+  t * v_at_1 + (1.0 - t) * v_at_0
+
+-- Rasterize a segment of a line in a single logical box centered between
+-- four physical pixels. This leads to a smooth, differentiable, mass-preserving
+-- antialiased line. We treat each pixel as a point in a grid, and consider
+-- boxes that connect four adjacent pixels. A point in this box contributes to
+-- each of the corners according to a bilinear approximation, so a point like
+--
+--    A---B
+--    |  *|
+--    C---D
+--
+-- might be approximated as 0.125 A + 0.375 B + 0.125 C + 0.375 D.
+-- To approximate a line segment, we can take the line integral of these
+-- coefficients; the result will be a total contribution equal to the length of
+-- the line, allocated differentiably between the four points.
+--
+-- This function assumes we are given a line in floating-point canvas-relative
+-- space, and a specific set of four pixels on a canvas to render into; it then
+-- computes the intersection of that line segment with the box, calculates the
+-- appropriate line integral, and accumulates the contributions to the four
+-- pixels surrounding the box. Out-of-bounds indices are ignored.
+def rasterLineSegmentInFourPixels (height:Int)?-> (width:Int)?-> (ref:Type)?->
+      (_: VSpace out)?=>
+      (low_pixel_x: Int) -- X of first box corner: 0 <= low_pixel_x < width - 1
+      (low_pixel_y: Int) -- Y of first box corner: 0 <= low_pixel_y < height - 1
+      (a: RelPoint) -- One line endpoint
+      (b: RelPoint) -- The other line endpoint
+      (fill: out) -- Fill intensity per relative unit.
+      (canvas:Ref ref ((Fin width & Fin height)=>out)) -- Where to draw to.
+      :{Accum ref} Unit =
+  
+  case (low_pixel_x >= 0 && low_pixel_x < (width - 1) && low_pixel_y >= 0 && low_pixel_y < (height - 1)) of
+    False -> () -- out of bounds! Don't segfault
+    True ->
+      -- dx and dy represent the width/height of one box
+      dx = 1.0 / IToF (width - 1)
+      dy = 1.0 / IToF (height - 1)
+      -- {x|y}_{lo|hi} give the relative coordinates of each corner of the box
+      x_lo = dx * IToF low_pixel_x
+      y_lo = dy * IToF low_pixel_y
+      x_hi = x_lo + dx
+      y_hi = y_lo + dy
+
+      (x0, y0) = a
+      (x1, y1) = b
+
+      -- Clip to the bounds.
+      (t_enter_x, t_exit_x) = time_of_entry_and_exit x0 x1 x_lo x_hi
+      (t_enter_y, t_exit_y) = time_of_entry_and_exit y0 y1 y_lo y_hi
+      t_enter = maximum [t_enter_x, t_enter_y, 0.]
+      t_exit  = minimum [t_exit_x,  t_exit_y,  1.]
+      case t_enter < t_exit of
+        False -> () -- enter after exiting => empty range
+        True ->
+          x_enter = interp x0 x1 t_enter
+          y_enter = interp y0 y1 t_enter
+          x_exit = interp x0 x1 t_exit
+          y_exit = interp y0 y1 t_exit
+          segment_len = sqrt (square (x_exit - x_enter) + square (y_exit - y_enter))
+          c = segment_len .* fill
+
+          -- bilinearFill evaluates the definite integral of the function
+          -- ((1-t) v1 + t v2) * ((1-t) w1 + t w2) from 0 to 1, then scales it
+          -- by the distance between (v1, w1) and (v2, w2).
+          bilinearFill = \v1 v2 w1 w2.
+            ((2.0*v1*w1 + 2.0*v2*w2 + v1*w2 + v2*w1) / 6.0) .* c
+
+          -- For each box corner, compute the normalized relative position of
+          -- the entry and exit points.
+          canvas!(pixel low_pixel_x low_pixel_y) += (bilinearFill
+            ((x_hi - x_enter)/dx) ((x_hi - x_exit)/dx)
+            ((y_hi - y_enter)/dy) ((y_hi - y_exit)/dy))
+          canvas!(pixel (low_pixel_x+1) low_pixel_y) += (bilinearFill
+            ((x_enter - x_lo)/dx) ((x_exit - x_lo)/dx)
+            ((y_hi - y_enter)/dy) ((y_hi - y_exit)/dy))
+          canvas!(pixel low_pixel_x (low_pixel_y+1)) += (bilinearFill
+            ((x_hi - x_enter)/dx) ((x_hi - x_exit)/dx)
+            ((y_enter - y_lo)/dy) ((y_exit - y_lo)/dy))
+          canvas!(pixel (low_pixel_x+1) (low_pixel_y+1)) += (bilinearFill
+            ((x_enter - x_lo)/dx) ((x_exit - x_lo)/dx)
+            ((y_enter - y_lo)/dy) ((y_exit - y_lo)/dy))
+          ()
+
+-- Simple rasterization of two lines by evaluating the fill color at every pixel.
+:plotmat
+  s = 100
+  s2 = s - 1
+  drawIntoCanvas s s $ \canvas.
+    for i:(Fin s2) j:(Fin s2).
+      rasterLineSegmentInFourPixels (ordinal i) (ordinal j) (0.1, 0.3) (0.8, 0.6) 1.0 canvas
+      rasterLineSegmentInFourPixels (ordinal i) (ordinal j) (0.6, 0.8) (0.3, 0.1) 1.0 canvas
+    ()
+
+
+-- Bilinear approximation preserves line integral
+trueLineIntegral = sqrt (square (0.8 - 0.1) + square (0.6 - 0.3))
+renderedLineIntegral = sum $ sum $ drawIntoCanvas 100 100 $ \canvas.
+  for i:(Fin 99) j:(Fin 99).
+    rasterLineSegmentInFourPixels (ordinal i) (ordinal j) (0.1, 0.3) (0.8, 0.6) 1.0 canvas
+  ()
+
+:p trueLineIntegral
+:p trueLineIntegral ~~ renderedLineIntegral
+
+-- TODO: This doesn't work because of https://github.com/google-research/dex-lang/issues/267
+-- def forEachBetween (eff:Effects)?-> (lo: Int) (hi: Int) (f: Int ->{|eff} Unit) :{|eff} Unit =
+--  delta = hi - lo + 1
+--  for offset:(Fin delta).
+--    i = lo + ordinal offset
+--    f i
+--  ()
+
+-- Instead of rasterizing every pixel, we can rasterize only those touched by
+-- the line segment. We do this by computing the range of four-pixel boxes
+-- spanned by the segment, then iterating over whichever axis spans the most
+-- four-pixel boxes, and rendering into the two closest boxes along the other
+-- axis (similar to Wu's line algorithm, but using the fancier antialiasing
+-- defined above)
+-- https://en.wikipedia.org/wiki/Xiaolin_Wu%27s_line_algorithm
+def rasterLineSegment (height:Int)?-> (width:Int)?-> (ref:Type)?->
+      (_: VSpace out)?=>
+      (a: RelPoint) -- First line endpoint
+      (b: RelPoint) -- Second line endpoint
+      (fill: out) -- Fill intensity per relative unit.
+      (canvas:Ref ref ((Fin width & Fin height)=>out)) -- Where to draw to.
+      :{Accum ref} Unit =
+  (x0, y0) = a
+  (x1, y1) = b
+  dx = 1.0 / IToF (width - 1)
+  dy = 1.0 / IToF (height - 1)
+
+  x_changes_more = abs (x0 - x1) > abs (y0 - y1)
+  -- u is the axis that changes fastest, v the one that changes slowest.
+  -- We also sort so that u0 <= u1.
+  (u0, u1, v0, v1, du, dv) = case x_changes_more of
+    True -> case x0 < x1 of
+      True -> (x0, x1, y0, y1, dx, dy)
+      False -> (x1, x0, y1, y0, dx, dy)
+    False -> case y0 < y1 of
+      True -> (y0, y1, x0, x1, dy, dx)
+      False -> (y1, y0, x1, x0, dy, dx)
+
+  slope = (v1 - v0)/(u1 - u0)
+
+  min_u_int = FToI $ floor (u0 / du)
+  max_u_int = FToI $ ceil (u1 / du)
+  -- TODO: once support for dynamic lists and also plotting lands, replace this
+  -- with iteration over a dynamic list, something like
+  --    u_values = arange min_u_int (max_u_int + 1)
+  --    for i.
+  --      u_int = u_values.i
+  --      ...
+  delta_u = max_u_int - min_u_int + 1
+  for u_offset:(Fin delta_u).
+    u_int = ordinal u_offset + min_u_int
+
+    -- Convert u back into relative coordinates
+    u_rel = IToF u_int * dx
+    -- Use that to figure out indices for v
+    v_rel = v0 + (u_rel - u0) * slope
+    v_int_prev = FToI $ floor (v_rel / dv)
+    v_int_next = case v1 > v0 of
+      True -> v_int_prev + 1
+      False -> v_int_prev - 1
+    
+    -- Rasterize into the two boxes (u_int, v_int_prev), (u_int, v_int_next)
+    case x_changes_more of
+      True ->
+        rasterLineSegmentInFourPixels u_int v_int_prev a b fill canvas
+        rasterLineSegmentInFourPixels u_int v_int_next a b fill canvas
+      False ->
+        rasterLineSegmentInFourPixels v_int_prev u_int a b fill canvas
+        rasterLineSegmentInFourPixels v_int_next u_int a b fill canvas
+  ()
+
+
+:plotmat
+  s = 100
+  drawIntoCanvas s s $ \canvas.
+    rasterLineSegment (0.1, 0.3) (0.8, 0.6) 1.0 canvas
+    rasterLineSegment (0.6, 0.8) (0.3, 0.1) 1.0 canvas
+
+-- Bilinear approximation still preserves line integral, confirming we are
+-- rendering the right set of pixels.
+sparseRenderedLineIntegral = sum $ sum $ drawIntoCanvas 100 100 $
+  rasterLineSegment (0.1, 0.3) (0.8, 0.6) 1.0
+
+:p trueLineIntegral ~~ sparseRenderedLineIntegral
+
+'## Light path visualization
+We can visualize light by rasterizing many lines coming from a single point.
+
+def invertAndGammaCorrect (raw : w=>h=>Float) : w=>h=>Float =
+  -for i j. exp $ 0.45 * log raw.i.j
+
+:plotmat
+  s = 100
+  n = 10000
+  invertAndGammaCorrect $ drawIntoCanvas s s $ \canvas.
+    for i:(Fin n).
+      key = ixkey (newKey 42) i
+      angle = 2. * pi * rand key
+      rasterLineSegment (0.5, 0.5) (0.5 + (cos angle), 0.5 + (sin angle)) 1.0 canvas
+    ()
+
+'But it's not very interesting unless the light has something to interact with!
+
+data BoundaryCurve =
+  LineSegment start:RelPoint end:RelPoint
+  ArcSegment center:RelPoint radius:Float theta1:Float theta2:Float  -- smallest theta must be between [-pi, pi)
+
+Ray = { start: RelPoint & dir: RelPoint }
+
+-- TODO: rewrite with table unpacking
+def invert2d (m: Fin 2 => Fin 2 => Float) : Fin 2 => Fin 2 => Float =
+  det = m.(0@_).(0@_) * m.(1@_).(1@_) - m.(0@_).(1@_) * m.(1@_).(0@_)
+  (1.0/det) .* [ [m.(1@_).(1@_), -m.(0@_).(1@_)]
+  , [-m.(1@_).(0@_), m.(0@_).(0@_)]
+  ]
+
+-- TODO: deduplicate with https://github.com/google-research/dex-lang/pull/276
+def atan2 (y:Float) (x:Float) :Float =
+  -- https://math.stackexchange.com/questions/1098487/atan2-faster-approximation/1105038
+  a = minimum [abs x, abs y] / maximum [abs x, abs y]
+  s = a * a
+  r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a
+  r = case (abs y > abs x) of
+    True -> (pi/2.) - r
+    False -> r
+  r = case x<0. of
+    True -> pi - r
+    False -> r
+  r = case y<0. of
+    True -> -r
+    False -> r
+  r
+
+-- Normalize a vector.
+def unitVector (u:RelPoint) : RelPoint =
+  (ux, uy) = u
+  unorm = sqrt (square ux + square uy)
+  (ux / unorm, uy / unorm)
+
+-- Ignore any intersection that happens before the ray has moved this far,
+-- to avoid repeatedly hitting the same surface.
+minDistance = 0.00001
+
+def otherwiseMaybe (a: Maybe t) (b: Maybe t) : Maybe t =
+  case a of
+    Just x -> Just x
+    Nothing -> b
+
+-- Intersect a ray with a boundary and return a surface normal. Direction of
+-- the surface normal depends on the direction of the boundary curve, but not
+-- the direction of the ray.
+def testHit (ray:Ray) (boundary:BoundaryCurve) : Maybe Ray =
+  ({start=(sx, sy), dir=dir}) = ray
+  (ux, uy) = unitVector dir
+  case boundary of
+    LineSegment (ax, ay) (bx, by) ->
+      (vx, vy) = (bx - ax, by - ay)
+      -- Solve a linear system to determine interpolation coefficients of the
+      -- intersection between the ray and the line segment.
+      soln = (invert2d [[-vx, ux], [-vy, uy]]) **. [ax - sx, ay - sy]
+      interp_a_to_b = soln.(0@_)
+      ray_dist = soln.(1@_)
+      case (interp_a_to_b > 0. && interp_a_to_b <= 1. && ray_dist > minDistance) of
+        True -> Just { start=(sx + ray_dist * ux, sy + ray_dist * uy)
+                     , dir=(-vy, vx)
+                     }
+        False -> Nothing
+    ArcSegment (cx, cy) r theta0 theta1 ->
+      ({start=(sx, sy), dir=dir}) = ray
+      u = [ux, uy]
+      uLeft = [-uy, ux]
+      -- Convert to a normalized coordinate system, so that the ray starts at
+      -- the origin and is axis-aligned.
+      sToC = [cx - sx, cy - sy]
+      dAlong = vdot u sToC
+      dPerp = vdot uLeft sToC
+      plusminus = [-1.0, 1.0]
+      -- Intersect with the full circle.
+      distances = for i. dAlong + plusminus.i * sqrt (square r - square dPerp)
+      -- Treat clockwise and counterclockwise arcs as oriented differently.
+      (normalPointsAway, baseTheta, radians) = case theta1 > theta0 of
+        True -> (False, theta0, theta1 - theta0)
+        False -> (True, theta1, theta0 - theta1)
+      
+      intersects = for i.
+        dist = distances.i
+        -- Check for intersection with the arc by computing the angle of the
+        -- possible circle intersection.
+        cToP_x = sx + ux * dist - cx
+        cToP_y = sy + uy * dist - cy
+        theta = atan2 cToP_y cToP_x
+        -- Is this intersection a real one?
+        valid = (dist > minDistance) && (theta >= baseTheta) && ((theta - baseTheta) < radians)
+        dir = case normalPointsAway of
+          True -> (cToP_x, cToP_y)
+          False -> (-cToP_x, -cToP_y)
+        case valid of
+          True -> Just {start=(sx + ux * dist, sy + uy * dist), dir=dir}
+          False -> Nothing
+
+      intersects.(0@_) `otherwiseMaybe` intersects.(1@_)
+
+
+:p testHit {start=(0.,0.), dir=(0., 1.)} (LineSegment (2., 2.) (-2., 2.))
+
+:p testHit {start=(0.,0.), dir=(1., 1.)} (LineSegment (5., 2.) (-5., 1.))
+
+:p testHit {start=(0.,0.), dir=(1., 1.)} (LineSegment (1., 2.) (2., 3.))
+
+:p testHit {start=(0.,0.), dir=(1., 0.)} (ArcSegment (3., 1.) 2. (-pi) pi)
+
+'Now we can draw objects, although they are all opaque:
+
+:plotmat
+  s = 100
+  n = 10000
+  objects = [ LineSegment (0.85, 0.6) (0.6, 0.9)
+            , LineSegment (0.2, 0.7) (0.4, 0.5)
+            , ArcSegment (0.25, 0.25) 0.15 (-pi) (-pi/3.)
+            , ArcSegment (0.6, 0.25) 0.15 (-pi) pi
+            ]
+  invertAndGammaCorrect $ drawIntoCanvas s s $ \canvas.
+    for i:(Fin n).
+      key = ixkey (newKey 42) i
+      angle = 2. * pi * rand key
+      (sx, sy) = (0.5, 0.5)
+      ray = {start=(sx, sy), dir=(cos angle, sin angle)}
+      endpt = snd $ withState (sx + (cos angle), sy + (sin angle)) \ref.
+        for objidx.
+          case testHit ray objects.objidx of
+            Just {start=(nx, ny), ..._} ->
+              (cx, cy) = get ref
+              -- Find first intersection
+              dc = sqrt (square (cx-sx) + square (cy-sy))
+              dn = sqrt (square (nx-sx) + square (ny-sy))
+              case dn < dc of
+                True -> ref := (nx, ny)
+                False -> ()
+            Nothing -> ()
+
+      rasterLineSegment (getAt #start ray) endpt 1.0 canvas
+    ()
+
+'Let's add some interactions!
+
+data SurfaceType =
+  Black
+  Matte
+  Reflecting
+  Refracting refractionCoeff:Float
+
+Boundary = { curve: BoundaryCurve
+           & surface: SurfaceType
+           }
+
+-- This function implements a subset of the surfaces from [Tantalum](https://benedikt-bitterli.me/tantalum/).
+def reemit (incoming:Ray) (intersect:Ray) (surf:SurfaceType) (rng:Key) : Maybe Ray =
+  pt = getAt #start intersect
+  (ix, iy) = unitVector $ getAt #dir incoming   -- Direction of the ray
+  (nx, ny) = unitVector $ getAt #dir intersect  -- Normal vector of the surface
+  case surf of
+    Black -> Nothing
+    Matte ->
+      -- Pick a random direction on the same side of the surface as the incoming ray.
+      dotprod = ix * nx + iy * ny
+      xi = rand rng
+      perpendicular = 2.0 * xi - 1.0
+      parallel = sqrt (1.0 - square perpendicular) * select (dotprod > 0.) (-1.0) 1.0
+      reflected = ( parallel * nx + perpendicular * ny
+                  , parallel * ny + perpendicular * (-nx) )
+      Just {start=pt, dir=reflected}
+    Reflecting ->
+      -- Reflect the ray along the surface normal.
+      dotprod = ix * nx + iy * ny
+      reflected = (ix - 2. * nx * dotprod, iy - 2. * ny * dotprod)
+      Just {start=pt, dir=reflected}
+    Refracting rCoef ->
+      -- Bend the perpendicular component of the ray according to the
+      -- refraction coefficient (using the normal direction to determine which
+      -- way to bend).
+      dotprod = ix * nx + iy * ny
+      perp = ix * ny + iy * (-nx)
+      perpAdj = perp * select (dotprod > 0.) rCoef (1.0/rCoef)
+      parallelSquared = (1.0 - square perpAdj)
+      case parallelSquared > 0.0 of
+        False ->
+          -- Internal reflection
+          reflected = (ix - 2. * nx * dotprod, iy - 2. * ny * dotprod)
+          Just {start=pt, dir=reflected}
+        True ->
+          parallelAdj = sqrt parallelSquared * select (dotprod > 0.) 1.0 (-1.0)
+          refracted = ( parallelAdj * nx + perpAdj * ny
+                      , parallelAdj * ny + perpAdj * (-nx) )
+          Just {start=pt, dir=refracted}
+      
+
+-- Trace a single ray as it bounces between a collection of surface boundaries.
+def traceLightPaths (height:Int)?-> (width:Int)?-> (ref:Type)?->
+      (boundaries: bidx=>Boundary)
+      (ray:Ray) -- Start position and direction.
+      (maxBounces:Int) 
+      (key:Key) 
+      (canvas:Ref ref ((Fin width & Fin height)=>Float32)) -- Where to draw to.
+      :{Accum ref} Unit =
+  withState {ray, key, stop=False, bounce=0} $ \h ?-> \stateRef:(Ref h _).
+    -- Slightly annoying that we have to write this type signature in order
+    -- for the typechecker to do the right effect inference.
+    cond : Unit ->{State h, Accum ref} Bool = \().
+      ({ray, key, stop, bounce}) = get stateRef
+      not stop && (bounce < maxBounces)
+    while cond $ \().
+      ({ray, key, stop, bounce}) = get stateRef
+      (sx, sy) = getAt #start ray
+      (k1, k2) = splitKey key
+      firstHit = snd $ withState Nothing \hitstate.
+        for i.
+          old = get hitstate
+          case testHit ray (getAt #curve boundaries.i) of
+            Just hit ->
+              ({start=(nx, ny), ...}) = hit
+              case old of
+                Just ({start=(cx, cy), ..._}, _) ->
+                  -- Take whichever intersection happens first.
+                  dc = sqrt (square (cx-sx) + square (cy-sy))
+                  dn = sqrt (square (nx-sx) + square (ny-sy))
+                  case dn < dc of
+                    True -> hitstate := Just (hit, i)
+                    False -> ()
+                Nothing -> hitstate := Just (hit, i)
+            Nothing -> ()
+      case firstHit of
+        Nothing -> stateRef := {ray, key, stop=True, bounce}
+        Just (intersect, idx) ->
+          rasterLineSegment (getAt #start ray) (getAt #start intersect) 1.0 canvas
+          case reemit ray intersect (getAt #surface boundaries.idx) k1 of
+            Nothing ->
+              stateRef := {ray, key, stop=True, bounce}
+            Just newRay ->
+              stateRef := {ray=newRay, key=k2, stop=False, bounce=bounce + 1}
+  ()
+
+:plotmat
+  s = 100     -- Resolution
+  n = 10000   -- Number of rays
+                -- Walls
+  boundaries =  [ { curve=LineSegment (0.0, 0.0) (0.0, 1.0)
+                  , surface=Black
+                  }
+                , { curve=LineSegment (1.0, 1.0) (0.0, 1.0)
+                  , surface=Black
+                  }
+                , { curve=LineSegment (1.0, 1.0) (1.0, 0.0)
+                  , surface=Matte
+                  }
+                , { curve=LineSegment (0.0, 0.0) (1.0, 0.0)
+                  , surface=Black
+                  }
+                -- Scene objects
+                , { curve=LineSegment (0.85, 0.6) (0.3, 0.9)
+                  , surface=Reflecting
+                }
+                , { curve=LineSegment (0.6, 0.8) (0.95, 0.95)
+                  , surface=Black
+                }
+                , { curve=ArcSegment (0.25, 0.25) 0.2 (-pi) (-pi/3.)
+                  , surface=Reflecting
+                }
+                , { curve=ArcSegment (0.5, 0.5) 0.3 (-pi/2.) 0.0
+                  , surface=Refracting 0.5
+                }
+                , { curve=ArcSegment (0.8, 0.2) 0.3 (pi/2.) pi
+                  , surface=Refracting 0.5
+                }
+            ]
+  invertAndGammaCorrect $ drawIntoCanvas s s $ \canvas.
+    for i:(Fin n).
+      key = ixkey (newKey 42) i
+      (k1, k2) = splitKey key
+      angle = 2. * pi * rand k1
+      (sx, sy) = (0.3, 0.7)
+      ray = {start=(sx, sy), dir=(cos angle, sin angle)}
+      maxBounces = 10
+      traceLightPaths boundaries ray maxBounces k2 canvas
+    ()
