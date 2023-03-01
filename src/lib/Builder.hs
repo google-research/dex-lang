@@ -302,6 +302,10 @@ updateTransposeRelation :: (Mut n, TopBuilder m) => TopFunName n -> TopFunName n
 updateTransposeRelation f1 f2 =
   extendCache $ mempty { transpositionCache = eMapSingleton f1 f2 <> eMapSingleton f2 f1}
 
+updateInstanceDef :: (Mut n, TopBuilder m) => InstanceName n -> InstanceDef n -> m n ()
+updateInstanceDef name def =
+  emitPartialTopEnvFrag $ mempty {fragInstanceDefUpdates = toSnocList [(name, def)]}
+
 bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
 bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName

@@ -105,13 +105,17 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
         body <- checkInstanceBody className'' params' methods
         return (ListE params' `PairE` body)
   Abs bs' (Abs dictBinders (ListE params' `PairE` body)) <- return ab
+  let emptyDef = InstanceDef className' (bs' >>> dictBinders) params' $ InstanceBody [] []
+  instanceName <- emitInstanceDef emptyDef
+  addInstanceSynthCandidate className' instanceName
   let def = InstanceDef className' (bs' >>> dictBinders) params' body
   def' <- synthInstanceDef def
-  instanceName <- emitInstanceDef def'
+  updateInstanceDef instanceName def'
   UDeclResultDone <$> case maybeName of
     RightB UnitB  -> do
+      -- TODO: Remove the next two lines of comment.
       -- only nameless instances become synthesis candidates
-      addInstanceSynthCandidate className' instanceName
+      -- addInstanceSynthCandidate className' instanceName
       return result
     JustB instanceName' -> do
       lam <- instanceFun instanceName

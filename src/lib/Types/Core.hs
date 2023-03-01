@@ -517,7 +517,8 @@ data PartialTopEnvFrag n = PartialTopEnvFrag
   , fragLoadedObjects   :: LoadedObjects n
   , fragLocalModuleEnv  :: ModuleEnv n
   , fragFinishSpecializedDict :: SnocList (SpecDictName n, [LamExpr SimpIR n])
-  , fragTopFunUpdates         :: SnocList (TopFunName n, TopFunEvalStatus n) }
+  , fragTopFunUpdates         :: SnocList (TopFunName n, TopFunEvalStatus n)
+  , fragInstanceDefUpdates    :: SnocList (InstanceName n, InstanceDef n) }
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
@@ -2463,15 +2464,19 @@ instance GenericE PartialTopEnvFrag where
                               `PairE` ModuleEnv
                               `PairE` ListE (PairE SpecDictName (ListE (LamExpr SimpIR)))
                               `PairE` ListE (PairE TopFunName (ComposeE EvalStatus TopFunLowerings))
-  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d fs) =
-    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d' `PairE` fs'
+                              `PairE` ListE (PairE InstanceName InstanceDef)
+  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d fs ds) =
+    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d' `PairE` fs' `PairE` ds'
     where d'  = ListE $ [name `PairE` ListE methods | (name, methods) <- toList d]
           fs' = ListE $ [name `PairE` ComposeE impl | (name, impl)    <- toList fs]
+          ds' = ListE $ [name `PairE` def           | (name, def)     <- toList ds]
   {-# INLINE fromE #-}
-  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d `PairE` fs) =
-    PartialTopEnvFrag cache rules loadedM loadedO env d' fs'
+  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d `PairE` fs `PairE` ds) =
+    PartialTopEnvFrag cache rules loadedM loadedO env d' fs' ds'
     where d'  = toSnocList [(name, methods) | name `PairE` ListE methods <- fromListE d]
           fs' = toSnocList [(name, impl)    | name `PairE` ComposeE impl <- fromListE fs]
+          ds' = toSnocList [(name, def)     | name `PairE` def           <- fromListE ds]
+
   {-# INLINE toE #-}
 
 instance SinkableE      PartialTopEnvFrag
@@ -2479,11 +2484,11 @@ instance HoistableE     PartialTopEnvFrag
 instance RenameE        PartialTopEnvFrag
 
 instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 x7 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 y7 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6) (x7 <> y7)
+  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 x7 x8 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 y7 y8 =
+    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6) (x7 <> y7) (x8 <> y8)
 
 instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty mempty
+  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance GenericB TopEnvFrag where
@@ -2514,12 +2519,13 @@ instance OutFrag TopEnvFrag where
 instance ExtOutMap Env TopEnvFrag where
   extendOutMap env
     (TopEnvFrag (EnvFrag frag)
-    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d' fs')) = result''
+    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d' fs' ds')) = result'''
     where
       Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
       result = Env newTopEnv newModuleEnv
-      result'  = foldl addMethods   result (toList d' )
-      result'' = foldl addFunUpdate result' (toList fs')
+      result'   = foldl addMethods           result   (toList d' )
+      result''  = foldl addFunUpdate         result'  (toList fs')
+      result''' = foldl addInstanceDefUpdate result'' (toList ds')
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
@@ -2558,6 +2564,9 @@ addFunUpdate e (f, s) = do
     TopFunBinding (DexTopFun def ty simp _) ->
       updateEnv f (TopFunBinding $ DexTopFun def ty simp s) e
     _ -> error "can't update ffi function impl"
+
+addInstanceDefUpdate :: Env n -> (InstanceName n, InstanceDef n) -> Env n
+addInstanceDefUpdate e (name, def) = updateEnv name (InstanceBinding def) e
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ topEnv env) v
