@@ -5,13 +5,11 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module ConcreteSyntax (
-  mustParseit, sourceBlocks, sourceBlock, joinPos, jointPos,
+  joinPos, jointPos,
   keyWordStrs, showPrimName,
   binOptL, binOptR, nary,
-  WithSrc (..), CSourceBlock, CSourceBlock' (..),
-  CTopDecl, CTopDecl' (..), CBlock (..), CDecl, CDecl' (..),
-  NameAndArgs, NameAndType, Group, Group'(..),
-  Bin, Bin' (..), Bracket (..), LabelPrefix (..), ForKind (..),
+  parseUModule, parseUModuleDeps,
+  finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
   pattern ExprDecl, pattern ExprBlock, pattern Bracketed,
   pattern Binary, pattern Prefix, pattern Postfix, pattern Identifier) where
 
@@ -25,125 +23,54 @@ import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text          qualified as T
+import Data.Text.Encoding qualified as T
 import Data.Tuple
 import Data.Void
-import Data.Word
-import GHC.Generics (Generic (..))
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 
 import Err
 import Lexing
 import Name
-import Types.Primitives hiding (Equal)
-import Types.Primitives qualified as P
 import Types.Source
+import Types.Primitives
+import Util
 
-sourceBlocks :: Parser [CSourceBlock]
+-- TODO: implement this more efficiently rather than just parsing the whole
+-- thing and then extracting the deps.
+parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
+parseUModuleDeps name file = deps
+  where UModule _ deps _ = parseUModule name $ T.decodeUtf8 $ fContents file
+{-# SCC parseUModuleDeps #-}
+
+finishUModuleParse :: UModulePartialParse -> UModule
+finishUModuleParse (UModulePartialParse name _ file) =
+  parseUModule name (T.decodeUtf8 $ fContents file)
+
+parseUModule :: ModuleSourceName -> Text -> UModule
+parseUModule name s = do
+  let blocks = mustParseit s sourceBlocks
+  let preamble = case name of
+        Prelude -> []
+        _ -> [preludeImportBlock]
+  let blocks' = preamble ++ blocks
+  let imports = flip foldMap blocks' \b -> case sbContents b of
+                  Misc (ImportModule moduleName) -> [moduleName]
+                  _ -> []
+  UModule name imports blocks'
+{-# SCC parseUModule #-}
+
+preludeImportBlock :: SourceBlock
+preludeImportBlock = SourceBlock 0 0 LogNothing "" $ Misc $ ImportModule Prelude
+
+sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
 {-# SCC sourceBlocks #-}
 
--- === Parsing target ADT ===
+mustParseSourceBlock :: Text -> SourceBlock
+mustParseSourceBlock s = mustParseit s sourceBlock
 
-type CSourceBlock = SourceBlockP CSourceBlock'
-
-data CSourceBlock'
-  = CTopDecl CTopDecl
-  | CCommand CmdName CBlock
-  | CDeclareForeign SourceName SourceName Group
-  | CDeclareCustomLinearization SourceName SymbolicZeros Group
-  | CMisc SourceBlockMisc
-  | CUnParseable ReachedEOF String
-  deriving (Show, Generic)
-
-type CTopDecl = WithSrc CTopDecl'
-data CTopDecl'
-  = CDecl LetAnn CDecl
-  | CData SourceName -- Type constructor name
-      [Group] -- Arguments, including class constraints
-      [NameAndArgs] -- Constructor names and argument sets
-  | CStruct SourceName -- Type constructor name
-      [Group] -- Arguments, including class constraints
-      [(SourceName, Group)] -- Field names and types
-  | CInterface [Group] -- Superclasses
-      NameAndArgs -- Class name and arguments
-      -- Method declarations: name, arguments, type.  TODO: Allow operators?
-      [(Group, Group)]
-  | CEffectDecl SourceName [(SourceName, UResumePolicy, Group)]
-  | CHandlerDecl SourceName -- Handler name
-      SourceName -- Effect name
-      SourceName -- Body type parameter
-      Group -- Handler arguments
-      Group -- Handler type annotation
-      [(SourceName, Maybe UResumePolicy, CBlock)] -- Handler methods
-  deriving (Show, Generic)
-
-type NameAndArgs = (SourceName, [Group])
-type NameAndType = (SourceName, Group)
-
-type CDecl = WithSrc CDecl'
-data CDecl'
-  = CLet Group CBlock
-  -- Arrow binder <-
-  | CBind Group CBlock
-  -- name, args, type, body.  The header should contain the parameters,
-  -- optional effects, and return type
-  | CDef SourceName Group (Maybe Group) CBlock
-  -- header, givens (may be empty), methods, optional name.  The header should contain
-  -- the prerequisites, class name, and class arguments.
-  | CInstance Group Group
-      [(SourceName, CBlock)] -- Method definitions
-      (Maybe SourceName) -- Optional name of instance
-  | CExpr Group
-  deriving (Show, Generic)
-
-type Group = WithSrc Group'
-data Group'
-  = CEmpty
-  | CIdentifier SourceName
-  | CPrim PrimName [Group]
-  | CNat Word64
-  | CInt Int
-  | CString String
-  | CChar Char
-  | CFloat Double
-  | CHole
-  | CLabel LabelPrefix String
-  | CParens CBlock
-  | CBracket Bracket Group
-  -- Encode various separators of lists (like commas) as infix
-  -- operators in their own right (with defined precedence!) at this
-  -- level.  We will enforce correct structure in the translation to
-  -- abstract syntax.
-  | CBin Bin Group Group
-  | CPrefix SourceName Group -- covers unary - and unary + among others
-  | CPostfix SourceName Group
-  | CLambda [Group] CBlock  -- The arguments do not have Juxtapose at the top level
-  | CFor ForKind [Group] CBlock -- also for_, rof, rof_
-  | CCase Group [(Group, CBlock)] -- scrutinee, alternatives
-  | CIf Group CBlock (Maybe CBlock)
-  | CDo CBlock
-  deriving (Show, Generic)
-
-type Bin = WithSrc Bin'
-data Bin'
-  = Juxtapose
-  | EvalBinOp String
-  | Ampersand
-  | DepAmpersand
-  | IndexingDot
-  | FieldAccessDot
-  | Comma
-  | DepComma
-  | Colon
-  | DoubleColon
-  | Dollar
-  | Arrow Arrow
-  | FatArrow  -- =>
-  | Question
-  | Pipe
-  | Equal
-  deriving (Eq, Ord, Show, Generic)
+-- === helpers for target ADT ===
 
 interp_operator :: String -> Bin'
 interp_operator = \case
@@ -163,38 +90,22 @@ interp_operator = \case
   "=>"  -> FatArrow
   "?"   -> Question
   "|"   -> Pipe
-  "="   -> Equal
+  "="   -> CSEqual
   " "   -> Juxtapose  -- The parser in the precedence table canonicalizes already
   name  -> EvalBinOp $ "(" <> name <> ")"
 
--- We can add others, like @{ or [| or whatever
-data Bracket = Square | Curly
-  deriving (Show, Generic)
 
-data LabelPrefix = PlainLabel
-  deriving (Show, Generic)
+pattern DeclTopDecl :: LetAnn -> CSDecl -> CTopDecl
+pattern DeclTopDecl ann d <- WithSrc _ (CSDecl ann d) where
+  DeclTopDecl ann d@(WithSrc src _) = WithSrc src (CSDecl ann d)
 
-data ForKind
-  = KFor
-  | KFor_
-  | KRof
-  | KRof_
-  deriving (Show, Generic)
-
-data CBlock = CBlock [CDecl] -- last decl should be a CExpr
-  deriving (Show, Generic)
-
-pattern DeclTopDecl :: LetAnn -> CDecl -> CTopDecl
-pattern DeclTopDecl ann d <- WithSrc _ (CDecl ann d) where
-  DeclTopDecl ann d@(WithSrc src _) = WithSrc src (CDecl ann d)
-
-pattern ExprDecl :: Group -> CDecl
+pattern ExprDecl :: Group -> CSDecl
 pattern ExprDecl g <- WithSrc _ (CExpr g) where
   ExprDecl g@(WithSrc src _) = WithSrc src (CExpr g)
 
-pattern ExprBlock :: Group -> CBlock
-pattern ExprBlock g <- (CBlock [ExprDecl g]) where
-  ExprBlock g = CBlock [ExprDecl g]
+pattern ExprBlock :: Group -> CSBlock
+pattern ExprBlock g <- (CSBlock [ExprDecl g]) where
+  ExprBlock g = CSBlock [ExprDecl g]
 
 pattern Bracketed :: Bracket -> Group -> Group
 pattern Bracketed b g <- (WithSrc _ (CBracket b g)) where
@@ -247,7 +158,7 @@ nary' op (g1:(g2:rest)) = go (Binary op g1 g2) rest where
 
 -- === Parser (top-level structure) ===
 
-sourceBlock :: Parser CSourceBlock
+sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
@@ -255,25 +166,25 @@ sourceBlock = do
     level <- logLevel <|> logTime <|> logBench <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
-  return $ SourceBlockP (unPos (sourceLine pos)) offset level src b
+  return $ SourceBlock (unPos (sourceLine pos)) offset level src b
 
-recover :: ParseError Text Void -> Parser (LogLevel, CSourceBlock')
+recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
 recover e = do
   pos <- liftM statePosState getParserState
   reachedEOF <-  try (mayBreak sc >> eof >> return True)
              <|> return False
   consumeTillBreak
   let errmsg = errorBundlePretty (ParseErrorBundle (e :| []) pos)
-  return (LogNothing, CUnParseable reachedEOF errmsg)
+  return (LogNothing, UnParseable reachedEOF errmsg)
 
-importModule :: Parser CSourceBlock'
-importModule = CMisc . ImportModule . OrdinaryModule <$> do
+importModule :: Parser SourceBlock'
+importModule = Misc . ImportModule . OrdinaryModule <$> do
   keyWord ImportKW
   s <- anyCaseName
   eol
   return s
 
-declareForeign :: Parser CSourceBlock'
+declareForeign :: Parser SourceBlock'
 declareForeign = do
   keyWord ForeignKW
   foreignName <- strLit
@@ -281,16 +192,16 @@ declareForeign = do
   void $ label "type annotation" $ sym ":"
   ty <- cGroup
   eol
-  return $ CDeclareForeign foreignName b ty
+  return $ DeclareForeign foreignName b ty
 
-declareCustomLinearization :: Parser CSourceBlock'
+declareCustomLinearization :: Parser SourceBlock'
 declareCustomLinearization = do
   zeros <- (keyWord CustomLinearizationSymbolicKW $> SymbolicZeros)
        <|> (keyWord CustomLinearizationKW $> InstantiateZeros)
   fun <- anyCaseName
   linearization <- cGroup
   eol
-  return $ CDeclareCustomLinearization fun zeros linearization
+  return $ DeclareCustomLinearization fun zeros linearization
 
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
@@ -323,30 +234,30 @@ passName = choice [thisNameString s $> x | (s, x) <- passNames]
 passNames :: [(Text, PassName)]
 passNames = [(T.pack $ show x, x) | x <- [minBound..maxBound]]
 
-sourceBlock' :: Parser CSourceBlock'
+sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM CTopDecl (dataDef <* eolf)
-  <|> liftM CTopDecl (structDef <* eolf)
-  <|> liftM CTopDecl (DeclTopDecl PlainLet <$> instanceDef True  <* eolf)
-  <|> liftM CTopDecl (DeclTopDecl PlainLet <$> instanceDef False <* eolf)
-  <|> liftM CTopDecl (interfaceDef <* eolf)
-  <|> liftM CTopDecl (effectDef <* eolf)
-  <|> liftM CTopDecl (handlerDef <* eolf)
-  <|> liftM CTopDecl (topLet <* eolf)
-  <|> hidden (some eol >> return (CMisc EmptyLines))
-  <|> hidden (sc >> eol >> return (CMisc CommentLine))
+  <|> liftM TopDecl (dataDef <* eolf)
+  <|> liftM TopDecl (structDef <* eolf)
+  <|> liftM TopDecl (DeclTopDecl PlainLet <$> instanceDef True  <* eolf)
+  <|> liftM TopDecl (DeclTopDecl PlainLet <$> instanceDef False <* eolf)
+  <|> liftM TopDecl (interfaceDef <* eolf)
+  <|> liftM TopDecl (effectDef <* eolf)
+  <|> liftM TopDecl (handlerDef <* eolf)
+  <|> topLetOrExpr <* eolf
+  <|> hidden (some eol >> return (Misc EmptyLines))
+  <|> hidden (sc >> eol >> return (Misc CommentLine))
 
-proseBlock :: Parser CSourceBlock'
-proseBlock = label "prose block" $ char '\'' >> fmap (CMisc . ProseBlock . fst) (withSource consumeTillBreak)
+proseBlock :: Parser SourceBlock'
+proseBlock = label "prose block" $ char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
 
-topLevelCommand :: Parser CSourceBlock'
+topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
   <|> declareForeign
   <|> declareCustomLinearization
-  <|> (CMisc . QueryEnv <$> envQuery)
+  <|> (Misc . QueryEnv <$> envQuery)
   <|> explicitCommand
   <?> "top-level command"
 
@@ -360,7 +271,7 @@ envQuery = string ":debug" >> sc >> (
     rawName :: Parser RawName
     rawName = undefined -- RawName <$> (fromString <$> anyName) <*> intLit
 
-explicitCommand :: Parser CSourceBlock'
+explicitCommand :: Parser SourceBlock'
 explicitCommand = do
   cmdName <- char ':' >> nameString
   cmd <- case cmdName of
@@ -373,8 +284,8 @@ explicitCommand = do
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- cBlock <* eolf
   return $ case (e, cmd) of
-    (ExprBlock (WithSrc _ (CIdentifier v)), GetType) -> CMisc $ GetNameType v
-    _ -> CCommand cmd e
+    (ExprBlock (WithSrc _ (CIdentifier v)), GetType) -> Misc $ GetNameType v
+    _ -> Command cmd e
 
 structDef :: Parser CTopDecl
 structDef = withSrc do
@@ -444,7 +355,7 @@ handlerDef = withSrc do
   return $ CHandlerDecl (fromString handlerName) (fromString effectName)
     (fromString bodyTyArg) args retTy methods
 
-effectOpDef :: Parser (SourceName, Maybe UResumePolicy, CBlock)
+effectOpDef :: Parser (SourceName, Maybe UResumePolicy, CSBlock)
 effectOpDef = do
   (rp, v) <- (keyWord ReturnKW $> (Nothing, "return"))
          <|> ((,) <$> (Just <$> resumePolicy) <*> anyName)
@@ -465,11 +376,18 @@ nameAndArgs = do
   args <- many cGroupNoBrackets
   return (n, args)
 
+topLetOrExpr :: Parser SourceBlock'
+topLetOrExpr = topLet >>= \case
+  WithSrc _ (CSDecl ann (ExprDecl e)) -> do
+    when (ann /= PlainLet) $ fail "Cannot annotate expressions"
+    return $ Command (EvalExpr (Printed Nothing)) (ExprBlock e)
+  d -> return $ TopDecl d
+
 topLet :: Parser CTopDecl
 topLet = withSrc do
   lAnn <- (char '@' >> letAnnStr <* (eol <|> sc)) <|> return PlainLet
   decl <- cDecl
-  return $ CDecl lAnn decl
+  return $ CSDecl lAnn decl
   where
     letAnnStr :: Parser LetAnn
     letAnnStr = (string "noinline"   $> NoInlineLet)
@@ -482,24 +400,24 @@ onePerLine p =   liftM (:[]) p
 -- === Groups ===
 
 -- Parse a block, which could also just be a group
-cBlock :: Parser CBlock
+cBlock :: Parser CSBlock
 cBlock = cBlock' >>= \case
   Left blk -> return blk
   Right ex -> return $ ExprBlock ex
 
 -- Parse a block or a group but tell me which (i.e., whether it was indented or not)
-cBlock' :: Parser (Either CBlock Group)
+cBlock' :: Parser (Either CSBlock Group)
 cBlock' = Left <$> realBlock <|> Right <$> cGroupNoSeparators where
   realBlock = withIndent $
-    CBlock <$> (mayNotBreak $ cDecl `sepBy1` (semicolon <|> try nextLine))
+    CSBlock <$> (mayNotBreak $ cDecl `sepBy1` (semicolon <|> try nextLine))
 
-cDecl :: Parser CDecl
+cDecl :: Parser CSDecl
 cDecl = instanceDef True <|> (do
   lhs <- funDefLet <|> (try simpleLet)
   rhs <- cBlock
   return $ lhs rhs) <|> (ExprDecl <$> cGroup)
 
-instanceDef :: Bool -> Parser CDecl
+instanceDef :: Bool -> Parser CSDecl
 instanceDef isNamed = withSrc $ do
   name <- case isNamed of
     False -> keyWord InstanceKW $> Nothing
@@ -510,14 +428,14 @@ instanceDef isNamed = withSrc $ do
              (onePerLine instanceMethod)
   return $ CInstance header (fromMaybe (WithSrc Nothing CEmpty) givens) methods name
 
-instanceMethod :: Parser (SourceName, CBlock)
+instanceMethod :: Parser (SourceName, CSBlock)
 instanceMethod = do
   v <- anyName
   mayNotBreak $ sym "="
   rhs <- cBlock
   return (fromString v, rhs)
 
-simpleLet :: Parser (CBlock -> CDecl)
+simpleLet :: Parser (CSBlock -> CSDecl)
 simpleLet = withSrc1 $ do
   binder <- cGroupNoEqual
   next <- nextChar
@@ -526,7 +444,7 @@ simpleLet = withSrc1 $ do
     '<' -> sym "<-" >> return (CBind binder)
     _   -> fail ""
 
-funDefLet :: Parser (CBlock -> CDecl)
+funDefLet :: Parser (CSBlock -> CSDecl)
 funDefLet = label "function definition" (mayBreak $ withSrc1 do
   keyWord DefKW
   name <- anyName
@@ -662,7 +580,7 @@ cIf = mayNotBreak do
   (cons, alt) <- thenSameLine <|> thenNewLine
   return $ CIf predicate cons alt
 
-thenSameLine :: Parser (CBlock, Maybe CBlock)
+thenSameLine :: Parser (CSBlock, Maybe CSBlock)
 thenSameLine = do
   keyWord ThenKW
   cBlock' >>= \case
@@ -679,7 +597,7 @@ thenSameLine = do
                >> withIndent (mayNotBreak $ keyWord ElseKW >> cBlock))
       return (ExprBlock ex, alt)
 
-thenNewLine :: Parser (CBlock, Maybe CBlock)
+thenNewLine :: Parser (CSBlock, Maybe CSBlock)
 thenNewLine = withIndent $ mayNotBreak $ do
   keyWord ThenKW
   cBlock' >>= \case
@@ -958,7 +876,7 @@ primNames = M.fromList
   , ("and"  , binary BAnd),  ("or"    , binary BOr )
   , ("not"  , unary  BNot),  ("xor"   , binary BXor)
   , ("shl"  , binary BShL),  ("shr"   , binary BShR)
-  , ("ieq"  , binary (ICmp P.Equal)), ("feq", binary (FCmp P.Equal))
+  , ("ieq"  , binary (ICmp Equal)),   ("feq", binary (FCmp Equal))
   , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
   , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
   , ("fneg" , unary  FNeg)

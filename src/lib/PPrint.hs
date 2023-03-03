@@ -32,8 +32,7 @@ import System.IO.Unsafe
 import qualified System.Environment as E
 import Numeric
 
-import ConcreteSyntax hiding (Equal)
-import ConcreteSyntax qualified as C
+import ConcreteSyntax
 import Err
 import LabeledItems
 import IRVariants
@@ -1176,30 +1175,26 @@ instance ToJSON Result where
           , "run_time"     .= toJSON runTime ]
         out -> ["result" .= String (fromString $ pprint out)]
 
-instance Pretty SourceBlock' where
-  pretty (EvalUDecl d) = fromString $ show d
-  pretty b = fromString $ show b
-
 -- === Concrete syntax rendering ===
 
-instance Pretty CSourceBlock' where
-  pretty (CTopDecl decl) = p decl
+instance Pretty SourceBlock' where
+  pretty (TopDecl decl) = p decl
   pretty d = fromString $ show d
 
 instance Pretty CTopDecl where
   pretty (WithSrc _ d) = p d
 
 instance Pretty CTopDecl' where
-  pretty (C.CDecl ann decl) = annDoc <> p decl
+  pretty (CSDecl ann decl) = annDoc <> p decl
     where annDoc = case ann of
             PlainLet -> mempty
             _ -> p ann <> " "
   pretty d = fromString $ show d
 
-instance Pretty C.CDecl where
+instance Pretty CSDecl where
   pretty (WithSrc _ d) = p d
 
-instance Pretty C.CDecl' where
+instance Pretty CSDecl' where
   pretty (CLet pat blk) = pArg pat <+> "=" <+> p blk
   pretty (CBind pat blk) = pArg pat <+> "<-" <+> p blk
   pretty (CDef name args (Just ty) blk) =
@@ -1218,9 +1213,9 @@ instance Pretty C.CDecl' where
       _ -> " given" <+> p givens <> " "
   pretty (CExpr e) = p e
 
-instance Pretty C.CBlock where
+instance Pretty CSBlock where
   pretty (ExprBlock g) = pArg g
-  pretty (CBlock decls) = nest 2 $ prettyLines decls
+  pretty (CSBlock decls) = nest 2 $ prettyLines decls
 
 instance PrettyPrec Group where
   prettyPrec (WithSrc _ g) = prettyPrec g
@@ -1272,4 +1267,4 @@ instance Pretty Bin' where
   pretty FatArrow = "=>"
   pretty Question = "?"
   pretty Pipe = "|"
-  pretty C.Equal = "="
+  pretty CSEqual = "="

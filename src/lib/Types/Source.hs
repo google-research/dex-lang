@@ -59,6 +59,116 @@ pattern SISourceName n = SourceOrInternalName (SourceName n)
 pattern SIInternalName :: SourceName -> Name c n -> SourceOrInternalName c n
 pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
 
+-- === Concrete syntax ===
+-- The grouping-level syntax of the source language
+
+type CTopDecl = WithSrc CTopDecl'
+data CTopDecl'
+  = CSDecl LetAnn CSDecl
+  | CData SourceName -- Type constructor name
+      [Group] -- Arguments, including class constraints
+      [NameAndArgs] -- Constructor names and argument sets
+  | CStruct SourceName -- Type constructor name
+      [Group] -- Arguments, including class constraints
+      [(SourceName, Group)] -- Field names and types
+  | CInterface [Group] -- Superclasses
+      NameAndArgs -- Class name and arguments
+      -- Method declarations: name, arguments, type.  TODO: Allow operators?
+      [(Group, Group)]
+  | CEffectDecl SourceName [(SourceName, UResumePolicy, Group)]
+  | CHandlerDecl SourceName -- Handler name
+      SourceName -- Effect name
+      SourceName -- Body type parameter
+      Group -- Handler arguments
+      Group -- Handler type annotation
+      [(SourceName, Maybe UResumePolicy, CSBlock)] -- Handler methods
+  deriving (Show, Generic)
+
+type NameAndArgs = (SourceName, [Group])
+type NameAndType = (SourceName, Group)
+
+type CSDecl = WithSrc CSDecl'
+data CSDecl'
+  = CLet Group CSBlock
+  -- Arrow binder <-
+  | CBind Group CSBlock
+  -- name, args, type, body.  The header should contain the parameters,
+  -- optional effects, and return type
+  | CDef SourceName Group (Maybe Group) CSBlock
+  -- header, givens (may be empty), methods, optional name.  The header should contain
+  -- the prerequisites, class name, and class arguments.
+  | CInstance Group Group
+      [(SourceName, CSBlock)] -- Method definitions
+      (Maybe SourceName) -- Optional name of instance
+  | CExpr Group
+  deriving (Show, Generic)
+
+type Group = WithSrc Group'
+data Group'
+  = CEmpty
+  | CIdentifier SourceName
+  | CPrim PrimName [Group]
+  | CNat Word64
+  | CInt Int
+  | CString String
+  | CChar Char
+  | CFloat Double
+  | CHole
+  | CLabel LabelPrefix String
+  | CParens CSBlock
+  | CBracket Bracket Group
+  -- Encode various separators of lists (like commas) as infix
+  -- operators in their own right (with defined precedence!) at this
+  -- level.  We will enforce correct structure in the translation to
+  -- abstract syntax.
+  | CBin Bin Group Group
+  | CPrefix SourceName Group -- covers unary - and unary + among others
+  | CPostfix SourceName Group
+  | CLambda [Group] CSBlock  -- The arguments do not have Juxtapose at the top level
+  | CFor ForKind [Group] CSBlock -- also for_, rof, rof_
+  | CCase Group [(Group, CSBlock)] -- scrutinee, alternatives
+  | CIf Group CSBlock (Maybe CSBlock)
+  | CDo CSBlock
+  deriving (Show, Generic)
+
+type Bin = WithSrc Bin'
+data Bin'
+  = Juxtapose
+  | EvalBinOp String
+  | Ampersand
+  | DepAmpersand
+  | IndexingDot
+  | FieldAccessDot
+  | Comma
+  | DepComma
+  | Colon
+  | DoubleColon
+  | Dollar
+  | Arrow Arrow
+  | FatArrow  -- =>
+  | Question
+  | Pipe
+  | CSEqual
+  deriving (Eq, Ord, Show, Generic)
+
+-- We can add others, like @{ or [| or whatever
+data Bracket = Square | Curly
+  deriving (Show, Generic)
+
+data LabelPrefix = PlainLabel
+  deriving (Show, Generic)
+
+data ForKind
+  = KFor
+  | KFor_
+  | KRof
+  | KRof_
+  deriving (Show, Generic)
+
+-- `CSBlock` instead of `CBlock` because the latter is an alias for `Block CoreIR`.
+data CSBlock = CSBlock [CSDecl] -- last decl should be a CExpr
+  deriving (Show, Generic)
+
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
@@ -339,34 +449,28 @@ data UModule = UModule
 
 type SourceName = String
 
-data SourceBlockP a = SourceBlockP
+data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
   , sbLogLevel :: LogLevel
   , sbText     :: Text
-  , sbContents :: a }
+  , sbContents :: SourceBlock' }
   deriving (Show, Generic)
-
-type SourceBlock = SourceBlockP SourceBlock'
 
 type ReachedEOF = Bool
 
 data SymbolicZeros = SymbolicZeros | InstantiateZeros
                      deriving (Generic, Eq, Show)
 
-data SourceBlock' =
-   EvalUDecl (UDecl VoidS VoidS)
- | Command CmdName (UExpr VoidS)
- | DeclareForeign SourceName (UAnnBinder (AtomNameC CoreIR) VoidS VoidS)
- | DeclareCustomLinearization SourceName SymbolicZeros (UExpr VoidS)
- | Misc SourceBlockMisc
- | UnParseable ReachedEOF String  -- Grouping failure like `x + * y`.
- | BadSyntax Errs  -- Well-grouped nonsense like `x : Int : Float`.
+data SourceBlock'
+  = TopDecl CTopDecl
+  | Command CmdName CSBlock
+  | DeclareForeign SourceName SourceName Group
+  | DeclareCustomLinearization SourceName SymbolicZeros Group
+  | Misc SourceBlockMisc
+  | UnParseable ReachedEOF String
   deriving (Show, Generic)
 
--- This stuff is done when successfully parsed as concrete syntax, and
--- does not participate in the concrete->abstract interpretation in
--- AbstractSyntax.hs.
 data SourceBlockMisc
   = GetNameType SourceName
   | ImportModule ModuleSourceName

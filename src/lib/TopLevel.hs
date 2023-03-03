@@ -25,6 +25,7 @@ import qualified Data.ByteString as BS
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
+import Data.String (fromString)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -47,6 +48,7 @@ import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends)
 import CheckType (checkTypesM)
 #endif
 import Core
+import ConcreteSyntax
 import CheapReduction
 import Err
 import IRVariants
@@ -202,7 +204,7 @@ catchLogsAndErrs m = do
 evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlockP _ _ _ _ (Misc (ImportModule name)) -> do
+    SourceBlock _ _ _ _ (Misc (ImportModule name)) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
@@ -232,7 +234,10 @@ evalSourceBlock mname block = do
      return $ Result logs maybeErr
   case resultErrs result of
     Failure _ -> case sbContents block of
-      EvalUDecl decl -> emitSourceMap $ uDeclErrSourceMap mname decl
+      TopDecl decl -> do
+        case runFallibleM (parseDecl decl) of
+          Success decl' -> emitSourceMap $ uDeclErrSourceMap mname decl'
+          Failure _ -> return ()
       _ -> return ()
     _ -> return ()
   return $ filterLogs block $ addResultCtx block result
@@ -241,8 +246,10 @@ evalSourceBlock mname block = do
 evalSourceBlock'
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
 evalSourceBlock' mname block = case sbContents block of
-  EvalUDecl decl -> execUDecl mname decl
-  Command cmd expr -> case cmd of
+  TopDecl decl -> parseDecl decl >>= execUDecl mname
+  Command cmd expr' -> do
+   expr <- parseBlock expr'
+   case cmd of
     -- TODO: we should filter the top-level emissions we produce in this path
     -- we want cache entries but we don't want dead names.
     EvalExpr fmt -> when (mname == Main) case fmt of
@@ -273,8 +280,9 @@ evalSourceBlock' mname block = case sbContents block of
       val <- evalUExpr expr
       ty <- cheapNormalize =<< getType val
       logTop $ TextOut $ pprintCanonicalized ty
-  DeclareForeign fname (UAnnBinder b uty) -> do
-    ty <- evalUType uty
+  DeclareForeign fname dexName cTy -> do
+    let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
+    ty <- evalUType =<< parseExpr cTy
     asFFIFunType ty >>= \case
       Nothing -> throw TypeErr
         "FFI functions must be n-ary first order functions with the IO effect"
@@ -286,7 +294,8 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
-  DeclareCustomLinearization fname zeros expr -> do
+  DeclareCustomLinearization fname zeros g -> do
+    expr <- parseExpr g
     lookupSourceMap fname >>= \case
       Nothing -> throw UnboundVarErr $ pprint fname
       Just (UAtomVar fname') -> do
@@ -323,7 +332,6 @@ evalSourceBlock' mname block = case sbContents block of
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
-  BadSyntax e -> throwErrs e
   Misc m -> case m of
     GetNameType v -> do
       ty <- cheapNormalize =<< sourceNameType v

@@ -11,7 +11,8 @@ import Data.Maybe (catMaybes)
 import Data.Text
 import Test.Hspec
 
-import AbstractSyntax (parseUModule)
+import ConcreteSyntax (parseUModule)
+import AbstractSyntax (parseBlock)
 import Err
 import Inference (inferTopUExpr, synthTopBlock)
 import Name
@@ -34,7 +35,7 @@ sourceTextToBlocks source = do
 sourceBlockToBlock :: (Topper m, Mut n) => SourceBlock -> m n (Maybe (SBlock n))
 sourceBlockToBlock block = case sbContents block of
   Misc (ImportModule moduleName)  -> importModule moduleName >> return Nothing
-  Command (EvalExpr (Printed _)) expr -> Just <$> uExprToBlock expr
+  Command (EvalExpr (Printed _)) expr -> Just <$> (parseBlock expr >>= uExprToBlock)
   UnParseable _ s -> throw ParseErr s
   _ -> error $ "Unexpected SourceBlock " ++ pprint block ++ " in unit tests"
 

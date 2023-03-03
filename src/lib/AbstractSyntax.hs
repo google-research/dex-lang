@@ -45,10 +45,7 @@
 -- for example to permit grouping parens in more places, that much
 -- easier.
 
-module AbstractSyntax (
-  parseUModule, parseUModuleDeps,
-  finishUModuleParse, preludeImportBlock,
-  parseTopDeclRepl) where
+module AbstractSyntax (parseExpr, parseDecl, parseBlock, parseTopDeclRepl) where
 
 import Control.Monad (forM, when, liftM2)
 import Data.Functor
@@ -56,83 +53,57 @@ import Data.Maybe
 import Data.Set qualified as S
 import Data.String (fromString)
 import Data.Text (Text)
-import Data.Text.Encoding qualified as T
 
-import ConcreteSyntax hiding (sourceBlock)
-import ConcreteSyntax qualified as C
+import ConcreteSyntax
 import Err
 import Name
 import PPrint ()
 import IRVariants
-import Types.Primitives hiding (Equal)
+import Types.Primitives
 import Types.Source
-import Util
 
--- TODO: implement this more efficiently rather than just parsing the whole
--- thing and then extracting the deps.
-parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
-parseUModuleDeps name file = deps
-  where UModule _ deps _ = parseUModule name $ T.decodeUtf8 $ fContents file
-{-# SCC parseUModuleDeps #-}
+-- === Converting concrete syntax to abstract syntax ===
 
-finishUModuleParse :: UModulePartialParse -> UModule
-finishUModuleParse (UModulePartialParse name _ file) =
-  parseUModule name (T.decodeUtf8 $ fContents file)
+parseExpr :: Fallible m => Group -> m (UExpr VoidS)
+parseExpr e = liftSyntaxM $ expr e
 
-parseUModule :: ModuleSourceName -> Text -> UModule
-parseUModule name s = do
-  let blocks = (mustParseit s C.sourceBlocks)
-  let blocks' = (map sourceBlock blocks)
-  let blocks'' = if name == Prelude
-        then blocks'
-        else preludeImportBlock : blocks'
-  let imports = flip foldMap blocks'' \b -> case sbContents b of
-                  (Misc (ImportModule moduleName)) -> [moduleName]
-                  _ -> []
-  UModule name imports blocks''
-{-# SCC parseUModule #-}
+parseDecl :: Fallible m => CTopDecl -> m (UDecl VoidS VoidS)
+parseDecl d = liftSyntaxM $ topDecl d
 
-preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlockP 0 0 LogNothing ""
-  $ Misc $ ImportModule Prelude
+parseBlock :: Fallible m => CSBlock -> m (UExpr VoidS)
+parseBlock b = liftSyntaxM $ block b
+
+liftSyntaxM :: Fallible m => SyntaxM a -> m a
+liftSyntaxM cont = liftExcept $ runFallibleM cont
 
 parseTopDeclRepl :: Text -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
-  BadSyntax _ -> Nothing
-  _ -> Just b
-  where b = sourceBlock $ mustParseit s C.sourceBlock
+  _ -> case runFallibleM (checkSourceBlockParses $ sbContents b) of
+    Success _ -> Just b
+    Failure _ -> Nothing
+  where b = mustParseSourceBlock s
 {-# SCC parseTopDeclRepl #-}
+
+checkSourceBlockParses :: SourceBlock' -> SyntaxM ()
+checkSourceBlockParses = \case
+  TopDecl (WithSrc _ (CSDecl ann (ExprDecl e)))-> do
+    when (ann /= PlainLet) $ fail "Cannot annotate expressions"
+    void $ expr e
+  TopDecl d -> void $ topDecl d
+  Command _ b -> void $ block b
+  DeclareForeign _ _ ty -> void $ expr ty
+  DeclareCustomLinearization _ _ body -> void $ expr body
+  Misc _ -> return ()
+  UnParseable _ _ -> return ()
 
 -- === Converting concrete syntax to abstract syntax ===
 
 type SyntaxM = FallibleM
 
-sourceBlock :: CSourceBlock -> SourceBlock
-sourceBlock SourceBlockP {..} = SourceBlockP {sbContents = contents', ..} where
-  contents' = runSyntaxM $ addSrcTextContext sbOffset sbText $ sourceBlock' sbContents
-
-runSyntaxM :: SyntaxM SourceBlock' -> SourceBlock'
-runSyntaxM act = case runFallibleM act of
-  (Success b) -> b
-  (Failure e) -> BadSyntax e
-
-sourceBlock' :: CSourceBlock' -> SyntaxM SourceBlock'
-sourceBlock' (CTopDecl (WithSrc _ (CDecl ann (ExprDecl e)))) = do
-  when (ann /= PlainLet) $ fail "Cannot annotate expressions"
-  Command (EvalExpr (Printed Nothing)) <$> expr e
-sourceBlock' (CTopDecl d) = EvalUDecl <$> topDecl d
-sourceBlock' (CCommand typ b) = Command typ <$> block b
-sourceBlock' (CDeclareForeign foreignName dexName ty) =
-  DeclareForeign foreignName . UAnnBinder (fromString dexName) <$> expr ty
-sourceBlock' (CDeclareCustomLinearization fun zeros body) =
-  DeclareCustomLinearization fun zeros <$> expr body
-sourceBlock' (CMisc m) = return $ Misc m
-sourceBlock' (CUnParseable eof s) = return $ UnParseable eof s
-
 topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
-  topDecl' (CDecl ann d) = decl ann d
+  topDecl' (CSDecl ann d) = decl ann d
   topDecl' (CData name args constructors) = do
     binders <- toNest . concat <$> mapM dataArg args
     constructors' <- mapM dataCon constructors
@@ -218,14 +189,14 @@ multiIfaceBinder = dropSrc \case
   g@(CBin (WithSrc _ Juxtapose) _ _) -> concat <$> mapM multiIfaceBinder (nary Juxtapose $ WithSrc Nothing g)
   _ -> fail "Invalid class constraint list; expecting one or more bracketed groups"
 
-effectOpDef :: (SourceName, Maybe UResumePolicy, CBlock) -> SyntaxM (UEffectOpDef VoidS)
+effectOpDef :: (SourceName, Maybe UResumePolicy, CSBlock) -> SyntaxM (UEffectOpDef VoidS)
 effectOpDef (v, Nothing, rhs) =
   case v of
     "return" -> UReturnOpDef <$> block rhs
     _ -> error "impossible"
 effectOpDef (v, Just rp, rhs) = UEffectOpDef rp (fromString v) <$> block rhs
 
-decl :: LetAnn -> CDecl -> SyntaxM (UDecl VoidS VoidS)
+decl :: LetAnn -> CSDecl -> SyntaxM (UDecl VoidS VoidS)
 decl ann = dropSrc decl' where
   decl' (CLet binder body) = ULet ann <$> patOptAnn binder <*> block body
   decl' (CBind _ _) = throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
@@ -297,7 +268,7 @@ pat = propagateSrcB pat' where
     return $ UPatDepPair $ PairB lhs' rhs'
   pat' (CBracket Curly g) = case g of
     (WithSrc _ CEmpty) -> return $ UPatRecord UEmptyRowPat
-    _ -> UPatRecord <$> (fieldRowPatList Equal $ nary Comma g)
+    _ -> UPatRecord <$> (fieldRowPatList CSEqual $ nary Comma g)
   pat' (CBracket Square g) = UPatTable . toNest <$> (mapM pat $ nary Comma g)
   -- A single name in parens is also interpreted as a nullary
   -- constructor to match
@@ -411,20 +382,20 @@ effect (Identifier "IO") = return UIOEffect
 effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
-method :: (SourceName, CBlock) -> SyntaxM (UMethodDef VoidS)
+method :: (SourceName, CSBlock) -> SyntaxM (UMethodDef VoidS)
 method (name, body) = UMethodDef (fromString name) <$> block body
 
-block :: CBlock -> SyntaxM (UExpr VoidS)
-block (CBlock []) = throw SyntaxErr "Block must end in expression"
-block (CBlock [ExprDecl g]) = expr g
-block (CBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
+block :: CSBlock -> SyntaxM (UExpr VoidS)
+block (CSBlock []) = throw SyntaxErr "Block must end in expression"
+block (CSBlock [ExprDecl g]) = expr g
+block (CSBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
   binder' <- patOptAnn binder
   rhs' <- block rhs
-  body <- block $ CBlock ds
+  body <- block $ CSBlock ds
   return $ WithSrcE pos $ UApp rhs' $ ns $ ULam $ ULamExpr PlainArrow binder' body
-block (CBlock (d@(WithSrc pos _):ds)) = do
+block (CSBlock (d@(WithSrc pos _):ds)) = do
   d' <- decl PlainLet d
-  e' <- block $ CBlock ds
+  e' <- block $ CSBlock ds
   return $ WithSrcE pos $ UDecl $ UDeclExpr d' e'
 
 -- === Concrete to abstract syntax of expressions ===
@@ -469,7 +440,7 @@ expr = propagateSrcE expr' where
       Comma         -> evalOp "(,)"
       DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
       Pipe          -> evalOp "(|)"
-      Equal         -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
+      CSEqual       -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
       Question      -> throw SyntaxErr "Question mark separates labeled row elements, is not a standalone operator"
       Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
       FatArrow      -> do
@@ -560,14 +531,14 @@ labeledExprs (WithSrc _ CEmpty) = return $ URecord []
 -- comma means record value, colon means record type, question means
 -- labeled row, and pipe means variant type.
 labeledExprs g@(Binary Comma _ _) =
-  URecord <$> (fieldRowList Equal $ nary Comma g)
+  URecord <$> (fieldRowList CSEqual $ nary Comma g)
 labeledExprs g@(Binary Ampersand _ _) =
   URecordTy <$> (fieldRowList Colon $ nary Ampersand g)
 labeledExprs g@(Binary Question _ _) =
   ULabeledRow <$> (fieldRowList Colon $ nary Question g)
 -- If we have a singleton, we can try to disambiguate by the internal
 -- separator.  Equal always means record.
-labeledExprs g@(Binary Equal _ _) = URecord . (:[]) <$> oneField Equal g
+labeledExprs g@(Binary CSEqual _ _) = URecord . (:[]) <$> oneField CSEqual g
 -- URecordTy, ULabeledRow, and UVariantTy all use colon as the
 -- internal separator, so a singleton is ambiguous.  Like the previous
 -- parser, we disambiguate in favor of records.

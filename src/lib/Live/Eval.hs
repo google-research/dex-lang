@@ -19,7 +19,7 @@ import Data.Aeson qualified as A
 import Data.Text.Prettyprint.Doc
 import System.Directory (getModificationTime)
 
-import AbstractSyntax
+import ConcreteSyntax
 import Actor
 import RenderHtml (ToMarkup, pprintHtml)
 import TopLevel
