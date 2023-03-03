@@ -588,10 +588,11 @@ instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports
 
 instance Pretty (ModuleEnv n) where
-  pretty (ModuleEnv imports sm sc) =
+  pretty (ModuleEnv imports sm sc (ATM atm)) =
     prettyRecord [ ("Imports"         , p imports)
                  , ("Source map"      , p sm)
-                 , ("Synth candidates", p sc) ]
+                 , ("Synth candidates", p sc)
+                 , ("atom/method names", p atm) ]
 
 instance Pretty (Env n) where
   pretty (Env env1 env2) =

@@ -280,6 +280,10 @@ addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m 
 addInstanceSynthCandidate className instanceName =
   emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
 
+addAtomToMethodName :: TopBuilder m => AtomName CoreIR n -> MethodName n -> m n ()
+addAtomToMethodName aname mname =
+  emitLocalModuleEnv $ mempty {envAtomToMethodNames = ATM [(aname, mname)]}
+
 emitAtomRules :: TopBuilder m => AtomName CoreIR n -> AtomRules n -> m n ()
 emitAtomRules v rules = emitNamelessEnv $
   TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v rules }
@@ -1152,8 +1156,10 @@ emitMethod
   => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
 emitMethod hint classDef explicit idx = do
   getter <- makeMethodGetter classDef explicit idx
-  f <- Var <$> emitTopLet hint PlainLet (Atom getter)
-  emitBinding hint $ MethodBinding classDef idx f
+  aname <- emitTopLet hint PlainLet (Atom getter)
+  mname <- emitBinding hint $ MethodBinding classDef idx (Var aname)
+  addAtomToMethodName aname mname
+  return mname
 
 makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (CAtom n)
 makeMethodGetter className explicit methodIdx = liftBuilder do

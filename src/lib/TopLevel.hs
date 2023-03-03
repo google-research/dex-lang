@@ -453,7 +453,7 @@ evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <-
     localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
   TopEnvFrag envFrag moduleEnvFrag <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs <-
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs _ <-
     return $ fragLocalModuleEnv moduleEnvFrag
   let fragToReEmit = TopEnvFrag envFrag $ moduleEnvFrag {
         fragLocalModuleEnv = mempty }

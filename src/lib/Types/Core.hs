@@ -468,7 +468,8 @@ data SerializedEnv n = SerializedEnv
 data ModuleEnv (n::S) = ModuleEnv
   { envImportStatus    :: ImportStatus n
   , envSourceMap       :: SourceMap n
-  , envSynthCandidates :: SynthCandidates n }
+  , envSynthCandidates :: SynthCandidates n
+  , envAtomToMethodNames :: AtomToMethodNames n }
   deriving (Generic)
 
 data Module (n::S) = Module
@@ -487,7 +488,7 @@ data LoadedModules (n::S) = LoadedModules
   deriving (Show, Generic)
 
 emptyModuleEnv :: ModuleEnv n
-emptyModuleEnv = ModuleEnv emptyImportStatus (SourceMap mempty) mempty
+emptyModuleEnv = ModuleEnv emptyImportStatus (SourceMap mempty) mempty mempty
 
 emptyLoadedModules :: LoadedModules n
 emptyLoadedModules = LoadedModules mempty
@@ -529,6 +530,30 @@ data SynthCandidates n = SynthCandidates
 
 emptyImportStatus :: ImportStatus n
 emptyImportStatus = ImportStatus mempty mempty
+
+data AtomToMethodNames n = ATM [(AtomName CoreIR n, MethodName n)]
+                           deriving (Show, Generic)
+
+instance Semigroup (AtomToMethodNames n) where
+  (ATM xs) <> (ATM ys) = ATM (xs <> ys)
+
+instance Monoid (AtomToMethodNames n) where
+  mempty = ATM []
+
+instance GenericE AtomToMethodNames where
+  type RepE AtomToMethodNames =
+    ListE ((AtomName CoreIR) `PairE` MethodName)
+  fromE (ATM xs) = ListE $ map toPairE xs
+  {-# INLINE fromE #-}
+  toE (ListE xs) = ATM $ map fromPairE xs
+  {-# INLINE toE #-}
+
+instance SinkableE      AtomToMethodNames
+instance HoistableE     AtomToMethodNames
+instance AlphaEqE       AtomToMethodNames
+instance AlphaHashableE AtomToMethodNames
+instance RenameE        AtomToMethodNames
+instance Store          (AtomToMethodNames n)
 
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
@@ -769,7 +794,7 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
   extendOutMap (Env (TopEnv defs rules cache loadedM loadedO)
-                    (ModuleEnv imports sm scs)) frag =
+                    (ModuleEnv imports sm scs atm)) frag =
     withExtEvidence frag $ Env
       (TopEnv
         (defs  `extendRecSubst` frag)
@@ -780,7 +805,8 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
       (ModuleEnv
         (sink imports)
         (sink sm)
-        (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag)))
+        (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag))
+        (sink atm))
   {-# INLINE extendOutMap #-}
 
 instance ExtOutMap Env EnvFrag where
@@ -790,8 +816,8 @@ instance ExtOutMap Env EnvFrag where
 extendEnv :: Distinct l => Env n -> EnvFrag n l -> Env l
 extendEnv env (EnvFrag newEnv) = do
   case extendOutMap env newEnv of
-    Env envTop (ModuleEnv imports sm scs) -> do
-      Env envTop (ModuleEnv imports sm scs)
+    Env envTop (ModuleEnv imports sm scs atm) -> do
+      Env envTop (ModuleEnv imports sm scs atm)
 {-# NOINLINE [1] extendEnv #-}
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
@@ -2539,9 +2565,10 @@ instance ExtOutMap Env TopEnvFrag where
           (imports <> imports')
           (sm   <> sm'   <> newImportedSM)
           (scs  <> scs'  <> newImportedSC)
+          (atm  <> atm')
         where
-          ModuleEnv imports sm scs = withExtEvidence frag $ sink mEnv
-          ModuleEnv imports' sm' scs' = mEnv'
+          ModuleEnv imports sm scs atm = withExtEvidence frag $ sink mEnv
+          ModuleEnv imports' sm' scs' atm' = mEnv'
           newDirectImports = S.difference (directImports imports') (directImports imports)
           newTransImports  = S.difference (transImports  imports') (transImports  imports)
           newImportedSM  = flip foldMap newDirectImports $ moduleExports         . lookupModulePure
@@ -2649,9 +2676,10 @@ instance GenericE ModuleEnv where
   type RepE ModuleEnv = ImportStatus
                 `PairE` SourceMap
                 `PairE` SynthCandidates
-  fromE (ModuleEnv imports sm sc) = imports `PairE` sm `PairE` sc
+                `PairE` AtomToMethodNames
+  fromE (ModuleEnv imports sm sc atm) = imports `PairE` sm `PairE` sc `PairE` atm
   {-# INLINE fromE #-}
-  toE   (imports `PairE` sm `PairE` sc) = ModuleEnv imports sm sc
+  toE   (imports `PairE` sm `PairE` sc `PairE` atm) = ModuleEnv imports sm sc atm
   {-# INLINE toE #-}
 
 instance SinkableE      ModuleEnv
@@ -2661,11 +2689,11 @@ instance AlphaHashableE ModuleEnv
 instance RenameE        ModuleEnv
 
 instance Semigroup (ModuleEnv n) where
-  ModuleEnv x1 x2 x3 <> ModuleEnv y1 y2 y3 =
-    ModuleEnv (x1<>y1) (x2<>y2) (x3<>y3)
+  ModuleEnv x1 x2 x3 x4 <> ModuleEnv y1 y2 y3 y4 =
+    ModuleEnv (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4)
 
 instance Monoid (ModuleEnv n) where
-  mempty = ModuleEnv mempty mempty mempty
+  mempty = ModuleEnv mempty mempty mempty mempty
 
 instance Semigroup (LoadedModules n) where
   LoadedModules m1 <> LoadedModules m2 = LoadedModules (m2 <> m1)

@@ -109,7 +109,7 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
   instanceName <- emitInstanceDef emptyDef
   addInstanceSynthCandidate className' instanceName
   let def = InstanceDef className' (bs' >>> dictBinders) params' body
-  def' <- synthInstanceDef def
+  def' <- synthInstanceDef instanceName def
   updateInstanceDef instanceName def'
   UDeclResultDone <$> case maybeName of
     RightB UnitB  -> do
@@ -2934,12 +2934,53 @@ generalizeInstanceArgs (Nest (RolePiBinder b ty _ role) bs) (arg:args) = do
   return $ arg':args'
 generalizeInstanceArgs _ _ = error "zip error"
 
+data RecMethodDefCheckTraverserS (n::S) = S (ClassName n) (InstanceName n) Int
+                                        deriving Show
+
+instance GenericE RecMethodDefCheckTraverserS where
+  type RepE RecMethodDefCheckTraverserS  = ClassName `PairE` InstanceName `PairE` LiftE Int
+  fromE :: RecMethodDefCheckTraverserS n -> RepE RecMethodDefCheckTraverserS n
+  fromE (S cname iname ix) = cname `PairE` iname `PairE` LiftE ix
+  toE (cname `PairE` iname `PairE` LiftE ix) = S cname iname ix
+instance SinkableE RecMethodDefCheckTraverserS
+instance HoistableState RecMethodDefCheckTraverserS where
+  hoistState _ b (S cname iname ix) =
+    let cname' = ignoreHoistFailure $ hoist b cname
+        iname' = ignoreHoistFailure $ hoist b iname
+    in S cname' iname' ix
+
+instance GenericTraverser CoreIR UnitB RecMethodDefCheckTraverserS where
+  traverseExpr (App f xs) = do
+    xs' <- mapM traverseGenericE xs
+    traverseGenericE f >>= \case
+      f'@(Var m) -> getMethodName m >>= \case
+        Nothing -> return $ App f' xs'
+        Just mname -> lookupEnv mname >>= \case
+          MethodBinding cname' ix' _ -> do
+            forM_ xs' \case
+              DictCon (InstanceDict iname' _) -> do
+                S cname iname ix <- get
+                if (cname == cname' && iname == iname' && ix <= ix')
+                  then throw TypeErr $ "Cannot call method " ++ show ix' ++
+                                        " from within definition of method " ++ show ix ++
+                                        ", in definition of instance " ++ pprint iname
+                  else return ()
+              _ -> return ()
+            return $ App f' xs'
+      f' -> return $ App f' xs'
+  traverseExpr e = traverseExprDefault e
+
 synthInstanceDef
-  :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
-synthInstanceDef (InstanceDef className bs params body) = do
+  :: (EnvReader m, Fallible1 m) => InstanceName n -> InstanceDef n -> m n (InstanceDef n)
+synthInstanceDef instanceName (InstanceDef className bs params body) = do
   liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
     \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
-      methods' <- mapM synthTopBlock methods
+      methods' <- forM (zip [0..] methods) \(ix, method) -> do
+        method' <- synthTopBlock method
+        let className' = sink className
+        let instanceName' = sink instanceName
+        (method'', _) <- liftGenericTraverserM (S className' instanceName' ix) $ traverseGenericE method'
+        return method''
       return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
 
 -- main entrypoint to dictionary synthesizer

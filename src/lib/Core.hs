@@ -414,6 +414,15 @@ getInstanceDicts name = do
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
 
+getMethodName :: EnvReader m => AtomName CoreIR n -> m n (Maybe (MethodName n))
+getMethodName name = do
+  env <- withEnv moduleEnv
+  let ATM xs = envAtomToMethodNames env
+  case filter (\x -> fst x == name) xs of
+    [] -> return Nothing
+    [(_, mname)] -> return $ Just mname
+    _ -> error ""
+
 nonDepPiType :: ScopeReader m
              => Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
