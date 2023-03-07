@@ -18,11 +18,11 @@
     "llvm-hs-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1644009200,
-        "narHash": "sha256-IG4Mh89bY+PtBJtzlXKYsPljfHP7OSQk03pV6fSmdRY=",
+        "lastModified": 1665495332,
+        "narHash": "sha256-JKrpUmHJ1nsNiCoHhV5FCcdQGlNFfD37Oiu5kSmghfM=",
         "owner": "llvm-hs",
         "repo": "llvm-hs",
-        "rev": "eda85a2bbe362a0b89df5adce0cb65e4e755eac5",
+        "rev": "423220bffac4990d019fc088c46c5f25310d5a33",
         "type": "github"
       },
       "original": {

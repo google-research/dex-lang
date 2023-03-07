@@ -129,6 +129,8 @@ library
                        -- Serialization
                      , aeson
                      , store
+  if impl(ghc < 9.2.2)
+    build-depends:
                        -- Floating-point pedanticness (correcting for GHC < 9.2.2)
                      , floating-bits
   if flag(live)

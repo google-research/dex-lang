@@ -1,6 +1,5 @@
 {
   description = "Dex (named for \"index\") is a research language for typed, functional array processing.";
-
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     llvm-hs-src = {
@@ -8,28 +7,34 @@
       flake = false;
     };
   };
-
-  outputs = { self, nixpkgs, flake-utils, llvm-hs-src }:
+  outputs =
+    { self
+    , nixpkgs
+    , flake-utils
+    , llvm-hs-src
+    }:
     flake-utils.lib.eachDefaultSystem (system:
     let
-      pkgs = (import nixpkgs {
+      unfreePkgs = import nixpkgs {
         inherit system;
-        config.allowUnfree = true; # Needed for CUDA
-      });
-    in rec {
-      packages.dex = (pkgs.callPackage ./. {
-        inherit pkgs;
-        inherit llvm-hs-src;
-      });
-      packages.dex-cuda = (pkgs.callPackage ./. {
-        inherit pkgs;
-        inherit llvm-hs-src;
-        withCudaSupport = true;
-      });
-      defaultPackage = packages.dex;
-
-      devShell = (import ./shell.nix {
-        inherit pkgs;
-      });
-    });
-  }
+        # NOTE: Needed for CUDA
+        config.allowUnfree = true;
+      };
+      pkgs = nixpkgs.legacyPackages.${system};
+    in
+    {
+      packages = rec {
+        dex = import ./. { inherit pkgs llvm-hs-src; };
+        dex-cuda =
+          import ./. {
+            inherit llvm-hs-src;
+            pkgs = unfreePkgs;
+            cudaSupport = true;
+          };
+        default = dex;
+      };
+      devShells.default = import ./shell.nix { inherit pkgs; };
+      formatter = pkgs.nixpkgs-fmt;
+    }
+    );
+}
