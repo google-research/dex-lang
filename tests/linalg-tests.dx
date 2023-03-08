@@ -1,5 +1,11 @@
 import linalg
 
+-- Check that the optimized matmul gives the same answers as the naive one
+amat = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
+
+:p amat ** amat ~~ naive_matmul amat amat
+> True
+
 -- Check that the inverse of the inverse is identity.
 mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
 :p mat ~~ (invert (invert mat))
