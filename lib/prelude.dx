@@ -2501,6 +2501,9 @@ def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
 def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
 def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
+def naive_matmul {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
+  for i k. fsum for j. x.i.j * y.j.k
+
 -- A `FullTileIx` type represents `tile_ix`th full tile (of size
 -- `tile_size`) iterating over the index set `n`.
 -- This type is only well formed when tile_ix * tile_size < size n.
@@ -2551,7 +2554,6 @@ def tile {eff} (n:Type) [Ix n]
 -- matmul. Better symbol to use? `@`?
 -- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
 def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
-  -- for i k. fsum for j. x.i.j * y.j.k
   -- Tile sizes picked for axch's laptop
   l_tile_size = 32
   n_tile_size = 128
