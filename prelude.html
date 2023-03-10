@@ -1552,29 +1552,6 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
   yield_state x <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> _<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
     ref <span class="symbol">:=</span> f (get ref)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h3>Linear Algebra</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linspace (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (low<span class="symbol">:</span><span class="type-name">Float</span>) (high<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  dx <span class="symbol">=</span> (high <span class="symbol">-</span> low) <span class="symbol">/</span> n_to_f (size n)
-  <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> low <span class="symbol">+</span> n_to_f (ordinal i) <span class="symbol">*</span> dx
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose {n m a} (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> vdot {n} (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> fsum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> y<span class="symbol">.</span>i
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dot {n v} [<span class="type-name">VSpace</span> v] (s<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (vs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> s<span class="symbol">.</span>j <span class="symbol">.*</span> vs<span class="symbol">.</span>j
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- matmul. Better symbol to use? `@`?
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">**</span>) {l m n} [<span class="type-name">Ix</span> n] (x<span class="symbol">:</span> l<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (l<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
-  <span class="keyword">for</span> i k<span class="symbol">.</span> fsum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j<span class="symbol">.</span>k
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">**.</span>) {n m} (mat<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (v<span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> vdot mat<span class="symbol">.</span>i v
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">.**</span>) {n m} (v<span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (mat<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> mat <span class="symbol">**.</span> v
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inner {n m} (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (mat<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  fsum <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eye {n a} [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> n] <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>cumulative sum</h2>
 <p>TODO: Move this to be with reductions?
 It's a kind of <code>scan</code>.</p>
@@ -2744,4 +2721,91 @@ Such as <code>rand_mat</code> with samples from the distribution of floating poi
   <span class="keyword">if</span> size m <span class="symbol">==</span> size n
     <span class="keyword">then</span> unsafe_coerce (m<span class="symbol">=&gt;</span>a) x
     <span class="keyword">else</span> error &quot;mismatched sizes in table coercion&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Linear Algebra</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linspace (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (low<span class="symbol">:</span><span class="type-name">Float</span>) (high<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  dx <span class="symbol">=</span> (high <span class="symbol">-</span> low) <span class="symbol">/</span> n_to_f (size n)
+  <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> low <span class="symbol">+</span> n_to_f (ordinal i) <span class="symbol">*</span> dx
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose {n m a} (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> vdot {n} (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> fsum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> y<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dot {n v} [<span class="type-name">VSpace</span> v] (s<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (vs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> s<span class="symbol">.</span>j <span class="symbol">.*</span> vs<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> naive_matmul {l m n} [<span class="type-name">Ix</span> n] (x<span class="symbol">:</span> l<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (l<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+  <span class="keyword">for</span> i k<span class="symbol">.</span> fsum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j<span class="symbol">.</span>k
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A `FullTileIx` type represents `tile_ix`th full tile (of size
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- `tile_size`) iterating over the index set `n`.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- This type is only well formed when tile_ix * tile_size &lt; size n.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">FullTileIx</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (tile_size<span class="symbol">:</span><span class="type-name">Nat</span>) (tile_ix<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">=</span>
+  <span class="type-name">UnsafeFullTileIx</span> (<span class="type-name">Fin</span> tile_size)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">FullTileIx</span> n tile_size tile_ix) <span class="keyword">given</span> {n} {tile_size<span class="symbol">:</span><span class="type-name">Nat</span>} {tile_ix<span class="symbol">:</span><span class="type-name">Nat</span>}
+  size <span class="symbol">=</span> tile_size
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeFullTileIx</span> i)<span class="symbol">.</span> ordinal i
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> (<span class="type-name">UnsafeFullTileIx</span> <span class="symbol">$</span> unsafe_from_ordinal _ i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">FullTileIx</span> n tile_size tile_ix) n <span class="keyword">given</span> {n} {tile_size<span class="symbol">:</span><span class="type-name">Nat</span>} {tile_ix<span class="symbol">:</span><span class="type-name">Nat</span>}
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeFullTileIx</span> i)<span class="symbol">.</span> unsafe_from_ordinal _ <span class="symbol">$</span> tile_size <span class="symbol">*</span> tile_ix <span class="symbol">+</span> ordinal i
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>ix<span class="symbol">.</span> todo
+  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>ix<span class="symbol">.</span> todo
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A `CodaIx` type represents the last few elements of the index set `n`,
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- as might be left over after iterating by tiles.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- This type is only well formed when size n == coda_offset + coda_size
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">CodaIx</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] (coda_offset<span class="symbol">:</span><span class="type-name">Nat</span>) (coda_size<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">=</span>
+  <span class="type-name">UnsafeCodaIx</span> (<span class="type-name">Fin</span> coda_size)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">CodaIx</span> n coda_offset coda_size) <span class="keyword">given</span> {n} {coda_offset<span class="symbol">:</span><span class="type-name">Nat</span>} {coda_size<span class="symbol">:</span><span class="type-name">Nat</span>}
+  size <span class="symbol">=</span> coda_size
+  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeCodaIx</span> i)<span class="symbol">.</span> ordinal i
+  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> (<span class="type-name">UnsafeCodaIx</span> <span class="symbol">$</span> unsafe_from_ordinal _ i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">CodaIx</span> n coda_offset coda_size) n <span class="keyword">given</span> {n} {coda_offset<span class="symbol">:</span><span class="type-name">Nat</span>} {coda_size<span class="symbol">:</span><span class="type-name">Nat</span>}
+  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeCodaIx</span> i)<span class="symbol">.</span> unsafe_from_ordinal _ <span class="symbol">$</span> coda_offset <span class="symbol">+</span> ordinal i
+  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>ix<span class="symbol">.</span> todo
+  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>ix<span class="symbol">.</span> todo
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO Can we have a function that takes implicit or class arguments
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- last?  Status quo crashes with a pattern match failure in
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Inference.checkSigma
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tile {eff} (n<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n]
+    (tile_size<span class="symbol">:</span> <span class="type-name">Nat</span>)
+    (body<span class="symbol">:</span> ((m<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">-&gt;</span> <span class="type-name">Ix</span> m <span class="symbol">?=&gt;</span> <span class="type-name">Subset</span> m n <span class="symbol">?=&gt;</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span>))
+    <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  num_tiles <span class="symbol">=</span> size n `idiv` tile_size
+  coda_size <span class="symbol">=</span> size n `rem` tile_size
+  coda_offset <span class="symbol">=</span> num_tiles <span class="symbol">*</span> tile_size
+  <span class="keyword">for</span>_ tile_ix<span class="symbol">:</span>(<span class="type-name">Fin</span> num_tiles)<span class="symbol">.</span>
+    tile_ix&#39; <span class="symbol">=</span> ordinal tile_ix
+    body (<span class="type-name">FullTileIx</span> n tile_size tile_ix&#39;) ()
+  body (<span class="type-name">CodaIx</span> n coda_offset coda_size) ()
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- matmul. Better symbol to use? `@`?
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">**</span>) {l m n} [<span class="type-name">Ix</span> n] (x<span class="symbol">:</span> l<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (l<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+  <span class="comment">-- Tile sizes picked for axch&#39;s laptop
+</span>  l_tile_size <span class="symbol">=</span> 32
+  n_tile_size <span class="symbol">=</span> 128
+  m_tile_size <span class="symbol">=</span> 8
+  yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>result<span class="symbol">.</span>
+    tile l l_tile_size <span class="symbol">\</span>l_set _<span class="symbol">.</span>
+      tile n n_tile_size <span class="symbol">\</span>n_set _<span class="symbol">.</span>
+        tile m m_tile_size <span class="symbol">\</span>m_set _<span class="symbol">.</span>
+          <span class="keyword">for</span>_ l_offset<span class="command">:l</span>_set<span class="symbol">.</span>
+            l_ix <span class="symbol">=</span> inject l l_offset
+            <span class="keyword">for</span>_ n_offset<span class="command">:n</span>_set<span class="symbol">.</span>
+              n_ix <span class="symbol">=</span> inject _ n_offset
+              <span class="keyword">for</span>_ m_offset<span class="command">:m</span>_set<span class="symbol">.</span>
+                m_ix <span class="symbol">=</span> inject _ m_offset
+                result<span class="symbol">!</span>l_ix<span class="symbol">!</span>n_ix <span class="symbol">+=</span> x<span class="symbol">.</span>l_ix<span class="symbol">.</span>m_ix <span class="symbol">*</span> y<span class="symbol">.</span>m_ix<span class="symbol">.</span>n_ix
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">**.</span>) {n m} (mat<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (v<span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> vdot mat<span class="symbol">.</span>i v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">.**</span>) {n m} (v<span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (mat<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> mat <span class="symbol">**.</span> v
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inner {n m} (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (mat<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  fsum <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eye {n a} [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> n] <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
 </div></div></div></body></html>
