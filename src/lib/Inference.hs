@@ -115,14 +115,13 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
         return (ListE params' `PairE` body)
   Abs bs' (Abs dictBinders (ListE params' `PairE` (InstanceBody superclasses methods'))) <- return ab
   let def = InstanceDef className' (bs' >>> dictBinders) params' (InstanceBody superclasses methods')
-  instanceName <- synthInstanceDefAndAddSynthCandidate def
   UDeclResultDone <$> case maybeName of
     RightB UnitB  -> do
-      -- TODO: Remove the next two lines of comment.
-      -- only nameless instances become synthesis candidates
-      -- addInstanceSynthCandidate className' instanceName
+      void $ synthInstanceDefAndAddSynthCandidate def
       return result
     JustB instanceName' -> do
+      def' <- synthInstanceDef def
+      instanceName <- emitInstanceDef def'
       lam <- instanceFun instanceName
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
       applyRename (instanceName' @> instanceAtomName) result
@@ -2899,7 +2898,7 @@ synthInstanceDefAndAddSynthCandidate def@(InstanceDef className bs params (Insta
   let emptyDef = InstanceDef className bs params $ InstanceBody superclasses []
   instanceName <- emitInstanceDef emptyDef
   addInstanceSynthCandidate className instanceName
-  synthInstanceDef instanceName def
+  synthInstanceDefRec instanceName def
   return instanceName
 
 type InstanceDefAbsBodyT =
@@ -2917,9 +2916,9 @@ pattern InstanceDefAbs :: Nest RolePiBinder h n -> [CType n] -> [CAtom n] -> [CB
 pattern InstanceDefAbs bs params superclasses doneMethods todoMethods =
   Abs bs (InstanceDefAbsBody params superclasses doneMethods todoMethods)
 
-synthInstanceDef
+synthInstanceDefRec
   :: (Mut n, TopBuilder m, EnvReader m,  Fallible1 m) => InstanceName n -> InstanceDef n -> m n ()
-synthInstanceDef instanceName (InstanceDef className bs params (InstanceBody superclasses methods)) = do
+synthInstanceDefRec instanceName (InstanceDef className bs params (InstanceBody superclasses methods)) = do
   let ab = InstanceDefAbs bs params superclasses [] methods
   recur ab className instanceName
   where
@@ -2939,17 +2938,17 @@ synthInstanceDef instanceName (InstanceDef className bs params (InstanceBody sup
               return (def, ab')
       updateInstanceDef iname def
       recur ab' cname iname
--- =======
---   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
--- synthInstanceDef (InstanceDef className bs params body) = do
---   liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
---     \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
---        EnvReaderT $ ReaderT \(Distinct, env) -> do
---          let env' = extendSynthCandidatess bs' env
---          flip runReaderT (Distinct, env') $ runEnvReaderT' do
---            methods' <- mapM synthTopBlock methods
---            return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
--- >>>>>>> main
+
+synthInstanceDef
+  :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
+synthInstanceDef (InstanceDef className bs params body) = do
+  liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
+    \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
+       EnvReaderT $ ReaderT \(Distinct, env) -> do
+         let env' = extendSynthCandidatess bs' env
+         flip runReaderT (Distinct, env') $ runEnvReaderT' do
+           methods' <- mapM synthTopBlock methods
+           return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (SynthAtom n)
@@ -3200,7 +3199,7 @@ instantiateSynthArgsRec prevArgsRec dictTy subst synthTy = case synthTy of
       ImplicitArrow -> Var <$> freshInferenceName argTy'
       ClassArrow access -> do
         return $ DictHole (AlwaysEqual Nothing) argTy' access
-      _ -> empty  -- error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
+      _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
     instantiateSynthArgsRec (param:prevArgsRec) dictTy (subst <.> b @> SubstVal param) resultTy
   SynthDictType dictTy' -> do
     unify dictTy =<< applySubst subst dictTy'
