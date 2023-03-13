@@ -246,7 +246,7 @@ plainUAnnBinder :: UAnnBinder c n l -> UAnnBinderArrow c n l
 plainUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty PlainArrow
 
 classUAnnBinder :: UAnnBinder c n l -> UAnnBinderArrow c n l
-classUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty ClassArrow
+classUAnnBinder (UAnnBinder b ty) = UAnnBinderArrow b ty (ClassArrow Full)
 
 data UAlt (n::S) where
   UAlt :: UPat n l -> UExpr l -> UAlt n

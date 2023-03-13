@@ -136,7 +136,7 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   RepValAtom _ -> substM atom
   NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
   NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
-  DictHole s ty -> DictHole s <$> tge ty
+  DictHole s ty access -> DictHole s <$> tge ty <*> pure access
   SimpInCore _ -> substM atom
 
 traverseExtLabeledItems

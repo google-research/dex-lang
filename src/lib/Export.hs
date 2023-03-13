@@ -83,7 +83,7 @@ prepareFunctionForExport cc f = do
               vis <- case arrow of
                 PlainArrow    -> return ExplicitArg
                 ImplicitArrow -> return ImplicitArg
-                ClassArrow    -> invalidArrow
+                ClassArrow _  -> invalidArrow
                 LinArrow      -> invalidArrow
               ety <- toExportType ty
               goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)

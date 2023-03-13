@@ -41,7 +41,7 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
       ty' <- substM ty
       arg' <- case ty' of
         TyKind -> liftSubstReaderT $ generalizeType arg
-        DictTy _ | arr == ClassArrow -> generalizeDict ty' arg
+        DictTy _ | isClassArrow arr -> generalizeDict ty' arg
         _ -> isData ty' >>= \case
           True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
           False -> do

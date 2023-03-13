@@ -953,7 +953,7 @@ getLinearizationType fname zeros fType = do
             refreshAbs (Abs pbinder b') \pbinder' b'' ->
               go fullTy (RNest implicitArgs pbinder') [] b''
       case arr of
-        ClassArrow -> implicit
+        ClassArrow _ -> implicit
         ImplicitArrow -> implicit
         PlainArrow -> do
           b <- case hoist binder b' of

@@ -69,7 +69,8 @@ data Atom (r::IR) (n::S) where
  DictTy       :: DictType n                    -> Atom CoreIR n
  NewtypeCon   :: NewtypeCon n -> Atom CoreIR n -> Atom CoreIR n
  NewtypeTyCon :: NewtypeTyCon n                -> Atom CoreIR n
- DictHole     :: AlwaysEqual SrcPosCtx -> Type CoreIR n -> Atom CoreIR n
+ DictHole     :: AlwaysEqual SrcPosCtx -> Type CoreIR n -> RequiredMethodAccess
+              -> Atom CoreIR n
  -- === Shims between IRs ===
  SimpInCore   :: SimpInCore n    -> Atom CoreIR n
  RepValAtom   :: RepVal SimpIR n -> Atom SimpIR n
@@ -830,9 +831,9 @@ bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag)) =
       Empty -> return ()
       Nest (SubstPair b binding) rest -> withExtEvidence rest do
         case binding of
-           AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
+           AtomNameBinding (LamBound (LamBinding (ClassArrow _) _)) -> do
              tell $ sink (SynthCandidates [binderName b] mempty)
-           AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
+           AtomNameBinding (PiBound (PiBinding (ClassArrow _) _)) -> do
              tell $ sink (SynthCandidates [binderName b] mempty)
            _ -> return ()
         go rest
@@ -1587,7 +1588,9 @@ instance IRRep r => GenericE (Atom r) where
             ) (EitherE3
   {- NewtypeCon -}     (WhenCore r (NewtypeCon `PairE` Atom r))
   {- NewtypeTyCon -}   (WhenCore r NewtypeTyCon)
-  {- DictHole -}       (WhenCore r (LiftE (AlwaysEqual SrcPosCtx) `PairE` Type CoreIR))
+  {- DictHole -}       (WhenCore r (LiftE (AlwaysEqual SrcPosCtx) `PairE`
+                                    (Type CoreIR) `PairE`
+                                    (LiftE RequiredMethodAccess)))
               ) (EitherE6
   {- Con -}        (ComposeE (PrimCon r) (Atom r))
   {- TC -}         (ComposeE (PrimTC  r) (Atom r))
@@ -1608,7 +1611,7 @@ instance IRRep r => GenericE (Atom r) where
     DictTy  d      -> Case2 $ Case3 $ WhenIRE d
     NewtypeCon c x -> Case3 $ Case0 $ WhenIRE (c `PairE` x)
     NewtypeTyCon t -> Case3 $ Case1 $ WhenIRE t
-    DictHole s t   -> Case3 $ Case2 $ WhenIRE (LiftE s `PairE` t)
+    DictHole s t access -> Case3 $ Case2 $ WhenIRE (LiftE s `PairE` t `PairE` LiftE access)
     Con con -> Case4 $ Case0 $ ComposeE con
     TC  con -> Case4 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case2 $ WhenIRE effs
@@ -1636,7 +1639,7 @@ instance IRRep r => GenericE (Atom r) where
     Case3 val -> case val of
       Case0 (WhenIRE (c `PairE` x)) -> NewtypeCon c x
       Case1 (WhenIRE t)             -> NewtypeTyCon t
-      Case2 (WhenIRE (LiftE s `PairE` t)) -> DictHole s t
+      Case2 (WhenIRE (LiftE s `PairE` t `PairE` LiftE access)) -> DictHole s t access
       _ -> error "impossible"
     Case4 val -> case val of
       Case0 (ComposeE con) -> Con con

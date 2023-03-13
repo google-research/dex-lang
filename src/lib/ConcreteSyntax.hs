@@ -155,7 +155,7 @@ interp_operator = \case
   "$"   -> Dollar
   "->"  -> Arrow PlainArrow
   "?->" -> Arrow ImplicitArrow
-  "?=>" -> Arrow ClassArrow
+  "?=>" -> Arrow (ClassArrow Full)
   "--o" -> Arrow LinArrow
   "=>"  -> FatArrow
   "?"   -> Question

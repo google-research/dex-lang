@@ -304,6 +304,7 @@ quine-tests: $(quine-test-targets)
 
 file-check-tests: just-build
 	misc/file-check tests/instance-interface-syntax-tests.dx $(dex) -O script
+	misc/file-check tests/instance-methods-tests.dx $(dex) -O script
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t

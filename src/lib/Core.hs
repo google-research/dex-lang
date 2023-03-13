@@ -400,7 +400,7 @@ plainPiBinder :: Binder CoreIR n l -> PiBinder n l
 plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
 
 classPiBinder :: Binder CoreIR n l -> PiBinder n l
-classPiBinder (b:>ty) = PiBinder b ty ClassArrow
+classPiBinder (b:>ty) = PiBinder b ty (ClassArrow Full)
 
 getLambdaDicts :: EnvReader m => m n [AtomName CoreIR n]
 getLambdaDicts = do

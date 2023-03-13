@@ -104,13 +104,9 @@ inferTopUDecl (UInstance className bs params methods maybeName) result = do
         className'' <- sinkM className'
         body <- checkInstanceBody className'' params' methods
         return (ListE params' `PairE` body)
-  Abs bs' (Abs dictBinders (ListE params' `PairE` body)) <- return ab
-  let emptyDef = InstanceDef className' (bs' >>> dictBinders) params' $ InstanceBody [] []
-  instanceName <- emitInstanceDef emptyDef
-  addInstanceSynthCandidate className' instanceName
-  let def = InstanceDef className' (bs' >>> dictBinders) params' body
-  def' <- synthInstanceDef instanceName def
-  updateInstanceDef instanceName def'
+  Abs bs' (Abs dictBinders (ListE params' `PairE` (InstanceBody superclasses methods'))) <- return ab
+  let def = InstanceDef className' (bs' >>> dictBinders) params' (InstanceBody superclasses methods')
+  instanceName <- synthInstanceDefAndAddSynthCandidate def
   UDeclResultDone <$> case maybeName of
     RightB UnitB  -> do
       -- TODO: Remove the next two lines of comment.
@@ -921,7 +917,7 @@ checkSigma :: EmitsBoth o
            => NameHint -> UExpr i -> SigmaType o -> InfererM i o (CAtom o)
 checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
   Pi piTy@(PiType (PiBinder b _ arrow) _ _)
-    | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
+    | arrow == ImplicitArrow || isClassArrow arrow -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _)) | arrow == arrow' -> checkULam lam piTy
         -- we have to add the lambda argument corresponding to the implicit pi
         -- type argument
@@ -972,9 +968,9 @@ getImplicitArgs ty = case ty of
 getImplicitArg :: EmitsInf o => PiBinder o o' -> InfererM i o (Maybe (CAtom o))
 getImplicitArg (PiBinder _ argTy arr) = case arr of
   ImplicitArrow -> Just <$> freshType argTy
-  ClassArrow -> do
+  ClassArrow reqMethodAccess -> do
     ctx <- srcPosCtx <$> getErrCtx
-    return $ Just $ DictHole (AlwaysEqual ctx) argTy
+    return $ Just $ DictHole (AlwaysEqual ctx) argTy reqMethodAccess
   _ -> return Nothing
 
 -- The name hint names the object being computed
@@ -1029,7 +1025,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
            $ "Couldn't synthesize a class dictionary for: "
              ++ pprint (head $ eSetToList missingDs))
       autoDs <- case arr of
-        ClassArrow -> checkNoMissing $> mempty
+        ClassArrow _ -> checkNoMissing $> mempty
         _          -> return $ missingDs
       introDictTys (eSetToList autoDs) $ do
         ann' <- getAnnType
@@ -1682,7 +1678,7 @@ binderNestAsPiNest arr = \case
 
 inferRole :: CType o -> Arrow -> InfererM i o ParamRole
 inferRole ty arr = case arr of
-  ClassArrow -> return DictParam
+  ClassArrow _ -> return DictParam
   _ -> do
     zonk ty >>= \case
       TyKind -> return TypeParam
@@ -1804,7 +1800,7 @@ withSuperclassBindersRec [] cont = do
   result <- cont
   return $ Abs Empty result
 withSuperclassBindersRec (ty:rest) cont = do
-  let binding = PiBinding ClassArrow ty
+  let binding = PiBinding (ClassArrow Full) ty
   Abs (b:>_) (Abs bs e) <- buildAbsInf noHint binding \_ -> do
     ListE rest' <- sinkM $ ListE rest
     withSuperclassBindersRec rest' cont
@@ -1888,7 +1884,7 @@ checkInstanceArgs Empty cont = do
 checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
   case arrow of
     ImplicitArrow -> return ()
-    ClassArrow    -> return ()
+    ClassArrow _  -> return ()
     PlainArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
   ab <- checkAnnWithMissingDicts ann \ds getArgTy -> do
@@ -1970,7 +1966,7 @@ checkInstanceBody className params methods = do
   def@(ClassDef _ methodNames _ _ _ ) <- getClassDef className
   Abs superclassBs methodTys <- checkedApplyClassParams def params
   SuperclassBinders bs superclassTys <- return superclassBs
-  superclassDicts <- mapM trySynthTerm superclassTys
+  superclassDicts <- mapM (flip trySynthTerm Full) superclassTys
   ListE methodTys' <- applySubst (bs @@> map SubstVal superclassDicts) methodTys
   methodsChecked <- mapM (checkMethodDef className methodTys') methods
   let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
@@ -1988,7 +1984,7 @@ introDicts
   -> InfererM i o (Abs (Nest RolePiBinder) e o)
 introDicts []    m = do Distinct <- getDistinct; Abs Empty <$> m
 introDicts (h:t) m = do
-  ab <- buildPiAbsInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
+  ab <- buildPiAbsInf (getNameHint @String "_autoq") (ClassArrow Full) h \_ -> do
     ListE t' <- sinkM $ ListE t
     introDicts t' m
   Abs (PiBinder b ty arr) (Abs bs e) <- return ab
@@ -1999,7 +1995,7 @@ introDictTys :: forall i o. EmitsInf o
              -> (forall l. (EmitsInf l, DExt o l) => InfererM i l (PiType l))
              -> InfererM i o (PiType o)
 introDictTys []    m = do Distinct <- getDistinct; m
-introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") ClassArrow h \_ -> do
+introDictTys (h:t) m = buildPiInf (getNameHint @String "_autoq") (ClassArrow Full) h \_ -> do
   ListE t' <- sinkM $ ListE t
   (Pure,) . Pi <$> (introDictTys t' m)
 
@@ -2120,12 +2116,12 @@ inferParams (Abs paramBs body) = case paramBs of
     rest <- applyRename (b@>x) $ Abs bs body
     (DataDefParams params, body') <- inferParams rest
     return (DataDefParams ((PlainArrow, (Var x)) : params), body')
-  Nest (RolePiBinder b ty ClassArrow _) bs -> do
+  Nest (RolePiBinder b ty (ClassArrow access) _) bs -> do
     ctx <- srcPosCtx <$> getErrCtx
-    let d = DictHole (AlwaysEqual ctx) ty
+    let d = DictHole (AlwaysEqual ctx) ty access
     rest <- applySubst (b@>SubstVal d) $ Abs bs body
     (DataDefParams params, body') <- inferParams rest
-    return (DataDefParams ((ClassArrow, d):params), body')
+    return (DataDefParams ((ClassArrow access, d):params), body')
   Nest (RolePiBinder _ _ _ _) _ -> do
     error "TODO Handle implicit or linear parameters for data constructors"
 
@@ -2347,7 +2343,7 @@ inferTabCon hint xs reqTy = do
   let n = fromIntegral (length xs) :: Word32
   let finTy = FinConst n
   ctx <- srcPosCtx <$> getErrCtx
-  let dataDictHole dTy = Just $ WhenIRE $ DictHole (AlwaysEqual ctx) dTy
+  let dataDictHole dTy = Just $ WhenIRE $ DictHole (AlwaysEqual ctx) dTy Full
   case reqTy of
     Infer -> do
       elemTy <- case xs of
@@ -2433,7 +2429,7 @@ asIxType :: CType o -> InfererM i o (IxType CoreIR o)
 asIxType ty = do
   dictTy <- DictTy <$> ixDictType ty
   ctx <- srcPosCtx <$> getErrCtx
-  return $ IxType ty $ IxDictAtom $ DictHole (AlwaysEqual ctx) dictTy
+  return $ IxType ty $ IxDictAtom $ DictHole (AlwaysEqual ctx) dictTy Full
 {-# SCC asIxType #-}
 
 -- === Solver ===
@@ -2934,63 +2930,58 @@ generalizeInstanceArgs (Nest (RolePiBinder b ty _ role) bs) (arg:args) = do
   return $ arg':args'
 generalizeInstanceArgs _ _ = error "zip error"
 
-data RecMethodDefCheckTraverserS (n::S) = S (ClassName n) (InstanceName n) Int
-                                        deriving Show
+synthInstanceDefAndAddSynthCandidate
+  :: (Mut n, TopBuilder m, EnvReader m,  Fallible1 m) => InstanceDef n -> m n (InstanceName n)
+synthInstanceDefAndAddSynthCandidate def@(InstanceDef className bs params (InstanceBody superclasses _)) = do
+  let emptyDef = InstanceDef className bs params $ InstanceBody superclasses []
+  instanceName <- emitInstanceDef emptyDef
+  addInstanceSynthCandidate className instanceName
+  synthInstanceDef instanceName def
+  return instanceName
 
-instance GenericE RecMethodDefCheckTraverserS where
-  type RepE RecMethodDefCheckTraverserS  = ClassName `PairE` InstanceName `PairE` LiftE Int
-  fromE :: RecMethodDefCheckTraverserS n -> RepE RecMethodDefCheckTraverserS n
-  fromE (S cname iname ix) = cname `PairE` iname `PairE` LiftE ix
-  toE (cname `PairE` iname `PairE` LiftE ix) = S cname iname ix
-instance SinkableE RecMethodDefCheckTraverserS
-instance HoistableState RecMethodDefCheckTraverserS where
-  hoistState _ b (S cname iname ix) =
-    let cname' = ignoreHoistFailure $ hoist b cname
-        iname' = ignoreHoistFailure $ hoist b iname
-    in S cname' iname' ix
+type InstanceDefAbsBodyT =
+      ((ListE CType) `PairE` (ListE CAtom) `PairE` (ListE CBlock) `PairE` (ListE CBlock))
 
-instance GenericTraverser CoreIR UnitB RecMethodDefCheckTraverserS where
-  traverseExpr (App f xs) = do
-    xs' <- mapM traverseGenericE xs
-    traverseGenericE f >>= \case
-      f'@(Var m) -> getMethodName m >>= \case
-        Nothing -> return $ App f' xs'
-        Just mname -> lookupEnv mname >>= \case
-          MethodBinding cname' ix' _ -> do
-            forM_ xs' \case
-              DictCon (InstanceDict iname' _) -> do
-                S cname iname ix <- get
-                if (cname == cname' && iname == iname' && ix <= ix')
-                  then throw TypeErr $ "Cannot call method " ++ show ix' ++
-                                        " from within definition of method " ++ show ix ++
-                                        ", in definition of instance " ++ pprint iname
-                  else return ()
-              _ -> return ()
-            return $ App f' xs'
-      f' -> return $ App f' xs'
-  traverseExpr e = traverseExprDefault e
+pattern InstanceDefAbsBody :: [CType n] -> [CAtom n] -> [CBlock n] -> [CBlock n]
+                           -> InstanceDefAbsBodyT n
+pattern InstanceDefAbsBody params superclasses doneMethods todoMethods =
+  ListE params `PairE` (ListE superclasses) `PairE` (ListE doneMethods) `PairE` (ListE todoMethods)
+
+type InstanceDefAbsT = Abs (Nest RolePiBinder) InstanceDefAbsBodyT
+
+pattern InstanceDefAbs :: Nest RolePiBinder h n -> [CType n] -> [CAtom n] -> [CBlock n] -> [CBlock n]
+                       -> InstanceDefAbsT h
+pattern InstanceDefAbs bs params superclasses doneMethods todoMethods =
+  Abs bs (InstanceDefAbsBody params superclasses doneMethods todoMethods)
 
 synthInstanceDef
-  :: (EnvReader m, Fallible1 m) => InstanceName n -> InstanceDef n -> m n (InstanceDef n)
-synthInstanceDef instanceName (InstanceDef className bs params body) = do
-  liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
-    \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
-      methods' <- forM (zip [0..] methods) \(ix, method) -> do
-        method' <- synthTopBlock method
-        let className' = sink className
-        let instanceName' = sink instanceName
-        (method'', _) <- liftGenericTraverserM (S className' instanceName' ix) $ traverseGenericE method'
-        return method''
-      return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
+  :: (Mut n, TopBuilder m, EnvReader m,  Fallible1 m) => InstanceName n -> InstanceDef n -> m n ()
+synthInstanceDef instanceName (InstanceDef className bs params (InstanceBody superclasses methods)) = do
+  let ab = InstanceDefAbs bs params superclasses [] methods
+  recur ab className instanceName
+  where
+    recur :: (Mut n, TopBuilder m, EnvReader m, Fallible1 m)
+          => InstanceDefAbsT n -> ClassName n -> InstanceName n -> m n ()
+    recur (InstanceDefAbs _ _ _ _ []) _ _ = return ()
+    recur ab cname iname = do
+      (def, ab') <- liftExceptEnvReaderM $ refreshAbs ab
+        \bs' (InstanceDefAbsBody ps scs doneMethods (m:ms)) -> do
+          m' <- synthTopBlock m
+          let doneMethods' = doneMethods ++ [m']
+          let ab' = InstanceDefAbs bs' ps scs doneMethods' ms
+          let def = InstanceDef cname bs' ps $ InstanceBody scs doneMethods'
+          return (def, ab')
+      updateInstanceDef iname def
+      recur ab' cname iname
 
 -- main entrypoint to dictionary synthesizer
-trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> m n (SynthAtom n)
-trySynthTerm ty = do
+trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (SynthAtom n)
+trySynthTerm ty reqMethodAccess = do
   hasInferenceVars ty >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
     False -> do
       synthTy <- liftExcept $ typeAsSynthType ty
-      solutions <- liftSyntherM $ synthTerm synthTy
+      solutions <- liftSyntherM $ synthTerm synthTy reqMethodAccess
       case solutions of
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
         [d] -> cheapNormalize d -- normalize to reduce code size
@@ -3058,7 +3049,7 @@ getSynthType x = do
 typeAsSynthType :: CType n -> Except (SynthType n)
 typeAsSynthType (DictTy dictTy) = return $ SynthDictType dictTy
 typeAsSynthType (Pi (PiType b@(PiBinder _ _ arrow) Pure resultTy))
-  | arrow == ImplicitArrow || arrow == ClassArrow = do
+  | arrow == ImplicitArrow || isClassArrow arrow = do
      resultTy' <- typeAsSynthType resultTy
      return $ SynthPiType $ Abs b resultTy'
 typeAsSynthType ty = Failure $ Errs [Err TypeErr mempty $ "Can't synthesize terms of type: " ++ pprint ty]
@@ -3106,16 +3097,16 @@ getSuperclassClosurePure env givens newGivens =
           return $ void superclasses
       return $ enumerate superclasses <&> \(i, _) -> DictCon $ SuperclassProj synthExpr i
 
-synthTerm :: SynthType n -> SyntherM n (SynthAtom n)
-synthTerm ty = confuseGHC >>= \_ -> case ty of
+synthTerm :: SynthType n -> RequiredMethodAccess -> SyntherM n (SynthAtom n)
+synthTerm ty reqMethodAccess = confuseGHC >>= \_ -> case ty of
   SynthPiType (Abs (PiBinder b argTy arr) resultTy) ->
     withFreshBinder (getNameHint b) argTy \b' -> do
       let v = binderName b'
       resultTy' <- applyRename (b@>v) resultTy
       newGivens <- case arr of
-        ClassArrow -> return [Var v]
+        ClassArrow _ -> return [Var v]
         _ -> return []
-      synthExpr <- extendGivens newGivens $ synthTerm resultTy'
+      synthExpr <- extendGivens newGivens $ synthTerm resultTy' reqMethodAccess
       let lamExpr = UnaryLamExpr b' (AtomicBlock synthExpr)
       return $ lamExprToAtom lamExpr arr Nothing
   SynthDictType dictTy -> case dictTy of
@@ -3123,8 +3114,27 @@ synthTerm ty = confuseGHC >>= \_ -> case ty of
     DictType "Data" _ [t] -> do
       void (synthDictForData dictTy <!> synthDictFromGiven dictTy)
       return $ DictCon $ DataData t
-    _ -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
+    _ -> do
+      dict <- synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
+      case dict of
+        DictCon (InstanceDict instanceName _) -> do
+          isReqMethodAccessAllowed <- reqMethodAccess `isMethodAccessAllowedBy` instanceName
+          if isReqMethodAccessAllowed
+            then return dict
+            else empty
+        _ -> return dict
 {-# SCC synthTerm #-}
+
+isMethodAccessAllowedBy :: EnvReader m =>  RequiredMethodAccess -> InstanceName n -> m n Bool
+isMethodAccessAllowedBy access instanceName = do
+  InstanceDef className _ _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+  let instanceMethodIdxs = S.fromList $ take (length methods) [0..]
+  ClassDef _ _ _ _ methodTys <- lookupClassDef className
+  let classMethodIdxs = S.fromList $ take (length methodTys) [0..]
+  case access of
+    Full         -> return $ classMethodIdxs `S.isSubsetOf` instanceMethodIdxs
+    Partial idxs -> return $ idxs'           `S.isSubsetOf` instanceMethodIdxs
+                      where idxs' = S.fromList idxs
 
 synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromGiven dictTy = do
@@ -3199,7 +3209,7 @@ instantiateSynthArgs target synthTy = do
     args <- {-# SCC argInstantiation #-} instantiateSynthArgsRec [] target' emptyInFrag synthTy'
     zonk $ ListE args
   forM args \case
-    DictHole _ argTy -> liftExceptAlt (typeAsSynthType argTy) >>= synthTerm
+    DictHole _ argTy access -> liftExceptAlt (typeAsSynthType argTy) >>= (flip synthTerm access)
     arg -> return arg
 
 instantiateSynthArgsRec
@@ -3211,8 +3221,9 @@ instantiateSynthArgsRec prevArgsRec dictTy subst synthTy = case synthTy of
     argTy' <- applySubst subst argTy
     param <- case arrow of
       ImplicitArrow -> Var <$> freshInferenceName argTy'
-      ClassArrow -> return $ DictHole (AlwaysEqual Nothing) argTy'
-      _ -> error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
+      ClassArrow access -> do
+        return $ DictHole (AlwaysEqual Nothing) argTy' access
+      _ -> empty  -- error $ "Not a valid arrow type for synthesis: " ++ pprint arrow
     instantiateSynthArgsRec (param:prevArgsRec) dictTy (subst <.> b @> SubstVal param) resultTy
   SynthDictType dictTy' -> do
     unify dictTy =<< applySubst subst dictTy'
@@ -3251,9 +3262,9 @@ instance HoistableState DictSynthTraverserS where
   hoistState _ _ (DictSynthTraverserS errs) = DictSynthTraverserS errs
 
 instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
-  traverseAtom a@(DictHole (AlwaysEqual ctx) ty) = do
+  traverseAtom a@(DictHole (AlwaysEqual ctx) ty access) = do
     ty' <- cheapNormalize =<< traverseAtom ty
-    ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'
+    ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty' access
     case ans of
       Failure errs -> put (DictSynthTraverserS errs) >> substM a
       Success d    -> return d
